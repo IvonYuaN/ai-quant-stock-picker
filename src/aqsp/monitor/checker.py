@@ -69,6 +69,8 @@ class MonitorChecker:
             try:
                 if monitor.check == "data_freshness":
                     result = self._check_data_freshness(monitor.params)
+                elif monitor.check == "raw_market_freshness":
+                    result = self._check_raw_market_freshness(monitor.params)
                 elif monitor.check == "circuit_breaker":
                     result = self._check_circuit_breaker(monitor.params)
                 elif monitor.check == "win_rate":
@@ -185,6 +187,91 @@ class MonitorChecker:
                 message=f"检查数据新鲜度失败: {e}",
                 details={"error": str(e)},
             )
+
+    def _check_raw_market_freshness(self, params: dict[str, Any]) -> MonitorResult:
+        """Probe production raw daily bars through the composite SQLite index."""
+        env_name = str(params.get("db_env", "AQSP_SQLITE_DB_PATH"))
+        db_path = Path(os.getenv(env_name, str(params.get("db_path", ""))))
+        symbols = tuple(
+            str(value).strip()
+            for value in params.get("symbols", ())
+            if str(value).strip()
+        )
+        max_lag_days = int(params.get("max_lag_days", 1))
+        if not db_path.exists():
+            return MonitorResult(
+                name="raw_market_data",
+                triggered=True,
+                severity="critical",
+                message="生产原始日线库不存在",
+                details={"db_path": str(db_path), "env": env_name},
+            )
+        if not symbols:
+            return MonitorResult(
+                name="raw_market_data",
+                triggered=True,
+                severity="critical",
+                message="生产原始日线探针代码为空",
+            )
+        import sqlite3
+
+        latest_by_symbol: dict[str, date] = {}
+        try:
+            with sqlite3.connect(str(db_path), timeout=5.0) as conn:
+                for symbol in symbols:
+                    row = conn.execute(
+                        """
+                        SELECT trade_date FROM daily_qfq
+                        WHERE ts_code = ?
+                        ORDER BY trade_date DESC LIMIT 1
+                        """,
+                        (symbol,),
+                    ).fetchone()
+                    if not row or not row[0]:
+                        return MonitorResult(
+                            name="raw_market_data",
+                            triggered=True,
+                            severity="critical",
+                            message=f"生产原始日线缺少探针标的: {symbol}",
+                            details={"db_path": str(db_path), "symbol": symbol},
+                        )
+                    raw_date = str(row[0])
+                    normalized = (
+                        f"{raw_date[:4]}-{raw_date[4:6]}-{raw_date[6:]}"
+                        if len(raw_date) == 8 and raw_date.isdigit()
+                        else raw_date[:10]
+                    )
+                    latest_by_symbol[symbol] = date.fromisoformat(normalized)
+        except (OSError, ValueError, sqlite3.Error) as exc:
+            return MonitorResult(
+                name="raw_market_data",
+                triggered=True,
+                severity="critical",
+                message=f"生产原始日线新鲜度检查失败: {exc}",
+                details={"db_path": str(db_path), "error": str(exc)},
+            )
+        oldest = min(latest_by_symbol.values())
+        lag_days = trading_day_lag(oldest, today_shanghai())
+        return MonitorResult(
+            name="raw_market_data",
+            triggered=lag_days > max_lag_days,
+            severity="critical",
+            message=(
+                f"生产原始日线滞后 {lag_days} 个交易日"
+                if lag_days > max_lag_days
+                else f"生产原始日线正常，最旧探针滞后 {lag_days} 个交易日"
+            ),
+            details={
+                "db_path": str(db_path),
+                "latest_by_symbol": {
+                    symbol: value.isoformat()
+                    for symbol, value in latest_by_symbol.items()
+                },
+                "oldest_date": oldest.isoformat(),
+                "trading_lag_days": lag_days,
+                "max_trading_lag_days": max_lag_days,
+            },
+        )
 
     def _check_circuit_breaker(self, params: dict[str, Any]) -> MonitorResult:
         try:

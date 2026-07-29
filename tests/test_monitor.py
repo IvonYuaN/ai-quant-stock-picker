@@ -199,6 +199,64 @@ class TestMonitorChecker:
         assert result.severity == "critical"
         assert "数据缓存文件不存在" in result.message
 
+    def test_raw_market_freshness_alerts_when_any_probe_is_stale(
+        self,
+        sample_config: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import sqlite3
+
+        db_path = tmp_path / "raw.db"
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("CREATE TABLE daily_qfq (ts_code TEXT, trade_date TEXT)")
+            conn.executemany(
+                "INSERT INTO daily_qfq VALUES (?, ?)",
+                [("600519.SH", "20260728"), ("000001.SZ", "20260727")],
+            )
+        monkeypatch.setattr(
+            "aqsp.monitor.checker.today_shanghai", lambda: date(2026, 7, 29)
+        )
+        checker = MonitorChecker(config_path=str(sample_config))
+
+        result = checker._check_raw_market_freshness(
+            {
+                "db_path": str(db_path),
+                "symbols": ["600519.SH", "000001.SZ"],
+                "max_lag_days": 1,
+            }
+        )
+
+        assert result.triggered is True
+        assert result.details["oldest_date"] == "2026-07-27"
+
+    def test_raw_market_freshness_uses_index_probe_without_full_table_scan(
+        self,
+        sample_config: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import sqlite3
+
+        db_path = tmp_path / "raw.db"
+        with sqlite3.connect(db_path) as conn:
+            conn.execute(
+                "CREATE TABLE daily_qfq (ts_code TEXT, trade_date TEXT, "
+                "PRIMARY KEY (ts_code, trade_date))"
+            )
+            conn.execute("INSERT INTO daily_qfq VALUES ('600519.SH', '20260728')")
+        monkeypatch.setattr(
+            "aqsp.monitor.checker.today_shanghai", lambda: date(2026, 7, 29)
+        )
+        checker = MonitorChecker(config_path=str(sample_config))
+
+        result = checker._check_raw_market_freshness(
+            {"db_path": str(db_path), "symbols": ["600519.SH"], "max_lag_days": 1}
+        )
+
+        assert result.triggered is False
+        assert result.details["latest_by_symbol"] == {"600519.SH": "2026-07-28"}
+
     def test_check_circuit_breaker(self, sample_config: Path) -> None:
         checker = MonitorChecker(config_path=str(sample_config))
 

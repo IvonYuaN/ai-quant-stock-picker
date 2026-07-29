@@ -16,6 +16,16 @@ monitors:
     check: "circuit_breaker"
     params: {}
     severity: "critical"
+
+  - name: "raw_market_data"
+    description: "生产原始日线探针新鲜度"
+    enabled: true
+    check: "raw_market_freshness"
+    params:
+      db_env: "AQSP_SQLITE_DB_PATH"
+      max_lag_days: 1
+      symbols: ["600519.SH", "000001.SZ", "300750.SZ"]
+    severity: "critical"
     
   - name: "win_rate_drop"
     description: "胜率异常下降"
