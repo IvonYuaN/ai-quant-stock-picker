@@ -2475,6 +2475,80 @@ def test_validate_predictions_uses_resilient_history_when_primary_fails(
     assert result["sources_attempted"] == ["eastmoney", "resilient_history"]
 
 
+def test_validate_predictions_fetches_only_pending_paper_eligible_symbols(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+    ledger_path = tmp_path / "predictions.jsonl"
+    ledger_path.write_text("{}\n", encoding="utf-8")
+    rows = [
+        {"symbol": "600519", "status": "pending", "rating": "buy_candidate"},
+        {"symbol": "000001", "status": "validated", "rating": "buy_candidate"},
+        {"symbol": "300750", "status": "pending", "rating": "watch"},
+        {
+            "symbol": "002594",
+            "status": "pending",
+            "rating": "buy_candidate",
+            "paper_review_eligible": False,
+        },
+    ]
+    seen: dict[str, object] = {}
+    monkeypatch.setattr("aqsp.ledger.base.read_ledger", lambda _path: rows)
+    monkeypatch.setattr(daily_pipeline, "_build_data_source", lambda _config: object())
+    monkeypatch.setattr(
+        "aqsp.data.fetch_with_source",
+        lambda _source, symbols, **_kwargs: (
+            seen.update({"symbols": symbols})
+            or {"600519": pd.DataFrame([{"date": "2026-07-29", "close": 1.0}])}
+        ),
+    )
+    monkeypatch.setattr(
+        "aqsp.ledger.validate_predictions",
+        lambda *_args, **_kwargs: type(
+            "Validation",
+            (),
+            {
+                "checked": 0,
+                "wins": 0,
+                "avg_return_pct": 0.0,
+                "avg_excess_pct": 0.0,
+                "skipped_not_executable": 0,
+                "not_executable_reasons": {},
+            },
+        )(),
+    )
+
+    config = daily_pipeline.PipelineConfig(
+        project_root=tmp_path,
+        source="eastmoney",
+        mode="close",
+        limit=10,
+        max_universe=50,
+        min_avg_amount=50_000_000,
+        max_data_lag_days=3,
+        enable_online_factors=False,
+        allow_online_fallback=True,
+        ledger_path=ledger_path.name,
+        report_path="reports/latest.md",
+        csv_path="reports/latest.csv",
+        briefing_path="reports/briefing.md",
+        paper_report_path="reports/paper.md",
+        dashboard_html="dist/dashboard/index.html",
+        dashboard_db="dist/dashboard/aqsp.db",
+        paper_ledger="data/paper_trades.jsonl",
+        closing_review_path="reports/closing_review.md",
+        notify=False,
+        notify_mode="summary",
+        dry_run=False,
+        enable_debate=False,
+        enable_auto_evolution=False,
+    )
+    daily_pipeline._step_validate_predictions(config, logging.getLogger("test"))
+
+    assert seen["symbols"] == ["600519"]
+
+
 def test_validate_predictions_returns_not_executable_summary(
     monkeypatch,
     tmp_path: Path,

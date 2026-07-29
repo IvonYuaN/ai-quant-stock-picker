@@ -672,18 +672,26 @@ def _step_validate_predictions(
         return {"checked": 0, "skipped": True}
 
     from aqsp.ledger import validate_predictions
-    from aqsp.ledger.base import read_ledger
+    from aqsp.ledger.base import is_ledger_row_paper_review_eligible, read_ledger
+    from aqsp.ratings import is_tradable_rating
 
     rows = read_ledger(str(ledger_path))
     if not rows:
         logger.info("  Ledger 为空, 跳过验证")
         return {"checked": 0, "skipped": True}
 
+    validation_rows = [
+        row
+        for row in rows
+        if row.get("status") == "pending"
+        and (row.get("rating") in (None, "") or is_tradable_rating(row.get("rating")))
+        and is_ledger_row_paper_review_eligible(row)
+    ]
     symbols_in_ledger: list[str] = []
     benchmark_symbols: list[str] = []
     seen_symbols: set[str] = set()
     seen_benchmarks: set[str] = set()
-    for row in rows:
+    for row in validation_rows:
         sym = str(row.get("symbol", "") or "")
         if sym and sym not in seen_symbols:
             seen_symbols.add(sym)
