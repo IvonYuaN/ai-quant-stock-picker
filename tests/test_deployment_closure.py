@@ -69,6 +69,40 @@ def test_deployment_closure_rejects_unpushed_head(monkeypatch, tmp_path: Path) -
     )
 
 
+def test_deployment_closure_ignores_user_project_profile_only(
+    monkeypatch, tmp_path: Path
+) -> None:
+    def fake_run(_root: Path, command: list[str]) -> subprocess.CompletedProcess[str]:
+        assert command == ["git", "status", "--porcelain", "--untracked-files=all"]
+        return _completed(command, 0, " M .codex/project-profile.md\n")
+
+    monkeypatch.setattr(closure, "_run", fake_run)
+
+    result = closure._worktree_clean(tmp_path)
+
+    assert result.status == "ok"
+    assert "ignored local project profile" in result.detail
+
+
+def test_deployment_closure_rejects_other_dirty_release_input(
+    monkeypatch, tmp_path: Path
+) -> None:
+    def fake_run(_root: Path, command: list[str]) -> subprocess.CompletedProcess[str]:
+        assert command == ["git", "status", "--porcelain", "--untracked-files=all"]
+        return _completed(
+            command,
+            0,
+            " M .codex/project-profile.md\n M scripts/daily_pipeline.py\n",
+        )
+
+    monkeypatch.setattr(closure, "_run", fake_run)
+
+    result = closure._worktree_clean(tmp_path)
+
+    assert result.status == "failed"
+    assert result.detail == " M scripts/daily_pipeline.py"
+
+
 def test_deployment_closure_requires_successful_ci(monkeypatch, tmp_path: Path) -> None:
     def fake_run(_root: Path, command: list[str]) -> subprocess.CompletedProcess[str]:
         if command[:3] == ["git", "rev-parse", "HEAD"]:

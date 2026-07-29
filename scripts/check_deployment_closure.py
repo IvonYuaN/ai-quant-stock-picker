@@ -34,6 +34,7 @@ DEFAULT_BASE_URL = "https://lh.ifidy.cn"
 DEFAULT_SSH_TARGET = "aqsp-server"
 MIN_SNAPSHOT_VARIANTS = 100
 REQUIRED_TECHNICAL_METRICS = ("macd_hist", "kdj_j", "volume_ratio", "atr_pct")
+_IGNORED_LOCAL_WORKTREE_PATHS = frozenset({".codex/project-profile.md"})
 
 
 @dataclass(frozen=True)
@@ -97,11 +98,24 @@ def _local_commit(root: Path) -> tuple[str, ClosureCheck]:
 
 def _worktree_clean(root: Path) -> ClosureCheck:
     result = _run(root, ["git", "status", "--porcelain", "--untracked-files=all"])
-    output = _first_output(result)
     if result.returncode != 0:
-        return ClosureCheck("worktree_clean", "failed", output)
-    if output:
-        return ClosureCheck("worktree_clean", "failed", output[:500])
+        return ClosureCheck("worktree_clean", "failed", _first_output(result))
+    dirty_lines = [line for line in result.stdout.splitlines() if line.strip()]
+    release_input_lines = [
+        line
+        for line in dirty_lines
+        if line[3:].strip() not in _IGNORED_LOCAL_WORKTREE_PATHS
+    ]
+    if release_input_lines:
+        return ClosureCheck(
+            "worktree_clean", "failed", "\n".join(release_input_lines)[:500]
+        )
+    if dirty_lines:
+        return ClosureCheck(
+            "worktree_clean",
+            "ok",
+            "release inputs clean; ignored local project profile",
+        )
     return ClosureCheck(
         "worktree_clean", "ok", "tracked and untracked release inputs clean"
     )
