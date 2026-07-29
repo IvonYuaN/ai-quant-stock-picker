@@ -506,7 +506,9 @@ class DashboardDebateSummary:
     support_points: tuple[str, ...] = ()
     opposition_points: tuple[str, ...] = ()
     watch_items: tuple[str, ...] = ()
-    viewpoint_buckets: dict[str, tuple[str, ...]] = dataclass_field(default_factory=dict)
+    viewpoint_buckets: dict[str, tuple[str, ...]] = dataclass_field(
+        default_factory=dict
+    )
     disagreement_points: tuple[str, ...] = ()
     uncertainty_points: tuple[str, ...] = ()
     created_at: str = ""
@@ -937,7 +939,12 @@ class DashboardDataProvider:
             or os.getenv("AQSP_BT_LOGS_DIR", "").strip()
             or "logs/bt"
         )
-        resolved_reports = reports_dir.strip() or "reports"
+        configured_report = os.getenv("AQSP_REPORT", "").strip()
+        resolved_reports = reports_dir.strip() or (
+            str(Path(configured_report).expanduser().parent)
+            if configured_report
+            else "reports"
+        )
         resolved_debate_results = (
             debate_results_path.strip()
             or os.getenv("AQSP_DEBATE_RESULTS", "").strip()
@@ -1611,18 +1618,16 @@ class DashboardDataProvider:
                 )
             if not progress:
                 progress = handoff_progress
-            if not progress and (
-                gate_blocker_line or cooldown_until
-            ):
+            if not progress and (gate_blocker_line or cooldown_until):
                 progress = self._coldstart_progress_from_ledger()
             coldstart_ready = self._coldstart_progress_ready(progress)
 
             status = str(run.get("status") or "").strip()
             triggered = bool(run.get("run_circuit_breaker_triggered"))
             final_count = _runtime_float(run.get("run_final_count"))
-            display_override = os.getenv("AQSP_RESEARCH_DISPLAY_OVERRIDE", "").strip().lower() in {
-                "1", "true", "yes", "on"
-            }
+            display_override = os.getenv(
+                "AQSP_RESEARCH_DISPLAY_OVERRIDE", ""
+            ).strip().lower() in {"1", "true", "yes", "on"}
             if display_override and final_count is not None and final_count > 0:
                 conclusion = f"研究展示模式：当前运行已产出 {int(final_count)} 个候选"
             elif display_override and run:
@@ -1637,9 +1642,7 @@ class DashboardDataProvider:
                     if coldstart_ready
                     else "组合保护生效，候选研究等待新鲜数据"
                 )
-            elif (
-                coldstart_ready and cooldown_until
-            ):
+            elif coldstart_ready and cooldown_until:
                 conclusion = "冷启动样本已达标；候选研究继续，组合保护单独展示"
             elif coldstart_ready:
                 conclusion = "冷启动样本已达标；候选研究不再等待组合保护"
@@ -2715,9 +2718,7 @@ class DashboardDataProvider:
             source, "live_short"
         )
         blocked = bool(
-            date_overview.blocked_total
-            or runtime.gate_blocker_line
-            or stale_source
+            date_overview.blocked_total or runtime.gate_blocker_line or stale_source
         )
         if blocked:
             label = "阻塞"
@@ -5654,11 +5655,16 @@ class DashboardDataProvider:
             return False
         rating = str(row.get("rating", "") or "").strip()
         action = str(row.get("portfolio_action", "") or "").strip()
-        return rating in {"watch", "avoid"} or action in {
-            "downgrade",
-            "keep",
-            "observation_only",
-        } or row.get("paper_review_eligible", True) is False
+        return (
+            rating in {"watch", "avoid"}
+            or action
+            in {
+                "downgrade",
+                "keep",
+                "observation_only",
+            }
+            or row.get("paper_review_eligible", True) is False
+        )
 
     def _is_watch_only(self, row: dict[str, Any], task_id: str = "") -> bool:
         return (
