@@ -115,6 +115,7 @@ class PipelineConfig:
     enable_auto_evolution: bool
     requested_source: str = ""
     source_override_reason: str = ""
+    research_only: bool = False
     daily_digest_path: str = "reports/daily_digest.md"
     daily_digest_json_path: str = "reports/daily_digest.json"
 
@@ -1329,6 +1330,15 @@ def run_pipeline(config: PipelineConfig) -> PipelineResult:
         ("Dashboard刷新", lambda: _step_refresh_dashboard(config, logger)),
         ("数据清理", lambda: _step_cleanup(config, logger)),
     ]
+    if config.research_only:
+        pipeline_steps = [
+            ("策略运行", lambda: _step_run_strategy(config, logger)),
+            (
+                "报告生成",
+                lambda: _step_generate_report(config, logger, allow_notify=False),
+            ),
+            ("Dashboard刷新", lambda: _step_refresh_dashboard(config, logger)),
+        ]
     if not _is_trade_day(today):
         pipeline_steps = [
             (
@@ -2272,6 +2282,7 @@ def _build_config(args: argparse.Namespace) -> PipelineConfig:
         enable_auto_evolution=env.enable_auto_evolution,
         requested_source=requested_source,
         source_override_reason=source_override_reason,
+        research_only=bool(getattr(args, "research_only", False)),
     )
 
 
@@ -2337,6 +2348,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--verbose", action="store_true", help="详细日志输出")
     parser.add_argument("--notify", action="store_true", help="发送通知")
     parser.add_argument(
+        "--research-only",
+        action="store_true",
+        help="只执行一块收盘研究、报告和首页刷新，不重复纸面同步或学习",
+    )
+    parser.add_argument(
         "--enable-debate", action="store_true", help="启用多Agent辩论分析"
     )
     parser.add_argument(
@@ -2374,7 +2390,8 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         result = run_pipeline(config)
-        _send_pipeline_digest(config, result, logger)
+        if not config.research_only:
+            _send_pipeline_digest(config, result, logger)
         _write_result_file(result, config.project_root)
 
         if result.overall_success:

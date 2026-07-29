@@ -2213,6 +2213,36 @@ def test_step_run_strategy_does_not_advance_sqlite_research_chunk_when_failed(
     assert cursor["next_offset"] == 0
 
 
+def test_run_pipeline_runs_only_research_steps_when_research_only(
+    monkeypatch, tmp_path: Path
+) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+    executed: list[str] = []
+    monkeypatch.setattr(daily_pipeline, "_is_trade_day", lambda _day: True)
+    for name in (
+        "_step_run_strategy",
+        "_step_generate_report",
+        "_step_refresh_dashboard",
+    ):
+        monkeypatch.setattr(
+            daily_pipeline,
+            name,
+            lambda *args, _name=name, **kwargs: executed.append(_name) or {},
+        )
+    config = dataclasses.replace(
+        _pipeline_config(daily_pipeline, tmp_path), research_only=True
+    )
+
+    result = daily_pipeline.run_pipeline(config)
+
+    assert result.overall_success is True
+    assert executed == [
+        "_step_run_strategy",
+        "_step_generate_report",
+        "_step_refresh_dashboard",
+    ]
+
+
 def test_step_update_data_uses_only_current_sqlite_refresh_symbols(
     monkeypatch, tmp_path: Path
 ) -> None:

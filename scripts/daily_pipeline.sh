@@ -144,9 +144,12 @@ if [ -z "$RUN_TASK_ID" ]; then
     log "拒绝直接运行 daily_pipeline：缺少 AQSP_RUN_TASK_ID，请统一走 scripts/bt_task.sh daily"
     exit 0
 fi
-if [ "$RUN_TASK_ID" != "daily" ]; then
+if [ "$RUN_TASK_ID" != "daily" ] && [ "$RUN_TASK_ID" != "daily_research" ]; then
     log "拒绝运行 daily_pipeline：AQSP_RUN_TASK_ID=${RUN_TASK_ID}，请统一走 scripts/bt_task.sh ${RUN_TASK_ID}"
     exit 0
+fi
+if [ "$RUN_TASK_ID" = "daily_research" ]; then
+    PIPELINE_ARGS+=( "--research-only" )
 fi
 DAILY_NOTIFY_RESOLVED="${AQSP_DAILY_NOTIFY:-${AQSP_NOTIFY:-true}}"
 if is_truthy "$DAILY_NOTIFY_RESOLVED"; then

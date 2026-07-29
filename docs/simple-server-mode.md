@@ -182,10 +182,10 @@ bash /opt/aqsp/scripts/server_sync_and_run.sh
 统一命令入口：
 
 ```bash
-/bin/bash /opt/aqsp/scripts/bt_task.sh <intraday|midday|daily|data-refresh|data-refresh-retry|coldstart|variant-refresh|monitor|news|status>
+/bin/bash /opt/aqsp/scripts/bt_task.sh <intraday|midday|daily|daily-research|data-refresh|data-refresh-retry|coldstart|variant-refresh|monitor|news|status>
 ```
 
-建议在宝塔里配置 **9 条自动任务 + 1 条手动自检命令**：
+建议在宝塔里配置 **10 条自动任务 + 1 条手动自检命令**：
 
 | 任务名 | 推荐时间 | 宝塔脚本内容 | 作用 |
 |---|---:|---|---|
@@ -195,6 +195,7 @@ bash /opt/aqsp/scripts/server_sync_and_run.sh
 | `AQSP-日线数据分块刷新` | 工作日 `15:35` | `/bin/bash /opt/aqsp/scripts/bt_task.sh data-refresh` | 只更新一个有时间预算的原始日线批次，记录游标；仅允许北京时间 `15:30-17:50`，与重任务互斥 |
 | `AQSP-日线延迟重试` | 工作日 `17:00` | `/bin/bash /opt/aqsp/scripts/bt_task.sh data-refresh-retry` | 上游收盘日线延迟发布时只补一次下一分块；与首轮和其他重任务共用资源门禁 |
 | `AQSP-收盘主链路` | 工作日 `18:00` | `/bin/bash /opt/aqsp/scripts/bt_task.sh daily` | 完整收盘复盘、纸面验证、简报、通知和看板刷新 |
+| `AQSP-收盘研究分块` | 工作日 `18:20,18:40,19:00,19:20,20:20,20:40,21:20,21:40,22:20` | `/bin/bash /opt/aqsp/scripts/bt_task.sh daily-research` | 每次只研究一个 cursor 分块，刷新报告和首页；不重复纸面同步、通知或学习，避开冷启动与变体刷新 |
 | `AQSP-冷启动补样本` | 工作日 `19:40` | `/bin/bash /opt/aqsp/scripts/bt_task.sh coldstart` | 收盘主链路结束后再补历史库和冷启动样本，避免互斥跳过 |
 | `AQSP-变体刷新` | 工作日 `21:00` | `/bin/bash /opt/aqsp/scripts/bt_task.sh variant-refresh` | 受限轮转刷新变体实验；仅在收盘后运行，不写正式 ledger |
 | `AQSP-服务器监控` | 工作日每 `15` 分钟 | `/bin/bash /opt/aqsp/scripts/bt_task.sh monitor` | 检查数据、运行态、通知通道；默认只推关键异常 |
@@ -204,7 +205,7 @@ bash /opt/aqsp/scripts/server_sync_and_run.sh
 
 `daily` 和 `coldstart` 会共用主锁。如果你在 `daily` 还没跑完时手动触发 `coldstart`，日志出现“正常跳过；这是互斥保护，不是失败”是预期行为。生产建议把 `coldstart` 放到 `19:40`，不要放在 `daily` 附近。
 
-`data-refresh`、`data-refresh-retry`、`coldstart`、`variant-refresh` 和 `walkforward-gate` 启动前会读取服务器实时负载、可用内存、总内存和主链锁，并抢占同一把 `data/.locks/heavy-compute.lock` 槽位锁。资源不足或已有重任务时只写 `data/.state/resource-gate-<task>.json` 并正常跳过，保留上一版产物，等待下一个错峰窗口；不会和盘中、收盘主链或其他重任务争抢资源。两次日线任务每批只处理 `AQSP_DATA_REFRESH_BATCH_SIZE` 个标的，逐标的超时 4 秒；首轮默认一批，延迟重试默认在同一 `480` 秒总预算内连续处理小批并持续写入游标。刷新池只包含沪市主板、深市主板与创业板，排除 ST、退市和科创板，按板块交错轮转，绝不把全市场读进内存或退化为成交额头部。它用独立的 `AQSP_DATA_REFRESH_MIN_FREE_MEMORY_MB=640` 和 `AQSP_DATA_REFRESH_MAX_LOAD_PER_CPU=0.50` 门槛，适配 2C/1.6GB 服务器。变体刷新固定 `240` 股票上限、`80` 条 SQL 分块、`300` 秒预算和低 CPU 优先级，并用 `AQSP_VARIANT_MIN_FREE_MEMORY_MB=700`、`AQSP_VARIANT_MAX_LOAD_PER_CPU=0.50` 门槛，避免通用 1GB 保留量在 1.6GB 主机上永久阻塞 v2 产物。其它重任务未配置时，内存保留量按总内存的 `25%` 自动计算，最低 `768MB`、最高 `4096MB`；每核 1 分钟负载默认上限 `0.70`。服务器 `.env` 可用 `AQSP_HEAVY_MIN_FREE_MEMORY_MB` 覆盖自动值，用 `AQSP_HEAVY_MAX_LOAD_PER_CPU` 调整负载门槛；状态文件会记录实际采用的内存门槛。直接运行 production walk-forward 也会检查可用内存，默认低于 `768MB` 拒绝启动，可用 `--min-free-memory-mb` 按主机配置调整。变体市场库查询按 `80` 只股票分块，避免单条大 SQL 占用过高；发布前至少 `80%` 的变体必须拥有不同的持仓签名，每只当前持仓必须带同日 MACD、KDJ、量比和 ATR 证据，每一只换仓股票的说明必须点名并给出技术指标。
+`daily`、`daily-research`、`data-refresh`、`data-refresh-retry`、`coldstart`、`variant-refresh` 和 `walkforward-gate` 启动前会读取服务器实时负载、可用内存、总内存和主链锁，并抢占同一把 `data/.locks/heavy-compute.lock` 槽位锁。资源不足或已有重任务时只写 `data/.state/resource-gate-<task>.json` 并正常跳过，保留上一版产物，等待下一个错峰窗口；不会和盘中、收盘主链或其他重任务争抢资源。两次日线任务每批只处理 `AQSP_DATA_REFRESH_BATCH_SIZE` 个标的，逐标的超时 4 秒；首轮默认一批，延迟重试默认在同一 `480` 秒总预算内连续处理小批并持续写入游标。收盘研究分块默认每次只处理 `AQSP_DAILY_RESEARCH_BATCH_SIZE=10` 只，最长 `360` 秒、硬上限 `480` 秒，成功才推进 cursor；首页会显示真实的已研究数量和覆盖率。刷新池只包含沪市主板、深市主板与创业板，排除 ST、退市和科创板，按板块交错轮转，绝不把全市场读进内存或退化为成交额头部。它用独立的 `AQSP_DATA_REFRESH_MIN_FREE_MEMORY_MB=640` 和 `AQSP_DATA_REFRESH_MAX_LOAD_PER_CPU=0.50` 门槛，适配 2C/1.6GB 服务器。变体刷新固定 `240` 股票上限、`80` 条 SQL 分块、`300` 秒预算和低 CPU 优先级，并用 `AQSP_VARIANT_MIN_FREE_MEMORY_MB=700`、`AQSP_VARIANT_MAX_LOAD_PER_CPU=0.50` 门槛，避免通用 1GB 保留量在 1.6GB 主机上永久阻塞 v2 产物。其它重任务未配置时，内存保留量按总内存的 `25%` 自动计算，最低 `768MB`、最高 `4096MB`；每核 1 分钟负载默认上限 `0.70`。服务器 `.env` 可用 `AQSP_HEAVY_MIN_FREE_MEMORY_MB` 覆盖自动值，用 `AQSP_HEAVY_MAX_LOAD_PER_CPU` 调整负载门槛；状态文件会记录实际采用的内存门槛。直接运行 production walk-forward 也会检查可用内存，默认低于 `768MB` 拒绝启动，可用 `--min-free-memory-mb` 按主机配置调整。变体市场库查询按 `80` 只股票分块，避免单条大 SQL 占用过高；发布前至少 `80%` 的变体必须拥有不同的持仓签名，每只当前持仓必须带同日 MACD、KDJ、量比和 ATR 证据，每一只换仓股票的说明必须点名并给出技术指标。
 
 `check_scheduler.py` 同时审计系统 crontab 和宝塔实际任务目录 `/www/server/cron`。它会把直跑旧脚本、绕过 `bt_task.sh` 的重任务、缺失的必需动作、以及同一重任务的多个宝塔包装任务判为失败；工作日/周末两条消息面任务属于允许的错峰窗口。不可变发布会以 `AQSP_SCHEDULER_STRICT_SCHEDULE=true` 阻断这类调度错误，不会因为当天尚未生成日志而误阻断。该检查只读，不会自行删除任何计划任务。
 

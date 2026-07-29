@@ -61,11 +61,12 @@ log() {
 
 usage() {
     cat <<'EOF'
-Usage: bt_task.sh <daily|intraday|midday|data-refresh|data-refresh-retry|coldstart|variant-refresh|walkforward-gate|monitor|news|status>
+Usage: bt_task.sh <daily|daily-research|intraday|midday|data-refresh|data-refresh-retry|coldstart|variant-refresh|walkforward-gate|monitor|news|status>
 
 BT panel examples:
   /bin/bash /opt/aqsp/scripts/bt_task.sh intraday
   /bin/bash /opt/aqsp/scripts/bt_task.sh daily
+  /bin/bash /opt/aqsp/scripts/bt_task.sh daily-research
   /bin/bash /opt/aqsp/scripts/bt_task.sh midday
   /bin/bash /opt/aqsp/scripts/bt_task.sh data-refresh
   /bin/bash /opt/aqsp/scripts/bt_task.sh coldstart
@@ -79,6 +80,7 @@ Recommended BT schedule (Asia/Shanghai):
   intraday  every 10 min; script gates 09:35-11:30 / 13:05-14:57, Mon-Fri
   midday    12:05 Mon-Fri
   daily     18:00 Mon-Fri
+  daily-research 18:20-22:20 every 20 min Mon-Fri; one bounded cursor chunk
   data-refresh 15:35 Mon-Fri; bounded raw daily-data batch before daily research
   data-refresh-retry 17:00 Mon-Fri; one delayed bounded retry for source publication lag
   coldstart 19:40 Mon-Fri
@@ -321,6 +323,18 @@ set_daily_runner_timeout() {
     elif [ "$configured" -gt 1200 ]; then
         log "收盘主链超时配置过长(${configured})，收紧为 1200 秒"
         configured="1200"
+    fi
+    export AQSP_RUNNER_TIMEOUT_SECONDS="$configured"
+}
+
+set_daily_research_runner_timeout() {
+    local configured="${AQSP_DAILY_RESEARCH_OUTER_TIMEOUT_SECONDS:-360}"
+    if ! [[ "$configured" =~ ^[1-9][0-9]*$ ]]; then
+        log "收盘分块超时配置无效(${configured})，使用 360 秒"
+        configured="360"
+    elif [ "$configured" -gt 480 ]; then
+        log "收盘分块超时配置过长(${configured})，收紧为 480 秒"
+        configured="480"
     fi
     export AQSP_RUNNER_TIMEOUT_SECONDS="$configured"
 }
@@ -590,6 +604,20 @@ case "$ACTION" in
         acquire_optional_heavy_slot
         set_daily_runner_timeout
         export AQSP_RUN_TASK_ID="daily"
+        export AQSP_RUNNER_SCRIPT=scripts/daily_pipeline.sh
+        run_script "${PROJECT_ROOT}/scripts/server_sync_and_run.sh"
+        ;;
+    daily-research)
+        skip_non_trading_day
+        AQSP_HEAVY_MIN_FREE_MEMORY_MB="${AQSP_DAILY_MIN_FREE_MEMORY_MB:-700}" \
+            AQSP_HEAVY_MAX_LOAD_PER_CPU="${AQSP_DAILY_MAX_LOAD_PER_CPU:-0.50}" \
+            gate_optional_heavy_task
+        acquire_optional_heavy_slot
+        set_daily_research_runner_timeout
+        export AQSP_RUN_TASK_ID="daily_research"
+        export AQSP_DAILY_RESEARCH_ONLY="true"
+        export AQSP_NOTIFY="false"
+        export AQSP_GATE_NOTIFY="false"
         export AQSP_RUNNER_SCRIPT=scripts/daily_pipeline.sh
         run_script "${PROJECT_ROOT}/scripts/server_sync_and_run.sh"
         ;;

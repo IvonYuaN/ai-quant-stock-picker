@@ -854,12 +854,15 @@ def test_bt_task_script_exposes_panel_safe_actions() -> None:
     assert 'configured="${AQSP_DAILY_OUTER_TIMEOUT_SECONDS:-900}"' in script
     assert '[ "$configured" -gt 1200 ]' in script
     assert "set_daily_runner_timeout" in script
+    assert 'configured="${AQSP_DAILY_RESEARCH_OUTER_TIMEOUT_SECONDS:-360}"' in script
+    assert '[ "$configured" -gt 480 ]' in script
+    assert "set_daily_research_runner_timeout" in script
 
     assert "宝塔面板计划任务统一入口" in script
     assert 'ACTION="${1:-}"' in script
     assert 'if [ -z "$ACTION" ]' in script
     assert (
-        "daily|intraday|midday|data-refresh|data-refresh-retry|coldstart|variant-refresh|walkforward-gate|monitor|news|status"
+        "daily|daily-research|intraday|midday|data-refresh|data-refresh-retry|coldstart|variant-refresh|walkforward-gate|monitor|news|status"
         in script
     )
     assert "AQSP_RUNNER_TIMEOUT_SECONDS=5400" in script
@@ -934,9 +937,10 @@ def test_simple_server_mode_documents_delayed_data_refresh_task() -> None:
         encoding="utf-8"
     )
 
-    assert "9 条自动任务 + 1 条手动自检命令" in guide
+    assert "10 条自动任务 + 1 条手动自检命令" in guide
     assert "AQSP-日线延迟重试" in guide
     assert "data-refresh-retry" in guide
+    assert "daily-research" in guide
 
 
 def test_bt_task_propagates_intraday_runner_failure_to_cron(
@@ -1872,6 +1876,13 @@ def test_bt_optional_heavy_tasks_check_host_capacity_before_starting() -> None:
     assert "gate_optional_heavy_task" in daily_block
     assert "acquire_optional_heavy_slot" in daily_block
     assert "set_daily_runner_timeout" in daily_block
+    research_block = script[
+        script.index("\n    daily-research)") : script.index("\n    data-refresh)")
+    ]
+    assert "gate_optional_heavy_task" in research_block
+    assert "acquire_optional_heavy_slot" in research_block
+    assert "set_daily_research_runner_timeout" in research_block
+    assert 'export AQSP_DAILY_RESEARCH_ONLY="true"' in research_block
 
 
 def test_bt_task_skips_optional_heavy_task_when_shared_slot_is_held(
