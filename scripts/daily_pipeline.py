@@ -21,11 +21,13 @@ from aqsp.presentation import (
 )
 from aqsp.core.errors import DataError, FreshnessError
 from aqsp.core.time import now_shanghai, today_shanghai
+from aqsp.universe.intraday_cursor import IntradayBatch, IntradayUniverseCursor
 from aqsp.utils.jsonl_io import append_jsonl, atomic_write_text
 
 _DEFAULT_FETCH_HISTORY_DAYS = 260
 _DEFAULT_FETCH_LOOKBACK_DAYS = max(_DEFAULT_FETCH_HISTORY_DAYS * 2, 365)
 _DEFAULT_DAILY_MAX_UNIVERSE = 300
+_DEFAULT_DAILY_RESEARCH_BATCH_SIZE = 10
 
 
 def _runtime_path_env(
@@ -546,15 +548,60 @@ def _sqlite_refreshed_symbols(config: PipelineConfig) -> list[str]:
     return symbols[: config.max_universe] if config.max_universe > 0 else symbols
 
 
+def _daily_research_batch_size(max_universe: int) -> int:
+    raw = str(os.getenv("AQSP_DAILY_RESEARCH_BATCH_SIZE", "") or "").strip()
+    try:
+        configured = int(raw) if raw else _DEFAULT_DAILY_RESEARCH_BATCH_SIZE
+    except ValueError:
+        configured = _DEFAULT_DAILY_RESEARCH_BATCH_SIZE
+    upper_bound = max_universe if max_universe > 0 else configured
+    return max(1, min(configured, upper_bound))
+
+
+def _select_sqlite_research_batch(
+    config: PipelineConfig,
+) -> tuple[IntradayUniverseCursor, IntradayBatch]:
+
+    symbols = _sqlite_refreshed_symbols(config)
+    if not symbols:
+        raise DataError("sqlite_db 收盘研究缺少当日 refresh 覆盖集，拒绝运行策略")
+    state_dir_raw = str(os.getenv("AQSP_RUNTIME_STATE_DIR", "") or "").strip()
+    state_dir = (
+        Path(state_dir_raw)
+        if state_dir_raw
+        else _runtime_data_root(config.project_root) / ".state"
+    )
+    cursor_path = Path(
+        os.getenv(
+            "AQSP_DAILY_RESEARCH_CURSOR_PATH",
+            str(state_dir / "daily-research-cursor.json"),
+        )
+    )
+    cursor = IntradayUniverseCursor(cursor_path)
+    batch = cursor.select(
+        symbols,
+        trade_date=today_shanghai(),
+        batch_size=_daily_research_batch_size(config.max_universe),
+    )
+    return cursor, batch
+
+
 def _step_run_strategy(
     config: PipelineConfig, logger: logging.Logger
 ) -> dict[str, Any]:
     logger.info("  执行选股策略 (mode=%s, limit=%d)", config.mode, config.limit)
     explicit_symbols = _explicit_runtime_symbols()
+    research_cursor: IntradayUniverseCursor | None = None
+    research_batch: IntradayBatch | None = None
     if config.source == "sqlite_db":
-        explicit_symbols = _sqlite_refreshed_symbols(config)
-        if not explicit_symbols:
-            raise DataError("sqlite_db 收盘研究缺少当日 refresh 覆盖集，拒绝运行策略")
+        research_cursor, research_batch = _select_sqlite_research_batch(config)
+        explicit_symbols = list(research_batch.symbols)
+        logger.info(
+            "  收盘研究分块: batch=%s symbols=%d coverage=%.1f%%",
+            research_batch.batch_id,
+            len(explicit_symbols),
+            research_batch.coverage_pct * 100,
+        )
 
     argv = [
         "run",
@@ -590,13 +637,22 @@ def _step_run_strategy(
 
     from aqsp.cli import main
 
-    exit_code = main(argv)
+    try:
+        exit_code = main(argv)
+    except Exception as exc:
+        if research_cursor is not None and research_batch is not None:
+            research_cursor.fail(research_batch, str(exc))
+        raise
 
-    if exit_code != 0:
-        if exit_code == 2:
-            logger.warning("  策略运行完成但熔断器触发 (exit_code=2)")
-        else:
-            raise DataError(f"策略运行失败, exit_code={exit_code}")
+    if exit_code not in (0, 2):
+        if research_cursor is not None and research_batch is not None:
+            research_cursor.fail(research_batch, f"strategy exit_code={exit_code}")
+        raise DataError(f"策略运行失败, exit_code={exit_code}")
+    if exit_code == 2:
+        logger.warning("  策略运行完成但熔断器触发 (exit_code=2)")
+
+    if research_cursor is not None and research_batch is not None:
+        research_cursor.commit(research_batch, scanned_count=len(explicit_symbols))
 
     report_path = Path(config.project_root / config.report_path)
     report_size = report_path.stat().st_size if report_path.exists() else 0
@@ -615,6 +671,13 @@ def _step_run_strategy(
         "report_size": report_size,
         "gate_ok": not gate_blocked,
     }
+    if research_batch is not None:
+        result["research_batch"] = {
+            "batch_id": research_batch.batch_id,
+            "symbols": len(explicit_symbols),
+            "universe_count": research_batch.universe_count,
+            "coverage_pct": research_batch.coverage_pct,
+        }
     if exit_code == 2:
         result["circuit_breaker"] = True
         result["circuit_breaker_message"] = "组合保护已触发"

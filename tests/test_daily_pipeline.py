@@ -2151,6 +2151,68 @@ def test_step_run_strategy_uses_real_benchmark_for_regime(
     assert "--notify" not in argv
 
 
+def test_step_run_strategy_commits_sqlite_research_chunk_when_successful(
+    monkeypatch, tmp_path: Path
+) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+    report_path = tmp_path / "reports" / "latest.md"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text("# report\n", encoding="utf-8")
+    monkeypatch.setenv("AQSP_RUNTIME_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("AQSP_DAILY_RESEARCH_BATCH_SIZE", "2")
+    monkeypatch.setattr("aqsp.cli.main", lambda _argv: 0)
+    monkeypatch.setattr(
+        daily_pipeline,
+        "_sqlite_refreshed_symbols",
+        lambda _config: ["000001", "000002", "000003"],
+    )
+    config = dataclasses.replace(
+        _pipeline_config(daily_pipeline, tmp_path),
+        source="sqlite_db",
+        report_path="reports/latest.md",
+    )
+
+    result = daily_pipeline._step_run_strategy(config, logging.getLogger("test"))
+
+    cursor = json.loads(
+        (tmp_path / "state" / "daily-research-cursor.json").read_text(encoding="utf-8")
+    )
+    assert result["research_batch"] == {
+        "batch_id": f"{daily_pipeline.today_shanghai().isoformat()}:1:0",
+        "symbols": 2,
+        "universe_count": 3,
+        "coverage_pct": pytest.approx(2 / 3),
+    }
+    assert cursor["active_state"] == "committed"
+    assert cursor["next_offset"] == 2
+    assert cursor["scanned_count"] == 2
+
+
+def test_step_run_strategy_does_not_advance_sqlite_research_chunk_when_failed(
+    monkeypatch, tmp_path: Path
+) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+    monkeypatch.setenv("AQSP_RUNTIME_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setattr("aqsp.cli.main", lambda _argv: 1)
+    monkeypatch.setattr(
+        daily_pipeline,
+        "_sqlite_refreshed_symbols",
+        lambda _config: ["000001", "000002"],
+    )
+    config = dataclasses.replace(
+        _pipeline_config(daily_pipeline, tmp_path), source="sqlite_db"
+    )
+
+    with pytest.raises(daily_pipeline.DataError, match="策略运行失败"):
+        daily_pipeline._step_run_strategy(config, logging.getLogger("test"))
+
+    cursor = json.loads(
+        (tmp_path / "state" / "daily-research-cursor.json").read_text(encoding="utf-8")
+    )
+    assert cursor["active_state"] == "failed"
+    assert cursor["next_offset"] == 0
+
+
 def test_step_update_data_uses_only_current_sqlite_refresh_symbols(
     monkeypatch, tmp_path: Path
 ) -> None:

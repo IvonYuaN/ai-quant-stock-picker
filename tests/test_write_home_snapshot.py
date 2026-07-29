@@ -173,6 +173,42 @@ def test_variant_suite_snapshot_reads_variant_results_metadata(
     assert suite.coverage_pct == 0.3659
 
 
+def test_universe_snapshot_exposes_partial_daily_research_coverage(
+    monkeypatch, tmp_path: Path
+) -> None:
+    cursor_path = tmp_path / "daily-research-cursor.json"
+    cursor_path.write_text(
+        json.dumps(
+            {
+                "trade_date": "2026-07-29",
+                "universe_count": 237,
+                "batch_size": 10,
+                "scanned_count": 10,
+                "last_batch_id": "2026-07-29:1:0",
+                "cycle_id": 1,
+                "coverage_pct": 10 / 237,
+                "active_state": "committed",
+                "last_error": "",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AQSP_DAILY_RESEARCH_CURSOR_PATH", str(cursor_path))
+    monkeypatch.setattr(
+        write_home_snapshot, "today_shanghai", lambda: date(2026, 7, 29)
+    )
+
+    universe = write_home_snapshot._universe_snapshot()
+
+    assert universe.total == 237
+    assert universe.resolved == 10
+    assert universe.screened == 10
+    assert universe.batch_id == "2026-07-29:1:0"
+    assert universe.batch_size == 10
+    assert universe.coverage_pct == pytest.approx(10 / 237)
+    assert universe.source == "sqlite_db"
+
+
 def test_variant_snapshot_keeps_all_standard_experiment_variants(
     monkeypatch, tmp_path: Path
 ) -> None:

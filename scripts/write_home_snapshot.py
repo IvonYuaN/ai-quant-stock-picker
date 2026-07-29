@@ -1550,6 +1550,33 @@ def _phase_snapshot(
 
 
 def _universe_snapshot() -> HomeSnapshotUniverse:
+    daily_cursor = _runtime_json_path(
+        "AQSP_DAILY_RESEARCH_CURSOR_PATH",
+        "data/.state/daily-research-cursor.json",
+    )
+    daily_payload = _read_json_object(daily_cursor)
+    if (
+        daily_payload
+        and str(daily_payload.get("trade_date") or "") == today_shanghai().isoformat()
+    ):
+        universe_count = int(daily_payload.get("universe_count") or 0)
+        scanned_count = int(daily_payload.get("scanned_count") or 0)
+        return HomeSnapshotUniverse(
+            total=universe_count,
+            resolved=scanned_count,
+            screened=scanned_count,
+            max_universe=int(daily_payload.get("batch_size") or 0),
+            source="sqlite_db",
+            batch_active=str(daily_payload.get("active_state") or "") == "selected",
+            batch_id=_text(
+                daily_payload.get("active_batch_id")
+                or daily_payload.get("last_batch_id")
+            ),
+            batch_size=int(daily_payload.get("batch_size") or 0),
+            cycle_id=int(daily_payload.get("cycle_id") or 0),
+            coverage_pct=float(daily_payload.get("coverage_pct") or 0.0),
+            last_error=_text(daily_payload.get("last_error")),
+        )
     raw = _runtime_json_path(
         "AQSP_INTRADAY_REFRESH_STATUS_PATH",
         "data/runtime/intraday_refresh_status.json",
