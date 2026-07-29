@@ -177,8 +177,13 @@ lock_is_stale() {
     age_minutes="$(lock_age_minutes "$LOCK_DIR")"
     load_lock_info
     pid="${LOCK_PID:-}"
-    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-        return 1
+    if [ -n "$pid" ]; then
+        if kill -0 "$pid" 2>/dev/null; then
+            return 1
+        fi
+        # A recorded PID that has exited cannot own this directory anymore.
+        # Reclaim it immediately instead of suppressing the next news window.
+        return 0
     fi
     [ "$age_minutes" -ge "$LOCK_STALE_MINUTES" ]
 }

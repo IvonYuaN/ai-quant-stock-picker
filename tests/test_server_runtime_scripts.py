@@ -1263,6 +1263,42 @@ def test_news_catalysts_skips_when_another_run_owns_the_lock(tmp_path: Path) -> 
     assert "消息面任务已在运行，本次正常跳过" in result.stdout
 
 
+def test_news_catalysts_reclaims_lock_when_recorded_pid_has_exited(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "project"
+    scripts_dir = project_root / "scripts"
+    scripts_dir.mkdir(parents=True)
+    shutil.copy2(PROJECT_ROOT / "scripts" / "news_catalysts.sh", scripts_dir)
+    shutil.copy2(PROJECT_ROOT / "scripts" / "runtime_python.sh", scripts_dir)
+    fake_python = tmp_path / "fake-python"
+    fake_python.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    fake_python.chmod(0o755)
+    lock_dir = tmp_path / "news-catalysts.lock"
+    lock_dir.mkdir()
+    (lock_dir / "meta.env").write_text("LOCK_PID=999999\n", encoding="utf-8")
+
+    result = subprocess.run(
+        ["bash", str(scripts_dir / "news_catalysts.sh")],
+        cwd=project_root,
+        env={
+            **os.environ,
+            "AQSP_PROJECT_ROOT": str(project_root),
+            "AQSP_NEWS_LOCK_DIR": str(lock_dir),
+            "AQSP_NEWS_LOG_DIR": str(tmp_path / "logs"),
+            "AQSP_PYTHON": str(fake_python),
+            "AQSP_NEWS_NOTIFY": "false",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=10,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "检测到陈旧消息锁，自动回收 pid=999999" in result.stdout
+
+
 def test_server_status_surfaces_bt_task_logs() -> None:
     script = (PROJECT_ROOT / "scripts" / "server_status.sh").read_text(encoding="utf-8")
 
