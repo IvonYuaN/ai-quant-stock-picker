@@ -861,6 +861,8 @@ def test_bt_task_script_exposes_panel_safe_actions() -> None:
     assert "news      08:35 Mon-Fri trading days only; 09:05 Sat/Sun" in script
     assert "daily     18:00 Mon-Fri" in script
     assert "data-refresh 15:35 Mon-Fri" in script
+    assert "ensure_data_refresh_window()" in script
+    assert "data-refresh 允许窗口" in script
     assert "coldstart 19:40 Mon-Fri" in script
     assert "walkforward-gate 22:00 Sat" in script
     assert '"正常跳过/互斥保护"' in script
@@ -1794,7 +1796,7 @@ def test_bt_optional_heavy_tasks_check_host_capacity_before_starting() -> None:
     script = (PROJECT_ROOT / "scripts" / "bt_task.sh").read_text(encoding="utf-8")
 
     assert "resource_gate.py" in script
-    assert 'AQSP_HEAVY_MIN_FREE_MEMORY_MB:-0' in script
+    assert "AQSP_HEAVY_MIN_FREE_MEMORY_MB:-0" in script
     assert "AQSP_HEAVY_MAX_LOAD_PER_CPU" in script
     assert "gate_optional_heavy_task" in script
     assert 'HEAVY_SLOT_LOCK_FILE="${LOCK_DIR}/heavy-compute.lock"' in script

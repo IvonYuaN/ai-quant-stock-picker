@@ -312,6 +312,21 @@ set_realtime_runner_timeout() {
     export AQSP_RUNNER_TIMEOUT_SECONDS="$configured"
 }
 
+ensure_data_refresh_window() {
+    local start_hm="${AQSP_DATA_REFRESH_WINDOW_START_HM:-1530}"
+    local end_hm="${AQSP_DATA_REFRESH_WINDOW_END_HM:-1750}"
+    local now_hm
+    if ! [[ "$start_hm" =~ ^[0-9]{3,4}$ && "$end_hm" =~ ^[0-9]{3,4}$ ]]; then
+        log "数据刷新窗口配置无效，拒绝运行 start=${start_hm} end=${end_hm}"
+        exit 2
+    fi
+    now_hm=$((10#$(date +%H%M)))
+    if [ "$now_hm" -lt "$start_hm" ] || [ "$now_hm" -gt "$end_hm" ]; then
+        log "当前时间 ${now_hm} 不在 data-refresh 允许窗口 ${start_hm}-${end_hm}，跳过原始日线刷新"
+        exit 0
+    fi
+}
+
 gate_optional_heavy_task() {
     local status_path="${STATE_DIR}/resource-gate-${ACTION}.json"
     # 0 lets resource_gate reserve 25% of known host memory, bounded by its safe floor/cap.
@@ -545,6 +560,7 @@ case "$ACTION" in
         ;;
     data-refresh)
         skip_non_trading_day
+        ensure_data_refresh_window
         # This task only writes a bounded raw-data chunk. It has a lower memory
         # reserve than backtests, but remains mutually exclusive with all heavy work.
         AQSP_HEAVY_MIN_FREE_MEMORY_MB="${AQSP_DATA_REFRESH_MIN_FREE_MEMORY_MB:-640}" \

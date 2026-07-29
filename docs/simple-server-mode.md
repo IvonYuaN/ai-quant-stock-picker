@@ -192,7 +192,7 @@ bash /opt/aqsp/scripts/server_sync_and_run.sh
 | `AQSP-盘中刷新` | 工作日 `09:35-11:30`、`13:05-14:57` 每 10 分钟 | `/bin/bash /opt/aqsp/scripts/bt_task.sh intraday` | 刷新盘中候选和看板，写独立盘中产物，不污染正式 ledger |
 | `AQSP-午盘分析` | 工作日 `12:05` | `/bin/bash /opt/aqsp/scripts/bt_task.sh midday` | 中午固定复核上午走势、候选和大盘状态 |
 | `AQSP-消息面雷达` | 工作日 `08:35`，周末 `09:05` | `/bin/bash /opt/aqsp/scripts/bt_task.sh news` | 盘前/周末复核高影响消息、涨价链、政策、风险事件 |
-| `AQSP-日线数据分块刷新` | 工作日 `15:35` | `/bin/bash /opt/aqsp/scripts/bt_task.sh data-refresh` | 只更新一个有时间预算的原始日线批次，记录游标；与重任务互斥 |
+| `AQSP-日线数据分块刷新` | 工作日 `15:35` | `/bin/bash /opt/aqsp/scripts/bt_task.sh data-refresh` | 只更新一个有时间预算的原始日线批次，记录游标；仅允许北京时间 `15:30-17:50`，与重任务互斥 |
 | `AQSP-收盘主链路` | 工作日 `18:00` | `/bin/bash /opt/aqsp/scripts/bt_task.sh daily` | 完整收盘复盘、纸面验证、简报、通知和看板刷新 |
 | `AQSP-冷启动补样本` | 工作日 `19:40` | `/bin/bash /opt/aqsp/scripts/bt_task.sh coldstart` | 收盘主链路结束后再补历史库和冷启动样本，避免互斥跳过 |
 | `AQSP-变体刷新` | 工作日 `21:00` | `/bin/bash /opt/aqsp/scripts/bt_task.sh variant-refresh` | 受限轮转刷新变体实验；仅在收盘后运行，不写正式 ledger |
