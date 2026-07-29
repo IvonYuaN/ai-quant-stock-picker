@@ -924,6 +924,16 @@ def test_bt_task_script_exposes_panel_safe_actions() -> None:
     assert "logs/bt" in script
 
 
+def test_simple_server_mode_documents_delayed_data_refresh_task() -> None:
+    guide = (PROJECT_ROOT / "docs" / "simple-server-mode.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "9 条自动任务 + 1 条手动自检命令" in guide
+    assert "AQSP-日线延迟重试" in guide
+    assert "data-refresh-retry" in guide
+
+
 def test_bt_task_propagates_intraday_runner_failure_to_cron(
     tmp_path: Path,
 ) -> None:
