@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import importlib.util
 import json
 import logging
@@ -2626,7 +2627,12 @@ def test_validate_predictions_returns_not_executable_summary(
 def test_sync_paper_trades_writes_report(monkeypatch, tmp_path: Path) -> None:
     daily_pipeline = _load_daily_pipeline_module()
     ledger_path = tmp_path / "predictions.jsonl"
-    ledger_path.write_text('{"symbol":"600519","status":"pending"}\n', encoding="utf-8")
+    today = daily_pipeline.today_shanghai().isoformat()
+    ledger_path.write_text(
+        f'{{"symbol":"600519","status":"pending","signal_date":"{today}"}}\n',
+        encoding="utf-8",
+    )
+    seen: dict[str, object] = {}
 
     monkeypatch.setattr(
         daily_pipeline,
@@ -2635,13 +2641,14 @@ def test_sync_paper_trades_writes_report(monkeypatch, tmp_path: Path) -> None:
     )
     monkeypatch.setattr(
         "aqsp.data.fetch_with_source",
-        lambda _source, _symbols, days=60: {
-            "600519": pd.DataFrame([{"date": "2026-06-02"}])
-        },
+        lambda _source, _symbols, days=60: (
+            seen.update(symbols=list(_symbols))
+            or {"600519": pd.DataFrame([{"date": "2026-06-02"}])}
+        ),
     )
     monkeypatch.setattr(
         "aqsp.ledger.base.read_ledger",
-        lambda _path: [{"symbol": "600519", "status": "pending"}],
+        lambda _path: [{"symbol": "600519", "status": "pending", "signal_date": today}],
     )
     monkeypatch.setattr(
         "aqsp.paper.read_paper_trades",
@@ -2657,7 +2664,9 @@ def test_sync_paper_trades_writes_report(monkeypatch, tmp_path: Path) -> None:
 
     monkeypatch.setattr(
         "aqsp.paper.sync_paper_trades",
-        lambda **_kwargs: FakeSummary(),
+        lambda **kwargs: (
+            seen.update(signal_dates=kwargs["signal_dates"]) or FakeSummary()
+        ),
     )
     monkeypatch.setattr(
         "aqsp.paper.render_paper_report",
@@ -2694,9 +2703,61 @@ def test_sync_paper_trades_writes_report(monkeypatch, tmp_path: Path) -> None:
 
     assert result["opened"] == 1
     assert result["open_positions"] == 1
+    assert seen["symbols"] == ["600519"]
+    assert seen["signal_dates"] == {today}
     assert (tmp_path / "reports" / "paper.md").read_text(
         encoding="utf-8"
     ) == "opened=1, rows=1"
+
+
+def test_sync_paper_trades_does_not_fetch_closed_historical_signals(
+    monkeypatch, tmp_path: Path
+) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+    ledger_path = tmp_path / "predictions.jsonl"
+    ledger_path.write_text(
+        '{"symbol":"600519","status":"validated","signal_date":"2026-07-01"}\n',
+        encoding="utf-8",
+    )
+    fetch_called = False
+
+    def fail_fetch(*_args: object, **_kwargs: object) -> dict[str, pd.DataFrame]:
+        nonlocal fetch_called
+        fetch_called = True
+        raise AssertionError("closed historical rows must not fetch history")
+
+    monkeypatch.setattr(daily_pipeline, "_fetch_history_frames_resilient", fail_fetch)
+    monkeypatch.setattr(
+        "aqsp.ledger.base.read_ledger",
+        lambda _path: [
+            {"symbol": "600519", "status": "validated", "signal_date": "2026-07-01"}
+        ],
+    )
+    monkeypatch.setattr("aqsp.paper.read_paper_trades", lambda _path: [])
+
+    class FakeSummary:
+        opened = 0
+        closed = 0
+        open_positions = 0
+        pending_entry = 0
+        not_executable = 0
+
+    seen: dict[str, object] = {}
+    monkeypatch.setattr(
+        "aqsp.paper.sync_paper_trades",
+        lambda **kwargs: (
+            seen.update(signal_dates=kwargs["signal_dates"]) or FakeSummary()
+        ),
+    )
+    monkeypatch.setattr("aqsp.paper.render_paper_report", lambda **_kwargs: "paper")
+    config = _pipeline_config(daily_pipeline, tmp_path)
+    config = dataclasses.replace(config, ledger_path=ledger_path.name)
+
+    result = daily_pipeline._step_sync_paper_trades(config, logging.getLogger("test"))
+
+    assert fetch_called is False
+    assert result == {"skipped": True}
+    assert seen == {}
 
 
 def test_resolve_symbols_keeps_full_available_universe_when_max_universe_zero(

@@ -766,9 +766,22 @@ def _step_sync_paper_trades(
         logger.info("  Ledger 为空, 跳过虚拟盘同步")
         return {"skipped": True}
 
+    # A paper run only admits signals produced for this trading day.  Replaying
+    # every historical ledger row causes a large, useless history fetch after
+    # the rows have already been validated or closed.
+    run_date = today_shanghai().isoformat()
+    signal_dates = {run_date}
+    paper_rows = read_paper_trades(paper_ledger_path)
     symbols: list[str] = []
     seen: set[str] = set()
-    for row in signal_rows + read_paper_trades(paper_ledger_path):
+    tracked_rows = [
+        row for row in signal_rows if str(row.get("signal_date", "")) == run_date
+    ] + [
+        row
+        for row in paper_rows
+        if str(row.get("status", "")) in {"open", "pending_entry"}
+    ]
+    for row in tracked_rows:
         symbol = str(row.get("symbol", "")).strip()
         if symbol and symbol not in seen:
             seen.add(symbol)
@@ -788,6 +801,7 @@ def _step_sync_paper_trades(
         signal_ledger=ledger_path,
         paper_ledger=paper_ledger_path,
         frames=frames,
+        signal_dates=signal_dates,
     )
     paper_rows = read_paper_trades(paper_ledger_path)
     report = render_paper_report(summary=summary, trades=paper_rows)
