@@ -869,6 +869,8 @@ def test_bt_task_script_exposes_panel_safe_actions() -> None:
     assert "data-refresh 15:35 Mon-Fri" in script
     assert "data-refresh-retry 17:00 Mon-Fri" in script
     assert "ensure_data_refresh_window()" in script
+    assert "ensure_data_refresh_retry_window()" in script
+    assert 'AQSP_DATA_REFRESH_RETRY_WINDOW_END_HM:-1930' in script
     assert "data-refresh 允许窗口" in script
     assert "data-refresh-retry)" in script
     assert "coldstart 19:40 Mon-Fri" in script

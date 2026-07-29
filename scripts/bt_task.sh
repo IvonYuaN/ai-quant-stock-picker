@@ -328,6 +328,21 @@ ensure_data_refresh_window() {
     fi
 }
 
+ensure_data_refresh_retry_window() {
+    local start_hm="${AQSP_DATA_REFRESH_RETRY_WINDOW_START_HM:-1700}"
+    local end_hm="${AQSP_DATA_REFRESH_RETRY_WINDOW_END_HM:-1930}"
+    local now_hm
+    if ! [[ "$start_hm" =~ ^[0-9]{3,4}$ && "$end_hm" =~ ^[0-9]{3,4}$ ]]; then
+        log "延迟数据刷新窗口配置无效，拒绝运行 start=${start_hm} end=${end_hm}"
+        exit 2
+    fi
+    now_hm=$((10#$(date +%H%M)))
+    if [ "$now_hm" -lt "$start_hm" ] || [ "$now_hm" -gt "$end_hm" ]; then
+        log "当前时间 ${now_hm} 不在 data-refresh-retry 允许窗口 ${start_hm}-${end_hm}，跳过延迟原始日线刷新"
+        exit 0
+    fi
+}
+
 gate_optional_heavy_task() {
     local status_path="${STATE_DIR}/resource-gate-${ACTION}.json"
     # 0 lets resource_gate reserve 25% of known host memory, bounded by its safe floor/cap.
@@ -584,7 +599,7 @@ case "$ACTION" in
         ;;
     data-refresh-retry)
         skip_non_trading_day
-        ensure_data_refresh_window
+        ensure_data_refresh_retry_window
         AQSP_HEAVY_MIN_FREE_MEMORY_MB="${AQSP_DATA_REFRESH_MIN_FREE_MEMORY_MB:-640}" \
             AQSP_HEAVY_MAX_LOAD_PER_CPU="${AQSP_DATA_REFRESH_MAX_LOAD_PER_CPU:-0.50}" \
             gate_optional_heavy_task
