@@ -21,6 +21,11 @@ def test_refresh_sqlite_batch_persists_date_summary_and_advances_cursor(
         def get_symbol_name(self, symbol: str) -> str:
             return symbol
 
+        def get_symbols_with_daily_coverage(
+            self, symbols: list[str], *_args, **_kwargs
+        ) -> list[str]:
+            return symbols
+
     summary = UpdateSummary(
         updated_rows=3,
         skipped_symbols=0,
@@ -85,6 +90,11 @@ def test_refresh_sqlite_batch_accumulates_same_day_covered_symbols(
 
         def get_symbol_name(self, symbol: str) -> str:
             return symbol
+
+        def get_symbols_with_daily_coverage(
+            self, symbols: list[str], *_args, **_kwargs
+        ) -> list[str]:
+            return symbols
 
     summary = UpdateSummary(
         updated_rows=2,

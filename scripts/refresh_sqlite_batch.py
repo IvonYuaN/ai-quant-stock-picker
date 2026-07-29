@@ -135,13 +135,20 @@ def refresh_batch(
         max_runtime_seconds=max_runtime_seconds,
         require_target_coverage=False,
     )
+    covered_batch = source.get_symbols_with_daily_coverage(
+        batch,
+        target_day,
+        target_day,
+        min_rows=1,
+        min_coverage_ratio=1.0,
+    )
     _write_cursor(
         state_path,
         target_day=target_day,
         next_offset=offset + summary.processed_symbols,
         universe_size=len(symbols),
         summary=summary,
-        batch_symbols=batch,
+        batch_symbols=covered_batch,
     )
     return summary
 

@@ -532,6 +532,23 @@ def _sqlite_refreshed_symbols(config: PipelineConfig) -> list[str]:
             str(symbol).strip() for symbol in raw_symbols if str(symbol).strip()
         )
     )
+    if not symbols:
+        return []
+    try:
+        source = _build_data_source(config)
+        coverage_checker = getattr(source, "get_symbols_with_daily_coverage", None)
+        if callable(coverage_checker):
+            symbols = list(
+                coverage_checker(
+                    symbols,
+                    today_shanghai(),
+                    today_shanghai(),
+                    min_rows=1,
+                    min_coverage_ratio=1.0,
+                )
+            )
+    except Exception:
+        return []
     return symbols[: config.max_universe] if config.max_universe > 0 else symbols
 
 
