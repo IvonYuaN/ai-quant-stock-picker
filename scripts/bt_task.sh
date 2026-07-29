@@ -579,7 +579,8 @@ case "$ACTION" in
             --universe-limit "${AQSP_DATA_REFRESH_UNIVERSE_LIMIT:-0}" \
             --min-amount "${AQSP_MIN_AVG_AMOUNT:-50000000}" \
             --query-timeout-seconds "${AQSP_DATA_REFRESH_QUERY_TIMEOUT_SECONDS:-4}" \
-            --max-runtime-seconds "${AQSP_DATA_REFRESH_MAX_RUNTIME_SECONDS:-480}"
+            --max-runtime-seconds "${AQSP_DATA_REFRESH_MAX_RUNTIME_SECONDS:-480}" \
+            --batches "${AQSP_DATA_REFRESH_BATCHES:-1}"
         ;;
     data-refresh-retry)
         skip_non_trading_day
@@ -599,7 +600,8 @@ case "$ACTION" in
             --universe-limit "${AQSP_DATA_REFRESH_UNIVERSE_LIMIT:-0}" \
             --min-amount "${AQSP_MIN_AVG_AMOUNT:-50000000}" \
             --query-timeout-seconds "${AQSP_DATA_REFRESH_QUERY_TIMEOUT_SECONDS:-4}" \
-            --max-runtime-seconds "${AQSP_DATA_REFRESH_MAX_RUNTIME_SECONDS:-480}"
+            --max-runtime-seconds "${AQSP_DATA_REFRESH_MAX_RUNTIME_SECONDS:-480}" \
+            --batches "${AQSP_DATA_REFRESH_RETRY_BATCHES:-0}"
         ;;
     intraday)
         skip_non_trading_day
