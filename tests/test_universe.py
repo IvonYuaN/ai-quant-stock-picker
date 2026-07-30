@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 
 import pandas as pd
 import pytest
@@ -108,7 +108,10 @@ def test_suspended_filter():
     assert "600000" in result
 
 
-def test_new_stock_filter():
+def test_new_stock_filter(monkeypatch):
+    monkeypatch.setattr(
+        "aqsp.universe.filters.now_shanghai", lambda: datetime(2026, 7, 20)
+    )
     filter = NewStockFilter(min_days_listed=90)
     listing_dates = {
         "600000": "2000-01-01",
