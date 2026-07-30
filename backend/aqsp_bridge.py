@@ -261,6 +261,7 @@ class AQSPVariantSuite:
     cycle_id: int = 0
     coverage_pct: float = 0.0
     filters: str = ""
+    last_error: str = ""
 
 
 @dataclass(frozen=True)
@@ -1059,6 +1060,7 @@ def _parse_variant_suite(payload: object) -> AQSPVariantSuite:
             "cycle_id",
             "coverage_pct",
             "filters",
+            "last_error",
         },
     )
     return AQSPVariantSuite(
@@ -1085,6 +1087,7 @@ def _parse_variant_suite(payload: object) -> AQSPVariantSuite:
         cycle_id=_integer(item.get("cycle_id", 0), "variant_suite.cycle_id"),
         coverage_pct=float(item.get("coverage_pct", 0.0) or 0.0),
         filters=_optional_text(item.get("filters"), "variant_suite.filters"),
+        last_error=_optional_text(item.get("last_error"), "variant_suite.last_error"),
     )
 
 

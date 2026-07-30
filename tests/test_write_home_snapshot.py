@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from aqsp.core.errors import DataError
+from aqsp.core.time import latest_completed_trading_day
 from aqsp.news.catalysts import CatalystEvent, CatalystReport, serialize_catalyst_report
 from aqsp.web.home_snapshot import (
     load_home_dashboard_snapshot,
@@ -296,11 +297,12 @@ def test_variant_suite_snapshot_hides_legacy_or_insufficient_artifact(
 def test_variant_suite_snapshot_exposes_raw_refresh_blocker(
     monkeypatch, tmp_path: Path
 ) -> None:
+    target_day = latest_completed_trading_day().isoformat()
     cursor_path = tmp_path / "sqlite-refresh-cursor.json"
     cursor_path.write_text(
         json.dumps(
             {
-                "target_day": "2026-07-29",
+                "target_day": target_day,
                 "universe_size": 4464,
                 "offset": 120,
                 "target_day_symbols": [f"600{index:03d}" for index in range(122)],

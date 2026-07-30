@@ -774,6 +774,7 @@ def test_aqsp_bridge_preserves_variant_holding_dates_and_adjustments(
         "cycle_id": 3,
         "coverage_pct": 0.3659,
         "filters": "沪市主板+深市主板+创业板；排除 ST/*ST/PT/退市/科创/北交/B股",
+        "last_error": "原始日线刷新尚未完成",
     }
     payload["variants"] = [
         {
@@ -847,6 +848,7 @@ def test_aqsp_bridge_preserves_variant_holding_dates_and_adjustments(
     assert data["variant_suite"]["schema_version"] == "variant-suite-v2"
     assert data["variant_suite"]["selected_symbols"] == 600
     assert data["variant_suite"]["batch_id"] == "3:1200"
+    assert data["variant_suite"]["last_error"] == "原始日线刷新尚未完成"
     variant = data["variants"][0]
     assert variant["holdings_date"] == "2026-07-14"
     assert variant["previous_holdings_date"] == "2026-07-13"
