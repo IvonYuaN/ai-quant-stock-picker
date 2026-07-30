@@ -398,6 +398,9 @@ stamp_manifest "$RELEASE_DIR" "$COMMIT"
 normalize_release_modes "$RELEASE_DIR"
 prepare_frontend_runtime_cache "$RELEASE_DIR"
 check_release "$RELEASE_DIR"
+# The BaoTa wrappers are external state. Reject schedule drift before the
+# symlink/service switch so a failed acceptance never leaves a half deployment.
+run_scheduler_check "$RELEASE_DIR"
 switch_links "$RELEASE_DIR"
 check_current_release "$RELEASE_DIR"
 
@@ -416,7 +419,6 @@ if ! check_variant_results; then
 fi
 cleanup_release_root_residuals
 prune_releases "$RELEASE_DIR"
-run_scheduler_check "$RELEASE_DIR"
 if [ "$VERIFY_LEVEL" = "full" ]; then
     log "immutable release deployment verified: $RELEASE_DIR"
 else

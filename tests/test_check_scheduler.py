@@ -114,15 +114,78 @@ def test_scheduled_actions_ignores_bt_task_comment_words(tmp_path) -> None:
     assert actions == {"intraday"}
 
 
-def test_bt_panel_actions_does_not_require_optional_data_refresh_retry(
-    monkeypatch,
-) -> None:
-    monkeypatch.setattr(check_scheduler, "_run", lambda _args: (0, ""))
+def test_bt_panel_actions_requires_data_refresh_retry(monkeypatch, tmp_path) -> None:
+    wrapper = tmp_path / "scheduled"
+    actions = sorted(
+        check_scheduler.REQUIRED_SCHEDULED_ACTIONS - {"data-refresh-retry"}
+    )
+    wrapper.write_text(
+        "\n".join(
+            f"/bin/bash /opt/aqsp/scripts/release_task_entrypoint.sh {action}"
+            for action in actions
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        check_scheduler,
+        "_run",
+        lambda _args: (
+            0,
+            f"0 * * * * flock -xn {wrapper}.lock -c '/bin/bash {wrapper}'",
+        ),
+    )
 
     result = check_scheduler.check_bt_panel_actions()
 
-    assert result.ok
-    assert "data-refresh-retry" not in result.detail
+    assert result.ok is False
+    assert "data-refresh-retry" in result.detail
+
+
+def test_bt_panel_wrapper_identity_rejects_foreign_runtime_file(
+    monkeypatch, tmp_path
+) -> None:
+    wrapper = tmp_path / "data-refresh"
+    wrapper.write_text(
+        "echo $$ > /www/server/cron/coldstart.pl\n"
+        "/bin/bash /opt/aqsp/scripts/release_task_entrypoint.sh data-refresh\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check_scheduler, "BT_CRON_DIR", tmp_path)
+    monkeypatch.setattr(
+        check_scheduler,
+        "_run",
+        lambda _args: (
+            0,
+            f"35 15 * * 1-5 flock -xn {wrapper}.lock -c '/bin/bash {wrapper}'",
+        ),
+    )
+
+    result = check_scheduler.check_bt_panel_wrapper_identity()
+
+    assert result.ok is False
+    assert "coldstart" in result.detail
+
+
+def test_bt_panel_wrapper_identity_accepts_own_runtime_file(
+    monkeypatch, tmp_path
+) -> None:
+    wrapper = tmp_path / "data-refresh"
+    wrapper.write_text(
+        "echo $$ > /www/server/cron/data-refresh.pl\n"
+        "/bin/bash /opt/aqsp/scripts/release_task_entrypoint.sh data-refresh\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check_scheduler, "BT_CRON_DIR", tmp_path)
+    monkeypatch.setattr(
+        check_scheduler,
+        "_run",
+        lambda _args: (
+            0,
+            f"35 15 * * 1-5 flock -xn {wrapper}.lock -c '/bin/bash {wrapper}'",
+        ),
+    )
+
+    assert check_scheduler.check_bt_panel_wrapper_identity().ok is True
 
 
 def test_check_duplicate_bt_panel_actions_rejects_two_coldstart_wrappers(
@@ -268,6 +331,7 @@ def test_scheduler_main_strict_schedule_ignores_missing_runtime_logs(
         "check_cron_lock_collisions",
         "check_bt_panel_actions",
         "check_duplicate_bt_panel_actions",
+        "check_bt_panel_wrapper_identity",
         "check_bt_panel_wrapper_integrity",
     ):
         monkeypatch.setattr(check_scheduler, name, lambda: passing)

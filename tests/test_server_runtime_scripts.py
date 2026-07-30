@@ -1873,7 +1873,10 @@ def test_bt_optional_heavy_tasks_check_host_capacity_before_starting() -> None:
     assert "printf 'HEAVY_SLOT_PID=%q\\n' \"$$\"" in script
     assert "optional_heavy_slot_is_stale" in script
     assert "agent_run_registry.py" in script
-    assert 'AGENT_RUNS_PATH="${AQSP_AGENT_RUNS_PATH:-${RUNTIME_DATA_ROOT}/runtime/agent_runs.jsonl}"' in script
+    assert (
+        'AGENT_RUNS_PATH="${AQSP_AGENT_RUNS_PATH:-${RUNTIME_DATA_ROOT}/runtime/agent_runs.jsonl}"'
+        in script
+    )
     assert 'start_agent_run "${AQSP_AGENT_DEADLINE_SECONDS:-480}"' in script
     assert 'start_agent_run "${AQSP_AGENT_DEADLINE_SECONDS:-300}"' in script
     assert "finish_agent_run" in script
@@ -2119,6 +2122,16 @@ def test_immutable_deploy_script_requires_full_post_deploy_acceptance() -> None:
     verified_index = script.index("immutable release deployment verified")
     skipped_index = script.index("immutable release prepared with skipped checks")
     assert verified_index < skipped_index
+
+
+def test_immutable_deploy_preflights_scheduler_before_switching_release() -> None:
+    script = (PROJECT_ROOT / "scripts" / "deploy_immutable_release.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert script.index('run_scheduler_check "$RELEASE_DIR"') < script.index(
+        'switch_links "$RELEASE_DIR"'
+    )
 
 
 def test_deployment_closure_gate_is_documented_as_required() -> None:

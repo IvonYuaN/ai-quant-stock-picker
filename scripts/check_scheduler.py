@@ -30,6 +30,7 @@ REQUIRED_SCHEDULED_ACTIONS = frozenset(
         "intraday",
         "midday",
         "data-refresh",
+        "data-refresh-retry",
         "coldstart",
         "variant-refresh",
         "walkforward-gate",
@@ -37,7 +38,7 @@ REQUIRED_SCHEDULED_ACTIONS = frozenset(
         "news",
     }
 )
-SCHEDULED_ACTIONS = REQUIRED_SCHEDULED_ACTIONS | frozenset({"data-refresh-retry"})
+SCHEDULED_ACTIONS = REQUIRED_SCHEDULED_ACTIONS
 MULTI_WINDOW_ACTIONS = frozenset({"news"})
 LEGACY_CRON_TERMS = (
     "daily_run.sh",
@@ -360,6 +361,57 @@ def check_duplicate_bt_panel_actions() -> CheckResult:
     return CheckResult("BT Panel duplicate actions", True, "no duplicate task actions")
 
 
+def check_bt_panel_wrapper_identity() -> CheckResult:
+    """Reject scheduled BaoTa wrappers that write another task's runtime files."""
+    code, output = _run(["crontab", "-l"])
+    if code != 0:
+        return CheckResult(
+            "BT Panel wrapper identity", True, output or "crontab unavailable"
+        )
+    mismatches: list[str] = []
+    for line in output.splitlines():
+        owner = _flock_owner(line)
+        if owner is None:
+            continue
+        try:
+            tokens = shlex.split(owner[1])
+        except ValueError:
+            continue
+        wrapper = next(
+            (
+                Path(token)
+                for token in tokens
+                if not token.startswith("-") and Path(token).name not in {"bash", "sh"}
+            ),
+            None,
+        )
+        if wrapper is None or not wrapper.is_file() or wrapper.parent != BT_CRON_DIR:
+            continue
+        try:
+            references = set(
+                re.findall(
+                    r"/www/server/cron/([A-Za-z0-9]+)\.(?:pl|log)",
+                    wrapper.read_text(encoding="utf-8"),
+                )
+            )
+        except OSError:
+            continue
+        expected = wrapper.name
+        unexpected = sorted(
+            reference for reference in references if reference != expected
+        )
+        if unexpected:
+            mismatches.append(f"{wrapper} -> {','.join(unexpected)}")
+    return CheckResult(
+        "BT Panel wrapper identity",
+        not mismatches,
+        "wrapper runtime-file identity ok"
+        if not mismatches
+        else "scheduled wrapper references another task runtime file: "
+        + "; ".join(mismatches),
+    )
+
+
 def _bt_wrapper_actions(text: str) -> set[str]:
     """Extract real scheduler commands, ignoring wrapper comments."""
     return {
@@ -538,6 +590,7 @@ def main() -> int:
         check_cron_lock_collisions(),
         check_bt_panel_actions(),
         check_duplicate_bt_panel_actions(),
+        check_bt_panel_wrapper_identity(),
         check_bt_panel_wrapper_integrity(),
     ]
     checks = [
