@@ -412,6 +412,49 @@ def check_bt_panel_wrapper_identity() -> CheckResult:
     )
 
 
+def check_bt_panel_wrapper_shell_syntax() -> CheckResult:
+    """Reject scheduled BaoTa wrappers with malformed serialized shell bodies."""
+    code, output = _run(["crontab", "-l"])
+    if code != 0:
+        return CheckResult(
+            "BT Panel wrapper shell", True, output or "crontab unavailable"
+        )
+    errors: list[str] = []
+    for line in output.splitlines():
+        owner = _flock_owner(line)
+        if owner is None:
+            continue
+        try:
+            tokens = shlex.split(owner[1])
+        except ValueError:
+            continue
+        wrapper = next(
+            (
+                Path(token)
+                for token in tokens
+                if not token.startswith("-") and Path(token).name not in {"bash", "sh"}
+            ),
+            None,
+        )
+        if wrapper is None or not wrapper.is_file() or wrapper.parent != BT_CRON_DIR:
+            continue
+        try:
+            text = wrapper.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if r"\n" in text or r"\"" in text:
+            errors.append(f"{wrapper}: literal shell escape")
+            continue
+        syntax_code, syntax_output = _run(["bash", "-n", str(wrapper)])
+        if syntax_code != 0:
+            errors.append(f"{wrapper}: {syntax_output or 'bash -n failed'}")
+    return CheckResult(
+        "BT Panel wrapper shell",
+        not errors,
+        "scheduled wrapper shell syntax ok" if not errors else "; ".join(errors),
+    )
+
+
 def _bt_wrapper_actions(text: str) -> set[str]:
     """Extract real scheduler commands, ignoring wrapper comments."""
     return {
@@ -591,6 +634,7 @@ def main() -> int:
         check_bt_panel_actions(),
         check_duplicate_bt_panel_actions(),
         check_bt_panel_wrapper_identity(),
+        check_bt_panel_wrapper_shell_syntax(),
         check_bt_panel_wrapper_integrity(),
     ]
     checks = [

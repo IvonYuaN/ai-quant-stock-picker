@@ -188,6 +188,49 @@ def test_bt_panel_wrapper_identity_accepts_own_runtime_file(
     assert check_scheduler.check_bt_panel_wrapper_identity().ok is True
 
 
+def test_bt_panel_wrapper_shell_rejects_literal_serialization_escapes(
+    monkeypatch, tmp_path
+) -> None:
+    wrapper = tmp_path / "data-refresh"
+    wrapper.write_text(
+        r"status=0\nif [ \"$(date +%u)\" -le 5 ]; then\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check_scheduler, "BT_CRON_DIR", tmp_path)
+    monkeypatch.setattr(
+        check_scheduler,
+        "_run",
+        lambda _args: (
+            0,
+            f"35 15 * * 1-5 flock -xn {wrapper}.lock -c '/bin/bash {wrapper}'",
+        ),
+    )
+
+    result = check_scheduler.check_bt_panel_wrapper_shell_syntax()
+
+    assert result.ok is False
+    assert "literal shell escape" in result.detail
+
+
+def test_bt_panel_wrapper_shell_rejects_invalid_syntax(monkeypatch, tmp_path) -> None:
+    wrapper = tmp_path / "data-refresh"
+    wrapper.write_text("if then\n", encoding="utf-8")
+    crontab = f"35 15 * * 1-5 flock -xn {wrapper}.lock -c '/bin/bash {wrapper}'"
+
+    def fake_run(args: list[str]) -> tuple[int, str]:
+        if args == ["crontab", "-l"]:
+            return 0, crontab
+        return 2, "syntax error"
+
+    monkeypatch.setattr(check_scheduler, "BT_CRON_DIR", tmp_path)
+    monkeypatch.setattr(check_scheduler, "_run", fake_run)
+
+    result = check_scheduler.check_bt_panel_wrapper_shell_syntax()
+
+    assert result.ok is False
+    assert "syntax error" in result.detail
+
+
 def test_check_duplicate_bt_panel_actions_rejects_two_coldstart_wrappers(
     monkeypatch, tmp_path
 ) -> None:
@@ -332,6 +375,7 @@ def test_scheduler_main_strict_schedule_ignores_missing_runtime_logs(
         "check_bt_panel_actions",
         "check_duplicate_bt_panel_actions",
         "check_bt_panel_wrapper_identity",
+        "check_bt_panel_wrapper_shell_syntax",
         "check_bt_panel_wrapper_integrity",
     ):
         monkeypatch.setattr(check_scheduler, name, lambda: passing)
@@ -355,6 +399,8 @@ def test_scheduler_main_strict_schedule_rejects_unsafe_wrapper(monkeypatch) -> N
         "check_cron_lock_collisions",
         "check_bt_panel_actions",
         "check_duplicate_bt_panel_actions",
+        "check_bt_panel_wrapper_identity",
+        "check_bt_panel_wrapper_shell_syntax",
     ):
         monkeypatch.setattr(check_scheduler, name, lambda: passing)
     monkeypatch.setattr(

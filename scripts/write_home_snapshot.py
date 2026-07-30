@@ -1597,6 +1597,12 @@ def _universe_snapshot() -> HomeSnapshotUniverse:
         last_batch = raw_payload.get("last_batch")
         batch = last_batch if isinstance(last_batch, dict) else {}
         batch_size = int(batch.get("processed_symbols") or 0)
+        coverage_pct = (len(covered_symbols) / total) if total else 0.0
+        coverage_error = _text(batch.get("coverage_error"))
+        if total and len(covered_symbols) < total and not coverage_error:
+            coverage_error = (
+                f"原始日线仅覆盖 {len(covered_symbols)}/{total}；全市场刷新尚未完成"
+            )
         return HomeSnapshotUniverse(
             total=total,
             resolved=len(covered_symbols),
@@ -1609,8 +1615,8 @@ def _universe_snapshot() -> HomeSnapshotUniverse:
             cycle_id=(int(raw_payload.get("offset") or 0) // batch_size + 1)
             if batch_size
             else 0,
-            coverage_pct=(len(covered_symbols) / total) if total else 0.0,
-            last_error=_text(batch.get("coverage_error")),
+            coverage_pct=coverage_pct,
+            last_error=coverage_error,
         )
     raw = _runtime_json_path(
         "AQSP_INTRADAY_REFRESH_STATUS_PATH",

@@ -243,6 +243,7 @@ def test_universe_snapshot_exposes_verified_raw_refresh_coverage(
     assert universe.batch_size == 120
     assert universe.cycle_id == 4
     assert universe.coverage_pct == pytest.approx(3 / 4464)
+    assert universe.last_error == "原始日线仅覆盖 3/4464；全市场刷新尚未完成"
 
 
 def test_write_home_snapshot_parser_uses_runtime_output_path(
