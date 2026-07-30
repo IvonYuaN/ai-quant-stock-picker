@@ -70,6 +70,9 @@ esac
 export AQSP_PROJECT_ROOT="$RELEASE_ROOT"
 export AQSP_RUNTIME_ROOT="$RUNTIME_ROOT"
 export AQSP_RUNTIME_DATA_ROOT="$RUNTIME_DATA_ROOT"
+# Scheduled tasks use the shared runtime interpreter, which has no release
+# package installed. Keep imports tied to the immutable release being run.
+export PYTHONPATH="${RELEASE_ROOT}/src:${RELEASE_ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
 export AQSP_IMMUTABLE_RELEASE="${AQSP_IMMUTABLE_RELEASE:-true}"
 export AQSP_RELEASE_MANIFEST="${AQSP_RELEASE_MANIFEST:-${RELEASE_ROOT}/.aqsp-release.json}"
 if [[ -f "$AQSP_RELEASE_MANIFEST" ]]; then
