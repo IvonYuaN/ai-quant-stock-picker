@@ -209,6 +209,42 @@ def test_universe_snapshot_exposes_partial_daily_research_coverage(
     assert universe.source == "sqlite_db"
 
 
+def test_universe_snapshot_exposes_verified_raw_refresh_coverage(
+    monkeypatch, tmp_path: Path
+) -> None:
+    cursor_path = tmp_path / "sqlite-refresh-cursor.json"
+    cursor_path.write_text(
+        json.dumps(
+            {
+                "target_day": "2026-07-29",
+                "universe_size": 4464,
+                "offset": 360,
+                "target_day_symbols": ["600000", "000001", "300001", "600000"],
+                "last_batch": {"processed_symbols": 120, "coverage_error": None},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AQSP_SQLITE_REFRESH_CURSOR_PATH", str(cursor_path))
+    monkeypatch.setattr(
+        write_home_snapshot,
+        "latest_completed_trading_day",
+        lambda: date(2026, 7, 29),
+    )
+
+    universe = write_home_snapshot._universe_snapshot()
+
+    assert universe.total == 4464
+    assert universe.resolved == 3
+    assert universe.screened == 3
+    assert universe.source == "sqlite_raw_refresh"
+    assert universe.batch_active is True
+    assert universe.batch_id == "2026-07-29"
+    assert universe.batch_size == 120
+    assert universe.cycle_id == 4
+    assert universe.coverage_pct == pytest.approx(3 / 4464)
+
+
 def test_variant_snapshot_keeps_all_standard_experiment_variants(
     monkeypatch, tmp_path: Path
 ) -> None:

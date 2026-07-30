@@ -1577,6 +1577,41 @@ def _universe_snapshot() -> HomeSnapshotUniverse:
             coverage_pct=float(daily_payload.get("coverage_pct") or 0.0),
             last_error=_text(daily_payload.get("last_error")),
         )
+    raw_cursor = _runtime_json_path(
+        "AQSP_SQLITE_REFRESH_CURSOR_PATH",
+        "data/.state/sqlite-refresh-cursor.json",
+    )
+    raw_payload = _read_json_object(raw_cursor)
+    if (
+        raw_payload
+        and _text(raw_payload.get("target_day"))
+        == latest_completed_trading_day().isoformat()
+    ):
+        symbols = raw_payload.get("target_day_symbols")
+        covered_symbols = (
+            tuple(dict.fromkeys(str(symbol) for symbol in symbols if symbol))
+            if isinstance(symbols, list)
+            else ()
+        )
+        total = int(raw_payload.get("universe_size") or 0)
+        last_batch = raw_payload.get("last_batch")
+        batch = last_batch if isinstance(last_batch, dict) else {}
+        batch_size = int(batch.get("processed_symbols") or 0)
+        return HomeSnapshotUniverse(
+            total=total,
+            resolved=len(covered_symbols),
+            screened=len(covered_symbols),
+            max_universe=0,
+            source="sqlite_raw_refresh",
+            batch_active=bool(total and len(covered_symbols) < total),
+            batch_id=_text(raw_payload.get("target_day")),
+            batch_size=batch_size,
+            cycle_id=(int(raw_payload.get("offset") or 0) // batch_size + 1)
+            if batch_size
+            else 0,
+            coverage_pct=(len(covered_symbols) / total) if total else 0.0,
+            last_error=_text(batch.get("coverage_error")),
+        )
     raw = _runtime_json_path(
         "AQSP_INTRADAY_REFRESH_STATUS_PATH",
         "data/runtime/intraday_refresh_status.json",
