@@ -293,6 +293,31 @@ def test_variant_suite_snapshot_hides_legacy_or_insufficient_artifact(
     assert write_home_snapshot._variant_snapshot() == ()
 
 
+def test_variant_suite_snapshot_exposes_raw_refresh_blocker(
+    monkeypatch, tmp_path: Path
+) -> None:
+    cursor_path = tmp_path / "sqlite-refresh-cursor.json"
+    cursor_path.write_text(
+        json.dumps(
+            {
+                "target_day": "2026-07-29",
+                "universe_size": 4464,
+                "offset": 120,
+                "target_day_symbols": [f"600{index:03d}" for index in range(122)],
+                "last_batch": {"target_day_symbol_count": 122, "total_symbols": 4464},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AQSP_SQLITE_REFRESH_CURSOR_PATH", str(cursor_path))
+    monkeypatch.setenv("AQSP_VARIANT_RESULTS", str(tmp_path / "missing.json"))
+
+    suite = write_home_snapshot._variant_suite_snapshot()
+
+    assert suite.variant_count == 0
+    assert suite.last_error == "变体等待：原始日线仅覆盖 122/4464；全市场刷新尚未完成"
+
+
 def test_variant_suite_snapshot_hides_artifact_without_current_technical_evidence(
     monkeypatch, tmp_path: Path
 ) -> None:

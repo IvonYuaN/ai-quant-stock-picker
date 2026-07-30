@@ -229,6 +229,7 @@ class HomeSnapshotVariantSuite:
     cycle_id: int = 0
     coverage_pct: float = 0.0
     filters: str = ""
+    last_error: str = ""
 
 
 @dataclass(frozen=True)
@@ -870,6 +871,7 @@ def _variant_suite_from_dict(payload: object) -> HomeSnapshotVariantSuite:
             "cycle_id",
             "coverage_pct",
             "filters",
+            "last_error",
         },
     )
     return HomeSnapshotVariantSuite(
@@ -896,6 +898,9 @@ def _variant_suite_from_dict(payload: object) -> HomeSnapshotVariantSuite:
         cycle_id=_integer(mapping.get("cycle_id", 0), "variant_suite.cycle_id"),
         coverage_pct=float(mapping.get("coverage_pct", 0.0) or 0.0),
         filters=_optional_text(mapping.get("filters"), "variant_suite.filters"),
+        last_error=_optional_text(
+            mapping.get("last_error"), "variant_suite.last_error"
+        ),
     )
 
 

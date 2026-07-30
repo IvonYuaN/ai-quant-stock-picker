@@ -170,6 +170,7 @@ export interface AqspVariantSuite {
   cycle_id?: number;
   coverage_pct?: number;
   filters?: string;
+  last_error?: string;
 }
 
 export interface AqspAgentResult {

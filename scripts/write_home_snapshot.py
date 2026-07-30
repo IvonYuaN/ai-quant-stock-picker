@@ -1699,7 +1699,12 @@ def _variant_suite_snapshot() -> HomeSnapshotVariantSuite:
     """Read bounded metadata from the isolated experiment artifact."""
     payload = _variant_results_payload()
     if not payload:
-        return HomeSnapshotVariantSuite()
+        universe = _universe_snapshot()
+        if universe.last_error:
+            return HomeSnapshotVariantSuite(
+                last_error=f"变体等待：{universe.last_error}"
+            )
+        return HomeSnapshotVariantSuite(last_error="变体结果尚未生成或未通过数据契约。")
     universe = payload.get("universe")
     if not isinstance(universe, dict):
         universe = {}
