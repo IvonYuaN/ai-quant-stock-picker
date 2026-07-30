@@ -61,8 +61,8 @@ BT_LEGACY_ENTRY_PATTERN = re.compile(
 )
 BT_ACTION_PATTERN = re.compile(
     r"(?:release_task_entrypoint|bt_task)\.sh\s+("
-    + "|".join(sorted(SCHEDULED_ACTIONS))
-    + r")\b"
+    + "|".join(sorted(SCHEDULED_ACTIONS, key=lambda action: (-len(action), action)))
+    + r")(?=\s|$)"
 )
 for candidate in (PROJECT_ROOT / "src", PROJECT_ROOT):
     candidate_str = str(candidate)
@@ -269,8 +269,8 @@ def _scheduled_action_sources(
     sources: dict[str, set[str]] = {}
     action_pattern = re.compile(
         r"(?:release_task_entrypoint|bt_task)\.sh\s+("
-        + "|".join(sorted(SCHEDULED_ACTIONS))
-        + r")\b"
+        + "|".join(sorted(SCHEDULED_ACTIONS, key=lambda action: (-len(action), action)))
+        + r")(?=\s|$)"
     )
     for line in crontab.splitlines():
         owner = _flock_owner(line)

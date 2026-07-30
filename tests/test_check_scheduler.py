@@ -141,6 +141,32 @@ def test_bt_panel_actions_requires_data_refresh_retry(monkeypatch, tmp_path) -> 
     assert "data-refresh-retry" in result.detail
 
 
+def test_scheduled_actions_keeps_data_refresh_retry_distinct(tmp_path) -> None:
+    refresh = tmp_path / "data-refresh"
+    retry = tmp_path / "data-refresh-retry"
+    refresh.write_text(
+        "/bin/bash /opt/aqsp/scripts/release_task_entrypoint.sh data-refresh\n",
+        encoding="utf-8",
+    )
+    retry.write_text(
+        "/bin/bash /opt/aqsp/scripts/release_task_entrypoint.sh data-refresh-retry\n",
+        encoding="utf-8",
+    )
+    crontab = "\n".join(
+        (
+            f"35 15 * * * flock -xn {refresh}.lock -c '/bin/bash {refresh}'",
+            f"*/10 * * * * flock -xn {retry}.lock -c '/bin/bash {retry}'",
+        )
+    )
+
+    actions = check_scheduler._scheduled_actions(
+        crontab,
+        lambda path: path.read_text(encoding="utf-8"),
+    )
+
+    assert actions == {"data-refresh", "data-refresh-retry"}
+
+
 def test_bt_panel_wrapper_identity_rejects_foreign_runtime_file(
     monkeypatch, tmp_path
 ) -> None:
