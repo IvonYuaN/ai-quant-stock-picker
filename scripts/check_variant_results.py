@@ -116,7 +116,9 @@ def validate_variant_payload(
             raise ValueError(f"{variant_id} adjustments missing")
         if not _has_holding_change_explanation(item):
             raise ValueError(f"{variant_id} holding change explanation incomplete")
-        if not _has_structured_technical_evidence(item, end_date=end_date):
+        if _list(
+            item.get("holdings"), f"variants[{index}].holdings"
+        ) and not _has_structured_technical_evidence(item, end_date=end_date):
             raise ValueError(f"{variant_id} technical evidence missing")
         if not _has_named_holdings(item, variant_id=variant_id):
             raise ValueError(f"{variant_id} holding name missing")

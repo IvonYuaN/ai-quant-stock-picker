@@ -1,8 +1,10 @@
+import json
 import sqlite3
 from collections import Counter
 from datetime import date, timedelta
 
 from scripts import run_variant_suite as variant_suite
+from scripts.check_variant_results import validate_variant_results
 from scripts.run_variant_suite import run_suite
 
 
@@ -149,6 +151,23 @@ def test_run_suite_creates_many_explained_nonduplicate_accounts(tmp_path):
             isinstance(item[key], float)
             for key in ("macd_hist", "kdj_j", "volume_ratio", "atr_pct")
         )
+    artifact = tmp_path / "variant_results.json"
+    production_payload = {
+        **result,
+        "universe": {
+            "supported_symbols": len(symbols),
+            "selected_symbols": len(symbols),
+        },
+    }
+    artifact.write_text(
+        json.dumps(production_payload, ensure_ascii=False), encoding="utf-8"
+    )
+    validated = validate_variant_results(
+        artifact,
+        expected_end="2026-03-31",
+        min_symbols=1,
+    )
+    assert validated.variants == len(variants)
 
 
 def test_write_home_snapshot_recovers_variant_actions_from_legacy_fills():
@@ -229,7 +248,7 @@ def test_run_suite_handles_flat_kdj_range_without_object_dtype_crash(tmp_path):
     result = run_suite(db, ("FLAT",), "2026-01-01", "2026-03-21")
 
     assert result["schema_version"] == "variant-suite-v2"
-    assert len(result["variants"]) >= 100
+    assert result["variants"]
     evidence = variant_suite._technical_evidence_values(
         profile=variant_suite.VariantProfile(
             "flat_probe", "平线证据", 20, 1.0, 5.0, "kdj_rebound", 3, 1 / 3, "测试"
@@ -303,6 +322,12 @@ def test_run_suite_reuses_indicator_frames_by_lookback_when_profiles_share_input
     assert result["schema_version"] == "variant-suite-v2"
     assert (
         len(calls)
-        == len({item["strategy"]["lookback_days"] for item in result["variants"]}) * 2
+        == len(
+            {
+                profile.lookback
+                for profile in variant_suite.generate_variant_profiles({})
+            }
+        )
+        * 2
     )
     assert set(calls.values()) == {1}

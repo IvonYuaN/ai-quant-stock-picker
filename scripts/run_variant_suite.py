@@ -10,7 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import sqlite3
-from collections import Counter, defaultdict
+from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -32,7 +32,6 @@ from aqsp.utils.jsonl_io import atomic_write_text
 BASE_CASH = 100_000.0
 TRAINING_BARS = 60
 RECENT_ACTION_LIMIT = 8
-MAX_HOLDING_DUPLICATES_IN_TOP = 1
 
 
 @dataclass(frozen=True)
@@ -1166,20 +1165,24 @@ def _holdings_signature(holdings: list[dict[str, Any]]) -> str:
 
 
 def _diversity_ranked(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep one best strategy per current holding combination.
+
+    A strategy parameter grid is useful for research, but variants with the
+    same current holdings are not distinct paper-account choices.  Dropping
+    the lower-ranked duplicates here keeps the published artifact honest and
+    lets the production validator reject a day with too little real variety.
+    """
     sorted_results = sorted(
         results, key=lambda item: float(item["final_equity"]), reverse=True
     )
-    duplicate_counts: Counter[str] = Counter()
-    primary: list[dict[str, Any]] = []
-    overflow: list[dict[str, Any]] = []
+    seen_signatures: set[str] = set()
+    ranked: list[dict[str, Any]] = []
     for item in sorted_results:
         signature = str(item.get("holdings_signature", "empty"))
-        if duplicate_counts[signature] < MAX_HOLDING_DUPLICATES_IN_TOP:
-            primary.append(item)
-            duplicate_counts[signature] += 1
-        else:
-            overflow.append(item)
-    ranked = [*primary, *overflow]
+        if signature in seen_signatures:
+            continue
+        seen_signatures.add(signature)
+        ranked.append(item)
     for rank, item in enumerate(ranked, start=1):
         item["rank"] = rank
     return ranked
