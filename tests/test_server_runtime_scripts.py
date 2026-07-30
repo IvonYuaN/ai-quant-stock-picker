@@ -874,6 +874,8 @@ def test_bt_task_script_exposes_panel_safe_actions() -> None:
     assert "daily     18:00 Mon-Fri" in script
     assert "data-refresh 15:35 Mon-Fri" in script
     assert "data-refresh-retry 17:00 Mon-Fri" in script
+    assert '--batches "${AQSP_DATA_REFRESH_BATCHES:-0}"' in script
+    assert '--batches "${AQSP_DATA_REFRESH_RETRY_BATCHES:-0}"' in script
     assert "ensure_data_refresh_window()" in script
     assert "ensure_data_refresh_retry_window()" in script
     assert "AQSP_DATA_REFRESH_RETRY_WINDOW_END_HM:-1930" in script

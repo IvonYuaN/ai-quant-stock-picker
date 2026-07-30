@@ -642,7 +642,7 @@ case "$ACTION" in
             --min-amount "${AQSP_MIN_AVG_AMOUNT:-50000000}" \
             --query-timeout-seconds "${AQSP_DATA_REFRESH_QUERY_TIMEOUT_SECONDS:-4}" \
             --max-runtime-seconds "${AQSP_DATA_REFRESH_MAX_RUNTIME_SECONDS:-480}" \
-            --batches "${AQSP_DATA_REFRESH_BATCHES:-1}"
+            --batches "${AQSP_DATA_REFRESH_BATCHES:-0}"
         ;;
     data-refresh-retry)
         skip_non_trading_day
