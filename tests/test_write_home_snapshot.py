@@ -318,6 +318,26 @@ def test_variant_suite_snapshot_exposes_raw_refresh_blocker(
     assert suite.last_error == "变体等待：原始日线仅覆盖 122/4464；全市场刷新尚未完成"
 
 
+def test_recommendation_gate_blocks_partial_raw_refresh_coverage() -> None:
+    gate = write_home_snapshot._recommendation_gate(
+        provider=SimpleNamespace(paper_ledger_path=None),
+        runtime=SimpleNamespace(),
+        source=SimpleNamespace(status="run_completed", lag_days=0),
+        message_status="可用",
+        evaluated_at=datetime(2026, 7, 30, 16, tzinfo=ZoneInfo("Asia/Shanghai")),
+        universe=write_home_snapshot.HomeSnapshotUniverse(
+            total=4464,
+            resolved=122,
+            source="sqlite_raw_refresh",
+            last_error="原始日线仅覆盖 122/4464；全市场刷新尚未完成",
+        ),
+    )
+
+    assert gate.recommendation_allowed is False
+    assert gate.status == "blocked_incomplete_raw_data"
+    assert gate.reasons == ("原始日线仅覆盖 122/4464；全市场刷新尚未完成",)
+
+
 def test_variant_suite_snapshot_hides_artifact_without_current_technical_evidence(
     monkeypatch, tmp_path: Path
 ) -> None:

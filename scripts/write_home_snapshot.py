@@ -1458,7 +1458,22 @@ def _recommendation_gate(
     message_status: str,
     *,
     evaluated_at: datetime,
+    universe: HomeSnapshotUniverse | None = None,
 ) -> HomeSnapshotRecommendationGate:
+    if (
+        universe is not None
+        and universe.source == "sqlite_raw_refresh"
+        and universe.total > 0
+        and universe.resolved < universe.total
+    ):
+        return HomeSnapshotRecommendationGate(
+            recommendation_allowed=False,
+            status="blocked_incomplete_raw_data",
+            reasons=(
+                universe.last_error
+                or f"原始日线仅覆盖 {universe.resolved}/{universe.total}；全市场刷新尚未完成",
+            ),
+        )
     cooldown_until = str(getattr(runtime, "cooldown_until", "") or "").strip()
     cooldown_date = None
     if cooldown_until:
@@ -1918,6 +1933,7 @@ def build_home_snapshot(
     task_view = payload.task_view
     selected_date = _resolve_selected_date(payload, requested_date)
     runtime = provider.runtime_overview(selected_date)
+    universe = _universe_snapshot()
     overview = payload.overview
     generated_at = to_shanghai(now_shanghai()).isoformat(timespec="seconds")
     source = _snapshot_source(runtime, task_view, selected_date=selected_date)
@@ -1972,6 +1988,7 @@ def build_home_snapshot(
         source,
         message_status,
         evaluated_at=now_shanghai(),
+        universe=universe,
     )
     candidates = _apply_recommendation_gate(candidates, recommendation_gate)
     if not recommendation_gate.recommendation_allowed:
@@ -2048,7 +2065,7 @@ def build_home_snapshot(
         market_context=market_context,
         recommendation_gate=recommendation_gate,
         phases=phases,
-        universe=_universe_snapshot(),
+        universe=universe,
         variant_suite=_variant_suite_snapshot(),
         variants=_variant_snapshot(),
     )
