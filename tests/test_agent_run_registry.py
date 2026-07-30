@@ -101,3 +101,46 @@ def test_agent_run_registry_returns_failure_for_invalid_start_input(
         )
         == 1
     )
+
+
+def test_agent_run_registry_returns_skip_code_when_parent_capacity_is_reached(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "agent_runs.jsonl"
+    common = [
+        "start",
+        "--path",
+        str(path),
+        "--parent-run-id",
+        "scheduler:2026-07-30",
+        "--pid",
+        "42",
+        "--deadline-seconds",
+        "300",
+    ]
+    for index in range(3):
+        assert (
+            agent_run_registry.main(
+                [
+                    *common,
+                    "--agent-run-id",
+                    f"agent-{index}",
+                    "--scope",
+                    f"scheduled:task-{index}",
+                ]
+            )
+            == 0
+        )
+
+    assert (
+        agent_run_registry.main(
+            [
+                *common,
+                "--agent-run-id",
+                "agent-3",
+                "--scope",
+                "scheduled:task-3",
+            ]
+        )
+        == 75
+    )

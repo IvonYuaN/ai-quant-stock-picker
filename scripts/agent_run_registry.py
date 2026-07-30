@@ -13,7 +13,7 @@ from aqsp.audit.agent_runs import AgentRunRegistry
 _SKIP_START_ERRORS = (
     "agent_run_id is already active",
     "scope is already active",
-    "parallel limit reached",
+    "parallel limit",
 )
 
 
