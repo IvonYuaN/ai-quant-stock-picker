@@ -1872,6 +1872,11 @@ def test_bt_optional_heavy_tasks_check_host_capacity_before_starting() -> None:
     assert "acquire_optional_heavy_slot" in script
     assert "printf 'HEAVY_SLOT_PID=%q\\n' \"$$\"" in script
     assert "optional_heavy_slot_is_stale" in script
+    assert "agent_run_registry.py" in script
+    assert 'AGENT_RUNS_PATH="${AQSP_AGENT_RUNS_PATH:-${RUNTIME_DATA_ROOT}/runtime/agent_runs.jsonl}"' in script
+    assert 'start_agent_run "${AQSP_AGENT_DEADLINE_SECONDS:-480}"' in script
+    assert 'start_agent_run "${AQSP_AGENT_DEADLINE_SECONDS:-300}"' in script
+    assert "finish_agent_run" in script
     daily_block = script[
         script.index("\n    daily)") : script.index("\n    data-refresh)")
     ]

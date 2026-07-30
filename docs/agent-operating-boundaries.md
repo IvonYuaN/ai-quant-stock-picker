@@ -103,5 +103,6 @@ python3 scripts/headless_dashboard_check.py --url https://lh.ifidy.cn --screensh
 - 每个子任务记录 `parent_run_id`、`agent_run_id`、PID、开始时间、deadline 和退出原因；超时或锁冲突必须降级/退出，不得无限等待。
 - 运行登记统一使用 `aqsp.audit.agent_runs.AgentRunRegistry`，生产记录写入私有
   `/opt/aqsp/data/runtime/agent_runs.jsonl`；同一文件范围不可并行，单父任务和全局最多各 3 个活跃子任务；超时必须写为 `timed_out`。
+- 受资源门禁保护的收盘、数据刷新、变体、冷启动和 walk-forward 任务必须在启动后登记，在退出时写入完成或失败状态；注册冲突视为正常跳过，不能绕过资源锁重复运行。
 - 资源不足时优先保护用户前台和生产主链，允许跳过旁路 Agent；旁路 Agent 的输出只能补充证据，不能覆盖确定性评分或交易边界。
 - 用户影响是硬门禁：任何任务只要可能拖慢、重启、覆盖或污染用户正在使用的服务，必须先降级为只读诊断或隔离环境；部署后未完成 health、数据新鲜度、页面入口和关键结果检查，不得宣称完成。

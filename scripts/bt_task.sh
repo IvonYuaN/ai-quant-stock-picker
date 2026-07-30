@@ -48,6 +48,11 @@ LOCK_DIR="${AQSP_RUNTIME_LOCK_DIR:-${RUNTIME_DATA_ROOT}/.locks}"
 STATE_DIR="${AQSP_RUNTIME_STATE_DIR:-${RUNTIME_DATA_ROOT}/.state}"
 HEAVY_SLOT_LOCK_FILE="${LOCK_DIR}/heavy-compute.lock"
 HEAVY_SLOT_LOCK_INFO_FILE="${HEAVY_SLOT_LOCK_FILE}/meta.env"
+AGENT_RUNS_PATH="${AQSP_AGENT_RUNS_PATH:-${RUNTIME_DATA_ROOT}/runtime/agent_runs.jsonl}"
+AGENT_RUN_REGISTRY_SCRIPT="${PROJECT_ROOT}/scripts/agent_run_registry.py"
+AGENT_RUN_ID=""
+AGENT_RUN_ACTIVE="false"
+HEAVY_SLOT_ACQUIRED="false"
 GIT_SYNC_LOCK_FILE="${LOCK_DIR}/server-git-sync.lock"
 GIT_SYNC_LOCK_INFO_FILE="${GIT_SYNC_LOCK_FILE}/meta.env"
 GIT_SYNC_WAIT_SECONDS="${AQSP_GIT_SYNC_WAIT_SECONDS:-180}"
@@ -402,6 +407,60 @@ release_optional_heavy_slot() {
     rmdir "$HEAVY_SLOT_LOCK_FILE" 2>/dev/null || true
 }
 
+finish_agent_run() {
+    local exit_code="$1" status="completed"
+    [ "$AGENT_RUN_ACTIVE" = "true" ] || return 0
+    if [ "$exit_code" -ne 0 ]; then
+        status="failed"
+    fi
+    PYTHONPATH="${PROJECT_ROOT}/src:${PROJECT_ROOT}:${PYTHONPATH:-}" \
+        "$AQSP_RUNTIME_PYTHON" "$AGENT_RUN_REGISTRY_SCRIPT" finish \
+        --path "$AGENT_RUNS_PATH" \
+        --agent-run-id "$AGENT_RUN_ID" \
+        --status "$status" \
+        --exit-reason "bt_task_exit_${exit_code}" >>"$RUN_LOG" 2>&1 || \
+        log "[ERROR] agent 任务审计完成状态写入失败: ${AGENT_RUN_ID}"
+    AGENT_RUN_ACTIVE="false"
+}
+
+cleanup_task() {
+    local exit_code="$1"
+    if [ "$HEAVY_SLOT_ACQUIRED" = "true" ]; then
+        release_optional_heavy_slot
+    fi
+    finish_agent_run "$exit_code"
+    return "$exit_code"
+}
+
+start_agent_run() {
+    local deadline_seconds="$1" registry_exit_code
+    [ -f "$AGENT_RUN_REGISTRY_SCRIPT" ] || {
+        log "[ERROR] 缺少 agent 任务注册器: ${AGENT_RUN_REGISTRY_SCRIPT}"
+        exit 1
+    }
+    AGENT_RUN_ID="bt-task:${ACTION}:$(date +%Y%m%d%H%M%S):$$"
+    set +e
+    PYTHONPATH="${PROJECT_ROOT}/src:${PROJECT_ROOT}:${PYTHONPATH:-}" \
+        "$AQSP_RUNTIME_PYTHON" "$AGENT_RUN_REGISTRY_SCRIPT" start \
+        --path "$AGENT_RUNS_PATH" \
+        --parent-run-id "scheduler:$(date +%F)" \
+        --agent-run-id "$AGENT_RUN_ID" \
+        --scope "scheduled:${ACTION}" \
+        --pid "$$" \
+        --deadline-seconds "$deadline_seconds" >>"$RUN_LOG" 2>&1
+    registry_exit_code=$?
+    set -e
+    if [ "$registry_exit_code" -eq 75 ]; then
+        log "agent 任务槽位已占用，本次 ${ACTION} 正常跳过"
+        exit 0
+    fi
+    if [ "$registry_exit_code" -ne 0 ]; then
+        log "[ERROR] agent 任务注册失败，拒绝运行 ${ACTION}"
+        exit "$registry_exit_code"
+    fi
+    AGENT_RUN_ACTIVE="true"
+}
+
 optional_heavy_slot_is_stale() {
     if [ ! -f "$HEAVY_SLOT_LOCK_INFO_FILE" ]; then
         return 1
@@ -434,7 +493,7 @@ acquire_optional_heavy_slot() {
         printf 'HEAVY_SLOT_RUNNER=%q\n' "bt_task:${ACTION}"
         printf 'HEAVY_SLOT_STARTED_AT=%q\n' "$(date '+%Y-%m-%d %H:%M:%S')"
     } >"$HEAVY_SLOT_LOCK_INFO_FILE"
-    trap 'release_optional_heavy_slot' EXIT
+    HEAVY_SLOT_ACQUIRED="true"
 }
 
 is_market_trading_day() {
@@ -592,6 +651,7 @@ fi
 
 export AQSP_PROJECT_ROOT="$PROJECT_ROOT"
 export TZ="Asia/Shanghai"
+trap 'cleanup_task "$?"' EXIT
 
 case "$ACTION" in
     daily)
@@ -603,6 +663,7 @@ case "$ACTION" in
             gate_optional_heavy_task
         acquire_optional_heavy_slot
         set_daily_runner_timeout
+        start_agent_run "${AQSP_AGENT_DEADLINE_SECONDS:-${AQSP_RUNNER_TIMEOUT_SECONDS}}"
         export AQSP_RUN_TASK_ID="daily"
         export AQSP_RUNNER_SCRIPT=scripts/daily_pipeline.sh
         run_script "${PROJECT_ROOT}/scripts/server_sync_and_run.sh"
@@ -614,6 +675,7 @@ case "$ACTION" in
             gate_optional_heavy_task
         acquire_optional_heavy_slot
         set_daily_research_runner_timeout
+        start_agent_run "${AQSP_AGENT_DEADLINE_SECONDS:-${AQSP_RUNNER_TIMEOUT_SECONDS}}"
         export AQSP_RUN_TASK_ID="daily_research"
         export AQSP_DAILY_RESEARCH_ONLY="true"
         export AQSP_NOTIFY="false"
@@ -630,6 +692,7 @@ case "$ACTION" in
             AQSP_HEAVY_MAX_LOAD_PER_CPU="${AQSP_DATA_REFRESH_MAX_LOAD_PER_CPU:-0.50}" \
             gate_optional_heavy_task
         acquire_optional_heavy_slot
+        start_agent_run "${AQSP_AGENT_DEADLINE_SECONDS:-480}"
         export AQSP_RUN_TASK_ID="data_refresh"
         export AQSP_NOTIFY="false"
         export AQSP_GATE_NOTIFY="false"
@@ -651,6 +714,7 @@ case "$ACTION" in
             AQSP_HEAVY_MAX_LOAD_PER_CPU="${AQSP_DATA_REFRESH_MAX_LOAD_PER_CPU:-0.50}" \
             gate_optional_heavy_task
         acquire_optional_heavy_slot
+        start_agent_run "${AQSP_AGENT_DEADLINE_SECONDS:-480}"
         export AQSP_RUN_TASK_ID="data_refresh_retry"
         export AQSP_NOTIFY="false"
         export AQSP_GATE_NOTIFY="false"
@@ -724,6 +788,7 @@ case "$ACTION" in
         skip_non_trading_day
         gate_optional_heavy_task
         acquire_optional_heavy_slot
+        start_agent_run "${AQSP_AGENT_DEADLINE_SECONDS:-900}"
         export AQSP_RUN_TASK_ID="coldstart"
         export AQSP_NOTIFY="false"
         export AQSP_GATE_NOTIFY="false"
@@ -738,6 +803,7 @@ case "$ACTION" in
             AQSP_HEAVY_MAX_LOAD_PER_CPU="${AQSP_VARIANT_MAX_LOAD_PER_CPU:-0.50}" \
             gate_optional_heavy_task
         acquire_optional_heavy_slot
+        start_agent_run "${AQSP_AGENT_DEADLINE_SECONDS:-300}"
         export AQSP_RUN_TASK_ID="variant_refresh"
         export AQSP_NOTIFY="false"
         export AQSP_GATE_NOTIFY="false"
@@ -747,6 +813,7 @@ case "$ACTION" in
     walkforward-gate)
         gate_optional_heavy_task
         acquire_optional_heavy_slot
+        start_agent_run "${AQSP_AGENT_DEADLINE_SECONDS:-900}"
         export AQSP_RUN_TASK_ID="walkforward_gate"
         export AQSP_NOTIFY="false"
         export AQSP_GATE_NOTIFY="${AQSP_WALKFORWARD_GATE_NOTIFY:-false}"
