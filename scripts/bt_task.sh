@@ -87,7 +87,7 @@ Recommended BT schedule (Asia/Shanghai):
   daily     18:00 Mon-Fri
   daily-research 18:20-22:20 every 20 min Mon-Fri; one bounded cursor chunk
   data-refresh 15:35 Mon-Fri; bounded raw daily-data batch before daily research
-  data-refresh-retry 17:00 Mon-Fri; one delayed bounded retry for source publication lag
+  data-refresh-retry every 10 min from 17:00-19:30 Mon-Fri; bounded delayed refresh while the source publishes
   coldstart 19:40 Mon-Fri
   variant-refresh 21:00 Mon-Fri; bounded isolated experiment refresh
   walkforward-gate 22:00 Sat; controlled production evidence only, no threshold apply
