@@ -10,6 +10,13 @@ from pathlib import Path
 from aqsp.audit.agent_runs import AgentRunRegistry
 
 
+_SKIP_START_ERRORS = (
+    "agent_run_id is already active",
+    "scope is already active",
+    "parallel limit reached",
+)
+
+
 def _start(args: argparse.Namespace) -> int:
     registry = AgentRunRegistry(Path(args.path))
     record = registry.register(
@@ -63,7 +70,11 @@ def main(argv: list[str] | None = None) -> int:
         return _finish(args)
     except (OSError, ValueError) as exc:
         print(f"agent run registry failed: {exc}")
-        return 75 if args.command == "start" else 1
+        if args.command == "start" and any(
+            message in str(exc) for message in _SKIP_START_ERRORS
+        ):
+            return 75
+        return 1
 
 
 if __name__ == "__main__":

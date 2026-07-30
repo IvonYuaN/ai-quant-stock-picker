@@ -76,3 +76,28 @@ def test_agent_run_registry_returns_skip_code_when_scope_is_active(
 
     assert agent_run_registry.main([*first, "--agent-run-id", "first"]) == 0
     assert agent_run_registry.main([*first, "--agent-run-id", "second"]) == 75
+
+
+def test_agent_run_registry_returns_failure_for_invalid_start_input(
+    tmp_path: Path,
+) -> None:
+    assert (
+        agent_run_registry.main(
+            [
+                "start",
+                "--path",
+                str(tmp_path / "agent_runs.jsonl"),
+                "--parent-run-id",
+                "scheduler:2026-07-30",
+                "--agent-run-id",
+                "invalid",
+                "--scope",
+                "scheduled:data-refresh",
+                "--pid",
+                "0",
+                "--deadline-seconds",
+                "480",
+            ]
+        )
+        == 1
+    )
