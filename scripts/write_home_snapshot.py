@@ -2157,7 +2157,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--output",
-        default=DEFAULT_OUTPUT_PATH,
+        default=os.environ.get("AQSP_HOME_SNAPSHOT_PATH", DEFAULT_OUTPUT_PATH),
         help="runtime snapshot path, relative to the project root",
     )
     parser.add_argument(

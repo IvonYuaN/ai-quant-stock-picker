@@ -245,6 +245,17 @@ def test_universe_snapshot_exposes_verified_raw_refresh_coverage(
     assert universe.coverage_pct == pytest.approx(3 / 4464)
 
 
+def test_write_home_snapshot_parser_uses_runtime_output_path(
+    monkeypatch, tmp_path: Path
+) -> None:
+    output = tmp_path / "runtime" / "home_dashboard_snapshot.json"
+    monkeypatch.setenv("AQSP_HOME_SNAPSHOT_PATH", str(output))
+
+    args = write_home_snapshot.build_parser().parse_args([])
+
+    assert args.output == str(output)
+
+
 def test_variant_snapshot_keeps_all_standard_experiment_variants(
     monkeypatch, tmp_path: Path
 ) -> None:
