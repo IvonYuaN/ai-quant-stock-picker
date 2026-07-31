@@ -19,6 +19,7 @@ def test_deploy_immutable_release_updates_tracking_ref_when_deploying_branch() -
     assert "blocked_incomplete_raw_data" in script
     assert "raw_coverage=" in script
     assert "latest_trade_date missing outside blocked raw refresh" in script
+    assert "is_current_intraday_snapshot" in script
     guard = (
         'if [ "$SKIP_FRONTEND_BUILD" = "true" ] && { '
         '[ ! -d "$RELEASE_DIR/frontend/node_modules" ] || '

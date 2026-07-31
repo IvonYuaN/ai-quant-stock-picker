@@ -252,6 +252,7 @@ from datetime import date
 
 sys.path.insert(0, sys.argv[2])
 from aqsp.core.http import urlopen_no_macos_proxy
+from aqsp.core.time import today_shanghai
 
 url = sys.argv[1]
 expected_end = sys.argv[3]
@@ -278,9 +279,13 @@ partial_raw_refresh = (
     and 0 <= universe["resolved"] < universe["total"]
     and str(universe.get("batch_id") or "") == expected_end
 )
-if expected_end and selected != expected_end and not partial_raw_refresh:
+is_current_intraday_snapshot = (
+    selected == today_shanghai().isoformat()
+    and latest_trade_date == selected
+)
+if expected_end and selected != expected_end and not partial_raw_refresh and not is_current_intraday_snapshot:
     raise SystemExit(f"snapshot selected_date {selected} != expected {expected_end}")
-if expected_end and latest_trade_date not in {"", "未记录", expected_end}:
+if expected_end and latest_trade_date not in {"", "未记录", expected_end, selected}:
     raise SystemExit(
         f"snapshot latest_trade_date {latest_trade_date} != expected {expected_end}"
     )
