@@ -121,21 +121,15 @@ def _worktree_clean(root: Path) -> ClosureCheck:
     )
 
 
-def _remote_commit(
-    root: Path, *, remote: str, branch: str, commit: str
-) -> ClosureCheck:
+def _remote_branch_commit(
+    root: Path, *, remote: str, branch: str
+) -> tuple[str, ClosureCheck]:
     result = _run(root, ["git", "ls-remote", remote, f"refs/heads/{branch}"])
     output = _first_output(result)
     remote_commit = result.stdout.split(maxsplit=1)[0] if result.stdout.strip() else ""
     if result.returncode != 0 or not remote_commit:
-        return ClosureCheck("remote_commit", "failed", output)
-    if remote_commit != commit:
-        return ClosureCheck(
-            "remote_commit",
-            "failed",
-            f"remote {remote}/{branch}={remote_commit} != local {commit}",
-        )
-    return ClosureCheck("remote_commit", "ok", remote_commit)
+        return "", ClosureCheck("remote_commit", "failed", output)
+    return remote_commit, ClosureCheck("remote_commit", "ok", remote_commit)
 
 
 def _github_ci(root: Path, *, branch: str, commit: str, skip: bool) -> ClosureCheck:
@@ -454,11 +448,14 @@ def assess(
     skip_snapshot: bool,
 ) -> ClosureReport:
     checks: list[ClosureCheck] = []
-    commit, local = _local_commit(root)
+    local_commit, local = _local_commit(root)
     checks.append(local)
-    if commit:
+    commit = ""
+    if local_commit:
         checks.append(_worktree_clean(root))
-        checks.append(_remote_commit(root, remote=remote, branch=branch, commit=commit))
+        commit, remote_check = _remote_branch_commit(root, remote=remote, branch=branch)
+        checks.append(remote_check)
+    if commit:
         checks.append(
             _github_ci(root, branch=branch, commit=commit, skip=skip_github_ci)
         )

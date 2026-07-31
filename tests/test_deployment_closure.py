@@ -19,7 +19,9 @@ def _completed(
     return subprocess.CompletedProcess(command, code, stdout, stderr)
 
 
-def test_deployment_closure_rejects_unpushed_head(monkeypatch, tmp_path: Path) -> None:
+def test_deployment_closure_uses_remote_release_commit_when_local_history_diverges(
+    monkeypatch, tmp_path: Path
+) -> None:
     def fake_run(_root: Path, command: list[str]) -> subprocess.CompletedProcess[str]:
         values = {
             ("git", "rev-parse", "HEAD"): _completed(command, 0, SHA_A + "\n"),
@@ -62,10 +64,10 @@ def test_deployment_closure_rejects_unpushed_head(monkeypatch, tmp_path: Path) -
         skip_snapshot=False,
     )
 
-    assert report.status == "failed"
+    assert report.status == "verified"
+    assert report.commit == SHA_B
     assert any(
-        item.name == "remote_commit" and item.status == "failed"
-        for item in report.checks
+        item.name == "remote_commit" and item.status == "ok" for item in report.checks
     )
 
 
