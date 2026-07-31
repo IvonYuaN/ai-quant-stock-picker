@@ -101,6 +101,61 @@ def test_refresh_sqlite_batch_excludes_historical_symbols_from_active_baseline()
     ) == ["600000", "000001", "300001"]
 
 
+def test_refresh_sqlite_batch_uses_previous_trade_day_for_active_baseline(
+    monkeypatch, tmp_path: Path
+) -> None:
+    class FakeSource:
+        def __init__(self, **_kwargs) -> None:
+            pass
+
+        def get_symbols_with_daily_coverage(
+            self, symbols: list[str], *_args, **_kwargs
+        ) -> list[str]:
+            return symbols
+
+    summary = UpdateSummary(
+        updated_rows=1,
+        skipped_symbols=0,
+        failed_symbols=0,
+        target_day=date(2026, 7, 30),
+        price_mode="raw",
+        target_day_symbol_count=1,
+        total_symbols=1,
+        raw_max_trade_date=date(2026, 7, 30),
+        processed_symbols=1,
+    )
+    observed: list[date | None] = []
+
+    def fake_universe(
+        _source, *, universe_limit: int, reference_day: date | None = None
+    ) -> list[str]:
+        assert universe_limit == 0
+        observed.append(reference_day)
+        return ["600000"]
+
+    monkeypatch.setattr(refresh_sqlite_batch, "SqliteDbSource", FakeSource)
+    monkeypatch.setattr(
+        refresh_sqlite_batch, "get_previous_trading_day", lambda _: date(2026, 7, 29)
+    )
+    monkeypatch.setattr(refresh_sqlite_batch, "_refresh_universe", fake_universe)
+    monkeypatch.setattr(
+        refresh_sqlite_batch, "update_sqlite_daily", lambda *_args, **_kwargs: summary
+    )
+
+    refresh_sqlite_batch.refresh_batch(
+        db_path=tmp_path / "market.db",
+        state_path=tmp_path / "cursor.json",
+        target_day=date(2026, 7, 30),
+        batch_size=1,
+        universe_limit=0,
+        min_amount=0.0,
+        query_timeout_seconds=4.0,
+        max_runtime_seconds=120.0,
+    )
+
+    assert observed == [date(2026, 7, 29)]
+
+
 def test_refresh_sqlite_batch_accumulates_same_day_covered_symbols(
     monkeypatch, tmp_path: Path
 ) -> None:
