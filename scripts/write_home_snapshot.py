@@ -91,6 +91,7 @@ MAX_HOME_MESSAGES_PER_SOURCE = 2
 MAX_HOME_VARIANTS = 160
 MIN_HOME_VARIANT_COUNT = 100
 MIN_HOME_VARIANT_SYMBOLS = 121
+VERIFIED_RAW_COVERAGE_FLOOR = 0.98
 NEWS_REPORT_MAX_AGE_SECONDS = 6 * 60 * 60
 CURRENT_MESSAGE_WINDOW = timedelta(hours=24)
 _SOURCE_STATUS_LABELS = {
@@ -1625,8 +1626,18 @@ def _universe_snapshot() -> HomeSnapshotUniverse:
         batch_size = int(batch.get("processed_symbols") or 0)
         coverage_pct = (len(covered_symbols) / total) if total else 0.0
         coverage_error = _text(batch.get("coverage_error"))
-        cycle_complete = (
-            bool(covered_symbols) and int(raw_payload.get("offset") or 0) == 0
+        target_day = _text(raw_payload.get("target_day"))
+        verified_exclusions = (
+            total > 0
+            and coverage_pct >= VERIFIED_RAW_COVERAGE_FLOOR
+            and _text(batch.get("raw_max_trade_date")) == target_day
+            and int(batch.get("failed_symbols") or 0) == 0
+        )
+        # A cursor only describes the next bounded refresh chunk. It cannot
+        # keep an otherwise verified raw universe blocked after unavailable
+        # symbols have been explicitly excluded for the target trading day.
+        cycle_complete = bool(covered_symbols) and (
+            int(raw_payload.get("offset") or 0) == 0 or verified_exclusions
         )
         if total and len(covered_symbols) < total and not coverage_error:
             missing = total - len(covered_symbols)

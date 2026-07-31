@@ -247,6 +247,43 @@ def test_universe_snapshot_exposes_verified_raw_refresh_coverage(
     assert universe.last_error == "原始日线仅覆盖 3/4464；全市场刷新尚未完成"
 
 
+def test_universe_snapshot_accepts_verified_raw_exclusions_without_cursor_reset(
+    monkeypatch, tmp_path: Path
+) -> None:
+    cursor_path = tmp_path / "sqlite-refresh-cursor.json"
+    cursor_path.write_text(
+        json.dumps(
+            {
+                "target_day": "2026-07-29",
+                "universe_size": 4466,
+                "offset": 2040,
+                "target_day_symbols": [f"600{index:03d}" for index in range(4399)],
+                "last_batch": {
+                    "processed_symbols": 2880,
+                    "raw_max_trade_date": "2026-07-29",
+                    "failed_symbols": 0,
+                    "coverage_error": None,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AQSP_SQLITE_REFRESH_CURSOR_PATH", str(cursor_path))
+    monkeypatch.setattr(
+        write_home_snapshot,
+        "latest_completed_trading_day",
+        lambda: date(2026, 7, 29),
+    )
+
+    universe = write_home_snapshot._universe_snapshot()
+
+    assert universe.batch_active is False
+    assert universe.coverage_pct == pytest.approx(4399 / 4466)
+    assert (
+        universe.last_error == "原始日线当日可用 4399/4466；67 只未返回当日日线，已排除"
+    )
+
+
 def test_write_home_snapshot_parser_uses_runtime_output_path(
     monkeypatch, tmp_path: Path
 ) -> None:
