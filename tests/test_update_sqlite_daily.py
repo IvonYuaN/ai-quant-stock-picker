@@ -439,6 +439,29 @@ def test_update_sqlite_daily_marks_symbol_failed_after_retry_exhausted(
     assert fake_bs.logout_calls == 3
 
 
+def test_query_retry_stops_when_shared_deadline_is_exhausted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(update_sqlite_daily.time, "monotonic", lambda: 10.0)
+    monkeypatch.setattr(
+        update_sqlite_daily,
+        "_query_history_rows",
+        lambda **_kwargs: pytest.fail("query must not start after deadline"),
+    )
+
+    status, rows = update_sqlite_daily._query_history_rows_with_retry(
+        bs=object(),
+        ts_code="600000.SH",
+        fetch_start_day=date(2026, 6, 18),
+        target_day=date(2026, 6, 18),
+        price_mode="raw",
+        timeout_seconds=4.0,
+        deadline=10.0,
+    )
+
+    assert (status, rows) == ("timeout", [])
+
+
 def test_sync_stock_list_preserves_existing_historical_symbols_by_default(
     tmp_path: Path,
 ) -> None:

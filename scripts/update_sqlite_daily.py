@@ -142,9 +142,13 @@ def _query_history_rows_with_retry(
     timeout_seconds: float,
     retry_limit: int = _QUERY_RETRY_LIMIT,
     retry_sleep_seconds: float = _QUERY_RETRY_BASE_SLEEP_SECONDS,
+    deadline: float | None = None,
 ) -> tuple[str, list[list[str]]]:
     attempts = max(1, retry_limit + 1)
     for attempt in range(1, attempts + 1):
+        remaining = None if deadline is None else deadline - time.monotonic()
+        if remaining is not None and remaining <= 0:
+            return "timeout", []
         try:
             error_code, rows = _query_history_rows(
                 bs=bs,
@@ -152,7 +156,11 @@ def _query_history_rows_with_retry(
                 fetch_start_day=fetch_start_day,
                 target_day=target_day,
                 price_mode=price_mode,
-                timeout_seconds=timeout_seconds,
+                timeout_seconds=(
+                    timeout_seconds
+                    if remaining is None
+                    else min(timeout_seconds, remaining)
+                ),
             )
         except Exception as exc:
             if not _exception_supports_retry(exc) or attempt >= attempts:
@@ -162,7 +170,11 @@ def _query_history_rows_with_retry(
             _logout_baostock_session(bs)
             _login_baostock_session(bs)
             if retry_sleep_seconds > 0:
-                time.sleep(retry_sleep_seconds * attempt)
+                delay = retry_sleep_seconds * attempt
+                if deadline is not None:
+                    delay = min(delay, max(0.0, deadline - time.monotonic()))
+                if delay > 0:
+                    time.sleep(delay)
             continue
         if error_code == "0":
             return error_code, rows
@@ -171,7 +183,11 @@ def _query_history_rows_with_retry(
         _logout_baostock_session(bs)
         _login_baostock_session(bs)
         if retry_sleep_seconds > 0:
-            time.sleep(retry_sleep_seconds * attempt)
+            delay = retry_sleep_seconds * attempt
+            if deadline is not None:
+                delay = min(delay, max(0.0, deadline - time.monotonic()))
+            if delay > 0:
+                time.sleep(delay)
     return "exception", []
 
 
@@ -530,6 +546,7 @@ def update_sqlite_daily(
                     target_day=target_day,
                     price_mode=price_mode,
                     timeout_seconds=query_timeout_seconds,
+                    deadline=deadline,
                 )
                 if error_code != "0":
                     failed += 1

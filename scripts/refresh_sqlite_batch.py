@@ -140,12 +140,13 @@ def refresh_batch(
     min_amount: float,
     query_timeout_seconds: float,
     max_runtime_seconds: float,
+    universe_symbols: list[str] | None = None,
 ) -> UpdateSummary:
     source = SqliteDbSource(db_path=db_path, cache=None)
     # Raw daily refresh must rotate the full supported market rather than a
     # turnover-ranked head. Liquidity is applied later by the research pipeline.
     del min_amount
-    symbols = _refresh_universe(
+    symbols = universe_symbols or _refresh_universe(
         source,
         universe_limit=universe_limit,
         reference_day=get_previous_trading_day(target_day),
@@ -196,18 +197,17 @@ def refresh_batches(
     batches: int,
 ) -> UpdateSummary:
     """Run bounded sequential batches under one shared wall-clock budget."""
+    started = time.monotonic()
     source = SqliteDbSource(db_path=db_path, cache=None)
-    universe_size = len(
-        _refresh_universe(
-            source,
-            universe_limit=universe_limit,
-            reference_day=get_previous_trading_day(target_day),
-        )
+    symbols = _refresh_universe(
+        source,
+        universe_limit=universe_limit,
+        reference_day=get_previous_trading_day(target_day),
     )
+    universe_size = len(symbols)
     max_batches = (
         (universe_size + batch_size - 1) // batch_size if batches <= 0 else batches
     )
-    started = time.monotonic()
     summaries: list[UpdateSummary] = []
     for _ in range(max_batches):
         remaining = max_runtime_seconds - (time.monotonic() - started)
@@ -222,6 +222,7 @@ def refresh_batches(
             min_amount=min_amount,
             query_timeout_seconds=query_timeout_seconds,
             max_runtime_seconds=remaining,
+            universe_symbols=symbols,
         )
         summaries.append(summary)
         if summary.processed_symbols == 0 or summary.budget_exhausted:
@@ -245,6 +246,8 @@ def refresh_batches(
         budget_exhausted=(
             time.monotonic() - started >= max_runtime_seconds or latest.budget_exhausted
         ),
+        already_current_symbols=sum(item.already_current_symbols for item in summaries),
+        empty_response_symbols=sum(item.empty_response_symbols for item in summaries),
     )
     next_offset = _read_cursor(state_path, target_day=target_day)
     _write_cursor(

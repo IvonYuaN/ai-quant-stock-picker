@@ -261,3 +261,55 @@ def test_refresh_sqlite_batch_runs_multiple_chunks_with_shared_summary(
     assert len(calls) == 2
     assert result.processed_symbols == 4
     assert result.total_symbols == 3
+
+
+def test_refresh_sqlite_batch_reuses_one_universe_for_multiple_chunks(
+    monkeypatch, tmp_path: Path
+) -> None:
+    class FakeSource:
+        def __init__(self, **_kwargs) -> None:
+            pass
+
+        def get_symbols_with_daily_coverage(
+            self, symbols: list[str], *_args, **_kwargs
+        ) -> list[str]:
+            return symbols
+
+    summary = UpdateSummary(
+        updated_rows=2,
+        skipped_symbols=0,
+        failed_symbols=0,
+        target_day=date(2026, 7, 29),
+        price_mode="raw",
+        target_day_symbol_count=2,
+        total_symbols=2,
+        raw_max_trade_date=date(2026, 7, 29),
+        processed_symbols=2,
+    )
+    calls = 0
+
+    def fake_universe(*_args, **_kwargs) -> list[str]:
+        nonlocal calls
+        calls += 1
+        return ["600000", "000001", "300001", "600001"]
+
+    monkeypatch.setattr(refresh_sqlite_batch, "SqliteDbSource", FakeSource)
+    monkeypatch.setattr(refresh_sqlite_batch, "_refresh_universe", fake_universe)
+    monkeypatch.setattr(
+        refresh_sqlite_batch, "update_sqlite_daily", lambda *_args, **_kwargs: summary
+    )
+
+    result = refresh_sqlite_batch.refresh_batches(
+        db_path=tmp_path / "market.db",
+        state_path=tmp_path / "cursor.json",
+        target_day=date(2026, 7, 29),
+        batch_size=2,
+        universe_limit=0,
+        min_amount=0.0,
+        query_timeout_seconds=4.0,
+        max_runtime_seconds=120.0,
+        batches=2,
+    )
+
+    assert calls == 1
+    assert result.processed_symbols == 4
