@@ -564,6 +564,7 @@ refresh_home_dashboard_snapshot() {
         return 0
     fi
     if "${PYTHON_BIN}" "${PROJECT_ROOT}/scripts/write_home_snapshot.py" \
+        --date "$(date +%F)" \
         --task-id "${AQSP_RUN_TASK_ID}" \
         --output "${HOME_SNAPSHOT_PATH}" \
         --index-output "${HOME_SNAPSHOT_INDEX_PATH}" >>"${RESULT_LOG}" 2>&1; then
@@ -1484,6 +1485,26 @@ payload["freshness"] = {
         quality_gate.get("provenance_status", "unknown") or "unknown"
     ),
 }
+preserved_artifact = False
+if payload["status"] in {"failed", "error"} and latest_trade_date == now_shanghai().date().isoformat():
+    try:
+        with csv_path_for_metadata.open("r", encoding="utf-8", newline="") as handle:
+            preserved_artifact = any(
+                clean(row.get("symbol")) != "__RUN__"
+                and clean(row.get("signal_date") or row.get("date"))[:10]
+                == now_shanghai().date().isoformat()
+                for row in csv.DictReader(handle)
+            )
+    except (OSError, csv.Error):
+        preserved_artifact = False
+if preserved_artifact:
+    # A failed retry must not erase a still-fresh, validated same-day artifact.
+    # The dashboard keeps enforcing its file-age window before exposing it.
+    payload["freshness"]["status"] = "fresh"
+    payload["freshness"]["lag_days"] = metadata_lag_days
+    payload["freshness"]["latest_trade_date"] = latest_trade_date
+    payload["freshness"]["provenance_status"] = provenance_status
+payload["preserved_artifact"] = preserved_artifact
 payload["quality_gate"] = quality_gate
 payload["provenance"] = quality_gate.get("provenance", {})
 csv_path = Path(payload["csv_path"])
