@@ -14,9 +14,8 @@ def test_deploy_immutable_release_updates_tracking_ref_when_deploying_branch() -
         in script
     )
     assert script.count('--branch "$BRANCH"') == 3
-    assert "snapshot variant_suite variant_count < 100" in script
-    assert "snapshot variants < 100" in script
-    assert "technical_evidence incomplete" in script
+    assert "check_variant_results.py" in script
+    assert "变体产物未通过校验；release 已切换" in script
     assert "blocked_incomplete_raw_data" in script
     assert "raw_coverage=" in script
     assert "latest_trade_date missing outside blocked raw refresh" in script
@@ -27,7 +26,7 @@ def test_deploy_immutable_release_updates_tracking_ref_when_deploying_branch() -
     )
     assert guard in script
     assert script.index(guard) < script.index('if [ ! -d "$RELEASE_DIR" ]; then')
-    assert "--skip-frontend-build requires an existing release with complete frontend artifacts" in script
-    assert script.index("def _is_finite(value):") < script.index(
-        'technical_evidence = first.get("technical_evidence")'
+    assert (
+        "--skip-frontend-build requires an existing release with complete frontend artifacts"
+        in script
     )

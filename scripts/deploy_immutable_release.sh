@@ -247,7 +247,6 @@ PY
     fi
     "$PYTHON_BIN" - "${CHECK_URL%/}/api/aqsp/snapshot" "$RELEASE_DIR/src" "$EXPECTED_VARIANT_END" <<'PY'
 import json
-import math
 import sys
 from datetime import date
 
@@ -291,9 +290,6 @@ if (
     and not partial_raw_refresh
 ):
     raise SystemExit("snapshot latest_trade_date missing outside blocked raw refresh")
-variant_suite = data.get("variant_suite")
-if not isinstance(variant_suite, dict):
-    raise SystemExit("snapshot variant_suite missing")
 if partial_raw_refresh:
     print(
         "snapshot_contract blocked_incomplete_raw_data",
@@ -301,43 +297,6 @@ if partial_raw_refresh:
         f"raw_coverage={universe['resolved']}/{universe['total']}",
     )
     raise SystemExit(0)
-suite_end = str(variant_suite.get("end_date") or "")
-if expected_end and suite_end != expected_end:
-    raise SystemExit(f"snapshot variant_suite end_date {suite_end} != expected {expected_end}")
-variants = data.get("variants")
-if not isinstance(variants, list) or not variants or not isinstance(variants[0], dict):
-    raise SystemExit("snapshot variants missing")
-declared_variant_count = variant_suite.get("variant_count")
-if not isinstance(declared_variant_count, int) or declared_variant_count < 100:
-    raise SystemExit("snapshot variant_suite variant_count < 100")
-if len(variants) < 100:
-    raise SystemExit("snapshot variants < 100")
-first = variants[0]
-previous_holdings_date = str(first.get("previous_holdings_date") or "")
-if expected_end and first.get("holdings_date") != expected_end:
-    raise SystemExit("snapshot first variant holdings_date mismatch")
-if previous_holdings_date and previous_holdings_date not in available:
-    raise SystemExit("snapshot available_dates missing previous_holdings_date")
-if not first.get("adjustments"):
-    raise SystemExit("snapshot first variant adjustments empty")
-
-def _is_finite(value):
-    try:
-        return math.isfinite(float(value))
-    except (TypeError, ValueError):
-        return False
-
-technical_evidence = first.get("technical_evidence")
-if not isinstance(technical_evidence, list) or not any(
-    isinstance(evidence, dict)
-    and all(
-        not isinstance(evidence.get(key), bool)
-        and _is_finite(evidence.get(key))
-        for key in ("macd_hist", "kdj_j", "volume_ratio", "atr_pct")
-    )
-    for evidence in technical_evidence
-):
-    raise SystemExit("snapshot first variant technical_evidence incomplete")
 for key in ("candidates", "debates", "summaries", "messages"):
     value = data.get(key)
     if value is not None and not isinstance(value, list):
