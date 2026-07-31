@@ -1337,6 +1337,16 @@ def _intraday_source_provenance() -> dict[str, object]:
     return {}
 
 
+def _intraday_failure_summary() -> str:
+    state = _read_json_object(
+        _runtime_json_path("AQSP_INTRADAY_STATUS", "data/intraday_refresh_status.json")
+    )
+    if str(state.get("status") or "").strip() not in {"failed", "error"}:
+        return ""
+    reason = _text(state.get("reason") or state.get("detail"))
+    return f"盘中任务失败：{reason}" if reason else "盘中任务失败：未记录原因"
+
+
 def _snapshot_source(
     runtime: Any, task_view: Any, *, selected_date: str
 ) -> HomeSnapshotSource:
@@ -1996,6 +2006,7 @@ def build_home_snapshot(
         shown_recommendation_count = 0
     phases = _phase_snapshot(provider, selected_date)
     live_phase_produced = any(phase.status != "未产出" for phase in phases)
+    intraday_failure_summary = _intraday_failure_summary()
     debate_missing = bool(getattr(payload, "debates", ()) or ()) and not debates
     raw_summaries = (
         "委员会结论缺少当前候选映射，已隐藏" if debate_missing else "",
@@ -2007,7 +2018,9 @@ def build_home_snapshot(
         getattr(task_view, "headline", ""),
     )
     if not candidates:
-        if messages and not live_phase_produced:
+        if intraday_failure_summary:
+            empty_day_summary = intraday_failure_summary
+        elif messages and not live_phase_produced:
             empty_day_summary = "今日消息已更新；实时行情任务尚未产出，未使用历史候选"
         elif messages:
             empty_day_summary = "今日消息已更新；实时行情筛选暂无候选，未使用历史结果"
