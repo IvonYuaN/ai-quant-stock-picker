@@ -992,6 +992,7 @@ def test_bt_task_propagates_intraday_runner_failure_to_cron(
             "AQSP_RUNTIME_OVERLAY_MANIFEST": str(manifest),
             "AQSP_GIT_REMOTE": "origin",
             "AQSP_INTRADAY_MIDDAY_BRIDGE": "false",
+            "AQSP_INTRADAY_ENFORCE_DISPATCH_WINDOW": "false",
         },
         check=False,
         capture_output=True,

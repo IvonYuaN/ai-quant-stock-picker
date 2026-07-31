@@ -571,6 +571,9 @@ should_bridge_intraday_to_midday() {
 }
 
 ensure_intraday_dispatch_window() {
+    if ! is_truthy "${AQSP_INTRADAY_ENFORCE_DISPATCH_WINDOW:-true}"; then
+        return 0
+    fi
     local now_hm
     now_hm=$((10#$(date +%H%M)))
     if { [ "$now_hm" -ge 935 ] && [ "$now_hm" -le 1130 ]; } || \
