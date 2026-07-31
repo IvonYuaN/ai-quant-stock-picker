@@ -405,6 +405,10 @@ case "$COMMIT" in [0-9a-f][0-9a-f][0-9a-f][0-9a-f]*) ;; *) fail "invalid commit:
 RELEASE_DIR="${RELEASES_ROOT}/${COMMIT}"
 log "deploy commit=$COMMIT branch=$BRANCH release=$RELEASE_DIR"
 
+if [ "$SKIP_FRONTEND_BUILD" = "true" ] && { [ ! -d "$RELEASE_DIR/frontend/node_modules" ] || [ ! -d "$RELEASE_DIR/frontend/dist" ]; }; then
+    fail "--skip-frontend-build requires an existing release with complete frontend artifacts"
+fi
+
 if [ ! -d "$RELEASE_DIR" ]; then
     STAGE_DIR="$(mktemp -d "${RELEASES_ROOT}/.stage-${COMMIT}.XXXXXX")"
     (cd "$REPO_ROOT" && git archive --format=tar "$COMMIT") | tar -x -C "$STAGE_DIR"
