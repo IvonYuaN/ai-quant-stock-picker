@@ -214,6 +214,47 @@ def test_update_sqlite_daily_counts_only_requested_symbols_for_coverage(
     assert summary.empty_response_symbols == 1
 
 
+def test_update_sqlite_daily_skips_stock_list_sync_for_explicit_batch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    class FakeBaostock:
+        def login(self):
+            return type("Login", (), {"error_code": "0", "error_msg": ""})()
+
+        def logout(self) -> None:
+            return None
+
+    db = tmp_path / "astocks_raw.db"
+    monkeypatch.setattr(update_sqlite_daily, "_load_baostock", FakeBaostock)
+    monkeypatch.setattr(
+        update_sqlite_daily,
+        "_sync_stock_list_compat",
+        lambda *_args, **_kwargs: pytest.fail(
+            "explicit batch must not sync stock list"
+        ),
+    )
+    seen: list[str] = []
+
+    def fake_query(**kwargs):
+        seen.append(kwargs["ts_code"])
+        return "0", []
+
+    monkeypatch.setattr(update_sqlite_daily, "_query_history_rows", fake_query)
+
+    summary = update_sqlite_daily.update_sqlite_daily(
+        db,
+        target_day=date(2026, 6, 18),
+        sleep_seconds=0.0,
+        limit=0,
+        symbols=("600000", "000001.SZ", "300750"),
+        price_mode="raw",
+        require_target_coverage=False,
+    )
+
+    assert seen == ["000001.SZ", "300750.SZ", "600000.SH"]
+    assert summary.total_symbols == 3
+
+
 def test_update_sqlite_daily_uses_offset_and_defers_coverage_for_bounded_batch(
     monkeypatch, tmp_path: Path
 ) -> None:

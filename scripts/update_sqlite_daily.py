@@ -92,6 +92,22 @@ def _normalize_requested_symbol(raw: str) -> str:
     return text
 
 
+def _requested_ts_codes(symbols: tuple[str, ...]) -> list[str]:
+    """Return explicit batch symbols in the database's canonical format."""
+    normalized: set[str] = set()
+    for item in symbols:
+        requested = _normalize_requested_symbol(item)
+        if not requested:
+            continue
+        if "." in requested:
+            normalized.add(requested)
+        elif requested.startswith("6"):
+            normalized.add(f"{requested}.SH")
+        elif requested.startswith(("0", "3")):
+            normalized.add(f"{requested}.SZ")
+    return sorted(normalized)
+
+
 def _bs_code(ts_code: str) -> str:
     code, market = ts_code.split(".")
     return f"{market.lower()}.{code}"
@@ -491,19 +507,13 @@ def update_sqlite_daily(
         with sqlite3.connect(db_path) as conn:
             configure_sqlite_connection(conn)
             ensure_schema(conn)
-            all_symbols = _sync_stock_list_compat(
-                conn,
-                bs,
-                preserve_existing=True,
-            )
-            requested = {_normalize_requested_symbol(item) for item in symbols if item}
-            selected_symbols = [
-                ts_code
-                for ts_code in all_symbols
-                if not requested
-                or ts_code in requested
-                or ts_code.split(".")[0] in requested
-            ]
+            selected_symbols = _requested_ts_codes(symbols)
+            if not selected_symbols:
+                selected_symbols = _sync_stock_list_compat(
+                    conn,
+                    bs,
+                    preserve_existing=True,
+                )
             safe_offset = max(0, int(offset))
             if safe_offset:
                 selected_symbols = selected_symbols[safe_offset:]
