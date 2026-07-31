@@ -252,8 +252,10 @@ def test_immutable_release_deploy_script_covers_full_server_activation_chain() -
     assert "available_dates" in script
     assert "expected_end" in script
     assert "latest_trade_date" in script
-    assert "previous_holdings_date" in script
-    assert "technical_evidence" in script
+    assert "check_variant_results.py" in script
+    assert "变体产物未通过校验；release 已切换" in script
+    assert "previous_holdings_date" not in script
+    assert "technical_evidence" not in script
     assert "check_runtime_storage.py" in script
     assert "--apply --json" in script
     assert "check_scheduler.py" in script
