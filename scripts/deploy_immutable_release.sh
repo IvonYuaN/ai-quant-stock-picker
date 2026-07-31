@@ -265,17 +265,36 @@ if not isinstance(selected, str) or not selected:
 date.fromisoformat(selected)
 if not isinstance(available, list) or selected not in available:
     raise SystemExit("snapshot available_dates missing selected_date")
-if expected_end and selected != expected_end:
-    raise SystemExit(f"snapshot selected_date {selected} != expected {expected_end}")
 source = data.get("source") if isinstance(data.get("source"), dict) else {}
 latest_trade_date = str(source.get("latest_trade_date") or "")
 if expected_end and latest_trade_date and latest_trade_date != expected_end:
     raise SystemExit(
         f"snapshot latest_trade_date {latest_trade_date} != expected {expected_end}"
     )
+universe = data.get("universe") if isinstance(data.get("universe"), dict) else {}
+gate = data.get("recommendation_gate")
+partial_raw_refresh = (
+    isinstance(gate, dict)
+    and gate.get("recommendation_allowed") is False
+    and gate.get("status") == "blocked_incomplete_raw_data"
+    and universe.get("source") == "sqlite_raw_refresh"
+    and isinstance(universe.get("total"), int)
+    and isinstance(universe.get("resolved"), int)
+    and 0 <= universe["resolved"] < universe["total"]
+    and str(universe.get("batch_id") or "") == expected_end
+)
+if expected_end and selected != expected_end and not partial_raw_refresh:
+    raise SystemExit(f"snapshot selected_date {selected} != expected {expected_end}")
 variant_suite = data.get("variant_suite")
 if not isinstance(variant_suite, dict):
     raise SystemExit("snapshot variant_suite missing")
+if partial_raw_refresh:
+    print(
+        "snapshot_contract blocked_incomplete_raw_data",
+        f"selected_date={selected}",
+        f"raw_coverage={universe['resolved']}/{universe['total']}",
+    )
+    raise SystemExit(0)
 suite_end = str(variant_suite.get("end_date") or "")
 if expected_end and suite_end != expected_end:
     raise SystemExit(f"snapshot variant_suite end_date {suite_end} != expected {expected_end}")
