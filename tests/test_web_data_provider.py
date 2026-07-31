@@ -6191,13 +6191,13 @@ def test_dashboard_data_provider_live_view_caps_intraday_csv_and_exposes_card_ev
         "actionable",
         "actionable",
         "actionable",
+        "actionable",
+        "actionable",
+        "actionable",
+        "actionable",
+        "actionable",
+        "actionable",
         "blocked",
-        "watch",
-        "watch",
-        "watch",
-        "watch",
-        "watch",
-        "watch",
     ]
     assert len(spotlights) == 10
     assert all("新鲜度: 新鲜" in item.review_meta for item in spotlights)

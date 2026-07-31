@@ -219,6 +219,8 @@ def _candidate_from_row(
 
 def _candidate_status(row: Mapping[str, Any]) -> tuple[str, str]:
     blocker = str(row.get("candidate_blocker") or "").strip()
+    if blocker.lower() in {"nan", "none", "null"}:
+        blocker = ""
     candidate_status = str(row.get("candidate_status") or "").strip()
     action = str(row.get("portfolio_action") or "").strip()
     quality_gate_action = str(row.get("quality_gate_action") or "").strip()

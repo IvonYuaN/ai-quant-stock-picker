@@ -217,6 +217,7 @@ class TestMonitorChecker:
         monkeypatch.setattr(
             "aqsp.monitor.checker.today_shanghai", lambda: date(2026, 7, 29)
         )
+        monkeypatch.delenv("AQSP_SQLITE_DB_PATH", raising=False)
         checker = MonitorChecker(config_path=str(sample_config))
 
         result = checker._check_raw_market_freshness(
