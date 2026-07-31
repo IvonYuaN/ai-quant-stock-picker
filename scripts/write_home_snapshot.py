@@ -317,6 +317,8 @@ def _candidate_technical_metrics(
         ("ret20_pct", "20日动能", "{:+.2f}%"),
         ("volume_ratio", "量比", "{:.2f}x"),
         ("rsi12", "RSI12", "{:.1f}"),
+        ("macd_hist", "MACD柱", "{:+.3f}"),
+        ("kdj_j", "KDJ-J", "{:.1f}"),
         ("bias20_pct", "MA20偏离", "{:+.2f}%"),
         ("stop_loss", "纸面止损", "{:.2f}"),
         ("take_profit", "纸面止盈", "{:.2f}"),
@@ -419,6 +421,7 @@ def _snapshot_candidates(payload: Any) -> tuple[HomeSnapshotCandidate, ...]:
     )
     recommendation_labels = (
         "纸面复核",
+        "实时推荐",
         "优先复核",
         "上调优先级",
         "第一顺位",
@@ -1711,14 +1714,16 @@ def _universe_snapshot() -> HomeSnapshotUniverse:
     )
 
 
-def _variant_results_payload() -> dict[str, Any] | None:
+def _variant_results_payload() -> tuple[dict[str, Any] | None, str]:
     path = _runtime_json_path(
         "AQSP_VARIANT_RESULTS",
         "data/runtime/variant_results.json",
     )
     payload = _read_json_object(path)
-    if not payload or payload.get("initial_cash") != 100_000.0:
-        return None
+    if not payload:
+        return None, "变体产物不存在。"
+    if payload.get("initial_cash") != 100_000.0:
+        return None, "变体初始资金不符合 100000 元纸面账户契约。"
     universe = payload.get("universe")
     variants = payload.get("variants")
     if (
@@ -1728,7 +1733,10 @@ def _variant_results_payload() -> dict[str, Any] | None:
         or len(variants) < MIN_HOME_VARIANT_COUNT
         or int(universe.get("selected_symbols") or 0) < MIN_HOME_VARIANT_SYMBOLS
     ):
-        return None
+        return (
+            None,
+            "变体产物未达到 schema、100 个变体或 121 只合格股票的最低契约。",
+        )
     try:
         validate_variant_payload(
             payload,
@@ -1736,21 +1744,21 @@ def _variant_results_payload() -> dict[str, Any] | None:
             min_variants=MIN_HOME_VARIANT_COUNT,
             min_symbols=MIN_HOME_VARIANT_SYMBOLS,
         )
-    except (TypeError, ValueError):
-        return None
-    return payload
+    except (TypeError, ValueError) as exc:
+        return None, f"变体数据契约校验失败：{exc}"
+    return payload, ""
 
 
 def _variant_suite_snapshot() -> HomeSnapshotVariantSuite:
     """Read bounded metadata from the isolated experiment artifact."""
-    payload = _variant_results_payload()
+    payload, error = _variant_results_payload()
     if not payload:
         universe = _universe_snapshot()
         if universe.last_error:
             return HomeSnapshotVariantSuite(
                 last_error=f"变体等待：{universe.last_error}"
             )
-        return HomeSnapshotVariantSuite(last_error="变体结果尚未生成或未通过数据契约。")
+        return HomeSnapshotVariantSuite(last_error=error)
     universe = payload.get("universe")
     if not isinstance(universe, dict):
         universe = {}
@@ -1775,7 +1783,7 @@ def _variant_suite_snapshot() -> HomeSnapshotVariantSuite:
 
 def _variant_snapshot() -> tuple[HomeSnapshotVariant, ...]:
     """Read only bounded summaries from the isolated experiment artifact."""
-    payload = _variant_results_payload()
+    payload, _ = _variant_results_payload()
     if not payload:
         return ()
     raw_variants = payload.get("variants")

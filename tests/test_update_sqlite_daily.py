@@ -140,6 +140,10 @@ def test_update_sqlite_daily_counts_target_day_coverage(
             "INSERT OR REPLACE INTO stocks(ts_code, name) VALUES(?, ?)",
             ("000001.SZ", "SZ Bank"),
         )
+        conn.execute(
+            "INSERT OR REPLACE INTO daily_qfq(ts_code, trade_date, close) VALUES(?, ?, ?)",
+            ("688001.SH", "20260618", 1.0),
+        )
         conn.commit()
         return ["000001.SZ", "600000.SH"]
 
@@ -168,6 +172,46 @@ def test_update_sqlite_daily_counts_target_day_coverage(
     assert summary.total_symbols == 2
     assert summary.raw_max_trade_date == date(2026, 6, 18)
     assert summary.coverage_error is None
+
+
+def test_update_sqlite_daily_counts_only_requested_symbols_for_coverage(
+    monkeypatch, tmp_path: Path
+) -> None:
+    class FakeBaostock:
+        def login(self):
+            return type("Login", (), {"error_code": "0", "error_msg": ""})()
+
+        def logout(self) -> None:
+            return None
+
+    db = tmp_path / "astocks_raw.db"
+    monkeypatch.setattr(update_sqlite_daily, "_load_baostock", FakeBaostock)
+    monkeypatch.setattr(
+        update_sqlite_daily,
+        "_sync_stock_list_compat",
+        lambda conn, _bs, preserve_existing=True: ["600000.SH"],
+    )
+    monkeypatch.setattr(
+        update_sqlite_daily, "_query_history_rows", lambda **_kwargs: ("0", [])
+    )
+    with sqlite3.connect(db) as conn:
+        update_sqlite_daily.ensure_schema(conn)
+        conn.execute(
+            "INSERT INTO daily_qfq(ts_code, trade_date, close) VALUES(?, ?, ?)",
+            ("688001.SH", "20260618", 1.0),
+        )
+
+    summary = update_sqlite_daily.update_sqlite_daily(
+        db,
+        target_day=date(2026, 6, 18),
+        sleep_seconds=0.0,
+        limit=0,
+        price_mode="raw",
+        require_target_coverage=False,
+    )
+
+    assert summary.target_day_symbol_count == 0
+    assert summary.empty_response_symbols == 1
 
 
 def test_update_sqlite_daily_uses_offset_and_defers_coverage_for_bounded_batch(

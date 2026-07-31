@@ -114,12 +114,17 @@ def _write_cursor(
     except (OSError, json.JSONDecodeError):
         pass
     target_day_symbols = list(dict.fromkeys(existing_symbols + (batch_symbols or [])))
+    eligible_covered_count = len(target_day_symbols)
     payload = {
         "target_day": target_day.isoformat(),
         "offset": next_offset if next_offset < universe_size else 0,
         "universe_size": universe_size,
         "updated_at": now_shanghai().isoformat(timespec="seconds"),
         "target_day_symbols": target_day_symbols,
+        "eligible_covered_count": eligible_covered_count,
+        "eligible_coverage_pct": (
+            eligible_covered_count / universe_size if universe_size else 0.0
+        ),
         "last_batch": asdict(summary),
     }
     atomic_write_text(path, json.dumps(payload, ensure_ascii=False, default=str) + "\n")

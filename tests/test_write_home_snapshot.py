@@ -101,6 +101,8 @@ def _candidate(symbol: str, score: float) -> SimpleNamespace:
         ret20_pct=12.75,
         volume_ratio=1.6,
         rsi12=64.2,
+        macd_hist=0.1234,
+        kdj_j=58.6,
         bias20_pct=2.1,
         stop_loss=11.1,
         take_profit=14.8,
@@ -601,6 +603,8 @@ def test_write_home_snapshot_builds_bounded_advisory_only_payload(monkeypatch) -
         ("20日动能", "+12.75%"),
         ("量比", "1.60x"),
         ("RSI12", "64.2"),
+        ("MACD柱", "+0.123"),
+        ("KDJ-J", "58.6"),
         ("MA20偏离", "+2.10%"),
         ("纸面止损", "11.10"),
         ("纸面止盈", "14.80"),
@@ -633,6 +637,31 @@ def test_recommendation_gate_keeps_quote_candidates_when_news_refresh_fails() ->
 
     assert gate.recommendation_allowed is True
     assert gate.reasons == ()
+
+
+def test_snapshot_candidates_keeps_live_recommendation_with_technical_evidence() -> (
+    None
+):
+    live = _candidate("600010", 88.0)
+    live.action_label = "实时推荐"
+    payload = SimpleNamespace(
+        task_view=SimpleNamespace(detail_cards=(live,)), spotlights=()
+    )
+
+    candidates = write_home_snapshot._snapshot_candidates(payload)
+
+    assert [candidate.symbol for candidate in candidates] == ["600010"]
+    assert any(metric.label == "MACD柱" for metric in candidates[0].technical_metrics)
+
+
+def test_variant_suite_reports_missing_artifact_reason(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("AQSP_VARIANT_RESULTS", str(tmp_path / "missing.json"))
+
+    suite = write_home_snapshot._variant_suite_snapshot()
+
+    assert suite.last_error == "变体产物不存在。"
 
 
 def test_snapshot_candidate_maps_freshness_label_when_status_is_missing() -> None:

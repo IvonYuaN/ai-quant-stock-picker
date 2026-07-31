@@ -35,6 +35,7 @@ monitors:
       state_path: sqlite-refresh-cursor.json
       min_universe_size: 1000
       min_target_day_symbols: 300
+      min_coverage_ratio: 0.98
     severity: "critical"
     
   - name: "win_rate_drop"

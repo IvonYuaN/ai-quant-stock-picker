@@ -44,6 +44,8 @@ class UpdateSummary:
     coverage_error: str | None = None
     processed_symbols: int = 0
     budget_exhausted: bool = False
+    already_current_symbols: int = 0
+    empty_response_symbols: int = 0
 
 
 def _parse_trade_date(raw: object) -> date | None:
@@ -386,21 +388,30 @@ def _insert_bar(conn: sqlite3.Connection, ts_code: str, row: list[str]) -> bool:
     return True
 
 
-def _count_target_day_symbols(conn: sqlite3.Connection, target_day: date) -> int:
+def _count_target_day_symbols(
+    conn: sqlite3.Connection,
+    target_day: date,
+    symbols: list[str],
+) -> int:
+    if not symbols:
+        return 0
+    placeholders = ",".join("?" for _ in symbols)
     row = conn.execute(
-        "SELECT COUNT(DISTINCT ts_code) FROM daily_qfq WHERE trade_date = ?",
-        (_to_compact(target_day),),
+        "SELECT COUNT(DISTINCT ts_code) FROM daily_qfq "
+        f"WHERE trade_date = ? AND ts_code IN ({placeholders})",
+        (_to_compact(target_day), *symbols),
     ).fetchone()
     return int(row[0] or 0) if row else 0
 
 
-def _raw_max_trade_date(conn: sqlite3.Connection) -> date | None:
+def _raw_max_trade_date(conn: sqlite3.Connection, symbols: list[str]) -> date | None:
+    if not symbols:
+        return None
+    placeholders = ",".join("?" for _ in symbols)
     row = conn.execute(
-        """
-        SELECT MAX(CAST(trade_date AS TEXT))
-        FROM daily_qfq
-        WHERE trade_date != 'SKIP'
-        """
+        "SELECT MAX(CAST(trade_date AS TEXT)) FROM daily_qfq "
+        f"WHERE trade_date != 'SKIP' AND ts_code IN ({placeholders})",
+        tuple(symbols),
     ).fetchone()
     return _parse_trade_date(row[0]) if row and row[0] else None
 
@@ -457,6 +468,8 @@ def update_sqlite_daily(
     updated_rows = 0
     skipped = 0
     failed = 0
+    already_current = 0
+    empty_response = 0
     total_symbols = 0
     try:
         with sqlite3.connect(db_path) as conn:
@@ -508,6 +521,7 @@ def update_sqlite_daily(
                 )
                 if fetch_start_day > target_day:
                     skipped += 1
+                    already_current += 1
                     continue
                 error_code, rows = _query_history_rows_with_retry(
                     bs=bs,
@@ -528,6 +542,7 @@ def update_sqlite_daily(
                     updated_rows += inserted
                 else:
                     skipped += 1
+                    empty_response += 1
                 if index % 200 == 0:
                     conn.commit()
                     print(
@@ -537,8 +552,10 @@ def update_sqlite_daily(
                 if sleep_seconds > 0:
                     time.sleep(sleep_seconds)
             conn.commit()
-            target_day_symbol_count = _count_target_day_symbols(conn, target_day)
-            raw_max_trade_date = _raw_max_trade_date(conn)
+            target_day_symbol_count = _count_target_day_symbols(
+                conn, target_day, selected_symbols
+            )
+            raw_max_trade_date = _raw_max_trade_date(conn, selected_symbols)
             coverage_error = (
                 _target_coverage_error(
                     target_day=target_day,
@@ -565,6 +582,8 @@ def update_sqlite_daily(
         coverage_error=coverage_error,
         processed_symbols=processed_symbols,
         budget_exhausted=budget_exhausted,
+        already_current_symbols=already_current,
+        empty_response_symbols=empty_response,
     )
 
 

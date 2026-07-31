@@ -288,6 +288,9 @@ class MonitorChecker:
         )
         min_universe_size = max(1, int(params.get("min_universe_size", 1)))
         min_target_day_symbols = max(1, int(params.get("min_target_day_symbols", 1)))
+        min_coverage_ratio = min(
+            1.0, max(0.0, float(params.get("min_coverage_ratio", 1.0)))
+        )
         if not path.exists():
             return MonitorResult(
                 name="raw_market_coverage",
@@ -300,8 +303,10 @@ class MonitorChecker:
             payload = json.loads(path.read_text(encoding="utf-8"))
             target_day = str(payload["target_day"])
             universe_size = int(payload["universe_size"])
-            last_batch = payload["last_batch"]
-            target_count = int(last_batch["target_day_symbol_count"])
+            symbols = payload["target_day_symbols"]
+            if not isinstance(symbols, list):
+                raise ValueError("target_day_symbols must be a list")
+            target_count = len({str(symbol).strip() for symbol in symbols if symbol})
         except (KeyError, TypeError, ValueError, json.JSONDecodeError, OSError) as exc:
             return MonitorResult(
                 name="raw_market_coverage",
@@ -311,10 +316,12 @@ class MonitorChecker:
                 details={"state_path": str(path), "error": str(exc)},
             )
         expected_day = today_shanghai().isoformat()
+        coverage_ratio = target_count / universe_size if universe_size else 0.0
         insufficient = (
             target_day != expected_day
             or universe_size < min_universe_size
             or target_count < min_target_day_symbols
+            or coverage_ratio < min_coverage_ratio
         )
         return MonitorResult(
             name="raw_market_coverage",
@@ -329,8 +336,10 @@ class MonitorChecker:
                 "expected_day": expected_day,
                 "universe_size": universe_size,
                 "target_day_symbol_count": target_count,
+                "coverage_ratio": coverage_ratio,
                 "min_universe_size": min_universe_size,
                 "min_target_day_symbols": min_target_day_symbols,
+                "min_coverage_ratio": min_coverage_ratio,
             },
         )
 
