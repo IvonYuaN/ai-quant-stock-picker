@@ -286,6 +286,7 @@ if ! [[ "$INTRADAY_BATCH_RESOLVE_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] || \
     INTRADAY_BATCH_RESOLVE_TIMEOUT_SECONDS="45"
 fi
 INTRADAY_CURSOR_PATH="$(resolve_path "${AQSP_INTRADAY_CURSOR_PATH:-data/runtime/intraday_universe_cursor.json}")"
+INTRADAY_UNIVERSE_CACHE="$(resolve_path "${AQSP_INTRADAY_UNIVERSE_CACHE:-data/runtime/intraday_live_universe.json}")"
 INTRADAY_BATCH_ACTIVE="false"
 INTRADAY_BATCH_SYMBOLS=""
 INTRADAY_BATCH_ID=""
@@ -1619,18 +1620,32 @@ if is_truthy "$INTRADAY_BATCH_SCAN" && \
         --source "$INTRADAY_SOURCE" \
         --batch-size "$INTRADAY_BATCH_SIZE" \
         --min-avg-amount "$INTRADAY_MIN_AVG_AMOUNT" \
-        --cursor "$INTRADAY_CURSOR_PATH" 2>>"$RESULT_LOG")"
+        --cursor "$INTRADAY_CURSOR_PATH" \
+        --cache-path "$INTRADAY_UNIVERSE_CACHE" 2>>"$RESULT_LOG")"
     BATCH_RESOLVE_EXIT_CODE=$?
     set -e
     if [ "$BATCH_RESOLVE_EXIT_CODE" -ne 0 ]; then
         if [ "$BATCH_RESOLVE_EXIT_CODE" -eq 124 ]; then
-            log "[ERROR] 盘中股票池解析超时(${INTRADAY_BATCH_RESOLVE_TIMEOUT_SECONDS}s)；不退回全量重策略"
-            write_intraday_status "failed" "universe_resolution_timeout；实时股票池解析超时" "$BATCH_RESOLVE_EXIT_CODE"
+            log "盘中股票池解析超时(${INTRADAY_BATCH_RESOLVE_TIMEOUT_SECONDS}s)；尝试已校验名单缓存"
+            set +e
+            INTRADAY_BATCH_SYMBOLS="$("${PYTHON_BIN}" "${PROJECT_ROOT}/scripts/prepare_intraday_batch.py" \
+                --batch-size "$INTRADAY_BATCH_SIZE" \
+                --cursor "$INTRADAY_CURSOR_PATH" \
+                --cache-path "$INTRADAY_UNIVERSE_CACHE" \
+                --cache-only 2>>"$RESULT_LOG")"
+            BATCH_CACHE_EXIT_CODE=$?
+            set -e
+            if [ "$BATCH_CACHE_EXIT_CODE" -ne 0 ]; then
+                log "[ERROR] 实时名单缓存不可用；不退回全量重策略"
+                write_intraday_status "failed" "universe_resolution_timeout；实时股票池解析超时且缓存不可用" "$BATCH_RESOLVE_EXIT_CODE"
+                exit "$BATCH_RESOLVE_EXIT_CODE"
+            fi
+            log "实时名单超时，已使用校验通过的缓存批次"
         else
             log "[ERROR] 无法准备盘中股票批次；不退回全量重策略，避免再次阻塞服务器"
             write_intraday_status "failed" "universe_resolution_failed；实时股票池解析失败" "$BATCH_RESOLVE_EXIT_CODE"
+            exit "$BATCH_RESOLVE_EXIT_CODE"
         fi
-        exit "$BATCH_RESOLVE_EXIT_CODE"
     fi
     if [ -z "$INTRADAY_BATCH_SYMBOLS" ]; then
         log "[ERROR] 盘中股票批次为空；不运行重策略"

@@ -128,6 +128,10 @@ if args and Path(args[0]).name == "prepare_intraday_batch.py":
         call = "commit" if "--commit" in args else "fail" if "--fail" in args else "select"
         with Path(calls_path).open("a", encoding="utf-8") as handle:
             handle.write(call + "\\n")
+    if "--cache-only" in args:
+        if os.getenv("AQSP_TEST_CACHE_BATCH"):
+            print(os.environ["AQSP_TEST_CACHE_BATCH"])
+        raise SystemExit(int(os.getenv("AQSP_TEST_CACHE_EXIT_CODE", "0")))
     if os.getenv("AQSP_TEST_PREPARE_BATCH") and "--commit" not in args:
         print("600000,000001")
     raise SystemExit(0)
@@ -1032,6 +1036,7 @@ def test_intraday_batch_resolution_stops_when_preparation_times_out(
             "AQSP_TEST_REPO": str(PROJECT_ROOT),
             "AQSP_TEST_ARGS": str(args_path),
             "AQSP_TEST_TIMEOUT_PREPARE_EXIT_CODE": "124",
+            "AQSP_TEST_CACHE_EXIT_CODE": "1",
             "AQSP_INTRADAY_REQUIRE_MARKET_HOURS": "false",
             "AQSP_INTRADAY_DEBATE_BACKFILL": "false",
             "AQSP_HOME_SNAPSHOT_ENABLED": "false",
@@ -1055,7 +1060,49 @@ def test_intraday_batch_resolution_stops_when_preparation_times_out(
     assert status["status"] == "failed"
     assert status["exit_code"] == 124
     assert "universe_resolution_timeout" in status["reason"]
+    assert "缓存不可用" in status["reason"]
     assert not args_path.exists()
+
+
+def test_intraday_batch_resolution_uses_validated_cache_after_timeout(
+    tmp_path: Path,
+) -> None:
+    venv_bin = tmp_path / ".venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    utility_bin = tmp_path / "bin"
+    utility_bin.mkdir()
+    _write_timeout_stub(utility_bin / "timeout")
+    args_path = tmp_path / "cli_args.json"
+    _write_python_stub(venv_bin / "python3", PROJECT_ROOT, args_path)
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "prepare_intraday_batch.py").write_text(
+        "# test stub\n", encoding="utf-8"
+    )
+    env = os.environ.copy()
+    env.update(
+        {
+            "AQSP_PROJECT_ROOT": str(tmp_path),
+            "AQSP_TEST_REPO": str(PROJECT_ROOT),
+            "AQSP_TEST_ARGS": str(args_path),
+            "AQSP_TEST_TIMEOUT_PREPARE_EXIT_CODE": "124",
+            "AQSP_TEST_CACHE_BATCH": "600000,000001",
+            "AQSP_INTRADAY_REQUIRE_MARKET_HOURS": "false",
+            "AQSP_INTRADAY_DEBATE_BACKFILL": "false",
+            "AQSP_HOME_SNAPSHOT_ENABLED": "false",
+            "PATH": f"{utility_bin}:{os.environ['PATH']}",
+        }
+    )
+    result = subprocess.run(
+        ["bash", str(SCRIPT_PATH)],
+        cwd=PROJECT_ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "已使用校验通过的缓存批次" in result.stdout
 
 
 def test_intraday_batch_does_not_commit_when_output_metadata_is_partial(
