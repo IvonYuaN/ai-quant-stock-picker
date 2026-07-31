@@ -1474,6 +1474,7 @@ def _recommendation_gate(
         universe is not None
         and universe.source == "sqlite_raw_refresh"
         and universe.total > 0
+        and universe.batch_active
         and universe.resolved < universe.total
     ):
         return HomeSnapshotRecommendationGate(
@@ -1624,9 +1625,16 @@ def _universe_snapshot() -> HomeSnapshotUniverse:
         batch_size = int(batch.get("processed_symbols") or 0)
         coverage_pct = (len(covered_symbols) / total) if total else 0.0
         coverage_error = _text(batch.get("coverage_error"))
+        cycle_complete = (
+            bool(covered_symbols) and int(raw_payload.get("offset") or 0) == 0
+        )
         if total and len(covered_symbols) < total and not coverage_error:
+            missing = total - len(covered_symbols)
             coverage_error = (
-                f"原始日线仅覆盖 {len(covered_symbols)}/{total}；全市场刷新尚未完成"
+                f"原始日线当日可用 {len(covered_symbols)}/{total}；"
+                f"{missing} 只未返回当日日线，已排除"
+                if cycle_complete
+                else f"原始日线仅覆盖 {len(covered_symbols)}/{total}；全市场刷新尚未完成"
             )
         return HomeSnapshotUniverse(
             total=total,
@@ -1634,7 +1642,9 @@ def _universe_snapshot() -> HomeSnapshotUniverse:
             screened=len(covered_symbols),
             max_universe=0,
             source="sqlite_raw_refresh",
-            batch_active=bool(total and len(covered_symbols) < total),
+            batch_active=bool(
+                total and len(covered_symbols) < total and not cycle_complete
+            ),
             batch_id=_text(raw_payload.get("target_day")),
             batch_size=batch_size,
             cycle_id=(int(raw_payload.get("offset") or 0) // batch_size + 1)

@@ -331,6 +331,7 @@ def test_recommendation_gate_blocks_partial_raw_refresh_coverage() -> None:
             total=4464,
             resolved=122,
             source="sqlite_raw_refresh",
+            batch_active=True,
             last_error="原始日线仅覆盖 122/4464；全市场刷新尚未完成",
         ),
     )
@@ -338,6 +339,27 @@ def test_recommendation_gate_blocks_partial_raw_refresh_coverage() -> None:
     assert gate.recommendation_allowed is False
     assert gate.status == "blocked_incomplete_raw_data"
     assert gate.reasons == ("原始日线仅覆盖 122/4464；全市场刷新尚未完成",)
+
+
+def test_recommendation_gate_allows_completed_raw_refresh_with_excluded_symbols() -> (
+    None
+):
+    gate = write_home_snapshot._recommendation_gate(
+        provider=SimpleNamespace(paper_ledger_path=None),
+        runtime=SimpleNamespace(),
+        source=SimpleNamespace(status="run_completed", lag_days=0),
+        message_status="可用",
+        evaluated_at=datetime(2026, 7, 30, 18, tzinfo=write_home_snapshot.SHANGHAI_TZ),
+        universe=write_home_snapshot.HomeSnapshotUniverse(
+            total=4466,
+            resolved=4399,
+            source="sqlite_raw_refresh",
+            batch_active=False,
+            last_error="原始日线当日可用 4399/4466；67 只未返回当日日线，已排除",
+        ),
+    )
+
+    assert gate.status != "blocked_incomplete_raw_data"
 
 
 def test_variant_suite_snapshot_hides_artifact_without_current_technical_evidence(
