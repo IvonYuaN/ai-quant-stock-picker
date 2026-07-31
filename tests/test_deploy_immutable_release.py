@@ -19,6 +19,7 @@ def test_deploy_immutable_release_updates_tracking_ref_when_deploying_branch() -
     assert "technical_evidence incomplete" in script
     assert "blocked_incomplete_raw_data" in script
     assert "raw_coverage=" in script
+    assert "latest_trade_date missing outside blocked raw refresh" in script
     assert script.index("def _is_finite(value):") < script.index(
         'technical_evidence = first.get("technical_evidence")'
     )
