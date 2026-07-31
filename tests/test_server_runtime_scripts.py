@@ -1944,7 +1944,7 @@ def test_cron_installer_schedules_variant_refresh_after_coldstart() -> None:
     )
 
     assert "AQSP_ENABLE_VARIANT_REFRESH_CRON" in script
-    assert "0 21 * * 1-5" in script
+    assert "30 22 * * 1-5" in script
     assert "bt_task.sh variant-refresh" in script
 
 

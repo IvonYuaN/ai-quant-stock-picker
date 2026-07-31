@@ -8,7 +8,7 @@
 # 4. 北京时间 08:35 和周末 09:05 运行消息面雷达
 # 5. 北京时间 18:00 运行收盘同步 + 全量跑批
 # 6. 北京时间 19:40 运行冷启动补样本，避开收盘主链路
-# 7. 北京时间 21:00 运行受限变体刷新
+# 7. 北京时间 22:30 运行受限变体刷新，避开最后一批收盘研究
 # 8. 北京时间每 15 分钟运行一次监控
 
 set -euo pipefail
@@ -55,7 +55,7 @@ emit_jobs() {
     fi
 
     if [[ "${ENABLE_VARIANT_REFRESH,,}" =~ ^(1|true|yes|on)$ ]]; then
-        echo '0 21 * * 1-5 /bin/bash '"${PROJECT_ROOT}"'/scripts/bt_task.sh variant-refresh >> '"${CRON_LOG}"' 2>&1'
+        echo '30 22 * * 1-5 /bin/bash '"${PROJECT_ROOT}"'/scripts/bt_task.sh variant-refresh >> '"${CRON_LOG}"' 2>&1'
     fi
 
     if [[ "${ENABLE_WALKFORWARD_GATE,,}" =~ ^(1|true|yes|on)$ ]]; then
