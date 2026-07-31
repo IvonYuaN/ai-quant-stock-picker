@@ -195,7 +195,7 @@ bash /opt/aqsp/scripts/server_sync_and_run.sh
 | `AQSP-日线数据分块刷新` | 工作日 `15:35` | `/bin/bash /opt/aqsp/scripts/bt_task.sh data-refresh` | 在 480 秒硬预算内顺序更新多个 120 只原始日线小块，记录游标；仅允许北京时间 `15:30-17:50`，与重任务互斥 |
 | `AQSP-日线延迟重试` | 工作日 `17:00-19:30` 每 10 分钟 | `/bin/bash /opt/aqsp/scripts/bt_task.sh data-refresh-retry` | 上游收盘日线延迟发布时，在窗口内分批续跑；与首轮和其他重任务共用资源门禁 |
 | `AQSP-收盘主链路` | 工作日 `18:00` | `/bin/bash /opt/aqsp/scripts/bt_task.sh daily` | 完整收盘复盘、纸面验证、简报、通知和看板刷新 |
-| `AQSP-收盘研究分块` | 工作日 `18:20,18:40,19:00,19:20,20:20,20:40,21:20,21:40,22:20` | `/bin/bash /opt/aqsp/scripts/bt_task.sh daily-research` | 每次只研究一个 cursor 分块，刷新报告和首页；不重复纸面同步、通知或学习，避开冷启动与变体刷新 |
+| `AQSP-收盘研究分块` | 工作日 `20:00,20:20,20:40,21:00,21:20,21:40,22:00,22:20` | `/bin/bash /opt/aqsp/scripts/bt_task.sh daily-research` | 日线延迟刷新结束后，每次只研究一个 cursor 分块，刷新报告和首页；不重复纸面同步、通知或学习，避开变体刷新 |
 | `AQSP-冷启动补样本` | 工作日 `19:40` | `/bin/bash /opt/aqsp/scripts/bt_task.sh coldstart` | 收盘主链路结束后再补历史库和冷启动样本，避免互斥跳过 |
 | `AQSP-变体刷新` | 工作日 `22:30` | `/bin/bash /opt/aqsp/scripts/bt_task.sh variant-refresh` | 在最后一批收盘研究的最长退出时间后运行，受限轮转刷新变体实验；不写正式 ledger |
 | `AQSP-服务器监控` | 工作日每 `15` 分钟 | `/bin/bash /opt/aqsp/scripts/bt_task.sh monitor` | 检查数据、运行态、通知通道；默认只推关键异常 |

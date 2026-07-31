@@ -1950,6 +1950,17 @@ def test_cron_installer_schedules_variant_refresh_after_coldstart() -> None:
     assert "bt_task.sh variant-refresh" in script
 
 
+def test_cron_installer_schedules_daily_research_after_raw_data_retry() -> None:
+    script = (PROJECT_ROOT / "scripts" / "install_server_cron.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "AQSP_ENABLE_DAILY_RESEARCH_CRON" in script
+    assert "0,20,40 20-21 * * 1-5" in script
+    assert "0,20 22 * * 1-5" in script
+    assert "bt_task.sh daily-research" in script
+
+
 def test_coldstart_daily_stops_when_update_fails_and_target_coverage_is_too_low(
     tmp_path: Path,
 ) -> None:

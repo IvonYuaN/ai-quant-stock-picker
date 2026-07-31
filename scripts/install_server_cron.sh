@@ -7,9 +7,10 @@
 # 3. 北京时间 13:00-14:59 每 10 分钟触发盘中刷新（精确时间由脚本门控）
 # 4. 北京时间 08:35 和周末 09:05 运行消息面雷达
 # 5. 北京时间 18:00 运行收盘同步 + 全量跑批
-# 6. 北京时间 19:40 运行冷启动补样本，避开收盘主链路
-# 7. 北京时间 22:30 运行受限变体刷新，避开最后一批收盘研究
-# 8. 北京时间每 15 分钟运行一次监控
+# 6. 北京时间 20:00-22:20 运行收盘研究分块，作为收盘主链的错峰重试
+# 7. 北京时间 19:40 运行冷启动补样本，避开收盘主链路
+# 8. 北京时间 22:30 运行受限变体刷新，避开最后一批收盘研究
+# 9. 北京时间每 15 分钟运行一次监控
 
 set -euo pipefail
 
@@ -22,6 +23,7 @@ ENABLE_DAILY="${AQSP_ENABLE_DAILY_CRON:-true}"
 ENABLE_MONITOR="${AQSP_ENABLE_MONITOR_CRON:-true}"
 ENABLE_NEWS="${AQSP_ENABLE_NEWS_CRON:-true}"
 ENABLE_COLDSTART="${AQSP_ENABLE_COLDSTART_CRON:-true}"
+ENABLE_DAILY_RESEARCH="${AQSP_ENABLE_DAILY_RESEARCH_CRON:-true}"
 ENABLE_VARIANT_REFRESH="${AQSP_ENABLE_VARIANT_REFRESH_CRON:-true}"
 ENABLE_WALKFORWARD_GATE="${AQSP_ENABLE_WALKFORWARD_GATE_CRON:-true}"
 
@@ -54,6 +56,11 @@ emit_jobs() {
         echo '40 19 * * 1-5 /bin/bash '"${PROJECT_ROOT}"'/scripts/bt_task.sh coldstart >> '"${CRON_LOG}"' 2>&1'
     fi
 
+    if [[ "${ENABLE_DAILY_RESEARCH,,}" =~ ^(1|true|yes|on)$ ]]; then
+        echo '0,20,40 20-21 * * 1-5 /bin/bash '"${PROJECT_ROOT}"'/scripts/bt_task.sh daily-research >> '"${CRON_LOG}"' 2>&1'
+        echo '0,20 22 * * 1-5 /bin/bash '"${PROJECT_ROOT}"'/scripts/bt_task.sh daily-research >> '"${CRON_LOG}"' 2>&1'
+    fi
+
     if [[ "${ENABLE_VARIANT_REFRESH,,}" =~ ^(1|true|yes|on)$ ]]; then
         echo '30 22 * * 1-5 /bin/bash '"${PROJECT_ROOT}"'/scripts/bt_task.sh variant-refresh >> '"${CRON_LOG}"' 2>&1'
     fi
@@ -75,7 +82,7 @@ emit_jobs() {
 CURRENT_CRONTAB="$(crontab -l 2>/dev/null || true)"
 FILTERED_CRONTAB="$(
     printf '%s\n' "$CURRENT_CRONTAB" | grep -vE \
-        'AQSP_RUNNER_SCRIPT=scripts/intraday_refresh\.sh|AQSP_RUNNER_SCRIPT=scripts/midday_refresh\.sh|/scripts/(daily_run|daily_pipeline|intraday_refresh|midday_refresh|coldstart_daily|server_sync_and_run|server_monitor|news_catalysts)\.sh|/scripts/bt_task\.sh (daily|intraday|midday|coldstart|variant-refresh|walkforward-gate|monitor|news)' || true
+        'AQSP_RUNNER_SCRIPT=scripts/intraday_refresh\.sh|AQSP_RUNNER_SCRIPT=scripts/midday_refresh\.sh|/scripts/(daily_run|daily_pipeline|intraday_refresh|midday_refresh|coldstart_daily|server_sync_and_run|server_monitor|news_catalysts)\.sh|/scripts/bt_task\.sh (daily|daily-research|intraday|midday|coldstart|variant-refresh|walkforward-gate|monitor|news)' || true
 )"
 
 {
