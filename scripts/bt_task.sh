@@ -570,6 +570,18 @@ should_bridge_intraday_to_midday() {
     return 0
 }
 
+ensure_intraday_dispatch_window() {
+    local now_hm
+    now_hm=$((10#$(date +%H%M)))
+    if { [ "$now_hm" -ge 935 ] && [ "$now_hm" -le 1130 ]; } || \
+       { [ "$now_hm" -ge 1135 ] && [ "$now_hm" -le 1230 ]; } || \
+       { [ "$now_hm" -ge 1305 ] && [ "$now_hm" -le 1457 ]; }; then
+        return 0
+    fi
+    log "当前不在盘中或午盘桥接时段，跳过 intraday，不抢占收盘主链锁"
+    exit 0
+}
+
 run_script() {
     local script_path="$1"
     shift || true
@@ -731,6 +743,7 @@ case "$ACTION" in
         ;;
     intraday)
         skip_non_trading_day
+        ensure_intraday_dispatch_window
         set_realtime_runner_timeout
         export AQSP_RUN_TASK_ID="intraday"
         export AQSP_NOTIFY="false"

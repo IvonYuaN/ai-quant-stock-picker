@@ -914,6 +914,8 @@ def test_bt_task_script_exposes_panel_safe_actions() -> None:
     assert 'export AQSP_GATE_NOTIFY="false"' in script
     assert 'export AQSP_RUN_TASK_ID="midday"' in script
     assert "should_bridge_intraday_to_midday" in script
+    assert "ensure_intraday_dispatch_window" in script
+    assert "不抢占收盘主链锁" in script
     assert "AQSP_INTRADAY_MIDDAY_BRIDGE" in script
     assert "midday-$(date +%Y-%m-%d).done" in script
     assert "scripts/server_sync_and_run.sh" in script
