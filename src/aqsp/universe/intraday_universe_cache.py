@@ -66,7 +66,7 @@ def load_intraday_universe_cache(
     path: str | Path,
     *,
     trade_date: date,
-    source: str,
+    source: str | tuple[str, ...],
     min_symbols: int = DEFAULT_MIN_SYMBOLS,
     now: datetime | None = None,
 ) -> IntradayUniverseCache | None:
@@ -90,9 +90,10 @@ def load_intraday_universe_cache(
         return None
     cached_source = str(payload.get("source") or "").strip()
     raw_symbols = payload.get("symbols")
+    allowed_sources = (source,) if isinstance(source, str) else source
     if (
         not cached_source
-        or cached_source != source.strip()
+        or cached_source not in allowed_sources
         or not isinstance(raw_symbols, list)
     ):
         return None
@@ -111,6 +112,53 @@ def load_intraday_universe_cache(
         source=cached_source,
         symbols=symbols,
         universe_hash=actual_hash,
+    )
+
+
+def bootstrap_intraday_universe_cache(
+    cache_path: str | Path,
+    *,
+    refresh_cursor_path: str | Path,
+    trade_date: date,
+    min_symbols: int = DEFAULT_MIN_SYMBOLS,
+    now: datetime | None = None,
+) -> IntradayUniverseCache | None:
+    """Create a bounded fallback from the prior completed raw-refresh cursor."""
+    try:
+        payload = json.loads(
+            Path(refresh_cursor_path).expanduser().read_text(encoding="utf-8")
+        )
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    previous_day = get_previous_trading_day(trade_date)
+    if str(payload.get("target_day") or "") != previous_day.isoformat():
+        return None
+    try:
+        updated_at = parse_iso8601(str(payload.get("updated_at") or ""))
+    except (TypeError, ValueError):
+        return None
+    current = now or now_shanghai()
+    raw_symbols = payload.get("target_day_symbols")
+    if updated_at > current or not isinstance(raw_symbols, list):
+        return None
+    symbols = _normalize_symbols(raw_symbols)
+    if len(symbols) < max(1, min_symbols):
+        return None
+    last_batch = payload.get("last_batch")
+    if not isinstance(last_batch, dict):
+        return None
+    if str(last_batch.get("raw_max_trade_date") or "") != previous_day.isoformat():
+        return None
+    if int(last_batch.get("failed_symbols") or 0) != 0:
+        return None
+    return write_intraday_universe_cache(
+        cache_path,
+        symbols=list(symbols),
+        source="sqlite_previous_close",
+        trade_date=previous_day,
+        resolved_at=updated_at,
     )
 
 

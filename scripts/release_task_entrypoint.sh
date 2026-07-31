@@ -139,6 +139,7 @@ export_runtime_path AQSP_DAILY_RUN_HISTORY data/daily_run_history.jsonl
 export_runtime_path AQSP_CATALYST_REPORT_CACHE_PATH data/runtime/catalyst_report_cache.json
 export_runtime_path AQSP_RUNTIME_LOCK_DIR .locks
 export_runtime_path AQSP_RUNTIME_STATE_DIR .state
+export_runtime_path AQSP_SQLITE_REFRESH_CURSOR_PATH .state/sqlite-refresh-cursor.json
 export_runtime_path AQSP_RUNTIME_TMP_ROOT .tmp
 export_runtime_path AQSP_DEPLOY_LOG_DIR logs/deploy
 export_runtime_path AQSP_MONITOR_LOG_DIR logs/monitor

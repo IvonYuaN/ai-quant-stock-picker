@@ -1632,6 +1632,7 @@ if is_truthy "$INTRADAY_BATCH_SCAN" && \
                 --batch-size "$INTRADAY_BATCH_SIZE" \
                 --cursor "$INTRADAY_CURSOR_PATH" \
                 --cache-path "$INTRADAY_UNIVERSE_CACHE" \
+                --bootstrap-state "${AQSP_SQLITE_REFRESH_CURSOR_PATH:-${RUNTIME_DATA_ROOT}/.state/sqlite-refresh-cursor.json}" \
                 --cache-only 2>>"$RESULT_LOG")"
             BATCH_CACHE_EXIT_CODE=$?
             set -e

@@ -5,6 +5,7 @@ from datetime import date, datetime
 
 from aqsp.core.time import SHANGHAI_TZ
 from aqsp.universe.intraday_universe_cache import (
+    bootstrap_intraday_universe_cache,
     load_intraday_universe_cache,
     write_intraday_universe_cache,
 )
@@ -76,3 +77,34 @@ def test_intraday_universe_cache_rejects_bad_hash_or_old_trade_date(tmp_path) ->
         )
         is None
     )
+
+
+def test_intraday_universe_cache_bootstraps_only_from_completed_previous_close(
+    tmp_path,
+) -> None:
+    state_path = tmp_path / "sqlite-refresh-cursor.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "target_day": "2026-07-30",
+                "updated_at": "2026-07-30T19:38:20+08:00",
+                "target_day_symbols": _supported_symbols(),
+                "last_batch": {
+                    "raw_max_trade_date": "2026-07-30",
+                    "failed_symbols": 0,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    cached = bootstrap_intraday_universe_cache(
+        tmp_path / "universe.json",
+        refresh_cursor_path=state_path,
+        trade_date=date(2026, 7, 31),
+        now=datetime(2026, 7, 31, 10, 0, tzinfo=SHANGHAI_TZ),
+    )
+
+    assert cached is not None
+    assert cached.source == "sqlite_previous_close"
+    assert len(cached.symbols) == 3000

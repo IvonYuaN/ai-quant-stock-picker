@@ -18,6 +18,7 @@ from aqsp.universe import DEFAULT_SYMBOLS  # noqa: E402
 from aqsp.universe.intraday_cursor import IntradayUniverseCursor  # noqa: E402
 from aqsp.universe.intraday_universe_cache import (  # noqa: E402
     DEFAULT_MIN_SYMBOLS,
+    bootstrap_intraday_universe_cache,
     load_intraday_universe_cache,
     write_intraday_universe_cache,
 )
@@ -56,6 +57,12 @@ def main() -> int:
     )
     parser.add_argument("--cache-only", action="store_true")
     parser.add_argument(
+        "--bootstrap-state",
+        default=os.getenv(
+            "AQSP_SQLITE_REFRESH_CURSOR_PATH", "data/.state/sqlite-refresh-cursor.json"
+        ),
+    )
+    parser.add_argument(
         "--cache-min-symbols",
         type=int,
         default=int(os.getenv("AQSP_INTRADAY_CACHE_MIN_SYMBOLS", DEFAULT_MIN_SYMBOLS)),
@@ -75,9 +82,16 @@ def main() -> int:
         cached = load_intraday_universe_cache(
             args.cache_path,
             trade_date=today_shanghai(),
-            source=args.source,
+            source=(args.source, "sqlite_previous_close"),
             min_symbols=args.cache_min_symbols,
         )
+        if cached is None:
+            cached = bootstrap_intraday_universe_cache(
+                args.cache_path,
+                refresh_cursor_path=args.bootstrap_state,
+                trade_date=today_shanghai(),
+                min_symbols=args.cache_min_symbols,
+            )
         if cached is None:
             raise RuntimeError("盘中实时名单缓存缺失、过期或校验失败")
         symbols = list(cached.symbols)
