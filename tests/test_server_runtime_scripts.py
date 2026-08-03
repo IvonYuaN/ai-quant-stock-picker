@@ -1856,6 +1856,9 @@ def test_variant_refresh_runs_after_close_with_bounded_resources() -> None:
     assert 'MAX_RUNTIME_SECONDS="${AQSP_VARIANT_MAX_RUNTIME_SECONDS:-300}"' in script
     assert 'NICE_LEVEL="${AQSP_VARIANT_NICE_LEVEL:-15}"' in script
     assert 'PROFILE_BATCH_SIZE="${AQSP_VARIANT_PROFILE_BATCH_SIZE:-32}"' in script
+    assert "MIN_PUBLISHED_VARIANTS=100" in script
+    assert "MIN_PROFILE_BATCH_SIZE=$(( (MIN_PUBLISHED_VARIANTS + MAX_STAGE_BATCHES - 1) / MAX_STAGE_BATCHES ))" in script
+    assert "无法在 ${MAX_STAGE_BATCHES} 段内形成 ${MIN_PUBLISHED_VARIANTS} 个合格变体" in script
     assert "--profile-batch-size" in script
     assert "--status-file" in script
     assert "--status-only waiting" in script

@@ -91,6 +91,7 @@ MAX_RUNTIME_SECONDS="${AQSP_VARIANT_MAX_RUNTIME_SECONDS:-300}"
 NICE_LEVEL="${AQSP_VARIANT_NICE_LEVEL:-15}"
 PROFILE_BATCH_SIZE="${AQSP_VARIANT_PROFILE_BATCH_SIZE:-32}"
 MAX_STAGE_BATCHES="${AQSP_VARIANT_MAX_STAGE_BATCHES:-4}"
+MIN_PUBLISHED_VARIANTS=100
 
 if ! [[ "$MAX_SYMBOLS" =~ ^[0-9]+$ ]] || [ "$MAX_SYMBOLS" -lt 121 ]; then
     log "变体股票批次无效(${MAX_SYMBOLS})，使用 240"
@@ -116,6 +117,14 @@ fi
 if ! [[ "$MAX_STAGE_BATCHES" =~ ^[0-9]+$ ]] || [ "$MAX_STAGE_BATCHES" -lt 1 ] || [ "$MAX_STAGE_BATCHES" -gt 4 ]; then
     log "变体分段次数无效(${MAX_STAGE_BATCHES})，使用 4"
     MAX_STAGE_BATCHES="4"
+fi
+# The runtime artifact validator rejects fewer than 100 variants.  Keep a
+# misconfigured small profile batch from silently staging forever across
+# changing trading dates, while retaining the same bounded number of stages.
+MIN_PROFILE_BATCH_SIZE=$(( (MIN_PUBLISHED_VARIANTS + MAX_STAGE_BATCHES - 1) / MAX_STAGE_BATCHES ))
+if [ "$PROFILE_BATCH_SIZE" -lt "$MIN_PROFILE_BATCH_SIZE" ]; then
+    log "变体策略批次 ${PROFILE_BATCH_SIZE} 无法在 ${MAX_STAGE_BATCHES} 段内形成 ${MIN_PUBLISHED_VARIANTS} 个合格变体，提升为 ${MIN_PROFILE_BATCH_SIZE}"
+    PROFILE_BATCH_SIZE="$MIN_PROFILE_BATCH_SIZE"
 fi
 # The Python entrypoint performs a read-only SQLite integrity/table preflight.
 # Keep the shell check minimal so a zero-byte fallback is reported there instead
