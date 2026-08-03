@@ -41,9 +41,9 @@ def test_rebuild_raw_sqlite_batches_seeds_only_supported_non_st_symbols(
             ],
         )
     assert rebuild_raw_sqlite_batches._seed_candidate_database(source, candidate) == [
-        "000001.SZ",
-        "300001.SZ",
-        "600000.SH",
+        "000001",
+        "300001",
+        "600000",
     ]
     with sqlite3.connect(candidate) as conn:
         assert conn.execute(
@@ -157,7 +157,7 @@ def test_rebuild_raw_sqlite_batches_processes_multiple_chunks_within_budget(
         batches=2,
     )
 
-    assert calls == [("000001.SZ",), ("300001.SZ",)]
+    assert calls == [("000001",), ("300001",)]
     assert result.next_offset == 2
     assert not result.complete
 

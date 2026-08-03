@@ -79,7 +79,10 @@ def _seed_candidate_database(source_db: Path, candidate_db: Path) -> list[str]:
                 "INSERT OR REPLACE INTO stocks(ts_code, name) VALUES(?, ?)", symbols
             )
             conn.commit()
-    return [code for code, _ in symbols]
+    # SqliteDbSource exposes bare six-digit A-share symbols. Keep the database
+    # rows canonical (``ts_code`` with exchange), but use its public symbol
+    # contract for updates and coverage checks.
+    return [code.split(".", 1)[0] for code, _ in symbols]
 
 
 def _read_state(
