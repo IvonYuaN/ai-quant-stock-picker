@@ -344,6 +344,16 @@ set_daily_research_runner_timeout() {
     export AQSP_RUNNER_TIMEOUT_SECONDS="$configured"
 }
 
+set_variant_runner_timeout() {
+    local configured="${AQSP_VARIANT_OUTER_TIMEOUT_SECONDS:-300}"
+    if ! [[ "$configured" =~ ^[1-9][0-9]*$ ]]; then
+        configured="300"
+    elif [ "$configured" -gt 360 ]; then
+        configured="360"
+    fi
+    export AQSP_RUNNER_TIMEOUT_SECONDS="$configured"
+}
+
 ensure_data_refresh_window() {
     local start_hm="${AQSP_DATA_REFRESH_WINDOW_START_HM:-1530}"
     local end_hm="${AQSP_DATA_REFRESH_WINDOW_END_HM:-1750}"
@@ -820,6 +830,8 @@ case "$ACTION" in
             gate_optional_heavy_task
         acquire_optional_heavy_slot
         start_agent_run "${AQSP_AGENT_DEADLINE_SECONDS:-300}"
+        set_variant_runner_timeout
+        export AQSP_VARIANT_MAX_RUNTIME_SECONDS="${AQSP_VARIANT_MAX_RUNTIME_SECONDS:-240}"
         export AQSP_RUN_TASK_ID="variant_refresh"
         export AQSP_NOTIFY="false"
         export AQSP_GATE_NOTIFY="false"
