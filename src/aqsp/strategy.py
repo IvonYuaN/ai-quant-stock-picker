@@ -418,6 +418,8 @@ def score_symbol(
             "bias20_pct": round(bias20, 2),
             "volume_ratio": round(volume_ratio, 2),
             "rsi12": round(rsi12, 2),
+            "macd_hist": round(macd_hist, 4),
+            "kdj_j": round(_num(row["kdj_j"]), 2),
             "quality_gate_status": quality.action,
             "quality_gate_reasons": tuple(dict.fromkeys(quality.reasons)),
             "paper_review_eligible": quality.paper_review_eligible,

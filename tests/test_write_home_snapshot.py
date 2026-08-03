@@ -614,11 +614,9 @@ def test_write_home_snapshot_builds_bounded_advisory_only_payload(monkeypatch) -
     assert snapshot.debate.conclusion == "委员会建议复核"
     assert "999" not in snapshot.to_json()
     assert "raise" not in snapshot.to_json()
-    assert snapshot.summaries == (
-        "讨论复核 1/5 只；4 只未通过质量门，已隐藏",
-        "当前运行已落盘",
-        "重点看首个确定性候选",
-    )
+    assert snapshot.summaries[0].startswith("研究重点：600001 示例（纸面复核）")
+    assert snapshot.summaries[1].startswith("复核条件：600001 示例，")
+    assert "讨论复核 1/5 只；4 只未通过质量门，已隐藏" not in snapshot.summaries
     assert snapshot.stale_after == "2026-07-10T15:31:00+08:00"
 
 
@@ -863,7 +861,9 @@ def test_write_home_snapshot_resolves_news_sidecar_from_runtime_root(
     )
 
 
-def test_write_home_snapshot_makes_hidden_candidate_count_explicit(monkeypatch) -> None:
+def test_write_home_snapshot_keeps_candidate_conclusion_first_when_list_is_capped(
+    monkeypatch,
+) -> None:
     provider = _Provider()
     original_payload = provider.home_digest_payload
     original_runtime = provider.runtime_overview
@@ -901,7 +901,8 @@ def test_write_home_snapshot_makes_hidden_candidate_count_explicit(monkeypatch) 
     )
 
     assert len(snapshot.candidates) == 5
-    assert "待复核 6 只，首页展示 5 只" in snapshot.summaries[0]
+    assert snapshot.summaries[0].startswith("研究重点：600001 示例（纸面复核）")
+    assert not any("首页展示" in summary for summary in snapshot.summaries)
 
 
 def test_write_home_snapshot_downgrades_recommendations_when_gate_is_blocked(
@@ -1473,7 +1474,8 @@ def test_write_home_snapshot_hides_debate_for_non_current_candidate(
     )
 
     assert snapshot.debate is None
-    assert snapshot.summaries[0] == "委员会结论缺少当前候选映射，已隐藏"
+    assert snapshot.summaries[0].startswith("研究重点：600001 示例（纸面复核）")
+    assert "讨论产物与当前候选不匹配，已隐藏" in snapshot.summaries
     assert "600999" not in snapshot.to_json()
 
 
