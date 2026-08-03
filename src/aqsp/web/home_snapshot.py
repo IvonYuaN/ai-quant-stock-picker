@@ -170,6 +170,7 @@ class HomeSnapshotDebate:
     viewpoint_buckets: dict[str, tuple[str, ...]] = field(default_factory=dict)
     disagreement_points: tuple[str, ...] = ()
     uncertainty_points: tuple[str, ...] = ()
+    review_kind: str = "unverified"
 
 
 @dataclass(frozen=True)
@@ -1130,6 +1131,7 @@ def _debate_from_dict(payload: object) -> HomeSnapshotDebate:
             "viewpoint_buckets",
             "disagreement_points",
             "uncertainty_points",
+            "review_kind",
         },
     )
     return HomeSnapshotDebate(
@@ -1163,6 +1165,10 @@ def _debate_from_dict(payload: object) -> HomeSnapshotDebate:
         uncertainty_points=_text_tuple(
             mapping.get("uncertainty_points", []), "debate.uncertainty_points"
         ),
+        review_kind=_optional_text(
+            mapping.get("review_kind", "unverified"), "debate.review_kind"
+        )
+        or "unverified",
     )
 
 
@@ -1305,12 +1311,24 @@ def _validate_snapshot(snapshot: HomeDashboardSnapshot) -> None:
             debate.bear_count,
             debate.neutral_count,
         )
+        if debate.review_kind not in {"multi_agent", "unverified"}:
+            raise ValueError("debate review_kind is not supported")
         if debate.round_count not in (2, 3):
             raise ValueError("published debates must contain two or three rounds")
         if any(count < 0 for count in vote_counts):
             raise ValueError("debate vote counts must not be negative")
         if sum(vote_counts) != len(debate.active_roles) or len(debate.active_roles) < 2:
             raise ValueError("debate vote counts must match active roles")
+        if debate.review_kind == "multi_agent":
+            substantive_buckets = sum(
+                bool(points) for points in debate.viewpoint_buckets.values()
+            )
+            if len(debate.active_roles) < 3:
+                raise ValueError("multi-agent debates require three roles")
+            if substantive_buckets < 2 or not debate.disagreement_points:
+                raise ValueError(
+                    "multi-agent debates require independent evidence and disagreement"
+                )
     debate_symbols = tuple(value.symbol for value in snapshot.debates)
     if len(set(debate_symbols)) != len(debate_symbols):
         raise ValueError("debates must not contain duplicate symbols")

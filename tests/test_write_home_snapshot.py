@@ -609,9 +609,7 @@ def test_write_home_snapshot_builds_bounded_advisory_only_payload(monkeypatch) -
         ("纸面止损", "11.10"),
         ("纸面止盈", "14.80"),
     ]
-    assert snapshot.debate is not None
-    assert snapshot.debate.symbol == "600003"
-    assert snapshot.debate.conclusion == "委员会建议复核"
+    assert snapshot.debate is None
     assert "999" not in snapshot.to_json()
     assert "raise" not in snapshot.to_json()
     assert snapshot.summaries[0].startswith("研究重点：600001 示例（纸面复核）")
@@ -702,7 +700,7 @@ def test_snapshot_candidate_reads_required_metrics_from_preserved_runtime_mappin
     }
 
 
-def test_write_home_snapshot_backfills_deterministic_discussion_when_agent_artifact_missing(
+def test_write_home_snapshot_hides_discussion_when_multi_agent_artifact_missing(
     monkeypatch,
 ) -> None:
     provider = _Provider()
@@ -728,14 +726,44 @@ def test_write_home_snapshot_backfills_deterministic_discussion_when_agent_artif
         provider, signal_date="2026-07-10", task_id="intraday"
     )
 
-    assert snapshot.debates[0].symbol == "600001"
-    assert snapshot.debates[0].active_roles == ("规则证据", "风险约束")
-    assert snapshot.debates[0].primary_risk_gate == "量能确认前不形成正式推荐"
-    assert snapshot.debates[0].next_trigger == "核对 600001 量能"
-    assert snapshot.debates[0].viewpoint_buckets == {
-        "technical": ("MA20 斜率向上",),
-        "risk_counterevidence": ("量能确认前不形成正式推荐",),
-    }
+    assert snapshot.debates == ()
+
+
+def test_write_home_snapshot_rejects_two_role_runtime_debate(
+    monkeypatch, tmp_path: Path
+) -> None:
+    provider = _Provider()
+    debate_path = tmp_path / "debates.jsonl"
+    debate_path.write_text(
+        json.dumps(
+            {
+                "symbol": "600001",
+                "name": "示例",
+                "related_signal_date": "2026-07-10",
+                "rounds": [
+                    {"round_num": 1, "opinions": []},
+                    {
+                        "round_num": 2,
+                        "opinions": [
+                            {"role": "bull", "stance": "bullish"},
+                            {"role": "risk_control", "stance": "bearish"},
+                        ],
+                    },
+                ],
+                "final_vote": {"bull": "bullish", "risk_control": "bearish"},
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AQSP_DEBATE_RESULTS", str(debate_path))
+
+    snapshot = write_home_snapshot.build_home_snapshot(
+        provider, signal_date="2026-07-10", task_id="intraday"
+    )
+
+    assert snapshot.debates == ()
 
 
 def test_variant_suite_reports_missing_artifact_reason(
@@ -877,6 +905,14 @@ def test_write_home_snapshot_backfills_current_runtime_debate_when_provider_omit
                 "primary_risk_gate": "量能",
                 "next_trigger": "放量",
                 "final_vote": {"bull": "bullish", "bear": "bearish", "risk": "neutral"},
+                "process_recorded": True,
+                "conclusion_recorded": True,
+                "evidence_sufficient": True,
+                "viewpoint_buckets": {
+                    "technical": ["MACD 由负转正"],
+                    "risk_counterevidence": ["量能不足"],
+                },
+                "disagreement_points": ["趋势延续与量能不足存在分歧"],
                 "rounds": [
                     {"round_num": 1, "summary": "首轮"},
                     {"round_num": 2, "summary": "复核"},
@@ -1521,7 +1557,9 @@ def test_write_home_snapshot_hides_debate_for_non_current_candidate(
 
     assert snapshot.debate is None
     assert snapshot.summaries[0].startswith("研究重点：600001 示例（纸面复核）")
-    assert "讨论产物与当前候选不匹配，已隐藏" in snapshot.summaries
+    assert (
+        "多 Agent 讨论未达到独立证据、分歧与角色数量门槛，已隐藏" in snapshot.summaries
+    )
     assert "600999" not in snapshot.to_json()
 
 

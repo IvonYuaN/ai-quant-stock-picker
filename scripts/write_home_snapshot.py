@@ -583,74 +583,10 @@ def _snapshot_debates(
                 uncertainty_points=tuple(
                     getattr(debate, "uncertainty_points", ()) or ()
                 )[:4],
+                review_kind="multi_agent",
             )
         )
         selected_symbols.add(symbol)
-        if len(selected) == MAX_HOME_SNAPSHOT_DEBATES:
-            break
-    return tuple(selected)
-
-
-def _candidate_discussion_inputs(candidate: Any) -> tuple[tuple[str, ...], str, str]:
-    """Return rule-derived support, risk, and trigger without agent inference."""
-    support = _candidate_reasons(candidate)
-    raw_risks = getattr(candidate, "risks", ()) or ()
-    if isinstance(raw_risks, str):
-        raw_risks = (raw_risks,)
-    risks = _bounded_unique_text((*raw_risks, getattr(candidate, "blocker", "")), 4)
-    trigger = _text(getattr(candidate, "next_step", ""))
-    return support, _first_text(*risks), trigger
-
-
-def _deterministic_candidate_debates(
-    payload: Any,
-    candidates: tuple[HomeSnapshotCandidate, ...],
-) -> tuple[HomeSnapshotDebate, ...]:
-    """Show source-recorded rule support/risk/trigger when no debate artifact exists."""
-    candidate_symbols = {candidate.symbol for candidate in candidates}
-    selected: list[HomeSnapshotDebate] = []
-    seen: set[str] = set()
-    ordered = (
-        *(getattr(payload.task_view, "detail_cards", ()) or ()),
-        *(getattr(payload, "spotlights", ()) or ()),
-    )
-    for candidate in ordered:
-        symbol = _text(getattr(candidate, "symbol", ""))
-        if not symbol or symbol not in candidate_symbols or symbol in seen:
-            continue
-        support, risk, trigger = _candidate_discussion_inputs(candidate)
-        if not (support and risk and trigger):
-            continue
-        selected.append(
-            HomeSnapshotDebate(
-                symbol=symbol,
-                display_name=_first_text(
-                    getattr(candidate, "display_name", ""),
-                    getattr(candidate, "name", ""),
-                    symbol,
-                ),
-                conclusion="规则支持与风险约束并存，保留复核。",
-                primary_risk_gate=risk,
-                next_trigger=trigger,
-                active_roles=("规则证据", "风险约束"),
-                round_count=2,
-                bull_count=1,
-                bear_count=1,
-                process_summary="确定性复核：规则支持与风险约束，不使用 LLM 推理。",
-                round_summaries=(
-                    f"支持：{support[0]}",
-                    f"风险：{risk}",
-                ),
-                viewpoint_buckets={
-                    "technical": support[:4],
-                    "risk_counterevidence": (risk,),
-                },
-                disagreement_points=(
-                    "规则支持成立，但风险约束未解除前不形成正式推荐。",
-                ),
-            )
-        )
-        seen.add(symbol)
         if len(selected) == MAX_HOME_SNAPSHOT_DEBATES:
             break
     return tuple(selected)
@@ -728,7 +664,7 @@ def _runtime_debates_for_snapshot(
                 if _text(item.get("role"))
             }
         roles = tuple(dict.fromkeys(_text(role) for role in vote_map if _text(role)))
-        if len(roles) < 2:
+        if len(roles) < 3:
             continue
         agent_views = tuple(
             SimpleNamespace(role_id=role, role_label=role) for role in roles
@@ -769,6 +705,7 @@ def _runtime_debates_for_snapshot(
                 viewpoint_buckets=record.get("viewpoint_buckets", {}),
                 disagreement_points=record.get("disagreement_points", ()),
                 uncertainty_points=record.get("uncertainty_points", ()),
+                review_kind="multi_agent",
                 **counts,
             )
         )
@@ -807,7 +744,7 @@ def _debate_is_complete(debate: Any) -> bool:
             )
         )
     )
-    if len(roles) < 2:
+    if len(roles) < 3:
         return False
     try:
         vote_counts = tuple(
@@ -816,7 +753,15 @@ def _debate_is_complete(debate: Any) -> bool:
         )
     except (TypeError, ValueError):
         return False
-    return all(count >= 0 for count in vote_counts) and sum(vote_counts) == len(roles)
+    if not all(count >= 0 for count in vote_counts) or sum(vote_counts) != len(roles):
+        return False
+    viewpoints = getattr(debate, "viewpoint_buckets", {}) or {}
+    if (
+        not isinstance(viewpoints, dict)
+        or len([points for points in viewpoints.values() if tuple(points or ())]) < 2
+    ):
+        return False
+    return bool(tuple(getattr(debate, "disagreement_points", ()) or ()))
 
 
 def _news_report_path() -> Path:
@@ -2089,8 +2034,6 @@ def build_home_snapshot(
         candidates,
         runtime_debates=runtime_debates,
     )
-    if not debates:
-        debates = _deterministic_candidate_debates(payload, candidates)
     message_status, messages, catalyst_report = _parse_news_report_payload(
         selected_date
     )
@@ -2129,7 +2072,9 @@ def build_home_snapshot(
     debate_missing = bool(getattr(payload, "debates", ()) or ()) and not debates
     raw_summaries = (
         *_research_conclusion_summaries(candidates),
-        "讨论产物与当前候选不匹配，已隐藏" if debate_missing else "",
+        "多 Agent 讨论未达到独立证据、分歧与角色数量门槛，已隐藏"
+        if debate_missing
+        else "",
         getattr(overview, "blocker_headline", ""),
     )
     if not candidates:
