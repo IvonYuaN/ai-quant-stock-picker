@@ -805,17 +805,26 @@ def run_suite(
     symbols: tuple[str, ...],
     start: str,
     end: str,
+    profiles: tuple[VariantProfile, ...] | None = None,
+    *,
+    deduplicate_holdings: bool = True,
 ) -> dict[str, object]:
     frames = load_frames(db_path, symbols, start, end)
     rules = VariantExecutionRules(initial_cash=BASE_CASH)
-    profiles = generate_variant_profiles(frames)
+    selected_profiles = profiles or generate_variant_profiles(frames)
+    if not selected_profiles:
+        raise ValueError("变体策略批次不能为空")
+    if len({profile.variant_id for profile in selected_profiles}) != len(
+        selected_profiles
+    ):
+        raise ValueError("变体策略批次包含重复 variant_id")
     symbol_names = _symbol_names(frames)
     previous_date = _previous_trade_date(frames, end)
     prepared_data = prepare_variant_data(frames)
     snapshot_dates = (previous_date,) if previous_date else ()
     results = []
     profiles_by_lookback: dict[int, list[VariantProfile]] = defaultdict(list)
-    for profile in profiles:
+    for profile in selected_profiles:
         profiles_by_lookback[profile.lookback].append(profile)
     for lookback in sorted(profiles_by_lookback):
         indicator_cache = {lookback: build_indicator_frames(frames, lookback)}
@@ -860,7 +869,8 @@ def run_suite(
             payload["orders_signature"] = _orders_signature(orders)
             payload["filled_orders_signature"] = _filled_orders_signature(result)
             results.append(payload)
-    results = _diversity_ranked(results)
+    if deduplicate_holdings:
+        results = diversity_ranked_variants(results)
     training_volatility_pct = _training_volatility_pct(frames)
     return {
         "schema_version": "variant-suite-v2",
@@ -1164,7 +1174,7 @@ def _holdings_signature(holdings: list[dict[str, Any]]) -> str:
     )
 
 
-def _diversity_ranked(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def diversity_ranked_variants(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Keep one best strategy per current holding combination.
 
     A strategy parameter grid is useful for research, but variants with the

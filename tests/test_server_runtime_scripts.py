@@ -1855,11 +1855,14 @@ def test_variant_refresh_runs_after_close_with_bounded_resources() -> None:
     assert "变体股票批次无效(${MAX_SYMBOLS})，使用 240" in script
     assert 'MAX_RUNTIME_SECONDS="${AQSP_VARIANT_MAX_RUNTIME_SECONDS:-300}"' in script
     assert 'NICE_LEVEL="${AQSP_VARIANT_NICE_LEVEL:-15}"' in script
+    assert 'PROFILE_BATCH_SIZE="${AQSP_VARIANT_PROFILE_BATCH_SIZE:-32}"' in script
+    assert "--profile-batch-size" in script
     assert 'nice -n "$NICE_LEVEL"' in script
     assert "AQSP_VARIANT_ALLOW_HEAVY" in script
     assert "variant-results-refresh.lock" in script
     assert "refresh_variant_results_from_market_db.py" in script
     assert "write_home_snapshot.py" in script
+    assert "变体首轮仍在分段构建，未更新首页正式变体快照" in script
 
 
 def test_bt_optional_heavy_tasks_check_host_capacity_before_starting() -> None:

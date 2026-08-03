@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import importlib.util
+import json
 from argparse import Namespace
 import subprocess
 import sys
@@ -9,6 +10,8 @@ import time
 from pathlib import Path
 
 import pytest
+
+from scripts import run_variant_suite as variant_suite
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -254,42 +257,6 @@ def test_refresh_skips_lock_conflict_without_writing_or_advancing_cursor(
     assert not cursor.exists()
 
 
-def test_merge_qualified_artifacts_reuses_only_missing_same_day_variants() -> None:
-    previous = {
-        "end_date": "2026-07-27",
-        "symbols": ["000001", "300001"],
-        "variants": [
-            {"variant_id": "kept", "source": "previous"},
-            {"variant_id": "replaced", "source": "previous"},
-        ],
-    }
-    refreshed = {
-        "end_date": "2026-07-27",
-        "symbols": ["300001", "600001"],
-        "variants": [
-            {"variant_id": "replaced", "source": "refreshed"},
-            {"variant_id": "new", "source": "refreshed"},
-        ],
-    }
-
-    merged = mod.merge_qualified_artifacts(previous, refreshed)
-
-    assert merged["symbols"] == ["000001", "300001", "600001"]
-    assert {item["variant_id"]: item["source"] for item in merged["variants"]} == {
-        "kept": "previous",
-        "replaced": "refreshed",
-        "new": "refreshed",
-    }
-    assert merged["artifact_lineage"]["reused_same_day_variant_ids"] == 1
-
-
-def test_merge_qualified_artifacts_does_not_mix_different_trade_days() -> None:
-    previous = {"end_date": "2026-07-26", "variants": [{"variant_id": "old"}]}
-    refreshed = {"end_date": "2026-07-27", "variants": [{"variant_id": "new"}]}
-
-    assert mod.merge_qualified_artifacts(previous, refreshed) is refreshed
-
-
 @pytest.mark.parametrize(
     ("failure", "expected_code", "expected_text"),
     [
@@ -341,7 +308,19 @@ def test_refresh_failure_preserves_last_qualified_artifact_and_cursor(
     monkeypatch.setattr(mod, "load_supported_symbols", lambda _path: symbols)
     monkeypatch.setattr(mod, "select_variant_batch", lambda *_args: batch)
     monkeypatch.setattr(mod, "copy_market_rows", lambda **_kwargs: ("000001",))
-    monkeypatch.setattr(mod, "run_suite", lambda *_args: (_ for _ in ()).throw(failure))
+    monkeypatch.setattr(mod, "load_frames", lambda *_args: {})
+    monkeypatch.setattr(
+        mod,
+        "generate_variant_profiles",
+        lambda _frames: (
+            variant_suite.VariantProfile(
+                "test", "测试", 10, 1.0, 2.0, "trend", 2, 0.5, "测试"
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        mod, "run_suite", lambda *_args, **_kwargs: (_ for _ in ()).throw(failure)
+    )
 
     assert mod.main() == expected_code
     assert output.read_text(encoding="utf-8") == original
@@ -349,3 +328,121 @@ def test_refresh_failure_preserves_last_qualified_artifact_and_cursor(
     message = capsys.readouterr().out
     assert expected_text in message
     assert "preserved qualified artifact" in message
+
+
+def test_refresh_stages_profile_chunks_before_publishing_first_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "variant_results.json"
+    cursor = tmp_path / "variant.cursor.json"
+    stage = tmp_path / "variant.stage.json"
+    profiles = tuple(
+        mod.VariantProfile(
+            f"profile-{index}",
+            f"策略 {index}",
+            10,
+            1.0,
+            2.0,
+            "trend",
+            2,
+            0.5,
+            "测试",
+        )
+        for index in range(4)
+    )
+    symbols = tuple(
+        mod.MarketSymbol(f"0000{index:02d}.SZ", f"0000{index:02d}", "样本", "深市主板")
+        for index in range(121)
+    )
+    batch = mod.VariantUniverseBatch(symbols, "test", 121, 0, 1)
+    calls: list[tuple[str, ...]] = []
+    commits: list[Path] = []
+
+    def args() -> Namespace:
+        return Namespace(
+            market_db=tmp_path / "market.db",
+            output=output,
+            temp_db=tmp_path / "input.db",
+            start="2026-01-01",
+            end="2026-07-27",
+            lookback_calendar_days=180,
+            max_symbols=121,
+            max_fills_per_variant=24,
+            max_runtime_seconds=0,
+            lock_file=tmp_path / "variant.lock",
+            cursor_file=cursor,
+            staging_file=stage,
+            profile_batch_size=2,
+            lock_wait_seconds=0.0,
+            sql_chunk_size=80,
+        )
+
+    def fake_run_suite(*values: object, **_kwargs: object) -> dict[str, object]:
+        selected = values[4]
+        assert isinstance(selected, tuple)
+        calls.append(tuple(profile.variant_id for profile in selected))
+        return {
+            "schema_version": "variant-suite-v2",
+            "end_date": "2026-07-27",
+            "start_date": "2026-01-01",
+            "symbols": [item.symbol for item in symbols],
+            "initial_cash": 100_000.0,
+            "optimization": {},
+            "variants": [
+                {
+                    "variant_id": profile.variant_id,
+                    "strategy_signature": profile.variant_id,
+                    "holdings_signature": profile.variant_id,
+                    "final_equity": float(index),
+                }
+                for index, profile in enumerate(selected)
+            ],
+        }
+
+    def validate(payload: dict[str, object], **_kwargs: object) -> None:
+        if len(payload["variants"]) < 4:
+            raise ValueError("variant count too small")
+
+    monkeypatch.setattr(mod, "parse_args", args)
+    monkeypatch.setattr(mod, "load_supported_symbols", lambda _path: symbols)
+    monkeypatch.setattr(mod, "select_variant_batch", lambda *_args: batch)
+    monkeypatch.setattr(
+        mod,
+        "copy_market_rows",
+        lambda **_kwargs: tuple(item.symbol for item in symbols),
+    )
+    monkeypatch.setattr(mod, "load_frames", lambda *_args: {})
+    monkeypatch.setattr(mod, "generate_variant_profiles", lambda _frames: profiles)
+    monkeypatch.setattr(mod, "run_suite", fake_run_suite)
+    monkeypatch.setattr(mod, "validate_variant_payload", validate)
+    monkeypatch.setattr(
+        mod,
+        "diversity_ranked_variants",
+        lambda values: [
+            dict(item, rank=index + 1) for index, item in enumerate(values)
+        ],
+    )
+    monkeypatch.setattr(
+        mod, "commit_variant_batch", lambda path, _batch: commits.append(path)
+    )
+
+    assert mod.main() == 0
+    assert not output.exists()
+    assert not cursor.exists()
+    assert json.loads(stage.read_text(encoding="utf-8"))["completed_variant_ids"] == [
+        "profile-0",
+        "profile-1",
+    ]
+
+    assert mod.main() == 0
+    assert calls == [("profile-0", "profile-1"), ("profile-2", "profile-3")]
+    assert {
+        item["variant_id"]
+        for item in json.loads(output.read_text(encoding="utf-8"))["variants"]
+    } == {
+        "profile-0",
+        "profile-1",
+        "profile-2",
+        "profile-3",
+    }
+    assert commits == [cursor]

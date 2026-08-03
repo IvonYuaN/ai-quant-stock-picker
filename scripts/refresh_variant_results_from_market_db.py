@@ -28,7 +28,13 @@ import pandas as pd
 
 from aqsp.utils.jsonl_io import atomic_write_text
 from check_variant_results import validate_variant_payload
-from run_variant_suite import run_suite
+from run_variant_suite import (
+    VariantProfile,
+    diversity_ranked_variants,
+    generate_variant_profiles,
+    load_frames,
+    run_suite,
+)
 
 CODE_PREFIXES = ("000", "001", "002", "003", "300", "600", "601", "603", "605")
 EXCLUDED_NAME_MARKERS = ("ST", "*ST", "退", "PT")
@@ -37,6 +43,8 @@ DEFAULT_MAX_SYMBOLS = 300
 DEFAULT_MAX_FILLS_PER_VARIANT = 24
 DEFAULT_MAX_RUNTIME_SECONDS = 600
 DEFAULT_LOCK_WAIT_SECONDS = 0.0
+DEFAULT_PROFILE_BATCH_SIZE = 32
+STAGING_SCHEMA_VERSION = "variant-suite-stage-v1"
 LATEST_DATE_PROBE_SYMBOLS = 240
 SQL_CHUNK_SIZE = 80
 
@@ -344,42 +352,104 @@ def load_qualified_artifact(output_path: Path) -> dict[str, object] | None:
     return payload if isinstance(payload, dict) else None
 
 
-def merge_qualified_artifacts(
-    previous: dict[str, object] | None,
-    refreshed: dict[str, object],
-) -> dict[str, object]:
-    """Keep qualified same-day variants that a bounded refresh did not produce.
+def _stage_is_compatible(
+    payload: object,
+    *,
+    start: str,
+    end: str,
+    symbols: tuple[str, ...],
+) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    return (
+        payload.get("schema_version") == STAGING_SCHEMA_VERSION
+        and payload.get("start_date") == start
+        and payload.get("end_date") == end
+        and payload.get("symbols") == list(symbols)
+    )
 
-    Variant ids identify a strategy configuration, so a refreshed id replaces the
-    older result for that configuration.  This preserves a coherent same-day
-    artifact without duplicating strategy variants or mixing trading dates.
-    """
-    if previous is None or previous.get("end_date") != refreshed.get("end_date"):
-        return refreshed
-    previous_variants = previous.get("variants")
-    refreshed_variants = refreshed.get("variants")
-    if not isinstance(previous_variants, list) or not isinstance(
-        refreshed_variants, list
-    ):
-        return refreshed
-    merged_by_id: dict[str, object] = {}
-    for variant in previous_variants:
-        if isinstance(variant, dict) and isinstance(variant.get("variant_id"), str):
-            merged_by_id[variant["variant_id"]] = variant
-    for variant in refreshed_variants:
-        if isinstance(variant, dict) and isinstance(variant.get("variant_id"), str):
-            merged_by_id[variant["variant_id"]] = variant
-    merged = dict(refreshed)
-    merged["variants"] = list(merged_by_id.values())
-    previous_symbols = previous.get("symbols")
-    refreshed_symbols = refreshed.get("symbols")
-    if isinstance(previous_symbols, list) and isinstance(refreshed_symbols, list):
-        merged["symbols"] = list(dict.fromkeys([*previous_symbols, *refreshed_symbols]))
-    merged["artifact_lineage"] = {
-        "reused_same_day_variant_ids": len(merged_by_id) - len(refreshed_variants),
-        "previous_end_date": previous.get("end_date"),
+
+def load_variant_stage(
+    stage_path: Path,
+    *,
+    start: str,
+    end: str,
+    symbols: tuple[str, ...],
+) -> dict[str, object]:
+    """Load only a same-input staged batch; stale work is never mixed in."""
+    try:
+        payload = json.loads(stage_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return (
+        payload
+        if _stage_is_compatible(payload, start=start, end=end, symbols=symbols)
+        else {}
+    )
+
+
+def staged_variants(payload: dict[str, object]) -> dict[str, dict[str, object]]:
+    values = payload.get("variants")
+    if not isinstance(values, list):
+        return {}
+    return {
+        item["variant_id"]: item
+        for item in values
+        if isinstance(item, dict) and isinstance(item.get("variant_id"), str)
     }
-    return merged
+
+
+def select_profile_batch(
+    profiles: tuple[VariantProfile, ...],
+    completed_ids: set[str],
+    batch_size: int,
+) -> tuple[VariantProfile, ...]:
+    if batch_size < 1:
+        raise ValueError("profile_batch_size must be positive")
+    pending = [
+        profile for profile in profiles if profile.variant_id not in completed_ids
+    ]
+    return tuple(pending[:batch_size])
+
+
+def make_stage_payload(
+    *,
+    start: str,
+    end: str,
+    symbols: tuple[str, ...],
+    all_profile_ids: tuple[str, ...],
+    variants: dict[str, dict[str, object]],
+) -> dict[str, object]:
+    return {
+        "schema_version": STAGING_SCHEMA_VERSION,
+        "start_date": start,
+        "end_date": end,
+        "symbols": list(symbols),
+        "profile_ids": list(all_profile_ids),
+        "completed_variant_ids": sorted(variants),
+        "variants": [variants[key] for key in sorted(variants)],
+    }
+
+
+def merge_stage_into_payload(
+    payload: dict[str, object], variants: dict[str, dict[str, object]]
+) -> None:
+    ranked = diversity_ranked_variants(list(variants.values()))
+    payload["variants"] = ranked
+    optimization = payload.get("optimization")
+    if not isinstance(optimization, dict):
+        optimization = {}
+        payload["optimization"] = optimization
+    optimization["variant_count"] = len(ranked)
+    optimization["unique_strategy_signatures"] = len(
+        {str(item.get("strategy_signature") or "") for item in ranked}
+    )
+    optimization["unique_holding_signatures"] = len(
+        {str(item.get("holdings_signature") or "") for item in ranked}
+    )
+    optimization["selected_variant_id"] = (
+        str(ranked[0].get("variant_id") or "") if ranked else ""
+    )
 
 
 def preserved_artifact_detail(previous: dict[str, object] | None) -> str:
@@ -459,6 +529,10 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--lock-file", type=Path)
     parser.add_argument("--cursor-file", type=Path)
+    parser.add_argument("--staging-file", type=Path)
+    parser.add_argument(
+        "--profile-batch-size", type=int, default=DEFAULT_PROFILE_BATCH_SIZE
+    )
     parser.add_argument("--sql-chunk-size", type=int, default=SQL_CHUNK_SIZE)
     parser.add_argument(
         "--lock-wait-seconds", type=float, default=DEFAULT_LOCK_WAIT_SECONDS
@@ -474,6 +548,9 @@ def main() -> int:
     )
     cursor_path = args.cursor_file or args.output.with_name(
         f".{args.output.name}.universe_cursor.json"
+    )
+    stage_path = getattr(args, "staging_file", None) or args.output.with_name(
+        f".{args.output.name}.staging.json"
     )
     previous = load_qualified_artifact(args.output)
     try:
@@ -494,6 +571,7 @@ def main() -> int:
             )
             batch = select_variant_batch(supported, args.max_symbols, cursor_path)
             selected = batch.symbols
+            selected_symbols = tuple(item.symbol for item in selected)
             if args.temp_db:
                 temp_db = args.temp_db
                 selected_symbols = copy_market_rows(
@@ -504,21 +582,66 @@ def main() -> int:
                     end=end,
                     sql_chunk_size=sql_chunk_size,
                 )
-                payload = run_suite(temp_db, selected_symbols, start, end)
+                temp_db_context = contextlib.nullcontext(temp_db)
             else:
-                with tempfile.TemporaryDirectory(prefix="aqsp-variant-db-") as tmp:
-                    temp_db = Path(tmp) / "variant_input.db"
+                temp_db_context = tempfile.TemporaryDirectory(prefix="aqsp-variant-db-")
+            with temp_db_context as temporary:
+                if args.temp_db:
+                    run_db = temp_db
+                else:
+                    run_db = Path(temporary) / "variant_input.db"
                     selected_symbols = copy_market_rows(
                         source_db=args.market_db,
-                        target_db=temp_db,
+                        target_db=run_db,
                         symbols=selected,
                         start=start,
                         end=end,
                         sql_chunk_size=sql_chunk_size,
                     )
-                    payload = run_suite(temp_db, selected_symbols, start, end)
+                stage = load_variant_stage(
+                    stage_path,
+                    start=start,
+                    end=end,
+                    symbols=selected_symbols,
+                )
+                all_profiles = generate_variant_profiles(
+                    load_frames(run_db, selected_symbols, start, end)
+                )
+                staged = staged_variants(stage)
+                profile_batch = select_profile_batch(
+                    all_profiles,
+                    set(staged),
+                    int(
+                        getattr(args, "profile_batch_size", DEFAULT_PROFILE_BATCH_SIZE)
+                    ),
+                )
+                if not profile_batch:
+                    raise ValueError("当前股票批次已完成但未形成合格变体产物")
+                payload = run_suite(
+                    run_db,
+                    selected_symbols,
+                    start,
+                    end,
+                    profile_batch,
+                    deduplicate_holdings=False,
+                )
             compact_variant_fills(payload, args.max_fills_per_variant)
-            payload = merge_qualified_artifacts(previous, payload)
+            for item in payload["variants"]:
+                if isinstance(item, dict) and isinstance(item.get("variant_id"), str):
+                    staged[item["variant_id"]] = item
+            stage_payload = make_stage_payload(
+                start=start,
+                end=end,
+                symbols=selected_symbols,
+                all_profile_ids=tuple(profile.variant_id for profile in all_profiles),
+                variants=staged,
+            )
+            stage_path.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write_text(
+                stage_path,
+                json.dumps(stage_payload, ensure_ascii=False, indent=2) + "\n",
+            )
+            merge_stage_into_payload(payload, staged)
             payload["universe"] = {
                 "market_db": str(args.market_db),
                 "supported_symbols": len(supported),
@@ -530,11 +653,21 @@ def main() -> int:
                 "cycle_id": batch.cycle_id,
                 "coverage_pct": batch.coverage_pct,
             }
-            validate_variant_payload(
-                payload,
-                path=str(args.output),
-                expected_end=end,
-            )
+            try:
+                validate_variant_payload(
+                    payload,
+                    path=str(args.output),
+                    expected_end=end,
+                )
+            except ValueError as exc:
+                print(
+                    "variant_results staged: "
+                    f"profiles={len(staged)}/{len(all_profiles)} "
+                    f"published_variants={len(payload['variants'])} "
+                    f"reason={exc}",
+                    flush=True,
+                )
+                return 0
             args.output.parent.mkdir(parents=True, exist_ok=True)
             atomic_write_text(
                 args.output, json.dumps(payload, ensure_ascii=False, indent=2) + "\n"

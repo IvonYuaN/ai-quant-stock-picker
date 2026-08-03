@@ -66,6 +66,8 @@ CURSOR_PATH="$(resolve_path "${AQSP_VARIANT_CURSOR_PATH:-data/runtime/variant_re
 MAX_SYMBOLS="${AQSP_VARIANT_MAX_SYMBOLS:-240}"
 MAX_RUNTIME_SECONDS="${AQSP_VARIANT_MAX_RUNTIME_SECONDS:-300}"
 NICE_LEVEL="${AQSP_VARIANT_NICE_LEVEL:-15}"
+PROFILE_BATCH_SIZE="${AQSP_VARIANT_PROFILE_BATCH_SIZE:-32}"
+MAX_STAGE_BATCHES="${AQSP_VARIANT_MAX_STAGE_BATCHES:-4}"
 
 if ! [[ "$MAX_SYMBOLS" =~ ^[0-9]+$ ]] || [ "$MAX_SYMBOLS" -lt 121 ]; then
     log "变体股票批次无效(${MAX_SYMBOLS})，使用 240"
@@ -84,26 +86,47 @@ if ! [[ "$NICE_LEVEL" =~ ^[0-9]+$ ]] || [ "$NICE_LEVEL" -lt 10 ] || [ "$NICE_LEV
     log "变体 CPU 优先级无效(${NICE_LEVEL})，使用低优先级 15"
     NICE_LEVEL="15"
 fi
+if ! [[ "$PROFILE_BATCH_SIZE" =~ ^[0-9]+$ ]] || [ "$PROFILE_BATCH_SIZE" -lt 1 ] || [ "$PROFILE_BATCH_SIZE" -gt 48 ]; then
+    log "变体策略批次无效(${PROFILE_BATCH_SIZE})，使用 32"
+    PROFILE_BATCH_SIZE="32"
+fi
+if ! [[ "$MAX_STAGE_BATCHES" =~ ^[0-9]+$ ]] || [ "$MAX_STAGE_BATCHES" -lt 1 ] || [ "$MAX_STAGE_BATCHES" -gt 4 ]; then
+    log "变体分段次数无效(${MAX_STAGE_BATCHES})，使用 4"
+    MAX_STAGE_BATCHES="4"
+fi
 if [ ! -f "$MARKET_DB" ]; then
     log "[ERROR] 变体市场库不存在: ${MARKET_DB}"
     exit 1
 fi
 
 mkdir -p "$(dirname "$OUTPUT_PATH")" "$(dirname "$LOCK_PATH")" "$(dirname "$CURSOR_PATH")"
-log "开始变体刷新：max_symbols=${MAX_SYMBOLS} timeout=${MAX_RUNTIME_SECONDS}s nice=${NICE_LEVEL}"
-if timeout --foreground --signal=TERM --kill-after=15s "${MAX_RUNTIME_SECONDS}s" \
-    nice -n "$NICE_LEVEL" "$PYTHON_BIN" "$PROJECT_ROOT/scripts/refresh_variant_results_from_market_db.py" \
-    --market-db "$MARKET_DB" \
-    --output "$OUTPUT_PATH" \
-    --max-symbols "$MAX_SYMBOLS" \
-    --max-runtime-seconds "$MAX_RUNTIME_SECONDS" \
-    --lock-file "$LOCK_PATH" \
-    --cursor-file "$CURSOR_PATH" >>"$LOG_FILE" 2>&1; then
-    "$PYTHON_BIN" "$PROJECT_ROOT/scripts/write_home_snapshot.py" \
-        --task-id variant-refresh >>"$LOG_FILE" 2>&1
-    log "变体刷新和首页快照更新完成"
-else
-    status=$?
-    log "[ERROR] 变体刷新失败或超时，保留上一版合格产物，exit=${status}"
-    exit "$status"
-fi
+log "开始变体刷新：max_symbols=${MAX_SYMBOLS} profiles=${PROFILE_BATCH_SIZE} batches=${MAX_STAGE_BATCHES} timeout=${MAX_RUNTIME_SECONDS}s nice=${NICE_LEVEL}"
+started_at="$(date +%s)"
+for batch_index in $(seq 1 "$MAX_STAGE_BATCHES"); do
+    elapsed=$(( $(date +%s) - started_at ))
+    remaining=$(( MAX_RUNTIME_SECONDS - elapsed - 15 ))
+    if [ "$remaining" -le 0 ]; then
+        log "变体总预算已耗尽，保留 staging 等待下个错峰窗口"
+        break
+    fi
+    if ! timeout --foreground --signal=TERM --kill-after=15s "${remaining}s" \
+        nice -n "$NICE_LEVEL" "$PYTHON_BIN" "$PROJECT_ROOT/scripts/refresh_variant_results_from_market_db.py" \
+        --market-db "$MARKET_DB" \
+        --output "$OUTPUT_PATH" \
+        --max-symbols "$MAX_SYMBOLS" \
+        --profile-batch-size "$PROFILE_BATCH_SIZE" \
+        --max-runtime-seconds "$remaining" \
+        --lock-file "$LOCK_PATH" \
+        --cursor-file "$CURSOR_PATH" >>"$LOG_FILE" 2>&1; then
+        status=$?
+        log "[ERROR] 变体分段 ${batch_index} 失败或超时，保留产物与 staging，exit=${status}"
+        exit "$status"
+    fi
+    if "$PYTHON_BIN" "$PROJECT_ROOT/scripts/check_variant_results.py" "$OUTPUT_PATH" >>"$LOG_FILE" 2>&1; then
+        "$PYTHON_BIN" "$PROJECT_ROOT/scripts/write_home_snapshot.py" \
+            --task-id variant-refresh >>"$LOG_FILE" 2>&1
+        log "变体刷新和首页快照更新完成"
+        exit 0
+    fi
+done
+log "变体首轮仍在分段构建，未更新首页正式变体快照"
