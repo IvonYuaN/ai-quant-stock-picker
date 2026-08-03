@@ -70,7 +70,7 @@ class MultiSource(DataSource):
         end: date,
         adjust: Literal["", "qfq", "hfq"] = "",
     ) -> dict[str, OhlcvFrame]:
-        if self._active_workload == "live_short" and self.validate_consistency:
+        if self._active_workload == "live_short":
             return self._with_live_short_fallback(
                 lambda src: src.fetch_daily(symbols, start, end, adjust),
                 "fetch_daily",
