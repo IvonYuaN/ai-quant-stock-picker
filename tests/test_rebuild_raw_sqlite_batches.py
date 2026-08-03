@@ -108,6 +108,60 @@ def test_rebuild_raw_sqlite_batches_persists_resumable_cursor(
     assert not payload["publish_ready"]
 
 
+def test_rebuild_raw_sqlite_batches_processes_multiple_chunks_within_budget(
+    monkeypatch, tmp_path: Path
+) -> None:
+    source = tmp_path / "legacy.db"
+    candidate = tmp_path / "candidate.db"
+    state = tmp_path / "rebuild.json"
+    with sqlite3.connect(source) as conn:
+        ensure_schema(conn)
+        conn.executemany(
+            "INSERT INTO stocks(ts_code, name) VALUES(?, ?)",
+            [
+                ("600000.SH", "A"),
+                ("000001.SZ", "B"),
+                ("300001.SZ", "C"),
+            ],
+        )
+
+    class FakeSource:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def price_mode(self) -> str:
+            return "raw"
+
+        def get_symbols_with_daily_coverage(self, symbols, *_args, **_kwargs):
+            return list(symbols)
+
+    calls: list[tuple[str, ...]] = []
+
+    def fake_update(*_args, **kwargs) -> UpdateSummary:
+        calls.append(tuple(kwargs["symbols"]))
+        return _summary()
+
+    monkeypatch.setattr(rebuild_raw_sqlite_batches, "SqliteDbSource", FakeSource)
+    monkeypatch.setattr(rebuild_raw_sqlite_batches, "update_sqlite_daily", fake_update)
+
+    result = rebuild_raw_sqlite_batches.rebuild_batches(
+        source_db=source,
+        candidate_db=candidate,
+        state_path=state,
+        target_day=date(2026, 8, 3),
+        start_day=date(2025, 1, 1),
+        batch_size=1,
+        query_timeout_seconds=4.0,
+        max_runtime_seconds=60.0,
+        min_coverage_ratio=0.98,
+        batches=2,
+    )
+
+    assert calls == [("000001.SZ",), ("300001.SZ",)]
+    assert result.next_offset == 2
+    assert not result.complete
+
+
 def test_rebuild_raw_sqlite_batches_atomically_activates_valid_candidate(
     monkeypatch, tmp_path: Path
 ) -> None:

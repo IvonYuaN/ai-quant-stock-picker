@@ -8,6 +8,7 @@ import json
 import os
 import sqlite3
 import sys
+import time
 from dataclasses import asdict, dataclass
 from datetime import date
 from pathlib import Path
@@ -203,6 +204,53 @@ def rebuild_batch(
     return summary
 
 
+def rebuild_batches(
+    *,
+    source_db: Path,
+    candidate_db: Path,
+    state_path: Path,
+    target_day: date,
+    start_day: date,
+    batch_size: int,
+    query_timeout_seconds: float,
+    max_runtime_seconds: float,
+    min_coverage_ratio: float,
+    batches: int,
+    activate_active_db: bool = False,
+) -> RebuildSummary:
+    """Run bounded rebuild chunks serially within one shared wall-clock budget."""
+    if batches < 0:
+        raise ValueError("batches must be non-negative")
+    started = time.monotonic()
+    completed: RebuildSummary | None = None
+    maximum_batches = batches if batches > 0 else sys.maxsize
+    for _ in range(maximum_batches):
+        remaining = max_runtime_seconds - (time.monotonic() - started)
+        if remaining <= 0:
+            break
+        completed = rebuild_batch(
+            source_db=source_db,
+            candidate_db=candidate_db,
+            state_path=state_path,
+            target_day=target_day,
+            start_day=start_day,
+            batch_size=batch_size,
+            query_timeout_seconds=query_timeout_seconds,
+            max_runtime_seconds=remaining,
+            min_coverage_ratio=min_coverage_ratio,
+            activate_active_db=activate_active_db,
+        )
+        if (
+            completed.complete
+            or completed.processed_symbols == 0
+            or completed.update.budget_exhausted
+        ):
+            break
+    if completed is None:
+        raise RuntimeError("raw rebuild exhausted its runtime before the first batch")
+    return completed
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source-db", required=True, type=Path)
@@ -213,6 +261,12 @@ def main() -> int:
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--query-timeout-seconds", type=float, default=4.0)
     parser.add_argument("--max-runtime-seconds", type=float, default=420.0)
+    parser.add_argument(
+        "--batches",
+        type=int,
+        default=0,
+        help="maximum serial chunks; 0 continues until the shared runtime budget",
+    )
     parser.add_argument("--min-coverage-ratio", type=float, default=0.98)
     parser.add_argument(
         "--activate-active-db",
@@ -224,10 +278,11 @@ def main() -> int:
         args.batch_size <= 0
         or args.query_timeout_seconds <= 0
         or args.max_runtime_seconds <= 0
+        or args.batches < 0
         or not 0 < args.min_coverage_ratio <= 1
     ):
         raise SystemExit("batch size and timeouts must be positive")
-    summary = rebuild_batch(
+    summary = rebuild_batches(
         source_db=args.source_db,
         candidate_db=args.candidate_db,
         state_path=args.state,
@@ -237,6 +292,7 @@ def main() -> int:
         query_timeout_seconds=args.query_timeout_seconds,
         max_runtime_seconds=args.max_runtime_seconds,
         min_coverage_ratio=args.min_coverage_ratio,
+        batches=args.batches,
         activate_active_db=bool(args.activate_active_db),
     )
     print(json.dumps(asdict(summary), ensure_ascii=False, default=str, sort_keys=True))

@@ -415,6 +415,7 @@ run_bounded_raw_refresh() {
             --batch-size "${AQSP_RAW_REBUILD_BATCH_SIZE:-16}" \
             --query-timeout-seconds "$query_timeout" \
             --max-runtime-seconds "$runtime_seconds" \
+            --batches "$batches" \
             --min-coverage-ratio "${AQSP_RAW_REBUILD_MIN_COVERAGE_RATIO:-0.98}" \
             --activate-active-db
         return
