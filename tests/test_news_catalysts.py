@@ -1416,9 +1416,10 @@ def test_news_catalyst_does_not_treat_wire_prefix_as_target_name() -> None:
     assert "来源: 富途" in markdown
 
 
-def test_news_catalyst_prioritizes_higher_quality_source_when_weight_and_time_match() -> (
-    None
-):
+def test_news_catalyst_prioritizes_higher_quality_source_when_weight_and_time_match(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr("aqsp.news.catalysts.today_shanghai", lambda: date(2026, 7, 3))
     report = build_catalyst_report(
         fetch_global_news=lambda _limit: pd.DataFrame(
             [
