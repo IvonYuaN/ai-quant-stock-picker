@@ -1431,6 +1431,70 @@ def _raw_partial_coverage_floor() -> float:
     return value if 0 < value <= 1 else DEFAULT_RAW_PARTIAL_COVERAGE_FLOOR
 
 
+def _raw_rebuild_universe_snapshot() -> HomeSnapshotUniverse | None:
+    """Expose the resumable clean-database rebuild without treating it as live data."""
+    state_path = _runtime_json_path(
+        "AQSP_RAW_REBUILD_STATE_PATH",
+        "data/.state/raw-rebuild-cursor.json",
+    )
+    payload = _read_json_object(state_path)
+    if (
+        not payload
+        or _text(payload.get("target_day"))
+        != latest_completed_trading_day().isoformat()
+    ):
+        return None
+    total = int(payload.get("universe_size") or 0)
+    raw_covered = payload.get("covered_ts_codes")
+    covered_symbols = (
+        tuple(dict.fromkeys(str(symbol) for symbol in raw_covered if symbol))
+        if isinstance(raw_covered, list)
+        else ()
+    )
+    coverage_pct = (len(covered_symbols) / total) if total else 0.0
+    floor = _raw_partial_coverage_floor()
+    complete = bool(payload.get("complete"))
+    publish_ready = bool(payload.get("publish_ready"))
+    missing = max(0, total - len(covered_symbols))
+    if publish_ready:
+        detail = (
+            f"原始日线重建当日可用 {len(covered_symbols)}/{total}；"
+            f"{missing} 只已排除；完成轮次覆盖达到 {floor:.0%} 下限，"
+            "成功股票进入研究池"
+        )
+    elif complete:
+        detail = (
+            f"原始日线重建完成但仅覆盖 {len(covered_symbols)}/{total}；"
+            f"未达到 {floor:.0%} 下限，候选继续阻塞"
+        )
+    else:
+        detail = (
+            f"原始日线重建仅覆盖 {len(covered_symbols)}/{total}；全市场重建尚未完成"
+        )
+    batch = payload.get("update")
+    update = batch if isinstance(batch, dict) else {}
+    batch_size = int(update.get("processed_symbols") or 0)
+    next_offset = int(payload.get("next_offset") or 0)
+    return HomeSnapshotUniverse(
+        total=total,
+        resolved=len(covered_symbols),
+        screened=len(covered_symbols),
+        max_universe=0,
+        source="sqlite_raw_rebuild",
+        batch_active=not publish_ready,
+        batch_id=_text(payload.get("target_day")),
+        batch_size=batch_size,
+        cycle_id=(next_offset // batch_size + 1) if batch_size else 0,
+        coverage_pct=coverage_pct,
+        last_error=detail,
+    )
+
+
+def _universe_coverage_ratio(universe: HomeSnapshotUniverse) -> float:
+    """Calculate the gate input from counts, not the optional display percentage."""
+    return universe.resolved / universe.total if universe.total else 0.0
+
+
 def _walkforward_evidence(*, evaluated_at: datetime) -> tuple[bool, datetime | None]:
     """Load production status and gate sidecar as one fail-closed evidence set."""
     status = _read_json_object(
@@ -1476,10 +1540,9 @@ def _recommendation_gate(
 ) -> HomeSnapshotRecommendationGate:
     if (
         universe is not None
-        and universe.source == "sqlite_raw_refresh"
+        and universe.source in {"sqlite_raw_refresh", "sqlite_raw_rebuild"}
         and universe.total > 0
-        and universe.batch_active
-        and universe.resolved < universe.total
+        and _universe_coverage_ratio(universe) < _raw_partial_coverage_floor()
     ):
         return HomeSnapshotRecommendationGate(
             recommendation_allowed=False,
@@ -1607,6 +1670,9 @@ def _universe_snapshot() -> HomeSnapshotUniverse:
             coverage_pct=float(daily_payload.get("coverage_pct") or 0.0),
             last_error=_text(daily_payload.get("last_error")),
         )
+    rebuild_universe = _raw_rebuild_universe_snapshot()
+    if rebuild_universe is not None:
+        return rebuild_universe
     raw_cursor = _runtime_json_path(
         "AQSP_SQLITE_REFRESH_CURSOR_PATH",
         "data/.state/sqlite-refresh-cursor.json",

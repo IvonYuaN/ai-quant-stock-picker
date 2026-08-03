@@ -249,6 +249,43 @@ def test_universe_snapshot_exposes_verified_raw_refresh_coverage(
     assert universe.last_error == "原始日线仅覆盖 3/4464；全市场刷新尚未完成"
 
 
+def test_universe_snapshot_exposes_partial_raw_rebuild_coverage(
+    monkeypatch, tmp_path: Path
+) -> None:
+    state_path = tmp_path / "raw-rebuild-cursor.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "target_day": "2026-07-29",
+                "universe_size": 4464,
+                "covered_ts_codes": ["600000.SH", "000001.SZ", "600000.SH"],
+                "next_offset": 32,
+                "complete": False,
+                "publish_ready": False,
+                "update": {"processed_symbols": 16},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AQSP_RAW_REBUILD_STATE_PATH", str(state_path))
+    monkeypatch.setattr(
+        write_home_snapshot,
+        "latest_completed_trading_day",
+        lambda: date(2026, 7, 29),
+    )
+
+    universe = write_home_snapshot._universe_snapshot()
+
+    assert universe.source == "sqlite_raw_rebuild"
+    assert universe.total == 4464
+    assert universe.resolved == 2
+    assert universe.batch_active is True
+    assert universe.batch_size == 16
+    assert universe.cycle_id == 3
+    assert universe.coverage_pct == pytest.approx(2 / 4464)
+    assert universe.last_error == "原始日线重建仅覆盖 2/4464；全市场重建尚未完成"
+
+
 def test_universe_snapshot_accepts_verified_raw_exclusions_without_cursor_reset(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -380,6 +417,28 @@ def test_recommendation_gate_blocks_partial_raw_refresh_coverage() -> None:
     assert gate.recommendation_allowed is False
     assert gate.status == "blocked_incomplete_raw_data"
     assert gate.reasons == ("原始日线仅覆盖 122/4464；全市场刷新尚未完成",)
+
+
+def test_recommendation_gate_blocks_partial_raw_rebuild_coverage() -> None:
+    gate = write_home_snapshot._recommendation_gate(
+        provider=SimpleNamespace(paper_ledger_path=None),
+        runtime=SimpleNamespace(),
+        source=SimpleNamespace(status="run_completed", lag_days=0),
+        message_status="可用",
+        evaluated_at=datetime(2026, 7, 30, 16, tzinfo=ZoneInfo("Asia/Shanghai")),
+        universe=write_home_snapshot.HomeSnapshotUniverse(
+            total=4464,
+            resolved=122,
+            source="sqlite_raw_rebuild",
+            batch_active=True,
+            coverage_pct=122 / 4464,
+            last_error="原始日线重建仅覆盖 122/4464；全市场重建尚未完成",
+        ),
+    )
+
+    assert gate.recommendation_allowed is False
+    assert gate.status == "blocked_incomplete_raw_data"
+    assert gate.reasons == ("原始日线重建仅覆盖 122/4464；全市场重建尚未完成",)
 
 
 def test_recommendation_gate_allows_completed_raw_refresh_with_excluded_symbols() -> (
