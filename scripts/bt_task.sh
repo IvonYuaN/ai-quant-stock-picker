@@ -431,6 +431,20 @@ run_bounded_raw_refresh() {
         --batches "$batches"
 }
 
+refresh_home_snapshot_after_data_refresh() {
+    local snapshot_script="${PROJECT_ROOT}/scripts/write_home_snapshot.py"
+    [ -f "$snapshot_script" ] || return 0
+    if run_python_script "$snapshot_script" \
+        --date "$(date +%F)" \
+        --task-id "$AQSP_RUN_TASK_ID" \
+        --output "${AQSP_HOME_SNAPSHOT_PATH:-data/runtime/home_dashboard_snapshot.json}" \
+        --index-output "${AQSP_HOME_SNAPSHOT_INDEX_PATH:-data/runtime/home_dashboard_snapshot_index.json}"; then
+        log "原始日线批次完成，首页快照已刷新"
+    else
+        log "[WARN] 原始日线批次完成，但首页快照刷新失败；保留上一版快照"
+    fi
+}
+
 gate_optional_heavy_task() {
     local status_path="${STATE_DIR}/resource-gate-${ACTION}.json"
     # 0 lets resource_gate reserve 25% of known host memory, bounded by its safe floor/cap.
@@ -770,6 +784,7 @@ case "$ACTION" in
         export AQSP_GATE_NOTIFY="false"
         sync_code_only
         run_bounded_raw_refresh "${AQSP_DATA_REFRESH_BATCHES:-0}"
+        refresh_home_snapshot_after_data_refresh
         ;;
     data-refresh-retry)
         skip_non_trading_day
@@ -784,6 +799,7 @@ case "$ACTION" in
         export AQSP_GATE_NOTIFY="false"
         sync_code_only
         run_bounded_raw_refresh "${AQSP_DATA_REFRESH_RETRY_BATCHES:-0}"
+        refresh_home_snapshot_after_data_refresh
         ;;
     intraday)
         skip_non_trading_day

@@ -879,6 +879,8 @@ def test_bt_task_script_exposes_panel_safe_actions() -> None:
     assert 'run_bounded_raw_refresh "${AQSP_DATA_REFRESH_BATCHES:-0}"' in script
     assert 'run_bounded_raw_refresh "${AQSP_DATA_REFRESH_RETRY_BATCHES:-0}"' in script
     assert '--batches "$batches"' in script
+    assert script.count("refresh_home_snapshot_after_data_refresh") == 3
+    assert "原始日线批次完成，首页快照已刷新" in script
     assert "ensure_data_refresh_window()" in script
     assert "ensure_data_refresh_retry_window()" in script
     assert "AQSP_DATA_REFRESH_RETRY_WINDOW_END_HM:-1930" in script
