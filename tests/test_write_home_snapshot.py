@@ -263,7 +263,7 @@ def test_universe_snapshot_accepts_verified_raw_exclusions_without_cursor_reset(
                 "last_batch": {
                     "processed_symbols": 2880,
                     "raw_max_trade_date": "2026-07-29",
-                    "failed_symbols": 0,
+                    "failed_symbols": 67,
                     "coverage_error": None,
                 },
             }
@@ -282,7 +282,9 @@ def test_universe_snapshot_accepts_verified_raw_exclusions_without_cursor_reset(
     assert universe.batch_active is False
     assert universe.coverage_pct == pytest.approx(4399 / 4466)
     assert (
-        universe.last_error == "原始日线当日可用 4399/4466；67 只未返回当日日线，已排除"
+        universe.last_error
+        == "原始日线当日可用 4399/4466；67 只未返回当日日线，已排除；"
+        "完成轮次覆盖达到 98% 下限，成功股票进入研究池"
     )
 
 
@@ -394,7 +396,10 @@ def test_recommendation_gate_allows_completed_raw_refresh_with_excluded_symbols(
             resolved=4399,
             source="sqlite_raw_refresh",
             batch_active=False,
-            last_error="原始日线当日可用 4399/4466；67 只未返回当日日线，已排除",
+            last_error=(
+                "原始日线当日可用 4399/4466；67 只未返回当日日线，已排除；"
+                "完成轮次覆盖达到 98% 下限，成功股票进入研究池"
+            ),
         ),
     )
 

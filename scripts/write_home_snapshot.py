@@ -90,7 +90,7 @@ MAX_HOME_MESSAGES_PER_SOURCE = 2
 MAX_HOME_VARIANTS = 160
 MIN_HOME_VARIANT_COUNT = 100
 MIN_HOME_VARIANT_SYMBOLS = 121
-VERIFIED_RAW_COVERAGE_FLOOR = 0.98
+DEFAULT_RAW_PARTIAL_COVERAGE_FLOOR = 0.98
 NEWS_REPORT_MAX_AGE_SECONDS = 6 * 60 * 60
 CURRENT_MESSAGE_WINDOW = timedelta(hours=24)
 _SOURCE_STATUS_LABELS = {
@@ -1419,6 +1419,18 @@ def _read_json_object(path: Path) -> dict[str, object]:
     return payload if isinstance(payload, dict) else {}
 
 
+def _raw_partial_coverage_floor() -> float:
+    """Return the minimum completed raw-data coverage allowed into research."""
+    raw = os.getenv("AQSP_RAW_PARTIAL_COVERAGE_MIN_RATIO", "").strip()
+    if not raw:
+        return DEFAULT_RAW_PARTIAL_COVERAGE_FLOOR
+    try:
+        value = float(raw)
+    except ValueError:
+        return DEFAULT_RAW_PARTIAL_COVERAGE_FLOOR
+    return value if 0 < value <= 1 else DEFAULT_RAW_PARTIAL_COVERAGE_FLOOR
+
+
 def _walkforward_evidence(*, evaluated_at: datetime) -> tuple[bool, datetime | None]:
     """Load production status and gate sidecar as one fail-closed evidence set."""
     status = _read_json_object(
@@ -1618,11 +1630,11 @@ def _universe_snapshot() -> HomeSnapshotUniverse:
         coverage_pct = (len(covered_symbols) / total) if total else 0.0
         coverage_error = _text(batch.get("coverage_error"))
         target_day = _text(raw_payload.get("target_day"))
+        partial_coverage_floor = _raw_partial_coverage_floor()
         verified_exclusions = (
             total > 0
-            and coverage_pct >= VERIFIED_RAW_COVERAGE_FLOOR
+            and coverage_pct >= partial_coverage_floor
             and _text(batch.get("raw_max_trade_date")) == target_day
-            and int(batch.get("failed_symbols") or 0) == 0
         )
         # A cursor only describes the next bounded refresh chunk. It cannot
         # keep an otherwise verified raw universe blocked after unavailable
@@ -1634,7 +1646,8 @@ def _universe_snapshot() -> HomeSnapshotUniverse:
             missing = total - len(covered_symbols)
             coverage_error = (
                 f"原始日线当日可用 {len(covered_symbols)}/{total}；"
-                f"{missing} 只未返回当日日线，已排除"
+                f"{missing} 只未返回当日日线，已排除；"
+                f"完成轮次覆盖达到 {partial_coverage_floor:.0%} 下限，成功股票进入研究池"
                 if cycle_complete
                 else f"原始日线仅覆盖 {len(covered_symbols)}/{total}；全市场刷新尚未完成"
             )
