@@ -1855,7 +1855,7 @@ def test_variant_refresh_runs_after_close_with_bounded_resources() -> None:
     assert "变体股票批次无效(${MAX_SYMBOLS})，使用 240" in script
     assert 'MAX_RUNTIME_SECONDS="${AQSP_VARIANT_MAX_RUNTIME_SECONDS:-300}"' in script
     assert 'NICE_LEVEL="${AQSP_VARIANT_NICE_LEVEL:-15}"' in script
-    assert 'PROFILE_BATCH_SIZE="${AQSP_VARIANT_PROFILE_BATCH_SIZE:-32}"' in script
+    assert 'PROFILE_BATCH_SIZE="${AQSP_VARIANT_PROFILE_BATCH_SIZE:-25}"' in script
     assert "MIN_PUBLISHED_VARIANTS=100" in script
     assert "MIN_PROFILE_BATCH_SIZE=$(( (MIN_PUBLISHED_VARIANTS + MAX_STAGE_BATCHES - 1) / MAX_STAGE_BATCHES ))" in script
     assert "无法在 ${MAX_STAGE_BATCHES} 段内形成 ${MIN_PUBLISHED_VARIANTS} 个合格变体" in script
@@ -1870,7 +1870,7 @@ def test_variant_refresh_runs_after_close_with_bounded_resources() -> None:
     assert "write_home_snapshot.py" in script
     assert "变体首轮仍在分段构建，首页已更新状态快照" in script
     assert "refresh_home_snapshot" in script
-    assert 'status=$?' in script
+    assert "status=$?" in script
 
 
 def test_bt_optional_heavy_tasks_check_host_capacity_before_starting() -> None:
