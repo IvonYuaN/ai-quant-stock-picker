@@ -135,3 +135,27 @@ def test_rebuild_raw_sqlite_batches_atomically_activates_valid_candidate(
     backups = list(tmp_path.glob("astocks_raw.db.invalid-*"))
     assert len(backups) == 1
     assert backups[0].read_text(encoding="utf-8") == "legacy"
+
+
+def test_rebuild_raw_sqlite_batches_keeps_cursor_when_target_day_rolls(
+    tmp_path: Path,
+) -> None:
+    state = tmp_path / "rebuild.json"
+    state.write_text(
+        json.dumps(
+            {
+                "target_day": "2026-08-03",
+                "start_date": "2024-01-01",
+                "next_offset": 32,
+                "covered_ts_codes": ["000001.SZ"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    offset, covered = rebuild_raw_sqlite_batches._read_state(
+        state, date(2026, 8, 4), date(2024, 1, 1), 100
+    )
+
+    assert offset == 32
+    assert covered == set()

@@ -82,15 +82,18 @@ def _seed_candidate_database(source_db: Path, candidate_db: Path) -> list[str]:
 
 
 def _read_state(
-    state_path: Path, target_day: date, universe_size: int
+    state_path: Path, target_day: date, start_day: date, universe_size: int
 ) -> tuple[int, set[str]]:
     try:
         payload = json.loads(state_path.read_text(encoding="utf-8"))
-        if payload.get("target_day") != target_day.isoformat():
+        if payload.get("start_date") != start_day.isoformat():
             return 0, set()
+        offset = max(0, int(payload.get("next_offset", 0))) % universe_size
+        if payload.get("target_day") != target_day.isoformat():
+            return offset, set()
         covered = payload.get("covered_ts_codes", [])
         symbols = {str(item) for item in covered if isinstance(item, str)}
-        return max(0, int(payload.get("next_offset", 0))) % universe_size, symbols
+        return offset, symbols
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         return 0, set()
 
@@ -143,7 +146,9 @@ def rebuild_batch(
     symbols = _seed_candidate_database(source_db, candidate_db)
     if not 0 < min_coverage_ratio <= 1:
         raise ValueError("min coverage ratio must be in (0, 1]")
-    offset, covered_before = _read_state(state_path, target_day, len(symbols))
+    offset, covered_before = _read_state(
+        state_path, target_day, start_day, len(symbols)
+    )
     batch = symbols[offset : offset + batch_size]
     if not batch:
         batch = symbols[:batch_size]
@@ -189,6 +194,7 @@ def rebuild_batch(
     )
     payload = asdict(summary)
     payload["target_day"] = target_day.isoformat()
+    payload["start_date"] = start_day.isoformat()
     payload["updated_at"] = now_shanghai().isoformat(timespec="seconds")
     payload["covered_ts_codes"] = sorted(covered)
     atomic_write_text(
