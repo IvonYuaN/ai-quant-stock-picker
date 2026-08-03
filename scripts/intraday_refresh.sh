@@ -564,7 +564,8 @@ refresh_home_dashboard_snapshot() {
         log "首页快照刷新已关闭"
         return 0
     fi
-    if "${PYTHON_BIN}" "${PROJECT_ROOT}/scripts/write_home_snapshot.py" \
+    if AQSP_INTRADAY_LATEST_CSV="${INTRADAY_OUTPUT_CSV}" \
+        "${PYTHON_BIN}" "${PROJECT_ROOT}/scripts/write_home_snapshot.py" \
         --date "$(date +%F)" \
         --task-id "${AQSP_RUN_TASK_ID}" \
         --output "${HOME_SNAPSHOT_PATH}" \

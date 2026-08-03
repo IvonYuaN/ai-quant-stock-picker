@@ -537,6 +537,12 @@ def test_intraday_runtime_quality_gate_downgrades_watch_candidate_and_records_st
     }
 
 
+def test_intraday_runtime_passes_absolute_csv_to_home_snapshot() -> None:
+    script = SCRIPT_PATH.read_text(encoding="utf-8")
+
+    assert 'AQSP_INTRADAY_LATEST_CSV="${INTRADAY_OUTPUT_CSV}"' in script
+
+
 def test_intraday_runtime_production_env_disables_main_debate_and_falls_back_from_eastmoney(
     tmp_path: Path,
 ) -> None:
