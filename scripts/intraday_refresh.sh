@@ -475,7 +475,7 @@ refresh_debate_backfill_lock_owner() {
 }
 
 launch_intraday_debate_backfill() {
-    if ! is_truthy "${AQSP_INTRADAY_DEBATE_BACKFILL:-false}"; then
+    if ! is_truthy "${AQSP_INTRADAY_DEBATE_BACKFILL:-true}"; then
         log "盘中 Agent 讨论回填已关闭"
         return 0
     fi

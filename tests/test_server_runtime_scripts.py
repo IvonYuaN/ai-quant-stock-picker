@@ -639,7 +639,7 @@ def test_intraday_refresh_script_uses_isolated_outputs() -> None:
     )
     assert "launch_intraday_debate_backfill" in script
     assert "scripts/backfill_intraday_debate.py" in script
-    assert "AQSP_INTRADAY_DEBATE_BACKFILL:-false" in script
+    assert "AQSP_INTRADAY_DEBATE_BACKFILL:-true" in script
     assert "AQSP_INTRADAY_DEBATE_BACKFILL_BACKGROUND:-false" in script
     assert "AQSP_INTRADAY_DEBATE_BACKFILL_FORCE:-true" in script
     assert "AQSP_INTRADAY_DEBATE_BACKFILL_MAX_CANDIDATES:-3" in script
