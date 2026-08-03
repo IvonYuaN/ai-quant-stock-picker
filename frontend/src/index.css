@@ -374,11 +374,14 @@
   .aqsp-tag-good { color: hsl(var(--success)); background: hsl(var(--success) / 0.13); }
   .aqsp-tag-bad { color: hsl(var(--danger)); background: hsl(var(--danger) / 0.13); }
   .aqsp-card-summary { margin-top: 0.55rem; color: hsl(var(--foreground) / 0.78); font-size: 0.72rem; line-height: 1.5; }
-  .aqsp-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.4rem; margin-top: 0.65rem; border-top: 1px solid hsl(var(--border) / 0.45); padding-top: 0.6rem; }
+  .aqsp-strategies { margin-top: 0.4rem; color: hsl(var(--primary)); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.62rem; }
+  .aqsp-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.5rem 0.75rem; margin-top: 0.6rem; border-top: 1px solid hsl(var(--border) / 0.45); padding-top: 0.55rem; }
   .aqsp-metrics div { min-width: 0; }
   .aqsp-metrics span { display: block; overflow: hidden; color: hsl(var(--muted-foreground)); font-size: 0.58rem; text-overflow: ellipsis; white-space: nowrap; }
   .aqsp-metrics b { display: block; overflow: hidden; margin-top: 0.12rem; color: hsl(var(--foreground) / 0.88); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.7rem; text-overflow: ellipsis; white-space: nowrap; }
-  .aqsp-reasons { display: grid; gap: 0.25rem; margin-top: 0.6rem; color: hsl(var(--foreground) / 0.8); font-size: 0.68rem; line-height: 1.4; }
+  .aqsp-evidence { margin-top: 0.55rem; border-top: 1px solid hsl(var(--border) / 0.45); padding-top: 0.5rem; }
+  .aqsp-evidence > b { color: hsl(var(--muted-foreground)); font-size: 0.58rem; font-weight: 650; }
+  .aqsp-reasons { display: grid; gap: 0.2rem; margin-top: 0.3rem; color: hsl(var(--foreground) / 0.8); font-size: 0.68rem; line-height: 1.4; }
   .aqsp-score-breakdown { margin-top: 0.6rem; border-top: 1px solid hsl(var(--border) / 0.45); padding-top: 0.55rem; color: hsl(var(--muted-foreground)); font-size: 0.65rem; line-height: 1.45; }
   .aqsp-score-breakdown b { margin-right: 0.35rem; color: hsl(var(--primary)); font-weight: 650; }
   .aqsp-reasons li, .aqsp-next, .aqsp-debate-foot span, .aqsp-source { display: flex; align-items: flex-start; gap: 0.3rem; }
