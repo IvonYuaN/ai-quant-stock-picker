@@ -315,7 +315,8 @@ print(
     f"messages={len(data.get('messages') or [])}",
 )
 PY
-    AQSP_HEADLESS_LOCK="$HEADLESS_LOCK_FILE" "$PYTHON_BIN" "$RELEASE_DIR/scripts/headless_dashboard_check.py" \
+    PYTHONPATH="$RELEASE_DIR/src${PYTHONPATH:+:$PYTHONPATH}" \
+        AQSP_HEADLESS_LOCK="$HEADLESS_LOCK_FILE" "$PYTHON_BIN" "$RELEASE_DIR/scripts/headless_dashboard_check.py" \
         --url "$CHECK_URL" \
         --mode browser \
         --require-browser \
