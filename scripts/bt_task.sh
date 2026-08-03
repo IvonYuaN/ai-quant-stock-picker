@@ -384,6 +384,51 @@ ensure_data_refresh_retry_window() {
     fi
 }
 
+sqlite_price_basis_is_invalid() {
+    local db_path="$1"
+    PYTHONPATH="${PROJECT_ROOT}/src:${PROJECT_ROOT}:${PYTHONPATH:-}" \
+        "$AQSP_RUNTIME_PYTHON" - "$db_path" <<'AQSP_PRICE_BASIS_PY'
+import sys
+from pathlib import Path
+
+from aqsp.data.sqlite_db_source import SqliteDbSource
+
+raise SystemExit(0 if SqliteDbSource(Path(sys.argv[1]), cache=None).price_mode() == "invalid" else 1)
+AQSP_PRICE_BASIS_PY
+}
+
+run_bounded_raw_refresh() {
+    local batches="${1:-${AQSP_DATA_REFRESH_BATCHES:-0}}"
+    local db_path="${AQSP_SQLITE_DB_PATH:?AQSP_SQLITE_DB_PATH is required}"
+    local state_path="${STATE_DIR}/sqlite-refresh-cursor.json"
+    local batch_size="${AQSP_DATA_REFRESH_BATCH_SIZE:-120}"
+    local runtime_seconds="${AQSP_DATA_REFRESH_MAX_RUNTIME_SECONDS:-480}"
+    local query_timeout="${AQSP_DATA_REFRESH_QUERY_TIMEOUT_SECONDS:-4}"
+    if sqlite_price_basis_is_invalid "$db_path"; then
+        log "现有 SQLite 价格基准无效，转入旁路 raw 重建；正式库保持只读"
+        run_python_script "${PROJECT_ROOT}/scripts/rebuild_raw_sqlite_batches.py" \
+            --source-db "$db_path" \
+            --candidate-db "${AQSP_RAW_REBUILD_DB_PATH:-${db_path}.rebuild}" \
+            --state "${STATE_DIR}/raw-rebuild-cursor.json" \
+            --target-date "$(date +%F)" \
+            --start-date "${AQSP_RAW_REBUILD_START_DATE:-2024-01-01}" \
+            --batch-size "${AQSP_RAW_REBUILD_BATCH_SIZE:-16}" \
+            --query-timeout-seconds "$query_timeout" \
+            --max-runtime-seconds "$runtime_seconds" \
+            --min-coverage-ratio "${AQSP_RAW_REBUILD_MIN_COVERAGE_RATIO:-0.98}"
+        return
+    fi
+    run_python_script "${PROJECT_ROOT}/scripts/refresh_sqlite_batch.py" \
+        --db "$db_path" \
+        --state "$state_path" \
+        --batch-size "$batch_size" \
+        --universe-limit "${AQSP_DATA_REFRESH_UNIVERSE_LIMIT:-0}" \
+        --min-amount "${AQSP_MIN_AVG_AMOUNT:-50000000}" \
+        --query-timeout-seconds "$query_timeout" \
+        --max-runtime-seconds "$runtime_seconds" \
+        --batches "$batches"
+}
+
 gate_optional_heavy_task() {
     local status_path="${STATE_DIR}/resource-gate-${ACTION}.json"
     # 0 lets resource_gate reserve 25% of known host memory, bounded by its safe floor/cap.
@@ -722,15 +767,7 @@ case "$ACTION" in
         export AQSP_NOTIFY="false"
         export AQSP_GATE_NOTIFY="false"
         sync_code_only
-        run_python_script "${PROJECT_ROOT}/scripts/refresh_sqlite_batch.py" \
-            --db "${AQSP_SQLITE_DB_PATH:?AQSP_SQLITE_DB_PATH is required}" \
-            --state "${STATE_DIR}/sqlite-refresh-cursor.json" \
-            --batch-size "${AQSP_DATA_REFRESH_BATCH_SIZE:-120}" \
-            --universe-limit "${AQSP_DATA_REFRESH_UNIVERSE_LIMIT:-0}" \
-            --min-amount "${AQSP_MIN_AVG_AMOUNT:-50000000}" \
-            --query-timeout-seconds "${AQSP_DATA_REFRESH_QUERY_TIMEOUT_SECONDS:-4}" \
-            --max-runtime-seconds "${AQSP_DATA_REFRESH_MAX_RUNTIME_SECONDS:-480}" \
-            --batches "${AQSP_DATA_REFRESH_BATCHES:-0}"
+        run_bounded_raw_refresh "${AQSP_DATA_REFRESH_BATCHES:-0}"
         ;;
     data-refresh-retry)
         skip_non_trading_day
@@ -744,15 +781,7 @@ case "$ACTION" in
         export AQSP_NOTIFY="false"
         export AQSP_GATE_NOTIFY="false"
         sync_code_only
-        run_python_script "${PROJECT_ROOT}/scripts/refresh_sqlite_batch.py" \
-            --db "${AQSP_SQLITE_DB_PATH:?AQSP_SQLITE_DB_PATH is required}" \
-            --state "${STATE_DIR}/sqlite-refresh-cursor.json" \
-            --batch-size "${AQSP_DATA_REFRESH_BATCH_SIZE:-120}" \
-            --universe-limit "${AQSP_DATA_REFRESH_UNIVERSE_LIMIT:-0}" \
-            --min-amount "${AQSP_MIN_AVG_AMOUNT:-50000000}" \
-            --query-timeout-seconds "${AQSP_DATA_REFRESH_QUERY_TIMEOUT_SECONDS:-4}" \
-            --max-runtime-seconds "${AQSP_DATA_REFRESH_MAX_RUNTIME_SECONDS:-480}" \
-            --batches "${AQSP_DATA_REFRESH_RETRY_BATCHES:-0}"
+        run_bounded_raw_refresh "${AQSP_DATA_REFRESH_RETRY_BATCHES:-0}"
         ;;
     intraday)
         skip_non_trading_day
