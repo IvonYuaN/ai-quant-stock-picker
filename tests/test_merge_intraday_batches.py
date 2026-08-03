@@ -52,6 +52,7 @@ def test_merge_batches_preserves_existing_when_current_batch_has_no_candidates(
                 "signal_date": "2026-07-31",
                 "score": "60",
                 "volume_ratio": "1.20",
+                "candidate_status": "质量观察",
             },
         ],
     )
@@ -69,6 +70,7 @@ def test_merge_batches_preserves_existing_when_current_batch_has_no_candidates(
     assert rows[1]["quality_gate_action"] == "observe"
     assert rows[1]["observation_only"] == "true"
     assert rows[1]["paper_review_eligible"] == "false"
+    assert rows[1]["candidate_status"] == "质量观察"
     assert "macd_hist" in rows[1]["candidate_blocker"]
     assert "kdj_j" in rows[1]["candidate_blocker"]
 

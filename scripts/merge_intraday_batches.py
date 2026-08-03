@@ -57,6 +57,7 @@ def _enforce_technical_evidence(row: dict[str, str]) -> dict[str, str]:
     downgraded = dict(row)
     reason = f"技术证据不完整: 缺少 {', '.join(missing)}"
     existing_blocker = str(downgraded.get("candidate_blocker") or "").strip()
+    existing_status = str(downgraded.get("candidate_status") or "").strip()
     downgraded.update(
         {
             "technical_quality_status": "incomplete",
@@ -64,7 +65,7 @@ def _enforce_technical_evidence(row: dict[str, str]) -> dict[str, str]:
             "observation_only": "true",
             "research_recommendation": "false",
             "paper_review_eligible": "false",
-            "candidate_status": "技术证据不完整",
+            "candidate_status": existing_status or "技术证据不完整",
             "candidate_blocker": (
                 f"{existing_blocker}；{reason}" if existing_blocker else reason
             ),
