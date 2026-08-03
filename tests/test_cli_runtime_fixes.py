@@ -880,6 +880,100 @@ def test_fetch_special_strategy_frames_keeps_daily_when_intraday_overlay_is_empt
     assert result["600000"].attrs["intraday_overlay_coverage"]["status"] == "partial"
 
 
+def test_fetch_special_strategy_frames_uses_sqlite_base_then_realtime_overlay(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import aqsp.cli as cli_mod
+
+    base = {
+        "600000": _fresh_frame("2026-06-25"),
+        "000300": _fresh_frame("2026-06-25"),
+    }
+    overlay_frame = _fresh_frame("2026-06-26")
+    overlay_frame.attrs.update(
+        {
+            "source_name": "tencent",
+            "source": "tencent",
+            "workload": "live_short",
+            "fetched_at": "2026-06-26T10:00:00+08:00",
+            "timestamp_source": "bar_time",
+            "freshness": "fresh",
+        }
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "_fetch_frames_for_cli_with_metadata",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(DataError("online unavailable")),
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "_fetch_intraday_historical_base",
+        lambda *_args, **_kwargs: base,
+    )
+    monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 26))
+
+    class FakeIntradayService:
+        def __init__(self, _source) -> None:
+            pass
+
+        def merge_intraday_bar_into_daily_with_coverage(self, *_args, **_kwargs):
+            return SimpleNamespace(
+                frames={"600000": overlay_frame},
+                requested_symbols=("600000", "000300"),
+                covered_symbols=("600000",),
+                missing_symbols=("000300",),
+                complete=False,
+            )
+
+    monkeypatch.setattr(cli_mod, "IntradayService", FakeIntradayService)
+
+    result, actual_source = cli_mod._fetch_special_strategy_frames(
+        "online_first", ["600000"], benchmark_symbol="000300"
+    )
+
+    assert result["600000"] is overlay_frame
+    assert result["000300"] is base["000300"]
+    assert actual_source == "tencent"
+    assert result["000300"].attrs["intraday_overlay_coverage"]["missing_symbols"] == (
+        "000300",
+    )
+
+
+def test_fetch_intraday_historical_base_ends_at_previous_trading_day(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import aqsp.cli as cli_mod
+
+    captured: dict[str, object] = {}
+    frame = _fresh_frame("2026-06-25")
+    monkeypatch.setattr(cli_mod, "_build_sqlite_db_source", lambda **_kwargs: object())
+
+    def fake_fetch(source, symbols, **kwargs):
+        captured.update({"source": source, "symbols": symbols, **kwargs})
+        return {"600000": frame}
+
+    monkeypatch.setattr(cli_mod, "fetch_with_source", fake_fetch)
+    monkeypatch.setattr(
+        cli_mod, "get_previous_trading_day", lambda day: date(2026, 6, 25)
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "now_shanghai",
+        lambda: datetime.fromisoformat("2026-06-26T10:00:00+08:00"),
+    )
+
+    result = cli_mod._fetch_intraday_historical_base(
+        ["600000"],
+        benchmark_symbol="000300",
+        days=250,
+        target_day=date(2026, 6, 26),
+    )
+
+    assert captured["end_date"] == date(2026, 6, 25)
+    assert result["600000"].attrs["source_name"] == "sqlite_db"
+    assert result["600000"].attrs["workload"] == "historical_base"
+
+
 def test_intraday_actual_source_uses_current_overlay_provenance() -> None:
     import aqsp.cli as cli_mod
 

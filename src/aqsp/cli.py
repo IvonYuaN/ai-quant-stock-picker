@@ -20,7 +20,7 @@ from aqsp.config import (
     load_runtime_config,
 )
 from aqsp.core.errors import DataError, MissingDataError
-from aqsp.core.time import now_shanghai, today_shanghai
+from aqsp.core.time import get_previous_trading_day, now_shanghai, today_shanghai
 from aqsp.core.types import RunMetadata
 from aqsp.data.registry import (
     local_data_status,
@@ -2558,29 +2558,51 @@ def _fetch_special_strategy_frames(
     )
     if not allowed:
         raise DataError(reason)
-    frames, actual_source = _fetch_frames_for_cli_with_metadata(
-        source_name,
-        symbols,
-        benchmark_symbol=benchmark_symbol,
-        days=days,
-        workload="live_short",
-    )
     target_day = today_shanghai()
-    frames = {
-        symbol: frame
-        for symbol, frame in frames.items()
-        if not frame.empty
-        and "date" in frame.columns
-        and pd.to_datetime(frame["date"], errors="coerce").max().date()
-        >= target_day
-    }
-    actual_allowed, actual_reason = _runtime_actual_source_workload_allowed(
-        source_name,
-        actual_source,
-        workload="live_short",
-    )
-    if not actual_allowed:
-        raise DataError(actual_reason)
+    try:
+        frames, actual_source = _fetch_frames_for_cli_with_metadata(
+            source_name,
+            symbols,
+            benchmark_symbol=benchmark_symbol,
+            days=days,
+            workload="live_short",
+        )
+    except DataError as live_error:
+        frames = _fetch_intraday_historical_base(
+            symbols,
+            benchmark_symbol=benchmark_symbol,
+            days=days,
+            target_day=target_day,
+        )
+        actual_source = source_name
+        LOGGER.warning(
+            "盘中在线日线不可用，使用 sqlite 历史底座等待实时覆盖: %s", live_error
+        )
+    else:
+        actual_allowed, actual_reason = _runtime_actual_source_workload_allowed(
+            source_name,
+            actual_source,
+            workload="live_short",
+        )
+        if not actual_allowed:
+            raise DataError(actual_reason)
+        frames = {
+            symbol: frame
+            for symbol, frame in frames.items()
+            if not frame.empty
+            and "date" in frame.columns
+            and pd.to_datetime(frame["date"], errors="coerce").max().date()
+            >= target_day
+        }
+    if not frames:
+        frames = _fetch_intraday_historical_base(
+            symbols,
+            benchmark_symbol=benchmark_symbol,
+            days=days,
+            target_day=target_day,
+        )
+        actual_source = source_name
+        LOGGER.warning("盘中在线日线为空，使用 sqlite 历史底座等待实时覆盖")
     if not frames:
         raise MissingDataError(symbols[0], reason="无法获取历史日线数据")
     data_source = _get_source(source_name)
@@ -2604,10 +2626,43 @@ def _fetch_special_strategy_frames(
     # A failed intraday overlay must not erase a valid live daily batch. Keep
     # the daily frames, expose the overlay gap, and let the downstream quality
     # boundary downgrade affected candidates explicitly.
-    output_frames = overlay.frames or frames
+    # Preserve the prior completed-day base for symbols without a live bar so
+    # they can be explicitly downgraded to observation-only downstream.
+    output_frames = {**frames, **overlay.frames}
     for frame in output_frames.values():
         frame.attrs["intraday_overlay_coverage"] = coverage
-    return output_frames, _intraday_actual_source(output_frames, actual_source)
+    return output_frames, _intraday_actual_source(overlay.frames, actual_source)
+
+
+def _fetch_intraday_historical_base(
+    symbols: list[str],
+    *,
+    benchmark_symbol: str | None,
+    days: int,
+    target_day: date,
+) -> dict[str, pd.DataFrame]:
+    """Load only completed historical bars for a live intraday overlay fallback."""
+    historical_source = _build_sqlite_db_source(cache=None)
+    base = fetch_with_source(
+        historical_source,
+        symbols,
+        days=days,
+        benchmark_symbol=benchmark_symbol,
+        end_date=get_previous_trading_day(target_day),
+    )
+    fetched_at = now_shanghai().isoformat()
+    for frame in base.values():
+        frame.attrs.update(
+            {
+                "source_name": "sqlite_db",
+                "source": "sqlite_db",
+                "workload": "historical_base",
+                "fetched_at": fetched_at,
+                "timestamp_source": "sqlite_trade_date",
+                "freshness": "historical",
+            }
+        )
+    return base
 
 
 def _intraday_overlay_coverage(
