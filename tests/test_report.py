@@ -4,7 +4,7 @@ from aqsp.core.types import RunMetadata
 from aqsp.models import PickResult
 from aqsp.portfolio.manager import PortfolioDecision, PortfolioDecisionSummary
 from aqsp.portfolio.optimizer import PortfolioAllocation
-from aqsp.report import to_intraday_dataframe, to_markdown
+from aqsp.report import to_dataframe, to_intraday_dataframe, to_markdown
 from aqsp.briefing.agent_roles import AgentRole
 from aqsp.briefing.debate import AgentOpinion, DebateResult, DebateRound
 
@@ -1011,3 +1011,26 @@ def test_report_renders_candidate_blocker_and_next_step_when_present() -> None:
     assert "- 下一步: 等待板块暴露回落后，再重新评估纸面复核优先级" in markdown
     assert "复核窗口: 中优先级 / 板块分化时" in markdown
     assert "- 再看优先级/时机: 中优先级 / 板块分化时" in markdown
+
+
+def test_report_dataframe_preserves_intraday_technical_metrics() -> None:
+    pick = PickResult(
+        symbol="000001",
+        name="平安银行",
+        date="2026-06-05",
+        close=10.82,
+        score=58,
+        rating="watch",
+        entry_type="relative_strength",
+        ideal_buy=10.82,
+        stop_loss=10.73,
+        take_profit=11.73,
+        position="watch",
+        metrics={"macd_hist": 0.1234, "kdj_j": 68.5, "volume_ratio": 1.24},
+    )
+
+    row = to_dataframe([pick]).iloc[0]
+
+    assert row["macd_hist"] == 0.1234
+    assert row["kdj_j"] == 68.5
+    assert row["volume_ratio"] == 1.24
