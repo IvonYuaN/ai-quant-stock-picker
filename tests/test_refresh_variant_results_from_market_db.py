@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import importlib.util
 import json
+import sqlite3
 from argparse import Namespace
 import subprocess
 import sys
@@ -86,6 +87,30 @@ def test_refresh_defaults_keep_production_refresh_bounded() -> None:
     assert mod.DEFAULT_MAX_RUNTIME_SECONDS == 600
     assert mod.DEFAULT_LOCK_WAIT_SECONDS == 0.0
     assert mod.SQL_CHUNK_SIZE == 80
+
+
+def test_validate_market_db_rejects_empty_or_incompatible_database(
+    tmp_path: Path,
+) -> None:
+    empty = tmp_path / "empty.db"
+    empty.touch()
+    with pytest.raises(ValueError, match="不可用或为空"):
+        mod.validate_market_db(empty)
+
+    incomplete = tmp_path / "incomplete.db"
+    with sqlite3.connect(incomplete) as conn:
+        conn.execute("CREATE TABLE stocks (ts_code TEXT, name TEXT)")
+    with pytest.raises(ValueError, match="daily_qfq"):
+        mod.validate_market_db(incomplete)
+
+
+def test_validate_market_db_accepts_required_readable_tables(tmp_path: Path) -> None:
+    market_db = tmp_path / "market.db"
+    with sqlite3.connect(market_db) as conn:
+        conn.execute("CREATE TABLE stocks (ts_code TEXT, name TEXT)")
+        conn.execute("CREATE TABLE daily_qfq (ts_code TEXT, trade_date TEXT)")
+
+    mod.validate_market_db(market_db)
 
 
 def test_copy_market_rows_rejects_non_positive_sql_chunk_size(tmp_path: Path) -> None:
@@ -297,6 +322,7 @@ def test_refresh_failure_preserves_last_qualified_artifact_and_cursor(
         ),
     )
     monkeypatch.setattr(mod, "validate_variant_payload", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(mod, "validate_market_db", lambda _path: None)
     symbols = (mod.MarketSymbol("000001.SZ", "000001", "样本", "深市主板"),)
     batch = mod.VariantUniverseBatch(
         symbols=symbols,
@@ -404,6 +430,7 @@ def test_refresh_stages_profile_chunks_before_publishing_first_artifact(
             raise ValueError("variant count too small")
 
     monkeypatch.setattr(mod, "parse_args", args)
+    monkeypatch.setattr(mod, "validate_market_db", lambda _path: None)
     monkeypatch.setattr(mod, "load_supported_symbols", lambda _path: symbols)
     monkeypatch.setattr(mod, "select_variant_batch", lambda *_args: batch)
     monkeypatch.setattr(

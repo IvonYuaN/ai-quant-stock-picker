@@ -47,6 +47,7 @@ DEFAULT_PROFILE_BATCH_SIZE = 32
 STAGING_SCHEMA_VERSION = "variant-suite-stage-v1"
 LATEST_DATE_PROBE_SYMBOLS = 240
 SQL_CHUNK_SIZE = 80
+REQUIRED_MARKET_TABLES = frozenset({"stocks", "daily_qfq"})
 
 
 class VariantRefreshTimeout(TimeoutError):
@@ -55,6 +56,28 @@ class VariantRefreshTimeout(TimeoutError):
 
 class VariantRefreshLocked(RuntimeError):
     """Raised when another bounded variant refresh owns the runtime lock."""
+
+
+def validate_market_db(db_path: Path) -> None:
+    """Reject an empty or incompatible market database before any heavy work."""
+    if not db_path.is_file() or db_path.stat().st_size <= 0:
+        raise ValueError(f"变体市场库不可用或为空: {db_path}")
+    try:
+        with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
+            integrity = conn.execute("PRAGMA quick_check").fetchone()
+            tables = {
+                str(row[0])
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                )
+            }
+    except sqlite3.Error as exc:
+        raise ValueError(f"变体市场库无法读取: {db_path}: {exc}") from exc
+    if not integrity or str(integrity[0]).lower() != "ok":
+        raise ValueError(f"变体市场库完整性校验失败: {db_path}")
+    missing = REQUIRED_MARKET_TABLES - tables
+    if missing:
+        raise ValueError("变体市场库缺少必要表: " + ", ".join(sorted(missing)))
 
 
 @dataclass(frozen=True)
@@ -560,6 +583,7 @@ def main() -> int:
         ):
             if sql_chunk_size < 1:
                 raise ValueError("sql_chunk_size must be positive")
+            validate_market_db(args.market_db)
             supported = load_supported_symbols(args.market_db)
             end = args.end or latest_trade_date(args.market_db, supported)
             start = (

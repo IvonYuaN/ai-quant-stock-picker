@@ -750,6 +750,26 @@ def test_variant_suite_reports_missing_artifact_reason(
     assert suite.last_error == "变体产物不存在。"
 
 
+def test_research_conclusion_summaries_are_candidate_first_and_flag_missing_metrics() -> (
+    None
+):
+    candidate = write_home_snapshot._snapshot_candidate(_candidate("600006", 70.0))
+    assert candidate is not None
+    candidate = replace(
+        candidate,
+        technical_metrics=tuple(
+            replace(metric, value="未提供") if metric.key == "macd_hist" else metric
+            for metric in candidate.technical_metrics
+        ),
+    )
+
+    summaries = write_home_snapshot._research_conclusion_summaries((candidate,))
+
+    assert summaries[0].startswith("研究重点：600006 示例（纸面复核）；依据：")
+    assert summaries[1].startswith("复核条件：600006 示例，")
+    assert "MACD柱/KDJ-J 未提供" in summaries[2]
+
+
 def test_snapshot_candidate_maps_freshness_label_when_status_is_missing() -> None:
     candidate = _candidate("600006", 70.0)
     candidate.freshness = ""

@@ -94,8 +94,11 @@ if ! [[ "$MAX_STAGE_BATCHES" =~ ^[0-9]+$ ]] || [ "$MAX_STAGE_BATCHES" -lt 1 ] ||
     log "变体分段次数无效(${MAX_STAGE_BATCHES})，使用 4"
     MAX_STAGE_BATCHES="4"
 fi
-if [ ! -f "$MARKET_DB" ]; then
-    log "[ERROR] 变体市场库不存在: ${MARKET_DB}"
+# The Python entrypoint performs a read-only SQLite integrity/table preflight.
+# Keep the shell check minimal so a zero-byte fallback is reported there instead
+# of silently consuming a full bounded runtime window.
+if [ ! -s "$MARKET_DB" ]; then
+    log "[ERROR] 变体市场库不存在或为空: ${MARKET_DB}；检查 AQSP_VARIANT_MARKET_DB/AQSP_SQLITE_DB_PATH"
     exit 1
 fi
 

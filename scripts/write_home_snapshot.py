@@ -67,7 +67,6 @@ from aqsp.web.home_snapshot import (
     HomeSnapshotVariant,
     HomeSnapshotVariantSuite,
     MAX_HOME_SNAPSHOT_TECHNICAL_METRICS,
-    HOME_RECOMMENDATION_LABELS,
     is_home_recommendation,
     load_home_snapshot_index,
     stale_after_for_task,
@@ -494,31 +493,6 @@ def _snapshot_candidates(payload: Any) -> tuple[HomeSnapshotCandidate, ...]:
     return tuple(candidates)
 
 
-def _snapshot_recommendation_count(payload: Any) -> int:
-    """Count all distinct deterministic recommendation cards before the home cap."""
-    ordered = (
-        *(getattr(payload.task_view, "detail_cards", ()) or ()),
-        *(getattr(payload, "spotlights", ()) or ()),
-    )
-    seen: set[str] = set()
-    count = 0
-    for item in ordered:
-        raw_status = _first_text(
-            getattr(item, "action_label", ""),
-            getattr(item, "status_label", ""),
-            getattr(item, "rank_label", ""),
-        )
-        if not any(label in raw_status for label in HOME_RECOMMENDATION_LABELS):
-            continue
-        if not _has_candidate_deterministic_evidence(item):
-            continue
-        symbol = _text(getattr(item, "symbol", ""))
-        if symbol and symbol not in seen:
-            seen.add(symbol)
-            count += 1
-    return count
-
-
 def _apply_recommendation_gate(
     candidates: tuple[HomeSnapshotCandidate, ...],
     gate: HomeSnapshotRecommendationGate,
@@ -536,23 +510,6 @@ def _apply_recommendation_gate(
             ),
         )
         for candidate in candidates
-    )
-
-
-def _align_count_summary(text: str, *, total: int, shown: int) -> str:
-    """Make a legacy count headline explicit when the home card cap hides rows."""
-    if not text:
-        return text
-    match = re.search(r"(?:纸面复核|待复核)\s*(\d+)\s*只", text)
-    reported = int(match.group(1)) if match else 0
-    total = max(total, reported)
-    if total <= shown:
-        return text
-    return re.sub(
-        r"(纸面复核|待复核)\s*\d+\s*只",
-        rf"\1 {total} 只，首页展示 {shown} 只",
-        text,
-        count=1,
     )
 
 
@@ -1867,6 +1824,38 @@ def _variant_suite_snapshot() -> HomeSnapshotVariantSuite:
     )
 
 
+def _research_conclusion_summaries(
+    candidates: tuple[HomeSnapshotCandidate, ...],
+) -> tuple[str, ...]:
+    """Build concise, candidate-first research conclusions without action language."""
+    if not candidates:
+        return ()
+    lead = candidates[0]
+    name = _first_text(lead.display_name, lead.symbol)
+    evidence = "；".join(lead.deterministic_reasons[:2])
+    lines = [
+        f"研究重点：{name}（{lead.research_status}）"
+        + (f"；依据：{evidence}" if evidence else "；规则证据不足，保留观察"),
+    ]
+    if lead.next_step:
+        lines.append(f"复核条件：{name}，{lead.next_step}")
+    incomplete = [
+        _first_text(candidate.display_name, candidate.symbol)
+        for candidate in candidates
+        if any(
+            metric.key in _REQUIRED_TECHNICAL_METRICS and metric.value == "未提供"
+            for metric in candidate.technical_metrics
+        )
+    ]
+    if incomplete:
+        lines.append(
+            "技术缺口："
+            + "、".join(incomplete[:3])
+            + " 的 MACD柱/KDJ-J 未提供，不以动量指标形成结论"
+        )
+    return tuple(lines)
+
+
 def _variant_snapshot() -> tuple[HomeSnapshotVariant, ...]:
     """Read only bounded summaries from the isolated experiment artifact."""
     payload, _ = _variant_results_payload()
@@ -2063,7 +2052,6 @@ def build_home_snapshot(
     generated_at = to_shanghai(now_shanghai()).isoformat(timespec="seconds")
     source = _snapshot_source(runtime, task_view, selected_date=selected_date)
     candidates = _snapshot_candidates(payload)
-    recommendation_count = _snapshot_recommendation_count(payload)
     runtime_debates = _runtime_debates_for_snapshot(
         selected_date,
         {candidate.symbol for candidate in candidates},
@@ -2075,17 +2063,6 @@ def build_home_snapshot(
     )
     if not debates:
         debates = _deterministic_candidate_debates(payload, candidates)
-    shown_recommendation_count = sum(
-        is_home_recommendation(candidate) for candidate in candidates
-    )
-    candidate_symbols = {candidate.symbol for candidate in candidates}
-    debate_symbols = {debate.symbol for debate in debates}
-    debate_gap_summary = ""
-    if debates and candidate_symbols - debate_symbols:
-        debate_gap_summary = (
-            f"讨论复核 {len(debate_symbols)}/{len(candidate_symbols)} 只；"
-            f"{len(candidate_symbols - debate_symbols)} 只未通过质量门，已隐藏"
-        )
     message_status, messages, catalyst_report = _parse_news_report_payload(
         selected_date
     )
@@ -2118,21 +2095,14 @@ def build_home_snapshot(
         universe=universe,
     )
     candidates = _apply_recommendation_gate(candidates, recommendation_gate)
-    if not recommendation_gate.recommendation_allowed:
-        recommendation_count = 0
-        shown_recommendation_count = 0
     phases = _phase_snapshot(provider, selected_date)
     live_phase_produced = any(phase.status != "未产出" for phase in phases)
     intraday_failure_summary = _intraday_failure_summary()
     debate_missing = bool(getattr(payload, "debates", ()) or ()) and not debates
     raw_summaries = (
-        "委员会结论缺少当前候选映射，已隐藏" if debate_missing else "",
-        debate_gap_summary,
-        getattr(runtime, "conclusion", ""),
-        getattr(overview, "focus_headline", ""),
+        *_research_conclusion_summaries(candidates),
+        "讨论产物与当前候选不匹配，已隐藏" if debate_missing else "",
         getattr(overview, "blocker_headline", ""),
-        getattr(overview, "top_headline", ""),
-        getattr(task_view, "headline", ""),
     )
     if not candidates:
         if intraday_failure_summary:
@@ -2154,23 +2124,7 @@ def build_home_snapshot(
                 )
             ),
         )
-    aligned_summaries = tuple(
-        _align_count_summary(
-            str(summary),
-            total=recommendation_count,
-            shown=shown_recommendation_count,
-        )
-        for summary in raw_summaries
-    )
-    count_summaries = tuple(
-        summary
-        for summary in aligned_summaries
-        if re.search(r"(?:纸面复核|待复核)\s*\d+\s*只", summary)
-    )
-    summaries = _bounded_unique_text(
-        (*count_summaries, debate_gap_summary, *aligned_summaries),
-        MAX_HOME_SUMMARIES,
-    )
+    summaries = _bounded_unique_text(raw_summaries, MAX_HOME_SUMMARIES)
 
     return HomeDashboardSnapshot(
         schema_version=HOME_SNAPSHOT_SCHEMA_VERSION,
