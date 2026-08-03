@@ -201,6 +201,7 @@ function CandidateCard({ candidate }: { candidate: AqspCandidate }) {
         <div className="aqsp-score"><b>{Number.isFinite(candidate.score) ? candidate.score.toFixed(1) : "—"}</b><span>评分</span></div>
       </div>
       {candidate.strategies.length > 0 && <p className="aqsp-strategies">{candidate.strategies.join(" · ")}</p>}
+      {(candidate.score_breakdown ?? []).length > 0 && <p className="aqsp-score-breakdown"><b>评分依据</b>{candidate.score_breakdown?.slice(0, 4).join(" · ")}</p>}
       {metrics.length > 0 && <div className="aqsp-metrics">{metrics.map((metric) => <div key={metric.key}><span>{metric.label}</span><b>{metric.value}</b></div>)}</div>}
       {candidate.deterministic_reasons.length > 0 && <div className="aqsp-evidence"><b>触发依据</b><ul className="aqsp-reasons">{candidate.deterministic_reasons.slice(0, 3).map((reason) => <li key={reason}><Check className="h-3.5 w-3.5 shrink-0 text-success" />{reason}</li>)}</ul></div>}
     </article>
