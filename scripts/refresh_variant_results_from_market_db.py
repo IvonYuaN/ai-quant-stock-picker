@@ -26,6 +26,7 @@ from typing import Any, Iterable, Iterator
 
 import pandas as pd
 
+from aqsp.core.time import now_shanghai
 from aqsp.utils.jsonl_io import atomic_write_text
 from check_variant_results import validate_variant_payload
 from run_variant_suite import (
@@ -48,6 +49,7 @@ STAGING_SCHEMA_VERSION = "variant-suite-stage-v1"
 LATEST_DATE_PROBE_SYMBOLS = 240
 SQL_CHUNK_SIZE = 80
 REQUIRED_MARKET_TABLES = frozenset({"stocks", "daily_qfq"})
+VARIANT_REFRESH_STATUS_SCHEMA_VERSION = "variant-refresh-status-v1"
 
 
 class VariantRefreshTimeout(TimeoutError):
@@ -78,6 +80,31 @@ def validate_market_db(db_path: Path) -> None:
     missing = REQUIRED_MARKET_TABLES - tables
     if missing:
         raise ValueError("变体市场库缺少必要表: " + ", ".join(sorted(missing)))
+
+
+def write_variant_refresh_status(
+    path: Path,
+    *,
+    status: str,
+    message: str,
+    **details: object,
+) -> None:
+    """Persist a bounded runtime status without publishing an incomplete artifact."""
+    payload = {
+        "schema_version": VARIANT_REFRESH_STATUS_SCHEMA_VERSION,
+        "generated_at": now_shanghai().isoformat(timespec="seconds"),
+        "status": status,
+        "message": message[:500],
+        **{key: value for key, value in details.items() if value not in (None, "")},
+    }
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_text(
+            path, json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+        )
+    except OSError:
+        # Status reporting must not turn a valid isolated experiment into a failure.
+        return
 
 
 @dataclass(frozen=True)
@@ -553,6 +580,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lock-file", type=Path)
     parser.add_argument("--cursor-file", type=Path)
     parser.add_argument("--staging-file", type=Path)
+    parser.add_argument("--status-file", type=Path)
     parser.add_argument(
         "--profile-batch-size", type=int, default=DEFAULT_PROFILE_BATCH_SIZE
     )
@@ -574,6 +602,9 @@ def main() -> int:
     )
     stage_path = getattr(args, "staging_file", None) or args.output.with_name(
         f".{args.output.name}.staging.json"
+    )
+    status_path = getattr(args, "status_file", None) or args.output.with_name(
+        "variant_refresh_status.json"
     )
     previous = load_qualified_artifact(args.output)
     try:
@@ -684,6 +715,16 @@ def main() -> int:
                     expected_end=end,
                 )
             except ValueError as exc:
+                write_variant_refresh_status(
+                    status_path,
+                    status="staged",
+                    message="变体分段构建中，等待下一错峰窗口继续。",
+                    profiles_staged=len(staged),
+                    profiles_total=len(all_profiles),
+                    selected_symbols=len(selected_symbols),
+                    end_date=end,
+                    reason=str(exc),
+                )
                 print(
                     "variant_results staged: "
                     f"profiles={len(staged)}/{len(all_profiles)} "
@@ -697,6 +738,15 @@ def main() -> int:
                 args.output, json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
             )
             commit_variant_batch(cursor_path, batch)
+            write_variant_refresh_status(
+                status_path,
+                status="completed",
+                message="变体结果已通过完整契约校验。",
+                profiles_staged=len(payload["variants"]),
+                profiles_total=len(all_profiles),
+                selected_symbols=len(selected_symbols),
+                end_date=payload["end_date"],
+            )
             print(
                 "variant_results refreshed: "
                 f"schema={payload['schema_version']} variants={len(payload['variants'])} "
@@ -705,6 +755,12 @@ def main() -> int:
             )
             return 0
     except VariantRefreshTimeout as exc:
+        write_variant_refresh_status(
+            status_path,
+            status="timed_out",
+            message="变体分段达到运行预算，保留 staging 等待下一错峰窗口。",
+            reason=str(exc),
+        )
         print(
             f"variant_results refresh timeout: {exc}; "
             f"{preserved_artifact_detail(previous)}",
@@ -712,9 +768,21 @@ def main() -> int:
         )
         return 124
     except VariantRefreshLocked as exc:
+        write_variant_refresh_status(
+            status_path,
+            status="skipped_lock",
+            message="已有变体任务占用资源锁，本次未重复运行。",
+            reason=str(exc),
+        )
         print(f"variant_results refresh skipped_lock: {exc}", flush=True)
         return 0
     except ValueError as exc:
+        write_variant_refresh_status(
+            status_path,
+            status="rejected",
+            message="变体输入或结果契约未通过，未发布半成品。",
+            reason=str(exc),
+        )
         print(
             f"variant_results refresh rejected: {exc}; "
             f"{preserved_artifact_detail(previous)}",
@@ -722,6 +790,12 @@ def main() -> int:
         )
         return 1
     except Exception as exc:
+        write_variant_refresh_status(
+            status_path,
+            status="failed",
+            message="变体刷新异常，未发布半成品。",
+            reason=f"{type(exc).__name__}: {exc}",
+        )
         print(
             f"variant_results refresh failed: {type(exc).__name__}: {exc}; "
             f"{preserved_artifact_detail(previous)}",

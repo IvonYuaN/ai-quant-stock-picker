@@ -63,6 +63,7 @@ MARKET_DB="$(resolve_path "${AQSP_VARIANT_MARKET_DB:-${AQSP_SQLITE_DB_PATH:-data
 OUTPUT_PATH="$(resolve_path "${AQSP_VARIANT_RESULTS:-data/runtime/variant_results.json}")"
 LOCK_PATH="$(resolve_path "${AQSP_VARIANT_REFRESH_LOCK:-data/.locks/variant-results-refresh.lock}")"
 CURSOR_PATH="$(resolve_path "${AQSP_VARIANT_CURSOR_PATH:-data/runtime/variant_results_cursor.json}")"
+STATUS_PATH="$(resolve_path "${AQSP_VARIANT_REFRESH_STATUS:-data/runtime/variant_refresh_status.json}")"
 MAX_SYMBOLS="${AQSP_VARIANT_MAX_SYMBOLS:-240}"
 MAX_RUNTIME_SECONDS="${AQSP_VARIANT_MAX_RUNTIME_SECONDS:-300}"
 NICE_LEVEL="${AQSP_VARIANT_NICE_LEVEL:-15}"
@@ -98,11 +99,10 @@ fi
 # Keep the shell check minimal so a zero-byte fallback is reported there instead
 # of silently consuming a full bounded runtime window.
 if [ ! -s "$MARKET_DB" ]; then
-    log "[ERROR] 变体市场库不存在或为空: ${MARKET_DB}；检查 AQSP_VARIANT_MARKET_DB/AQSP_SQLITE_DB_PATH"
-    exit 1
+    log "[WARN] 变体市场库不存在或为空: ${MARKET_DB}；由 Python 预检写入状态产物"
 fi
 
-mkdir -p "$(dirname "$OUTPUT_PATH")" "$(dirname "$LOCK_PATH")" "$(dirname "$CURSOR_PATH")"
+mkdir -p "$(dirname "$OUTPUT_PATH")" "$(dirname "$LOCK_PATH")" "$(dirname "$CURSOR_PATH")" "$(dirname "$STATUS_PATH")"
 log "开始变体刷新：max_symbols=${MAX_SYMBOLS} profiles=${PROFILE_BATCH_SIZE} batches=${MAX_STAGE_BATCHES} timeout=${MAX_RUNTIME_SECONDS}s nice=${NICE_LEVEL}"
 started_at="$(date +%s)"
 for batch_index in $(seq 1 "$MAX_STAGE_BATCHES"); do
@@ -112,7 +112,7 @@ for batch_index in $(seq 1 "$MAX_STAGE_BATCHES"); do
         log "变体总预算已耗尽，保留 staging 等待下个错峰窗口"
         break
     fi
-    if ! timeout --foreground --signal=TERM --kill-after=15s "${remaining}s" \
+    if timeout --foreground --signal=TERM --kill-after=15s "${remaining}s" \
         nice -n "$NICE_LEVEL" "$PYTHON_BIN" "$PROJECT_ROOT/scripts/refresh_variant_results_from_market_db.py" \
         --market-db "$MARKET_DB" \
         --output "$OUTPUT_PATH" \
@@ -120,7 +120,10 @@ for batch_index in $(seq 1 "$MAX_STAGE_BATCHES"); do
         --profile-batch-size "$PROFILE_BATCH_SIZE" \
         --max-runtime-seconds "$remaining" \
         --lock-file "$LOCK_PATH" \
-        --cursor-file "$CURSOR_PATH" >>"$LOG_FILE" 2>&1; then
+        --cursor-file "$CURSOR_PATH" \
+        --status-file "$STATUS_PATH" >>"$LOG_FILE" 2>&1; then
+        :
+    else
         status=$?
         log "[ERROR] 变体分段 ${batch_index} 失败或超时，保留产物与 staging，exit=${status}"
         exit "$status"

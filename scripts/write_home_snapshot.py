@@ -1792,6 +1792,30 @@ def _variant_results_payload() -> tuple[dict[str, Any] | None, str]:
     return payload, ""
 
 
+def _variant_refresh_status_error() -> str:
+    path = _runtime_json_path(
+        "AQSP_VARIANT_REFRESH_STATUS",
+        "data/runtime/variant_refresh_status.json",
+    )
+    payload = _read_json_object(path)
+    if not payload:
+        return ""
+    status = _text(payload.get("status"))
+    message = _text(payload.get("message"))
+    reason = _text(payload.get("reason"))
+    staged = int(payload.get("profiles_staged") or 0)
+    total = int(payload.get("profiles_total") or 0)
+    if status == "staged":
+        progress = f"已完成 {staged}/{total} 个变体" if total else "已写入分段 staging"
+        return f"变体分段构建中：{progress}；{message or '等待下一错峰窗口继续'}"
+    if status == "completed":
+        return ""
+    if status in {"timed_out", "skipped_lock", "rejected", "failed"}:
+        detail = reason or message
+        return f"变体未发布：{detail or status}"
+    return ""
+
+
 def _variant_suite_snapshot() -> HomeSnapshotVariantSuite:
     """Read bounded metadata from the isolated experiment artifact."""
     payload, error = _variant_results_payload()
@@ -1801,7 +1825,9 @@ def _variant_suite_snapshot() -> HomeSnapshotVariantSuite:
             return HomeSnapshotVariantSuite(
                 last_error=f"变体等待：{universe.last_error}"
             )
-        return HomeSnapshotVariantSuite(last_error=error)
+        return HomeSnapshotVariantSuite(
+            last_error=_variant_refresh_status_error() or error
+        )
     universe = payload.get("universe")
     if not isinstance(universe, dict):
         universe = {}

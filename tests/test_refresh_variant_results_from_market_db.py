@@ -113,6 +113,26 @@ def test_validate_market_db_accepts_required_readable_tables(tmp_path: Path) -> 
     mod.validate_market_db(market_db)
 
 
+def test_write_variant_refresh_status_is_bounded_and_timestamped(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "variant_refresh_status.json"
+
+    mod.write_variant_refresh_status(
+        path,
+        status="staged",
+        message="x" * 600,
+        profiles_staged=32,
+        profiles_total=128,
+    )
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["schema_version"] == "variant-refresh-status-v1"
+    assert payload["status"] == "staged"
+    assert len(payload["message"]) == 500
+    assert payload["generated_at"].endswith("+08:00")
+
+
 def test_copy_market_rows_rejects_non_positive_sql_chunk_size(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="sql_chunk_size"):
         mod.copy_market_rows(
@@ -214,6 +234,7 @@ def test_refresh_rejects_invalid_payload_before_write_or_cursor_commit(
             lock_wait_seconds=0.0,
         ),
     )
+    monkeypatch.setattr(mod, "validate_market_db", lambda _path: None)
     monkeypatch.setattr(mod, "load_supported_symbols", lambda _path: symbols)
     monkeypatch.setattr(mod, "select_variant_batch", lambda *_args: batch)
     monkeypatch.setattr(
@@ -240,7 +261,7 @@ def test_refresh_rejects_invalid_payload_before_write_or_cursor_commit(
     )
 
     assert mod.main() == 1
-    assert writes == []
+    assert writes == [output.with_name("variant_refresh_status.json")]
     assert commits == []
     assert not output.exists()
     assert not cursor.exists()

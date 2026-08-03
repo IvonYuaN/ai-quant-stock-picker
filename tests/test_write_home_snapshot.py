@@ -748,6 +748,33 @@ def test_variant_suite_reports_missing_artifact_reason(
     assert suite.last_error == "变体产物不存在。"
 
 
+def test_variant_suite_exposes_staged_refresh_progress(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("AQSP_VARIANT_RESULTS", str(tmp_path / "missing.json"))
+    status_path = tmp_path / "variant_refresh_status.json"
+    status_path.write_text(
+        json.dumps(
+            {
+                "status": "staged",
+                "message": "等待下一错峰窗口继续。",
+                "profiles_staged": 32,
+                "profiles_total": 128,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AQSP_VARIANT_REFRESH_STATUS", str(status_path))
+
+    suite = write_home_snapshot._variant_suite_snapshot()
+
+    assert (
+        suite.last_error
+        == "变体分段构建中：已完成 32/128 个变体；等待下一错峰窗口继续。"
+    )
+
+
 def test_research_conclusion_summaries_are_candidate_first_and_flag_missing_metrics() -> (
     None
 ):
