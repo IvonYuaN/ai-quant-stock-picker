@@ -334,6 +334,64 @@ def compact_variant_fills(payload: dict[str, object], max_fills: int) -> None:
             variant["fills_retained"] = max_fills
 
 
+def load_qualified_artifact(output_path: Path) -> dict[str, object] | None:
+    """Return the last complete artifact, never an unchecked JSON file."""
+    try:
+        payload = json.loads(output_path.read_text(encoding="utf-8"))
+        validate_variant_payload(payload, path=str(output_path))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def merge_qualified_artifacts(
+    previous: dict[str, object] | None,
+    refreshed: dict[str, object],
+) -> dict[str, object]:
+    """Keep qualified same-day variants that a bounded refresh did not produce.
+
+    Variant ids identify a strategy configuration, so a refreshed id replaces the
+    older result for that configuration.  This preserves a coherent same-day
+    artifact without duplicating strategy variants or mixing trading dates.
+    """
+    if previous is None or previous.get("end_date") != refreshed.get("end_date"):
+        return refreshed
+    previous_variants = previous.get("variants")
+    refreshed_variants = refreshed.get("variants")
+    if not isinstance(previous_variants, list) or not isinstance(
+        refreshed_variants, list
+    ):
+        return refreshed
+    merged_by_id: dict[str, object] = {}
+    for variant in previous_variants:
+        if isinstance(variant, dict) and isinstance(variant.get("variant_id"), str):
+            merged_by_id[variant["variant_id"]] = variant
+    for variant in refreshed_variants:
+        if isinstance(variant, dict) and isinstance(variant.get("variant_id"), str):
+            merged_by_id[variant["variant_id"]] = variant
+    merged = dict(refreshed)
+    merged["variants"] = list(merged_by_id.values())
+    previous_symbols = previous.get("symbols")
+    refreshed_symbols = refreshed.get("symbols")
+    if isinstance(previous_symbols, list) and isinstance(refreshed_symbols, list):
+        merged["symbols"] = list(dict.fromkeys([*previous_symbols, *refreshed_symbols]))
+    merged["artifact_lineage"] = {
+        "reused_same_day_variant_ids": len(merged_by_id) - len(refreshed_variants),
+        "previous_end_date": previous.get("end_date"),
+    }
+    return merged
+
+
+def preserved_artifact_detail(previous: dict[str, object] | None) -> str:
+    if previous is None:
+        return "no qualified prior artifact"
+    variants = previous.get("variants")
+    count = len(variants) if isinstance(variants, list) else 0
+    return (
+        f"preserved qualified artifact end={previous.get('end_date')} variants={count}"
+    )
+
+
 @contextlib.contextmanager
 def refresh_lock(lock_path: Path, wait_seconds: float) -> Iterator[None]:
     lock_path.parent.mkdir(parents=True, exist_ok=True)
@@ -417,6 +475,7 @@ def main() -> int:
     cursor_path = args.cursor_file or args.output.with_name(
         f".{args.output.name}.universe_cursor.json"
     )
+    previous = load_qualified_artifact(args.output)
     try:
         with (
             refresh_lock(lock_path, args.lock_wait_seconds),
@@ -459,6 +518,7 @@ def main() -> int:
                     )
                     payload = run_suite(temp_db, selected_symbols, start, end)
             compact_variant_fills(payload, args.max_fills_per_variant)
+            payload = merge_qualified_artifacts(previous, payload)
             payload["universe"] = {
                 "market_db": str(args.market_db),
                 "supported_symbols": len(supported),
@@ -488,13 +548,28 @@ def main() -> int:
             )
             return 0
     except VariantRefreshTimeout as exc:
-        print(f"variant_results refresh timeout: {exc}", flush=True)
+        print(
+            f"variant_results refresh timeout: {exc}; "
+            f"{preserved_artifact_detail(previous)}",
+            flush=True,
+        )
         return 124
     except VariantRefreshLocked as exc:
         print(f"variant_results refresh skipped_lock: {exc}", flush=True)
         return 0
     except ValueError as exc:
-        print(f"variant_results refresh rejected: {exc}", flush=True)
+        print(
+            f"variant_results refresh rejected: {exc}; "
+            f"{preserved_artifact_detail(previous)}",
+            flush=True,
+        )
+        return 1
+    except Exception as exc:
+        print(
+            f"variant_results refresh failed: {type(exc).__name__}: {exc}; "
+            f"{preserved_artifact_detail(previous)}",
+            flush=True,
+        )
         return 1
 
 

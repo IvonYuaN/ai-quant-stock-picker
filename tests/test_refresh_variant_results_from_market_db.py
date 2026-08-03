@@ -252,3 +252,100 @@ def test_refresh_skips_lock_conflict_without_writing_or_advancing_cursor(
     assert mod.main() == 0
     assert not output.exists()
     assert not cursor.exists()
+
+
+def test_merge_qualified_artifacts_reuses_only_missing_same_day_variants() -> None:
+    previous = {
+        "end_date": "2026-07-27",
+        "symbols": ["000001", "300001"],
+        "variants": [
+            {"variant_id": "kept", "source": "previous"},
+            {"variant_id": "replaced", "source": "previous"},
+        ],
+    }
+    refreshed = {
+        "end_date": "2026-07-27",
+        "symbols": ["300001", "600001"],
+        "variants": [
+            {"variant_id": "replaced", "source": "refreshed"},
+            {"variant_id": "new", "source": "refreshed"},
+        ],
+    }
+
+    merged = mod.merge_qualified_artifacts(previous, refreshed)
+
+    assert merged["symbols"] == ["000001", "300001", "600001"]
+    assert {item["variant_id"]: item["source"] for item in merged["variants"]} == {
+        "kept": "previous",
+        "replaced": "refreshed",
+        "new": "refreshed",
+    }
+    assert merged["artifact_lineage"]["reused_same_day_variant_ids"] == 1
+
+
+def test_merge_qualified_artifacts_does_not_mix_different_trade_days() -> None:
+    previous = {"end_date": "2026-07-26", "variants": [{"variant_id": "old"}]}
+    refreshed = {"end_date": "2026-07-27", "variants": [{"variant_id": "new"}]}
+
+    assert mod.merge_qualified_artifacts(previous, refreshed) is refreshed
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected_code", "expected_text"),
+    [
+        (mod.VariantRefreshTimeout("budget exhausted"), 124, "timeout"),
+        (RuntimeError("runner failed"), 1, "failed"),
+    ],
+)
+def test_refresh_failure_preserves_last_qualified_artifact_and_cursor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    failure: Exception,
+    expected_code: int,
+    expected_text: str,
+) -> None:
+    output = tmp_path / "variant_results.json"
+    cursor = tmp_path / "variant.cursor.json"
+    original = '{"last":"qualified"}\n'
+    output.write_text(original, encoding="utf-8")
+    cursor.write_text('{"next_offset": 80}\n', encoding="utf-8")
+    monkeypatch.setattr(
+        mod,
+        "parse_args",
+        lambda: Namespace(
+            market_db=tmp_path / "market.db",
+            output=output,
+            temp_db=tmp_path / "input.db",
+            start="2026-01-01",
+            end="2026-07-27",
+            lookback_calendar_days=180,
+            max_symbols=300,
+            max_fills_per_variant=24,
+            max_runtime_seconds=0,
+            lock_file=tmp_path / "variant.lock",
+            cursor_file=cursor,
+            lock_wait_seconds=0.0,
+            sql_chunk_size=80,
+        ),
+    )
+    monkeypatch.setattr(mod, "validate_variant_payload", lambda *_args, **_kwargs: None)
+    symbols = (mod.MarketSymbol("000001.SZ", "000001", "样本", "深市主板"),)
+    batch = mod.VariantUniverseBatch(
+        symbols=symbols,
+        universe_version="test",
+        universe_count=121,
+        offset=0,
+        cycle_id=1,
+    )
+    monkeypatch.setattr(mod, "load_supported_symbols", lambda _path: symbols)
+    monkeypatch.setattr(mod, "select_variant_batch", lambda *_args: batch)
+    monkeypatch.setattr(mod, "copy_market_rows", lambda **_kwargs: ("000001",))
+    monkeypatch.setattr(mod, "run_suite", lambda *_args: (_ for _ in ()).throw(failure))
+
+    assert mod.main() == expected_code
+    assert output.read_text(encoding="utf-8") == original
+    assert cursor.read_text(encoding="utf-8") == '{"next_offset": 80}\n'
+    message = capsys.readouterr().out
+    assert expected_text in message
+    assert "preserved qualified artifact" in message
