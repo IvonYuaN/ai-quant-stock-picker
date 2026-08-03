@@ -1846,6 +1846,7 @@ def test_news_catalyst_report_rejects_too_old_stale_cache_when_fetch_fails(
     monkeypatch,
     tmp_path,
 ) -> None:
+    monkeypatch.setattr("aqsp.news.catalysts.today_shanghai", lambda: date(2026, 7, 3))
     cache_path = tmp_path / "catalyst_cache.json"
     config = NewsCatalystConfig(
         cache_path=str(cache_path),
