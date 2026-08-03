@@ -1808,6 +1808,8 @@ def _variant_refresh_status_error() -> str:
     if status == "staged":
         progress = f"已完成 {staged}/{total} 个变体" if total else "已写入分段 staging"
         return f"变体分段构建中：{progress}；{message or '等待下一错峰窗口继续'}"
+    if status == "waiting":
+        return f"变体等待：{message or '等待下一个错峰运行窗口'}"
     if status == "completed":
         return ""
     if status in {"timed_out", "skipped_lock", "rejected", "failed"}:

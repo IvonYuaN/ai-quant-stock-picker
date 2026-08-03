@@ -38,9 +38,33 @@ if ! aqsp_require_runtime_python "$PYTHON_BIN"; then
     exit 1
 fi
 
+MARKET_DB="$(resolve_path "${AQSP_VARIANT_MARKET_DB:-${AQSP_SQLITE_DB_PATH:-data/astocks_raw.db}}")"
+OUTPUT_PATH="$(resolve_path "${AQSP_VARIANT_RESULTS:-data/runtime/variant_results.json}")"
+LOCK_PATH="$(resolve_path "${AQSP_VARIANT_REFRESH_LOCK:-data/.locks/variant-results-refresh.lock}")"
+CURSOR_PATH="$(resolve_path "${AQSP_VARIANT_CURSOR_PATH:-data/runtime/variant_results_cursor.json}")"
+STATUS_PATH="$(resolve_path "${AQSP_VARIANT_REFRESH_STATUS:-data/runtime/variant_refresh_status.json}")"
+
+write_waiting_status() {
+    "$PYTHON_BIN" "$PROJECT_ROOT/scripts/refresh_variant_results_from_market_db.py" \
+        --market-db "$MARKET_DB" \
+        --output "$OUTPUT_PATH" \
+        --status-file "$STATUS_PATH" \
+        --status-only waiting \
+        --status-message "$1" >/dev/null 2>&1 || true
+}
+
+refresh_home_snapshot() {
+    if ! "$PYTHON_BIN" "$PROJECT_ROOT/scripts/write_home_snapshot.py" \
+        --task-id variant-refresh >>"$LOG_FILE" 2>&1; then
+        log "[WARN] 变体状态已写入，但首页快照刷新失败"
+    fi
+}
+
 DOW="$(date +%u)"
 if [ "$DOW" -ge 6 ]; then
     log "周末跳过变体刷新"
+    write_waiting_status "周末不运行变体，等待下一个交易日错峰窗口。"
+    refresh_home_snapshot
     exit 0
 fi
 if ! "$PYTHON_BIN" - <<'PY'
@@ -50,20 +74,18 @@ raise SystemExit(0 if is_trading_day(today_shanghai()) else 1)
 PY
 then
     log "今日非交易日，跳过变体刷新"
+    write_waiting_status "今日非交易日，等待下一个交易日错峰窗口。"
+    refresh_home_snapshot
     exit 0
 fi
 
 NOW_HM=$((10#$(date +%H%M)))
 if ! is_truthy "${AQSP_VARIANT_ALLOW_EARLY:-false}" && [ "$NOW_HM" -lt 2100 ]; then
     log "当前未到北京时间 21:00，跳过变体刷新"
+    write_waiting_status "当前未到北京时间 21:00，等待收盘后错峰运行。"
+    refresh_home_snapshot
     exit 0
 fi
-
-MARKET_DB="$(resolve_path "${AQSP_VARIANT_MARKET_DB:-${AQSP_SQLITE_DB_PATH:-data/astocks_raw.db}}")"
-OUTPUT_PATH="$(resolve_path "${AQSP_VARIANT_RESULTS:-data/runtime/variant_results.json}")"
-LOCK_PATH="$(resolve_path "${AQSP_VARIANT_REFRESH_LOCK:-data/.locks/variant-results-refresh.lock}")"
-CURSOR_PATH="$(resolve_path "${AQSP_VARIANT_CURSOR_PATH:-data/runtime/variant_results_cursor.json}")"
-STATUS_PATH="$(resolve_path "${AQSP_VARIANT_REFRESH_STATUS:-data/runtime/variant_refresh_status.json}")"
 MAX_SYMBOLS="${AQSP_VARIANT_MAX_SYMBOLS:-240}"
 MAX_RUNTIME_SECONDS="${AQSP_VARIANT_MAX_RUNTIME_SECONDS:-300}"
 NICE_LEVEL="${AQSP_VARIANT_NICE_LEVEL:-15}"
@@ -126,6 +148,7 @@ for batch_index in $(seq 1 "$MAX_STAGE_BATCHES"); do
     else
         status=$?
         log "[ERROR] 变体分段 ${batch_index} 失败或超时，保留产物与 staging，exit=${status}"
+        refresh_home_snapshot
         exit "$status"
     fi
     if "$PYTHON_BIN" "$PROJECT_ROOT/scripts/check_variant_results.py" "$OUTPUT_PATH" >>"$LOG_FILE" 2>&1; then
@@ -135,4 +158,5 @@ for batch_index in $(seq 1 "$MAX_STAGE_BATCHES"); do
         exit 0
     fi
 done
-log "变体首轮仍在分段构建，未更新首页正式变体快照"
+refresh_home_snapshot
+log "变体首轮仍在分段构建，首页已更新状态快照"

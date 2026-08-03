@@ -1858,13 +1858,15 @@ def test_variant_refresh_runs_after_close_with_bounded_resources() -> None:
     assert 'PROFILE_BATCH_SIZE="${AQSP_VARIANT_PROFILE_BATCH_SIZE:-32}"' in script
     assert "--profile-batch-size" in script
     assert "--status-file" in script
+    assert "--status-only waiting" in script
     assert "AQSP_VARIANT_REFRESH_STATUS" in script
     assert 'nice -n "$NICE_LEVEL"' in script
     assert "AQSP_VARIANT_ALLOW_HEAVY" in script
     assert "variant-results-refresh.lock" in script
     assert "refresh_variant_results_from_market_db.py" in script
     assert "write_home_snapshot.py" in script
-    assert "变体首轮仍在分段构建，未更新首页正式变体快照" in script
+    assert "变体首轮仍在分段构建，首页已更新状态快照" in script
+    assert "refresh_home_snapshot" in script
     assert 'status=$?' in script
 
 

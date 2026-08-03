@@ -582,6 +582,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--staging-file", type=Path)
     parser.add_argument("--status-file", type=Path)
     parser.add_argument(
+        "--status-only",
+        choices=("waiting",),
+        help="只写运行状态，不读取市场数据或执行变体计算。",
+    )
+    parser.add_argument("--status-message", default="")
+    parser.add_argument(
         "--profile-batch-size", type=int, default=DEFAULT_PROFILE_BATCH_SIZE
     )
     parser.add_argument("--sql-chunk-size", type=int, default=SQL_CHUNK_SIZE)
@@ -594,10 +600,10 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     sql_chunk_size = int(getattr(args, "sql_chunk_size", SQL_CHUNK_SIZE))
-    lock_path = args.lock_file or args.output.with_name(
+    lock_path = getattr(args, "lock_file", None) or args.output.with_name(
         f".{args.output.name}.refresh.lock"
     )
-    cursor_path = args.cursor_file or args.output.with_name(
+    cursor_path = getattr(args, "cursor_file", None) or args.output.with_name(
         f".{args.output.name}.universe_cursor.json"
     )
     stage_path = getattr(args, "staging_file", None) or args.output.with_name(
@@ -606,6 +612,15 @@ def main() -> int:
     status_path = getattr(args, "status_file", None) or args.output.with_name(
         "variant_refresh_status.json"
     )
+    status_only = str(getattr(args, "status_only", "") or "").strip()
+    if status_only:
+        write_variant_refresh_status(
+            status_path,
+            status=status_only,
+            message=str(getattr(args, "status_message", "") or "")
+            or "等待下一个错峰运行窗口。",
+        )
+        return 0
     previous = load_qualified_artifact(args.output)
     try:
         with (

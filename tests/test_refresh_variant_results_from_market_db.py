@@ -133,6 +133,32 @@ def test_write_variant_refresh_status_is_bounded_and_timestamped(
     assert payload["generated_at"].endswith("+08:00")
 
 
+def test_main_writes_waiting_status_without_reading_market_database(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "variant_results.json"
+    status_path = tmp_path / "variant_refresh_status.json"
+    monkeypatch.setattr(
+        mod,
+        "parse_args",
+        lambda: Namespace(
+            market_db=tmp_path / "missing.db",
+            output=output,
+            status_file=status_path,
+            status_only="waiting",
+            status_message="等待收盘后错峰运行。",
+        ),
+    )
+    monkeypatch.setattr(
+        mod,
+        "validate_market_db",
+        lambda _path: (_ for _ in ()).throw(AssertionError("must not read db")),
+    )
+
+    assert mod.main() == 0
+    assert json.loads(status_path.read_text(encoding="utf-8"))["status"] == "waiting"
+
+
 def test_copy_market_rows_rejects_non_positive_sql_chunk_size(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="sql_chunk_size"):
         mod.copy_market_rows(
