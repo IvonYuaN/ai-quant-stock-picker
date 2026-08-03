@@ -202,6 +202,27 @@ class MultiSource(DataSource):
                 self._set_last_used_provenance(merged_result, "multi")
                 self._last_used_source = "multi"
                 return merged_result
+            if partial_results:
+                guarded_sources = [
+                    name
+                    for name, error in exceptions
+                    if "不适合 live_short" in str(error)
+                ]
+                if guarded_sources:
+                    self._clear_last_used()
+                    raise DataError(
+                        f"{guarded_sources[0]} 不适合 live_short；实时数据存在未覆盖标的，"
+                        "且历史源不得补齐"
+                    )
+                # Preserve the best verified partial response only when no live
+                # source can complete the missing symbols. The CLI coverage gate
+                # remains responsible for rejecting an undersized batch.
+                partial_results.sort(
+                    key=lambda item: (-len(item.result), item.source_name)
+                )
+                partial = partial_results[0]
+                self._set_last_used_provenance(partial.result, partial.source_name)
+                return partial.result
             raise DataError(
                 f"所有数据源获取{method_name}失败: "
                 + ", ".join(f"{name}: {str(error)[:80]}" for name, error in exceptions)
