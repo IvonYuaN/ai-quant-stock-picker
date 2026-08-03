@@ -51,7 +51,7 @@ def test_merge_batches_preserves_existing_when_current_batch_has_no_candidates(
                 "symbol": "000001",
                 "signal_date": "2026-07-31",
                 "score": "60",
-                "macd": "0.21",
+                "volume_ratio": "1.20",
             },
         ],
     )
@@ -64,7 +64,41 @@ def test_merge_batches_preserves_existing_when_current_batch_has_no_candidates(
     with existing.open(encoding="utf-8", newline="") as handle:
         rows = list(csv.DictReader(handle))
     assert [row["symbol"] for row in rows] == ["__RUN__", "000001"]
-    assert rows[1]["macd"] == "0.21"
+    assert rows[1]["volume_ratio"] == "1.20"
+    assert rows[1]["technical_quality_status"] == "incomplete"
+    assert rows[1]["quality_gate_action"] == "observe"
+    assert rows[1]["observation_only"] == "true"
+    assert rows[1]["paper_review_eligible"] == "false"
+    assert "macd_hist" in rows[1]["candidate_blocker"]
+    assert "kdj_j" in rows[1]["candidate_blocker"]
+
+
+def test_merge_batches_keeps_complete_technical_evidence_eligible(tmp_path) -> None:
+    existing = tmp_path / "latest.csv"
+    batch = tmp_path / "batch.csv"
+    _write(existing, [{"symbol": "__RUN__", "signal_date": "2026-07-31"}])
+    _write(
+        batch,
+        [
+            {"symbol": "__RUN__", "signal_date": "2026-07-31"},
+            {
+                "symbol": "000001",
+                "signal_date": "2026-07-31",
+                "score": "80",
+                "volume_ratio": "1.20",
+                "macd_hist": "0.12",
+                "kdj_j": "55.0",
+                "quality_gate_action": "promote",
+            },
+        ],
+    )
+
+    assert merge_batches(existing, batch, signal_date="2026-07-31") == 1
+    with existing.open(encoding="utf-8", newline="") as handle:
+        rows = list(csv.DictReader(handle))
+    assert rows[1]["quality_gate_action"] == "promote"
+    assert rows[1]["technical_quality_status"] == ""
+    assert rows[1]["candidate_blocker"] == ""
 
 
 def test_merge_batches_rejects_invalid_current_run_without_overwriting_existing(
