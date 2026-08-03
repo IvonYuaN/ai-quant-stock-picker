@@ -26,6 +26,7 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from aqsp.core.time import get_previous_trading_day, is_trading_day, today_shanghai
+from aqsp.data.sqlite_db_source import SqliteDbSource
 
 _QUERY_RETRY_LIMIT = 2
 _QUERY_RETRY_BASE_SLEEP_SECONDS = 0.2
@@ -348,7 +349,8 @@ def _latest_symbol_date(conn: sqlite3.Connection, ts_code: str) -> date | None:
 
 def _adjustflag_for_price_mode(price_mode: str) -> str:
     if price_mode == "raw":
-        return "1"
+        # BaoStock: 1=back-adjusted, 2=forward-adjusted, 3=unadjusted.
+        return "3"
     if price_mode == "qfq":
         return "2"
     raise ValueError(f"unsupported price_mode: {price_mode}")
@@ -494,6 +496,14 @@ def update_sqlite_daily(
     max_runtime_seconds: float = 0.0,
     require_target_coverage: bool = True,
 ) -> UpdateSummary:
+    if (
+        db_path.exists()
+        and SqliteDbSource(db_path=db_path, cache=None).price_mode() == "invalid"
+    ):
+        raise RuntimeError(
+            "existing sqlite price basis is invalid; build a new raw database in "
+            "bounded batches and switch only after coverage validation"
+        )
     bs = _load_baostock()
     _login_baostock_session(bs)
 

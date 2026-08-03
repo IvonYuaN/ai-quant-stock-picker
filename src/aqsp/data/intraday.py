@@ -34,6 +34,19 @@ _DEFAULT_FETCH_MAX_WORKERS = 4
 _DEFAULT_FETCH_BATCH_SIZE = 64
 
 
+@dataclass(frozen=True)
+class OverlayContinuityPolicy:
+    """Fail closed when historical and live prices use incompatible bases."""
+
+    # Wider than the 20% ChiNext daily limit; larger gaps are not safe inputs
+    # for indicators without explicit point-in-time corporate-action evidence.
+    max_abs_gap_ratio: float = 0.35
+
+    def __post_init__(self) -> None:
+        if not 0 < self.max_abs_gap_ratio < 1:
+            raise ValueError("max_abs_gap_ratio 必须在 0 和 1 之间")
+
+
 def _chunked(values: list[str], size: int) -> list[list[str]]:
     """Split symbols into bounded source requests."""
     return [values[index : index + size] for index in range(0, len(values), size)]
@@ -115,6 +128,7 @@ class IntradayService:
         fetch_deadline_seconds: float = _DEFAULT_FETCH_DEADLINE_SECONDS,
         fetch_max_workers: int = _DEFAULT_FETCH_MAX_WORKERS,
         fetch_batch_size: int = _DEFAULT_FETCH_BATCH_SIZE,
+        continuity_policy: OverlayContinuityPolicy = OverlayContinuityPolicy(),
     ) -> None:
         source_name = str(getattr(source, "name", "") or "").strip()
         guard_message = workload_guard_message(source_name, "live_short")
@@ -128,6 +142,7 @@ class IntradayService:
                 f"数据源 {source_name} 仅可作为 observation 层，不能形成正式盘中数据"
             )
         self.source = source
+        self.continuity_policy = continuity_policy
         self.allow_historical_replay = bool(allow_historical_replay)
         if fetch_deadline_seconds <= 0:
             raise ValueError("fetch_deadline_seconds 必须大于 0")
@@ -242,7 +257,9 @@ class IntradayService:
             thread_name_prefix="aqsp-intraday",
         )
         futures = {
-            executor.submit(self._fetch_intraday_batch, batch, period, method_name): batch
+            executor.submit(
+                self._fetch_intraday_batch, batch, period, method_name
+            ): batch
             for batch, method_name in jobs
         }
         try:
@@ -396,11 +413,20 @@ class IntradayService:
                     exc,
                 )
                 continue
-            merged[symbol] = self._merge_single_symbol_daily(
-                daily,
-                synthesized,
-                trade_day=trade_day,
-            )
+            try:
+                merged[symbol] = self._merge_single_symbol_daily(
+                    daily,
+                    synthesized,
+                    trade_day=trade_day,
+                )
+            except DataError as exc:
+                first_error = first_error or exc
+                _logger.warning(
+                    "数据源 %s 分时覆盖隔离坏标的 %s: %s",
+                    self.source.name,
+                    symbol,
+                    exc,
+                )
         if not merged:
             if first_error is not None:
                 raise first_error
@@ -427,7 +453,7 @@ class IntradayService:
                 target_date=target_date,
                 index_symbols=index_symbols,
             )
-        except MissingDataError:
+        except DataError:
             frames = {}
         covered = tuple(symbol for symbol in requested if symbol in frames)
         missing = tuple(symbol for symbol in requested if symbol not in frames)
@@ -502,6 +528,16 @@ class IntradayService:
         # A live overlay may keep prior history for indicators, but future rows
         # are look-ahead data and must never survive the merge.
         base = base[base["date"] < intraday_day_text]
+        symbol = (
+            str(intraday_daily["symbol"].iloc[0])
+            if "symbol" in intraday_daily.columns and not intraday_daily.empty
+            else "unknown"
+        )
+        self._assert_overlay_price_continuity(
+            base,
+            intraday_daily,
+            symbol=symbol,
+        )
         merged = pd.concat([base, intraday_daily], ignore_index=True)
         merged = merged.sort_values("date").reset_index(drop=True)
         return _attach_overlay_provenance(
@@ -512,6 +548,30 @@ class IntradayService:
                 benchmark=benchmark_provenance,
             ),
         )
+
+    def _assert_overlay_price_continuity(
+        self,
+        historical: pd.DataFrame,
+        intraday_daily: pd.DataFrame,
+        *,
+        symbol: str,
+    ) -> None:
+        if historical.empty or intraday_daily.empty:
+            return
+        prior_close = pd.to_numeric(historical["close"], errors="coerce").dropna()
+        current_open = pd.to_numeric(intraday_daily["open"], errors="coerce").dropna()
+        if prior_close.empty or current_open.empty:
+            raise DataError(f"{symbol} 历史/实时价格连续性缺少有效 close/open")
+        previous = float(prior_close.iloc[-1])
+        current = float(current_open.iloc[0])
+        if previous <= 0 or current <= 0:
+            raise DataError(f"{symbol} 历史/实时价格连续性存在非正价格")
+        gap_ratio = abs(current / previous - 1.0)
+        if gap_ratio > self.continuity_policy.max_abs_gap_ratio:
+            raise DataError(
+                f"{symbol} 历史昨收与实时开盘断层 {gap_ratio:.2%}，"
+                "疑似复权口径或公司行为未对齐，拒绝合并"
+            )
 
     def _synthesize_single_symbol_daily(
         self,

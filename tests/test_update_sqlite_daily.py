@@ -620,5 +620,38 @@ def test_run_with_timeout_raises_for_stalled_query() -> None:
 
 
 def test_adjustflag_for_price_mode_keeps_raw_unadjusted() -> None:
-    assert update_sqlite_daily._adjustflag_for_price_mode("raw") == "1"
+    assert update_sqlite_daily._adjustflag_for_price_mode("raw") == "3"
     assert update_sqlite_daily._adjustflag_for_price_mode("qfq") == "2"
+
+
+def test_update_sqlite_daily_rejects_existing_invalid_price_basis(
+    tmp_path: Path, monkeypatch
+) -> None:
+    db = tmp_path / "astocks_raw.db"
+    with sqlite3.connect(db) as conn:
+        update_sqlite_daily.ensure_schema(conn)
+        conn.execute("insert into stocks values ('000001.SZ', '平安银行')")
+        for index in range(5):
+            conn.execute(
+                """
+                insert into daily_qfq(
+                    ts_code, trade_date, open, high, low, close_qfq,
+                    volume, amount, close
+                ) values (?, ?, 1450, 1460, 1440, 1452, 1000, 10000, 1452)
+                """,
+                ("000001.SZ", f"2026010{index + 2}"),
+            )
+    monkeypatch.setattr(
+        update_sqlite_daily,
+        "_load_baostock",
+        lambda: (_ for _ in ()).throw(AssertionError("network must not start")),
+    )
+
+    with pytest.raises(RuntimeError, match="price basis is invalid"):
+        update_sqlite_daily.update_sqlite_daily(
+            db,
+            target_day=date(2026, 1, 8),
+            sleep_seconds=0,
+            limit=1,
+            price_mode="raw",
+        )
