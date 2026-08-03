@@ -218,7 +218,7 @@ class HomeSnapshotVariant:
 class HomeSnapshotVariantSuite:
     """Metadata for the isolated variant artifact, separate from formal universe."""
 
-    schema_version: str = ""
+    schema_version: str = "variant-suite-v2"
     generated_at: str = ""
     data_mode: str = ""
     end_date: str = ""

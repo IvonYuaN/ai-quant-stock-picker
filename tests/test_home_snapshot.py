@@ -171,6 +171,10 @@ def test_home_snapshot_round_trips_variant_suite_metadata(tmp_path) -> None:
     assert loaded.variant_suite.batch_id == "3:1200"
 
 
+def test_home_snapshot_default_variant_suite_has_versioned_pending_schema() -> None:
+    assert HomeSnapshotVariantSuite().schema_version == "variant-suite-v2"
+
+
 def test_home_snapshot_round_trips_candidate_provenance(tmp_path) -> None:
     candidate = HomeSnapshotCandidate(
         symbol="603019",

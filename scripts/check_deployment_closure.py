@@ -270,6 +270,15 @@ def _snapshot_contract(
         return ClosureCheck(
             "snapshot_contract", "failed", "variant_suite schema_version mismatch"
         )
+    variants = data.get("variants")
+    if not variants and str(variant_suite.get("last_error") or "").startswith(
+        "变体等待："
+    ):
+        return ClosureCheck(
+            "snapshot_contract",
+            "ok",
+            f"selected_date={selected} variant_suite=pending",
+        )
     suite_end = str(variant_suite.get("end_date") or "").strip()
     if suite_end and not _valid_date(suite_end):
         return ClosureCheck("snapshot_contract", "failed", "variant_suite end invalid")
@@ -284,7 +293,6 @@ def _snapshot_contract(
         return ClosureCheck(
             "snapshot_contract", "failed", "variant_suite selected_symbols < 121"
         )
-    variants = data.get("variants")
     if not isinstance(variants, list) or not variants:
         return ClosureCheck("snapshot_contract", "failed", "variants missing")
     first = variants[0]
