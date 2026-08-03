@@ -654,6 +654,92 @@ def test_snapshot_candidates_keeps_live_recommendation_with_technical_evidence()
     assert any(metric.label == "MACD柱" for metric in candidates[0].technical_metrics)
 
 
+def test_snapshot_candidate_keeps_required_technical_contract_when_values_missing() -> (
+    None
+):
+    candidate = _candidate("600011", 88.0)
+    candidate.volume_ratio = None
+    candidate.macd_hist = None
+    candidate.kdj_j = None
+
+    snapshot_candidate = write_home_snapshot._snapshot_candidate(candidate)
+
+    assert snapshot_candidate is not None
+    required = {
+        metric.key: metric.value
+        for metric in snapshot_candidate.technical_metrics
+        if metric.key in {"volume_ratio", "macd_hist", "kdj_j"}
+    }
+    assert required == {
+        "volume_ratio": "未提供",
+        "macd_hist": "未提供",
+        "kdj_j": "未提供",
+    }
+
+
+def test_snapshot_candidate_reads_required_metrics_from_preserved_runtime_mapping() -> (
+    None
+):
+    candidate = _candidate("600012", 88.0)
+    candidate.volume_ratio = None
+    candidate.macd_hist = None
+    candidate.kdj_j = None
+    candidate.metrics = {
+        "volume_ratio": 1.42,
+        "macd_hist": 0.1234,
+        "kdj_j": 58.6,
+    }
+
+    snapshot_candidate = write_home_snapshot._snapshot_candidate(candidate)
+
+    assert snapshot_candidate is not None
+    assert {
+        metric.key: metric.value
+        for metric in snapshot_candidate.technical_metrics
+        if metric.key in {"volume_ratio", "macd_hist", "kdj_j"}
+    } == {
+        "volume_ratio": "1.42x",
+        "macd_hist": "+0.123",
+        "kdj_j": "58.6",
+    }
+
+
+def test_write_home_snapshot_backfills_deterministic_discussion_when_agent_artifact_missing(
+    monkeypatch,
+) -> None:
+    provider = _Provider()
+    original = provider.home_digest_payload
+
+    def payload_without_agent_debate(
+        task_id: str, signal_date: str = ""
+    ) -> SimpleNamespace:
+        payload = original(task_id, signal_date)
+        first = payload.task_view.detail_cards[0]
+        first.risks = ("量能确认前不形成正式推荐",)
+        payload.debates = ()
+        return payload
+
+    provider.home_digest_payload = payload_without_agent_debate
+    monkeypatch.setattr(
+        write_home_snapshot,
+        "now_shanghai",
+        lambda: datetime(2026, 7, 10, 15, 1, tzinfo=ZoneInfo("Asia/Shanghai")),
+    )
+
+    snapshot = write_home_snapshot.build_home_snapshot(
+        provider, signal_date="2026-07-10", task_id="intraday"
+    )
+
+    assert snapshot.debates[0].symbol == "600001"
+    assert snapshot.debates[0].active_roles == ("规则证据", "风险约束")
+    assert snapshot.debates[0].primary_risk_gate == "量能确认前不形成正式推荐"
+    assert snapshot.debates[0].next_trigger == "核对 600001 量能"
+    assert snapshot.debates[0].viewpoint_buckets == {
+        "technical": ("MA20 斜率向上",),
+        "risk_counterevidence": ("量能确认前不形成正式推荐",),
+    }
+
+
 def test_variant_suite_reports_missing_artifact_reason(
     monkeypatch, tmp_path: Path
 ) -> None:

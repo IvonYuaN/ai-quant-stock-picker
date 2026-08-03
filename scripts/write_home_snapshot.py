@@ -307,10 +307,25 @@ def _candidate_score_breakdown(candidate: Any) -> tuple[str, ...]:
     return _bounded_unique_text(raw, 4)
 
 
+_REQUIRED_TECHNICAL_METRICS = frozenset({"volume_ratio", "macd_hist", "kdj_j"})
+
+
+def _candidate_metric_value(candidate: Any, key: str) -> object:
+    """Read a metric from the card or its preserved runtime metric mapping."""
+    value = getattr(candidate, key, None)
+    if value not in (None, ""):
+        return value
+    for field in ("metrics", "technical_metrics"):
+        raw_metrics = getattr(candidate, field, None)
+        if isinstance(raw_metrics, dict) and raw_metrics.get(key) not in (None, ""):
+            return raw_metrics[key]
+    return None
+
+
 def _candidate_technical_metrics(
     candidate: Any,
 ) -> tuple[HomeSnapshotTechnicalMetric, ...]:
-    """Expose only deterministic short-term fields already present in the card."""
+    """Expose deterministic technical fields and make missing required inputs explicit."""
     specifications = (
         ("close", "现价", "{:.2f}"),
         ("ret5_pct", "5日动能", "{:+.2f}%"),
@@ -325,18 +340,24 @@ def _candidate_technical_metrics(
     )
     metrics: list[HomeSnapshotTechnicalMetric] = []
     for key, label, template in specifications:
-        raw = getattr(candidate, key, None)
+        raw = _candidate_metric_value(candidate, key)
         try:
             value = float(raw)
         except (TypeError, ValueError):
-            continue
-        if not math.isfinite(value):
-            continue
-        metrics.append(
-            HomeSnapshotTechnicalMetric(
-                key=key, label=label, value=template.format(value)
+            value = math.nan
+        if math.isfinite(value):
+            metrics.append(
+                HomeSnapshotTechnicalMetric(
+                    key=key, label=label, value=template.format(value)
+                )
             )
-        )
+        elif key in _REQUIRED_TECHNICAL_METRICS:
+            # Do not invent an indicator when its source row omitted it.  The
+            # dashboard still exposes the broken contract instead of silently
+            # presenting an incomplete technical case as complete.
+            metrics.append(
+                HomeSnapshotTechnicalMetric(key=key, label=label, value="未提供")
+            )
         if len(metrics) == MAX_HOME_SNAPSHOT_TECHNICAL_METRICS:
             break
     return tuple(metrics)
@@ -608,6 +629,71 @@ def _snapshot_debates(
             )
         )
         selected_symbols.add(symbol)
+        if len(selected) == MAX_HOME_SNAPSHOT_DEBATES:
+            break
+    return tuple(selected)
+
+
+def _candidate_discussion_inputs(candidate: Any) -> tuple[tuple[str, ...], str, str]:
+    """Return rule-derived support, risk, and trigger without agent inference."""
+    support = _candidate_reasons(candidate)
+    raw_risks = getattr(candidate, "risks", ()) or ()
+    if isinstance(raw_risks, str):
+        raw_risks = (raw_risks,)
+    risks = _bounded_unique_text((*raw_risks, getattr(candidate, "blocker", "")), 4)
+    trigger = _text(getattr(candidate, "next_step", ""))
+    return support, _first_text(*risks), trigger
+
+
+def _deterministic_candidate_debates(
+    payload: Any,
+    candidates: tuple[HomeSnapshotCandidate, ...],
+) -> tuple[HomeSnapshotDebate, ...]:
+    """Show source-recorded rule support/risk/trigger when no debate artifact exists."""
+    candidate_symbols = {candidate.symbol for candidate in candidates}
+    selected: list[HomeSnapshotDebate] = []
+    seen: set[str] = set()
+    ordered = (
+        *(getattr(payload.task_view, "detail_cards", ()) or ()),
+        *(getattr(payload, "spotlights", ()) or ()),
+    )
+    for candidate in ordered:
+        symbol = _text(getattr(candidate, "symbol", ""))
+        if not symbol or symbol not in candidate_symbols or symbol in seen:
+            continue
+        support, risk, trigger = _candidate_discussion_inputs(candidate)
+        if not (support and risk and trigger):
+            continue
+        selected.append(
+            HomeSnapshotDebate(
+                symbol=symbol,
+                display_name=_first_text(
+                    getattr(candidate, "display_name", ""),
+                    getattr(candidate, "name", ""),
+                    symbol,
+                ),
+                conclusion="规则支持与风险约束并存，保留复核。",
+                primary_risk_gate=risk,
+                next_trigger=trigger,
+                active_roles=("规则证据", "风险约束"),
+                round_count=2,
+                bull_count=1,
+                bear_count=1,
+                process_summary="确定性复核：规则支持与风险约束，不使用 LLM 推理。",
+                round_summaries=(
+                    f"支持：{support[0]}",
+                    f"风险：{risk}",
+                ),
+                viewpoint_buckets={
+                    "technical": support[:4],
+                    "risk_counterevidence": (risk,),
+                },
+                disagreement_points=(
+                    "规则支持成立，但风险约束未解除前不形成正式推荐。",
+                ),
+            )
+        )
+        seen.add(symbol)
         if len(selected) == MAX_HOME_SNAPSHOT_DEBATES:
             break
     return tuple(selected)
@@ -1987,6 +2073,8 @@ def build_home_snapshot(
         candidates,
         runtime_debates=runtime_debates,
     )
+    if not debates:
+        debates = _deterministic_candidate_debates(payload, candidates)
     shown_recommendation_count = sum(
         is_home_recommendation(candidate) for candidate in candidates
     )
