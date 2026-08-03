@@ -48,6 +48,7 @@ from aqsp.data import (
     fetch_with_source,
     load_csv,
 )
+from aqsp.indicators import enrich_indicators
 from aqsp.data.index_constituents import load_optional_index_constituents
 from aqsp.data.cache import DataCache
 from aqsp.data.source_factory import (
@@ -542,6 +543,45 @@ def _screen_universe_with_thresholds(
             raise
         picks = screen_universe(frames, config)
     return apply_candidate_quality_gate(picks)
+
+
+def _ensure_pick_technical_metrics(
+    picks: list[PickResult],
+    frames: dict[str, pd.DataFrame],
+) -> list[PickResult]:
+    """Fill missing display evidence from the same point-in-time screening frame."""
+    specifications = (
+        ("macd_hist", 4),
+        ("kdj_j", 2),
+        ("volume_ratio", 2),
+    )
+    enriched: list[PickResult] = []
+    for pick in picks:
+        frame = frames.get(pick.symbol)
+        if frame is None or frame.empty:
+            enriched.append(pick)
+            continue
+        try:
+            last_row = enrich_indicators(frame).iloc[-1]
+        except (KeyError, TypeError, ValueError, IndexError):
+            enriched.append(pick)
+            continue
+        metrics = dict(pick.metrics)
+        for key, digits in specifications:
+            try:
+                existing = float(metrics.get(key))
+            except (TypeError, ValueError):
+                existing = float("nan")
+            if pd.notna(existing):
+                continue
+            try:
+                value = float(last_row.get(key))
+            except (TypeError, ValueError):
+                continue
+            if pd.notna(value):
+                metrics[key] = round(value, digits)
+        enriched.append(replace(pick, metrics=metrics))
+    return enriched
 
 
 def _runtime_strategy_weights(
@@ -4734,6 +4774,7 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         strategy_weights=weights,
         strategy_weight_reasons=strategy_weight_reasons,
     )
+    screened_picks = _ensure_pick_technical_metrics(screened_picks, screen_frames)
     relevant_intraday_missing_symbols = _relevant_intraday_missing_symbols(
         screened_picks,
         missing_symbols=intraday_missing_symbols,

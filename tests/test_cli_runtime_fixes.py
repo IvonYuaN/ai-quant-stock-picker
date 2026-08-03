@@ -974,6 +974,46 @@ def test_fetch_intraday_historical_base_ends_at_previous_trading_day(
     assert result["600000"].attrs["workload"] == "historical_base"
 
 
+def test_ensure_pick_technical_metrics_fills_missing_values_from_current_frame() -> None:
+    import aqsp.cli as cli_mod
+    from aqsp.core.types import PickResult
+
+    dates = pd.date_range("2026-05-01", periods=30, freq="B").strftime("%Y-%m-%d")
+    close = pd.Series(range(10, 40), dtype=float)
+    frame = pd.DataFrame(
+        {
+            "date": dates,
+            "symbol": ["600000"] * len(dates),
+            "open": close - 0.2,
+            "high": close + 0.5,
+            "low": close - 0.5,
+            "close": close,
+            "volume": [1_000 + index * 10 for index in range(len(dates))],
+            "amount": close * 100_000,
+        }
+    )
+    pick = PickResult(
+        symbol="600000",
+        name="测试股份",
+        date="2026-06-11",
+        close=39.0,
+        score=80.0,
+        rating="buy_candidate",
+        entry_type="next_open",
+        ideal_buy=39.0,
+        stop_loss=37.0,
+        take_profit=43.0,
+        position="watch",
+        metrics={"volume_ratio": 9.99},
+    )
+
+    result = cli_mod._ensure_pick_technical_metrics([pick], {"600000": frame})[0]
+
+    assert result.metrics["volume_ratio"] == 9.99
+    assert pd.notna(result.metrics["macd_hist"])
+    assert pd.notna(result.metrics["kdj_j"])
+
+
 def test_intraday_actual_source_uses_current_overlay_provenance() -> None:
     import aqsp.cli as cli_mod
 
