@@ -56,7 +56,7 @@ function EmptyState({ title, detail }: { title: string; detail: string }) {
 }
 
 function SnapshotMeta({ snapshot }: { snapshot: AqspSnapshot }) {
-  const stale = isAqspSnapshotStale(snapshot);
+  const stale = isAqspSnapshotStale(snapshot) || snapshot.meta?.freshness?.candidates === "stale";
   const historical = snapshot.meta?.historical ?? false;
   const freshness = snapshot.meta?.freshness;
   return (
@@ -174,7 +174,7 @@ function PhaseLane({ snapshot }: { snapshot: AqspSnapshot }) {
 
 function GateState({ snapshot }: { snapshot: AqspSnapshot }) {
   const gate = snapshot.recommendation_gate;
-  const stale = isAqspSnapshotStale(snapshot);
+  const stale = isAqspSnapshotStale(snapshot) || snapshot.meta?.freshness?.candidates === "stale";
   if (snapshot.candidates.length === 0) {
     return <div className="aqsp-gate aqsp-gate-warn"><Clock3 className="h-4 w-4 shrink-0" /><span>当天暂无候选，等待盘前或盘中任务产出；不使用历史结果替代。</span></div>;
   }
