@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sqlite3
 import sys
 from dataclasses import asdict, dataclass
@@ -40,6 +41,7 @@ class RebuildSummary:
     next_offset: int
     complete: bool
     publish_ready: bool
+    activated: bool
     update: UpdateSummary
 
 
@@ -93,6 +95,33 @@ def _read_state(
         return 0, set()
 
 
+def _activate_candidate_database(*, active_db: Path, candidate_db: Path) -> None:
+    """Atomically point the active database path at a validated candidate."""
+    if active_db.is_symlink():
+        raise RuntimeError(
+            "active sqlite path is already a symlink; refusing reactivation"
+        )
+    if not active_db.is_file():
+        raise RuntimeError("active sqlite database is missing")
+    if active_db.resolve() == candidate_db.resolve():
+        raise RuntimeError("candidate sqlite database must differ from active database")
+    with sqlite3.connect(candidate_db) as conn:
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    if SqliteDbSource(candidate_db, cache=None).price_mode() != "raw":
+        raise RuntimeError("candidate rebuild database did not validate as raw")
+    stamp = now_shanghai().strftime("%Y%m%dT%H%M%S")
+    backup = active_db.with_name(f"{active_db.name}.invalid-{stamp}")
+    temporary_link = active_db.with_name(f".{active_db.name}.next")
+    try:
+        os.link(active_db, backup)
+        temporary_link.unlink(missing_ok=True)
+        os.symlink(str(candidate_db.resolve()), temporary_link)
+        os.replace(temporary_link, active_db)
+    except Exception:
+        temporary_link.unlink(missing_ok=True)
+        raise
+
+
 def rebuild_batch(
     *,
     source_db: Path,
@@ -104,6 +133,7 @@ def rebuild_batch(
     query_timeout_seconds: float,
     max_runtime_seconds: float,
     min_coverage_ratio: float,
+    activate_active_db: bool = False,
 ) -> RebuildSummary:
     if (
         candidate_db.exists()
@@ -140,6 +170,11 @@ def rebuild_batch(
     next_offset = offset + len(batch)
     complete = next_offset >= len(symbols)
     coverage_ratio = len(covered) / len(symbols)
+    publish_ready = complete and coverage_ratio >= min_coverage_ratio
+    activated = False
+    if publish_ready and activate_active_db:
+        _activate_candidate_database(active_db=source_db, candidate_db=candidate_db)
+        activated = True
     summary = RebuildSummary(
         target_day=target_day,
         processed_symbols=update.processed_symbols,
@@ -148,7 +183,8 @@ def rebuild_batch(
         coverage_ratio=coverage_ratio,
         next_offset=0 if next_offset >= len(symbols) else next_offset,
         complete=complete,
-        publish_ready=complete and coverage_ratio >= min_coverage_ratio,
+        publish_ready=publish_ready,
+        activated=activated,
         update=update,
     )
     payload = asdict(summary)
@@ -172,6 +208,11 @@ def main() -> int:
     parser.add_argument("--query-timeout-seconds", type=float, default=4.0)
     parser.add_argument("--max-runtime-seconds", type=float, default=420.0)
     parser.add_argument("--min-coverage-ratio", type=float, default=0.98)
+    parser.add_argument(
+        "--activate-active-db",
+        action="store_true",
+        help="atomically switch the active path after a complete validated rebuild",
+    )
     args = parser.parse_args()
     if (
         args.batch_size <= 0
@@ -190,6 +231,7 @@ def main() -> int:
         query_timeout_seconds=args.query_timeout_seconds,
         max_runtime_seconds=args.max_runtime_seconds,
         min_coverage_ratio=args.min_coverage_ratio,
+        activate_active_db=bool(args.activate_active_db),
     )
     print(json.dumps(asdict(summary), ensure_ascii=False, default=str, sort_keys=True))
     return 0 if not summary.complete or summary.publish_ready else 1

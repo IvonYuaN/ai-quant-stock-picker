@@ -415,7 +415,8 @@ run_bounded_raw_refresh() {
             --batch-size "${AQSP_RAW_REBUILD_BATCH_SIZE:-16}" \
             --query-timeout-seconds "$query_timeout" \
             --max-runtime-seconds "$runtime_seconds" \
-            --min-coverage-ratio "${AQSP_RAW_REBUILD_MIN_COVERAGE_RATIO:-0.98}"
+            --min-coverage-ratio "${AQSP_RAW_REBUILD_MIN_COVERAGE_RATIO:-0.98}" \
+            --activate-active-db
         return
     fi
     run_python_script "${PROJECT_ROOT}/scripts/refresh_sqlite_batch.py" \

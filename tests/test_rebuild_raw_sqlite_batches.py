@@ -106,3 +106,32 @@ def test_rebuild_raw_sqlite_batches_persists_resumable_cursor(
     assert payload["universe_size"] == 3
     assert payload["coverage_ratio"] == 2 / 3
     assert not payload["publish_ready"]
+
+
+def test_rebuild_raw_sqlite_batches_atomically_activates_valid_candidate(
+    monkeypatch, tmp_path: Path
+) -> None:
+    active = tmp_path / "astocks_raw.db"
+    candidate = tmp_path / "astocks_raw.db.rebuild"
+    active.write_text("legacy", encoding="utf-8")
+    with sqlite3.connect(candidate):
+        pass
+
+    class FakeSource:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def price_mode(self) -> str:
+            return "raw"
+
+    monkeypatch.setattr(rebuild_raw_sqlite_batches, "SqliteDbSource", FakeSource)
+
+    rebuild_raw_sqlite_batches._activate_candidate_database(
+        active_db=active, candidate_db=candidate
+    )
+
+    assert active.is_symlink()
+    assert active.resolve() == candidate.resolve()
+    backups = list(tmp_path.glob("astocks_raw.db.invalid-*"))
+    assert len(backups) == 1
+    assert backups[0].read_text(encoding="utf-8") == "legacy"
