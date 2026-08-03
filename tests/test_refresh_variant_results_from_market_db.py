@@ -113,6 +113,38 @@ def test_validate_market_db_accepts_required_readable_tables(tmp_path: Path) -> 
     mod.validate_market_db(market_db)
 
 
+def test_validate_market_db_does_not_run_full_integrity_scan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    market_db = tmp_path / "market.db"
+    with sqlite3.connect(market_db) as conn:
+        conn.execute("CREATE TABLE stocks (ts_code TEXT, name TEXT)")
+        conn.execute("CREATE TABLE daily_qfq (ts_code TEXT, trade_date TEXT)")
+
+    original_connect = sqlite3.connect
+
+    def guarded_connect(*args, **kwargs):
+        class GuardedConnection:
+            def __init__(self, connection: sqlite3.Connection) -> None:
+                self.connection = connection
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exit_args) -> None:
+                self.connection.close()
+
+            def execute(self, sql, *execute_args, **execute_kwargs):
+                if "quick_check" in str(sql).lower():
+                    raise AssertionError("variant preflight must not scan the full DB")
+                return self.connection.execute(sql, *execute_args, **execute_kwargs)
+
+        return GuardedConnection(original_connect(*args, **kwargs))
+
+    monkeypatch.setattr(mod.sqlite3, "connect", guarded_connect)
+    mod.validate_market_db(market_db)
+
+
 def test_write_variant_refresh_status_is_bounded_and_timestamped(
     tmp_path: Path,
 ) -> None:

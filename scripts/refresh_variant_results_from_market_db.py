@@ -61,12 +61,17 @@ class VariantRefreshLocked(RuntimeError):
 
 
 def validate_market_db(db_path: Path) -> None:
-    """Reject an empty or incompatible market database before any heavy work."""
+    """Reject an empty or incompatible market database before any heavy work.
+
+    This runs in the bounded variant hot path.  A full ``quick_check`` scans
+    the whole market database and can consume the entire runtime budget on a
+    small server, so integrity scanning belongs to offline maintenance rather
+    than this constant-time schema preflight.
+    """
     if not db_path.is_file() or db_path.stat().st_size <= 0:
         raise ValueError(f"变体市场库不可用或为空: {db_path}")
     try:
         with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
-            integrity = conn.execute("PRAGMA quick_check").fetchone()
             tables = {
                 str(row[0])
                 for row in conn.execute(
@@ -75,8 +80,6 @@ def validate_market_db(db_path: Path) -> None:
             }
     except sqlite3.Error as exc:
         raise ValueError(f"变体市场库无法读取: {db_path}: {exc}") from exc
-    if not integrity or str(integrity[0]).lower() != "ok":
-        raise ValueError(f"变体市场库完整性校验失败: {db_path}")
     missing = REQUIRED_MARKET_TABLES - tables
     if missing:
         raise ValueError("变体市场库缺少必要表: " + ", ".join(sorted(missing)))
