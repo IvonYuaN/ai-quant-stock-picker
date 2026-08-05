@@ -59,6 +59,34 @@ export function variantActionText(
   }`;
 }
 
+export function variantHoldingChangeText(
+  today: AqspVariant["holdings"],
+  previous: AqspVariant["previous_holdings"],
+): string[] {
+  if (today === undefined || previous === undefined) return ["今日/昨日持仓字段不完整，无法判断换票。"];
+  const previousBySymbol = new Map(previous.map((holding) => [holding.symbol, holding]));
+  const todayBySymbol = new Map(today.map((holding) => [holding.symbol, holding]));
+  const changes: string[] = [];
+
+  for (const holding of today) {
+    const oldHolding = previousBySymbol.get(holding.symbol);
+    const name = variantHoldingName(holding);
+    if (!oldHolding) {
+      changes.push(`新增：${name}（${holding.symbol}）`);
+      continue;
+    }
+    if (oldHolding.quantity !== holding.quantity) {
+      changes.push(`数量调整：${name}（${holding.symbol}）${oldHolding.quantity} → ${holding.quantity} 股`);
+    }
+  }
+  for (const holding of previous) {
+    if (!todayBySymbol.has(holding.symbol)) {
+      changes.push(`移出：${variantHoldingName(holding)}（${holding.symbol}）`);
+    }
+  }
+  return changes.length > 0 ? changes : ["持仓未变化。"];
+}
+
 function metric(value: number | null | undefined, suffix = "", digits = 2): string {
   if (value == null || !Number.isFinite(value)) return "未形成";
   const sign = value > 0 ? "+" : "";

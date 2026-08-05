@@ -204,7 +204,13 @@ fi
     printf 'LOCK_PID=%q\n' "$$"
     printf 'LOCK_STARTED_AT=%q\n' "$(date '+%Y-%m-%d %H:%M:%S')"
 } >"$LOCK_INFO_FILE"
-trap 'rm -f "$LOCK_INFO_FILE"; rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT
+
+cleanup_lock() {
+    rm -f "$LOCK_INFO_FILE"
+    rmdir "$LOCK_DIR" 2>/dev/null || true
+}
+
+trap cleanup_lock EXIT
 
 has_usable_current_news() {
     # A transient source failure must not erase a valid same-day report that
@@ -257,7 +263,7 @@ PREVIOUS_NEWS_REPORT="${OUTPUT}.previous.$$"
 cleanup_previous_news() {
     rm -f "$PREVIOUS_NEWS_JSON" "$PREVIOUS_NEWS_REPORT"
 }
-trap cleanup_previous_news EXIT
+trap 'cleanup_lock; cleanup_previous_news' EXIT
 
 if has_usable_current_news; then
     cp -f "$JSON_OUTPUT" "$PREVIOUS_NEWS_JSON"

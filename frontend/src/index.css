@@ -457,7 +457,8 @@
   .aqsp-variant-ledger { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.45rem; margin-top: 0.55rem; }
   .aqsp-variant-ledger div, .aqsp-variant-actions { display: grid; gap: 0.2rem; min-width: 0; color: hsl(var(--foreground) / 0.78); font-size: 0.62rem; line-height: 1.4; overflow-wrap: anywhere; }
   .aqsp-variant-holding-column { min-height: 5.4rem; border: 1px solid hsl(var(--border) / 0.55); border-radius: 0.35rem; padding: 0.45rem; background: hsl(var(--background) / 0.18); }
-  .aqsp-variant-holding-column > b { display: block; margin-bottom: 0.25rem; color: hsl(var(--primary)); font-size: 0.6rem; }
+  .aqsp-variant-holding-column > b { display: flex; align-items: baseline; justify-content: space-between; gap: 0.35rem; margin-bottom: 0.25rem; color: hsl(var(--primary)); font-size: 0.65rem; }
+  .aqsp-variant-column-title small { color: hsl(var(--muted-foreground)); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.58rem; font-weight: 500; }
   .aqsp-variant-holding { display: grid; gap: 0.08rem; border-top: 1px solid hsl(var(--border) / 0.35); padding-top: 0.25rem; }
   .aqsp-variant-holding + .aqsp-variant-holding { margin-top: 0.25rem; }
   .aqsp-variant-holding strong { overflow: hidden; color: hsl(var(--foreground)); font-size: 0.68rem; text-overflow: ellipsis; white-space: nowrap; }

@@ -34,6 +34,7 @@ import { formatAqspTime, isAqspSnapshotStale, useWorkspaceSnapshot } from "./use
 import { useLocation } from "react-router-dom";
 import {
   variantActionText,
+  variantHoldingChangeText,
   variantHoldingName,
   variantMoney,
   variantPercent,
@@ -261,7 +262,7 @@ function VariantHoldingColumn({
 }) {
   return (
     <div className="aqsp-variant-holding-column">
-      <b>{label} · {date || "日期未记录"}</b>
+      <b className="aqsp-variant-column-title">{label}<small>{date || "日期未记录"}</small></b>
       {holdings === undefined ? <span>持仓字段未提供</span> : holdings.length === 0 ? <span>当前无持仓</span> : holdings.map((holding) => (
         <div className="aqsp-variant-holding" key={holding.symbol}>
           <strong>{variantHoldingName(holding)} <small>({holding.symbol})</small></strong>
@@ -302,7 +303,8 @@ function TestVariantsPanel({ snapshot }: { snapshot?: AqspSnapshot }) {
           <VariantHoldingColumn label="今日持仓" date={variant.holdings_date} holdings={holdings} />
           <VariantHoldingColumn label="昨日持仓" date={variant.previous_holdings_date} holdings={variant.previous_holdings} />
         </div>
-        <div className="aqsp-variant-actions"><b>为什么换票 / 保留</b>{(variant.recent_actions ?? []).slice(0, 3).map((action, index) => <span key={`${action.date}-${action.symbol}-${index}`}>{variantActionText(action)}</span>)}{(variant.adjustments ?? []).slice(0, 3).map((line) => <span key={line}>{line}</span>)}{(variant.recent_actions?.length ?? 0) === 0 && (variant.adjustments?.length ?? 0) === 0 ? <span>换票逻辑未记录；今日与昨日持仓只能做结果对照，不能补写原因。</span> : null}</div>
+        <div className="aqsp-variant-actions"><b>持仓变化</b>{variantHoldingChangeText(variant.holdings, variant.previous_holdings).map((line) => <span key={line}>{line}</span>)}</div>
+        <div className="aqsp-variant-actions"><b>为什么换票 / 保留</b>{(variant.recent_actions ?? []).slice(0, 3).map((action, index) => <span key={`${action.date}-${action.symbol}-${index}`}>{variantActionText(action)}</span>)}{(variant.adjustments ?? []).slice(0, 3).map((line) => <span key={line}>{line}</span>)}{(variant.recent_actions?.length ?? 0) === 0 && (variant.adjustments?.length ?? 0) === 0 ? <span>决策依据未记录；不根据持仓差异补写原因。</span> : null}</div>
         <div className="aqsp-variant-actions"><b>技术面证据</b>{(variant.technical_evidence ?? []).slice(0, 3).map((evidence, index) => <span key={`${evidence.symbol ?? "symbol"}-${evidence.execution_date ?? evidence.date ?? index}`}>{variantTechnicalEvidenceText(evidence)}</span>)}{(variant.technical_evidence?.length ?? 0) === 0 ? <span>结构化 MACD/KDJ/量比/ATR 未记录；不把空口描述当证据。</span> : null}</div>
         <p className="aqsp-variant-rules">成交 {variant.filled_orders} · 拒绝 {variant.rejected_orders} · {(variant.hard_rules ?? []).join(" · ") || "硬成交规则未记录"}</p>
       </article>;

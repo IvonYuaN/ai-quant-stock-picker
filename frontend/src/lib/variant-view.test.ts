@@ -1,6 +1,7 @@
 import type { AqspVariant } from "@/types/aqsp";
 import {
   variantActionText,
+  variantHoldingChangeText,
   variantHoldingName,
   variantHoldingsLabel,
   variantMoney,
@@ -79,6 +80,11 @@ export const variantViewContractChecks = {
     variantFixture.holdings_date === "2026-07-01" &&
     variantFixture.previous_holdings_date === "2026-06-30",
   adjustmentKeepsSwitchReason: variantFixture.adjustments[0].includes("MACD 柱转强"),
+  holdingChangeSeparatesAddedNameAndCode:
+    variantHoldingChangeText(variantFixture.holdings, variantFixture.previous_holdings)[0] ===
+    "新增：示例股份（600001）",
+  unchangedHoldingsAreExplicit:
+    variantHoldingChangeText(variantFixture.holdings, variantFixture.holdings)[0] === "持仓未变化。",
   actionKeepsNameAndReason:
     variantActionText(variantFixture.recent_actions[0]).includes("示例股份") &&
     variantActionText(variantFixture.recent_actions[0]).includes("量比确认"),

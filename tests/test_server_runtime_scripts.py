@@ -1328,6 +1328,7 @@ def test_news_catalysts_reclaims_lock_when_recorded_pid_has_exited(
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "检测到陈旧消息锁，自动回收 pid=999999" in result.stdout
+    assert not lock_dir.exists()
 
 
 def test_server_status_surfaces_bt_task_logs() -> None:

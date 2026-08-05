@@ -1,32 +1,7 @@
 name: CI
 
 on:
-  pull_request:
-    paths:
-      - "src/**"
-      - "scripts/**"
-      - "tests/**"
-      - "backend/**"
-      - "frontend/**"
-      - "deploy/baota/**"
-      - "deploy/nginx/**"
-      - "deploy/systemd/**"
-      - "pyproject.toml"
-      - ".github/workflows/**"
-  push:
-    branches:
-      - main
-    paths:
-      - "src/**"
-      - "scripts/**"
-      - "tests/**"
-      - "backend/**"
-      - "frontend/**"
-      - "deploy/baota/**"
-      - "deploy/nginx/**"
-      - "deploy/systemd/**"
-      - "pyproject.toml"
-      - ".github/workflows/**"
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}

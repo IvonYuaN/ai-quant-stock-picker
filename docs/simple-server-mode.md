@@ -2,19 +2,19 @@
 
 目标只有 4 条：
 
-1. 本地只负责开发和 `git push`
-2. 云服务器自动 `git pull`
+1. 本地只负责开发、验证并发布一个明确 commit
+2. 云服务器只接受不可变 release，不直接在运行目录 `git pull`
 3. 服务器本地保存 `.env`、数据库和运行结果，不被更新覆盖
 4. 通过备案域名 `https://lh.ifidy.cn` 看 Dashboard
 
 ## 这套模式怎么理解
 
 ```text
-Mac 本地开发
--> push 到 GitHub
--> 宝塔计划任务执行 scripts/bt_task.sh
--> bt_task.sh 同步代码并运行指定任务
--> 产出 reports/、data/、dist/dashboard/
+本地开发与验证
+-> 发布明确 commit 到服务器不可变 release
+-> aqsp-scheduler-current 原子切换
+-> 宝塔计划任务执行 release 下的 scripts/bt_task.sh
+-> 产出 /opt/aqsp/data 下的 reports、快照和日志
 -> aqsp-vibe-research.target 提供 React + FastAPI 看板
 -> Nginx / 宝塔反代到 https://lh.ifidy.cn
 ```
@@ -159,21 +159,14 @@ AQSP_ENABLE_AUTO_EVOLUTION=false
 - 如果你改用 `LLM_PROVIDER=siliconflow`，建议同时设置 `SILICONFLOW_FREE_ONLY=true`，只允许免费白名单模型，避免意外扣费。
 - 现在支持 provider 专属模型变量：`GLM_MODEL`、`QWEN_MODEL`、`AGNES_MODEL`、`SILICONFLOW_MODEL`、`OPENAI_MODEL`、`ANTHROPIC_MODEL`、`CUSTOM_MODEL`。这样切换 provider 时不会被旧的全局 `LLM_MODEL` 串台。
 
-## 自动更新脚本
+## 发布与运行入口
 
-仓库内置：
+生产发布统一使用 `scripts/deploy_immutable_release.sh`。它从指定远端 ref 构建新 release，先通过前端构建、release 一致性、调度审计，再原子切换
+`/opt/aqsp-releases/aqsp-scheduler-current`，重启 API/React 服务并验证公网入口。
 
-```bash
-bash /opt/aqsp/scripts/server_sync_and_run.sh
-```
-
-它会做 3 件事：
-
-1. 检查服务器代码目录是否干净
-2. `git pull --ff-only origin main`
-3. 运行 `AQSP_RUNNER_SCRIPT` 指定的脚本；生产入口由 `bt_task.sh` 显式设置
-
-如果服务器上存在受 Git 管理的本地改动，它会直接停下，不会乱覆盖。
+宝塔只负责调用当前 release 的 `scripts/bt_task.sh`，不负责拉代码，也不应直接调用旧的
+`daily_pipeline.sh`、`server_sync_and_run.sh` 或任何历史脚本。服务器 `/opt/aqsp` 的脏 staging
+checkout 不是发布来源；如 release 验收失败，保留 rollback symlink，不覆盖运行数据。
 
 ## 宝塔面板计划任务（生产推荐）
 
