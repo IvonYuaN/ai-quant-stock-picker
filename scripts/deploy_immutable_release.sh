@@ -273,7 +273,7 @@ partial_raw_refresh = (
     isinstance(gate, dict)
     and gate.get("recommendation_allowed") is False
     and gate.get("status") == "blocked_incomplete_raw_data"
-    and universe.get("source") == "sqlite_raw_refresh"
+    and universe.get("source") in {"sqlite_raw_refresh", "sqlite_raw_rebuild"}
     and isinstance(universe.get("total"), int)
     and isinstance(universe.get("resolved"), int)
     and 0 <= universe["resolved"] < universe["total"]
