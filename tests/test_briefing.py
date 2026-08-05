@@ -2494,7 +2494,9 @@ class TestGenerateSmartSummary:
             "sector_leader",
             "cross_market",
             "policy_sensitive",
+            "margin_trading",
             "northbound",
+            "retail_mood",
         )
 
     def test_briefing_generator_respects_goal_switch_when_constructor_requests_debate(
@@ -2617,6 +2619,8 @@ switches:
             "risk_control",
             "northbound",
             "bear",
+            "margin_trading",
+            "retail_mood",
         )
 
     def test_briefing_focus_roles_do_not_lock_context_role_expansion(self, monkeypatch):
@@ -2646,7 +2650,7 @@ switches:
         assert "cross_market" in roles
         assert "sector_leader" in roles
         assert "retail_mood" in roles
-        assert len(roles) == 8
+        assert len(roles) == 9
 
     def test_briefing_generator_expands_debate_coverage_with_runtime_max_candidates(
         self, monkeypatch

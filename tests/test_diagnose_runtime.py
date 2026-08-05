@@ -307,7 +307,7 @@ def test_diagnose_runtime_main_reports_debate_runtime_roles(
     assert "## Debate Runtime" in output
     assert "- debate_task_id: intraday" in output
     assert "- debate_enable_llm: True" in output
-    assert "- debate_max_rounds: 2" in output
+    assert "- debate_max_rounds: 3" in output
     assert "- debate_max_candidates: 3" in output
     assert "- debate_language: zh-CN" in output
     assert "- debate_explicit_roles: False" in output
@@ -319,7 +319,7 @@ def test_diagnose_runtime_main_reports_debate_runtime_roles(
         in output
     )
     assert "- debate_role_count: 8" in output
-    assert "- debate_discussion_capacity: roles=8 rounds=2 candidates<=3" in output
+    assert "- debate_discussion_capacity: roles=8 rounds=3 candidates<=3" in output
     assert "- debate_llm_role_count: 7" in output
     assert (
         "- debate_llm_roles: cross_market,bull,bear,sector_leader,policy_sensitive,margin_trading,retail_mood"

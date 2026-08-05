@@ -33,7 +33,9 @@ BRIEFING_ROLE_NAMES = (
     "sector_leader",
     "cross_market",
     "policy_sensitive",
+    "margin_trading",
     "northbound",
+    "retail_mood",
 )
 
 
@@ -81,7 +83,7 @@ def test_load_debate_runtime_config_reads_language_roles_and_llm(monkeypatch) ->
 
     assert config.enabled is True
     assert config.enable_llm is True
-    assert config.max_rounds == 2
+    assert config.max_rounds == 3
     assert config.max_candidates == 3
     assert config.language == "en-US"
     assert config.task_id == ""
@@ -136,6 +138,19 @@ def test_load_debate_runtime_config_defaults_to_task_preset_committee(
     assert config.context_roles_locked is False
 
 
+def test_load_debate_runtime_config_realtime_task_presets_keep_full_committee(
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("AQSP_DEBATE_ROLES", raising=False)
+    monkeypatch.delenv("AQSP_RUN_TASK_ID", raising=False)
+
+    for task_id in ("main_chain", "briefing", "closing_review"):
+        config = load_debate_runtime_config(task_id=task_id)
+
+        assert config.roles == RUNTIME_ROLE_NAMES
+        assert config.max_rounds == 3
+
+
 def test_load_debate_runtime_config_uses_run_task_alias_when_task_missing(
     monkeypatch,
 ) -> None:
@@ -165,7 +180,9 @@ def test_load_debate_runtime_config_focus_roles_only_reorder_full_committee(
         "bear",
         "sector_leader",
         "policy_sensitive",
+        "margin_trading",
         "northbound",
+        "retail_mood",
     )
     assert config.context_roles_locked is False
 
@@ -286,7 +303,7 @@ def test_load_debate_runtime_config_falls_back_when_rounds_invalid(monkeypatch) 
 
     config = load_debate_runtime_config()
 
-    assert config.max_rounds == 2
+    assert config.max_rounds == 3
 
 
 def test_load_debate_runtime_config_falls_back_when_max_candidates_invalid(
@@ -305,7 +322,7 @@ def test_load_debate_runtime_config_caps_expensive_advisory_fanout(monkeypatch) 
 
     config = load_debate_runtime_config()
 
-    assert config.max_rounds == 2
+    assert config.max_rounds == 3
     assert config.max_candidates == 3
 
 
