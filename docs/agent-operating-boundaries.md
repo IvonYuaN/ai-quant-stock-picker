@@ -50,7 +50,7 @@ curl -Ik https://lh.ifidy.cn/api/health
 2. 本地跑相关测试；重要 UI/通知改动至少跑 `tests/test_dashboard.py` 或 `tests/test_notify_templates.py`。
 3. 跑 secret 扫描。
 4. commit + push。
-5. 服务器 `git fetch && git reset --hard <commit>`，重启服务或运行目标脚本。
+5. 服务器从指定 commit 构建不可变 release，原子切换 `aqsp-scheduler-current`，再重启服务或运行目标脚本；不得在 `/opt/aqsp` staging checkout 上执行 `reset/clean`。
 6. 用服务器日志、公网 health 和隔离无头检查验证。
 
 推荐验证命令：

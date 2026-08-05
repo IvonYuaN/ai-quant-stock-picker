@@ -315,7 +315,7 @@ AQSP_INSTALL_SYSTEM_CRON=true AQSP_COLDSTART_CRON_SCHEDULE="40 11 * * 1-5" \
 
 长任务会自动互斥：
 
-- `daily`、`midday` 和 BT 入口的 `intraday` 会先通过 `server_sync_and_run.sh` 共用主锁，避免同步代码和写产物时互相踩踏。
+- `daily`、`midday` 和 BT 入口的 `intraday` 会通过当前 release 的运行锁互斥，避免写产物时互相踩踏；不会在任务中同步代码。
 - `news` 只写独立的 `reports/news_catalysts.md` 和通知，不写正式 ledger；为了不被长主链路挡住，默认不抢主锁。
 - `coldstart_daily.sh` 也使用主锁，因为它会补正式冷启动 ledger；如果 `daily` 未结束，它会正常跳过。
 - `intraday_refresh.sh` 还会使用盘中独立锁，只保护盘中刷新自身；如果主链路正在运行，BT 入口会先正常跳过。
@@ -398,7 +398,7 @@ React 只监听 `127.0.0.1:5899`，FastAPI 只监听 `127.0.0.1:8900`，不要�
 
 ## 不会被覆盖的东西
 
-下面这些默认不会被 `git pull` 覆盖：
+下面这些始终属于运行数据边界，不会被 release 切换覆盖：
 
 - `/opt/aqsp/.env`
 - `/opt/aqsp/.venv`
@@ -413,19 +413,11 @@ React 只监听 `127.0.0.1:5899`，FastAPI 只监听 `127.0.0.1:8900`，不要�
 
 平时只保留这条心智模型：
 
-1. 本地改代码
-2. `git push origin main`
-3. 服务器自动更新并跑
+1. 本地改代码并完成验证
+2. 发布一个明确 commit：`scripts/deploy_immutable_release.sh --branch <branch> --ref <commit>`
+3. 确认 current/rollback、调度、health 和数据新鲜度
 4. 打开 `https://lh.ifidy.cn` 看结果
 
-## GitHub Actions 降噪
+## GitHub Actions
 
-仓库里的 CI 现在做了两层降噪：
-
-- 只有 `src/`、`scripts/`、`tests/`、`pyproject.toml`、CI 自己变更时才会触发主 CI
-- 同一分支连续 push 时，旧的 workflow 会自动取消，避免邮箱被重复失败刷屏
-
-这意味着：
-
-- 改文档、改本地笔记、改非关键文件，不会再无意义触发主 CI
-- 连续修 bug 并反复 push，只看最后一次结果就够了
+CI 仅保留手动入口，不参与服务器发布、调度或公网验收；线上是否成功以不可变 release 和服务器证据为准。

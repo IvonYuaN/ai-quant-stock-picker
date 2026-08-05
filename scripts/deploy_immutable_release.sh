@@ -316,11 +316,23 @@ print(
 )
 PY
     PYTHONPATH="$RELEASE_DIR/src${PYTHONPATH:+:$PYTHONPATH}" \
-        AQSP_HEADLESS_LOCK="$HEADLESS_LOCK_FILE" "$PYTHON_BIN" "$RELEASE_DIR/scripts/headless_dashboard_check.py" \
+    AQSP_HEADLESS_LOCK="$HEADLESS_LOCK_FILE" "$PYTHON_BIN" "$RELEASE_DIR/scripts/headless_dashboard_check.py" \
         --url "$CHECK_URL" \
         --mode browser \
         --require-browser \
         --headless-lock "$HEADLESS_LOCK_FILE"
+    AQSP_HEADLESS_LOCK="$HEADLESS_LOCK_FILE" "$PYTHON_BIN" "$RELEASE_DIR/scripts/headless_dashboard_check.py" \
+        --url "${CHECK_URL%/}/variants" \
+        --mode browser \
+        --require-browser \
+        --headless-lock "$HEADLESS_LOCK_FILE"
+    for legacy_path in /paper-research /intel; do
+        AQSP_HEADLESS_LOCK="$HEADLESS_LOCK_FILE" "$PYTHON_BIN" "$RELEASE_DIR/scripts/headless_dashboard_check.py" \
+            --url "${CHECK_URL%/}${legacy_path}" \
+            --mode browser \
+            --require-browser \
+            --headless-lock "$HEADLESS_LOCK_FILE"
+    done
 }
 
 check_variant_results() {

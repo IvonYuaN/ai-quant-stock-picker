@@ -59,12 +59,13 @@ function SnapshotMeta({ snapshot }: { snapshot: AqspSnapshot }) {
   const stale = isAqspSnapshotStale(snapshot) || snapshot.meta?.freshness?.candidates === "stale";
   const historical = snapshot.meta?.historical ?? false;
   const freshness = snapshot.meta?.freshness;
+  const unavailable = freshness?.candidates === "unavailable";
   return (
     <div className="aqsp-meta">
       <span>{snapshot.selected_date || "日期未记录"}</span>
       <span>更新 {formatAqspTime(snapshot.generated_at)}</span>
-      <span className={cn("aqsp-badge", historical || stale ? "aqsp-badge-warn" : "aqsp-badge-ok")}>
-        {historical ? "历史日期" : stale ? "当前快照已过期" : "当前数据"}
+      <span className={cn("aqsp-badge", historical || stale || unavailable ? "aqsp-badge-warn" : "aqsp-badge-ok")}>
+        {historical ? "历史日期" : stale ? "当前快照已过期" : unavailable ? "等待数据刷新" : "当前数据"}
       </span>
       {freshness?.candidates === "fresh" && <span className="aqsp-badge aqsp-badge-ok">行情新鲜</span>}
       {freshness?.messages === "stale" && <span className="aqsp-badge aqsp-badge-warn">消息滞后</span>}
@@ -279,13 +280,14 @@ function TestVariantsPanel({ snapshot }: { snapshot?: AqspSnapshot }) {
   const variants = snapshot?.variants ?? [];
   const suite = snapshot?.variant_suite;
   const variantHistory = variants.some((variant) => variant.data_mode.includes("historical"));
+  const variantPending = variants.length === 0 && (!suite?.generated_at || Boolean(suite.last_error) || suite.batch_active);
   const [variantPage, setVariantPage] = useState(0);
   const variantPageCount = Math.max(1, Math.ceil(variants.length / VARIANT_PAGE_SIZE));
   const activeVariantPage = Math.min(variantPage, variantPageCount - 1);
   const visibleVariants = variants.slice(activeVariantPage * VARIANT_PAGE_SIZE, (activeVariantPage + 1) * VARIANT_PAGE_SIZE);
   return <section id={TEST_VARIANTS_SECTION_ID} className="aqsp-lab" aria-label="测试与变体">
     <div className="aqsp-section-head"><div><p className="aqsp-eyebrow"><FlaskConical className="h-3.5 w-3.5" />独立区域</p><h2>测试与变体</h2></div><span>不进入正式结论</span></div>
-    <div className="aqsp-lab-snapshot">{snapshot ? <><span>数据区间：{variants[0]?.start_date || "—"} 至 {suite?.end_date || variants[0]?.end_date || "—"}</span><span>已载入：{variants.length} / {suite?.variant_count ?? variants.length} 个</span><span>当前页：{activeVariantPage + 1} / {variantPageCount}</span><span>股票池：{suite?.selected_symbols ?? "—"} / {suite?.supported_symbols ?? "—"}</span>{suite?.batch_active ? <><span>轮转批次：{suite.batch_id || `第 ${suite.cycle_id ?? 0} 轮`}</span><span>本批：{suite.batch_size ?? suite.selected_symbols ?? "—"}，覆盖：{((suite.coverage_pct ?? 0) * 100).toFixed(1)}%</span></> : null}<span>{suite?.schema_version || "schema 未记录"}</span><span className={cn("aqsp-badge", historical || variantHistory ? "aqsp-badge-warn" : "aqsp-badge-ok")}>{historical || variantHistory ? "历史回测 · 仅验证" : "当前实验结果"}</span>{suite?.filters ? <span>{suite.filters}</span> : null}</> : <span>等待正式快照</span>}</div>
+    <div className="aqsp-lab-snapshot">{snapshot ? <><span>数据区间：{variants[0]?.start_date || "—"} 至 {suite?.end_date || variants[0]?.end_date || "—"}</span><span>已载入：{variants.length} / {suite?.variant_count ?? variants.length} 个</span><span>当前页：{activeVariantPage + 1} / {variantPageCount}</span><span>股票池：{suite?.selected_symbols ?? "—"} / {suite?.supported_symbols ?? "—"}</span>{suite?.batch_active ? <><span>轮转批次：{suite.batch_id || `第 ${suite.cycle_id ?? 0} 轮`}</span><span>本批：{suite.batch_size ?? suite.selected_symbols ?? "—"}，覆盖：{((suite.coverage_pct ?? 0) * 100).toFixed(1)}%</span></> : null}<span>{suite?.schema_version || "schema 未记录"}</span><span className={cn("aqsp-badge", historical || variantHistory || variantPending ? "aqsp-badge-warn" : "aqsp-badge-ok")}>{historical || variantHistory ? "历史回测 · 仅验证" : variantPending ? "等待产出 · 任务阻塞" : "当前实验结果"}</span>{suite?.filters ? <span>{suite.filters}</span> : null}</> : <span>等待正式快照</span>}</div>
     {variants.length === 0 ? <EmptyState title="变体结果尚未产出" detail={suite?.last_error || "实验结果独立于正式候选，产出后会显示在这里。"} /> : <><div className="aqsp-variant-grid">{visibleVariants.map((variant: AqspVariant) => {
       const pnl = variant.total_pnl;
       const holdings = variant.holdings;

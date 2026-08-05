@@ -24,23 +24,15 @@ def test_github_workflow_scan_includes_yaml_extensions(tmp_path: Path) -> None:
     ]
 
 
-def test_ci_workflow_limits_paths_and_sets_concurrency() -> None:
+def test_ci_workflow_is_manual_only_and_sets_concurrency() -> None:
     text = (PROJECT_ROOT / ".github" / "workflows" / "ci.yml").read_text(
         encoding="utf-8"
     )
 
-    assert "paths:" in text
+    assert "workflow_dispatch:" in text
+    assert "pull_request:" not in text
+    assert "push:" not in text
     assert "group: ci-${{ github.workflow }}-${{ github.ref }}" in text
-    assert "      - main\n" in text
-    assert '      - "codex/**"' not in text
-    assert '"src/**"' in text
-    assert '"backend/**"' in text
-    assert '"deploy/baota/**"' in text
-    assert '"deploy/nginx/**"' in text
-    assert '"deploy/systemd/**"' in text
-    assert '"tests/**"' in text
-    assert '".github/workflows/**"' in text
-    assert '".github/workflows/ci.yml"' not in text
 
 
 def test_ci_runs_upload_preflight_before_install() -> None:
