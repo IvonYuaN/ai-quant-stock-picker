@@ -320,7 +320,8 @@ PY
         --url "$CHECK_URL" \
         --mode browser \
         --require-browser \
-        --headless-lock "$HEADLESS_LOCK_FILE"
+        --headless-lock "$HEADLESS_LOCK_FILE" \
+        --health-url "${CHECK_URL%/}/api/health"
     AQSP_HEADLESS_LOCK="$HEADLESS_LOCK_FILE" "$PYTHON_BIN" "$RELEASE_DIR/scripts/headless_dashboard_check.py" \
         --url "${CHECK_URL%/}/variants" \
         --mode browser \
@@ -331,7 +332,8 @@ PY
             --url "${CHECK_URL%/}${legacy_path}" \
             --mode browser \
             --require-browser \
-            --headless-lock "$HEADLESS_LOCK_FILE"
+            --headless-lock "$HEADLESS_LOCK_FILE" \
+            --health-url "${CHECK_URL%/}/api/health"
     done
 }
 
