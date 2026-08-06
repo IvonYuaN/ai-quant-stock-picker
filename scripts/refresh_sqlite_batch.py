@@ -130,6 +130,15 @@ def _write_cursor(
     atomic_write_text(path, json.dumps(payload, ensure_ascii=False, default=str) + "\n")
 
 
+def _has_no_target_day_coverage(summary: UpdateSummary) -> bool:
+    """Return whether an upstream outage left a processed batch entirely uncovered."""
+    return (
+        summary.processed_symbols > 0
+        and summary.target_day_symbol_count == 0
+        and (summary.empty_response_symbols > 0 or summary.failed_symbols > 0)
+    )
+
+
 def refresh_batch(
     *,
     db_path: Path,
@@ -173,10 +182,15 @@ def refresh_batch(
         min_rows=1,
         min_coverage_ratio=1.0,
     )
+    next_offset = offset + summary.processed_symbols
+    if _has_no_target_day_coverage(summary):
+        # Do not rotate past a whole unavailable batch.  Advancing the cursor
+        # turns a delayed provider publication into a full-market no-op cycle.
+        next_offset = offset
     _write_cursor(
         state_path,
         target_day=target_day,
-        next_offset=offset + summary.processed_symbols,
+        next_offset=next_offset,
         universe_size=len(symbols),
         summary=summary,
         batch_symbols=covered_batch,
@@ -225,7 +239,11 @@ def refresh_batches(
             universe_symbols=symbols,
         )
         summaries.append(summary)
-        if summary.processed_symbols == 0 or summary.budget_exhausted:
+        if (
+            summary.processed_symbols == 0
+            or summary.budget_exhausted
+            or _has_no_target_day_coverage(summary)
+        ):
             break
     if not summaries:
         raise RuntimeError(
@@ -299,6 +317,13 @@ def main() -> int:
         batches=args.batches,
     )
     print(json.dumps(asdict(summary), default=str, ensure_ascii=False, sort_keys=True))
+    if _has_no_target_day_coverage(summary):
+        print(
+            "sqlite daily refresh deferred: target-day data is unavailable; "
+            "cursor retained for the next retry",
+            file=sys.stderr,
+        )
+        return 1
     return 0 if summary.failed_symbols == 0 else 1
 
 
