@@ -87,7 +87,7 @@ Recommended BT schedule (Asia/Shanghai):
   daily     18:00 Mon-Fri
   daily-research 18:20-22:20 every 20 min Mon-Fri; one bounded cursor chunk
   data-refresh 15:35 Mon-Fri; bounded raw daily-data batch before daily research
-  data-refresh-retry every 10 min from 17:00-19:30 Mon-Fri; bounded delayed refresh while the source publishes
+  data-refresh-retry every 10 min from 15:45-19:30 Mon-Fri; bounded delayed refresh while the source publishes
   coldstart 19:40 Mon-Fri
   variant-refresh 22:30 Mon-Fri; bounded isolated experiment refresh after daily research
   walkforward-gate 22:00 Sat; controlled production evidence only, no threshold apply
@@ -370,7 +370,8 @@ ensure_data_refresh_window() {
 }
 
 ensure_data_refresh_retry_window() {
-    local start_hm="${AQSP_DATA_REFRESH_RETRY_WINDOW_START_HM:-1700}"
+    # 北京时间 15:45：首轮 15:35 刷新结束后立即给 raw rebuild 留出连续窗口。
+    local start_hm="${AQSP_DATA_REFRESH_RETRY_WINDOW_START_HM:-1545}"
     local end_hm="${AQSP_DATA_REFRESH_RETRY_WINDOW_END_HM:-1930}"
     local now_hm
     if ! [[ "$start_hm" =~ ^[0-9]{3,4}$ && "$end_hm" =~ ^[0-9]{3,4}$ ]]; then

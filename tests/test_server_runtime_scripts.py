@@ -668,6 +668,14 @@ def test_intraday_refresh_script_uses_isolated_outputs() -> None:
         'RUNTIME_DATA_ROOT="${AQSP_RUNTIME_DATA_ROOT:-${RUNTIME_ROOT}/data}"' in script
     )
     assert (
+        'INTRADAY_CURSOR_PATH="$(resolve_path "${AQSP_INTRADAY_CURSOR_PATH:-${RUNTIME_DATA_ROOT}/runtime/intraday_universe_cursor.json}")"'
+        in script
+    )
+    assert (
+        'INTRADAY_UNIVERSE_CACHE="$(resolve_path "${AQSP_INTRADAY_UNIVERSE_CACHE:-${RUNTIME_DATA_ROOT}/runtime/intraday_live_universe.json}")"'
+        in script
+    )
+    assert (
         'LOG_DIR="${AQSP_INTRADAY_LOG_DIR:-${RUNTIME_DATA_ROOT}/logs/intraday}"'
         in script
     )
@@ -875,7 +883,7 @@ def test_bt_task_script_exposes_panel_safe_actions() -> None:
     assert "news      08:35 Mon-Fri trading days only; 09:05 Sat/Sun" in script
     assert "daily     18:00 Mon-Fri" in script
     assert "data-refresh 15:35 Mon-Fri" in script
-    assert "data-refresh-retry every 10 min from 17:00-19:30 Mon-Fri" in script
+    assert "data-refresh-retry every 10 min from 15:45-19:30 Mon-Fri" in script
     assert 'run_bounded_raw_refresh "${AQSP_DATA_REFRESH_BATCHES:-0}"' in script
     assert 'run_bounded_raw_refresh "${AQSP_DATA_REFRESH_RETRY_BATCHES:-0}"' in script
     assert '--batches "$batches"' in script
@@ -883,6 +891,7 @@ def test_bt_task_script_exposes_panel_safe_actions() -> None:
     assert "原始日线批次完成，首页快照已刷新" in script
     assert "ensure_data_refresh_window()" in script
     assert "ensure_data_refresh_retry_window()" in script
+    assert 'AQSP_DATA_REFRESH_RETRY_WINDOW_START_HM:-1545' in script
     assert "AQSP_DATA_REFRESH_RETRY_WINDOW_END_HM:-1930" in script
     assert "data-refresh 允许窗口" in script
     assert "data-refresh-retry)" in script

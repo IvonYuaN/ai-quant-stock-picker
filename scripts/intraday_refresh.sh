@@ -285,8 +285,8 @@ if ! [[ "$INTRADAY_BATCH_RESOLVE_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] || \
     log "盘中股票池解析超时配置无效(${INTRADAY_BATCH_RESOLVE_TIMEOUT_SECONDS})，使用 45 秒"
     INTRADAY_BATCH_RESOLVE_TIMEOUT_SECONDS="45"
 fi
-INTRADAY_CURSOR_PATH="$(resolve_path "${AQSP_INTRADAY_CURSOR_PATH:-data/runtime/intraday_universe_cursor.json}")"
-INTRADAY_UNIVERSE_CACHE="$(resolve_path "${AQSP_INTRADAY_UNIVERSE_CACHE:-data/runtime/intraday_live_universe.json}")"
+INTRADAY_CURSOR_PATH="$(resolve_path "${AQSP_INTRADAY_CURSOR_PATH:-${RUNTIME_DATA_ROOT}/runtime/intraday_universe_cursor.json}")"
+INTRADAY_UNIVERSE_CACHE="$(resolve_path "${AQSP_INTRADAY_UNIVERSE_CACHE:-${RUNTIME_DATA_ROOT}/runtime/intraday_live_universe.json}")"
 INTRADAY_BATCH_ACTIVE="false"
 INTRADAY_BATCH_SYMBOLS=""
 INTRADAY_BATCH_ID=""
