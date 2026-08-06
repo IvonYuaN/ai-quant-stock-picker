@@ -23,7 +23,7 @@ GIT_SYNC_LOCK_INFO_FILE="${GIT_SYNC_LOCK_FILE}/meta.env"
 GIT_SYNC_WAIT_SECONDS="${AQSP_GIT_SYNC_WAIT_SECONDS:-180}"
 GIT_LOCK_STALE_MINUTES="${AQSP_GIT_LOCK_STALE_MINUTES:-30}"
 LOCK_STALE_MINUTES="${AQSP_LOCK_STALE_MINUTES:-360}"
-RUNNER_TIMEOUT_SECONDS="${AQSP_RUNNER_TIMEOUT_SECONDS:-0}"
+RUNNER_TIMEOUT_SECONDS="${AQSP_RUNNER_TIMEOUT_SECONDS:-5400}"
 RUNNER_KILL_AFTER_SECONDS="${AQSP_RUNNER_KILL_AFTER_SECONDS:-15}"
 RUN_RESULT_FILE="${AQSP_SYNC_RESULT_FILE:-}"
 STATE_DIR="${AQSP_RUNTIME_STATE_DIR:-${RUNTIME_DATA_ROOT}/.state}"
@@ -59,6 +59,17 @@ write_result() {
         } >"$RUN_RESULT_FILE"
     fi
 }
+
+if ! [[ "$RUNNER_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+    log "[ERROR] AQSP_RUNNER_TIMEOUT_SECONDS 必须是正整数: ${RUNNER_TIMEOUT_SECONDS}"
+    write_result "invalid_timeout" 2
+    exit 2
+fi
+if ! [[ "$RUNNER_KILL_AFTER_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+    log "[ERROR] AQSP_RUNNER_KILL_AFTER_SECONDS 必须是正整数: ${RUNNER_KILL_AFTER_SECONDS}"
+    write_result "invalid_timeout" 2
+    exit 2
+fi
 
 dirty_state_hash() {
     if command -v sha256sum >/dev/null 2>&1; then
@@ -408,7 +419,8 @@ fi
 
 RUNNER_ELAPSED_SECONDS=$(( $(date +%s) - RUNNER_START_EPOCH ))
 RUNNER_EXIT_CLASS="completed"
-if [ "${RUNNER_EXIT_CODE}" -eq 124 ] || [ "${RUNNER_EXIT_CODE}" -eq 143 ]; then
+if { [ "${RUNNER_EXIT_CODE}" -eq 124 ] || [ "${RUNNER_EXIT_CODE}" -eq 143 ]; } && \
+   [ "${RUNNER_ELAPSED_SECONDS}" -ge "${RUNNER_TIMEOUT_SECONDS}" ]; then
     RUNNER_TIMED_OUT="true"
     RUNNER_EXIT_CLASS="timeout_term"
 elif [ "${RUNNER_EXIT_CODE}" -eq 137 ]; then

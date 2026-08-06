@@ -2,19 +2,19 @@
 
 目标只有 4 条：
 
-1. 本地只负责开发和 `git push`
-2. 云服务器自动 `git pull`
+1. 本地只负责开发、验证并发布一个明确 commit
+2. 云服务器只接受不可变 release，不直接在运行目录 `git pull`
 3. 服务器本地保存 `.env`、数据库和运行结果，不被更新覆盖
 4. 通过备案域名 `https://lh.ifidy.cn` 看 Dashboard
 
 ## 这套模式怎么理解
 
 ```text
-Mac 本地开发
--> push 到 GitHub
--> 宝塔计划任务执行 scripts/bt_task.sh
--> bt_task.sh 同步代码并运行指定任务
--> 产出 reports/、data/、dist/dashboard/
+本地开发与验证
+-> 发布明确 commit 到服务器不可变 release
+-> aqsp-scheduler-current 原子切换
+-> 宝塔计划任务执行 release 下的 scripts/bt_task.sh
+-> 产出 /opt/aqsp/data 下的 reports、快照和日志
 -> aqsp-vibe-research.target 提供 React + FastAPI 看板
 -> Nginx / 宝塔反代到 https://lh.ifidy.cn
 ```
@@ -159,21 +159,14 @@ AQSP_ENABLE_AUTO_EVOLUTION=false
 - 如果你改用 `LLM_PROVIDER=siliconflow`，建议同时设置 `SILICONFLOW_FREE_ONLY=true`，只允许免费白名单模型，避免意外扣费。
 - 现在支持 provider 专属模型变量：`GLM_MODEL`、`QWEN_MODEL`、`AGNES_MODEL`、`SILICONFLOW_MODEL`、`OPENAI_MODEL`、`ANTHROPIC_MODEL`、`CUSTOM_MODEL`。这样切换 provider 时不会被旧的全局 `LLM_MODEL` 串台。
 
-## 自动更新脚本
+## 发布与运行入口
 
-仓库内置：
+生产发布统一使用 `scripts/deploy_immutable_release.sh`。它从指定远端 ref 构建新 release，先通过前端构建、release 一致性、调度审计，再原子切换
+`/opt/aqsp-releases/aqsp-scheduler-current`，重启 API/React 服务并验证公网 health、路由和快照契约。视觉浏览器检查在本地隔离无头环境执行，不把服务器是否安装 Chromium 作为发布门槛。
 
-```bash
-bash /opt/aqsp/scripts/server_sync_and_run.sh
-```
-
-它会做 3 件事：
-
-1. 检查服务器代码目录是否干净
-2. `git pull --ff-only origin main`
-3. 运行 `AQSP_RUNNER_SCRIPT` 指定的脚本；生产入口由 `bt_task.sh` 显式设置
-
-如果服务器上存在受 Git 管理的本地改动，它会直接停下，不会乱覆盖。
+宝塔只负责调用当前 release 的 `scripts/bt_task.sh`，不负责拉代码，也不应直接调用旧的
+`daily_pipeline.sh`、`server_sync_and_run.sh` 或任何历史脚本。服务器 `/opt/aqsp` 的脏 staging
+checkout 不是发布来源；如 release 验收失败，保留 rollback symlink，不覆盖运行数据。
 
 ## 宝塔面板计划任务（生产推荐）
 
@@ -182,24 +175,36 @@ bash /opt/aqsp/scripts/server_sync_and_run.sh
 统一命令入口：
 
 ```bash
-/bin/bash /opt/aqsp/scripts/bt_task.sh <intraday|midday|daily|coldstart|monitor|news|status>
+/bin/bash /opt/aqsp/scripts/bt_task.sh <intraday|midday|daily|daily-research|data-refresh|data-refresh-retry|coldstart|variant-refresh|monitor|news|status>
 ```
 
-建议在宝塔里配置 **6 条自动任务 + 1 条手动自检命令**：
+建议在宝塔里配置 **10 条自动任务 + 1 条手动自检命令**：
 
 | 任务名 | 推荐时间 | 宝塔脚本内容 | 作用 |
 |---|---:|---|---|
 | `AQSP-盘中刷新` | 工作日 `09:35-11:30`、`13:05-14:57` 每 10 分钟 | `/bin/bash /opt/aqsp/scripts/bt_task.sh intraday` | 刷新盘中候选和看板，写独立盘中产物，不污染正式 ledger |
 | `AQSP-午盘分析` | 工作日 `12:05` | `/bin/bash /opt/aqsp/scripts/bt_task.sh midday` | 中午固定复核上午走势、候选和大盘状态 |
 | `AQSP-消息面雷达` | 工作日 `08:35`，周末 `09:05` | `/bin/bash /opt/aqsp/scripts/bt_task.sh news` | 盘前/周末复核高影响消息、涨价链、政策、风险事件 |
+| `AQSP-日线数据分块刷新` | 工作日 `15:35` | `/bin/bash /opt/aqsp/scripts/bt_task.sh data-refresh` | 在 480 秒硬预算内顺序更新多个 120 只原始日线小块，记录游标；仅允许北京时间 `15:30-17:50`，与重任务互斥 |
+| `AQSP-日线延迟重试` | 工作日 `15:45-19:30` 每 10 分钟 | `/bin/bash /opt/aqsp/scripts/bt_task.sh data-refresh-retry` | 首轮刷新结束后立即续跑，上游收盘日线延迟发布时在窗口内分批续跑；与首轮和其他重任务共用资源门禁 |
 | `AQSP-收盘主链路` | 工作日 `18:00` | `/bin/bash /opt/aqsp/scripts/bt_task.sh daily` | 完整收盘复盘、纸面验证、简报、通知和看板刷新 |
+| `AQSP-收盘研究分块` | 工作日 `20:00,20:20,20:40,21:00,21:20,21:40,22:00,22:20` | `/bin/bash /opt/aqsp/scripts/bt_task.sh daily-research` | 日线延迟刷新结束后，每次只研究一个 cursor 分块，刷新报告和首页；不重复纸面同步、通知或学习，避开变体刷新 |
 | `AQSP-冷启动补样本` | 工作日 `19:40` | `/bin/bash /opt/aqsp/scripts/bt_task.sh coldstart` | 收盘主链路结束后再补历史库和冷启动样本，避免互斥跳过 |
+| `AQSP-变体刷新` | 工作日 `22:30` | `/bin/bash /opt/aqsp/scripts/bt_task.sh variant-refresh` | 在最后一批收盘研究的最长退出时间后运行，受限轮转刷新变体实验；不写正式 ledger |
 | `AQSP-服务器监控` | 工作日每 `15` 分钟 | `/bin/bash /opt/aqsp/scripts/bt_task.sh monitor` | 检查数据、运行态、通知通道；默认只推关键异常 |
 | `AQSP-状态自检` | 不建议定时，手动点运行即可 | `/bin/bash /opt/aqsp/scripts/bt_task.sh status` | 临时查看 Git、产物、日志、运行态 |
 
 如果宝塔的“每 N 分钟”不能限制交易时段，也可以让 `intraday` 工作日每 10 分钟跑。宝塔外层不要再写第二套时间判断或无条件打印“Successful”；`bt_task.sh` 和 `scripts/intraday_refresh.sh` 会统一判断交易日/交易时段，并把真实失败码返回给调度器，非交易时段只记“跳过”，不会污染结果。
 
 `daily` 和 `coldstart` 会共用主锁。如果你在 `daily` 还没跑完时手动触发 `coldstart`，日志出现“正常跳过；这是互斥保护，不是失败”是预期行为。生产建议把 `coldstart` 放到 `19:40`，不要放在 `daily` 附近。
+
+raw 重建只有在覆盖率达标并原子激活正式数据库后，才会写入前一交易日的完整盘中名单缓存。盘中实时名单解析超时时，只能使用这份已验证缓存，不得退回不完整大盘池。
+
+每个目标交易日使用独立的 `astocks_raw.db.rebuild.<target_day>` 候选库；正式库切换后保留旧目标库作为可恢复备份，禁止下一轮任务在服务仍读取的候选文件上原地重建。
+
+`daily`、`daily-research`、`data-refresh`、`data-refresh-retry`、`coldstart`、`variant-refresh` 和 `walkforward-gate` 启动前会读取服务器实时负载、可用内存、总内存和主链锁，并抢占同一把 `data/.locks/heavy-compute.lock` 槽位锁。资源不足或已有重任务时只写 `data/.state/resource-gate-<task>.json` 并正常跳过，保留上一版产物，等待下一个错峰窗口；不会和盘中、收盘主链或其他重任务争抢资源。两次日线任务每批只处理 `AQSP_DATA_REFRESH_BATCH_SIZE` 个标的，逐标的超时 4 秒；首轮和延迟重试默认都在同一 `480` 秒总预算内连续处理小批并持续写入游标。收盘研究分块默认每次只处理 `AQSP_DAILY_RESEARCH_BATCH_SIZE=10` 只，最长 `360` 秒、硬上限 `480` 秒，成功才推进 cursor；首页会显示真实的已研究数量和覆盖率。刷新池只包含沪市主板、深市主板与创业板，排除 ST、退市和科创板，按板块交错轮转，绝不把全市场读进内存或退化为成交额头部。它用独立的 `AQSP_DATA_REFRESH_MIN_FREE_MEMORY_MB=640` 和 `AQSP_DATA_REFRESH_MAX_LOAD_PER_CPU=0.50` 门槛，适配 2C/1.6GB 服务器。变体刷新固定 `240` 股票上限、`80` 条 SQL 分块、`300` 秒预算和低 CPU 优先级，并用 `AQSP_VARIANT_MIN_FREE_MEMORY_MB=700`、`AQSP_VARIANT_MAX_LOAD_PER_CPU=0.50` 门槛，避免通用 1GB 保留量在 1.6GB 主机上永久阻塞 v2 产物。其它重任务未配置时，内存保留量按总内存的 `25%` 自动计算，最低 `768MB`、最高 `4096MB`；每核 1 分钟负载默认上限 `0.70`。服务器 `.env` 可用 `AQSP_HEAVY_MIN_FREE_MEMORY_MB` 覆盖自动值，用 `AQSP_HEAVY_MAX_LOAD_PER_CPU` 调整负载门槛；状态文件会记录实际采用的内存门槛。直接运行 production walk-forward 也会检查可用内存，默认低于 `768MB` 拒绝启动，可用 `--min-free-memory-mb` 按主机配置调整。变体市场库查询按 `80` 只股票分块，避免单条大 SQL 占用过高；发布前至少 `80%` 的变体必须拥有不同的持仓签名，每只当前持仓必须带同日 MACD、KDJ、量比和 ATR 证据，每一只换仓股票的说明必须点名并给出技术指标。
+
+`check_scheduler.py` 同时审计系统 crontab 和宝塔实际任务目录 `/www/server/cron`。它会把直跑旧脚本、绕过 `bt_task.sh` 的重任务、缺失的必需动作、以及同一重任务的多个宝塔包装任务判为失败；工作日/周末两条消息面任务属于允许的错峰窗口。不可变发布会以 `AQSP_SCHEDULER_STRICT_SCHEDULE=true` 阻断这类调度错误，不会因为当天尚未生成日志而误阻断。该检查只读，不会自行删除任何计划任务。
 
 手工验证：
 
@@ -279,18 +284,18 @@ AQSP_ENABLE_MONITOR_CRON=false bash /opt/aqsp/scripts/install_server_cron.sh
 
 ## 冷启动自动化
 
-如果你当前目标是只把 `predictions.jsonl` 的冷启动天数稳定累积到 30，而不是跑整套收盘链路，仓库现在内置了两条专用脚本：
+如果你当前目标是只把 `predictions.jsonl` 的冷启动天数稳定累积到 30，而不是跑整套收盘链路，使用宝塔任务的统一入口：
 
 ```bash
 cd /opt/aqsp
 python3 scripts/merge_server_ledgers.py
-bash scripts/install_coldstart_cron.sh
+/bin/bash /opt/aqsp/scripts/bt_task.sh coldstart
 ```
 
 含义：
 
 - `merge_server_ledgers.py`：把服务器本地 `data/ledger.jsonl` 合并进正式 `data/predictions.jsonl`，按 `(signal_date, symbol, thresholds_version, regime, intended_entry)` 去重，并自动补齐 `signal_day_group`。
-- `install_coldstart_cron.sh`：旧的独立冷启动安装器。当前生产推荐直接在宝塔里建 `AQSP-冷启动补样本`，时间放到 `19:40`，避免和 `daily` 互斥。
+- 宝塔任务 `AQSP-冷启动补样本`：`/bin/bash /opt/aqsp/scripts/bt_task.sh coldstart`，北京时间 `19:40`；禁止再使用 `coldstart_daily.sh` 直连 cron。
 
 `coldstart_daily.sh` 会按下面顺序寻找历史库更新脚本：
 
@@ -301,19 +306,20 @@ bash scripts/install_coldstart_cron.sh
 
 所以像服务器这种 `AQSP_SQLITE_DB_PATH=/opt/market-data/astocks_raw.db` 场景，会默认使用仓库内受测的 `scripts/update_sqlite_daily.py`；只有显式覆盖或仓库脚本不存在时，才会回退到 `/opt/market-data/update_daily.py`。
 
-如果服务器不是北京时间，可覆盖 cron 时间：
+仅在从旧 system cron 迁移时，可显式安装统一入口：
 
 ```bash
-AQSP_COLDSTART_CRON_SCHEDULE="30 9 * * 1-5" bash /opt/aqsp/scripts/install_coldstart_cron.sh
+AQSP_INSTALL_SYSTEM_CRON=true AQSP_COLDSTART_CRON_SCHEDULE="40 11 * * 1-5" \
+  bash /opt/aqsp/scripts/install_coldstart_cron.sh
 ```
 
-上面这个例子适合服务器时区为 `UTC`，对应北京时间 `17:30`。
+上面这个例子适合服务器时区为 `UTC`，对应北京时间 `19:40`，并会移除旧的直连冷启动任务。
 
 `scripts/intraday_refresh.sh` 默认只在交易时段内工作，并且写入单独的盘中 ledger，不污染正式收盘 ledger。
 
 长任务会自动互斥：
 
-- `daily`、`midday` 和 BT 入口的 `intraday` 会先通过 `server_sync_and_run.sh` 共用主锁，避免同步代码和写产物时互相踩踏。
+- `daily`、`midday` 和 BT 入口的 `intraday` 会通过当前 release 的运行锁互斥，避免写产物时互相踩踏；不会在任务中同步代码。
 - `news` 只写独立的 `reports/news_catalysts.md` 和通知，不写正式 ledger；为了不被长主链路挡住，默认不抢主锁。
 - `coldstart_daily.sh` 也使用主锁，因为它会补正式冷启动 ledger；如果 `daily` 未结束，它会正常跳过。
 - `intraday_refresh.sh` 还会使用盘中独立锁，只保护盘中刷新自身；如果主链路正在运行，BT 入口会先正常跳过。
@@ -396,7 +402,7 @@ React 只监听 `127.0.0.1:5899`，FastAPI 只监听 `127.0.0.1:8900`，不要�
 
 ## 不会被覆盖的东西
 
-下面这些默认不会被 `git pull` 覆盖：
+下面这些始终属于运行数据边界，不会被 release 切换覆盖：
 
 - `/opt/aqsp/.env`
 - `/opt/aqsp/.venv`
@@ -411,19 +417,11 @@ React 只监听 `127.0.0.1:5899`，FastAPI 只监听 `127.0.0.1:8900`，不要�
 
 平时只保留这条心智模型：
 
-1. 本地改代码
-2. `git push origin main`
-3. 服务器自动更新并跑
+1. 本地改代码并完成验证
+2. 发布一个明确 commit：`scripts/deploy_immutable_release.sh --branch <branch> --ref <commit>`
+3. 确认 current/rollback、调度、health 和数据新鲜度
 4. 打开 `https://lh.ifidy.cn` 看结果
 
-## GitHub Actions 降噪
+## GitHub Actions
 
-仓库里的 CI 现在做了两层降噪：
-
-- 只有 `src/`、`scripts/`、`tests/`、`pyproject.toml`、CI 自己变更时才会触发主 CI
-- 同一分支连续 push 时，旧的 workflow 会自动取消，避免邮箱被重复失败刷屏
-
-这意味着：
-
-- 改文档、改本地笔记、改非关键文件，不会再无意义触发主 CI
-- 连续修 bug 并反复 push，只看最后一次结果就够了
+CI 仅保留手动入口，不参与服务器发布、调度或公网验收；线上是否成功以不可变 release 和服务器证据为准。

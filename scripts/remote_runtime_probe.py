@@ -12,6 +12,8 @@ import urllib.request
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
+from aqsp.core.http import urlopen_no_macos_proxy
+
 
 @dataclass(frozen=True)
 class ProbeCheck:
@@ -116,7 +118,7 @@ def _http_probe(url: str, timeout: float) -> ProbeCheck:
         headers={"User-Agent": "aqsp-remote-probe/1.0"},
     )
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with urlopen_no_macos_proxy(request, timeout=timeout) as response:
             status = getattr(response, "status", 200)
             body = response.read(160).decode("utf-8", errors="replace").strip()
     except urllib.error.HTTPError as exc:

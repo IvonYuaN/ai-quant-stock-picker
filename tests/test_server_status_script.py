@@ -79,6 +79,8 @@ def _run_fake_server_status(
 def test_server_status_script_covers_runtime_sections() -> None:
     script = (PROJECT_ROOT / "scripts" / "server_status.sh").read_text(encoding="utf-8")
 
+    assert 'MONITOR_TIMEOUT_SECONDS="${AQSP_MONITOR_TIMEOUT_SECONDS:-120}"' in script
+
     assert 'print_section "GIT"' in script
     assert 'print_section "RELEASE CONSISTENCY"' in script
     assert "check_release_consistency.py" in script

@@ -99,17 +99,78 @@ export interface AqspVariant {
   data_mode: string;
   /** Serialized strategy description in the current producer contract. */
   strategy?: string;
+  holdings_date?: string;
   holdings?: readonly AqspVariantHolding[];
+  previous_holdings_date?: string;
+  previous_holdings?: readonly AqspVariantHolding[];
+  recent_actions?: readonly AqspVariantAction[];
+  adjustments?: readonly string[];
+  technical_evidence?: readonly AqspVariantEvidence[];
   hard_rules?: readonly string[];
 }
 
 export interface AqspVariantHolding {
   symbol: string;
+  name?: string;
+  display_name?: string;
   quantity: number;
   average_price: number;
   last_price: number;
   market_value: number;
   unrealized_pnl: number;
+  entry_reason?: string;
+  entry_evidence?: AqspVariantEvidence;
+}
+
+export interface AqspVariantEvidence {
+  date?: string;
+  signal_date?: string;
+  execution_date?: string;
+  symbol?: string;
+  name?: string;
+  side?: string;
+  mode?: string;
+  mode_label?: string;
+  lookback_days?: number;
+  ret_pct?: number | null;
+  bias_pct?: number | null;
+  macd_hist?: number | null;
+  kdj_j?: number | null;
+  volume_ratio?: number | null;
+  atr_pct?: number | null;
+  score?: number | null;
+  reason?: string;
+  evidence_kind?: string;
+}
+
+export interface AqspVariantAction {
+  date?: string;
+  symbol?: string;
+  name?: string;
+  display_name?: string;
+  side?: string;
+  action?: string;
+  quantity?: number;
+  price?: number;
+  reason?: string;
+  evidence?: AqspVariantEvidence;
+}
+
+export interface AqspVariantSuite {
+  schema_version?: string;
+  generated_at?: string;
+  data_mode?: string;
+  end_date?: string;
+  variant_count?: number;
+  selected_symbols?: number;
+  supported_symbols?: number;
+  batch_active?: boolean;
+  batch_id?: string;
+  batch_size?: number;
+  cycle_id?: number;
+  coverage_pct?: number;
+  filters?: string;
+  last_error?: string;
 }
 
 export interface AqspAgentResult {
@@ -128,6 +189,7 @@ export interface AqspAgentResult {
   viewpoint_buckets?: Readonly<Record<string, readonly string[]>>;
   disagreement_points?: readonly string[];
   uncertainty_points?: readonly string[];
+  review_kind?: "multi_agent" | "deterministic_fallback" | "unverified";
 }
 
 export type AqspAgentDiscussion = AqspAgentResult;
@@ -156,6 +218,7 @@ export interface AqspSnapshot {
   recommendation_gate?: AqspRecommendationGate;
   phases?: readonly AqspPhase[];
   universe?: AqspUniverse;
+  variant_suite?: AqspVariantSuite;
   variants?: readonly AqspVariant[];
   /** Present after the HTTP envelope is normalized; absent in the raw data payload. */
   meta?: AqspSnapshotMeta;

@@ -4,6 +4,10 @@ import numpy as np
 import pandas as pd
 
 
+KDJ_WINDOW = 9
+KDJ_SMOOTHING = 3
+
+
 def enrich_indicators(raw: pd.DataFrame) -> pd.DataFrame:
     df = normalize_ohlcv(raw).copy()
     close = df["close"]
@@ -21,6 +25,24 @@ def enrich_indicators(raw: pd.DataFrame) -> pd.DataFrame:
     df["macd_dif"] = df["ema12"] - df["ema26"]
     df["macd_dea"] = df["macd_dif"].ewm(span=9, adjust=False).mean()
     df["macd_hist"] = (df["macd_dif"] - df["macd_dea"]) * 2
+    kdj_low = low.rolling(KDJ_WINDOW, min_periods=KDJ_WINDOW).min()
+    kdj_high = high.rolling(KDJ_WINDOW, min_periods=KDJ_WINDOW).max()
+    kdj_rsv = (close - kdj_low) / (kdj_high - kdj_low).replace(0, np.nan) * 100
+    df["kdj_k"] = kdj_rsv.ewm(
+        alpha=1 / KDJ_SMOOTHING,
+        adjust=False,
+        min_periods=1,
+    ).mean()
+    df["kdj_d"] = (
+        df["kdj_k"]
+        .ewm(
+            alpha=1 / KDJ_SMOOTHING,
+            adjust=False,
+            min_periods=1,
+        )
+        .mean()
+    )
+    df["kdj_j"] = 3 * df["kdj_k"] - 2 * df["kdj_d"]
     df["rsi12"] = rsi(close, 12)
     df["atr14"] = atr(high, low, close, 14)
     df["ret_1"] = close.pct_change()

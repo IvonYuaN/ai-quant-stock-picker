@@ -6,6 +6,9 @@
 
 set -euo pipefail
 
+# 午盘窗口、交易日和产物日期必须按北京时间判断。
+export TZ="Asia/Shanghai"
+
 PROJECT_ROOT="${AQSP_PROJECT_ROOT:-/opt/aqsp}"
 RUNTIME_ROOT="${AQSP_RUNTIME_ROOT:-$PROJECT_ROOT}"
 RUNTIME_DATA_ROOT="${AQSP_RUNTIME_DATA_ROOT:-${RUNTIME_ROOT}/data}"
@@ -34,6 +37,8 @@ if [ -f "${PROJECT_ROOT}/.env" ]; then
     source "${PROJECT_ROOT}/.env"
     set +a
 fi
+# .env 不得覆盖计划任务的时区契约。
+export TZ="Asia/Shanghai"
 PYTHON_BIN="$(aqsp_runtime_python "$PROJECT_ROOT")"
 aqsp_require_runtime_python "$PYTHON_BIN"
 

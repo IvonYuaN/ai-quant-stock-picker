@@ -225,9 +225,7 @@ def test_aqsp_bridge_resolves_runtime_debates_from_runtime_root(
     response = client.get("/api/aqsp/snapshot")
 
     assert response.status_code == 200
-    assert [item["symbol"] for item in response.json()["data"]["debates"]] == [
-        "600001"
-    ]
+    assert [item["symbol"] for item in response.json()["data"]["debates"]] == ["600001"]
 
 
 def test_aqsp_bridge_does_not_attach_unmatched_runtime_debate_to_current_date(
@@ -756,3 +754,105 @@ def test_aqsp_bridge_does_not_invent_evidence_for_legacy_debate(
     assert debate["evidence"] == []
     assert debate["support_points"] == []
     assert debate["opposition_points"] == []
+
+
+def test_aqsp_bridge_preserves_variant_holding_dates_and_adjustments(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = _snapshot("2026-07-14")
+    payload["variant_suite"] = {
+        "schema_version": "variant-suite-v2",
+        "generated_at": "2026-07-14T18:20:00+08:00",
+        "data_mode": "historical_raw_unadjusted",
+        "end_date": "2026-07-14",
+        "variant_count": 148,
+        "selected_symbols": 600,
+        "supported_symbols": 4920,
+        "batch_active": True,
+        "batch_id": "3:1200",
+        "batch_size": 600,
+        "cycle_id": 3,
+        "coverage_pct": 0.3659,
+        "filters": "沪市主板+深市主板+创业板；排除 ST/*ST/PT/退市/科创/北交/B股",
+        "last_error": "原始日线刷新尚未完成",
+    }
+    payload["variants"] = [
+        {
+            "variant_id": "macd_cross_lb20_balanced",
+            "label": "MACD·20日·均衡",
+            "initial_cash": 100000.0,
+            "cash": 65000.0,
+            "final_equity": 102000.0,
+            "total_pnl": 2000.0,
+            "return_pct": 2.0,
+            "filled_orders": 3,
+            "rejected_orders": 0,
+            "start_date": "2026-07-01",
+            "end_date": "2026-07-14",
+            "data_mode": "historical_raw_unadjusted",
+            "rank": 1,
+            "strategy": "MACD·20日·均衡",
+            "holdings_date": "2026-07-14",
+            "holdings": [
+                {
+                    "symbol": "600001",
+                    "name": "示例股份",
+                    "quantity": 1000,
+                    "average_price": 10.0,
+                    "last_price": 11.0,
+                    "market_value": 11000.0,
+                    "unrealized_pnl": 1000.0,
+                }
+            ],
+            "previous_holdings_date": "2026-07-13",
+            "previous_holdings": [],
+            "recent_actions": [
+                {
+                    "date": "2026-07-14",
+                    "symbol": "600001",
+                    "name": "示例股份",
+                    "side": "buy",
+                    "quantity": 1000,
+                    "reason": "MACD柱转强，量比确认。",
+                    "evidence": {
+                        "macd_hist": 0.18,
+                        "kdj_j": 61.0,
+                        "volume_ratio": 1.42,
+                        "atr_pct": 2.6,
+                    },
+                }
+            ],
+            "adjustments": ["买入 600001 示例股份：昨日无，今日 1000 股；MACD柱转强。"],
+            "technical_evidence": [
+                {
+                    "symbol": "600001",
+                    "name": "示例股份",
+                    "signal_date": "2026-07-13",
+                    "execution_date": "2026-07-14",
+                    "macd_hist": 0.18,
+                    "kdj_j": 61.0,
+                    "volume_ratio": 1.42,
+                    "atr_pct": 2.6,
+                }
+            ],
+            "hard_rules": ["T+1：买入当日不可卖"],
+        }
+    ]
+    snapshot_path = _write_single(tmp_path, payload)
+    monkeypatch.setenv("AQSP_RESEARCH_SURFACE_SNAPSHOT", str(snapshot_path))
+
+    response = client.get("/api/aqsp/snapshot")
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["variant_suite"]["schema_version"] == "variant-suite-v2"
+    assert data["variant_suite"]["selected_symbols"] == 600
+    assert data["variant_suite"]["batch_id"] == "3:1200"
+    assert data["variant_suite"]["last_error"] == "原始日线刷新尚未完成"
+    variant = data["variants"][0]
+    assert variant["holdings_date"] == "2026-07-14"
+    assert variant["previous_holdings_date"] == "2026-07-13"
+    assert variant["holdings"][0]["name"] == "示例股份"
+    assert variant["recent_actions"][0]["reason"] == "MACD柱转强，量比确认。"
+    assert variant["technical_evidence"][0]["macd_hist"] == 0.18
+    assert variant["adjustments"][0].startswith("买入 600001 示例股份")

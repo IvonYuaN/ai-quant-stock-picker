@@ -7,7 +7,9 @@ from datetime import date, datetime
 from pathlib import Path
 
 from aqsp.core.time import SHANGHAI_TZ
+from scripts import check_before_live as readiness
 from scripts.check_before_live import (
+    _check_runtime_sqlite_freshness,
     _check_strategy_executability_runtime_feedback,
     _check_strategy_weight_snapshot_audit,
     _schedule_matches_bt_action,
@@ -519,6 +521,36 @@ def test_check_before_live_blocks_stale_runtime_sqlite_db(tmp_path: Path) -> Non
     assert finding.ok is False
     assert "mtime=2026-06-10" in finding.detail
     assert "require >= 2026-06-12" in finding.detail
+
+
+def test_runtime_sqlite_freshness_rejects_previous_day_after_current_close(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    db_path = tmp_path / "data" / "astocks_raw.db"
+    db_path.unlink()
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "CREATE TABLE daily_qfq (ts_code TEXT NOT NULL, trade_date TEXT NOT NULL)"
+        )
+        conn.executemany(
+            "INSERT INTO daily_qfq(ts_code, trade_date) VALUES(?, ?)",
+            [(f"{idx:06d}.SH", "20260724") for idx in range(3000)],
+        )
+        conn.commit()
+    timestamp = datetime(2026, 7, 27, 17, 0, 0, tzinfo=SHANGHAI_TZ).timestamp()
+    os.utime(db_path, (timestamp, timestamp))
+    monkeypatch.setattr(
+        readiness,
+        "now_shanghai",
+        lambda: datetime(2026, 7, 27, 17, 0, 0, tzinfo=SHANGHAI_TZ),
+    )
+
+    finding = _check_runtime_sqlite_freshness(tmp_path, date(2026, 7, 27))
+
+    assert finding.ok is False
+    assert "require >= 2026-07-27" in finding.detail
+    assert "2026-07-27 rows=0/3000 symbols" in finding.detail
 
 
 def test_check_before_live_blocks_partial_runtime_sqlite_db_coverage(
@@ -2178,9 +2210,7 @@ def test_check_before_live_blocks_non_http_webhook_url(tmp_path: Path) -> None:
 def test_check_before_live_blocks_invalid_notify_mode(tmp_path: Path) -> None:
     _prepare_ready_runtime(tmp_path)
     (tmp_path / ".env").write_text(
-        "AQSP_NOTIFY=true\n"
-        "AQSP_NOTIFY_MODE=serverchan\n"
-        "SERVERCHAN_SENDKEY=test\n",
+        "AQSP_NOTIFY=true\nAQSP_NOTIFY_MODE=serverchan\nSERVERCHAN_SENDKEY=test\n",
         encoding="utf-8",
     )
 

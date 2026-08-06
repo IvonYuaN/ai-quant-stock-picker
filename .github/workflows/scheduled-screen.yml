@@ -1,4 +1,4 @@
-name: Scheduled Stock Screening
+name: Manual Stock Screening
 
 on:
   workflow_dispatch:
@@ -9,7 +9,7 @@ on:
         default: "close"
 
 concurrency:
-  group: scheduled-screen-${{ github.workflow }}-${{ github.event.schedule || github.ref }}
+  group: manual-screen-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -24,7 +24,7 @@ jobs:
     timeout-minutes: 20
     env:
       AQSP_SYMBOLS: ${{ vars.AQSP_SYMBOLS }}
-      AQSP_MODE: ${{ github.event.inputs.mode || vars.AQSP_MODE || (github.event.schedule == '10 1 * * 1-5' && 'open' || 'close') }}
+      AQSP_MODE: ${{ github.event.inputs.mode || vars.AQSP_MODE || 'close' }}
       AQSP_LIMIT: ${{ vars.AQSP_LIMIT || '10' }}
       AQSP_MIN_AVG_AMOUNT: ${{ vars.AQSP_MIN_AVG_AMOUNT || '50000000' }}
       AQSP_MAX_DATA_LAG_DAYS: ${{ vars.AQSP_MAX_DATA_LAG_DAYS || '3' }}

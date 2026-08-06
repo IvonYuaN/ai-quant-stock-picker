@@ -913,14 +913,15 @@ def test_news_catalyst_filters_stale_history_news_when_only_url_contains_date() 
 
 
 def test_news_catalyst_uses_title_or_url_date_as_visible_timestamp() -> None:
+    published_date = today_shanghai().isoformat()
     report = build_catalyst_report(
         fetch_global_news=lambda _limit: pd.DataFrame(
             [
                 {
-                    "标题": "2026-06-27 政策支持半导体材料国产替代",
+                    "标题": f"{published_date} 政策支持半导体材料国产替代",
                     "来源": "新华社",
                     "时间": "",
-                    "链接": "https://example.com/20260627/a.html",
+                    "链接": f"https://example.com/{published_date.replace('-', '')}/a.html",
                 }
             ]
         ),
@@ -928,17 +929,18 @@ def test_news_catalyst_uses_title_or_url_date_as_visible_timestamp() -> None:
     )
 
     markdown = format_catalyst_notification(report)
-    assert "时间: 2026-06-27" in markdown
+    assert f"时间: {published_date}" in markdown
 
 
 def test_news_catalyst_reads_extended_published_at_fields() -> None:
+    published_date = today_shanghai().isoformat()
     report = build_catalyst_report(
         fetch_global_news=lambda _limit: pd.DataFrame(
             [
                 {
                     "标题": "MLCC 行业报价上调，龙头排产紧张",
                     "来源": "证券报",
-                    "发布日期": "2026-06-28 09:15",
+                    "发布日期": f"{published_date} 09:15",
                 }
             ]
         ),
@@ -946,7 +948,7 @@ def test_news_catalyst_reads_extended_published_at_fields() -> None:
     )
 
     markdown = format_catalyst_notification(report)
-    assert "时间: 2026-06-28T09:15:00+08:00" in markdown
+    assert f"时间: {published_date}T09:15:00+08:00" in markdown
 
 
 def test_news_catalyst_filters_pure_market_price_action_noise() -> None:
@@ -1148,7 +1150,9 @@ def test_catalyst_report_exposes_regional_freshness_quality_and_fallback() -> No
         ),
     )
 
-    domestic = next(item for item in report.region_statuses if item.region == "domestic")
+    domestic = next(
+        item for item in report.region_statuses if item.region == "domestic"
+    )
 
     assert domestic.status == "partial"
     assert domestic.freshness == "fresh"
@@ -1412,9 +1416,10 @@ def test_news_catalyst_does_not_treat_wire_prefix_as_target_name() -> None:
     assert "来源: 富途" in markdown
 
 
-def test_news_catalyst_prioritizes_higher_quality_source_when_weight_and_time_match() -> (
-    None
-):
+def test_news_catalyst_prioritizes_higher_quality_source_when_weight_and_time_match(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr("aqsp.news.catalysts.today_shanghai", lambda: date(2026, 7, 3))
     report = build_catalyst_report(
         fetch_global_news=lambda _limit: pd.DataFrame(
             [
@@ -1842,6 +1847,7 @@ def test_news_catalyst_report_rejects_too_old_stale_cache_when_fetch_fails(
     monkeypatch,
     tmp_path,
 ) -> None:
+    monkeypatch.setattr("aqsp.news.catalysts.today_shanghai", lambda: date(2026, 7, 3))
     cache_path = tmp_path / "catalyst_cache.json"
     config = NewsCatalystConfig(
         cache_path=str(cache_path),
@@ -2941,3 +2947,20 @@ def test_catalyst_report_artifact_round_trips_with_date_and_freshness_gate(
         )
         is None
     )
+
+
+def test_news_catalyst_never_uses_fork_on_macos(monkeypatch) -> None:
+    def fail_get_context(_method: str) -> object:
+        raise AssertionError("darwin must not call multiprocessing fork")
+
+    monkeypatch.setattr(catalysts.sys, "platform", "darwin")
+    monkeypatch.setattr(catalysts.multiprocessing, "get_context", fail_get_context)
+
+    outcomes = catalysts._run_fetchers_with_deadline(
+        {"global": lambda: pd.DataFrame([{"title": "ok"}])},
+        timeout_seconds=1.0,
+        isolate_process=True,
+    )
+
+    assert outcomes["global"].error is None
+    assert len(outcomes["global"].frame) == 1

@@ -477,7 +477,15 @@ def test_intraday_overlay_coverage_keeps_missing_symbols_explicit() -> None:
         MockSource(intraday_data=intraday),
         allow_historical_replay=True,
     ).merge_intraday_bar_into_daily_with_coverage(
-        {"600000": _historical_frame({"date": ["2026-06-25"], "symbol": ["600000"]})},
+        {
+            "600000": _historical_frame(
+                {
+                    "date": ["2026-06-25"],
+                    "symbol": ["600000"],
+                    "close": [9.9],
+                }
+            )
+        },
         ["600000", "000300"],
         index_symbols=["000300"],
         target_date=date(2026, 6, 26),
@@ -494,6 +502,62 @@ def test_intraday_overlay_coverage_keeps_missing_symbols_explicit() -> None:
     assert result.candidate_complete
     assert not result.benchmark_complete
     assert not result.complete
+
+
+def test_intraday_overlay_isolates_incompatible_historical_price_basis() -> None:
+    intraday = {
+        "000001": pd.DataFrame(
+            {
+                "date": ["2026-06-26 09:30:00"],
+                "open": [10.0],
+                "high": [10.1],
+                "low": [9.9],
+                "close": [10.0],
+                "volume": [1000],
+                "symbol": ["000001"],
+            }
+        ),
+        "600000": pd.DataFrame(
+            {
+                "date": ["2026-06-26 09:30:00"],
+                "open": [10.0],
+                "high": [10.1],
+                "low": [9.9],
+                "close": [10.0],
+                "volume": [1000],
+                "symbol": ["600000"],
+            }
+        ),
+    }
+    historical = {
+        "000001": _historical_frame(
+            {
+                "date": ["2026-06-25"],
+                "symbol": ["000001"],
+                "close": [1452.0],
+            }
+        ),
+        "600000": _historical_frame(
+            {
+                "date": ["2026-06-25"],
+                "symbol": ["600000"],
+                "close": [9.9],
+            }
+        ),
+    }
+
+    result = IntradayService(
+        MockSource(intraday_data=intraday),
+        allow_historical_replay=True,
+    ).merge_intraday_bar_into_daily_with_coverage(
+        historical,
+        ["000001", "600000"],
+        target_date=date(2026, 6, 26),
+    )
+
+    assert tuple(result.frames) == ("600000",)
+    assert result.covered_symbols == ("600000",)
+    assert result.missing_symbols == ("000001",)
 
 
 def test_merge_intraday_bar_into_daily_requires_target_day_bars() -> None:

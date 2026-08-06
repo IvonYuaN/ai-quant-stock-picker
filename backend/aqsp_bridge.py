@@ -20,7 +20,7 @@ DEFAULT_SNAPSHOT_PATH = "data/runtime/home_dashboard_snapshot.json"
 DEFAULT_DEBATE_RESULTS_PATH = "data/debate_results.jsonl"
 SNAPSHOT_SCHEMA_VERSION = "v1"
 INDEX_SCHEMA_VERSION = "v1-index"
-MAX_SNAPSHOT_BYTES = 512 * 1024
+MAX_SNAPSHOT_BYTES = 1024 * 1024
 MAX_DATES = 4
 MAX_CANDIDATES = 5
 MAX_DEBATES = 3
@@ -237,7 +237,31 @@ class AQSPVariant:
     rank: int = 0
     strategy: str = ""
     holdings: tuple[dict[str, Any], ...] = ()
+    holdings_date: str = ""
+    previous_holdings: tuple[dict[str, Any], ...] = ()
+    previous_holdings_date: str = ""
+    recent_actions: tuple[dict[str, Any], ...] = ()
+    adjustments: tuple[str, ...] = ()
+    technical_evidence: tuple[dict[str, Any], ...] = ()
     hard_rules: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class AQSPVariantSuite:
+    schema_version: str = ""
+    generated_at: str = ""
+    data_mode: str = ""
+    end_date: str = ""
+    variant_count: int = 0
+    selected_symbols: int = 0
+    supported_symbols: int = 0
+    batch_active: bool = False
+    batch_id: str = ""
+    batch_size: int = 0
+    cycle_id: int = 0
+    coverage_pct: float = 0.0
+    filters: str = ""
+    last_error: str = ""
 
 
 @dataclass(frozen=True)
@@ -286,6 +310,7 @@ class AQSPSnapshot:
     recommendation_gate: AQSPRecommendationGate | None = None
     phases: tuple[AQSPPhase, ...] = ()
     universe: AQSPUniverse = AQSPUniverse()
+    variant_suite: AQSPVariantSuite = AQSPVariantSuite()
     variants: tuple[AQSPVariant, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
@@ -779,6 +804,7 @@ def _parse_snapshot(payload: Mapping[str, Any]) -> AQSPSnapshot:
         "phases",
         "universe",
         "variant_universe",
+        "variant_suite",
         "variants",
     }
     _check_keys(payload, required, "快照", optional)
@@ -850,6 +876,7 @@ def _parse_snapshot(payload: Mapping[str, Any]) -> AQSPSnapshot:
             _parse_phase(item) for item in _list(payload.get("phases", []), "phases")
         ),
         universe=_parse_universe(payload.get("universe")),
+        variant_suite=_parse_variant_suite(payload.get("variant_suite")),
         variants=variants,
     )
 
@@ -883,6 +910,7 @@ def _parse_variant(payload: object) -> AQSPVariant:
             "previous_holdings_date",
             "recent_actions",
             "adjustments",
+            "technical_evidence",
         },
     )
     variant = AQSPVariant(
@@ -908,6 +936,34 @@ def _parse_variant(payload: object) -> AQSPVariant:
         holdings=tuple(
             value
             for value in _list(item.get("holdings", []), "variant.holdings")
+            if isinstance(value, dict)
+        ),
+        holdings_date=_optional_text(
+            item.get("holdings_date"), "variant.holdings_date"
+        ),
+        previous_holdings=tuple(
+            value
+            for value in _list(
+                item.get("previous_holdings", []), "variant.previous_holdings"
+            )
+            if isinstance(value, dict)
+        ),
+        previous_holdings_date=_optional_text(
+            item.get("previous_holdings_date"), "variant.previous_holdings_date"
+        ),
+        recent_actions=tuple(
+            value
+            for value in _list(item.get("recent_actions", []), "variant.recent_actions")
+            if isinstance(value, dict)
+        ),
+        adjustments=tuple(
+            _text_list(item.get("adjustments", []), "variant.adjustments")
+        ),
+        technical_evidence=tuple(
+            value
+            for value in _list(
+                item.get("technical_evidence", []), "variant.technical_evidence"
+            )
             if isinstance(value, dict)
         ),
         hard_rules=tuple(_text_list(item.get("hard_rules", []), "variant.hard_rules")),
@@ -979,6 +1035,59 @@ def _parse_universe(payload: object) -> AQSPUniverse:
         cycle_id=_integer(item.get("cycle_id", 0), "universe.cycle_id"),
         coverage_pct=float(item.get("coverage_pct", 0.0) or 0.0),
         last_error=_optional_text(item.get("last_error"), "universe.last_error"),
+    )
+
+
+def _parse_variant_suite(payload: object) -> AQSPVariantSuite:
+    if payload is None:
+        return AQSPVariantSuite()
+    item = _object(payload, "variant_suite")
+    _check_keys(
+        item,
+        set(),
+        "variant_suite",
+        {
+            "schema_version",
+            "generated_at",
+            "data_mode",
+            "end_date",
+            "variant_count",
+            "selected_symbols",
+            "supported_symbols",
+            "batch_active",
+            "batch_id",
+            "batch_size",
+            "cycle_id",
+            "coverage_pct",
+            "filters",
+            "last_error",
+        },
+    )
+    return AQSPVariantSuite(
+        schema_version=_optional_text(
+            item.get("schema_version"), "variant_suite.schema_version"
+        ),
+        generated_at=_optional_text(
+            item.get("generated_at"), "variant_suite.generated_at"
+        ),
+        data_mode=_optional_text(item.get("data_mode"), "variant_suite.data_mode"),
+        end_date=_optional_text(item.get("end_date"), "variant_suite.end_date"),
+        variant_count=_integer(
+            item.get("variant_count", 0), "variant_suite.variant_count"
+        ),
+        selected_symbols=_integer(
+            item.get("selected_symbols", 0), "variant_suite.selected_symbols"
+        ),
+        supported_symbols=_integer(
+            item.get("supported_symbols", 0), "variant_suite.supported_symbols"
+        ),
+        batch_active=bool(item.get("batch_active", False)),
+        batch_id=_optional_text(item.get("batch_id"), "variant_suite.batch_id"),
+        batch_size=_integer(item.get("batch_size", 0), "variant_suite.batch_size"),
+        cycle_id=_integer(item.get("cycle_id", 0), "variant_suite.cycle_id"),
+        coverage_pct=float(item.get("coverage_pct", 0.0) or 0.0),
+        filters=_optional_text(item.get("filters"), "variant_suite.filters"),
+        last_error=_optional_text(item.get("last_error"), "variant_suite.last_error"),
     )
 
 

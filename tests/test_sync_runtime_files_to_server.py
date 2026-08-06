@@ -82,6 +82,23 @@ def test_expand_runtime_dependencies_adds_transitive_runtime_modules(
     )
 
 
+def test_expand_runtime_dependencies_includes_intraday_batch_merger(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "repo"
+    expected = (
+        "scripts/intraday_refresh.sh",
+        "scripts/merge_intraday_batches.py",
+        "scripts/merge_intraday_news.py",
+    )
+    for relative in expected:
+        path = project_root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# ok\n", encoding="utf-8")
+
+    assert sync_mod._expand_runtime_dependencies(project_root, expected[:1]) == expected
+
+
 def test_expand_runtime_dependencies_fails_when_dependency_missing(
     tmp_path: Path,
 ) -> None:

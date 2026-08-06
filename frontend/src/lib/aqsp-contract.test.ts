@@ -1,4 +1,5 @@
 import type { AqspSnapshotEnvelope } from "./aqsp-contract";
+import { normalizeAqspSnapshotEnvelope } from "./api";
 
 // Compile-time fixtures keep the bridge contract checked without adding a test runner.
 export const aqspContractFixture = {
@@ -28,3 +29,12 @@ export const aqspContractFixture = {
 export const aqspEmptyStateIsRepresentable =
   aqspContractFixture.data.messages.length === 0 &&
   aqspContractFixture.data.debates.length === 0;
+
+export const aqspMalformedEnvelopeIsRejected = (() => {
+  try {
+    normalizeAqspSnapshotEnvelope({ data: aqspContractFixture.data, meta: {} });
+    return false;
+  } catch {
+    return true;
+  }
+})();

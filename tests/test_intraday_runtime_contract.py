@@ -83,9 +83,12 @@ def test_intraday_runtime_contract_uses_configured_benchmark_and_quality_gate() 
     assert "消息脚本返回成功但当前消息产物无效或已过期" in script
     assert 'AQSP_NEWS_ENABLE_LLM_REVIEW="false"' in script
     assert 'AQSP_NEWS_NOTIFY="false"' in script
+    assert 'AQSP_NEWS_LOCK_CONFLICT_EXIT_CODE="$news_lock_conflict_exit_code"' in script
     assert 'if [ ! -f "$INTRADAY_NEWS_SCRIPT" ]; then' in script
     assert 'bash "$INTRADAY_NEWS_SCRIPT"' in script
     assert 'NEWS_CATALYST_STATUS="warning"' in script
+    assert 'NEWS_CATALYST_STATUS="skipped_locked"' in script
+    assert "盘中侧车正常跳过" in script
     assert "继续首页快照" in script
     assert script.index("refresh_intraday_news_catalysts\n") > script.index(
         'replace_intraday_artifact "$TMP_INTRADAY_OUTPUT_CSV" "$INTRADAY_OUTPUT_CSV"'
@@ -101,6 +104,12 @@ def test_intraday_runtime_contract_uses_configured_benchmark_and_quality_gate() 
     assert script.index(
         'export AQSP_PROVISIONAL_REPORT="${TMP_INTRADAY_REPORT}"'
     ) < script.index('if apply_intraday_quality_gate "$TMP_INTRADAY_OUTPUT_CSV"')
+    assert '--date "$(date +%F)"' in script
+    assert "盘中候选累计合并失败，保留上一版全部盘中产物" in script
+    assert script.index("merge_intraday_batches.py") < script.rindex(
+        'replace_intraday_artifact "$TMP_INTRADAY_LEDGER" "$INTRADAY_LEDGER"'
+    )
+    assert 'payload["preserved_artifact"] = preserved_artifact' in script
 
 
 def _write_python_stub(path: Path, repo_root: Path, args_path: Path) -> None:
@@ -111,6 +120,7 @@ import json
 import os
 import subprocess
 import sys
+from datetime import date
 from pathlib import Path
 
 
@@ -125,9 +135,24 @@ if args and Path(args[0]).name == "prepare_intraday_batch.py":
         call = "commit" if "--commit" in args else "fail" if "--fail" in args else "select"
         with Path(calls_path).open("a", encoding="utf-8") as handle:
             handle.write(call + "\\n")
+    if "--cache-only" in args:
+        if os.getenv("AQSP_TEST_CACHE_BATCH"):
+            print(os.environ["AQSP_TEST_CACHE_BATCH"])
+        raise SystemExit(int(os.getenv("AQSP_TEST_CACHE_EXIT_CODE", "0")))
     if os.getenv("AQSP_TEST_PREPARE_BATCH") and "--commit" not in args:
         print("600000,000001")
     raise SystemExit(0)
+
+if args and Path(args[0]).name == "merge_intraday_batches.py":
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(Path(os.environ["AQSP_TEST_REPO"]) / "scripts" / "merge_intraday_batches.py"),
+            *args[1:],
+        ],
+        env={**os.environ, "PYTHONPATH": os.environ["AQSP_TEST_REPO"] + "/src"},
+    )
+    raise SystemExit(result.returncode)
 
 if args and Path(args[0]).name == "write_home_snapshot.py":
     marker = os.getenv("AQSP_TEST_HOME_SNAPSHOT_MARKER", "")
@@ -263,7 +288,7 @@ if args[:2] == ["-m", "aqsp"]:
             {
                 "symbol": "600000",
                 "name": "质量观察样本",
-                "date": "2026-07-13",
+                "date": date.today().isoformat(),
                 "score": "88",
                 "rating": "buy_candidate",
                 "candidate_review_priority": "high",
@@ -331,6 +356,7 @@ def _write_timeout_stub(path: Path) -> None:
         "shift\n"
         'while [ "$#" -gt 0 ] && [ "${1#-}" != "$1" ]; do shift; done\n'
         "shift\n"
+        'if [ -n "${AQSP_TEST_TIMEOUT_PREPARE_EXIT_CODE:-}" ] && [ "${2##*/}" = "prepare_intraday_batch.py" ]; then exit "$AQSP_TEST_TIMEOUT_PREPARE_EXIT_CODE"; fi\n'
         'exec "$@"\n',
         encoding="utf-8",
     )
@@ -511,6 +537,12 @@ def test_intraday_runtime_quality_gate_downgrades_watch_candidate_and_records_st
     }
 
 
+def test_intraday_runtime_passes_absolute_csv_to_home_snapshot() -> None:
+    script = SCRIPT_PATH.read_text(encoding="utf-8")
+
+    assert 'AQSP_INTRADAY_LATEST_CSV="${INTRADAY_OUTPUT_CSV}"' in script
+
+
 def test_intraday_runtime_production_env_disables_main_debate_and_falls_back_from_eastmoney(
     tmp_path: Path,
 ) -> None:
@@ -613,7 +645,7 @@ def test_intraday_runtime_refreshes_news_after_candidates_and_keeps_home_snapsho
     assert status["status"] == "completed"
     assert status["news_catalysts"]["status"] == "refreshed"
     assert status["execution"]["catalyst_fetch_mode"] == "thread"
-    assert status["execution"]["runner_timeout_seconds"] == 420
+    assert status["execution"]["runner_timeout_seconds"] == 240
     assert status["execution"]["news_task_timeout_seconds"] == 20
     assert status["execution"]["duration_seconds"] >= 0
 
@@ -1003,8 +1035,98 @@ def test_intraday_batch_mode_does_not_let_aqsp_max_universe_40_bypass_rotation(
 
     assert result.returncode == 0, result.stdout + result.stderr
     cli_args = json.loads(args_path.read_text(encoding="utf-8"))
-    assert cli_args["max_universe"] == "0"
+    assert cli_args["max_universe"] == "2"
     assert "忽略配置最大股票数 40" in result.stdout
+
+
+def test_intraday_batch_resolution_stops_when_preparation_times_out(
+    tmp_path: Path,
+) -> None:
+    venv_bin = tmp_path / ".venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    utility_bin = tmp_path / "bin"
+    utility_bin.mkdir()
+    _write_timeout_stub(utility_bin / "timeout")
+    args_path = tmp_path / "cli_args.json"
+    _write_python_stub(venv_bin / "python3", PROJECT_ROOT, args_path)
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "prepare_intraday_batch.py").write_text(
+        "# test stub\n", encoding="utf-8"
+    )
+    env = os.environ.copy()
+    env.update(
+        {
+            "AQSP_PROJECT_ROOT": str(tmp_path),
+            "AQSP_TEST_REPO": str(PROJECT_ROOT),
+            "AQSP_TEST_ARGS": str(args_path),
+            "AQSP_TEST_TIMEOUT_PREPARE_EXIT_CODE": "124",
+            "AQSP_TEST_CACHE_EXIT_CODE": "1",
+            "AQSP_INTRADAY_REQUIRE_MARKET_HOURS": "false",
+            "AQSP_INTRADAY_DEBATE_BACKFILL": "false",
+            "AQSP_HOME_SNAPSHOT_ENABLED": "false",
+            "PATH": f"{utility_bin}:{os.environ['PATH']}",
+        }
+    )
+    result = subprocess.run(
+        ["bash", str(SCRIPT_PATH)],
+        cwd=PROJECT_ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 124, result.stdout + result.stderr
+    assert "股票池解析超时" in result.stdout
+    status = json.loads(
+        (tmp_path / "data" / "intraday_refresh_status.json").read_text(encoding="utf-8")
+    )
+    assert status["status"] == "failed"
+    assert status["exit_code"] == 124
+    assert "universe_resolution_timeout" in status["reason"]
+    assert "缓存不可用" in status["reason"]
+    assert not args_path.exists()
+
+
+def test_intraday_batch_resolution_uses_validated_cache_after_timeout(
+    tmp_path: Path,
+) -> None:
+    venv_bin = tmp_path / ".venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    utility_bin = tmp_path / "bin"
+    utility_bin.mkdir()
+    _write_timeout_stub(utility_bin / "timeout")
+    args_path = tmp_path / "cli_args.json"
+    _write_python_stub(venv_bin / "python3", PROJECT_ROOT, args_path)
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "prepare_intraday_batch.py").write_text(
+        "# test stub\n", encoding="utf-8"
+    )
+    env = os.environ.copy()
+    env.update(
+        {
+            "AQSP_PROJECT_ROOT": str(tmp_path),
+            "AQSP_TEST_REPO": str(PROJECT_ROOT),
+            "AQSP_TEST_ARGS": str(args_path),
+            "AQSP_TEST_TIMEOUT_PREPARE_EXIT_CODE": "124",
+            "AQSP_TEST_CACHE_BATCH": "600000,000001",
+            "AQSP_INTRADAY_REQUIRE_MARKET_HOURS": "false",
+            "AQSP_INTRADAY_DEBATE_BACKFILL": "false",
+            "AQSP_HOME_SNAPSHOT_ENABLED": "false",
+            "PATH": f"{utility_bin}:{os.environ['PATH']}",
+        }
+    )
+    result = subprocess.run(
+        ["bash", str(SCRIPT_PATH)],
+        cwd=PROJECT_ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "已使用校验通过的缓存批次" in result.stdout
 
 
 def test_intraday_batch_does_not_commit_when_output_metadata_is_partial(

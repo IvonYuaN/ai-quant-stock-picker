@@ -164,6 +164,29 @@ def test_multi_source_live_partial_merge_records_symbol_provenance():
     assert result["000001"].attrs["source_name"] == "sina"
 
 
+def test_multi_source_live_daily_merges_partial_sources_without_consistency_check():
+    primary = MockSource(
+        {"600000": pd.DataFrame({"date": ["2026-05-27"], "close": [10.0]})}
+    )
+    primary.name = "eastmoney"
+    fallback = MockSource(
+        {"000001": pd.DataFrame({"date": ["2026-05-27"], "close": [12.0]})}
+    )
+    fallback.name = "tencent"
+    multi = MultiSource(primary, [fallback], validate_consistency=False)
+    multi.set_workload("live_short")
+
+    result = multi.fetch_daily(
+        ["600000", "000001"],
+        date(2026, 5, 27),
+        date(2026, 5, 27),
+    )
+
+    assert set(result) == {"600000", "000001"}
+    assert multi.last_used_source == "multi"
+    assert multi.last_used_sources == {"600000": "eastmoney", "000001": "tencent"}
+
+
 def test_multi_source_raises_when_partial_merge_still_missing_symbol():
     primary_data = {"600000": pd.DataFrame({"date": ["2026-05-27"], "close": [10.0]})}
     fallback_data = {"000001": pd.DataFrame({"date": ["2026-05-27"], "close": [12.0]})}

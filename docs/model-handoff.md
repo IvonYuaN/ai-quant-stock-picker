@@ -322,14 +322,15 @@ python3 -m pytest -q
 
 ```bash
 cd /opt/aqsp
-git status --short --branch --untracked-files=all
-.venv/bin/python scripts/sync_runtime_files_to_server.py --verify-overlay
-bash scripts/server_sync_and_run.sh; code=$?; echo "PIPELINE_EXIT_CODE=$code"
+current="$(readlink -f /opt/aqsp-releases/aqsp-scheduler-current)"
+AQSP_PROJECT_ROOT="$current" AQSP_RUNTIME_ROOT=/opt/aqsp \
+  /opt/aqsp-vibe-venv/bin/python3 "$current/scripts/check_scheduler.py"
+python3 scripts/headless_dashboard_check.py --url https://lh.ifidy.cn --mode raw
 ```
 
 必须检查：
 
-- `PIPELINE_EXIT_CODE=0`
+- 调度审计、API health、前端入口和数据新鲜度均通过
 - 跑批 `10/10` 成功
 - 报告里的候选名称不是纯代码
 - briefing 里的 `风险提示` 完整显示

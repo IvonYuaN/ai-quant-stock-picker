@@ -78,25 +78,37 @@ def parse_iso8601(s: str) -> datetime:
 
 
 def is_trading_day(d: date) -> bool:
-    from aqsp.data.trading_calendar import resolve_is_trading_day
+    """Return the deterministic local A-share calendar result.
 
-    return resolve_is_trading_day(d)
+    Scheduler gates must never depend on a remote calendar request: a failed
+    or stale response can turn an ordinary weekday into a false holiday and
+    cause repeated recovery runs. Call ``resolve_is_trading_day`` explicitly
+    where a point-in-time runtime calendar is required.
+    """
+    return _is_basic_trading_day(d)
 
 
 def get_previous_trading_day(d: date | None = None) -> date:
     if d is None:
         d = today_shanghai()
-    from aqsp.data.trading_calendar import resolve_previous_trading_day
-
-    return resolve_previous_trading_day(d)
+    return _get_basic_previous_trading_day(d)
 
 
 def get_next_trading_day(d: date | None = None) -> date:
     if d is None:
         d = today_shanghai()
-    from aqsp.data.trading_calendar import resolve_next_trading_day
+    return _get_basic_next_trading_day(d)
 
-    return resolve_next_trading_day(d)
+
+def latest_completed_trading_day(dt: datetime | None = None) -> date:
+    """Return the most recent A-share trading day with a completed close."""
+    current = to_shanghai(dt if dt is not None else now_shanghai())
+    current_day = current.date()
+    if is_trading_day(current_day):
+        _, close_time = market_hours(current)
+        if current >= close_time:
+            return current_day
+    return get_previous_trading_day(current_day)
 
 
 def market_hours(dt: datetime) -> tuple[datetime, datetime]:

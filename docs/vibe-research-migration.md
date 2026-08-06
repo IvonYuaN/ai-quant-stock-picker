@@ -247,21 +247,21 @@ bash -n scripts/health_vibe_research.sh scripts/start_vibe_research_service.sh \
 scripts/test_vibe_research_deployment.sh
 ```
 
-以下是迁移演练期间的历史配置记录，不是当前生产入口。当前生产配置
+以下是迁移演练期间的历史配置记录，不是当前生产入口，也不应作为部署操作手册。
+当前生产配置
 `deploy/nginx/aqsp-dashboard.conf` 使用 React + FastAPI；下列 Streamlit
 配置仅用于回滚演练：
 
-- `location /` 反代到 `127.0.0.1:8501`；不能改成 `5899` 或 `8900` 作为本次演练的一部分。
+- `location /` 反代到 `127.0.0.1:8501`；这只描述历史回滚，不得用于当前生产入口。
 - `/_stcore/stream` 和 `/_stcore/health` 继续走 `8501`。
 - `/dashboard*`、`/dist/dashboard*`、`/beginner*`、`/agent*`、`/agents*` 和归档 HTML 旧入口继续 `302` 到根路径。
 - 这份公网规则没有 Vibe-Research 的新 host/path 路由；独立端口检查应使用 `127.0.0.1`，不得 reload Nginx 或覆盖公网服务。
 
-## 根路径切换候选配置
+## 根路径切换候选配置（历史方案，已完成切换）
 
-切换候选为 `deploy/nginx/vibe-research-mainline.conf`，目标是同一域名的唯一根
-入口，而不是新增第二个公网域名。它与当前 `aqsp-dashboard.conf` 互斥：启用候选
-配置前必须保留旧文件为 Streamlit 回滚副本，并确保宝塔 include 目录中只有一份
-声明 `location /` 的活动片段。
+该配置曾用于同一域名的根入口切换，现已完成并由
+`deploy/nginx/aqsp-dashboard.conf` 作为 canonical 生产配置。两份配置互斥：
+宝塔 include 目录中只能启用一份声明 `location /` 的活动片段。
 
 ```text
 浏览器 -> lh.ifidy.cn
@@ -284,6 +284,5 @@ scripts/test_vibe_research_deployment.sh
 - 旧 `dashboard`、`beginner`、`agent`、`agents` 和归档 HTML URL 使用 `302`，
   保留 query string。稳定运行后是否改为 `301` 属于单独变更，不包含在本次候选中。
 
-本次交付只生成候选配置和文档，不执行服务器复制、`nginx -t` 或 reload。正式切换
-前后验收命令、鉴权检查和失败回滚步骤以 `docs/server-dashboard-deployment.md`
-的“Vibe-Research 根路径切换（候选方案）”为准。
+历史切换记录保留用于审计；后续发布只允许走不可变 release 部署脚本，不能再使用
+这份迁移演练作为第二部署路径。

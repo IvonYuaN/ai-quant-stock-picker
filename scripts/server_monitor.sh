@@ -28,10 +28,23 @@ LOCK_DIR="${AQSP_RUNTIME_LOCK_DIR:-${RUNTIME_DATA_ROOT}/.locks}"
 LOCK_FILE="${LOCK_DIR}/server-monitor.lock"
 LOCK_INFO_FILE="${LOCK_FILE}/meta.env"
 LOCK_STALE_MINUTES="${AQSP_LOCK_STALE_MINUTES:-360}"
-MONITOR_TIMEOUT_SECONDS="${AQSP_MONITOR_TIMEOUT_SECONDS:-0}"
+# Monitor is a lightweight alert path. An unbounded default can accumulate
+# stuck workers when BaoTa invokes it repeatedly, so keep it strictly bounded.
+MONITOR_TIMEOUT_SECONDS="${AQSP_MONITOR_TIMEOUT_SECONDS:-120}"
+MONITOR_TIMEOUT_MAX_SECONDS=180
 
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$RESULT_LOG"
+}
+
+normalize_monitor_timeout() {
+    if ! [[ "$MONITOR_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+        log "监控超时配置无效(${MONITOR_TIMEOUT_SECONDS})，使用 120 秒"
+        MONITOR_TIMEOUT_SECONDS=120
+    elif [ "$MONITOR_TIMEOUT_SECONDS" -gt "$MONITOR_TIMEOUT_MAX_SECONDS" ]; then
+        log "监控超时配置过长(${MONITOR_TIMEOUT_SECONDS})，收紧为 ${MONITOR_TIMEOUT_MAX_SECONDS} 秒"
+        MONITOR_TIMEOUT_SECONDS="$MONITOR_TIMEOUT_MAX_SECONDS"
+    fi
 }
 
 lock_age_minutes() {
@@ -65,6 +78,7 @@ lock_is_stale() {
 
 mkdir -p "$LOG_DIR"
 mkdir -p "$LOCK_DIR"
+normalize_monitor_timeout
 
 if [ -d "$LOCK_FILE" ] && lock_is_stale; then
     stale_age="$(lock_age_minutes "$LOCK_FILE")"
@@ -142,15 +156,12 @@ case "${MONITOR_NOTIFY,,}" in
 esac
 
 set +e
-if [ "${MONITOR_TIMEOUT_SECONDS}" -gt 0 ] && command -v timeout >/dev/null 2>&1; then
+if command -v timeout >/dev/null 2>&1; then
     log "启用监控超时保护: ${MONITOR_TIMEOUT_SECONDS}s"
-    timeout --foreground "${MONITOR_TIMEOUT_SECONDS}" "${PYTHON_BIN}" "${MONITOR_ARGS[@]}" "$@" 2>&1 | tee -a "$RESULT_LOG"
-    MONITOR_EXIT_CODE=${PIPESTATUS[0]}
-elif [ "${MONITOR_TIMEOUT_SECONDS}" -gt 0 ]; then
-    log "系统缺少 timeout 命令，跳过监控超时保护"
-    "${PYTHON_BIN}" "${MONITOR_ARGS[@]}" "$@" 2>&1 | tee -a "$RESULT_LOG"
+    timeout --foreground --signal=TERM --kill-after=10s "${MONITOR_TIMEOUT_SECONDS}s" "${PYTHON_BIN}" "${MONITOR_ARGS[@]}" "$@" 2>&1 | tee -a "$RESULT_LOG"
     MONITOR_EXIT_CODE=${PIPESTATUS[0]}
 else
+    log "[WARN] 系统缺少 timeout 命令，无法启用监控超时保护"
     "${PYTHON_BIN}" "${MONITOR_ARGS[@]}" "$@" 2>&1 | tee -a "$RESULT_LOG"
     MONITOR_EXIT_CODE=${PIPESTATUS[0]}
 fi

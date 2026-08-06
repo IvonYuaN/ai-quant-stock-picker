@@ -19,6 +19,7 @@ from aqsp.data.source import (
 )
 from aqsp.data.cache import DataCache
 from aqsp.core.errors import DataError
+from aqsp.core.http import trust_environment_proxy_enabled
 from aqsp.core.time import now_shanghai
 from aqsp.data.quote_metadata import (
     parse_legacy_quote_timestamp,
@@ -61,6 +62,7 @@ class TencentSource(DataSource):
 
     def __init__(self, cache: DataCache | None = None) -> None:
         self._session = requests.Session()
+        self._session.trust_env = trust_environment_proxy_enabled()
         self._session.headers.update(
             {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",

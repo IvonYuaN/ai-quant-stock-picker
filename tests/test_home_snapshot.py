@@ -3,7 +3,7 @@ from __future__ import annotations
 import ast
 import json
 from dataclasses import replace
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -28,6 +28,8 @@ from aqsp.web.home_snapshot import (
     HomeSnapshotMarketContext,
     HomeSnapshotMessage,
     HomeSnapshotSource,
+    HomeSnapshotVariant,
+    HomeSnapshotVariantSuite,
     HOME_SNAPSHOT_CLOSE_TTL,
     HOME_SNAPSHOT_INTRADAY_TTL,
     load_home_dashboard_snapshot,
@@ -109,7 +111,68 @@ def test_home_snapshot_round_trips_bounded_home_payload(tmp_path) -> None:
     write_home_dashboard_snapshot(source, snapshot)
 
     assert load_home_dashboard_snapshot(source) == snapshot
+
+
+def test_home_snapshot_accepts_variant_suite_with_one_hundred_entries(tmp_path) -> None:
+    source = tmp_path / "snapshot.json"
+    variants = tuple(
+        HomeSnapshotVariant(
+            variant_id=f"variant-{index}",
+            label=f"Variant {index}",
+            initial_cash=100_000.0,
+            cash=10_000.0,
+            final_equity=100_000.0,
+            total_pnl=0.0,
+            return_pct=0.0,
+            filled_orders=0,
+            rejected_orders=0,
+            start_date="2026-01-01",
+            end_date="2026-07-27",
+            data_mode="historical_raw_unadjusted",
+        )
+        for index in range(100)
+    )
+
+    write_home_dashboard_snapshot(source, replace(_snapshot(), variants=variants))
+
+    loaded = load_home_dashboard_snapshot(source)
+    assert loaded is not None
+    assert len(loaded.variants) == 100
     assert json.loads(source.read_text(encoding="utf-8"))["schema_version"] == "v1"
+
+
+def test_home_snapshot_round_trips_variant_suite_metadata(tmp_path) -> None:
+    source = tmp_path / "home.json"
+    snapshot = replace(
+        _snapshot(),
+        variant_suite=HomeSnapshotVariantSuite(
+            schema_version="variant-suite-v2",
+            generated_at="2026-07-24T16:00:00+08:00",
+            data_mode="historical_raw_unadjusted",
+            end_date="2026-07-24",
+            variant_count=148,
+            selected_symbols=600,
+            supported_symbols=4920,
+            batch_active=True,
+            batch_id="3:1200",
+            batch_size=600,
+            cycle_id=3,
+            coverage_pct=0.3659,
+            filters="沪市主板+深市主板+创业板；排除 ST/*ST/PT/退市/科创/北交/B股",
+        ),
+    )
+
+    write_home_dashboard_snapshot(source, snapshot)
+    loaded = load_home_dashboard_snapshot(source)
+
+    assert loaded == snapshot
+    assert loaded.variant_suite.schema_version == "variant-suite-v2"
+    assert loaded.variant_suite.selected_symbols == 600
+    assert loaded.variant_suite.batch_id == "3:1200"
+
+
+def test_home_snapshot_default_variant_suite_has_versioned_pending_schema() -> None:
+    assert HomeSnapshotVariantSuite().schema_version == "variant-suite-v2"
 
 
 def test_home_snapshot_round_trips_candidate_provenance(tmp_path) -> None:
@@ -536,13 +599,18 @@ def test_home_snapshot_write_uses_shared_atomic_writer(monkeypatch, tmp_path) ->
     assert str(captured["payload"]).endswith("\n")
 
 
-def test_home_snapshot_write_does_not_replace_newer_date_with_history(tmp_path) -> None:
+def test_home_snapshot_write_does_not_replace_newer_completed_date_with_history(
+    monkeypatch, tmp_path
+) -> None:
     current = _snapshot(selected_date="2026-07-11")
     historical = _snapshot(
         dates=("2026-07-10",),
         selected_date="2026-07-10",
     )
     source = tmp_path / "home.json"
+    monkeypatch.setattr(
+        home_snapshot, "latest_completed_trading_day", lambda: date(2026, 7, 11)
+    )
 
     write_home_dashboard_snapshot(source, current)
 
@@ -550,6 +618,22 @@ def test_home_snapshot_write_does_not_replace_newer_date_with_history(tmp_path) 
         write_home_dashboard_snapshot(source, historical)
 
     assert load_home_dashboard_snapshot(source) == current
+
+
+def test_home_snapshot_write_replaces_leaked_in_progress_date_with_completed_day(
+    monkeypatch, tmp_path
+) -> None:
+    leaked = _snapshot(dates=("2026-07-28",), selected_date="2026-07-28")
+    completed = _snapshot(dates=("2026-07-27",), selected_date="2026-07-27")
+    source = tmp_path / "home.json"
+    monkeypatch.setattr(
+        home_snapshot, "latest_completed_trading_day", lambda: date(2026, 7, 27)
+    )
+
+    write_home_dashboard_snapshot(source, leaked)
+    write_home_dashboard_snapshot(source, completed)
+
+    assert load_home_dashboard_snapshot(source) == completed
 
 
 def test_home_snapshot_index_write_does_not_replace_newer_date_with_history(
@@ -582,6 +666,36 @@ def test_home_snapshot_index_write_does_not_replace_newer_date_with_history(
         write_home_snapshot_index(source, historical_index)
 
     assert load_home_snapshot_index(source) == current_index
+
+
+def test_home_snapshot_index_replaces_leaked_in_progress_date_with_completed_day(
+    monkeypatch, tmp_path
+) -> None:
+    leaked = _snapshot(dates=("2026-07-28",), selected_date="2026-07-28")
+    completed = _snapshot(dates=("2026-07-27",), selected_date="2026-07-27")
+    leaked_index = HomeSnapshotIndex(
+        schema_version=HOME_SNAPSHOT_INDEX_SCHEMA_VERSION,
+        generated_at="2026-07-28T10:00:00+08:00",
+        stale_after="2026-07-28T10:30:00+08:00",
+        selected_date="2026-07-28",
+        days=(HomeSnapshotDay(date="2026-07-28", snapshot=leaked),),
+    )
+    completed_index = HomeSnapshotIndex(
+        schema_version=HOME_SNAPSHOT_INDEX_SCHEMA_VERSION,
+        generated_at="2026-07-28T10:01:00+08:00",
+        stale_after="2026-07-28T10:31:00+08:00",
+        selected_date="2026-07-27",
+        days=(HomeSnapshotDay(date="2026-07-27", snapshot=completed),),
+    )
+    source = tmp_path / "home-index.json"
+    monkeypatch.setattr(
+        home_snapshot, "latest_completed_trading_day", lambda: date(2026, 7, 27)
+    )
+
+    write_home_snapshot_index(source, leaked_index)
+    write_home_snapshot_index(source, completed_index)
+
+    assert load_home_snapshot_index(source) == completed_index
 
 
 @pytest.mark.parametrize(
@@ -658,7 +772,7 @@ def test_home_snapshot_write_rejects_payload_that_exceeds_byte_budget(tmp_path) 
     source = tmp_path / "home.json"
     snapshot = _snapshot(summaries=("x" * MAX_HOME_SNAPSHOT_BYTES,))
 
-    with pytest.raises(ValueError, match="64 KiB"):
+    with pytest.raises(ValueError, match="1 MiB"):
         write_home_dashboard_snapshot(source, snapshot)
 
     assert not source.exists()

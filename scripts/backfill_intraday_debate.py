@@ -22,6 +22,7 @@ from aqsp.cli import (
     serialize_debate_result,
 )
 from aqsp.config import load_debate_runtime_config
+from aqsp.audit.agent_runs import AgentRunRegistry
 from aqsp.briefing.debate_tracker import audit_debate_quality
 from aqsp.core.time import now_shanghai
 from aqsp.models import PickResult
@@ -43,6 +44,8 @@ CANDIDATE_RUNNING = "running"
 CANDIDATE_SUCCEEDED = "succeeded"
 CANDIDATE_FAILED = "failed"
 DEFAULT_MAX_ATTEMPTS = 2
+DEFAULT_AGENT_DEADLINE_SECONDS = 180
+AGENT_SCOPE = "intraday_debate_backfill"
 
 
 def _float_value(row: dict[str, str], key: str, default: float = 0.0) -> float:
@@ -845,6 +848,9 @@ def run_backfill(
     stale_lock_seconds: int = DEFAULT_STALE_LOCK_SECONDS,
     max_attempts: int = DEFAULT_MAX_ATTEMPTS,
     include_observation_only: bool = False,
+    agent_runs_path: Path | None = None,
+    parent_run_id: str = "",
+    agent_deadline_seconds: int = DEFAULT_AGENT_DEADLINE_SECONDS,
 ) -> int:
     input_csv = Path(input_csv)
     output_path = Path(output_path)
@@ -852,6 +858,7 @@ def run_backfill(
     lock_path = Path(lock_path)
     stale_lock_seconds = max(1, int(stale_lock_seconds))
     max_attempts = max(1, int(max_attempts))
+    agent_deadline_seconds = max(1, int(agent_deadline_seconds))
     run_id = uuid4().hex
     started_at = now_shanghai().isoformat(timespec="seconds")
     failed_candidates: list[dict[str, str]] = []
@@ -1000,6 +1007,38 @@ def run_backfill(
             stale_recovered=True,
             candidate_states=candidate_states,
         )
+
+    agent_registry: AgentRunRegistry | None = None
+    agent_run_id = f"{AGENT_SCOPE}:{run_id}"
+    if agent_runs_path is not None:
+        agent_registry = AgentRunRegistry(agent_runs_path)
+        try:
+            agent_registry.register(
+                parent_run_id=parent_run_id or f"{task_id}:{run_id}",
+                agent_run_id=agent_run_id,
+                scope=AGENT_SCOPE,
+                pid=os.getpid(),
+                deadline_seconds=agent_deadline_seconds,
+            )
+        except ValueError as exc:
+            _write_status(
+                status_path,
+                status=STATUS_SUCCEEDED,
+                run_id=run_id,
+                task_id=task_id,
+                input_csv=input_csv,
+                output_path=output_path,
+                candidate_count=len(picks),
+                succeeded_count=0,
+                failed_candidates=[],
+                started_at=started_at,
+                detail=f"agent backfill skipped: {exc}",
+                skipped=True,
+                candidate_states=candidate_states,
+            )
+            print(f"debate backfill skipped: {exc}")
+            _release_run_lock(lock_path, run_id)
+            return 0
 
     now = now_shanghai().isoformat(timespec="seconds")
     today = now_shanghai().date().isoformat()
@@ -1225,6 +1264,19 @@ def run_backfill(
         )
         return succeeded_count
     finally:
+        if agent_registry is not None:
+            try:
+                agent_registry.finish(
+                    agent_run_id,
+                    status="failed" if failed_candidates else "completed",
+                    exit_reason=(
+                        "candidate_failures"
+                        if failed_candidates
+                        else "backfill_completed"
+                    ),
+                )
+            except ValueError:
+                pass
         _release_run_lock(lock_path, run_id)
 
 
@@ -1250,6 +1302,19 @@ def main(argv: list[str] | None = None) -> int:
         type=int,
         default=DEFAULT_STALE_LOCK_SECONDS,
     )
+    parser.add_argument(
+        "--agent-runs-path", default=os.getenv("AQSP_AGENT_RUNS_PATH", "")
+    )
+    parser.add_argument(
+        "--parent-run-id", default=os.getenv("AQSP_AGENT_PARENT_RUN_ID", "")
+    )
+    parser.add_argument(
+        "--agent-deadline-seconds",
+        type=int,
+        default=int(
+            os.getenv("AQSP_AGENT_DEADLINE_SECONDS", DEFAULT_AGENT_DEADLINE_SECONDS)
+        ),
+    )
     args = parser.parse_args(argv)
 
     count = run_backfill(
@@ -1263,6 +1328,9 @@ def main(argv: list[str] | None = None) -> int:
         stale_lock_seconds=args.stale_lock_seconds,
         max_attempts=args.max_attempts,
         include_observation_only=args.include_observation_only,
+        agent_runs_path=Path(args.agent_runs_path) if args.agent_runs_path else None,
+        parent_run_id=args.parent_run_id,
+        agent_deadline_seconds=args.agent_deadline_seconds,
     )
     status = _read_json_object(Path(args.status_path))
     print(

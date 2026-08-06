@@ -1,36 +1,7 @@
 name: CI
 
 on:
-  pull_request:
-    paths:
-      - "src/**"
-      - "scripts/**"
-      - "tests/**"
-      - "backend/**"
-      - "frontend/**"
-      - "deploy/baota/**"
-      - "deploy/nginx/**"
-      - "deploy/systemd/**"
-      - "pyproject.toml"
-      - ".github/workflows/**"
-  push:
-    branches:
-      - main
-      - "feat/**"
-      - "fix/**"
-      - "codex/**"
-      - "test/**"
-    paths:
-      - "src/**"
-      - "scripts/**"
-      - "tests/**"
-      - "backend/**"
-      - "frontend/**"
-      - "deploy/baota/**"
-      - "deploy/nginx/**"
-      - "deploy/systemd/**"
-      - "pyproject.toml"
-      - ".github/workflows/**"
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -64,7 +35,7 @@ jobs:
           python-version: "3.11"
           cache: "pip"
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: "20"
           cache: npm
@@ -82,6 +53,9 @@ jobs:
         run: |
           npm ci --prefix frontend
           npm run build --prefix frontend
+
+      - name: Frontend audit
+        run: python3 scripts/check_frontend_audit.py
 
       - name: Check AQSP deployment bundle
         run: |

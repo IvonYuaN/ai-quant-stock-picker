@@ -20,7 +20,7 @@ if [ ! -f "$RUNTIME_PYTHON_HELPER" ]; then
 fi
 # shellcheck disable=SC1090
 source "$RUNTIME_PYTHON_HELPER"
-export TZ="${TZ:-Asia/Shanghai}"
+export TZ="Asia/Shanghai"
 DATE="$(date +%Y-%m-%d)"
 LOG_DIR="${AQSP_COLDSTART_LOG_DIR:-${RUNTIME_DATA_ROOT}/logs/coldstart}"
 RUN_LOG="${LOG_DIR}/coldstart-${DATE}.log"
@@ -114,6 +114,7 @@ if [ -f "${PROJECT_ROOT}/.env" ]; then
     source "${PROJECT_ROOT}/.env"
     set +a
 fi
+export TZ="Asia/Shanghai"
 
 export PYTHONPATH="${PROJECT_ROOT}/src:${PROJECT_ROOT}:${PYTHONPATH:-}"
 
@@ -130,14 +131,13 @@ RUN_AS_OF="$(
 import os
 from datetime import date
 
-from aqsp.core.time import get_previous_trading_day, is_trading_day, today_shanghai
+from aqsp.core.time import latest_completed_trading_day
 
 target = os.environ.get("TARGET_DATE_FOR_RUN", "").strip()
 if target:
     print(date.fromisoformat(target).isoformat())
 else:
-    today = today_shanghai()
-    print((today if is_trading_day(today) else get_previous_trading_day(today)).isoformat())
+    print(latest_completed_trading_day().isoformat())
 PY
 )"
 PROJECT_UPDATE_SCRIPT="$(resolve_path "scripts/update_sqlite_daily.py")"
@@ -169,11 +169,23 @@ case "$COLDSTART_RUNTIME_SOURCE" in
         exit 1
         ;;
 esac
-# 与 before-live 运行覆盖门槛一致：冷启动只补可筛选流动性池，避免退市/异常尾部代码阻断样本累积。
-COLDSTART_MAX_UNIVERSE="${AQSP_COLDSTART_MAX_UNIVERSE:-${AQSP_MAX_UNIVERSE:-3000}}"
-if ! [[ "$COLDSTART_MAX_UNIVERSE" =~ ^[0-9]+$ ]] || [ "$COLDSTART_MAX_UNIVERSE" -le 0 ]; then
-    COLDSTART_MAX_UNIVERSE="3000"
+# 冷启动分批积累样本，不能默认一次拉取全市场而挤占 Dashboard 和正式日终任务。
+# 需要扩大批量时必须显式确认；全市场回填应在独立资源充足的任务中执行。
+COLDSTART_SAFE_MAX_UNIVERSE="${AQSP_COLDSTART_SAFE_MAX_UNIVERSE:-600}"
+if ! [[ "$COLDSTART_SAFE_MAX_UNIVERSE" =~ ^[1-9][0-9]*$ ]]; then
+    COLDSTART_SAFE_MAX_UNIVERSE="600"
 fi
+COLDSTART_MAX_UNIVERSE="${AQSP_COLDSTART_MAX_UNIVERSE:-${AQSP_MAX_UNIVERSE:-$COLDSTART_SAFE_MAX_UNIVERSE}}"
+if ! [[ "$COLDSTART_MAX_UNIVERSE" =~ ^[0-9]+$ ]] || [ "$COLDSTART_MAX_UNIVERSE" -le 0 ]; then
+    COLDSTART_MAX_UNIVERSE="$COLDSTART_SAFE_MAX_UNIVERSE"
+fi
+if [ "$COLDSTART_MAX_UNIVERSE" -gt "$COLDSTART_SAFE_MAX_UNIVERSE" ] && \
+   ! is_truthy "${AQSP_COLDSTART_ALLOW_HEAVY_UNIVERSE:-false}"; then
+    log "冷启动扫描范围 ${COLDSTART_MAX_UNIVERSE} 超过安全上限 ${COLDSTART_SAFE_MAX_UNIVERSE}，已收紧；设置 AQSP_COLDSTART_ALLOW_HEAVY_UNIVERSE=true 才允许扩大"
+    COLDSTART_MAX_UNIVERSE="$COLDSTART_SAFE_MAX_UNIVERSE"
+fi
+# 单标的历史拉取默认低并发，避免冷启动与 Web/API 争抢小服务器 CPU、内存和连接。
+export AQSP_TENCENT_DAILY_FETCH_WORKERS="${AQSP_TENCENT_DAILY_FETCH_WORKERS:-2}"
 COLDSTART_MIN_TARGET_COVERAGE="${AQSP_COLDSTART_MIN_TARGET_COVERAGE:-3000}"
 
 mkdir -p \

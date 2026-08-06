@@ -6,6 +6,9 @@
 
 set -euo pipefail
 
+# 日内窗口和产物日期固定按北京时间计算。
+export TZ="Asia/Shanghai"
+
 PROJECT_ROOT="${AQSP_PROJECT_ROOT:-/opt/aqsp}"
 RUNTIME_ROOT="${AQSP_RUNTIME_ROOT:-$PROJECT_ROOT}"
 RUNTIME_DATA_ROOT="${AQSP_RUNTIME_DATA_ROOT:-${RUNTIME_ROOT}/data}"
@@ -118,7 +121,7 @@ if [ -f "${PROJECT_ROOT}/.env" ]; then
 fi
 
 export PYTHONPATH="${PROJECT_ROOT}/src:${PROJECT_ROOT}:${PYTHONPATH:-}"
-export TZ="${TZ:-Asia/Shanghai}"
+export TZ="Asia/Shanghai"
 export AQSP_RUN_TASK_ID="${AQSP_RUN_TASK_ID:-intraday}"
 # 盘中入口不接受外部任务 ID，避免残留 daily/live_short 环境改变运行分支。
 export AQSP_RUN_TASK_ID="intraday"
@@ -166,6 +169,12 @@ export AQSP_INTRADAY_FAST_FILL_CACHE="${AQSP_INTRADAY_FAST_FILL_CACHE:-true}"
 
 DOW=$(date +%u)
 REQUIRE_MARKET_HOURS="${AQSP_INTRADAY_REQUIRE_MARKET_HOURS:-true}"
+
+# Immutable production must not inherit a legacy .env override that permits
+# a full intraday scan after the close. Local diagnostics stay configurable.
+if is_truthy "${AQSP_IMMUTABLE_RELEASE:-false}"; then
+    REQUIRE_MARKET_HOURS="true"
+fi
 
 # The explicit diagnostic mode is also used by the isolated runtime contract
 # tests. Production keeps the trading-day guard because its default is true.
@@ -216,11 +225,15 @@ if [[ -z "$INTRADAY_BENCHMARK_SYMBOL" || "$INTRADAY_BENCHMARK_SYMBOL" =~ [[:spac
     log "[ERROR] 盘中市场基准配置无效: ${INTRADAY_BENCHMARK_SYMBOL:-<empty>}；请设置 AQSP_INTRADAY_BENCHMARK_SYMBOL"
     exit 1
 fi
-# 盘中任务按 10 分钟周期运行，默认 7 分钟收尾，给下一轮和清理留余量。
-INTRADAY_RUN_TIMEOUT_SECONDS="${AQSP_INTRADAY_RUN_TIMEOUT_SECONDS:-420}"
+# 盘中任务按 10 分钟周期运行。预留至少五分钟给下一轮和系统恢复，
+# 避免盘中计算、消息和 Agent 侧车累积后把生产机拖入持续高负载。
+INTRADAY_RUN_TIMEOUT_SECONDS="${AQSP_INTRADAY_RUN_TIMEOUT_SECONDS:-240}"
 if ! [[ "$INTRADAY_RUN_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] || [ "$INTRADAY_RUN_TIMEOUT_SECONDS" -le 0 ]; then
-    log "盘中运行超时配置无效(${INTRADAY_RUN_TIMEOUT_SECONDS})，使用 420 秒"
-    INTRADAY_RUN_TIMEOUT_SECONDS="420"
+    log "盘中运行超时配置无效(${INTRADAY_RUN_TIMEOUT_SECONDS})，使用 240 秒"
+    INTRADAY_RUN_TIMEOUT_SECONDS="240"
+elif [ "$INTRADAY_RUN_TIMEOUT_SECONDS" -gt 300 ] && ! is_truthy "${AQSP_INTRADAY_ALLOW_LONG_RUNTIME:-false}"; then
+    log "盘中运行时限 ${INTRADAY_RUN_TIMEOUT_SECONDS} 秒过长，收紧为 300 秒；设置 AQSP_INTRADAY_ALLOW_LONG_RUNTIME=true 才允许扩大"
+    INTRADAY_RUN_TIMEOUT_SECONDS="300"
 fi
 # 盘中默认解析完整实时股票池；短线流动性阈值必须通过盘中专用变量显式设置，
 # 不能继承收盘主链的 AQSP_MIN_AVG_AMOUNT 而静默缩成一部分股票。
@@ -254,12 +267,26 @@ INTRADAY_NEWS_SCRIPT="${AQSP_INTRADAY_NEWS_SCRIPT:-${PROJECT_ROOT}/scripts/news_
 INTRADAY_NEWS_OUTPUT="$(resolve_path "${AQSP_INTRADAY_NEWS_OUTPUT:-${AQSP_NEWS_OUTPUT:-reports/news_catalysts.md}}")"
 INTRADAY_NEWS_JSON_OUTPUT="$(resolve_path "${AQSP_INTRADAY_NEWS_JSON_OUTPUT:-${AQSP_NEWS_JSON_OUTPUT:-data/runtime/news_catalysts_latest.json}}")"
 INTRADAY_BATCH_SCAN="${AQSP_INTRADAY_BATCH_SCAN:-true}"
-# Keep the full-universe cursor while using a batch that can complete a
-# 5,000+ symbol rotation inside one trading session.  The screening process
-# remains bounded by the 420s timeout; operators can lower this explicitly on
-# a smaller host with AQSP_INTRADAY_BATCH_SIZE.
-INTRADAY_BATCH_SIZE="${AQSP_INTRADAY_BATCH_SIZE:-256}"
-INTRADAY_CURSOR_PATH="$(resolve_path "${AQSP_INTRADAY_CURSOR_PATH:-data/runtime/intraday_universe_cursor.json}")"
+# Keep the full-universe cursor, but keep each scheduled run small enough for
+# the production host and upstream quote sources.  Cursor rotation covers the
+# complete eligible pool across runs; it must not turn one ten-minute cycle
+# into a 5,000-symbol data request.
+INTRADAY_BATCH_SIZE="${AQSP_INTRADAY_BATCH_SIZE:-32}"
+if ! [[ "$INTRADAY_BATCH_SIZE" =~ ^[0-9]+$ ]] || [ "$INTRADAY_BATCH_SIZE" -le 0 ]; then
+    log "盘中批次大小无效(${INTRADAY_BATCH_SIZE})，使用 32"
+    INTRADAY_BATCH_SIZE="32"
+elif [ "$INTRADAY_BATCH_SIZE" -gt 48 ] && ! is_truthy "${AQSP_INTRADAY_ALLOW_HEAVY_UNIVERSE:-false}"; then
+    log "盘中批次大小 ${INTRADAY_BATCH_SIZE} 过大，收紧为 48；设置 AQSP_INTRADAY_ALLOW_HEAVY_UNIVERSE=true 才允许扩大"
+    INTRADAY_BATCH_SIZE="48"
+fi
+INTRADAY_BATCH_RESOLVE_TIMEOUT_SECONDS="${AQSP_INTRADAY_BATCH_RESOLVE_TIMEOUT_SECONDS:-45}"
+if ! [[ "$INTRADAY_BATCH_RESOLVE_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] || \
+   [ "$INTRADAY_BATCH_RESOLVE_TIMEOUT_SECONDS" -le 0 ]; then
+    log "盘中股票池解析超时配置无效(${INTRADAY_BATCH_RESOLVE_TIMEOUT_SECONDS})，使用 45 秒"
+    INTRADAY_BATCH_RESOLVE_TIMEOUT_SECONDS="45"
+fi
+INTRADAY_CURSOR_PATH="$(resolve_path "${AQSP_INTRADAY_CURSOR_PATH:-${RUNTIME_DATA_ROOT}/runtime/intraday_universe_cursor.json}")"
+INTRADAY_UNIVERSE_CACHE="$(resolve_path "${AQSP_INTRADAY_UNIVERSE_CACHE:-${RUNTIME_DATA_ROOT}/runtime/intraday_live_universe.json}")"
 INTRADAY_BATCH_ACTIVE="false"
 INTRADAY_BATCH_SYMBOLS=""
 INTRADAY_BATCH_ID=""
@@ -283,6 +310,7 @@ REALTIME_CROSS_MARKET_PATH="$(resolve_path "${AQSP_REALTIME_CROSS_MARKET_PATH:-d
 REALTIME_CROSS_MARKET_TIMEOUT_SECONDS="${AQSP_REALTIME_CROSS_MARKET_TIMEOUT_SECONDS:-8}"
 REALTIME_CROSS_MARKET_SOURCE_TIMEOUT_SECONDS="${AQSP_REALTIME_CROSS_MARKET_SOURCE_TIMEOUT_SECONDS:-0.8}"
 DEBATE_RESULTS="$(resolve_path "${AQSP_DEBATE_RESULTS:-data/debate_results.jsonl}")"
+AGENT_RUNS_PATH="$(resolve_path "${AQSP_AGENT_RUNS_PATH:-data/runtime/agent_runs.jsonl}")"
 DEBATE_BACKFILL_LOG="${LOG_DIR}/debate-backfill-$(date +%Y-%m-%d).log"
 DEBATE_BACKFILL_LOCK="${LOCK_BASE_DIR}/intraday-debate-backfill.lock"
 DEBATE_BACKFILL_LOCK_INFO="${DEBATE_BACKFILL_LOCK}/meta.env"
@@ -317,6 +345,7 @@ TMP_INTRADAY_OUTPUT_CSV="${TMP_DIR}/intraday_latest.csv"
 QUALITY_GATE_SUMMARY="${TMP_DIR}/quality_gate.json"
 BATCH_FAILURE_RECORDED="false"
 BATCH_OUTPUT_VALIDATED="false"
+INTRADAY_BATCH_MAX_FAILURES="${AQSP_INTRADAY_BATCH_MAX_FAILURES:-2}"
 
 # Install cleanup before resolver/data-source work can fail.
 cleanup_tmp_dir() {
@@ -459,7 +488,14 @@ launch_intraday_debate_backfill() {
         return 0
     fi
     local max_candidates
-    max_candidates="${AQSP_INTRADAY_DEBATE_BACKFILL_MAX_CANDIDATES:-5}"
+    max_candidates="${AQSP_INTRADAY_DEBATE_BACKFILL_MAX_CANDIDATES:-3}"
+    if ! [[ "$max_candidates" =~ ^[0-9]+$ ]] || [ "$max_candidates" -lt 1 ]; then
+        log "盘中 Agent 候选数无效，收紧为 3"
+        max_candidates="3"
+    elif [ "$max_candidates" -gt 3 ]; then
+        log "盘中 Agent 候选数超过资源上限，收紧为 3"
+        max_candidates="3"
+    fi
     local -a force_arg=()
     if is_truthy "${AQSP_INTRADAY_DEBATE_BACKFILL_FORCE:-true}"; then
         force_arg=(--force)
@@ -471,6 +507,9 @@ launch_intraday_debate_backfill() {
         env \
         "AQSP_ENABLE_DEBATE=true" \
         "AQSP_DEBATE_ENABLE_LLM=${AQSP_INTRADAY_DEBATE_ENABLE_LLM}"
+        "AQSP_AGENT_RUNS_PATH=${AGENT_RUNS_PATH}"
+        "AQSP_AGENT_PARENT_RUN_ID=${AQSP_RUN_TASK_ID}-${INTRADAY_STARTED_AT}"
+        "AQSP_AGENT_DEADLINE_SECONDS=${DEBATE_BACKFILL_TIMEOUT_SECONDS}"
         "$PYTHON_BIN" "${PROJECT_ROOT}/scripts/backfill_intraday_debate.py"
         --input-csv "$INTRADAY_OUTPUT_CSV"
         --output "$DEBATE_RESULTS"
@@ -525,7 +564,9 @@ refresh_home_dashboard_snapshot() {
         log "首页快照刷新已关闭"
         return 0
     fi
-    if "${PYTHON_BIN}" "${PROJECT_ROOT}/scripts/write_home_snapshot.py" \
+    if AQSP_INTRADAY_LATEST_CSV="${INTRADAY_OUTPUT_CSV}" \
+        "${PYTHON_BIN}" "${PROJECT_ROOT}/scripts/write_home_snapshot.py" \
+        --date "$(date +%F)" \
         --task-id "${AQSP_RUN_TASK_ID}" \
         --output "${HOME_SNAPSHOT_PATH}" \
         --index-output "${HOME_SNAPSHOT_INDEX_PATH}" >>"${RESULT_LOG}" 2>&1; then
@@ -567,6 +608,7 @@ refresh_intraday_news_catalysts() {
     NEWS_CATALYST_STATUS="skipped"
     NEWS_CATALYST_EXIT_CODE="0"
     NEWS_CATALYST_WARNING=""
+    local news_lock_conflict_exit_code="75"
 
     if ! is_truthy "${AQSP_INTRADAY_NEWS_REFRESH:-true}"; then
         log "盘中消息面刷新已关闭"
@@ -599,6 +641,7 @@ refresh_intraday_news_catalysts() {
         AQSP_NEWS_MAX_LLM_REVIEW_EVENTS="0" \
         AQSP_NEWS_NOTIFY="false" \
         AQSP_ALLOW_NON_TRADING_NEWS_NOTIFY="false" \
+        AQSP_NEWS_LOCK_CONFLICT_EXIT_CODE="$news_lock_conflict_exit_code" \
         AQSP_NOTIFY="false" \
         AQSP_GATE_NOTIFY="false" \
         timeout --signal=TERM --kill-after=3s \
@@ -613,7 +656,10 @@ refresh_intraday_news_catalysts() {
     if [ "$news_tee_exit_code" -ne 0 ]; then
         log "[WARN] 盘中消息面结果日志管道退出码: ${news_tee_exit_code}"
     fi
-    if [ "$news_exit_code" -eq 0 ]; then
+    if [ "$news_exit_code" -eq "$news_lock_conflict_exit_code" ]; then
+        NEWS_CATALYST_STATUS="skipped_locked"
+        log "消息面任务仍在运行，盘中侧车正常跳过"
+    elif [ "$news_exit_code" -eq 0 ]; then
         if "$PYTHON_BIN" - "$INTRADAY_NEWS_JSON_OUTPUT" <<'AQSP_NEWS_ARTIFACT_CHECK'
 import sys
 from pathlib import Path
@@ -1216,9 +1262,10 @@ write_intraday_status() {
        [ "$BATCH_OUTPUT_VALIDATED" != "true" ]; then
         if "${PYTHON_BIN}" "${PROJECT_ROOT}/scripts/prepare_intraday_batch.py" \
             --cursor "$INTRADAY_CURSOR_PATH" \
-            --fail "${BATCH_FAILURE_REASON:-${status}}" >>"$RESULT_LOG" 2>&1; then
+            --fail "${BATCH_FAILURE_REASON:-${status}}" \
+            --max-retries "$INTRADAY_BATCH_MAX_FAILURES" >>"$RESULT_LOG" 2>&1; then
             BATCH_FAILURE_RECORDED="true"
-            log "盘中批次已记录失败状态，保留 cursor 位置: ${BATCH_FAILURE_REASON:-${status}}"
+            log "盘中批次失败已记录；达到重试上限后自动跳过并继续覆盖: ${BATCH_FAILURE_REASON:-${status}}"
         else
             BATCH_FAILURE_RECORDED="error"
             log "[WARN] 盘中批次失败状态写入失败，状态标记 cursor_failure_unrecorded"
@@ -1441,6 +1488,26 @@ payload["freshness"] = {
         quality_gate.get("provenance_status", "unknown") or "unknown"
     ),
 }
+preserved_artifact = False
+if payload["status"] in {"failed", "error"} and latest_trade_date == now_shanghai().date().isoformat():
+    try:
+        with csv_path_for_metadata.open("r", encoding="utf-8", newline="") as handle:
+            preserved_artifact = any(
+                clean(row.get("symbol")) != "__RUN__"
+                and clean(row.get("signal_date") or row.get("date"))[:10]
+                == now_shanghai().date().isoformat()
+                for row in csv.DictReader(handle)
+            )
+    except (OSError, csv.Error):
+        preserved_artifact = False
+if preserved_artifact:
+    # A failed retry must not erase a still-fresh, validated same-day artifact.
+    # The dashboard keeps enforcing its file-age window before exposing it.
+    payload["freshness"]["status"] = "fresh"
+    payload["freshness"]["lag_days"] = metadata_lag_days
+    payload["freshness"]["latest_trade_date"] = latest_trade_date
+    payload["freshness"]["provenance_status"] = provenance_status
+payload["preserved_artifact"] = preserved_artifact
 payload["quality_gate"] = quality_gate
 payload["provenance"] = quality_gate.get("provenance", {})
 csv_path = Path(payload["csv_path"])
@@ -1531,6 +1598,7 @@ cleanup() {
         "${PYTHON_BIN}" "${PROJECT_ROOT}/scripts/prepare_intraday_batch.py" \
             --cursor "$INTRADAY_CURSOR_PATH" \
             --fail "${BATCH_FAILURE_REASON:-intraday_run_incomplete}" \
+            --max-retries "$INTRADAY_BATCH_MAX_FAILURES" \
             >>"$RESULT_LOG" 2>&1 || true
     fi
     cleanup_tmp_dir
@@ -1570,14 +1638,40 @@ if is_truthy "$INTRADAY_BATCH_SCAN" && \
    [ -f "${PROJECT_ROOT}/scripts/prepare_intraday_batch.py" ] && \
    [ -z "${AQSP_SYMBOLS:-}" ] && \
    [ "$INTRADAY_MAX_UNIVERSE" = "0" ]; then
-    if ! INTRADAY_BATCH_SYMBOLS="$(${PYTHON_BIN} "${PROJECT_ROOT}/scripts/prepare_intraday_batch.py" \
+    INTRADAY_BATCH_SYMBOLS=""
+    set +e
+    INTRADAY_BATCH_SYMBOLS="$(timeout --signal=TERM --kill-after=15s "${INTRADAY_BATCH_RESOLVE_TIMEOUT_SECONDS}s" \
+        "${PYTHON_BIN}" "${PROJECT_ROOT}/scripts/prepare_intraday_batch.py" \
         --source "$INTRADAY_SOURCE" \
         --batch-size "$INTRADAY_BATCH_SIZE" \
         --min-avg-amount "$INTRADAY_MIN_AVG_AMOUNT" \
-        --cursor "$INTRADAY_CURSOR_PATH" 2>>"$RESULT_LOG")"; then
-        log "[ERROR] 无法准备盘中股票批次；不退回全量重策略，避免再次阻塞服务器"
-        write_intraday_status "failed" "universe_resolution_failed；实时股票池解析失败" "1"
-        exit 1
+        --cursor "$INTRADAY_CURSOR_PATH" \
+        --cache-path "$INTRADAY_UNIVERSE_CACHE" 2>>"$RESULT_LOG")"
+    BATCH_RESOLVE_EXIT_CODE=$?
+    set -e
+    if [ "$BATCH_RESOLVE_EXIT_CODE" -ne 0 ]; then
+        if [ "$BATCH_RESOLVE_EXIT_CODE" -eq 124 ]; then
+            log "盘中股票池解析超时(${INTRADAY_BATCH_RESOLVE_TIMEOUT_SECONDS}s)；尝试已校验名单缓存"
+            set +e
+            INTRADAY_BATCH_SYMBOLS="$("${PYTHON_BIN}" "${PROJECT_ROOT}/scripts/prepare_intraday_batch.py" \
+                --batch-size "$INTRADAY_BATCH_SIZE" \
+                --cursor "$INTRADAY_CURSOR_PATH" \
+                --cache-path "$INTRADAY_UNIVERSE_CACHE" \
+                --bootstrap-state "${AQSP_SQLITE_REFRESH_CURSOR_PATH:-${RUNTIME_DATA_ROOT}/.state/sqlite-refresh-cursor.json}" \
+                --cache-only 2>>"$RESULT_LOG")"
+            BATCH_CACHE_EXIT_CODE=$?
+            set -e
+            if [ "$BATCH_CACHE_EXIT_CODE" -ne 0 ]; then
+                log "[ERROR] 实时名单缓存不可用；不退回全量重策略"
+                write_intraday_status "failed" "universe_resolution_timeout；实时股票池解析超时且缓存不可用" "$BATCH_RESOLVE_EXIT_CODE"
+                exit "$BATCH_RESOLVE_EXIT_CODE"
+            fi
+            log "实时名单超时，已使用校验通过的缓存批次"
+        else
+            log "[ERROR] 无法准备盘中股票批次；不退回全量重策略，避免再次阻塞服务器"
+            write_intraday_status "failed" "universe_resolution_failed；实时股票池解析失败" "$BATCH_RESOLVE_EXIT_CODE"
+            exit "$BATCH_RESOLVE_EXIT_CODE"
+        fi
     fi
     if [ -z "$INTRADAY_BATCH_SYMBOLS" ]; then
         log "[ERROR] 盘中股票批次为空；不运行重策略"
@@ -1590,9 +1684,10 @@ if is_truthy "$INTRADAY_BATCH_SCAN" && \
         exit 1
     fi
     INTRADAY_BATCH_ACTIVE="true"
-    # The explicit symbol list is already bounded by the cursor. Keep metadata
-    # at zero so batch size is not reported as a global universe cap.
-    INTRADAY_MAX_UNIVERSE="0"
+    # Pass the selected batch as a CLI hard cap too.  AQSP_SYMBOLS limits the
+    # normal path, but a nonzero cap prevents a future symbol-resolution
+    # regression from silently expanding this scheduled run to the full pool.
+    INTRADAY_MAX_UNIVERSE="$INTRADAY_BATCH_EXPECTED_COUNT"
     export AQSP_SYMBOLS="$INTRADAY_BATCH_SYMBOLS"
     log "盘中批次已准备: ${INTRADAY_BATCH_SYMBOLS}"
 fi
@@ -1773,9 +1868,15 @@ if [ "$OBSERVATION_ONLY" = "true" ]; then
         write_intraday_status "observation_only" "盘中最新产物已晋级 observation-only；不作推荐或正式 ledger 输入" "$SCRIPT_EXIT_CODE"
     fi
 elif ! is_truthy "$PARTIAL_SNAPSHOT_USED"; then
+    if ! "$PYTHON_BIN" "$PROJECT_ROOT/scripts/merge_intraday_batches.py" \
+        --existing "$INTRADAY_OUTPUT_CSV" --batch "$TMP_INTRADAY_OUTPUT_CSV" \
+        --date "$(date +%F)" >>"$RESULT_LOG" 2>&1; then
+        log "[ERROR] 盘中候选累计合并失败，保留上一版全部盘中产物"
+        write_intraday_status "failed" "盘中候选累计合并失败，未覆盖上一版有效产物" "1"
+        exit 1
+    fi
     replace_intraday_artifact "$TMP_INTRADAY_LEDGER" "$INTRADAY_LEDGER" "盘中 ledger"
     replace_intraday_artifact "$TMP_INTRADAY_REPORT" "$INTRADAY_REPORT" "盘中报告"
-    replace_intraday_artifact "$TMP_INTRADAY_OUTPUT_CSV" "$INTRADAY_OUTPUT_CSV" "盘中 CSV"
     write_intraday_status "completed" "盘中刷新完成；保护状态仅提示，不重写候选队列" "$RUN_EXIT_CODE"
 fi
 

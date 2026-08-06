@@ -9,6 +9,9 @@
 
 set -euo pipefail
 
+# 计划任务按北京时间解释日志日期、交易日和运行窗口。
+export TZ="Asia/Shanghai"
+
 # ============================ 配置 ============================
 
 PROJECT_ROOT="${AQSP_PROJECT_ROOT:-/opt/aqsp}"
@@ -84,7 +87,7 @@ log "运行时 Python: ${PYTHON_BIN}"
 export PYTHONPATH="${PROJECT_ROOT}/src:${PROJECT_ROOT}:${PYTHONPATH:-}"
 
 # 设置时区
-export TZ="${TZ:-Asia/Shanghai}"
+export TZ="Asia/Shanghai"
 
 is_truthy() {
     local value
@@ -141,9 +144,12 @@ if [ -z "$RUN_TASK_ID" ]; then
     log "拒绝直接运行 daily_pipeline：缺少 AQSP_RUN_TASK_ID，请统一走 scripts/bt_task.sh daily"
     exit 0
 fi
-if [ "$RUN_TASK_ID" != "daily" ]; then
+if [ "$RUN_TASK_ID" != "daily" ] && [ "$RUN_TASK_ID" != "daily_research" ]; then
     log "拒绝运行 daily_pipeline：AQSP_RUN_TASK_ID=${RUN_TASK_ID}，请统一走 scripts/bt_task.sh ${RUN_TASK_ID}"
     exit 0
+fi
+if [ "$RUN_TASK_ID" = "daily_research" ]; then
+    PIPELINE_ARGS+=( "--research-only" )
 fi
 DAILY_NOTIFY_RESOLVED="${AQSP_DAILY_NOTIFY:-${AQSP_NOTIFY:-true}}"
 if is_truthy "$DAILY_NOTIFY_RESOLVED"; then
@@ -200,7 +206,8 @@ esac
 
 # ============================ 部署Dashboard到服务器 ============================
 
-if [ "${AQSP_DEPLOY_DASHBOARD:-false}" = "true" ]; then
+if [ "${AQSP_DEPLOY_DASHBOARD:-false}" = "true" ] && [ "${AQSP_ALLOW_LEGACY_DASHBOARD_DEPLOY:-false}" = "true" ]; then
+    log "警告：启用的是历史静态 Dashboard 归档同步，不是生产公网发布"
     log "正在部署 Dashboard 到服务器..."
     DEPLOY_SCRIPT="${PROJECT_ROOT}/scripts/deploy_dashboard.sh"
     DASHBOARD_DIR="${PROJECT_ROOT}/dist/dashboard"
@@ -215,7 +222,7 @@ if [ "${AQSP_DEPLOY_DASHBOARD:-false}" = "true" ]; then
         log "⚠ 部署脚本或Dashboard目录不存在，跳过部署"
     fi
 else
-    log "Dashboard 部署已禁用（设置 AQSP_DEPLOY_DASHBOARD=true 启用）"
+    log "静态 Dashboard 归档同步已禁用；生产只允许不可变 release + React/FastAPI"
 fi
 
 # ============================ 数据生命周期管理 ============================

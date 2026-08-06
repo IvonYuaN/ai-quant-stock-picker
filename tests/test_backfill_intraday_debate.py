@@ -286,6 +286,39 @@ def test_backfill_continues_after_candidate_failure_and_persists_success(
     assert not lock_path.exists()
 
 
+def test_backfill_registers_advisory_agent_run_and_finishes_it(
+    tmp_path: Path, monkeypatch
+) -> None:
+    input_csv = tmp_path / "intraday_latest.csv"
+    output_path = tmp_path / "debate_results.jsonl"
+    status_path = tmp_path / "status.json"
+    lock_path = tmp_path / "backfill.lock"
+    agent_runs_path = tmp_path / "runtime" / "agent_runs.jsonl"
+    _write_candidates(input_csv, ("000001",))
+    _patch_runtime(monkeypatch)
+
+    count = backfill_intraday_debate.run_backfill(
+        input_csv=input_csv,
+        output_path=output_path,
+        task_id="intraday",
+        max_candidates=5,
+        force=True,
+        status_path=status_path,
+        lock_path=lock_path,
+        agent_runs_path=agent_runs_path,
+        parent_run_id="intraday-parent",
+        agent_deadline_seconds=120,
+    )
+
+    records = [json.loads(line) for line in agent_runs_path.read_text().splitlines()]
+    assert count == 1
+    assert [record["status"] for record in records] == ["running", "completed"]
+    assert {record["parent_run_id"] for record in records} == {"intraday-parent"}
+    assert {record["scope"] for record in records} == {
+        backfill_intraday_debate.AGENT_SCOPE
+    }
+
+
 def test_load_intraday_picks_includes_observation_only_only_when_explicit(
     tmp_path: Path,
 ) -> None:

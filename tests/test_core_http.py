@@ -1,0 +1,92 @@
+from __future__ import annotations
+
+from types import SimpleNamespace
+from typing import Any
+
+import aqsp.core.http as http
+
+
+class _Response:
+    def __enter__(self) -> "_Response":
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+
+def test_urlopen_no_macos_proxy_uses_empty_proxy_handler_on_darwin(monkeypatch) -> None:
+    calls: list[tuple[str, Any]] = []
+    response = _Response()
+
+    class Opener:
+        def open(self, request: object, *, timeout: float) -> _Response:
+            calls.append(("open", request, timeout))
+            return response
+
+    def fake_proxy_handler(payload: dict[str, str]) -> object:
+        calls.append(("proxy", payload))
+        return SimpleNamespace(payload=payload)
+
+    def fake_build_opener(handler: object) -> Opener:
+        calls.append(("build", handler))
+        return Opener()
+
+    monkeypatch.setattr(http.sys, "platform", "darwin")
+    monkeypatch.setattr(http.urllib.request, "ProxyHandler", fake_proxy_handler)
+    monkeypatch.setattr(http.urllib.request, "build_opener", fake_build_opener)
+    monkeypatch.setattr(
+        http.urllib.request,
+        "urlopen",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("raw urlopen")),
+    )
+
+    assert http.urlopen_no_macos_proxy("https://example.com", timeout=1.5) is response
+    assert calls[0] == ("proxy", {})
+    assert calls[-1] == ("open", "https://example.com", 1.5)
+
+
+def test_urlopen_no_macos_proxy_keeps_platform_default_off_macos(monkeypatch) -> None:
+    response = _Response()
+    calls: list[tuple[str, object, float]] = []
+
+    def fake_urlopen(request: object, *, timeout: float) -> _Response:
+        calls.append(("urlopen", request, timeout))
+        return response
+
+    monkeypatch.setattr(http.sys, "platform", "linux")
+    monkeypatch.setattr(http.urllib.request, "urlopen", fake_urlopen)
+
+    assert http.urlopen_no_macos_proxy("https://example.com", timeout=2.0) is response
+    assert calls == [("urlopen", "https://example.com", 2.0)]
+
+
+def test_requests_session_without_implicit_proxy_defaults_to_no_trust_env(
+    monkeypatch,
+) -> None:
+    sessions: list[Any] = []
+
+    class Session:
+        trust_env = True
+
+        def __init__(self) -> None:
+            sessions.append(self)
+
+    monkeypatch.delenv("AQSP_DATA_TRUST_ENV", raising=False)
+    monkeypatch.setattr(http.requests, "Session", Session)
+
+    session = http.requests_session_without_implicit_proxy()
+
+    assert session is sessions[0]
+    assert session.trust_env is False
+
+
+def test_requests_session_without_implicit_proxy_allows_explicit_opt_in(
+    monkeypatch,
+) -> None:
+    class Session:
+        trust_env = False
+
+    monkeypatch.setenv("AQSP_DATA_TRUST_ENV", "1")
+    monkeypatch.setattr(http.requests, "Session", Session)
+
+    assert http.requests_session_without_implicit_proxy().trust_env is True

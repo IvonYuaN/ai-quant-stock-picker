@@ -308,7 +308,7 @@ def test_diagnose_runtime_main_reports_debate_runtime_roles(
     assert "- debate_task_id: intraday" in output
     assert "- debate_enable_llm: True" in output
     assert "- debate_max_rounds: 3" in output
-    assert "- debate_max_candidates: 4" in output
+    assert "- debate_max_candidates: 3" in output
     assert "- debate_language: zh-CN" in output
     assert "- debate_explicit_roles: False" in output
     assert "- debate_context_roles_locked: False" in output
@@ -319,7 +319,7 @@ def test_diagnose_runtime_main_reports_debate_runtime_roles(
         in output
     )
     assert "- debate_role_count: 8" in output
-    assert "- debate_discussion_capacity: roles=8 rounds=3 candidates<=4" in output
+    assert "- debate_discussion_capacity: roles=8 rounds=3 candidates<=3" in output
     assert "- debate_llm_role_count: 7" in output
     assert (
         "- debate_llm_roles: cross_market,bull,bear,sector_leader,policy_sensitive,margin_trading,retail_mood"
@@ -704,7 +704,9 @@ def test_diagnose_runtime_warns_when_gate_state_fingerprint_drifted(
     monkeypatch.setenv("AQSP_PAPER_LEDGER", str(paper))
     monkeypatch.setenv("AQSP_GATE_NOTIFY_STATE_PATH", str(gate_state))
     monkeypatch.setenv("AQSP_WALKFORWARD_GATE_PATH", str(walkforward_gate))
-    monkeypatch.setattr("scripts.diagnose_runtime.today_shanghai", lambda: date(2026, 6, 21))
+    monkeypatch.setattr(
+        "scripts.diagnose_runtime.today_shanghai", lambda: date(2026, 6, 21)
+    )
     monkeypatch.setattr("scripts.diagnose_runtime.PROJECT_ROOT", tmp_path)
     monkeypatch.setattr(
         "scripts.diagnose_runtime.load_research_summary",

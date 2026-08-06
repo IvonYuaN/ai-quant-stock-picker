@@ -107,9 +107,15 @@ class IntradayUniverseCursor:
         batch = self._batch_from_state(current)
         self.commit(batch, scanned_count=scanned_count)
 
-    def fail_current(self, error: str) -> None:
+    def fail_current(self, error: str, *, max_retries: int = 2) -> bool:
         current = self._read()
-        self.fail(self._batch_from_state(current), error)
+        batch = self._batch_from_state(current)
+        failures = int(current.get("consecutive_failures") or 0) + 1
+        if failures > max(0, max_retries):
+            self.skip(batch, error=error, failures=failures)
+            return True
+        self.fail(batch, error, failures=failures)
+        return False
 
     def commit(self, batch: IntradayBatch, *, scanned_count: int) -> None:
         if scanned_count != len(batch.symbols):
@@ -140,7 +146,7 @@ class IntradayUniverseCursor:
             }
         )
 
-    def fail(self, batch: IntradayBatch, error: str) -> None:
+    def fail(self, batch: IntradayBatch, error: str, *, failures: int = 1) -> None:
         self._write(
             {
                 "trade_date": batch.trade_date,
@@ -156,7 +162,35 @@ class IntradayUniverseCursor:
                 "coverage_pct": round(batch.offset / batch.universe_count, 6),
                 "last_batch_finished_at": "",
                 "last_error": str(error or "batch failed")[:500],
+                "consecutive_failures": max(1, failures),
                 "active_state": "failed",
+            }
+        )
+
+    def skip(self, batch: IntradayBatch, *, error: str, failures: int) -> None:
+        next_offset = batch.offset + len(batch.symbols)
+        cycle_id = batch.cycle_id
+        if next_offset >= batch.universe_count:
+            next_offset = 0
+            cycle_id += 1
+        self._write(
+            {
+                "trade_date": batch.trade_date,
+                "universe_version": batch.universe_version,
+                "universe_count": batch.universe_count,
+                "batch_size": batch.batch_size,
+                "next_offset": next_offset,
+                "cycle_id": cycle_id,
+                "last_successful_offset": int(self._read().get("last_successful_offset") or 0),
+                "last_skipped_offset": batch.offset,
+                "last_skipped_batch_id": batch.batch_id,
+                "last_skipped_symbols": list(batch.symbols),
+                "skipped_count": len(batch.symbols),
+                "coverage_pct": batch.coverage_pct,
+                "last_batch_finished_at": now_shanghai().isoformat(timespec="seconds"),
+                "last_error": str(error or "batch failed")[:500],
+                "consecutive_failures": failures,
+                "active_state": "skipped",
             }
         )
 

@@ -181,6 +181,15 @@ export PYTHONPATH="${PROJECT_ROOT}/src:${PROJECT_ROOT}:${PYTHONPATH:-}"
 export AQSP_MODE="closing"
 export AQSP_RUN_TASK_ID="closing"
 
+if ! "${PYTHON_BIN}" - <<'AQSP_CALENDAR_PY' >/dev/null 2>&1
+from aqsp.core.time import is_trading_day, today_shanghai
+raise SystemExit(0 if is_trading_day(today_shanghai()) else 1)
+AQSP_CALENDAR_PY
+then
+    log "今日非交易日，尾盘策略正常跳过"
+    exit 0
+fi
+
 # ============================ 执行 ============================
 
 log "运行尾盘溢价策略 (timeout=${RUN_TIMEOUT_SECONDS}s)..."

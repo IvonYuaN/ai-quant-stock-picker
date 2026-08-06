@@ -35,8 +35,8 @@
 
 ## 5. 运行、通知和 Dashboard
 
-- [ ] `scripts/daily_pipeline.sh` 或服务器计划任务完整跑批 exit code 为 0。
-- [ ] `reports/latest.md`、`reports/briefing.md`、`reports/closing_review.md` 和 Dashboard 静态产物成功刷新。
+- [ ] 当前 immutable release 的 `bt_task.sh daily` 完整跑批 exit code 为 0。
+- [ ] `/opt/aqsp/data` 下的报告、快照和运行日志成功刷新；静态 Dashboard 仅作离线归档。
 - [ ] 通知模式默认为 summary；异常告警与正常流水不会重复轰炸。
 - [ ] 公网 Dashboard health 可用；视觉检查只用隔离无头浏览器和 AQSP 专属锁。
 - [ ] 历史归档内容在首页/推进板降噪为归档记录，不渲染成今日行动建议。

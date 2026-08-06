@@ -1,19 +1,86 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from dataclasses import replace
+from datetime import date, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
 
+from aqsp.core.errors import DataError
+from aqsp.core.time import latest_completed_trading_day
 from aqsp.news.catalysts import CatalystEvent, CatalystReport, serialize_catalyst_report
 from aqsp.web.home_snapshot import (
     load_home_dashboard_snapshot,
     load_home_snapshot_index,
 )
 from scripts import write_home_snapshot
+
+
+def _variant_result_payload(count: int = 100) -> dict[str, object]:
+    end_date = "2026-07-24"
+    variants = []
+    for index in range(count):
+        symbol = f"{index:06d}"
+        evidence = {
+            "date": end_date,
+            "execution_date": end_date,
+            "symbol": symbol,
+            "macd_hist": 0.12,
+            "kdj_j": 55.0,
+            "volume_ratio": 1.35,
+            "atr_pct": 2.4,
+        }
+        variants.append(
+            {
+                "variant_id": f"variant-{index}",
+                "strategy_signature": f"mode-{index}",
+                "holdings_signature": f"{symbol}:100",
+                "holdings_date": end_date,
+                "previous_holdings_date": "2026-07-23",
+                "initial_cash": 100000.0,
+                "holdings": [
+                    {
+                        "symbol": symbol,
+                        "name": f"样本{index}",
+                        "quantity": 100,
+                        "entry_evidence": evidence,
+                    }
+                ],
+                "previous_holdings": [],
+                "recent_actions": [
+                    {
+                        "date": end_date,
+                        "symbol": symbol,
+                        "side": "buy",
+                        "reason": "MACD/KDJ/量比确认",
+                        "evidence": evidence,
+                    }
+                ],
+                "adjustments": [f"买入 {symbol}：MACD/KDJ/量比/ATR 技术面确认。"],
+                "technical_evidence": [evidence],
+            }
+        )
+    return {
+        "schema_version": "variant-suite-v2",
+        "generated_at": "2026-07-24T18:00:00+08:00",
+        "data_mode": "historical_raw_unadjusted",
+        "end_date": end_date,
+        "initial_cash": 100000.0,
+        "universe": {
+            "supported_symbols": 4920,
+            "selected_symbols": 600,
+            "batch_active": True,
+            "batch_id": "3:1200",
+            "batch_size": 600,
+            "cycle_id": 3,
+            "coverage_pct": 0.3659,
+            "filters": "沪市主板+深市主板+创业板；排除 ST/*ST/PT/退市/科创/北交/B股",
+        },
+        "variants": variants,
+    }
 
 
 def _candidate(symbol: str, score: float) -> SimpleNamespace:
@@ -34,6 +101,8 @@ def _candidate(symbol: str, score: float) -> SimpleNamespace:
         ret20_pct=12.75,
         volume_ratio=1.6,
         rsi12=64.2,
+        macd_hist=0.1234,
+        kdj_j=58.6,
         bias20_pct=2.1,
         stop_loss=11.1,
         take_profit=14.8,
@@ -82,6 +151,334 @@ def test_walkforward_evidence_reads_completed_status_and_sidecar_in_shanghai(
     assert updated_at is not None
     assert updated_at.tzinfo == ZoneInfo("Asia/Shanghai")
     assert updated_at.isoformat() == "2026-07-18T00:00:00+08:00"
+
+
+def test_variant_suite_snapshot_reads_variant_results_metadata(
+    monkeypatch, tmp_path: Path
+) -> None:
+    path = tmp_path / "variant_results.json"
+    path.write_text(
+        json.dumps(
+            _variant_result_payload(),
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AQSP_VARIANT_RESULTS", str(path))
+
+    suite = write_home_snapshot._variant_suite_snapshot()
+
+    assert suite.schema_version == "variant-suite-v2"
+    assert suite.end_date == "2026-07-24"
+    assert suite.variant_count == 100
+    assert suite.selected_symbols == 600
+    assert suite.batch_id == "3:1200"
+    assert suite.coverage_pct == 0.3659
+
+
+def test_universe_snapshot_exposes_partial_daily_research_coverage(
+    monkeypatch, tmp_path: Path
+) -> None:
+    cursor_path = tmp_path / "daily-research-cursor.json"
+    cursor_path.write_text(
+        json.dumps(
+            {
+                "trade_date": "2026-07-29",
+                "universe_count": 237,
+                "batch_size": 10,
+                "scanned_count": 10,
+                "last_batch_id": "2026-07-29:1:0",
+                "cycle_id": 1,
+                "coverage_pct": 10 / 237,
+                "active_state": "committed",
+                "last_error": "",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AQSP_DAILY_RESEARCH_CURSOR_PATH", str(cursor_path))
+    monkeypatch.setattr(
+        write_home_snapshot, "today_shanghai", lambda: date(2026, 7, 29)
+    )
+
+    universe = write_home_snapshot._universe_snapshot()
+
+    assert universe.total == 237
+    assert universe.resolved == 10
+    assert universe.screened == 10
+    assert universe.batch_id == "2026-07-29:1:0"
+    assert universe.batch_size == 10
+    assert universe.coverage_pct == pytest.approx(10 / 237)
+    assert universe.source == "sqlite_db"
+
+
+def test_universe_snapshot_exposes_verified_raw_refresh_coverage(
+    monkeypatch, tmp_path: Path
+) -> None:
+    cursor_path = tmp_path / "sqlite-refresh-cursor.json"
+    cursor_path.write_text(
+        json.dumps(
+            {
+                "target_day": "2026-07-29",
+                "universe_size": 4464,
+                "offset": 360,
+                "target_day_symbols": ["600000", "000001", "300001", "600000"],
+                "last_batch": {"processed_symbols": 120, "coverage_error": None},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AQSP_SQLITE_REFRESH_CURSOR_PATH", str(cursor_path))
+    monkeypatch.setattr(
+        write_home_snapshot,
+        "latest_completed_trading_day",
+        lambda: date(2026, 7, 29),
+    )
+
+    universe = write_home_snapshot._universe_snapshot()
+
+    assert universe.total == 4464
+    assert universe.resolved == 3
+    assert universe.screened == 3
+    assert universe.source == "sqlite_raw_refresh"
+    assert universe.batch_active is True
+    assert universe.batch_id == "2026-07-29"
+    assert universe.batch_size == 120
+    assert universe.cycle_id == 4
+    assert universe.coverage_pct == pytest.approx(3 / 4464)
+    assert universe.last_error == "原始日线仅覆盖 3/4464；全市场刷新尚未完成"
+
+
+def test_universe_snapshot_exposes_partial_raw_rebuild_coverage(
+    monkeypatch, tmp_path: Path
+) -> None:
+    state_path = tmp_path / "raw-rebuild-cursor.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "target_day": "2026-07-29",
+                "universe_size": 4464,
+                "covered_ts_codes": ["600000.SH", "000001.SZ", "600000.SH"],
+                "next_offset": 32,
+                "complete": False,
+                "publish_ready": False,
+                "update": {"processed_symbols": 16},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AQSP_RAW_REBUILD_STATE_PATH", str(state_path))
+    monkeypatch.setattr(
+        write_home_snapshot,
+        "latest_completed_trading_day",
+        lambda: date(2026, 7, 29),
+    )
+
+    universe = write_home_snapshot._universe_snapshot()
+
+    assert universe.source == "sqlite_raw_rebuild"
+    assert universe.total == 4464
+    assert universe.resolved == 2
+    assert universe.batch_active is True
+    assert universe.batch_size == 16
+    assert universe.cycle_id == 3
+    assert universe.coverage_pct == pytest.approx(2 / 4464)
+    assert universe.last_error == "原始日线重建仅覆盖 2/4464；全市场重建尚未完成"
+
+
+def test_universe_snapshot_accepts_verified_raw_exclusions_without_cursor_reset(
+    monkeypatch, tmp_path: Path
+) -> None:
+    cursor_path = tmp_path / "sqlite-refresh-cursor.json"
+    cursor_path.write_text(
+        json.dumps(
+            {
+                "target_day": "2026-07-29",
+                "universe_size": 4466,
+                "offset": 2040,
+                "target_day_symbols": [f"600{index:03d}" for index in range(4399)],
+                "last_batch": {
+                    "processed_symbols": 2880,
+                    "raw_max_trade_date": "2026-07-29",
+                    "failed_symbols": 67,
+                    "coverage_error": None,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AQSP_SQLITE_REFRESH_CURSOR_PATH", str(cursor_path))
+    monkeypatch.setattr(
+        write_home_snapshot,
+        "latest_completed_trading_day",
+        lambda: date(2026, 7, 29),
+    )
+
+    universe = write_home_snapshot._universe_snapshot()
+
+    assert universe.batch_active is False
+    assert universe.coverage_pct == pytest.approx(4399 / 4466)
+    assert (
+        universe.last_error
+        == "原始日线当日可用 4399/4466；67 只未返回当日日线，已排除；"
+        "完成轮次覆盖达到 98% 下限，成功股票进入研究池"
+    )
+
+
+def test_write_home_snapshot_parser_uses_runtime_output_path(
+    monkeypatch, tmp_path: Path
+) -> None:
+    output = tmp_path / "runtime" / "home_dashboard_snapshot.json"
+    monkeypatch.setenv("AQSP_HOME_SNAPSHOT_PATH", str(output))
+
+    args = write_home_snapshot.build_parser().parse_args([])
+
+    assert args.output == str(output)
+
+
+def test_variant_snapshot_keeps_all_standard_experiment_variants(
+    monkeypatch, tmp_path: Path
+) -> None:
+    path = tmp_path / "variant_results.json"
+    path.write_text(
+        json.dumps(_variant_result_payload(148)),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AQSP_VARIANT_RESULTS", str(path))
+
+    variants = write_home_snapshot._variant_snapshot()
+
+    assert len(variants) == 148
+
+
+def test_variant_suite_snapshot_hides_legacy_or_insufficient_artifact(
+    monkeypatch, tmp_path: Path
+) -> None:
+    path = tmp_path / "variant_results.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "variant-suite-v1",
+                "initial_cash": 100000.0,
+                "universe": {"selected_symbols": 0},
+                "variants": [{"variant_id": "legacy"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AQSP_VARIANT_RESULTS", str(path))
+
+    assert write_home_snapshot._variant_suite_snapshot().variant_count == 0
+    assert write_home_snapshot._variant_snapshot() == ()
+
+
+def test_variant_suite_snapshot_exposes_raw_refresh_blocker(
+    monkeypatch, tmp_path: Path
+) -> None:
+    target_day = latest_completed_trading_day().isoformat()
+    cursor_path = tmp_path / "sqlite-refresh-cursor.json"
+    cursor_path.write_text(
+        json.dumps(
+            {
+                "target_day": target_day,
+                "universe_size": 4464,
+                "offset": 120,
+                "target_day_symbols": [f"600{index:03d}" for index in range(122)],
+                "last_batch": {"target_day_symbol_count": 122, "total_symbols": 4464},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AQSP_SQLITE_REFRESH_CURSOR_PATH", str(cursor_path))
+    monkeypatch.setenv("AQSP_VARIANT_RESULTS", str(tmp_path / "missing.json"))
+
+    suite = write_home_snapshot._variant_suite_snapshot()
+
+    assert suite.variant_count == 0
+    assert suite.last_error == "变体等待：原始日线仅覆盖 122/4464；全市场刷新尚未完成"
+
+
+def test_recommendation_gate_blocks_partial_raw_refresh_coverage() -> None:
+    gate = write_home_snapshot._recommendation_gate(
+        provider=SimpleNamespace(paper_ledger_path=None),
+        runtime=SimpleNamespace(),
+        source=SimpleNamespace(status="run_completed", lag_days=0),
+        message_status="可用",
+        evaluated_at=datetime(2026, 7, 30, 16, tzinfo=ZoneInfo("Asia/Shanghai")),
+        universe=write_home_snapshot.HomeSnapshotUniverse(
+            total=4464,
+            resolved=122,
+            source="sqlite_raw_refresh",
+            batch_active=True,
+            last_error="原始日线仅覆盖 122/4464；全市场刷新尚未完成",
+        ),
+    )
+
+    assert gate.recommendation_allowed is False
+    assert gate.status == "blocked_incomplete_raw_data"
+    assert gate.reasons == ("原始日线仅覆盖 122/4464；全市场刷新尚未完成",)
+
+
+def test_recommendation_gate_blocks_partial_raw_rebuild_coverage() -> None:
+    gate = write_home_snapshot._recommendation_gate(
+        provider=SimpleNamespace(paper_ledger_path=None),
+        runtime=SimpleNamespace(),
+        source=SimpleNamespace(status="run_completed", lag_days=0),
+        message_status="可用",
+        evaluated_at=datetime(2026, 7, 30, 16, tzinfo=ZoneInfo("Asia/Shanghai")),
+        universe=write_home_snapshot.HomeSnapshotUniverse(
+            total=4464,
+            resolved=122,
+            source="sqlite_raw_rebuild",
+            batch_active=True,
+            coverage_pct=122 / 4464,
+            last_error="原始日线重建仅覆盖 122/4464；全市场重建尚未完成",
+        ),
+    )
+
+    assert gate.recommendation_allowed is False
+    assert gate.status == "blocked_incomplete_raw_data"
+    assert gate.reasons == ("原始日线重建仅覆盖 122/4464；全市场重建尚未完成",)
+
+
+def test_recommendation_gate_allows_completed_raw_refresh_with_excluded_symbols() -> (
+    None
+):
+    gate = write_home_snapshot._recommendation_gate(
+        provider=SimpleNamespace(paper_ledger_path=None),
+        runtime=SimpleNamespace(),
+        source=SimpleNamespace(status="run_completed", lag_days=0),
+        message_status="可用",
+        evaluated_at=datetime(2026, 7, 30, 18, tzinfo=write_home_snapshot.SHANGHAI_TZ),
+        universe=write_home_snapshot.HomeSnapshotUniverse(
+            total=4466,
+            resolved=4399,
+            source="sqlite_raw_refresh",
+            batch_active=False,
+            last_error=(
+                "原始日线当日可用 4399/4466；67 只未返回当日日线，已排除；"
+                "完成轮次覆盖达到 98% 下限，成功股票进入研究池"
+            ),
+        ),
+    )
+
+    assert gate.status != "blocked_incomplete_raw_data"
+
+
+def test_variant_suite_snapshot_hides_artifact_without_current_technical_evidence(
+    monkeypatch, tmp_path: Path
+) -> None:
+    path = tmp_path / "variant_results.json"
+    payload = _variant_result_payload()
+    first = payload["variants"][0]
+    first["technical_evidence"] = []
+    first["recent_actions"] = []
+    first["holdings"][0].pop("entry_evidence")
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setenv("AQSP_VARIANT_RESULTS", str(path))
+
+    assert write_home_snapshot._variant_suite_snapshot().variant_count == 0
+    assert write_home_snapshot._variant_snapshot() == ()
 
 
 @pytest.mark.parametrize("status", ["blocked_resources", "timeout", "failed"])
@@ -247,7 +644,13 @@ def test_write_home_snapshot_builds_bounded_advisory_only_payload(monkeypatch) -
         "600005",
     ]
 
-    assert [item.score for item in snapshot.candidates] == [88.0, 80.0, 72.0, 66.0, 99.0]
+    assert [item.score for item in snapshot.candidates] == [
+        88.0,
+        80.0,
+        72.0,
+        66.0,
+        99.0,
+    ]
     assert snapshot.candidates[0].deterministic_reasons == ("MA20 斜率向上",)
     assert snapshot.candidates[0].strategies == ("ma_pullback",)
     assert snapshot.candidates[0].evidence_status == "有独立规则证据"
@@ -264,20 +667,18 @@ def test_write_home_snapshot_builds_bounded_advisory_only_payload(monkeypatch) -
         ("20日动能", "+12.75%"),
         ("量比", "1.60x"),
         ("RSI12", "64.2"),
+        ("MACD柱", "+0.123"),
+        ("KDJ-J", "58.6"),
         ("MA20偏离", "+2.10%"),
         ("纸面止损", "11.10"),
         ("纸面止盈", "14.80"),
     ]
-    assert snapshot.debate is not None
-    assert snapshot.debate.symbol == "600003"
-    assert snapshot.debate.conclusion == "委员会建议复核"
+    assert snapshot.debate is None
     assert "999" not in snapshot.to_json()
     assert "raise" not in snapshot.to_json()
-    assert snapshot.summaries == (
-        "讨论复核 1/5 只；4 只未通过质量门，已隐藏",
-        "当前运行已落盘",
-        "重点看首个确定性候选",
-    )
+    assert snapshot.summaries[0].startswith("研究重点：600001 示例（纸面复核）")
+    assert snapshot.summaries[1].startswith("复核条件：600001 示例，")
+    assert "讨论复核 1/5 只；4 只未通过质量门，已隐藏" not in snapshot.summaries
     assert snapshot.stale_after == "2026-07-10T15:31:00+08:00"
 
 
@@ -296,6 +697,213 @@ def test_recommendation_gate_keeps_quote_candidates_when_news_refresh_fails() ->
 
     assert gate.recommendation_allowed is True
     assert gate.reasons == ()
+
+
+def test_snapshot_candidates_keeps_live_recommendation_with_technical_evidence() -> (
+    None
+):
+    live = _candidate("600010", 88.0)
+    live.action_label = "实时推荐"
+    payload = SimpleNamespace(
+        task_view=SimpleNamespace(detail_cards=(live,)), spotlights=()
+    )
+
+    candidates = write_home_snapshot._snapshot_candidates(payload)
+
+    assert [candidate.symbol for candidate in candidates] == ["600010"]
+    assert any(metric.label == "MACD柱" for metric in candidates[0].technical_metrics)
+
+
+def test_snapshot_candidate_keeps_required_technical_contract_when_values_missing() -> (
+    None
+):
+    candidate = _candidate("600011", 88.0)
+    candidate.volume_ratio = None
+    candidate.macd_hist = None
+    candidate.kdj_j = None
+
+    snapshot_candidate = write_home_snapshot._snapshot_candidate(candidate)
+
+    assert snapshot_candidate is not None
+    required = {
+        metric.key: metric.value
+        for metric in snapshot_candidate.technical_metrics
+        if metric.key in {"volume_ratio", "macd_hist", "kdj_j"}
+    }
+    assert required == {
+        "volume_ratio": "未提供",
+        "macd_hist": "未提供",
+        "kdj_j": "未提供",
+    }
+
+
+def test_snapshot_candidate_reads_required_metrics_from_preserved_runtime_mapping() -> (
+    None
+):
+    candidate = _candidate("600012", 88.0)
+    candidate.volume_ratio = None
+    candidate.macd_hist = None
+    candidate.kdj_j = None
+    candidate.metrics = {
+        "volume_ratio": 1.42,
+        "macd_hist": 0.1234,
+        "kdj_j": 58.6,
+    }
+
+    snapshot_candidate = write_home_snapshot._snapshot_candidate(candidate)
+
+    assert snapshot_candidate is not None
+    assert {
+        metric.key: metric.value
+        for metric in snapshot_candidate.technical_metrics
+        if metric.key in {"volume_ratio", "macd_hist", "kdj_j"}
+    } == {
+        "volume_ratio": "1.42x",
+        "macd_hist": "+0.123",
+        "kdj_j": "58.6",
+    }
+
+
+def test_write_home_snapshot_hides_discussion_when_multi_agent_artifact_missing(
+    monkeypatch,
+) -> None:
+    provider = _Provider()
+    original = provider.home_digest_payload
+
+    def payload_without_agent_debate(
+        task_id: str, signal_date: str = ""
+    ) -> SimpleNamespace:
+        payload = original(task_id, signal_date)
+        first = payload.task_view.detail_cards[0]
+        first.risks = ("量能确认前不形成正式推荐",)
+        payload.debates = ()
+        return payload
+
+    provider.home_digest_payload = payload_without_agent_debate
+    monkeypatch.setattr(
+        write_home_snapshot,
+        "now_shanghai",
+        lambda: datetime(2026, 7, 10, 15, 1, tzinfo=ZoneInfo("Asia/Shanghai")),
+    )
+
+    snapshot = write_home_snapshot.build_home_snapshot(
+        provider, signal_date="2026-07-10", task_id="intraday"
+    )
+
+    assert snapshot.debates == ()
+
+
+def test_write_home_snapshot_rejects_two_role_runtime_debate(
+    monkeypatch, tmp_path: Path
+) -> None:
+    provider = _Provider()
+    debate_path = tmp_path / "debates.jsonl"
+    debate_path.write_text(
+        json.dumps(
+            {
+                "symbol": "600001",
+                "name": "示例",
+                "related_signal_date": "2026-07-10",
+                "rounds": [
+                    {"round_num": 1, "opinions": []},
+                    {
+                        "round_num": 2,
+                        "opinions": [
+                            {"role": "bull", "stance": "bullish"},
+                            {"role": "risk_control", "stance": "bearish"},
+                        ],
+                    },
+                ],
+                "final_vote": {"bull": "bullish", "risk_control": "bearish"},
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AQSP_DEBATE_RESULTS", str(debate_path))
+
+    snapshot = write_home_snapshot.build_home_snapshot(
+        provider, signal_date="2026-07-10", task_id="intraday"
+    )
+
+    assert snapshot.debates == ()
+
+
+def test_variant_suite_reports_missing_artifact_reason(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("AQSP_VARIANT_RESULTS", str(tmp_path / "missing.json"))
+
+    suite = write_home_snapshot._variant_suite_snapshot()
+
+    assert suite.last_error == "变体产物不存在。"
+
+
+def test_variant_suite_exposes_staged_refresh_progress(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("AQSP_VARIANT_RESULTS", str(tmp_path / "missing.json"))
+    status_path = tmp_path / "variant_refresh_status.json"
+    status_path.write_text(
+        json.dumps(
+            {
+                "status": "staged",
+                "message": "等待下一错峰窗口继续。",
+                "profiles_staged": 32,
+                "profiles_total": 128,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AQSP_VARIANT_REFRESH_STATUS", str(status_path))
+
+    suite = write_home_snapshot._variant_suite_snapshot()
+
+    assert (
+        suite.last_error
+        == "变体分段构建中：已完成 32/128 个变体；等待下一错峰窗口继续。"
+    )
+
+
+def test_variant_suite_exposes_waiting_refresh_window(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("AQSP_VARIANT_RESULTS", str(tmp_path / "missing.json"))
+    status_path = tmp_path / "variant_refresh_status.json"
+    status_path.write_text(
+        json.dumps(
+            {"status": "waiting", "message": "等待收盘后错峰运行。"},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AQSP_VARIANT_REFRESH_STATUS", str(status_path))
+
+    suite = write_home_snapshot._variant_suite_snapshot()
+
+    assert suite.last_error == "变体等待：等待收盘后错峰运行。"
+
+
+def test_research_conclusion_summaries_are_candidate_first_and_flag_missing_metrics() -> (
+    None
+):
+    candidate = write_home_snapshot._snapshot_candidate(_candidate("600006", 70.0))
+    assert candidate is not None
+    candidate = replace(
+        candidate,
+        technical_metrics=tuple(
+            replace(metric, value="未提供") if metric.key == "macd_hist" else metric
+            for metric in candidate.technical_metrics
+        ),
+    )
+
+    summaries = write_home_snapshot._research_conclusion_summaries((candidate,))
+
+    assert summaries[0].startswith("研究重点：600006 示例（纸面复核）；依据：")
+    assert summaries[1].startswith("复核条件：600006 示例，")
+    assert "MACD柱/KDJ-J 未提供" in summaries[2]
 
 
 def test_snapshot_candidate_maps_freshness_label_when_status_is_missing() -> None:
@@ -361,6 +969,14 @@ def test_write_home_snapshot_backfills_current_runtime_debate_when_provider_omit
                 "primary_risk_gate": "量能",
                 "next_trigger": "放量",
                 "final_vote": {"bull": "bullish", "bear": "bearish", "risk": "neutral"},
+                "process_recorded": True,
+                "conclusion_recorded": True,
+                "evidence_sufficient": True,
+                "viewpoint_buckets": {
+                    "technical": ["MACD 由负转正"],
+                    "risk_counterevidence": ["量能不足"],
+                },
+                "disagreement_points": ["趋势延续与量能不足存在分歧"],
                 "rounds": [
                     {"round_num": 1, "summary": "首轮"},
                     {"round_num": 2, "summary": "复核"},
@@ -391,7 +1007,9 @@ def test_write_home_snapshot_resolves_news_sidecar_from_runtime_root(
     )
 
 
-def test_write_home_snapshot_makes_hidden_candidate_count_explicit(monkeypatch) -> None:
+def test_write_home_snapshot_keeps_candidate_conclusion_first_when_list_is_capped(
+    monkeypatch,
+) -> None:
     provider = _Provider()
     original_payload = provider.home_digest_payload
     original_runtime = provider.runtime_overview
@@ -429,7 +1047,8 @@ def test_write_home_snapshot_makes_hidden_candidate_count_explicit(monkeypatch) 
     )
 
     assert len(snapshot.candidates) == 5
-    assert "待复核 6 只，首页展示 5 只" in snapshot.summaries[0]
+    assert snapshot.summaries[0].startswith("研究重点：600001 示例（纸面复核）")
+    assert not any("首页展示" in summary for summary in snapshot.summaries)
 
 
 def test_write_home_snapshot_downgrades_recommendations_when_gate_is_blocked(
@@ -982,7 +1601,7 @@ def test_write_home_snapshot_maps_midday_to_latest_intraday_artifact() -> None:
     write_home_snapshot.build_home_snapshot(provider, task_id="midday")
 
     assert provider.digest_calls == [
-        ("intraday", write_home_snapshot.today_shanghai().isoformat())
+        ("intraday", write_home_snapshot.latest_completed_trading_day().isoformat())
     ]
 
 
@@ -1001,7 +1620,10 @@ def test_write_home_snapshot_hides_debate_for_non_current_candidate(
     )
 
     assert snapshot.debate is None
-    assert snapshot.summaries[0] == "委员会结论缺少当前候选映射，已隐藏"
+    assert snapshot.summaries[0].startswith("研究重点：600001 示例（纸面复核）")
+    assert (
+        "多 Agent 讨论未达到独立证据、分歧与角色数量门槛，已隐藏" in snapshot.summaries
+    )
     assert "600999" not in snapshot.to_json()
 
 
@@ -1276,6 +1898,58 @@ class _DateAwareProvider(_Provider):
         return payload
 
 
+def test_write_home_snapshot_uses_latest_completed_day_during_market_hours(
+    monkeypatch,
+) -> None:
+    provider = _DateAwareProvider()
+    monkeypatch.setattr(
+        write_home_snapshot,
+        "latest_completed_trading_day",
+        lambda: date(2026, 7, 9),
+    )
+
+    snapshot = write_home_snapshot.build_home_snapshot(provider, task_id="intraday")
+
+    assert snapshot.selected_date == "2026-07-09"
+    assert provider.digest_calls == [("intraday", "2026-07-09")]
+    assert provider.runtime_dates == ["2026-07-09"]
+
+
+def test_snapshot_source_uses_intraday_provenance_for_completed_day(
+    monkeypatch, tmp_path
+) -> None:
+    status_path = tmp_path / "intraday_refresh_status.json"
+    status_path.write_text(
+        json.dumps(
+            {
+                "provenance": {
+                    "requested_source": "online_first",
+                    "actual_source": "tencent",
+                    "latest_trade_date": "2026-07-10",
+                    "lag_days": 0,
+                    "status": "verified",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AQSP_INTRADAY_STATUS", str(status_path))
+    monkeypatch.setattr(
+        write_home_snapshot,
+        "latest_completed_trading_day",
+        lambda: date(2026, 7, 9),
+    )
+
+    source = write_home_snapshot._snapshot_source(
+        SimpleNamespace(), SimpleNamespace(source_status={}), selected_date="2026-07-09"
+    )
+
+    assert source.effective == "tencent"
+    assert source.latest_trade_date == "2026-07-09"
+    assert source.lag_days == 0
+    assert source.status == "verified"
+
+
 def test_write_home_snapshot_builds_optional_four_day_index(monkeypatch) -> None:
     provider = _DateAwareProvider()
     monkeypatch.setattr(
@@ -1317,6 +1991,60 @@ def test_merge_home_snapshot_index_preserves_unrequested_history() -> None:
     original = existing.snapshot_for_date("2026-07-10")
     assert historical.candidates == original.candidates
     assert historical.available_dates == merged.available_dates
+
+
+def test_home_snapshot_index_keeps_existing_history_without_rebuilding_it(
+    monkeypatch,
+) -> None:
+    provider = _DateAwareProvider()
+    existing = write_home_snapshot.build_home_snapshot_index(
+        provider, signal_date="2026-07-10", task_id="intraday"
+    )
+    current = write_home_snapshot.build_home_snapshot(
+        provider, signal_date="2026-07-11", task_id="intraday"
+    )
+    current = replace(current, available_dates=("2026-07-11", "2026-07-10"))
+
+    def fail_historical(*_args, **_kwargs):
+        raise AssertionError("existing history must not be rebuilt")
+
+    monkeypatch.setattr(write_home_snapshot, "build_home_snapshot", fail_historical)
+
+    index = write_home_snapshot.build_home_snapshot_index(
+        provider,
+        task_id="intraday",
+        initial_snapshot=current,
+        existing_index=existing,
+    )
+
+    assert index.available_dates == ("2026-07-11", "2026-07-10")
+    assert index.snapshot_for_date("2026-07-10") == existing.snapshot_for_date(
+        "2026-07-10"
+    )
+
+
+def test_home_snapshot_index_keeps_current_snapshot_when_new_history_is_missing(
+    monkeypatch,
+) -> None:
+    provider = _DateAwareProvider()
+    current = write_home_snapshot.build_home_snapshot(
+        provider, signal_date="2026-07-11", task_id="intraday"
+    )
+    current = replace(current, available_dates=("2026-07-11", "2026-07-10"))
+
+    def missing_history(*_args, **_kwargs):
+        raise DataError("historical artifact missing")
+
+    monkeypatch.setattr(write_home_snapshot, "build_home_snapshot", missing_history)
+
+    index = write_home_snapshot.build_home_snapshot_index(
+        provider,
+        task_id="intraday",
+        initial_snapshot=current,
+    )
+
+    assert index.available_dates == ("2026-07-11",)
+    assert index.snapshot_for_date("2026-07-11") == current
 
 
 def test_write_home_snapshot_cli_honors_output_date_and_task_id(
