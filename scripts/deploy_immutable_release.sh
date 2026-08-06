@@ -339,7 +339,10 @@ PY
 
 check_variant_results() {
     local variant_path="${AQSP_VARIANT_RESULTS:-${RUNTIME_DATA_ROOT}/runtime/variant_results.json}"
-    [ -f "$variant_path" ] || fail "variant results missing: $variant_path"
+    if [ ! -f "$variant_path" ]; then
+        log "variant results missing: $variant_path"
+        return 1
+    fi
     local command=(
         "$PYTHON_BIN" "$RELEASE_DIR/scripts/check_variant_results.py"
         "$variant_path"
