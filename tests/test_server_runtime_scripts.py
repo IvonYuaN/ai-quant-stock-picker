@@ -2196,6 +2196,7 @@ def test_immutable_deploy_script_requires_full_post_deploy_acceptance() -> None:
     assert 'git rev-parse "refs/remotes/${REMOTE}/${BRANCH}^{commit}"' in script
     assert "headless_dashboard_check.py" in script
     assert 'PYTHONPATH="$RELEASE_DIR/src${PYTHONPATH:+:$PYTHONPATH}"' in script
+    assert script.count('PYTHONPATH="$RELEASE_DIR/src${PYTHONPATH:+:$PYTHONPATH}"') == 3
     assert "--mode raw" in script
     assert "--require-browser" not in script
     assert "check_variant_results.py" in script
