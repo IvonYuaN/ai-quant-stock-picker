@@ -20,6 +20,7 @@ if __package__ in {None, ""}:
 
 from aqsp.core.time import now_shanghai
 from aqsp.data.sqlite_db_source import SqliteDbSource
+from aqsp.universe.intraday_universe_cache import write_intraday_universe_cache
 from aqsp.utils.jsonl_io import atomic_write_text
 from scripts.update_sqlite_daily import (
     UpdateSummary,
@@ -141,6 +142,7 @@ def rebuild_batch(
     max_runtime_seconds: float,
     min_coverage_ratio: float,
     activate_active_db: bool = False,
+    intraday_cache_path: Path | None = None,
 ) -> RebuildSummary:
     if (
         candidate_db.exists()
@@ -188,6 +190,15 @@ def rebuild_batch(
     if publish_ready and activate_active_db:
         _activate_candidate_database(active_db=source_db, candidate_db=candidate_db)
         activated = True
+    if activated and intraday_cache_path is not None:
+        # The activated raw database is the only valid source for an offline
+        # intraday fallback. Do not expose a partial rebuild as a live pool.
+        write_intraday_universe_cache(
+            intraday_cache_path,
+            symbols=sorted(covered),
+            source="sqlite_previous_close",
+            trade_date=target_day,
+        )
     summary = RebuildSummary(
         target_day=target_day,
         processed_symbols=update.processed_symbols,
@@ -224,6 +235,7 @@ def rebuild_batches(
     min_coverage_ratio: float,
     batches: int,
     activate_active_db: bool = False,
+    intraday_cache_path: Path | None = None,
 ) -> RebuildSummary:
     """Run bounded rebuild chunks serially within one shared wall-clock budget."""
     if batches < 0:
@@ -246,6 +258,7 @@ def rebuild_batches(
             max_runtime_seconds=remaining,
             min_coverage_ratio=min_coverage_ratio,
             activate_active_db=activate_active_db,
+            intraday_cache_path=intraday_cache_path,
         )
         if (
             completed.complete
@@ -276,6 +289,11 @@ def main() -> int:
     )
     parser.add_argument("--min-coverage-ratio", type=float, default=0.98)
     parser.add_argument(
+        "--intraday-cache",
+        type=Path,
+        help="write a validated previous-close pool only after activation",
+    )
+    parser.add_argument(
         "--activate-active-db",
         action="store_true",
         help="atomically switch the active path after a complete validated rebuild",
@@ -301,6 +319,7 @@ def main() -> int:
         min_coverage_ratio=args.min_coverage_ratio,
         batches=args.batches,
         activate_active_db=bool(args.activate_active_db),
+        intraday_cache_path=args.intraday_cache,
     )
     print(json.dumps(asdict(summary), ensure_ascii=False, default=str, sort_keys=True))
     return 0 if not summary.complete or summary.publish_ready else 1

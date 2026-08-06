@@ -239,6 +239,77 @@ def test_rebuild_raw_sqlite_batches_atomically_activates_valid_candidate(
     assert backups[0].read_text(encoding="utf-8") == "legacy"
 
 
+def test_rebuild_raw_sqlite_batches_writes_intraday_cache_when_activated(
+    monkeypatch, tmp_path: Path
+) -> None:
+    source = tmp_path / "legacy.db"
+    candidate = tmp_path / "candidate.db"
+    state = tmp_path / "rebuild.json"
+    cache = tmp_path / "intraday_live_universe.json"
+    with sqlite3.connect(source) as conn:
+        ensure_schema(conn)
+        conn.executemany(
+            "INSERT INTO stocks(ts_code, name) VALUES(?, ?)",
+            [("600000.SH", "A"), ("000001.SZ", "B"), ("300001.SZ", "C")],
+        )
+
+    class FakeSource:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def price_mode(self) -> str:
+            return "raw"
+
+        def get_symbols_with_daily_coverage(self, symbols, *_args, **_kwargs):
+            return list(symbols)
+
+    calls: list[tuple[Path, list[str], str, date]] = []
+    monkeypatch.setattr(rebuild_raw_sqlite_batches, "SqliteDbSource", FakeSource)
+    monkeypatch.setattr(
+        rebuild_raw_sqlite_batches,
+        "update_sqlite_daily",
+        lambda *_args, **_kwargs: UpdateSummary(
+            **{**_summary().__dict__, "processed_symbols": 3}
+        ),
+    )
+    monkeypatch.setattr(
+        rebuild_raw_sqlite_batches,
+        "_activate_candidate_database",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        rebuild_raw_sqlite_batches,
+        "write_intraday_universe_cache",
+        lambda path, *, symbols, source, trade_date: calls.append(
+            (Path(path), symbols, source, trade_date)
+        ),
+    )
+
+    result = rebuild_raw_sqlite_batches.rebuild_batch(
+        source_db=source,
+        candidate_db=candidate,
+        state_path=state,
+        target_day=date(2026, 8, 3),
+        start_day=date(2025, 1, 1),
+        batch_size=3,
+        query_timeout_seconds=4.0,
+        max_runtime_seconds=60.0,
+        min_coverage_ratio=0.98,
+        activate_active_db=True,
+        intraday_cache_path=cache,
+    )
+
+    assert result.activated
+    assert calls == [
+        (
+            cache,
+            ["000001", "300001", "600000"],
+            "sqlite_previous_close",
+            date(2026, 8, 3),
+        )
+    ]
+
+
 def test_rebuild_raw_sqlite_batches_keeps_cursor_when_target_day_rolls(
     tmp_path: Path,
 ) -> None:

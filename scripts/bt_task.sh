@@ -443,6 +443,7 @@ AQSP_RAW_REBUILD_TARGET_PY
             --max-runtime-seconds "$runtime_seconds" \
             --batches "$batches" \
             --min-coverage-ratio "${AQSP_RAW_REBUILD_MIN_COVERAGE_RATIO:-0.98}" \
+            --intraday-cache "${AQSP_INTRADAY_UNIVERSE_CACHE:-${RUNTIME_DATA_ROOT}/runtime/intraday_live_universe.json}" \
             --activate-active-db
         return
     fi
