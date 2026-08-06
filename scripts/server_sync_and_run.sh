@@ -419,7 +419,8 @@ fi
 
 RUNNER_ELAPSED_SECONDS=$(( $(date +%s) - RUNNER_START_EPOCH ))
 RUNNER_EXIT_CLASS="completed"
-if [ "${RUNNER_EXIT_CODE}" -eq 124 ] || [ "${RUNNER_EXIT_CODE}" -eq 143 ]; then
+if { [ "${RUNNER_EXIT_CODE}" -eq 124 ] || [ "${RUNNER_EXIT_CODE}" -eq 143 ]; } && \
+   [ "${RUNNER_ELAPSED_SECONDS}" -ge "${RUNNER_TIMEOUT_SECONDS}" ]; then
     RUNNER_TIMED_OUT="true"
     RUNNER_EXIT_CLASS="timeout_term"
 elif [ "${RUNNER_EXIT_CODE}" -eq 137 ]; then

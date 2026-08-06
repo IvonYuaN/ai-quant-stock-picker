@@ -522,6 +522,32 @@ def test_server_sync_classifies_runner_timeout_and_records_execution_evidence(
     assert "resource_killed=false" in result_text
 
 
+def test_server_sync_does_not_misclassify_early_timeout_exit_code(tmp_path: Path) -> None:
+    root, runner = _build_sync_runtime(tmp_path)
+    runner.write_text("#!/usr/bin/env bash\nexit 124\n", encoding="utf-8")
+    runner.chmod(0o755)
+    manifest = _write_overlay_manifest(root, ("runner.sh",))
+    result_path = root / ".state" / "result.env"
+    marker_path = root / "marker.txt"
+
+    result = _run_server_sync(
+        root,
+        runner=runner,
+        result_path=result_path,
+        marker_path=marker_path,
+        extra_env={
+            "AQSP_RUNTIME_OVERLAY_MANIFEST": str(manifest),
+            "AQSP_RUNNER_TIMEOUT_SECONDS": "30",
+        },
+    )
+
+    assert result.returncode == 124
+    result_text = result_path.read_text(encoding="utf-8")
+    assert "status=failed" in result_text
+    assert "exit_class=completed" in result_text
+    assert "timed_out=false" in result_text
+
+
 def test_server_sync_rejects_disabled_or_invalid_timeout(tmp_path: Path) -> None:
     root, runner = _build_sync_runtime(tmp_path)
     runner.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
