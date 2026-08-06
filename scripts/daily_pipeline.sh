@@ -206,7 +206,8 @@ esac
 
 # ============================ 部署Dashboard到服务器 ============================
 
-if [ "${AQSP_DEPLOY_DASHBOARD:-false}" = "true" ]; then
+if [ "${AQSP_DEPLOY_DASHBOARD:-false}" = "true" ] && [ "${AQSP_ALLOW_LEGACY_DASHBOARD_DEPLOY:-false}" = "true" ]; then
+    log "警告：启用的是历史静态 Dashboard 归档同步，不是生产公网发布"
     log "正在部署 Dashboard 到服务器..."
     DEPLOY_SCRIPT="${PROJECT_ROOT}/scripts/deploy_dashboard.sh"
     DASHBOARD_DIR="${PROJECT_ROOT}/dist/dashboard"
@@ -221,7 +222,7 @@ if [ "${AQSP_DEPLOY_DASHBOARD:-false}" = "true" ]; then
         log "⚠ 部署脚本或Dashboard目录不存在，跳过部署"
     fi
 else
-    log "Dashboard 部署已禁用（设置 AQSP_DEPLOY_DASHBOARD=true 启用）"
+    log "静态 Dashboard 归档同步已禁用；生产只允许不可变 release + React/FastAPI"
 fi
 
 # ============================ 数据生命周期管理 ============================

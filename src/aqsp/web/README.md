@@ -30,7 +30,7 @@
 - 研究判断有没有进入虚拟盘执行
 - 某天的归档摘要、明日重点、运行快照分别是什么
 
-## 历史回滚入口
+## 历史回滚入口（仅故障演练）
 
 ```bash
 bash scripts/start_dashboard.sh
@@ -42,12 +42,13 @@ bash scripts/start_dashboard.sh
 streamlit run src/aqsp/web/dashboard.py --server.port 8501
 ```
 
-该入口只用于正式 React + FastAPI 入口故障时的临时回滚；当前生产入口请使用
-`bash scripts/start_vibe_research.sh`，访问 `http://127.0.0.1:5899`。
+该入口不属于生产部署链，只用于正式 React + FastAPI 入口故障时的隔离回滚演练。
+当前生产入口统一由 systemd 管理 React `5899` + FastAPI `8900`，部署必须使用
+`scripts/deploy_immutable_release.sh`；不要用本文件中的 Streamlit 命令启动生产服务。
 
 如果没有主链产物，页面会显示空态提示，这是预期行为。
 
-## 历史回滚部署
+## 历史回滚部署（不作为第二生产路径）
 
 如需临时回滚，公网部署默认不要直接暴露 Streamlit 端口，而是：
 
@@ -57,4 +58,5 @@ streamlit run src/aqsp/web/dashboard.py --server.port 8501
 - 开 HTTPS
 - 加 Basic Auth 或统一登录
 
-具体见 `/Users/ivon/Documents/AI量化选股/docs/DASHBOARD_GUIDE.md`。
+具体见 `docs/DASHBOARD_GUIDE.md` 的回滚章节；回滚完成后必须恢复不可变 release
+软链接和 systemd 服务，不能长期保留 `8501` 入口。

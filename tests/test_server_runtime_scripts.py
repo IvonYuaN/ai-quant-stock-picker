@@ -2057,6 +2057,25 @@ def test_deploy_setup_env_template_matches_production_readiness() -> None:
     assert "AQSP_SQLITE_DB_PATH=/opt/market-data/astocks_raw.db" in script
 
 
+def test_legacy_setup_does_not_overwrite_existing_git_checkout() -> None:
+    script = (PROJECT_ROOT / "deploy" / "setup.sh").read_text(encoding="utf-8")
+
+    assert "setup.sh 不再覆盖或清理生产 checkout" in script
+    assert "scripts/deploy_immutable_release.sh" in script
+    assert 'git reset --hard "origin/${GIT_BRANCH}"' not in script
+    assert "git clean -fd" not in script
+
+
+def test_daily_pipeline_requires_explicit_legacy_dashboard_sync() -> None:
+    script = (PROJECT_ROOT / "scripts" / "daily_pipeline.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "AQSP_ALLOW_LEGACY_DASHBOARD_DEPLOY" in script
+    assert "不是生产公网发布" in script
+    assert "生产只允许不可变 release + React/FastAPI" in script
+
+
 def test_env_example_defaults_match_production_readiness() -> None:
     text = (PROJECT_ROOT / ".env.example").read_text(encoding="utf-8")
 

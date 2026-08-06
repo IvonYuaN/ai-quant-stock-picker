@@ -187,15 +187,10 @@ setup_project_code() {
     log_step "步骤 3/7: 部署项目代码"
 
     if [ -d "$PROJECT_DIR/.git" ]; then
-        log_info "检测到已有项目目录, 备份后更新..."
-        cp -r "$PROJECT_DIR" "$BACKUP_DIR"
-        add_rollback "rm -rf $PROJECT_DIR && mv $BACKUP_DIR $PROJECT_DIR"
-
-        cd "$PROJECT_DIR"
-        git fetch origin
-        git reset --hard "origin/${GIT_BRANCH}"
-        git clean -fd
-        log_info "项目代码已更新到最新版本"
+        log_error "检测到已有 Git checkout: ${PROJECT_DIR}"
+        log_error "为保护运行数据，setup.sh 不再覆盖或清理生产 checkout。"
+        log_error "请使用 scripts/deploy_immutable_release.sh 发布不可变 release。"
+        return 1
     else
         if [ -d "$PROJECT_DIR" ]; then
             mv "$PROJECT_DIR" "$BACKUP_DIR"
