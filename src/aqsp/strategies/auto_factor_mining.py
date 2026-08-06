@@ -1,3 +1,11 @@
+"""Auto factor mining (offline research only).
+
+本模块仅限离线研究,不得进入实时链路。``mine_factors`` 用前向收益标签
+(基于未来收盘价)给候选因子打分,标签本身就包含未来信息,因此任何实时
+workload(尤其是 ``live_short``)都不允许传入,见 ``mine_factors`` 入口的
+workload guard,与 ``aqsp.backtest.audit.validate_backtest_frame`` 同源。
+"""
+
 from __future__ import annotations
 
 import json
@@ -8,6 +16,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from aqsp.core.errors import DataError
 from aqsp.core.time import now_shanghai
 from aqsp.indicators import atr, normalize_ohlcv, rsi
 
@@ -398,6 +407,18 @@ class AutoFactorMiner:
     def mine_factors(
         self, data: dict[str, pd.DataFrame], forward_days: int = 5
     ) -> list[dict[str, Any]]:
+        # Workload guard: forward-return labels peek at future closes, so this
+        # entry must stay offline. Mirrors the live_short rejection in
+        # aqsp.backtest.audit.validate_backtest_frame.
+        for symbol, frame in data.items():
+            if frame is None:
+                continue
+            workload = str(frame.attrs.get("workload", "") or "").strip().lower()
+            if workload == "live_short":
+                raise DataError(
+                    f"{symbol}: live_short workload cannot enter "
+                    "auto_factor_mining (offline research only)"
+                )
         candidates = self.generate_candidate_factors()
         results: list[dict[str, Any]] = []
 
@@ -478,7 +499,12 @@ class AutoFactorMiner:
     def _posterior_forward_returns(
         self, close: pd.Series, forward_days: int
     ) -> pd.Series:
-        """Build an offline research label without using negative shifts."""
+        """Build an offline research label without using negative shifts.
+
+        研究标签生成器:用未来 ``forward_days`` 的收盘价算前向收益,给离线
+        因子打分用。标签本身包含未来信息,只能在 ``mine_factors`` 离线路径
+        内消费,不得被实时链路调用。
+        """
         if forward_days <= 0:
             raise ValueError("forward_days must be positive")
         values = close.to_numpy(dtype=float, copy=False)

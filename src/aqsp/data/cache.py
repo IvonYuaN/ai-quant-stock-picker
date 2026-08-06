@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sqlite3
 from collections.abc import Collection
 from datetime import date, datetime
@@ -877,7 +878,7 @@ class DataCache:
 
     def clear_expired(
         self,
-        max_age_hours: int = 168,
+        max_age_hours: int | None = None,
         *,
         workloads: Collection[str] | None = None,
     ) -> int:
@@ -886,7 +887,14 @@ class DataCache:
         The legacy call with ``workloads=None`` keeps broad maintenance
         semantics. Production daily runs pass ``workloads=("live_short",)``
         so historical and walk-forward rows are not deleted by routine cleanup.
+
+        ``max_age_hours`` defaults to ``AQSP_CACHE_MAX_AGE_HOURS`` env var
+        (168 hours = 7 days) so retention is configurable without code changes.
         """
+        if max_age_hours is None:
+            max_age_hours = int(os.getenv("AQSP_CACHE_MAX_AGE_HOURS", "168"))
+            if max_age_hours <= 0:
+                max_age_hours = 168
         cutoff = (now_shanghai() - pd.Timedelta(hours=max_age_hours)).isoformat()
         with sqlite3.connect(self.db_path, timeout=_SQLITE_TIMEOUT_SECONDS) as conn:
             if workloads is None:

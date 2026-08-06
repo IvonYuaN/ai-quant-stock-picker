@@ -350,6 +350,28 @@ def test_cache_targeted_cleanup_preserves_historical_rows(tmp_path):
     )
 
 
+def test_cache_clear_expired_reads_max_age_from_env(monkeypatch, tmp_path):
+    """clear_expired 不传 max_age_hours 时从 AQSP_CACHE_MAX_AGE_HOURS 读取。"""
+    monkeypatch.setenv("AQSP_CACHE_MAX_AGE_HOURS", "0")
+    cache = DataCache(db_path=tmp_path / "test_env_cache.db")
+    df = pd.DataFrame(
+        {
+            "date": ["2026-05-27"],
+            "open": [10.0],
+            "high": [10.5],
+            "low": [9.9],
+            "close": [10.2],
+            "volume": [1000],
+            "amount": [10000],
+        }
+    )
+    cache.set_ohlcv("600000", df, source="test")
+    # env=0 → 回退 168 → 刚写入的数据不删除
+    assert cache.clear_expired() == 0
+    # 显式传 0 不走 env → 删除全部
+    assert cache.clear_expired(max_age_hours=0) >= 1
+
+
 def test_adjustment_apply_qfq():
     df = pd.DataFrame(
         {

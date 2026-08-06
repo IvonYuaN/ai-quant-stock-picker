@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta
+from typing import Literal, overload
 
 from aqsp.core.errors import DataError
 from aqsp.data.source import DataSource
 from aqsp.data.intraday import FrameProvenance, _normalize_fetched_at
 from aqsp.data.source_readiness import source_role_for_workload, workload_guard_message
 from aqsp.core.time import now_shanghai, is_market_open
+
+_logger = logging.getLogger(__name__)
 
 _COMPOSITE_SOURCES = frozenset({"auto", "local_first", "online_first", "multi"})
 
@@ -27,15 +31,48 @@ class RealtimeService:
         self.source = source
         self._last_fetch: dict[str, datetime] = {}
         self._last_data: dict[str, dict] = {}
+        self._last_fetch_failures: dict[str, str] = {}
+
+    @property
+    def last_fetch_failures(self) -> dict[str, str]:
+        """最近一次 ``get_quotes`` 调用中 fetch 失败的标的及原因(只读快照)。
+
+        每次 ``get_quotes`` 调用后刷新;返回副本,外部修改不会污染内部状态。
+        全部成功时为空 dict;全部失败抛异常前也会更新本属性。
+        """
+        return dict(self._last_fetch_failures)
+
+    @overload
+    def get_quotes(
+        self,
+        symbols: list[str],
+        force_refresh: bool = False,
+        *,
+        expose_failures: Literal[False] = False,
+    ) -> dict[str, dict]: ...
+
+    @overload
+    def get_quotes(
+        self,
+        symbols: list[str],
+        force_refresh: bool = False,
+        *,
+        expose_failures: Literal[True],
+    ) -> tuple[dict[str, dict], dict[str, str]]: ...
 
     def get_quotes(
-        self, symbols: list[str], force_refresh: bool = False
-    ) -> dict[str, dict]:
+        self,
+        symbols: list[str],
+        force_refresh: bool = False,
+        *,
+        expose_failures: bool = False,
+    ) -> dict[str, dict] | tuple[dict[str, dict], dict[str, str]]:
         from aqsp.freshness import validate_realtime_quotes
         from aqsp.data.quote_metadata import LIVE_SHORT_MAX_FUTURE_SECONDS
 
         now = now_shanghai()
-        result = {}
+        result: dict[str, dict] = {}
+        failures: dict[str, str] = {}
         errors: list[Exception] = []
 
         for symbol in symbols:
@@ -65,11 +102,19 @@ class RealtimeService:
                     self._last_data[symbol] = quotes[symbol]
                     result[symbol] = quotes[symbol]
             except Exception as exc:
+                message = str(exc) or repr(exc)
+                failures[symbol] = message
                 errors.append(exc)
+                _logger.warning("实时行情标的 %s 获取失败: %s", symbol, message)
+
+        # 每次调用后刷新失败快照,供调用方事后查询(即使不传 expose_failures)。
+        self._last_fetch_failures = dict(failures)
 
         if not result and errors:
             raise errors[0]
 
+        if expose_failures:
+            return result, failures
         return result
 
     def get_price(self, symbols: list[str]) -> dict[str, float]:

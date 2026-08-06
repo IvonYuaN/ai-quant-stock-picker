@@ -16,9 +16,9 @@ Support: Real-Time Data Reliability Engineer, Market Intelligence/News Fusion En
 
 ## Current Goal
 
-长期目标：把 AQSP 维护成覆盖研究、开发、部署、前端与 GitHub 运维的可审计闭环，定期发现问题并在仓库内形成可验证修复，不把工作局限为代码提交。
+长期目标：把 AQSP 维护成覆盖研究、开发、部署、前端与运行巡检的可审计闭环，定期发现问题并在仓库内形成可验证修复，不把工作局限为代码提交。生产服务器的实际运行、数据新鲜度和公网结果是第一成功标准。
 
-将 AQSP 演进为面向短线决策研究的实时多源数据与多代理研判系统。实时数据优先于历史数据，历史数据只用于回测、walk-forward 验证和阈值冻结证据；盘中链路优先保证新鲜度、可成交性和信息时效。策略默认围绕短线/超短线机会检测，允许受控自动优化，但优化结果只能进入阈值与权重层，不能直接覆盖确定性评分与人工决策边界。
+将 AQSP 演进为面向短线决策研究的实时多源数据与多代理研判系统。实时数据优先于历史数据，历史数据只用于回测、walk-forward 验证和阈值冻结证据；盘中链路优先保证新鲜度、可成交性和信息时效。策略默认围绕短线/超短线机会检测，允许受控自动优化，但优化结果只能进入阈值与权重层，不能直接覆盖确定性评分与人工决策边界。GitHub 只作代码归档和按需手动校验，不作为线上成功门禁，也不因 CI 噪声扩大工作范围。
 
 当前主线分五条并行推进：1) 压实实时行情/分时/quote 新鲜度与降级链路；2) 明确历史数据只进回测与验证、不反向污染盘中决策；3) 把国内外高价值信息源作为决策上下文接入并排序；4) 收敛多 Agent 讨论、投票和意见汇总，使其成为候选建议增强层而非下单层；5) 建立以服务器不可变 release、调度、数据新鲜度、公网 health 和前端结果为主的长期巡检闭环，见 `docs/long-term-operations.md`。GitHub 只作代码归档和手动验证入口，不作为线上成功门禁。
 
@@ -38,7 +38,7 @@ Support: Real-Time Data Reliability Engineer, Market Intelligence/News Fusion En
 
 ## Routing Cues
 
-实时行情、分时补齐、quote 新鲜度、fallback 降级交给 Real-Time Data Reliability lens；策略/开源吸收/自动优化边界交给 Quant Research lens；国内外新闻、指数、宏观、政策、资金流和情绪输入交给 Market Intelligence lens；多 Agent 辩论、角色编排、投票汇总和解释文案交给 Multi-Agent Decision lens；虚拟盘/ledger/可成交性交给 Paper-Trading lens；前端展示交给 Dashboard lens；合并前必须跑相关 pytest、ruff、脚本语法检查。
+实时行情、分时补齐、quote 新鲜度、fallback 降级交给 Real-Time Data Reliability lens；策略/开源吸收/自动优化边界交给 Quant Research lens；国内外新闻、指数、宏观、政策、资金流和情绪输入交给 Market Intelligence lens；多 Agent 辩论、角色编排、投票汇总和解释文案交给 Multi-Agent Decision lens；虚拟盘/ledger/可成交性交给 Paper-Trading lens；前端展示交给 Dashboard lens；生产验收交给 SRE/Reality Checker lens。合并前必须跑相关 pytest、ruff、脚本语法检查，部署后优先看 immutable release、服务 active、数据状态、公网 health 和用户可见入口。
 静态导出链路（`scripts/render_dashboard.py`、`scripts/render_agent_dashboard.py`、旧 `reports/`、研究发现 CLI）也属于用户可见面，不能只修 Streamlit 主面板而放任旧口径残留；所有时间戳继续强制带上海时区偏移。任何“优化”若涉及盘中建议，必须先回答它依赖的是实时数据还是历史证据，并验证没有把历史回测口径误接到实时链路。长期巡检由 Codex heartbeat 负责，服务器 health、调度、数据新鲜度和前端入口是交付证据。
 
 如果再次出现“修了很多细节但上线阻塞还在”的情况，优先检查：1) 全市场 walkforward formal/diagnostic 报告链是否完整；2) gate sidecar 是否含有效 `grid_diagnostics`；3) 服务器定时入口是否仍有高频通知或样本口径漂移；不要回到文案层空转。

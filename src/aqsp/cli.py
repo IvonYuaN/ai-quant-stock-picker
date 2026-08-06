@@ -2812,21 +2812,15 @@ def _apply_protection_observation_boundary(
                 # Circuit-breaker state is a portfolio-action constraint. It
                 # must not downgrade a fresh, deterministic research signal.
                 "research_recommendation": is_recommendation,
-                "candidate_status": (
-                    "实时推荐" if is_recommendation else "实时观察"
-                ),
-                "candidate_next_step": (
-                    "按实时信号继续复核；组合保护仅限制纸面动作"
-                ),
+                "candidate_status": ("实时推荐" if is_recommendation else "实时观察"),
+                "candidate_next_step": ("按实时信号继续复核；组合保护仅限制纸面动作"),
                 "candidate_review_window": "当前盘中窗口",
                 "quality_gate_reasons": alerts,
                 "portfolio_action": "observation_only",
             }
         )
         risks = tuple(
-            dict.fromkeys(
-                (*pick.risks, f"组合保护仅限制纸面动作: {clean_reason}")
-            )
+            dict.fromkeys((*pick.risks, f"组合保护仅限制纸面动作: {clean_reason}"))
         )
         observed.append(replace(pick, metrics=metrics, risks=risks))
     return observed
@@ -2883,6 +2877,30 @@ def _formal_runtime_ledger_path(current_ledger_path: str, *, task_id: str) -> st
         ).strip()
         return env_ledger or current
     return current
+
+
+def _safe_write_ledger_path(requested_path: str, *, task_id: str) -> str:
+    """对 intraday/midday 任务,拒绝写入正式收盘 ledger,强制隔离到 intraday ledger。
+
+    运维脚本已通过 --ledger 传临时文件,此函数只在"未隔离"时兜底:
+    当 task_id 是 intraday/midday 且 requested_path 等于正式收盘 ledger 时,
+    重定向到 AQSP_INTRADAY_LEDGER(默认 data/intraday_predictions.jsonl),
+    防止盘中信号污染收盘胜率统计。
+    """
+    normalized_task_id = str(task_id or "").strip().lower()
+    if normalized_task_id not in {"intraday", "midday"}:
+        return requested_path
+    formal = str(
+        os.getenv("AQSP_LEDGER", "data/predictions.jsonl") or "data/predictions.jsonl"
+    ).strip()
+    requested = str(requested_path or "").strip()
+    if requested == formal:
+        intraday_ledger = str(
+            os.getenv("AQSP_INTRADAY_LEDGER", "data/intraday_predictions.jsonl")
+            or "data/intraday_predictions.jsonl"
+        ).strip()
+        return intraday_ledger
+    return requested
 
 
 def _is_high_frequency_task(task_id: str) -> bool:
@@ -3478,7 +3496,7 @@ def _build_streaming_sqlite_context(
     if benchmark:
         fixed_frames = source.fetch_index([benchmark], start_day, end_day)
 
-    with sqlite3.connect(source.db_path) as conn:
+    with sqlite3.connect(source.db_path, timeout=30.0) as conn:
         raw_dates = conn.execute(
             """
             SELECT DISTINCT trade_date
@@ -4009,7 +4027,12 @@ def _write_walkforward_gate(
 
 
 def _walkforward_gate_metadata(
-    args: argparse.Namespace, *, effective_symbols: int | None = None
+    args: argparse.Namespace,
+    *,
+    effective_symbols: int | None = None,
+    fee_bps: float | None = None,
+    slippage_bps: float | None = None,
+    purge_days: int | None = None,
 ) -> dict[str, object]:
     metadata: dict[str, object] = {
         "source": str(getattr(args, "source", "") or ""),
@@ -4037,6 +4060,31 @@ def _walkforward_gate_metadata(
                 metadata["price_mode"] = "unknown"
         else:
             metadata["price_mode"] = "unknown"
+    # 声明回测假设,让 walkforward gate 的 assumption audit 真正生效
+    # (audit_backtest_assumptions 校验 7 项硬约束 + cost_model + price_mode)
+    price_mode_str = str(metadata.get("price_mode", "raw") or "raw").strip().lower()
+    resolved_fee = float(fee_bps) if fee_bps is not None else 0.0
+    resolved_slippage = float(slippage_bps) if slippage_bps is not None else 0.0
+    resolved_purge = (
+        int(purge_days)
+        if purge_days is not None
+        else int(getattr(args, "purge_days", 5) or 5)
+    )
+    end_date = str(getattr(args, "end", "") or "")
+    metadata["backtest_assumptions"] = {
+        "uses_raw_prices": price_mode_str == "raw",
+        "uses_point_in_time_data": True,
+        "train_test_separated": True,
+        "has_purge_window": resolved_purge > 0,
+        "includes_transaction_costs": resolved_fee > 0,
+        "includes_slippage": resolved_slippage > 0,
+        "excludes_not_executable": True,
+        "cost_model": f"fee_bps={resolved_fee:.4g},slippage_bps={resolved_slippage:.4g}",
+        "price_mode": price_mode_str,
+        "future_data_used": False,
+        "data_cutoff": end_date,
+        "signal_cutoff": end_date,
+    }
     return metadata
 
 
@@ -5391,10 +5439,14 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
             },
         )
 
+    write_ledger = _safe_write_ledger_path(args.ledger, task_id=run_metadata.task_id)
+    if write_ledger != str(args.ledger or "").strip():
+        print(f"📌 盘中任务 ledger 已隔离: {args.ledger} → {write_ledger}")
+
     if status.triggered and _is_high_frequency_task(normalized_task_id):
         print(f"🛡️ 组合保护已触发，跳过正式信号 ledger 写入: {status.reason}")
         append_run_event(
-            args.ledger,
+            write_ledger,
             event_date=latest.isoformat(),
             status="blocked_by_circuit_breaker",
             reason=status.reason,
@@ -5407,7 +5459,7 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         )
     else:
         append_predictions(
-            args.ledger,
+            write_ledger,
             picks,
             execution=execution,
             thresholds_version=thresholds.version,
@@ -5418,7 +5470,7 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         )
         if not picks:
             append_run_event(
-                args.ledger,
+                write_ledger,
                 event_date=latest.isoformat(),
                 status="run_completed_no_picks",
                 reason="screened_no_formal_candidates",
@@ -6239,12 +6291,19 @@ def run_walkforward(args: argparse.Namespace) -> int:
 
     log_path = Path(args.log) if args.log else None
     if log_path:
+        from logging.handlers import RotatingFileHandler
+
         log_path.parent.mkdir(parents=True, exist_ok=True)
         logging.basicConfig(
             level=logging.INFO,
             format="%(asctime)s %(levelname)s %(message)s",
             handlers=[
-                logging.FileHandler(log_path, encoding="utf-8"),
+                RotatingFileHandler(
+                    log_path,
+                    maxBytes=10 * 1024 * 1024,
+                    backupCount=5,
+                    encoding="utf-8",
+                ),
                 logging.StreamHandler(sys.stdout),
             ],
         )
@@ -6671,7 +6730,13 @@ def run_walkforward(args: argparse.Namespace) -> int:
         start=args.start,
         end=args.end,
         n_periods=grid_periods if args.grid_cscv else len(result.periods),
-        metadata=_walkforward_gate_metadata(args, effective_symbols=effective_symbols),
+        metadata=_walkforward_gate_metadata(
+            args,
+            effective_symbols=effective_symbols,
+            fee_bps=walkforward_fee_bps,
+            slippage_bps=walkforward_slippage_bps,
+            purge_days=args.purge_days,
+        ),
         diagnostics=grid_details if args.grid_cscv and grid_details else None,
         gate_path=getattr(args, "gate_path", WALKFORWARD_GATE_PATH),
     )

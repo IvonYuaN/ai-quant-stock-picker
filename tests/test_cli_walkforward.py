@@ -26,7 +26,9 @@ def _isolate_walkforward_gate(monkeypatch, tmp_path):
     monkeypatch.setattr("aqsp.universe.runtime.today_shanghai", lambda: TEST_TRADE_DAY)
     monkeypatch.setattr(
         "aqsp.data.intraday.now_shanghai",
-        lambda: datetime.combine(TEST_TRADE_DAY, datetime.min.time(), tzinfo=timezone.utc),
+        lambda: datetime.combine(
+            TEST_TRADE_DAY, datetime.min.time(), tzinfo=timezone.utc
+        ),
     )
 
 
@@ -1907,6 +1909,97 @@ def test_walkforward_sqlite_main_passes_cache_path_to_sqlite_source(
 
     assert result == 0
     assert seen == {"cache_path": str(cache_path)}
+
+
+def test_walkforward_gate_metadata_includes_valid_backtest_assumptions() -> None:
+    """_walkforward_gate_metadata 必须产出能通过 audit_backtest_assumptions 的声明。"""
+    from aqsp.backtest.audit import audit_backtest_assumptions
+    from aqsp.cli import _walkforward_gate_metadata
+
+    args = SimpleNamespace(
+        source="akshare",
+        window_mode="rolling_recent",
+        skip_pit_financials=True,
+        grid_cscv=False,
+        streaming=False,
+        end="2026-06-30",
+        purge_days=5,
+    )
+    metadata = _walkforward_gate_metadata(
+        args,
+        effective_symbols=4000,
+        fee_bps=3.0,
+        slippage_bps=5.0,
+        purge_days=5,
+    )
+    assumptions = metadata.get("backtest_assumptions")
+    assert isinstance(assumptions, dict)
+    audit = audit_backtest_assumptions(assumptions)
+    assert audit.ok is True, f"assumption audit blockers: {audit.blockers}"
+    assert assumptions["uses_raw_prices"] is True
+    assert assumptions["has_purge_window"] is True
+    assert assumptions["excludes_not_executable"] is True
+    assert assumptions["future_data_used"] is False
+
+
+def test_walkforward_gate_metadata_flags_zero_fee_as_incomplete() -> None:
+    """fee_bps=0 时 includes_transaction_costs=False,audit 应失败。"""
+    from aqsp.backtest.audit import audit_backtest_assumptions
+    from aqsp.cli import _walkforward_gate_metadata
+
+    args = SimpleNamespace(
+        source="akshare",
+        window_mode="rolling_recent",
+        skip_pit_financials=True,
+        grid_cscv=False,
+        streaming=False,
+        end="2026-06-30",
+        purge_days=5,
+    )
+    metadata = _walkforward_gate_metadata(
+        args,
+        fee_bps=0.0,
+        slippage_bps=5.0,
+        purge_days=5,
+    )
+    assumptions = metadata["backtest_assumptions"]
+    assert assumptions["includes_transaction_costs"] is False
+    audit = audit_backtest_assumptions(assumptions)
+    assert audit.ok is False
+    assert any("includes_transaction_costs" in b for b in audit.blockers)
+
+
+def test_walkforward_gate_metadata_marks_unknown_price_mode_as_not_raw(
+    monkeypatch,
+) -> None:
+    """sqlite_db 源但 price_mode=unknown 时,uses_raw_prices=False,audit 应失败。"""
+    from aqsp.backtest.audit import audit_backtest_assumptions
+    from aqsp.cli import _walkforward_gate_metadata
+
+    monkeypatch.setattr("aqsp.cli._resolve_sqlite_db_path", lambda: "/fake/path.db")
+    monkeypatch.setattr("aqsp.cli.sqlite_price_mode", lambda _p: "unknown")
+
+    args = SimpleNamespace(
+        source="sqlite_db",
+        window_mode="rolling_recent",
+        skip_pit_financials=True,
+        grid_cscv=False,
+        streaming=False,
+        end="2026-06-30",
+        purge_days=5,
+    )
+    metadata = _walkforward_gate_metadata(
+        args,
+        fee_bps=3.0,
+        slippage_bps=5.0,
+        purge_days=5,
+    )
+    assumptions = metadata["backtest_assumptions"]
+    assert assumptions["uses_raw_prices"] is False
+    assert assumptions["price_mode"] == "unknown"
+    audit = audit_backtest_assumptions(assumptions)
+    assert audit.ok is False
+    assert any("uses_raw_prices" in b for b in audit.blockers)
 
 
 def test_walkforward_defaults_to_recent_window_dates(monkeypatch, tmp_path) -> None:

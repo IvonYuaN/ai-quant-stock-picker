@@ -131,7 +131,16 @@ def merge_pit_financials(
     ohlcv_data: Dict[str, pd.DataFrame],
     financial_data: Dict[str, pd.DataFrame],
     disclosure_data: dict[str, pd.DataFrame] | None = None,
+    as_of: date | None = None,
 ) -> Dict[str, pd.DataFrame]:
+    """Merge PIT financials into OHLCV frames.
+
+    ``as_of`` is the point-in-time cutoff (typically the backtest signal date).
+    When provided, any disclosure date strictly after ``as_of`` is rejected by
+    ``validate_point_in_time_frame`` so future-published financials cannot leak
+    into a historical path. Leaving it ``None`` preserves the legacy
+    format-only validation for non-backtest callers.
+    """
     out: dict[str, pd.DataFrame] = {}
     for symbol, ohlcv in ohlcv_data.items():
         if symbol not in financial_data or financial_data[symbol].empty:
@@ -153,6 +162,7 @@ def merge_pit_financials(
             PitTimestampPolicy(
                 artifact_type=f"{symbol} financials",
                 timestamp_columns=("pubDate",),
+                as_of=as_of,
             ),
         )
         ohlcv = ohlcv.copy()
