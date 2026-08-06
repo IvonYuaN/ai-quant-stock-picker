@@ -434,7 +434,7 @@ AQSP_RAW_REBUILD_TARGET_PY
         log "现有 SQLite 价格基准无效，转入旁路 raw 重建；正式库保持只读"
         run_python_script "${PROJECT_ROOT}/scripts/rebuild_raw_sqlite_batches.py" \
             --source-db "$db_path" \
-            --candidate-db "${AQSP_RAW_REBUILD_DB_PATH:-${db_path}.rebuild}" \
+            --candidate-db "${AQSP_RAW_REBUILD_DB_PATH:-${db_path}.rebuild}.${target_day}" \
             --state "${STATE_DIR}/raw-rebuild-cursor.json" \
             --target-date "$target_day" \
             --start-date "${AQSP_RAW_REBUILD_START_DATE:-2024-01-01}" \

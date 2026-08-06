@@ -239,6 +239,37 @@ def test_rebuild_raw_sqlite_batches_atomically_activates_valid_candidate(
     assert backups[0].read_text(encoding="utf-8") == "legacy"
 
 
+def test_rebuild_raw_sqlite_batches_reactivates_when_active_path_is_symlink(
+    monkeypatch, tmp_path: Path
+) -> None:
+    active = tmp_path / "astocks_raw.db"
+    previous = tmp_path / "astocks_raw.db.rebuild.2026-08-02"
+    candidate = tmp_path / "astocks_raw.db.rebuild.2026-08-03"
+    previous.write_text("previous", encoding="utf-8")
+    active.symlink_to(previous)
+    with sqlite3.connect(candidate):
+        pass
+
+    class FakeSource:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def price_mode(self) -> str:
+            return "raw"
+
+    monkeypatch.setattr(rebuild_raw_sqlite_batches, "SqliteDbSource", FakeSource)
+
+    rebuild_raw_sqlite_batches._activate_candidate_database(
+        active_db=active, candidate_db=candidate
+    )
+
+    assert active.is_symlink()
+    assert active.resolve() == candidate.resolve()
+    backups = list(tmp_path.glob("astocks_raw.db.invalid-*"))
+    assert len(backups) == 1
+    assert backups[0].read_text(encoding="utf-8") == "previous"
+
+
 def test_rebuild_raw_sqlite_batches_writes_intraday_cache_when_activated(
     monkeypatch, tmp_path: Path
 ) -> None:

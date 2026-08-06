@@ -914,6 +914,7 @@ def test_bt_task_script_exposes_panel_safe_actions() -> None:
     assert 'run_bounded_raw_refresh "${AQSP_DATA_REFRESH_RETRY_BATCHES:-0}"' in script
     assert 'latest_completed_trading_day' in script
     assert '--target-date "$target_day"' in script
+    assert '--candidate-db "${AQSP_RAW_REBUILD_DB_PATH:-${db_path}.rebuild}.${target_day}"' in script
     assert '--batches "$batches"' in script
     assert script.count("refresh_home_snapshot_after_data_refresh") == 3
     assert "原始日线批次完成，首页快照已刷新" in script

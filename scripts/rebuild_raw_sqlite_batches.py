@@ -105,10 +105,6 @@ def _read_state(
 
 def _activate_candidate_database(*, active_db: Path, candidate_db: Path) -> None:
     """Atomically point the active database path at a validated candidate."""
-    if active_db.is_symlink():
-        raise RuntimeError(
-            "active sqlite path is already a symlink; refusing reactivation"
-        )
     if not active_db.is_file():
         raise RuntimeError("active sqlite database is missing")
     if active_db.resolve() == candidate_db.resolve():
@@ -120,8 +116,11 @@ def _activate_candidate_database(*, active_db: Path, candidate_db: Path) -> None
     stamp = now_shanghai().strftime("%Y%m%dT%H%M%S")
     backup = active_db.with_name(f"{active_db.name}.invalid-{stamp}")
     temporary_link = active_db.with_name(f".{active_db.name}.next")
+    previous_active = active_db.resolve()
     try:
-        os.link(active_db, backup)
+        # Back up the resolved database, not the symlink itself. This keeps
+        # the previous release recoverable across repeated daily activations.
+        os.link(previous_active, backup)
         temporary_link.unlink(missing_ok=True)
         os.symlink(str(candidate_db.resolve()), temporary_link)
         os.replace(temporary_link, active_db)
