@@ -162,7 +162,7 @@ AQSP_ENABLE_AUTO_EVOLUTION=false
 ## 发布与运行入口
 
 生产发布统一使用 `scripts/deploy_immutable_release.sh`。它从指定远端 ref 构建新 release，先通过前端构建、release 一致性、调度审计，再原子切换
-`/opt/aqsp-releases/aqsp-scheduler-current`，重启 API/React 服务并验证公网入口。
+`/opt/aqsp-releases/aqsp-scheduler-current`，重启 API/React 服务并验证公网 health、路由和快照契约。视觉浏览器检查在本地隔离无头环境执行，不把服务器是否安装 Chromium 作为发布门槛。
 
 宝塔只负责调用当前 release 的 `scripts/bt_task.sh`，不负责拉代码，也不应直接调用旧的
 `daily_pipeline.sh`、`server_sync_and_run.sh` 或任何历史脚本。服务器 `/opt/aqsp` 的脏 staging
