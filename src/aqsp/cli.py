@@ -4931,6 +4931,7 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
 
     nb_z = 0.0
     margin_z = 0.0
+    sentiment_z = 0.0
     if enable_online_factors:
         try:
             from aqsp.data.cn.northbound import (
@@ -4951,6 +4952,13 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         except Exception as exc:
             LOGGER.warning("两融因子计算失败，按 0 处理: %s", exc)
             margin_z = 0.0
+        try:
+            from aqsp.data.cn.sentiment import compute_sentiment_factor
+
+            sentiment_z = compute_sentiment_factor()
+        except Exception as exc:
+            LOGGER.warning("市场情绪因子计算失败，按 0 处理: %s", exc)
+            sentiment_z = 0.0
 
     market_context = None
     market_context_overview = ""
@@ -4994,6 +5002,7 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
                 catalyst_report=catalyst_report,
                 northbound_flow_5d_z=nb_z,
                 margin_balance_change_5d=margin_z,
+                sentiment_z=sentiment_z,
                 realtime_cross_market=realtime_cross_market,
                 news_universe=build_current_news_universe(
                     current_news_symbols,
@@ -5466,6 +5475,7 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
             regime=regime,
             northbound_flow_5d_z=nb_z,
             margin_balance_change_5d=margin_z,
+            sentiment_z=sentiment_z,
             run_metadata=run_metadata,
         )
         if not picks:

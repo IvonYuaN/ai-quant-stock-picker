@@ -190,6 +190,7 @@ def append_predictions(
     regime: str = "",
     northbound_flow_5d_z: float = 0.0,
     margin_balance_change_5d: float = 0.0,
+    sentiment_z: float = 0.0,
     run_metadata: RunMetadata | None = None,
 ) -> None:
     _validate_formal_run_metadata(run_metadata)
@@ -430,6 +431,7 @@ def append_predictions(
                 "signal_day_group": signal_day_group,
                 "northbound_flow_5d_z": northbound_flow_5d_z,
                 "margin_balance_change_5d": margin_balance_change_5d,
+                "sentiment_z": sentiment_z,
                 **run_metadata_fields(run_metadata),
             }
             for field in _TECHNICAL_METRIC_FIELDS:

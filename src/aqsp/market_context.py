@@ -18,6 +18,7 @@ from aqsp.news.watch_candidates import (
 
 _NORTHBOUND_STRONG_Z = 1.0
 _MARGIN_STRONG_CHANGE = 0.03
+_SENTIMENT_STRONG_Z = 1.0
 _CROSS_MARKET_STACK_SUPPORT_BONUS = 2
 _CROSS_MARKET_STACK_CONFLICT_PENALTY = 2
 _CROSS_MARKET_STRONG_SCORE = 3
@@ -1264,6 +1265,7 @@ def build_market_context_artifact(
     catalyst_report: CatalystReport | None,
     northbound_flow_5d_z: float = 0.0,
     margin_balance_change_5d: float = 0.0,
+    sentiment_z: float = 0.0,
     enable_domestic_intelligence: bool | None = None,
     enable_global_intelligence: bool | None = None,
     max_actionable_news_age_minutes: int = _DEFAULT_ACTIONABLE_NEWS_AGE_MINUTES,
@@ -1417,12 +1419,17 @@ def build_market_context_artifact(
     if margin_line:
         lines.append(margin_line)
 
+    sentiment_line = _sentiment_signal_line(sentiment_z) if domestic_enabled else ""
+    if sentiment_line:
+        lines.append(sentiment_line)
+
     combined_line = _combined_context_line(
         symbol_events=symbol_events,
         domestic_events=domestic_events,
         global_events=global_events,
         northbound_flow_5d_z=northbound_flow_5d_z if domestic_enabled else 0.0,
         margin_balance_change_5d=margin_balance_change_5d if domestic_enabled else 0.0,
+        sentiment_z=sentiment_z if domestic_enabled else 0.0,
     )
     if combined_line:
         lines.append(combined_line)
@@ -1433,6 +1440,7 @@ def build_market_context_artifact(
         global_events=global_events,
         northbound_flow_5d_z=northbound_flow_5d_z if domestic_enabled else 0.0,
         margin_balance_change_5d=margin_balance_change_5d if domestic_enabled else 0.0,
+        sentiment_z=sentiment_z if domestic_enabled else 0.0,
     )
     if coverage_line:
         lines.append(coverage_line)
@@ -1891,6 +1899,14 @@ def _margin_signal_line(value: float) -> str:
         return f"融资情绪: 升温（5日变化 {value:.1%}），短线拥挤度上升。"
     if value <= -_MARGIN_STRONG_CHANGE:
         return f"融资情绪: 降温（5日变化 {value:.1%}），杠杆风险偏好回落。"
+    return ""
+
+
+def _sentiment_signal_line(value: float) -> str:
+    if value >= _SENTIMENT_STRONG_Z:
+        return f"市场情绪: 偏热（涨停 z={value:.2f}），注意追高风险。"
+    if value <= -_SENTIMENT_STRONG_Z:
+        return f"市场情绪: 偏冷（涨停 z={value:.2f}），关注超跌反弹机会。"
     return ""
 
 
@@ -2629,6 +2645,7 @@ def _combined_context_line(
     global_events: list[CatalystEvent],
     northbound_flow_5d_z: float,
     margin_balance_change_5d: float,
+    sentiment_z: float = 0.0,
 ) -> str:
     reasons: list[str] = []
     score = 0
@@ -2670,6 +2687,12 @@ def _combined_context_line(
         score -= 1
         reasons.append("融资降温")
 
+    if sentiment_z >= _SENTIMENT_STRONG_Z:
+        reasons.append("情绪偏热")
+    elif sentiment_z <= -_SENTIMENT_STRONG_Z:
+        score -= 1
+        reasons.append("情绪偏冷")
+
     if not reasons:
         return ""
     if score >= 2:
@@ -2688,6 +2711,7 @@ def _coverage_line(
     global_events: list[CatalystEvent],
     northbound_flow_5d_z: float,
     margin_balance_change_5d: float,
+    sentiment_z: float = 0.0,
 ) -> str:
     coverage: list[str] = []
     if symbol_events:
@@ -2700,6 +2724,8 @@ def _coverage_line(
         coverage.append("北向资金")
     if abs(margin_balance_change_5d) >= _MARGIN_STRONG_CHANGE:
         coverage.append("融资情绪")
+    if abs(sentiment_z) >= _SENTIMENT_STRONG_Z:
+        coverage.append("市场情绪")
     if not coverage:
         return ""
     return f"情报覆盖: {' + '.join(coverage[:4])}。"
