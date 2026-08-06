@@ -176,7 +176,11 @@ def rebuild_batch(
         batch, target_day, target_day, min_rows=1, min_coverage_ratio=1.0
     )
     covered = covered_before | set(covered_now)
-    next_offset = offset + len(batch)
+    # update_sqlite_daily may exhaust its budget before reaching the end of the
+    # selected batch. Advance only across symbols that were actually attempted;
+    # otherwise the unprocessed tail is silently skipped forever.
+    processed_count = max(0, min(int(update.processed_symbols), len(batch)))
+    next_offset = offset + processed_count
     complete = next_offset >= len(symbols)
     coverage_ratio = len(covered) / len(symbols)
     publish_ready = complete and coverage_ratio >= min_coverage_ratio

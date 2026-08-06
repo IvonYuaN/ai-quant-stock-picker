@@ -405,13 +405,37 @@ run_bounded_raw_refresh() {
     local batch_size="${AQSP_DATA_REFRESH_BATCH_SIZE:-120}"
     local runtime_seconds="${AQSP_DATA_REFRESH_MAX_RUNTIME_SECONDS:-480}"
     local query_timeout="${AQSP_DATA_REFRESH_QUERY_TIMEOUT_SECONDS:-4}"
+    local target_day
+    target_day="$(${AQSP_RUNTIME_PYTHON} - "${STATE_DIR}/raw-rebuild-cursor.json" <<'AQSP_RAW_REBUILD_TARGET_PY'
+import json
+import sys
+from datetime import date
+
+from aqsp.core.time import latest_completed_trading_day
+
+latest = latest_completed_trading_day()
+try:
+    state = json.loads(open(sys.argv[1], encoding="utf-8").read())
+except (OSError, ValueError, TypeError):
+    state = {}
+candidate = str(state.get("target_day") or "")
+try:
+    candidate_day = date.fromisoformat(candidate)
+except ValueError:
+    candidate_day = None
+if not bool(state.get("complete")) and candidate_day is not None and candidate_day <= latest:
+    print(candidate_day.isoformat())
+else:
+    print(latest.isoformat())
+AQSP_RAW_REBUILD_TARGET_PY
+)"
     if sqlite_price_basis_is_invalid "$db_path"; then
         log "现有 SQLite 价格基准无效，转入旁路 raw 重建；正式库保持只读"
         run_python_script "${PROJECT_ROOT}/scripts/rebuild_raw_sqlite_batches.py" \
             --source-db "$db_path" \
             --candidate-db "${AQSP_RAW_REBUILD_DB_PATH:-${db_path}.rebuild}" \
             --state "${STATE_DIR}/raw-rebuild-cursor.json" \
-            --target-date "$(date +%F)" \
+            --target-date "$target_day" \
             --start-date "${AQSP_RAW_REBUILD_START_DATE:-2024-01-01}" \
             --batch-size "${AQSP_RAW_REBUILD_BATCH_SIZE:-16}" \
             --query-timeout-seconds "$query_timeout" \
