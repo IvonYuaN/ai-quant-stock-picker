@@ -69,6 +69,8 @@ src/aqsp/
 │                          # (SPX/HSI/DXY/US10Y/WTI/GOLD → RealtimeCrossMarketContext)
 ├── market_context_cross_market.py # 跨市场传导规则与运行时摘要
 │                          # (规则表 + 传导路径 → CrossMarketImplication/RuntimeSummary)
+├── market_context_implications.py # 跨市场传导计算引擎
+│                          # (事件+实时观测 → 证据栈+强度评级+行动建议)
 ├── universe/
 │   ├── pool.py            # 默认股票池
 │   └── filters.py         # ST、退市、停牌、新股过滤
@@ -352,6 +354,7 @@ class CircuitBreakerConfig:
 | `market_context.py` | 融合催化/北向/融资/情绪/全球风险 | `list[str]` 上下文行 | ❌ 增强解释 |
 | `market_context_realtime.py` | 实时跨市场观测归一化与新鲜度门控 | `RealtimeCrossMarketContext` | ❌ 入上下文 |
 | `market_context_cross_market.py` | 跨市场传导规则表 + 运行时摘要 | `CrossMarketImplication` / `CrossMarketRuleRuntimeSummary` | ❌ 入上下文 |
+| `market_context_implications.py` | 跨市场传导计算引擎(证据栈+强度评级) | `CrossMarketImplication` | ❌ 入上下文 |
 
 **硬约束**:
 - 全局新闻不能直接改写个股 score,只能增强建议解释或风控提示
@@ -427,6 +430,7 @@ class CircuitBreakerConfig:
 | 24 | 多Agent审计质量收敛:可证伪关键词修复 + 薄弱测试补齐 | #19 | falsifiable markers 精确化 + 3个负向审计测试 | ✅ |
 | 25 | market_context 拆分:实时跨市场模块独立 | #18 | market_context_realtime.py 提取(375行),向后兼容 | ✅ |
 | 26 | market_context 拆分:跨市场传导规则模块独立 | #18 | market_context_cross_market.py 提取(774行),向后兼容 | ✅ |
+| 27 | market_context 拆分:传导计算引擎独立 | #18 | market_context_implications.py 提取(769行),主模块降至1463行,向后兼容 | ✅ |
 
 **P0 三件**(本仓库当前最大风险,Claude 直接修了,不走小米Pro):
 
