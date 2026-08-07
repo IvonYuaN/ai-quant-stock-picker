@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 from datetime import date
 from typing import Any
@@ -201,7 +202,10 @@ def compute_real_pnl(ledger_path: str) -> tuple[float, float, float]:
             signal_date = date.fromisoformat(signal_date_str)
         except (ValueError, TypeError):
             continue
-        validated.append((signal_date, float(ret_pct)))
+        ret_value = float(ret_pct)
+        if math.isnan(ret_value) or math.isinf(ret_value):
+            continue
+        validated.append((signal_date, ret_value))
 
     if not validated:
         return 0.0, 0.0, 0.0
@@ -323,10 +327,20 @@ def _compound_returns(values: list[float]) -> float:
 
 
 def _safe_float(value: object) -> float:
+    """Convert *value* to ``float``, returning ``0.0`` for invalid/NaN/inf.
+
+    NaN and inf are treated as missing so that existing ``<= 0`` guards in
+    PnL computation catch them — without this, a NaN close price during the
+    midday gap (11:30–13:00) would slip through ``<= 0`` and pollute the
+    compound return with NaN.
+    """
     try:
-        return float(value)
+        result = float(value)
     except (TypeError, ValueError):
         return 0.0
+    if math.isnan(result) or math.isinf(result):
+        return 0.0
+    return result
 
 
 def _previous_close(frame: pd.DataFrame, latest_close: float) -> float:
