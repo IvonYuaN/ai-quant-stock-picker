@@ -418,6 +418,7 @@ class CircuitBreakerConfig:
 | 21 | P0 实时/历史边界修复:backtest_assumptions + ledger隔离 + realtime失败可见 + PIT as_of + factor mining guard | #18 #19 | 116测试通过 + ruff clean | ✅ |
 | 22 | 市场情绪量化数据模块 data/cn/sentiment.py | #18 | 涨停池 z-score 入 ledger/market_context,不进评分 | ✅ |
 | 23 | 宏观经济数据模块 data/cn/macro.py | #18 | CPI/PMI/M2/LPR 气候信号入 market_context,不进评分 | ✅ |
+| 24 | 多Agent审计质量收敛:可证伪关键词修复 + 薄弱测试补齐 | #19 | falsifiable markers 精确化 + 3个负向审计测试 | ✅ |
 
 **P0 三件**(本仓库当前最大风险,Claude 直接修了,不走小米Pro):
 
