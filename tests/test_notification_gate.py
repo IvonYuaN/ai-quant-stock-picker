@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import json
 
-from aqsp.cli import (
+from aqsp.cli_notification_gate import (
+    HELDOUT_TRAIN_CUTOFF,
     _check_notification_gate,
     _notification_gate_actions,
-    HELDOUT_TRAIN_CUTOFF,
 )
 
 
@@ -38,10 +38,10 @@ def _write_gate(tmp_path, **overrides):
 def test_all_three_gates_pass(tmp_path, monkeypatch):
     """冷启动够 + DSR/PBO 过 + 数据窗口干净 → 放行。"""
     # 固定 today 避免过期检查把测试跑挂
-    import aqsp.cli as cli_mod
+    import aqsp.cli_notification_gate as gate_mod
     from datetime import date
 
-    monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 5))
+    monkeypatch.setattr(gate_mod, "today_shanghai", lambda: date(2026, 6, 5))
     ok, reasons = _check_notification_gate(
         cold_start_days=30, gate_path=_write_gate(tmp_path)
     )
@@ -53,10 +53,10 @@ def test_all_three_gates_pass(tmp_path, monkeypatch):
 
 
 def test_cold_start_blocks(tmp_path, monkeypatch):
-    import aqsp.cli as cli_mod
+    import aqsp.cli_notification_gate as gate_mod
     from datetime import date
 
-    monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 5))
+    monkeypatch.setattr(gate_mod, "today_shanghai", lambda: date(2026, 6, 5))
     ok, reasons = _check_notification_gate(
         cold_start_days=10, gate_path=_write_gate(tmp_path)
     )
@@ -65,10 +65,10 @@ def test_cold_start_blocks(tmp_path, monkeypatch):
 
 
 def test_dsr_fail_blocks(tmp_path, monkeypatch):
-    import aqsp.cli as cli_mod
+    import aqsp.cli_notification_gate as gate_mod
     from datetime import date
 
-    monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 5))
+    monkeypatch.setattr(gate_mod, "today_shanghai", lambda: date(2026, 6, 5))
     ok, reasons = _check_notification_gate(
         cold_start_days=30,
         gate_path=_write_gate(tmp_path, dsr_pass=False, deflated_sharpe=0.5),
@@ -78,10 +78,10 @@ def test_dsr_fail_blocks(tmp_path, monkeypatch):
 
 
 def test_pbo_fail_blocks(tmp_path, monkeypatch):
-    import aqsp.cli as cli_mod
+    import aqsp.cli_notification_gate as gate_mod
     from datetime import date
 
-    monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 5))
+    monkeypatch.setattr(gate_mod, "today_shanghai", lambda: date(2026, 6, 5))
     ok, reasons = _check_notification_gate(
         cold_start_days=30,
         gate_path=_write_gate(tmp_path, pbo_pass=False, pbo=0.8),
@@ -104,10 +104,10 @@ def test_gate_actions_clarify_ready_coldstart_when_quality_gate_blocks():
 
 
 def test_small_symbol_smoke_gate_blocks_notification(tmp_path, monkeypatch):
-    import aqsp.cli as cli_mod
+    import aqsp.cli_notification_gate as gate_mod
     from datetime import date
 
-    monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 5))
+    monkeypatch.setattr(gate_mod, "today_shanghai", lambda: date(2026, 6, 5))
     ok, reasons = _check_notification_gate(
         cold_start_days=30,
         gate_path=_write_gate(tmp_path, effective_symbols=300),
@@ -118,10 +118,10 @@ def test_small_symbol_smoke_gate_blocks_notification(tmp_path, monkeypatch):
 
 
 def test_missing_effective_symbols_blocks_notification(tmp_path, monkeypatch):
-    import aqsp.cli as cli_mod
+    import aqsp.cli_notification_gate as gate_mod
     from datetime import date
 
-    monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 5))
+    monkeypatch.setattr(gate_mod, "today_shanghai", lambda: date(2026, 6, 5))
     ok, reasons = _check_notification_gate(
         cold_start_days=30,
         gate_path=_write_gate(tmp_path, effective_symbols=None),
@@ -132,10 +132,10 @@ def test_missing_effective_symbols_blocks_notification(tmp_path, monkeypatch):
 
 
 def test_pbo_placeholder_reports_grid_evidence_gap(tmp_path, monkeypatch):
-    import aqsp.cli as cli_mod
+    import aqsp.cli_notification_gate as gate_mod
     from datetime import date
 
-    monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 5))
+    monkeypatch.setattr(gate_mod, "today_shanghai", lambda: date(2026, 6, 5))
     ok, reasons = _check_notification_gate(
         cold_start_days=30,
         gate_path=_write_gate(
@@ -153,10 +153,10 @@ def test_pbo_placeholder_reports_grid_evidence_gap(tmp_path, monkeypatch):
 
 
 def test_string_boolean_sidecar_flags_fail_closed(tmp_path, monkeypatch):
-    import aqsp.cli as cli_mod
+    import aqsp.cli_notification_gate as gate_mod
     from datetime import date
 
-    monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 5))
+    monkeypatch.setattr(gate_mod, "today_shanghai", lambda: date(2026, 6, 5))
     ok, reasons = _check_notification_gate(
         cold_start_days=30,
         gate_path=_write_gate(
@@ -173,10 +173,10 @@ def test_string_boolean_sidecar_flags_fail_closed(tmp_path, monkeypatch):
 
 
 def test_both_pass_flag_must_be_true(tmp_path, monkeypatch):
-    import aqsp.cli as cli_mod
+    import aqsp.cli_notification_gate as gate_mod
     from datetime import date
 
-    monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 5))
+    monkeypatch.setattr(gate_mod, "today_shanghai", lambda: date(2026, 6, 5))
     ok, reasons = _check_notification_gate(
         cold_start_days=30,
         gate_path=_write_gate(tmp_path, both_pass=False),
@@ -187,10 +187,10 @@ def test_both_pass_flag_must_be_true(tmp_path, monkeypatch):
 
 
 def test_malformed_n_periods_fail_closed(tmp_path, monkeypatch):
-    import aqsp.cli as cli_mod
+    import aqsp.cli_notification_gate as gate_mod
     from datetime import date
 
-    monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 5))
+    monkeypatch.setattr(gate_mod, "today_shanghai", lambda: date(2026, 6, 5))
     ok, reasons = _check_notification_gate(
         cold_start_days=30,
         gate_path=_write_gate(tmp_path, n_periods="many"),
@@ -201,10 +201,10 @@ def test_malformed_n_periods_fail_closed(tmp_path, monkeypatch):
 
 
 def test_boolean_n_periods_fail_closed(tmp_path, monkeypatch):
-    import aqsp.cli as cli_mod
+    import aqsp.cli_notification_gate as gate_mod
     from datetime import date
 
-    monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 5))
+    monkeypatch.setattr(gate_mod, "today_shanghai", lambda: date(2026, 6, 5))
     ok, reasons = _check_notification_gate(
         cold_start_days=30,
         gate_path=_write_gate(tmp_path, n_periods=True),
@@ -215,10 +215,10 @@ def test_boolean_n_periods_fail_closed(tmp_path, monkeypatch):
 
 
 def test_boolean_or_nan_metric_fields_fail_closed(tmp_path, monkeypatch):
-    import aqsp.cli as cli_mod
+    import aqsp.cli_notification_gate as gate_mod
     from datetime import date
 
-    monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 5))
+    monkeypatch.setattr(gate_mod, "today_shanghai", lambda: date(2026, 6, 5))
     ok, reasons = _check_notification_gate(
         cold_start_days=30,
         gate_path=_write_gate(tmp_path, deflated_sharpe=True, pbo="NaN"),
@@ -230,10 +230,10 @@ def test_boolean_or_nan_metric_fields_fail_closed(tmp_path, monkeypatch):
 
 
 def test_string_numeric_metric_fields_fail_closed(tmp_path, monkeypatch):
-    import aqsp.cli as cli_mod
+    import aqsp.cli_notification_gate as gate_mod
     from datetime import date
 
-    monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 5))
+    monkeypatch.setattr(gate_mod, "today_shanghai", lambda: date(2026, 6, 5))
     ok, reasons = _check_notification_gate(
         cold_start_days=30,
         gate_path=_write_gate(tmp_path, deflated_sharpe="1.9", pbo="0.24"),
@@ -265,10 +265,10 @@ def test_corrupt_sidecar_fail_closed(tmp_path):
 
 def test_stale_sidecar_blocks(tmp_path, monkeypatch):
     """run_date 超过 35 天 → 过期拦截。"""
-    import aqsp.cli as cli_mod
+    import aqsp.cli_notification_gate as gate_mod
     from datetime import date
 
-    monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 5))
+    monkeypatch.setattr(gate_mod, "today_shanghai", lambda: date(2026, 6, 5))
     ok, reasons = _check_notification_gate(
         cold_start_days=30,
         gate_path=_write_gate(tmp_path, run_date="2026-01-01"),  # 半年前
@@ -284,10 +284,10 @@ def test_heldout_poisoned_grade_blocked(tmp_path, monkeypatch):
     """DSR/PBO 都过门，但 data_end 越过 held-out 边界（说明成绩用了 held-out
     数据，可能经 --allow-heldout 跑出）→ 必须拦截，不得解锁推送。
     这是摊2/摊4 接缝盲区的回归测试。"""
-    import aqsp.cli as cli_mod
+    import aqsp.cli_notification_gate as gate_mod
     from datetime import date
 
-    monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 5))
+    monkeypatch.setattr(gate_mod, "today_shanghai", lambda: date(2026, 6, 5))
     ok, reasons = _check_notification_gate(
         cold_start_days=30,
         gate_path=_write_gate(
@@ -304,10 +304,10 @@ def test_heldout_poisoned_grade_blocked(tmp_path, monkeypatch):
 
 def test_dataend_exactly_cutoff_passes(tmp_path, monkeypatch):
     """data_end 正好等于边界 2024-12-31 → 不算越界，放行。"""
-    import aqsp.cli as cli_mod
+    import aqsp.cli_notification_gate as gate_mod
     from datetime import date
 
-    monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 5))
+    monkeypatch.setattr(gate_mod, "today_shanghai", lambda: date(2026, 6, 5))
     ok, reasons = _check_notification_gate(
         cold_start_days=30,
         gate_path=_write_gate(tmp_path, data_end=HELDOUT_TRAIN_CUTOFF),
@@ -317,10 +317,10 @@ def test_dataend_exactly_cutoff_passes(tmp_path, monkeypatch):
 
 
 def test_recent_window_gate_can_notify_beyond_legacy_cutoff(tmp_path, monkeypatch):
-    import aqsp.cli as cli_mod
+    import aqsp.cli_notification_gate as gate_mod
     from datetime import date
 
-    monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 21))
+    monkeypatch.setattr(gate_mod, "today_shanghai", lambda: date(2026, 6, 21))
     ok, reasons = _check_notification_gate(
         cold_start_days=30,
         gate_path=_write_gate(
@@ -338,10 +338,10 @@ def test_recent_window_gate_can_notify_beyond_legacy_cutoff(tmp_path, monkeypatc
 
 def test_dataend_malformed_fail_closed(tmp_path, monkeypatch):
     """sidecar 的 data_end 格式异常 → fail-closed（看不懂就拦）。"""
-    import aqsp.cli as cli_mod
+    import aqsp.cli_notification_gate as gate_mod
     from datetime import date
 
-    monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 5))
+    monkeypatch.setattr(gate_mod, "today_shanghai", lambda: date(2026, 6, 5))
     ok, reasons = _check_notification_gate(
         cold_start_days=30,
         gate_path=_write_gate(tmp_path, data_end="2026/04/30"),  # 非 ISO

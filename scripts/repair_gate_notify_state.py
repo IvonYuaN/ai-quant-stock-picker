@@ -6,7 +6,11 @@ import os
 from pathlib import Path
 from typing import Any
 
-from aqsp.cli import GATE_NOTIFY_STATE_PATH, WALKFORWARD_GATE_PATH, _check_notification_gate
+from aqsp.cli_notification_gate import (
+    GATE_NOTIFY_STATE_PATH,
+    WALKFORWARD_GATE_PATH,
+    _check_notification_gate,
+)
 from aqsp.core.time import today_shanghai
 from aqsp.ledger import count_independent_signal_days
 from aqsp.runtime.gate_notify import mark_gate_notification_suppressed
@@ -40,8 +44,12 @@ def _load_gate_run_date(gate_path: Path) -> str:
 
 
 def repair_gate_notify_state(project_root: Path) -> dict[str, Any]:
-    ledger_path = _resolve_runtime_path(project_root, "AQSP_LEDGER", "data/predictions.jsonl")
-    gate_path = _resolve_runtime_path(project_root, "AQSP_WALKFORWARD_GATE_PATH", WALKFORWARD_GATE_PATH)
+    ledger_path = _resolve_runtime_path(
+        project_root, "AQSP_LEDGER", "data/predictions.jsonl"
+    )
+    gate_path = _resolve_runtime_path(
+        project_root, "AQSP_WALKFORWARD_GATE_PATH", WALKFORWARD_GATE_PATH
+    )
     state_path = _resolve_runtime_path(
         project_root,
         "AQSP_GATE_NOTIFY_STATE_PATH",
@@ -83,7 +91,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--project-root", default="", help="project root path")
     args = parser.parse_args(argv)
-    result = repair_gate_notify_state(_resolve_project_root(str(args.project_root or "")))
+    result = repair_gate_notify_state(
+        _resolve_project_root(str(args.project_root or ""))
+    )
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 

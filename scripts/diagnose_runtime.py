@@ -18,7 +18,7 @@ from aqsp.data.source_health import notification_level_for_health_label
 from aqsp.data.registry import list_registry_entries, local_data_status
 from aqsp.data.source_readiness import source_supports_workload, workload_fit_for_source
 from aqsp.data.tdx_vipdoc_source import TDX_DAY_RECORD_SIZE
-from aqsp.cli import WALKFORWARD_GATE_PATH, _check_notification_gate
+from aqsp.cli_notification_gate import WALKFORWARD_GATE_PATH, _check_notification_gate
 from aqsp.config import load_debate_runtime_config
 from aqsp.ledger.runtime import (
     REAL_SIGNAL_STATUSES,

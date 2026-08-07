@@ -28,7 +28,7 @@ from aqsp.core.time import (
     now_shanghai,
     today_shanghai,
 )
-from aqsp.cli import WALKFORWARD_GATE_PATH, _check_notification_gate
+from aqsp.cli_notification_gate import WALKFORWARD_GATE_PATH, _check_notification_gate
 from aqsp.ledger.runtime import (
     collect_simulated_signal_dates,
     count_independent_signal_days,

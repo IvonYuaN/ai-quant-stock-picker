@@ -21,7 +21,11 @@ def test_repair_gate_notify_state_overwrites_stale_cold_start_entry(
     _write_jsonl(
         tmp_path / "data" / "predictions.jsonl",
         [
-            {"signal_date": f"2026-05-{day:02d}", "symbol": "600519", "status": "watch_only"}
+            {
+                "signal_date": f"2026-05-{day:02d}",
+                "symbol": "600519",
+                "status": "watch_only",
+            }
             for day in range(1, 31)
         ],
     )
@@ -63,9 +67,11 @@ def test_repair_gate_notify_state_overwrites_stale_cold_start_entry(
     )
 
     # Pin today to 1 day after run_date so the gate is not considered stale.
-    import aqsp.cli as cli_mod
+    # Patch in cli_notification_gate because _check_notification_gate calls
+    # today_shanghai() from that module's namespace, not from aqsp.cli.
+    import aqsp.cli_notification_gate as gate_mod
 
-    monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 30))
+    monkeypatch.setattr(gate_mod, "today_shanghai", lambda: date(2026, 6, 30))
 
     result = repair_gate_notify_state(tmp_path)
     payload = json.loads(
@@ -84,7 +90,11 @@ def test_repair_gate_notify_state_clears_file_when_gate_passes(
     _write_jsonl(
         tmp_path / "data" / "predictions.jsonl",
         [
-            {"signal_date": f"2026-05-{day:02d}", "symbol": "600519", "status": "watch_only"}
+            {
+                "signal_date": f"2026-05-{day:02d}",
+                "symbol": "600519",
+                "status": "watch_only",
+            }
             for day in range(1, 31)
         ],
     )
@@ -113,9 +123,11 @@ def test_repair_gate_notify_state_clears_file_when_gate_passes(
     state_path.write_text('{"status":"suppressed"}\n', encoding="utf-8")
 
     # Pin today to 1 day after run_date so the gate is not considered stale.
-    import aqsp.cli as cli_mod
+    # Patch in cli_notification_gate because _check_notification_gate calls
+    # today_shanghai() from that module's namespace, not from aqsp.cli.
+    import aqsp.cli_notification_gate as gate_mod
 
-    monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 30))
+    monkeypatch.setattr(gate_mod, "today_shanghai", lambda: date(2026, 6, 30))
 
     result = repair_gate_notify_state(tmp_path)
 

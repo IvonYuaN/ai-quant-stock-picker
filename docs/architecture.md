@@ -441,6 +441,7 @@ class CircuitBreakerConfig:
 | 31 | 午盘空值保护:NaN/inf 价格不污染 PnL | #21 | _safe_float NaN→0.0 + compute_real_pnl 跳过 NaN return_pct,5测试 | ✅ |
 | 32 | cli.py 拆分 Phase 1:debate record I/O 提取 | P2 | cli_debate_helpers.py 提取5函数,cli.py -83行,向后兼容 | ✅ |
 | 33 | cli.py 拆分 Phase 2:debate coordinator/pick 提取 | P2 | cli_debate_helpers.py 再提取5函数,cli.py -160行,backfill 脚本导入源迁移,向后兼容 | ✅ |
+| 34 | cli.py 拆分 Phase 3:notification gate 提取 | P2 | cli_notification_gate.py 310行(11函数+3常量),cli.py -274行,3脚本导入源迁移,test monkeypatch 目标修正,向后兼容 | ✅ |
 
 **P0 三件**(本仓库当前最大风险,Claude 直接修了,不走小米Pro):
 
