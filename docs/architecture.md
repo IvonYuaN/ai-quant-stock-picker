@@ -65,6 +65,8 @@ src/aqsp/
 │   └── watch_candidates.py # 催化驱动的观察候选发现
 ├── market_context.py      # 跨市场信息融合引擎
 │                          # (催化/北向/融资/情绪/全球风险 → 决策上下文层)
+├── market_context_realtime.py # 实时跨市场观测归一化与新鲜度门控
+│                          # (SPX/HSI/DXY/US10Y/WTI/GOLD → RealtimeCrossMarketContext)
 ├── universe/
 │   ├── pool.py            # 默认股票池
 │   └── filters.py         # ST、退市、停牌、新股过滤
@@ -346,6 +348,7 @@ class CircuitBreakerConfig:
 | `data/cn/macro.py` | CPI/PMI/M2/LPR 宏观气候信号 | `dict` | ❌ 入上下文 |
 | `news/catalysts.py` | 多源新闻催化事件构建 | `CatalystReport` | ❌ 入上下文 |
 | `market_context.py` | 融合催化/北向/融资/情绪/全球风险 | `list[str]` 上下文行 | ❌ 增强解释 |
+| `market_context_realtime.py` | 实时跨市场观测归一化与新鲜度门控 | `RealtimeCrossMarketContext` | ❌ 入上下文 |
 
 **硬约束**:
 - 全局新闻不能直接改写个股 score,只能增强建议解释或风控提示
@@ -419,6 +422,7 @@ class CircuitBreakerConfig:
 | 22 | 市场情绪量化数据模块 data/cn/sentiment.py | #18 | 涨停池 z-score 入 ledger/market_context,不进评分 | ✅ |
 | 23 | 宏观经济数据模块 data/cn/macro.py | #18 | CPI/PMI/M2/LPR 气候信号入 market_context,不进评分 | ✅ |
 | 24 | 多Agent审计质量收敛:可证伪关键词修复 + 薄弱测试补齐 | #19 | falsifiable markers 精确化 + 3个负向审计测试 | ✅ |
+| 25 | market_context 拆分:实时跨市场模块独立 | #18 | market_context_realtime.py 提取(375行),向后兼容 | ✅ |
 
 **P0 三件**(本仓库当前最大风险,Claude 直接修了,不走小米Pro):
 
