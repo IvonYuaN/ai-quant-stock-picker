@@ -370,6 +370,7 @@ def _build_sqlite_db_source(*, cache: DataCache | None):
 
 
 def main(argv: list[str] | None = None) -> int:
+    """CLI 总入口，构建 argparse 并分发子命令。"""
     parser = argparse.ArgumentParser(prog="aqsp")
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -824,6 +825,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def run_sources(args: argparse.Namespace) -> int:
+    """列出已注册的数据源及其本地状态。"""
     entries = sort_registry_entries(ready_only=args.ready_only)
     health = read_source_health()
     source_health = health.get("sources", {})
@@ -880,6 +882,7 @@ def run_sources(args: argparse.Namespace) -> int:
 
 
 def run_doctor(args: argparse.Namespace) -> int:
+    """执行服务器与运行时就绪诊断。"""
     from scripts.server_doctor import main as doctor_main
 
     argv: list[str] = []
@@ -891,6 +894,7 @@ def run_doctor(args: argparse.Namespace) -> int:
 
 
 def run_research(args: argparse.Namespace) -> int:
+    """查看研究报告摘要。"""
     summary = load_research_summary()
     if summary is None:
         print("research summary unavailable")
@@ -1039,6 +1043,7 @@ def run_runtime_snapshot(args: argparse.Namespace) -> int:
 
 
 def run_pit(args: argparse.Namespace) -> int:
+    """检查 point-in-time 数据端点。"""
     client = TusharePitClient()
     start = date.fromisoformat(args.start)
     end = date.fromisoformat(args.end)
@@ -1058,6 +1063,7 @@ def run_pit(args: argparse.Namespace) -> int:
 
 
 def run_compare_snapshots(args: argparse.Namespace) -> int:
+    """对比两个日期的持仓快照差异。"""
     from aqsp.portfolio.snapshot import compare_snapshots, format_snapshot_diff
 
     date2 = args.date2 or today_shanghai().isoformat()
@@ -3219,6 +3225,7 @@ def _build_streaming_sqlite_context(
 
 
 def run_screen(args: argparse.Namespace) -> int:
+    """候选池单次筛选，作为 live_short 入口。"""
     actual_source = "csv"
     explicit_symbol_count = 0
     symbols: list[str] = []
@@ -3361,6 +3368,7 @@ def run_screen(args: argparse.Namespace) -> int:
 
 
 def run_scheduled(args: argparse.Namespace) -> int:
+    """定时运行与信号生成主函数，委托 service 层执行。"""
     from aqsp.services import scheduled
 
     return scheduled.run_scheduled_service(args, legacy_runner=_run_scheduled_legacy)
@@ -4639,6 +4647,7 @@ def run_dashboard(args: argparse.Namespace) -> int:
 
 
 def run_dashboard_static(args: argparse.Namespace) -> int:
+    """渲染并输出静态仪表盘 HTML。"""
     from scripts.render_dashboard import render_all_panels
     from aqsp.web.entrypoint import write_dashboard_artifact
 
@@ -5118,6 +5127,7 @@ def _append_walkforward_grid_rows(
 
 
 def run_walkforward(args: argparse.Namespace) -> int:
+    """执行 walk-forward 回测。"""
     import logging
     import sys
     from aqsp.core.time import now_shanghai, today_shanghai
@@ -5607,6 +5617,7 @@ def _ledger_text_tuple(value: object) -> tuple[str, ...]:
 
 
 def run_briefing(args: argparse.Namespace) -> int:
+    """生成每日简报。"""
     from aqsp.briefing import (
         BriefingGenerator,
         compose_briefing_notification_markdown,
@@ -5918,6 +5929,7 @@ def run_briefing(args: argparse.Namespace) -> int:
 
 
 def run_monitor(args: argparse.Namespace) -> int:
+    """运行监控检查并发送告警。"""
     from aqsp.monitor.checker import MonitorChecker
     from aqsp.monitor.notifier import format_alert, send_alerts
 
@@ -5980,6 +5992,7 @@ def run_monitor(args: argparse.Namespace) -> int:
 
 
 def run_news_catalysts(args: argparse.Namespace) -> int:
+    """分析新闻催化剂对标的的影响。"""
     from aqsp.news import (
         NewsCatalystConfig,
         build_catalyst_report,
@@ -6056,6 +6069,7 @@ def _parse_symbol_names(raw: str) -> dict[str, str]:
 
 
 def run_optimize(args: argparse.Namespace) -> int:
+    """执行策略参数优化。"""
     from aqsp.optimizer.param_optimizer import (
         BayesianOptimizer,
         GridSearchOptimizer,
@@ -6163,6 +6177,7 @@ def _apply_best_params(best_params: dict[str, float]) -> None:
 
 
 def run_discover(args: argparse.Namespace) -> int:
+    """从 ledger 中发现交易形态与策略。"""
     from aqsp.ledger.base import read_ledger
     from aqsp.optimizer.pattern_discovery import (
         PatternDiscoveryEngine,
@@ -6251,6 +6266,7 @@ def run_discover(args: argparse.Namespace) -> int:
 
 
 def run_mine_factors(args: argparse.Namespace) -> int:
+    """自动挖掘有效因子。"""
     from aqsp.strategies.auto_factor_mining import AutoFactorMiner, FactorLibrary
 
     print("开始自动因子挖掘...")
@@ -6328,6 +6344,7 @@ def run_mine_factors(args: argparse.Namespace) -> int:
 
 
 def run_evolve(args: argparse.Namespace) -> int:
+    """运行策略自动进化。"""
     from aqsp.strategies.auto_evolution import AutoEvolution
 
     print("开始自动进化...")
@@ -6407,6 +6424,7 @@ def run_evolve(args: argparse.Namespace) -> int:
 
 
 def run_multi_factor(args: argparse.Namespace) -> int:
+    """运行多因子轮动策略分析。"""
     from aqsp.strategies.multi_factor_rotation import MultiFactorRotationStrategy
 
     print("运行多因子轮动策略...")
@@ -6483,6 +6501,7 @@ def run_multi_factor(args: argparse.Namespace) -> int:
 
 
 def run_morning_breakout(args: argparse.Namespace) -> int:
+    """扫描早盘突破信号。"""
     from aqsp.strategies.morning_breakout import (
         MorningBreakoutStrategy,
         format_morning_signals,
@@ -6648,6 +6667,7 @@ def run_morning_breakout(args: argparse.Namespace) -> int:
 
 
 def run_closing_premium(args: argparse.Namespace) -> int:
+    """分析收盘溢价信号。"""
     from aqsp.strategies.closing_premium import (
         ClosingPremiumStrategy,
         format_closing_signals,
@@ -6814,6 +6834,7 @@ def run_closing_premium(args: argparse.Namespace) -> int:
 
 
 def run_closing_review(args: argparse.Namespace) -> int:
+    """生成收盘复盘报告。"""
     from aqsp.briefing.closing_review import (
         ClosingReviewer,
         format_daily_review,
