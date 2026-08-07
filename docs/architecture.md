@@ -3,7 +3,7 @@
 本文件是项目的 **唯一规划源**。所有新模块、PR、阈值变更必须先来这里对齐。
 两人协作:小米Pro 编码,Claude 审查。任何与本文件冲突的代码默认不合并。
 
-最后更新:2026-08-06。信息融合层与多Agent研判主线已纳入当前执行地图,详见 short-term-realtime-roadmap.md。
+最后更新:2026-08-07。cli.py 四阶段拆分完成(Phase 1-4),从 7996 行降至 6933 行(-13%)。
 
 ---
 
@@ -442,6 +442,7 @@ class CircuitBreakerConfig:
 | 32 | cli.py 拆分 Phase 1:debate record I/O 提取 | P2 | cli_debate_helpers.py 提取5函数,cli.py -83行,向后兼容 | ✅ |
 | 33 | cli.py 拆分 Phase 2:debate coordinator/pick 提取 | P2 | cli_debate_helpers.py 再提取5函数,cli.py -160行,backfill 脚本导入源迁移,向后兼容 | ✅ |
 | 34 | cli.py 拆分 Phase 3:notification gate 提取 | P2 | cli_notification_gate.py 310行(11函数+3常量),cli.py -274行,3脚本导入源迁移,test monkeypatch 目标修正,向后兼容 | ✅ |
+| 35 | cli.py 拆分 Phase 4:walkforward helpers 提取 | P2 | cli_walkforward_helpers.py 666行(16函数+1常量+HS300列表),cli.py -629行(7562→6933),test monkeypatch 目标迁移到 cli_walkforward_helpers,向后兼容 | ✅ |
 
 **P0 三件**(本仓库当前最大风险,Claude 直接修了,不走小米Pro):
 

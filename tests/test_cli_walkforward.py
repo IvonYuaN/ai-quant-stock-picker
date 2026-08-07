@@ -23,6 +23,9 @@ def _isolate_walkforward_gate(monkeypatch, tmp_path):
         "AQSP_RUNTIME_SYMBOL_CACHE", str(tmp_path / "missing-cache.json")
     )
     monkeypatch.setattr("aqsp.cli.today_shanghai", lambda: TEST_TRADE_DAY)
+    monkeypatch.setattr(
+        "aqsp.cli_walkforward_helpers.today_shanghai", lambda: TEST_TRADE_DAY
+    )
     monkeypatch.setattr("aqsp.universe.runtime.today_shanghai", lambda: TEST_TRADE_DAY)
     monkeypatch.setattr(
         "aqsp.data.intraday.now_shanghai",
@@ -260,10 +263,10 @@ class TestCLIUpdateThresholdsMetadata:
         yaml_file = tmp_path / "thresholds.yaml"
         yaml_file.write_text(yaml_content, encoding="utf-8")
 
-        import aqsp.cli as cli_mod
+        import aqsp.cli_walkforward_helpers as wf_helpers
 
-        original = cli_mod._find_thresholds_yaml
-        cli_mod._find_thresholds_yaml = lambda: yaml_file
+        original = wf_helpers._find_thresholds_yaml
+        wf_helpers._find_thresholds_yaml = lambda: yaml_file
         try:
             ok = _update_thresholds_metadata("2026-05-28")
             assert ok is True
@@ -271,7 +274,7 @@ class TestCLIUpdateThresholdsMetadata:
             assert 'last_walkforward_run: "2026-05-28"' in result
             assert 'version: "2.0.0"' in result
         finally:
-            cli_mod._find_thresholds_yaml = original
+            wf_helpers._find_thresholds_yaml = original
 
     def test_update_returns_false_when_field_missing(self, tmp_path):
         from aqsp.cli import _update_thresholds_metadata
@@ -280,27 +283,27 @@ class TestCLIUpdateThresholdsMetadata:
         yaml_file = tmp_path / "thresholds.yaml"
         yaml_file.write_text(yaml_content, encoding="utf-8")
 
-        import aqsp.cli as cli_mod
+        import aqsp.cli_walkforward_helpers as wf_helpers
 
-        original = cli_mod._find_thresholds_yaml
-        cli_mod._find_thresholds_yaml = lambda: yaml_file
+        original = wf_helpers._find_thresholds_yaml
+        wf_helpers._find_thresholds_yaml = lambda: yaml_file
         try:
             ok = _update_thresholds_metadata("2026-05-28")
             assert ok is False
         finally:
-            cli_mod._find_thresholds_yaml = original
+            wf_helpers._find_thresholds_yaml = original
 
     def test_update_returns_false_when_file_not_found(self):
         from aqsp.cli import _update_thresholds_metadata
-        import aqsp.cli as cli_mod
+        import aqsp.cli_walkforward_helpers as wf_helpers
 
-        original = cli_mod._find_thresholds_yaml
-        cli_mod._find_thresholds_yaml = lambda: None
+        original = wf_helpers._find_thresholds_yaml
+        wf_helpers._find_thresholds_yaml = lambda: None
         try:
             ok = _update_thresholds_metadata("2026-05-28")
             assert ok is False
         finally:
-            cli_mod._find_thresholds_yaml = original
+            wf_helpers._find_thresholds_yaml = original
 
 
 class TestCLIMinScoreParam:
@@ -1101,7 +1104,7 @@ class TestCLIHs300Symbols:
         from aqsp.cli import _get_hs300_symbols
 
         monkeypatch.setattr(
-            "aqsp.cli.load_optional_index_constituents",
+            "aqsp.cli_walkforward_helpers.load_optional_index_constituents",
             lambda index_code, as_of: ["300750", "600519"],
         )
 
@@ -1976,8 +1979,12 @@ def test_walkforward_gate_metadata_marks_unknown_price_mode_as_not_raw(
     from aqsp.backtest.audit import audit_backtest_assumptions
     from aqsp.cli import _walkforward_gate_metadata
 
-    monkeypatch.setattr("aqsp.cli._resolve_sqlite_db_path", lambda: "/fake/path.db")
-    monkeypatch.setattr("aqsp.cli.sqlite_price_mode", lambda _p: "unknown")
+    monkeypatch.setattr(
+        "aqsp.cli_walkforward_helpers._resolve_sqlite_db_path", lambda: "/fake/path.db"
+    )
+    monkeypatch.setattr(
+        "aqsp.cli_walkforward_helpers.sqlite_price_mode", lambda _p: "unknown"
+    )
 
     args = SimpleNamespace(
         source="sqlite_db",
@@ -2059,6 +2066,9 @@ def test_walkforward_defaults_to_recent_window_dates(monkeypatch, tmp_path) -> N
             )
 
     monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 20))
+    monkeypatch.setattr(
+        "aqsp.cli_walkforward_helpers.today_shanghai", lambda: date(2026, 6, 20)
+    )
     monkeypatch.setattr(
         cli_mod,
         "_build_sqlite_db_source",
@@ -2230,6 +2240,9 @@ def test_walkforward_grid_cscv_writes_valid_pbo_gate(monkeypatch, tmp_path):
     gate_path = tmp_path / "custom_gate.json"
     monkeypatch.setattr(cli_mod, "WALKFORWARD_GATE_PATH", str(default_gate_path))
     monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 20))
+    monkeypatch.setattr(
+        "aqsp.cli_walkforward_helpers.today_shanghai", lambda: date(2026, 6, 20)
+    )
     monkeypatch.setattr(
         cli_mod,
         "_get_hs300_symbols",
