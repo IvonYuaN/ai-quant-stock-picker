@@ -439,6 +439,7 @@ class CircuitBreakerConfig:
 | 29 | PositionTracker 集成:纸面持仓 T+1 状态概览 | #18 | position_service.py + cli.py 止损后注入,advisory-only,17测试 | ✅ |
 | 30 | 术语表 UI 渲染接入 canonical dashboard | #19 | dashboard.py 底部注入 BEGINNER_GLOSSARY expander,2测试 | ✅ |
 | 31 | 午盘空值保护:NaN/inf 价格不污染 PnL | #21 | _safe_float NaN→0.0 + compute_real_pnl 跳过 NaN return_pct,5测试 | ✅ |
+| 32 | cli.py 拆分 Phase 1:debate record I/O 提取 | P2 | cli_debate_helpers.py 提取5函数,cli.py -83行,向后兼容 | ✅ |
 
 **P0 三件**(本仓库当前最大风险,Claude 直接修了,不走小米Pro):
 
