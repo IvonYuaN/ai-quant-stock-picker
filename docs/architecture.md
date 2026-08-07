@@ -57,7 +57,8 @@ src/aqsp/
 │   └── cn/                # 国内专属数据源
 │       ├── northbound.py      # 北向资金因子(入ledger,不进评分)
 │       ├── margin_trading.py  # 融资融券因子(入ledger,不进评分)
-│       └── sentiment.py       # 市场情绪因子(涨停池 z-score)
+│       ├── sentiment.py       # 市场情绪因子(涨停池 z-score)
+│       └── macro.py           # 宏观经济因子(CPI/PMI/M2/LPR 气候信号)
 ├── news/                  # 新闻催化引擎
 │   ├── catalysts.py       # 催化事件构建 + 多源并行抓取
 │   ├── entity_graph.py    # 公司/板块实体关系图谱
@@ -342,6 +343,7 @@ class CircuitBreakerConfig:
 | `data/cn/northbound.py` | 北向资金5日 z-score | `float` | ❌ 入 ledger |
 | `data/cn/margin_trading.py` | 融资余额5日变化率 | `float` | ❌ 入 ledger |
 | `data/cn/sentiment.py` | 涨停池 z-score + 温度标签 | `float` + `dict` | ❌ 入 ledger |
+| `data/cn/macro.py` | CPI/PMI/M2/LPR 宏观气候信号 | `dict` | ❌ 入上下文 |
 | `news/catalysts.py` | 多源新闻催化事件构建 | `CatalystReport` | ❌ 入上下文 |
 | `market_context.py` | 融合催化/北向/融资/情绪/全球风险 | `list[str]` 上下文行 | ❌ 增强解释 |
 
@@ -415,6 +417,7 @@ class CircuitBreakerConfig:
 | 20 | 监控告警 aqsp monitor | #12 | monitors.yaml 配置 + GitHub Actions 每30分钟 | ✅ |
 | 21 | P0 实时/历史边界修复:backtest_assumptions + ledger隔离 + realtime失败可见 + PIT as_of + factor mining guard | #18 #19 | 116测试通过 + ruff clean | ✅ |
 | 22 | 市场情绪量化数据模块 data/cn/sentiment.py | #18 | 涨停池 z-score 入 ledger/market_context,不进评分 | ✅ |
+| 23 | 宏观经济数据模块 data/cn/macro.py | #18 | CPI/PMI/M2/LPR 气候信号入 market_context,不进评分 | ✅ |
 
 **P0 三件**(本仓库当前最大风险,Claude 直接修了,不走小米Pro):
 

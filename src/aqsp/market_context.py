@@ -19,6 +19,7 @@ from aqsp.news.watch_candidates import (
 _NORTHBOUND_STRONG_Z = 1.0
 _MARGIN_STRONG_CHANGE = 0.03
 _SENTIMENT_STRONG_Z = 1.0
+_MACRO_STRONG_SCORE = 0.5
 _CROSS_MARKET_STACK_SUPPORT_BONUS = 2
 _CROSS_MARKET_STACK_CONFLICT_PENALTY = 2
 _CROSS_MARKET_STRONG_SCORE = 3
@@ -1266,6 +1267,8 @@ def build_market_context_artifact(
     northbound_flow_5d_z: float = 0.0,
     margin_balance_change_5d: float = 0.0,
     sentiment_z: float = 0.0,
+    macro_climate: str = "",
+    macro_detail: str = "",
     enable_domestic_intelligence: bool | None = None,
     enable_global_intelligence: bool | None = None,
     max_actionable_news_age_minutes: int = _DEFAULT_ACTIONABLE_NEWS_AGE_MINUTES,
@@ -1423,6 +1426,12 @@ def build_market_context_artifact(
     if sentiment_line:
         lines.append(sentiment_line)
 
+    macro_line = (
+        _macro_climate_line(macro_climate, macro_detail) if domestic_enabled else ""
+    )
+    if macro_line:
+        lines.append(macro_line)
+
     combined_line = _combined_context_line(
         symbol_events=symbol_events,
         domestic_events=domestic_events,
@@ -1430,6 +1439,7 @@ def build_market_context_artifact(
         northbound_flow_5d_z=northbound_flow_5d_z if domestic_enabled else 0.0,
         margin_balance_change_5d=margin_balance_change_5d if domestic_enabled else 0.0,
         sentiment_z=sentiment_z if domestic_enabled else 0.0,
+        macro_climate=macro_climate if domestic_enabled else "",
     )
     if combined_line:
         lines.append(combined_line)
@@ -1441,6 +1451,7 @@ def build_market_context_artifact(
         northbound_flow_5d_z=northbound_flow_5d_z if domestic_enabled else 0.0,
         margin_balance_change_5d=margin_balance_change_5d if domestic_enabled else 0.0,
         sentiment_z=sentiment_z if domestic_enabled else 0.0,
+        macro_climate=macro_climate if domestic_enabled else "",
     )
     if coverage_line:
         lines.append(coverage_line)
@@ -1907,6 +1918,14 @@ def _sentiment_signal_line(value: float) -> str:
         return f"市场情绪: 偏热（涨停 z={value:.2f}），注意追高风险。"
     if value <= -_SENTIMENT_STRONG_Z:
         return f"市场情绪: 偏冷（涨停 z={value:.2f}），关注超跌反弹机会。"
+    return ""
+
+
+def _macro_climate_line(climate: str, detail: str) -> str:
+    if climate == "expansion":
+        return f"宏观气候: 扩张（{detail}），风险偏好支撑。"
+    if climate == "contraction":
+        return f"宏观气候: 收缩（{detail}），注意系统性风险。"
     return ""
 
 
@@ -2646,6 +2665,7 @@ def _combined_context_line(
     northbound_flow_5d_z: float,
     margin_balance_change_5d: float,
     sentiment_z: float = 0.0,
+    macro_climate: str = "",
 ) -> str:
     reasons: list[str] = []
     score = 0
@@ -2693,6 +2713,13 @@ def _combined_context_line(
         score -= 1
         reasons.append("情绪偏冷")
 
+    if macro_climate == "expansion":
+        score += 1
+        reasons.append("宏观扩张")
+    elif macro_climate == "contraction":
+        score -= 1
+        reasons.append("宏观收缩")
+
     if not reasons:
         return ""
     if score >= 2:
@@ -2712,6 +2739,7 @@ def _coverage_line(
     northbound_flow_5d_z: float,
     margin_balance_change_5d: float,
     sentiment_z: float = 0.0,
+    macro_climate: str = "",
 ) -> str:
     coverage: list[str] = []
     if symbol_events:
@@ -2726,6 +2754,8 @@ def _coverage_line(
         coverage.append("融资情绪")
     if abs(sentiment_z) >= _SENTIMENT_STRONG_Z:
         coverage.append("市场情绪")
+    if macro_climate in ("expansion", "contraction"):
+        coverage.append("宏观气候")
     if not coverage:
         return ""
     return f"情报覆盖: {' + '.join(coverage[:4])}。"

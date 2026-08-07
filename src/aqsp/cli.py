@@ -4932,6 +4932,8 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
     nb_z = 0.0
     margin_z = 0.0
     sentiment_z = 0.0
+    macro_climate = ""
+    macro_detail = ""
     if enable_online_factors:
         try:
             from aqsp.data.cn.northbound import (
@@ -4959,6 +4961,16 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         except Exception as exc:
             LOGGER.warning("市场情绪因子计算失败，按 0 处理: %s", exc)
             sentiment_z = 0.0
+        try:
+            from aqsp.data.cn.macro import get_macro_summary
+
+            macro_summary = get_macro_summary()
+            macro_climate = str(macro_summary.get("climate", "") or "")
+            macro_detail = str(macro_summary.get("climate_detail", "") or "")
+        except Exception as exc:
+            LOGGER.warning("宏观气候因子计算失败，跳过: %s", exc)
+            macro_climate = ""
+            macro_detail = ""
 
     market_context = None
     market_context_overview = ""
@@ -5003,6 +5015,8 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
                 northbound_flow_5d_z=nb_z,
                 margin_balance_change_5d=margin_z,
                 sentiment_z=sentiment_z,
+                macro_climate=macro_climate,
+                macro_detail=macro_detail,
                 realtime_cross_market=realtime_cross_market,
                 news_universe=build_current_news_universe(
                     current_news_symbols,
