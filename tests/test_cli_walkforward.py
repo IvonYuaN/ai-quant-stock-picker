@@ -26,13 +26,19 @@ def _isolate_walkforward_gate(monkeypatch, tmp_path):
     monkeypatch.setattr(
         "aqsp.cli_walkforward_helpers.today_shanghai", lambda: TEST_TRADE_DAY
     )
-    monkeypatch.setattr("aqsp.universe.runtime.today_shanghai", lambda: TEST_TRADE_DAY)
     monkeypatch.setattr(
-        "aqsp.data.intraday.now_shanghai",
-        lambda: datetime.combine(
-            TEST_TRADE_DAY, datetime.min.time(), tzinfo=timezone.utc
-        ),
+        "aqsp.cli_intraday_helpers.today_shanghai", lambda: TEST_TRADE_DAY
     )
+    monkeypatch.setattr("aqsp.universe.runtime.today_shanghai", lambda: TEST_TRADE_DAY)
+
+    def _now_mock():
+        return datetime.combine(
+            TEST_TRADE_DAY, datetime.min.time(), tzinfo=timezone.utc
+        )
+
+    monkeypatch.setattr("aqsp.data.intraday.now_shanghai", _now_mock)
+    monkeypatch.setattr("aqsp.cli_intraday_helpers.now_shanghai", _now_mock)
+    monkeypatch.setattr("aqsp.cli_regime_helpers.now_shanghai", _now_mock)
 
 
 def _make_sample_data(n_days: int = 200) -> pd.DataFrame:
@@ -503,7 +509,10 @@ class TestWalkforwardPitEnrichment:
                 disclosure_symbol_count=1,
             )
 
-        monkeypatch.setattr("aqsp.cli_runtime_source_helpers._get_source", lambda _name: DummyBaostockSource())
+        monkeypatch.setattr(
+            "aqsp.cli_runtime_source_helpers._get_source",
+            lambda _name: DummyBaostockSource(),
+        )
         monkeypatch.setattr(
             "aqsp.data.pit_financial.enrich_ohlcv_with_pit_financials",
             mock_enrich,
@@ -657,10 +666,12 @@ class TestCLIDataSources:
         class DummySource:
             name = "akshare"
 
-        monkeypatch.setattr("aqsp.cli_runtime_source_helpers._get_source",
+        monkeypatch.setattr(
+            "aqsp.cli_runtime_source_helpers._get_source",
             lambda _source_name: DummySource(),
         )
-        monkeypatch.setattr("aqsp.cli_runtime_source_helpers.fetch_with_source",
+        monkeypatch.setattr(
+            "aqsp.cli_runtime_source_helpers.fetch_with_source",
             lambda *args, **kwargs: {"600519": sample},
         )
 
@@ -711,8 +722,11 @@ class TestCLIDataSources:
             seen["cache_path"] = str(cache.db_path) if cache is not None else None
             return DummySource()
 
-        monkeypatch.setattr("aqsp.cli_runtime_source_helpers._get_source", fake_get_source)
-        monkeypatch.setattr("aqsp.cli_runtime_source_helpers.fetch_with_source",
+        monkeypatch.setattr(
+            "aqsp.cli_runtime_source_helpers._get_source", fake_get_source
+        )
+        monkeypatch.setattr(
+            "aqsp.cli_runtime_source_helpers.fetch_with_source",
             lambda *args, **kwargs: {"600519": sample},
         )
 
@@ -916,7 +930,10 @@ class TestCLIDataSources:
             def get_available_symbols(self):
                 return ["600000", "000001"]
 
-        monkeypatch.setattr("aqsp.cli_runtime_source_helpers._get_source", lambda _name: SourceWithUniverse())
+        monkeypatch.setattr(
+            "aqsp.cli_runtime_source_helpers._get_source",
+            lambda _name: SourceWithUniverse(),
+        )
 
         assert _resolve_run_symbols(
             "auto",
@@ -931,7 +948,9 @@ class TestCLIDataSources:
         def fail_if_called(_name):
             raise AssertionError("source should not be constructed")
 
-        monkeypatch.setattr("aqsp.cli_runtime_source_helpers._get_source", fail_if_called)
+        monkeypatch.setattr(
+            "aqsp.cli_runtime_source_helpers._get_source", fail_if_called
+        )
 
         assert _resolve_run_symbols(
             "auto",
@@ -1649,7 +1668,7 @@ class TestCLIPoolSelection:
             lambda pool_name: DummyPool(),
         )
         monkeypatch.setattr(
-            "aqsp.cli._fetch_frames_for_cli_with_metadata",
+            "aqsp.cli_intraday_helpers._fetch_frames_for_cli_with_metadata",
             mock_fetch_frames,
         )
         monkeypatch.setattr("aqsp.cli.screen_universe", lambda *_args, **_kwargs: [])
@@ -2459,7 +2478,7 @@ def test_walkforward_grid_dsr_uses_period_level_observation_count(
         lambda thresholds, variant: thresholds,
     )
     monkeypatch.setattr(
-        "aqsp.cli._execution_cost_bps_from_thresholds",
+        "aqsp.cli_ledger_helpers._execution_cost_bps_from_thresholds",
         lambda thresholds: (3.0, 20.0),
     )
     monkeypatch.setattr(
