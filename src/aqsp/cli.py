@@ -138,18 +138,17 @@ from aqsp.walkforward_gate import (
     validate_walkforward_gate_payload,
     validate_walkforward_market_coverage,
 )
-from aqsp.briefing.debate import (
-    AShareDebateCoordinator,
-    DebateResult,
-    debate_active_role_summary,
-    debate_active_roles,
-    parse_agent_roles,
-)
+from aqsp.briefing.debate import DebateResult
 from aqsp.cli_debate_helpers import (
+    _apply_debate_results_to_picks,
+    _build_debate_coordinator,
     _candidate_debate_fingerprint,
+    _debate_execution_enabled,
     _merge_debate_records,
     _read_retained_debates,
+    _resolve_pick_debate_roles,
     _write_debate_records,
+    serialize_debate_result,
 )
 from aqsp.goal_switches import goal_switch_enabled
 from aqsp.models import PickResult
@@ -164,165 +163,6 @@ DEBATE_COOLDOWN_DAYS = 3
 _INTRADAY_CATALYST_PREVIEW_MIN = 3
 _INTRADAY_CATALYST_PREVIEW_MAX = 5
 _INTRADAY_CATALYST_THREAD_MODES = frozenset({"thread", "in_process", "same_process"})
-
-
-def serialize_debate_result(result: DebateResult) -> dict:
-    """将辩论结果序列化为可JSON化的字典"""
-    return result.to_dict()
-
-
-def _build_debate_coordinator(
-    debate_runtime: Any,
-    *,
-    thresholds_version: str,
-    regime: str,
-    data_source: str,
-    roles_override: tuple[str, ...] | None = None,
-) -> AShareDebateCoordinator:
-    active_roles = parse_agent_roles(roles_override or debate_runtime.roles)
-    active_role_names = {role.value for role in active_roles}
-    role_runtime = tuple(
-        item for item in debate_runtime.role_runtime if item.role in active_role_names
-    )
-    return AShareDebateCoordinator(
-        enable_llm=debate_runtime.enable_llm,
-        # 实时盘中讨论必须至少完成一轮反驳，避免只产出单轮观点。
-        max_rounds=(
-            max(2, debate_runtime.max_rounds)
-            if str(regime).strip().lower() == "intraday"
-            else debate_runtime.max_rounds
-        ),
-        thresholds_version=thresholds_version,
-        regime=regime,
-        data_source=data_source,
-        language=debate_runtime.language,
-        roles=active_roles,
-        role_runtime=role_runtime,
-    )
-
-
-def _resolve_pick_debate_roles(
-    debate_runtime: Any,
-    *,
-    pick: PickResult,
-    market_context_lines: tuple[str, ...],
-) -> tuple[str, ...]:
-    if getattr(debate_runtime, "context_roles_locked", False):
-        return tuple(debate_runtime.roles)
-
-    from aqsp.briefing.agent_roles import infer_context_agent_roles
-
-    return tuple(
-        role.value
-        for role in infer_context_agent_roles(
-            pick,
-            base_roles=debate_runtime.roles,
-            market_context_lines=market_context_lines,
-            disabled_roles=getattr(debate_runtime, "disabled_roles", ()),
-        )
-    )
-
-
-def _debate_execution_enabled(args: Any, debate_runtime: Any) -> bool:
-    return goal_switch_enabled("multi_agent_advisory_layer", default=True) and (
-        getattr(args, "enable_debate", False) or debate_runtime.enabled
-    )
-
-
-def _apply_debate_results_to_picks(
-    picks: list[PickResult],
-    debate_results: list[DebateResult],
-) -> tuple[list[PickResult], int]:
-    debate_by_symbol = {result.symbol: result for result in debate_results}
-    if not debate_by_symbol:
-        return picks, 0
-
-    rewritten = 0
-    updated_picks: list[PickResult] = []
-    for pick in picks:
-        result = debate_by_symbol.get(pick.symbol)
-        if result is None:
-            updated_picks.append(pick)
-            continue
-
-        metrics = dict(pick.metrics)
-        deterministic_baseline = (
-            result.deterministic_score
-            if result.deterministic_score
-            else result.original_score
-        )
-        metrics["deterministic_score"] = float(pick.score)
-        metrics["deterministic_score_unchanged"] = bool(
-            result.deterministic_score_unchanged
-            and deterministic_baseline == result.original_score == pick.score
-        )
-        metrics["advisory_only"] = bool(result.advisory_only)
-        metrics["debate_id"] = result.debate_id
-        metrics["debate_disagreement_score"] = result.disagreement_score
-        metrics["debate_final_vote"] = {
-            role.value: stance for role, stance in result.final_vote.items()
-        }
-        metrics["debate_active_roles"] = [
-            role.value for role in debate_active_roles(result)
-        ]
-        active_role_summary = debate_active_role_summary(result)
-        if active_role_summary:
-            metrics["debate_active_role_summary"] = active_role_summary
-        if result.role_selection_summary:
-            metrics["debate_role_selection_summary"] = result.role_selection_summary
-        if result.role_selection_plan:
-            metrics["debate_role_selection_plan"] = result.role_selection_plan
-        if result.research_verdict:
-            metrics["debate_research_verdict"] = result.research_verdict
-        if result.primary_risk_gate:
-            metrics["debate_primary_risk_gate"] = result.primary_risk_gate
-        if result.next_trigger:
-            metrics["debate_next_trigger"] = result.next_trigger
-        if result.support_points:
-            metrics["support_points"] = list(result.support_points)
-        if result.opposition_points:
-            metrics["opposition_points"] = list(result.opposition_points)
-        if result.watch_items:
-            metrics["watch_items"] = list(result.watch_items)
-        if result.role_reliability_lines:
-            metrics["role_reliability_lines"] = list(result.role_reliability_lines)
-        if result.historical_context_note:
-            metrics["debate_historical_context_note"] = result.historical_context_note
-        if result.historical_context_bucket:
-            metrics["debate_historical_context_bucket"] = (
-                result.historical_context_bucket
-            )
-        if result.historical_context_sample_count > 0:
-            metrics["debate_historical_context_sample_count"] = (
-                result.historical_context_sample_count
-            )
-            metrics["debate_historical_context_accuracy"] = (
-                result.historical_context_accuracy
-            )
-        elif result.historical_context_accuracy > 0:
-            metrics["debate_historical_context_accuracy"] = (
-                result.historical_context_accuracy
-            )
-        if result.cross_market_support_event_count > 0:
-            metrics["cross_market_support_event_count"] = (
-                result.cross_market_support_event_count
-            )
-        if result.cross_market_conflict_event_count > 0:
-            metrics["cross_market_conflict_event_count"] = (
-                result.cross_market_conflict_event_count
-            )
-        if result.cross_market_evidence_stack_summary:
-            metrics["cross_market_evidence_stack_summary"] = (
-                result.cross_market_evidence_stack_summary
-            )
-
-        pick = replace(
-            pick,
-            metrics=metrics,
-            debate_consensus=result.final_consensus,
-        )
-        updated_picks.append(pick)
-    return updated_picks, rewritten
 
 
 SOURCE_CHOICES = [

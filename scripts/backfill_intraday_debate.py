@@ -12,7 +12,7 @@ from uuid import uuid4
 
 import pandas as pd
 
-from aqsp.cli import (
+from aqsp.cli_debate_helpers import (
     _build_debate_coordinator,
     _candidate_debate_fingerprint,
     _merge_debate_records,
