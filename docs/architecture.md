@@ -438,6 +438,7 @@ class CircuitBreakerConfig:
 | 28 | StopLossManager 集成:纸面持仓止损检查 | #18 | stop_loss_service.py + cli.py T+1后注入,advisory-only,16测试 | ✅ |
 | 29 | PositionTracker 集成:纸面持仓 T+1 状态概览 | #18 | position_service.py + cli.py 止损后注入,advisory-only,17测试 | ✅ |
 | 30 | 术语表 UI 渲染接入 canonical dashboard | #19 | dashboard.py 底部注入 BEGINNER_GLOSSARY expander,2测试 | ✅ |
+| 31 | 午盘空值保护:NaN/inf 价格不污染 PnL | #21 | _safe_float NaN→0.0 + compute_real_pnl 跳过 NaN return_pct,5测试 | ✅ |
 
 **P0 三件**(本仓库当前最大风险,Claude 直接修了,不走小米Pro):
 
