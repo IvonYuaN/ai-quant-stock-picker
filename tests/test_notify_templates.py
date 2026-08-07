@@ -14,6 +14,7 @@ from aqsp.notify_templates import (
     _notification_live_source_status_line,
     _daily_snapshot_debate_focus,
     _daily_snapshot_debate_state,
+    _high_risk_alert_lines,
     build_briefing_notification,
     build_daily_run_notification,
     build_closing_premium_notification,
@@ -856,6 +857,115 @@ def test_build_monitor_notification_summary_mode_is_action_oriented() -> None:
     assert "## 告警" in markdown
     assert "## 处理" not in markdown
     assert "stale_data" in markdown
+
+
+# -- High-risk alert tests --
+
+
+def _risk_pick(symbol: str, name: str, risks: tuple[str, ...]) -> PickResult:
+    return PickResult(
+        symbol=symbol,
+        name=name,
+        date="2026-08-07",
+        close=10.0,
+        score=70.0,
+        rating="watch",
+        entry_type="relative_strength",
+        ideal_buy=10.0,
+        stop_loss=9.2,
+        take_profit=12.0,
+        position="watch",
+        risks=risks,
+    )
+
+
+class TestHighRiskAlertLines:
+    """Tests for _high_risk_alert_lines."""
+
+    def test_returns_empty_when_no_picks(self) -> None:
+        result = _high_risk_alert_lines([], [], keywords=("ST",))
+        assert result == []
+
+    def test_returns_empty_when_no_matching_risks(self) -> None:
+        pick = _risk_pick("600519", "贵州茅台", ("收盘价低于 MA20",))
+        result = _high_risk_alert_lines([pick], [], keywords=("ST", "停牌"))
+        assert result == []
+
+    def test_returns_alert_when_risk_matches_keyword(self) -> None:
+        pick = _risk_pick(
+            "600519", "贵州茅台", ("ST股风险", "收盘价低于 MA20")
+        )
+        result = _high_risk_alert_lines([pick], [], keywords=("ST",))
+        # Header + blank line + at least one pick entry
+        assert len(result) >= 3
+        assert "高风险提示" in result[0]
+        all_text = " ".join(result)
+        assert "贵州茅台" in all_text
+        assert "ST股风险" in all_text
+
+    def test_matches_case_insensitively(self) -> None:
+        pick = _risk_pick("600519", "贵州茅台", ("st股风险",))
+        result = _high_risk_alert_lines([pick], [], keywords=("ST",))
+        assert len(result) >= 3
+
+    def test_checks_both_tradable_and_candidates(self) -> None:
+        tradable = _risk_pick("600519", "贵州茅台", ("ST股风险",))
+        candidate = _risk_pick("000858", "五粮液", ("涨停板流动性风险",))
+        result = _high_risk_alert_lines(
+            [tradable], [candidate], keywords=("ST", "涨停")
+        )
+        all_text = " ".join(result)
+        assert "贵州茅台" in all_text
+        assert "五粮液" in all_text
+
+    def test_limits_to_three_picks(self) -> None:
+        picks = [
+            _risk_pick(f"60000{i}", f"股票{i}", ("ST股风险",))
+            for i in range(5)
+        ]
+        result = _high_risk_alert_lines(picks, [], keywords=("ST",))
+        # Header + blank line + 3 picks + overflow line
+        assert len(result) == 6
+        assert "其他 2 只" in result[-1]
+
+    def test_uses_thresholds_keywords_when_none_provided(self) -> None:
+        pick = _risk_pick("600519", "贵州茅台", ("ST股风险",))
+        # keywords=None → loads from thresholds.yaml
+        result = _high_risk_alert_lines([pick], [])
+        assert len(result) >= 3
+        assert "ST" in " ".join(result) or "贵州茅台" in " ".join(result)
+
+    def test_returns_empty_when_keywords_empty(self) -> None:
+        pick = _risk_pick("600519", "贵州茅台", ("ST股风险",))
+        result = _high_risk_alert_lines([pick], [], keywords=())
+        assert result == []
+
+
+class TestHighRiskInDailyNotification:
+    """Tests that build_daily_run_notification includes high-risk alerts."""
+
+    def test_notification_includes_high_risk_block(self) -> None:
+        pick = _risk_pick("600519", "贵州茅台", ("ST股风险",))
+        markdown = build_daily_run_notification(
+            run_date="2026-08-07",
+            tradable=[pick],
+            actual_source="akshare",
+            source_health_label="ok",
+            source_health_message="正常",
+        )
+        assert "## 高风险提示" in markdown
+        assert "贵州茅台" in markdown
+
+    def test_notification_omits_high_risk_block_when_no_match(self) -> None:
+        pick = _risk_pick("600519", "贵州茅台", ("收盘价低于 MA20",))
+        markdown = build_daily_run_notification(
+            run_date="2026-08-07",
+            tradable=[pick],
+            actual_source="akshare",
+            source_health_label="ok",
+            source_health_message="正常",
+        )
+        assert "## 高风险提示" not in markdown
 
 
 def test_build_morning_breakout_notification_lists_top_candidates() -> None:

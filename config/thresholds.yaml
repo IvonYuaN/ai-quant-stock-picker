@@ -1,4 +1,4 @@
-version: "1.1.17"
+version: "1.1.18"
 composite:
   base_blend_weight: 0.7
   min_total_score: 0.4
@@ -9,7 +9,7 @@ composite:
   volume_weight: 0.0
   mean_reversion_weight: 0.0
   triple_rise_weight: 0.3
-description: "策略阈值配置 — v1.1.16：上调跨市场中等强度主线的截断前重排权重"
+description: "策略阈值配置 — v1.1.18：新增 high_risk_keywords 用于日报高风险提示区块"
 effective_from: '2026-06-17'
 execution:
   commission_rate: 0.0003
@@ -137,6 +137,14 @@ risk:
   portfolio_max_drawdown_pct: 0.10
   max_positions: 8
   max_single_position_pct: 0.30
+  # Keywords that mark a pick as high-risk in notifications.
+  # Matching is case-insensitive substring against each risk string.
+  high_risk_keywords:
+    - "ST"
+    - "退市"
+    - "停牌"
+    - "涨停"
+    - "融资余额"
   max_sector_concentration: 0.40
   max_correlation: 0.70
   min_cash_reserve: 0.10
