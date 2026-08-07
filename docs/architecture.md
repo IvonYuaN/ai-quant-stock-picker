@@ -437,6 +437,7 @@ class CircuitBreakerConfig:
 | 27 | market_context 拆分:传导计算引擎独立 | #18 | market_context_implications.py 提取(769行),主模块降至1463行,向后兼容 | ✅ |
 | 28 | StopLossManager 集成:纸面持仓止损检查 | #18 | stop_loss_service.py + cli.py T+1后注入,advisory-only,16测试 | ✅ |
 | 29 | PositionTracker 集成:纸面持仓 T+1 状态概览 | #18 | position_service.py + cli.py 止损后注入,advisory-only,17测试 | ✅ |
+| 30 | 术语表 UI 渲染接入 canonical dashboard | #19 | dashboard.py 底部注入 BEGINNER_GLOSSARY expander,2测试 | ✅ |
 
 **P0 三件**(本仓库当前最大风险,Claude 直接修了,不走小米Pro):
 

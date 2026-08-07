@@ -23,6 +23,7 @@ from aqsp.research.summary import (
 )
 from aqsp.web.archive_safety import sanitize_archive_text
 from aqsp.web.archive_safety import sanitize_research_text
+from aqsp.web.dashboard_beginner_compat import BEGINNER_GLOSSARY
 from aqsp.web.data_provider import (
     DashboardCandidateCard,
     DashboardCandidateJourneyStep,
@@ -13966,6 +13967,21 @@ def _render_raw_report(task_view) -> None:
         st.info("当前任务/日期暂无归档原文。")
 
 
+def _render_glossary_expander() -> None:
+    """Render a collapsible glossary of beginner-friendly terms.
+
+    Pulled from ``BEGINNER_GLOSSARY`` in ``dashboard_beginner_compat``.
+    Displayed at the bottom of every non-home workspace so new users
+    can look up unfamiliar terminology without leaving the page.
+    """
+    with st.expander("术语表（新手参考）", expanded=False):
+        for category, terms in BEGINNER_GLOSSARY.items():
+            st.markdown(f"**{category}**")
+            for term, explanation in terms:
+                st.markdown(f"- **{term}**：{explanation}")
+            st.markdown("")
+
+
 def main() -> None:
     updated_at = now_shanghai().strftime("%Y-%m-%d %H:%M:%S %z")
     _inject_dashboard_styles()
@@ -14134,6 +14150,9 @@ def main() -> None:
             )
         with st.expander("归档原文", expanded=False):
             _render_raw_report(task_view)
+
+    if workspace != "决策首页":
+        _render_glossary_expander()
 
 
 if __name__ == "__main__":

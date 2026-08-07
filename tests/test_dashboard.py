@@ -17152,3 +17152,50 @@ def test_dashboard_snapshot_without_stale_after_is_expired() -> None:
 
     assert dashboard._snapshot_is_expired(snapshot) is True
     assert dashboard._snapshot_is_expired(snapshot, historical=True) is False
+
+
+def test_glossary_expander_renders_all_categories() -> None:
+    """Glossary expander should render all BEGINNER_GLOSSARY categories."""
+    import aqsp.web.dashboard as dashboard
+    from aqsp.web.dashboard_beginner_compat import BEGINNER_GLOSSARY
+
+    markdown_blocks: list[str] = []
+
+    class _StubExpander:
+        def __init__(self, label: str, expanded: bool) -> None:
+            self.label = label
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    original_expander = dashboard.st.expander
+    original_markdown = dashboard.st.markdown
+
+    dashboard.st.expander = _StubExpander
+    dashboard.st.markdown = lambda text, **kw: markdown_blocks.append(text)
+
+    try:
+        dashboard._render_glossary_expander()
+    finally:
+        dashboard.st.expander = original_expander
+        dashboard.st.markdown = original_markdown
+
+    rendered = "\n".join(markdown_blocks)
+    for category in BEGINNER_GLOSSARY:
+        assert f"**{category}**" in rendered
+    for terms in BEGINNER_GLOSSARY.values():
+        for term, explanation in terms:
+            assert f"**{term}**" in rendered
+            assert explanation in rendered
+
+
+def test_glossary_expander_imported_in_dashboard_module() -> None:
+    """dashboard module must import BEGINNER_GLOSSARY from compat module."""
+    import aqsp.web.dashboard as dashboard
+
+    assert hasattr(dashboard, "BEGINNER_GLOSSARY")
+    assert hasattr(dashboard, "_render_glossary_expander")
+    assert callable(dashboard._render_glossary_expander)
