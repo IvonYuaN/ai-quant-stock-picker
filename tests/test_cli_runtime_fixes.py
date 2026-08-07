@@ -520,8 +520,7 @@ def test_load_runtime_market_context_catalyst_report_reuses_preview_report(
     ]
 
     monkeypatch.setattr(
-        cli_mod,
-        "_build_runtime_catalyst_report",
+        "aqsp.cli_runtime_catalyst_helpers._build_runtime_catalyst_report",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             AssertionError("should reuse preview report")
         ),
@@ -551,8 +550,7 @@ def test_load_runtime_market_context_catalyst_report_refetches_when_preview_is_i
         return "rebuilt-report"
 
     monkeypatch.setattr(
-        cli_mod,
-        "_build_runtime_catalyst_report",
+        "aqsp.cli_runtime_catalyst_helpers._build_runtime_catalyst_report",
         fake_build_runtime_catalyst_report,
     )
     picks = [

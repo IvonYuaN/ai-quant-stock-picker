@@ -91,8 +91,7 @@ def test_run_scheduled_persists_decision_audit_log(
     # This audit test verifies persistence, not live news retrieval. Keep the
     # external-source process/thread graph out of the test process.
     monkeypatch.setattr(
-        cli_mod,
-        "_build_runtime_catalyst_report",
+        "aqsp.cli_runtime_catalyst_helpers._build_runtime_catalyst_report",
         lambda *args, **kwargs: None,
     )
     monkeypatch.setattr(
