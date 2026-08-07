@@ -446,6 +446,7 @@ class CircuitBreakerConfig:
 | 36 | cli.py 拆分 Phase 5:notify dispatch helpers 提取 | P2 | cli_notify_helpers.py 94行(2函数+notify_markdown可变引用+NOTIFY_STATE_PATH),cli.py -69行(6933→6864),23处test monkeypatch迁移到字符串路径格式,向后兼容 | ✅ |
 | 37 | cli.py 拆分 Phase 6:runtime catalyst helpers 提取 | P2 | cli_runtime_catalyst_helpers.py 284行(17函数+_INTRADAY_CATALYST_THREAD_MODES),cli.py -248行(6884→6636),3处test monkeypatch迁移,4函数noqa re-export,向后兼容 | ✅ |
 | 38 | cli.py 拆分 Phase 7:runtime source helpers 提取 | P2 | cli_runtime_source_helpers.py 139行(7函数:_build_sqlite_db_source/_get_source/_get_source_optional_cache/_fetch_frames_for_cli/_fetch_frames_for_cli_with_metadata/_drop_benchmark_frame/_resolve_run_symbols),cli.py -113行(6636→6523),11处test monkeypatch迁移到cli_runtime_source_helpers,7函数noqa re-export,移除9个不再需要的import,向后兼容 | ✅ |
+| 39 | cli.py 拆分 Phase 8:candidate annotation helpers 提取 | P2 | cli_candidate_helpers.py 493行(10函数:_candidate_blocker_map/_candidate_review_map/_default_candidate_review/_annotate_candidate_status/_market_context_review_priority/_merge_candidate_note/_annotate_data_quality_context/_annotate_cross_market_context/_append_cross_market_watch_candidates/_news_watch_candidate_limit),cli.py -462行(6523→6061),10函数noqa re-export,移除hashlib+score_symbol import,零test monkeypatch迁移(内部调用不跨模块),向后兼容 | ✅ |
 
 **P0 三件**(本仓库当前最大风险,Claude 直接修了,不走小米Pro):
 
