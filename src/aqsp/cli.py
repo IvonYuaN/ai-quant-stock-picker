@@ -145,6 +145,12 @@ from aqsp.briefing.debate import (
     debate_active_roles,
     parse_agent_roles,
 )
+from aqsp.cli_debate_helpers import (
+    _candidate_debate_fingerprint,
+    _merge_debate_records,
+    _read_retained_debates,
+    _write_debate_records,
+)
 from aqsp.goal_switches import goal_switch_enabled
 from aqsp.models import PickResult
 from aqsp.presentation import format_symbol_name, has_meaningful_name
@@ -317,89 +323,6 @@ def _apply_debate_results_to_picks(
         )
         updated_picks.append(pick)
     return updated_picks, rewritten
-
-
-def _read_retained_debates(debate_file: Path, cutoff_date: str) -> dict[str, dict]:
-    retained: dict[str, dict] = {}
-    if not debate_file.exists():
-        return retained
-    for line in debate_file.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        try:
-            data = json.loads(line)
-            debate_date = str(
-                data.get("related_signal_date", "") or data.get("debate_date", "")
-            )
-            if debate_date < cutoff_date:
-                continue
-            key = _debate_record_key(data)
-            if key not in retained or retained[key].get("created_at", "") < data.get(
-                "created_at", ""
-            ):
-                retained[key] = data
-        except (json.JSONDecodeError, KeyError):
-            pass
-    return retained
-
-
-def _merge_debate_records(target: dict[str, dict], updates: dict[str, dict]) -> None:
-    for data in updates.values():
-        debate_date = str(
-            data.get("related_signal_date", "") or data.get("debate_date", "")
-        )
-        symbol = str(data.get("symbol", ""))
-        if not symbol or not debate_date:
-            continue
-        key = _debate_record_key(data)
-        if key not in target or target[key].get("created_at", "") < data.get(
-            "created_at", ""
-        ):
-            target[key] = data
-
-
-def _write_debate_records(debate_file: Path, records: dict[str, dict]) -> None:
-    text = "".join(
-        json.dumps(data, ensure_ascii=False) + "\n"
-        for data in sorted(
-            records.values(),
-            key=lambda item: (
-                str(item.get("related_signal_date", "") or item.get("debate_date", "")),
-                str(item.get("symbol", "")),
-                str(item.get("task_id", "")),
-                str(item.get("candidate_fingerprint", "")),
-                str(item.get("created_at", "")),
-            ),
-        )
-    )
-    atomic_write_text(debate_file, text)
-
-
-def _debate_record_key(data: dict[str, Any]) -> str:
-    symbol = str(data.get("symbol", "") or "")
-    debate_date = str(
-        data.get("related_signal_date", "") or data.get("debate_date", "")
-    )
-    task_id = str(data.get("task_id", "") or "")
-    fingerprint = str(data.get("candidate_fingerprint", "") or "")
-    if task_id or fingerprint:
-        return "|".join((symbol, debate_date, task_id, fingerprint))
-    return f"{symbol}_{debate_date}"
-
-
-def _candidate_debate_fingerprint(pick: PickResult) -> str:
-    payload = {
-        "symbol": pick.symbol,
-        "date": pick.date,
-        "score": round(float(pick.score or 0.0), 4),
-        "rating": pick.rating,
-        "strategies": list(pick.strategies),
-        "reasons": list(pick.reasons),
-        "risks": list(pick.risks),
-    }
-    return hashlib.sha256(
-        json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
-    ).hexdigest()[:16]
 
 
 SOURCE_CHOICES = [
