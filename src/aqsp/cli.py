@@ -4928,6 +4928,16 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
     for _line in format_stop_loss_report(stop_loss_report):
         print(_line)
 
+    # Position overview with T+1 freeze/unfreeze status (advisory only).
+    from aqsp.portfolio.position_service import (
+        format_position_report,
+        get_position_report,
+    )
+
+    position_report = get_position_report(paper_ledger_path)
+    for _line in format_position_report(position_report):
+        print(_line)
+
     execution_fee_bps, execution_slippage_bps = _resolve_execution_cost_bps(
         thresholds,
         fee_bps=args.fee_bps,

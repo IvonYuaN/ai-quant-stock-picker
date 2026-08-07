@@ -90,7 +90,9 @@ src/aqsp/
 ├── portfolio/
 │   ├── correlation.py     # 候选池内相关性去重
 │   ├── sector.py          # 行业去重
-│   └── sizing.py          # 等权 / 风险平价
+│   ├── sizing.py          # 等权 / 风险平价
+│   ├── position_tracker.py # T+1 持仓追踪器(冻结/解冻/可卖数量)
+│   └── position_service.py # 纸面持仓状态报告服务(advisory)
 ├── ledger/
 │   ├── base.py            # 读写 jsonl + append_predictions
 │   ├── store.py           # 读写 jsonl
@@ -434,6 +436,7 @@ class CircuitBreakerConfig:
 | 26 | market_context 拆分:跨市场传导规则模块独立 | #18 | market_context_cross_market.py 提取(774行),向后兼容 | ✅ |
 | 27 | market_context 拆分:传导计算引擎独立 | #18 | market_context_implications.py 提取(769行),主模块降至1463行,向后兼容 | ✅ |
 | 28 | StopLossManager 集成:纸面持仓止损检查 | #18 | stop_loss_service.py + cli.py T+1后注入,advisory-only,16测试 | ✅ |
+| 29 | PositionTracker 集成:纸面持仓 T+1 状态概览 | #18 | position_service.py + cli.py 止损后注入,advisory-only,17测试 | ✅ |
 
 **P0 三件**(本仓库当前最大风险,Claude 直接修了,不走小米Pro):
 
