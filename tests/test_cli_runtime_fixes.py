@@ -903,7 +903,9 @@ def test_fetch_special_strategy_frames_uses_sqlite_base_then_realtime_overlay(
     monkeypatch.setattr(
         cli_mod,
         "_fetch_frames_for_cli_with_metadata",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(DataError("online unavailable")),
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            DataError("online unavailable")
+        ),
     )
     monkeypatch.setattr(
         cli_mod,
@@ -974,7 +976,9 @@ def test_fetch_intraday_historical_base_ends_at_previous_trading_day(
     assert result["600000"].attrs["workload"] == "historical_base"
 
 
-def test_ensure_pick_technical_metrics_fills_missing_values_from_current_frame() -> None:
+def test_ensure_pick_technical_metrics_fills_missing_values_from_current_frame() -> (
+    None
+):
     import aqsp.cli as cli_mod
     from aqsp.core.types import PickResult
 
@@ -2119,8 +2123,7 @@ def test_run_scheduled_skips_runtime_chain_on_non_trading_day(
         ),
     )
     monkeypatch.setattr(
-        cli_mod,
-        "notify_markdown",
+        "aqsp.cli_notify_helpers.notify_markdown",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             AssertionError("non-trading day must not notify")
         ),
@@ -2722,7 +2725,9 @@ def test_run_scheduled_composite_rescore_updates_frozen_pick_results(
         "aqsp.data.freshness.check_freshness", lambda *_args, **_kwargs: []
     )
     monkeypatch.setattr(cli_mod, "validate_predictions", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(cli_mod, "notify_markdown", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        "aqsp.cli_notify_helpers.notify_markdown", lambda *_args, **_kwargs: []
+    )
     monkeypatch.setattr(cli_mod, "_log_run_decisions", lambda **_kwargs: None)
     monkeypatch.setattr(
         cli_mod, "_annotate_candidate_status", lambda picks, **_kwargs: picks
@@ -3017,7 +3022,9 @@ def test_run_scheduled_skips_formal_ledger_writes_when_circuit_breaker_triggers(
     monkeypatch.setattr(cli_mod, "_log_run_decisions", lambda **_kwargs: None)
     monkeypatch.setattr(cli_mod, "to_dataframe", lambda picks: pd.DataFrame())
     monkeypatch.setattr(cli_mod, "to_markdown", lambda *_args, **_kwargs: "# report")
-    monkeypatch.setattr(cli_mod, "notify_markdown", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        "aqsp.cli_notify_helpers.notify_markdown", lambda *_args, **_kwargs: []
+    )
     monkeypatch.setattr(
         "aqsp.portfolio.snapshot.save_snapshot",
         lambda *_args, **_kwargs: None,
@@ -3203,7 +3210,9 @@ def test_run_scheduled_intraday_keeps_observation_output_during_circuit_breaker(
         lambda picks: pd.DataFrame([{"symbol": p.symbol} for p in picks]),
     )
     monkeypatch.setattr(cli_mod, "to_markdown", lambda *_args, **_kwargs: "# report")
-    monkeypatch.setattr(cli_mod, "notify_markdown", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        "aqsp.cli_notify_helpers.notify_markdown", lambda *_args, **_kwargs: []
+    )
     saved_snapshots: list[object] = []
     monkeypatch.setattr(
         "aqsp.portfolio.snapshot.save_snapshot",
@@ -3336,7 +3345,9 @@ def test_run_scheduled_logs_learning_proposal_failure(
         "aqsp.data.freshness.check_freshness", lambda *_args, **_kwargs: []
     )
     monkeypatch.setattr(cli_mod, "validate_predictions", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(cli_mod, "notify_markdown", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        "aqsp.cli_notify_helpers.notify_markdown", lambda *_args, **_kwargs: []
+    )
     monkeypatch.setattr(cli_mod, "_log_run_decisions", lambda **_kwargs: None)
     monkeypatch.setattr(
         cli_mod, "_annotate_candidate_status", lambda picks, **_kwargs: picks

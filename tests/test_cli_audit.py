@@ -182,7 +182,7 @@ def test_run_scheduled_persists_decision_audit_log(
         "_resolve_audit_action",
         lambda *_args, **_kwargs: "PAPER_REVIEW",
     )
-    monkeypatch.setattr(cli_mod, "notify_markdown", lambda markdown: [])
+    monkeypatch.setattr("aqsp.cli_notify_helpers.notify_markdown", lambda markdown: [])
 
     args = Namespace(
         mode="close",

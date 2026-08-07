@@ -80,19 +80,11 @@ from aqsp.notify_templates import (
 )
 from aqsp.notification_runtime import (
     dispatch_gate_notification,
-    dispatch_notification_once as _dispatch_notification_once_impl,
     dispatch_scheduled_daily_notification,
     finalize_scheduled_notification,
     finalize_scheduled_outputs,
-    mark_notification_failed,
-    mark_notification_sent,
-    reserve_notification,
 )
-from aqsp.notifier import (
-    notify_markdown as _notify_markdown_default,
-    notify_markdown_via_config,
-    print_notify_results,
-)
+from aqsp.notifier import notify_markdown as _notify_markdown_default
 from aqsp.research.summary import load_research_summary
 from aqsp.runtime_snapshot import build_runtime_research_snapshot
 from aqsp.research_engine import (
@@ -162,12 +154,13 @@ from aqsp.cli_walkforward_helpers import (
     _walkforward_runtime_rows,
     _write_walkforward_gate,
 )
+from aqsp import cli_notify_helpers
+from aqsp.cli_notify_helpers import _dispatch_notification_once
 from aqsp.goal_switches import goal_switch_enabled
 from aqsp.models import PickResult
 from aqsp.presentation import format_symbol_name, has_meaningful_name
 
 LOGGER = logging.getLogger(__name__)
-notify_markdown = _notify_markdown_default
 DEBATE_RETENTION_DAYS = 30
 DEBATE_COOLDOWN_DAYS = 3
 # Keep the intraday catalyst fan-out bounded even when the final screen limit
@@ -202,70 +195,6 @@ WALKFORWARD_SOURCE_CHOICES = [
     "baostock",
     "sqlite_db",
 ]
-NOTIFY_STATE_PATH = "data/notify_state.json"
-
-
-def _notify_via_config(markdown: str, *, mode: str) -> list:
-    if notify_markdown is not _notify_markdown_default:
-        return notify_markdown(markdown)
-    return notify_markdown_via_config(markdown, mode=mode)
-
-
-def _dispatch_notification_once(
-    markdown: str,
-    *,
-    prefix: str,
-    mode: str,
-    kind: str,
-    summary_markdown: str | None = None,
-) -> list:
-    state_path = _resolve_runtime_state_path(
-        os.getenv("AQSP_NOTIFY_STATE_PATH", NOTIFY_STATE_PATH)
-    )
-    if notify_markdown is not _notify_markdown_default:
-        payload = (
-            summary_markdown
-            if str(mode).strip().lower() == "summary" and summary_markdown
-            else markdown
-        )
-        if not reserve_notification(
-            kind=kind,
-            markdown=payload,
-            state_path=state_path,
-        ):
-            print(f"{prefix}: skipped duplicate")
-            return []
-        try:
-            results = notify_markdown(payload)
-            print_notify_results(results, prefix=prefix)
-        except Exception:
-            mark_notification_failed(
-                kind=kind,
-                markdown=payload,
-                state_path=state_path,
-            )
-            raise
-        if any(result.ok for result in results):
-            mark_notification_sent(
-                kind=kind,
-                markdown=payload,
-                state_path=state_path,
-            )
-        else:
-            mark_notification_failed(
-                kind=kind,
-                markdown=payload,
-                state_path=state_path,
-            )
-        return results
-    return _dispatch_notification_once_impl(
-        markdown,
-        mode=mode,
-        prefix=prefix,
-        kind=kind,
-        state_path=state_path,
-        summary_markdown=summary_markdown,
-    )
 
 
 def _screen_universe_with_thresholds(
@@ -3113,8 +3042,8 @@ def _handle_circuit_breaker_block(
             )
         ),
         format_notification_gate_block_fn=_format_notification_gate_block,
-        legacy_notify_fn=notify_markdown
-        if notify_markdown is not _notify_markdown_default
+        legacy_notify_fn=cli_notify_helpers.notify_markdown
+        if cli_notify_helpers.notify_markdown is not _notify_markdown_default
         else None,
         print_fn=print,
         mark_gate_notification_sent_fn=lambda **kwargs: _mark_gate_notification_sent(
@@ -4596,7 +4525,9 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         os.environ.get("AQSP_NOTIFY_TITLE_LABEL", "") or "收盘研究日报"
     ).strip()
     legacy_notify = (
-        notify_markdown if notify_markdown is not _notify_markdown_default else None
+        cli_notify_helpers.notify_markdown
+        if cli_notify_helpers.notify_markdown is not _notify_markdown_default
+        else None
     )
     print(
         f"冷启动统计: ledger={formal_ledger_path} days={cold_start_days}/{cold_start_min_days}"
