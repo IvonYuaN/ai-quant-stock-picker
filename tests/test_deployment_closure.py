@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from datetime import date
 from pathlib import Path
 
@@ -379,7 +380,7 @@ def test_snapshot_contract_rejects_wrong_variant_date(monkeypatch) -> None:
 
 def test_deployment_closure_script_help_runs_directly() -> None:
     result = subprocess.run(
-        ["python3", "scripts/check_deployment_closure.py", "--help"],
+        [sys.executable, "scripts/check_deployment_closure.py", "--help"],
         cwd=Path(__file__).resolve().parents[1],
         capture_output=True,
         text=True,
