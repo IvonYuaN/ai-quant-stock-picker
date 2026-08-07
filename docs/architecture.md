@@ -445,6 +445,7 @@ class CircuitBreakerConfig:
 | 35 | cli.py 拆分 Phase 4:walkforward helpers 提取 | P2 | cli_walkforward_helpers.py 666行(16函数+1常量+HS300列表),cli.py -629行(7562→6933),test monkeypatch 目标迁移到 cli_walkforward_helpers,向后兼容 | ✅ |
 | 36 | cli.py 拆分 Phase 5:notify dispatch helpers 提取 | P2 | cli_notify_helpers.py 94行(2函数+notify_markdown可变引用+NOTIFY_STATE_PATH),cli.py -69行(6933→6864),23处test monkeypatch迁移到字符串路径格式,向后兼容 | ✅ |
 | 37 | cli.py 拆分 Phase 6:runtime catalyst helpers 提取 | P2 | cli_runtime_catalyst_helpers.py 284行(17函数+_INTRADAY_CATALYST_THREAD_MODES),cli.py -248行(6884→6636),3处test monkeypatch迁移,4函数noqa re-export,向后兼容 | ✅ |
+| 38 | cli.py 拆分 Phase 7:runtime source helpers 提取 | P2 | cli_runtime_source_helpers.py 139行(7函数:_build_sqlite_db_source/_get_source/_get_source_optional_cache/_fetch_frames_for_cli/_fetch_frames_for_cli_with_metadata/_drop_benchmark_frame/_resolve_run_symbols),cli.py -113行(6636→6523),11处test monkeypatch迁移到cli_runtime_source_helpers,7函数noqa re-export,移除9个不再需要的import,向后兼容 | ✅ |
 
 **P0 三件**(本仓库当前最大风险,Claude 直接修了,不走小米Pro):
 

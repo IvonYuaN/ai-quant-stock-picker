@@ -503,7 +503,7 @@ class TestWalkforwardPitEnrichment:
                 disclosure_symbol_count=1,
             )
 
-        monkeypatch.setattr("aqsp.cli._get_source", lambda _name: DummyBaostockSource())
+        monkeypatch.setattr("aqsp.cli_runtime_source_helpers._get_source", lambda _name: DummyBaostockSource())
         monkeypatch.setattr(
             "aqsp.data.pit_financial.enrich_ohlcv_with_pit_financials",
             mock_enrich,
@@ -632,7 +632,7 @@ class TestCLIDataSources:
         def boom(*args, **kwargs):
             raise RuntimeError("proxy died")
 
-        monkeypatch.setattr(cli_mod, "_get_source", boom)
+        monkeypatch.setattr("aqsp.cli_runtime_source_helpers._get_source", boom)
 
         try:
             cli_mod._fetch_frames_for_cli("akshare", ["600519"], benchmark_symbol=None)
@@ -657,14 +657,10 @@ class TestCLIDataSources:
         class DummySource:
             name = "akshare"
 
-        monkeypatch.setattr(
-            cli_mod,
-            "_get_source",
+        monkeypatch.setattr("aqsp.cli_runtime_source_helpers._get_source",
             lambda _source_name: DummySource(),
         )
-        monkeypatch.setattr(
-            cli_mod,
-            "fetch_with_source",
+        monkeypatch.setattr("aqsp.cli_runtime_source_helpers.fetch_with_source",
             lambda *args, **kwargs: {"600519": sample},
         )
 
@@ -682,7 +678,7 @@ class TestCLIDataSources:
         def fail(*args, **kwargs):
             raise DataError("upstream failed")
 
-        monkeypatch.setattr(cli_mod, "fetch_with_source", fail)
+        monkeypatch.setattr("aqsp.cli_runtime_source_helpers.fetch_with_source", fail)
         try:
             cli_mod._fetch_frames_for_cli_with_metadata(
                 "akshare",
@@ -715,10 +711,8 @@ class TestCLIDataSources:
             seen["cache_path"] = str(cache.db_path) if cache is not None else None
             return DummySource()
 
-        monkeypatch.setattr(cli_mod, "_get_source", fake_get_source)
-        monkeypatch.setattr(
-            cli_mod,
-            "fetch_with_source",
+        monkeypatch.setattr("aqsp.cli_runtime_source_helpers._get_source", fake_get_source)
+        monkeypatch.setattr("aqsp.cli_runtime_source_helpers.fetch_with_source",
             lambda *args, **kwargs: {"600519": sample},
         )
 
@@ -914,7 +908,6 @@ class TestCLIDataSources:
     def test_resolve_run_symbols_uses_source_universe_when_no_symbols(
         self, monkeypatch
     ):
-        import aqsp.cli as cli_mod
         from aqsp.cli import _resolve_run_symbols
 
         class SourceWithUniverse:
@@ -923,7 +916,7 @@ class TestCLIDataSources:
             def get_available_symbols(self):
                 return ["600000", "000001"]
 
-        monkeypatch.setattr(cli_mod, "_get_source", lambda _name: SourceWithUniverse())
+        monkeypatch.setattr("aqsp.cli_runtime_source_helpers._get_source", lambda _name: SourceWithUniverse())
 
         assert _resolve_run_symbols(
             "auto",
@@ -933,13 +926,12 @@ class TestCLIDataSources:
         ) == ["600000", "000001"]
 
     def test_resolve_run_symbols_prefers_explicit_symbols(self, monkeypatch):
-        import aqsp.cli as cli_mod
         from aqsp.cli import _resolve_run_symbols
 
         def fail_if_called(_name):
             raise AssertionError("source should not be constructed")
 
-        monkeypatch.setattr(cli_mod, "_get_source", fail_if_called)
+        monkeypatch.setattr("aqsp.cli_runtime_source_helpers._get_source", fail_if_called)
 
         assert _resolve_run_symbols(
             "auto",
@@ -960,7 +952,7 @@ class TestCLIDataSources:
         def fail_build(_name):
             raise DataError("tdx vipdoc missing")
 
-        monkeypatch.setattr("aqsp.cli._get_source", fail_build)
+        monkeypatch.setattr("aqsp.cli_runtime_source_helpers._get_source", fail_build)
 
         assert _resolve_run_symbols(
             "auto",
@@ -982,7 +974,7 @@ class TestCLIDataSources:
                 raise DataError("all sources failed")
 
         monkeypatch.setattr(
-            "aqsp.cli._get_source",
+            "aqsp.cli_runtime_source_helpers._get_source",
             lambda _name: SourceWithBrokenUniverse(),
         )
 
