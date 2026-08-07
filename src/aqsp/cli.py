@@ -4917,6 +4917,17 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         print(f"T+1 过滤剔除 {len(removed)} 只（昨日已买）: {removed}")
     picks = [r for r in picks if r.symbol in kept]
 
+    # Stop-loss check on open paper positions (advisory, no order placement).
+    # Uses the same frames and paper ledger already loaded for T+1/PnL.
+    from aqsp.risk.stop_loss_service import (
+        check_open_position_stop_losses,
+        format_stop_loss_report,
+    )
+
+    stop_loss_report = check_open_position_stop_losses(paper_ledger_path, frames)
+    for _line in format_stop_loss_report(stop_loss_report):
+        print(_line)
+
     execution_fee_bps, execution_slippage_bps = _resolve_execution_cost_bps(
         thresholds,
         fee_bps=args.fee_bps,

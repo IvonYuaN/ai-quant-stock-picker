@@ -98,7 +98,9 @@ src/aqsp/
 │   ├── learner.py         # 策略权重学习
 │   └── execution.py       # ExecutionConfig + 涨跌停/停牌判定
 ├── risk/
-│   └── circuit_breaker.py # 账户级熔断
+│   ├── circuit_breaker.py # 账户级熔断
+│   ├── stop_loss.py       # 止损管理器(单只/组合/移动止损)
+│   └── stop_loss_service.py # 纸面持仓止损检查服务(advisory)
 ├── briefing/              # 多Agent研判层(advisory-only)
 │   ├── agent_roles.py     # 9角色定义 + 运行时角色选择
 │   ├── debate.py          # 辩论引擎(多轮 + 投票 + 汇总)
@@ -431,6 +433,7 @@ class CircuitBreakerConfig:
 | 25 | market_context 拆分:实时跨市场模块独立 | #18 | market_context_realtime.py 提取(375行),向后兼容 | ✅ |
 | 26 | market_context 拆分:跨市场传导规则模块独立 | #18 | market_context_cross_market.py 提取(774行),向后兼容 | ✅ |
 | 27 | market_context 拆分:传导计算引擎独立 | #18 | market_context_implications.py 提取(769行),主模块降至1463行,向后兼容 | ✅ |
+| 28 | StopLossManager 集成:纸面持仓止损检查 | #18 | stop_loss_service.py + cli.py T+1后注入,advisory-only,16测试 | ✅ |
 
 **P0 三件**(本仓库当前最大风险,Claude 直接修了,不走小米Pro):
 
