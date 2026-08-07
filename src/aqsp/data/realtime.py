@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from typing import Literal, overload
 
 from aqsp.core.errors import DataError
+from aqsp.core.types import safe_float
 from aqsp.data.source import DataSource
 from aqsp.data.intraday import FrameProvenance, _normalize_fetched_at
 from aqsp.data.source_readiness import source_role_for_workload, workload_guard_message
@@ -119,14 +120,16 @@ class RealtimeService:
 
     def get_price(self, symbols: list[str]) -> dict[str, float]:
         quotes = self.get_quotes(symbols)
-        return {symbol: data.get("price", 0.0) for symbol, data in quotes.items()}
+        return {
+            symbol: safe_float(data.get("price")) for symbol, data in quotes.items()
+        }
 
     def get_bid_ask(self, symbols: list[str]) -> dict[str, tuple[float, float]]:
         quotes = self.get_quotes(symbols)
         result = {}
         for symbol, data in quotes.items():
-            bid = data.get("bid1", 0.0)
-            ask = data.get("ask1", 0.0)
+            bid = safe_float(data.get("bid1"))
+            ask = safe_float(data.get("ask1"))
             result[symbol] = (bid, ask)
         return result
 
@@ -134,8 +137,8 @@ class RealtimeService:
         quotes = self.get_quotes(symbols)
         result = {}
         for symbol, data in quotes.items():
-            volume = data.get("volume", 0.0)
-            amount = data.get("amount", 0.0)
+            volume = safe_float(data.get("volume"))
+            amount = safe_float(data.get("amount"))
             result[symbol] = (volume, amount)
         return result
 
@@ -151,6 +154,9 @@ class RealtimeService:
             return None
         price = quotes[symbol].get("price")
         if price is None or prev_close <= 0:
+            return None
+        price = safe_float(price)
+        if price <= 0:
             return None
         return (price - prev_close) / prev_close * 100
 

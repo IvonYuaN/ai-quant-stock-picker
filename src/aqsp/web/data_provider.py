@@ -159,9 +159,10 @@ def _runtime_float(value: Any) -> float | None:
     try:
         if value in ("", None):
             return None
-        return float(value)
+        result = float(value)
     except (TypeError, ValueError):
         return None
+    return result if math.isfinite(result) else None
 
 
 def _technical_metric_value(

@@ -7,6 +7,8 @@ but every executable entrypoint delegates to the canonical Dashboard.
 
 from __future__ import annotations
 
+import math
+
 import pandas as pd
 import streamlit as st
 
@@ -55,16 +57,18 @@ def load_runtime_snapshot() -> dict[str, object]:
 
 def _to_float(value: object) -> float:
     try:
-        return 0.0 if value in (None, "", "-") else float(value)
+        result = 0.0 if value in (None, "", "-") else float(value)
     except (TypeError, ValueError):
         return 0.0
+    return result if math.isfinite(result) else 0.0
 
 
 def _to_optional_float(value: object) -> float | None:
     try:
-        return None if value in (None, "", "-") else float(value)
+        result = None if value in (None, "", "-") else float(value)
     except (TypeError, ValueError):
         return None
+    return result if (result is not None and math.isfinite(result)) else None
 
 
 def _to_optional_int(value: object) -> int | None:

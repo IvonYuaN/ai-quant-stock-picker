@@ -9,6 +9,7 @@ from typing import Any, Protocol
 
 from aqsp.briefing.debate_tracker import audit_debate_quality
 from aqsp.core.time import now_shanghai
+from aqsp.core.types import safe_float
 
 
 SNAPSHOT_SCHEMA_VERSION = "v1"
@@ -238,7 +239,7 @@ def _snapshot_candidate(
     return RuntimeSnapshotCandidate(
         symbol=_candidate_symbol(candidate),
         display_name=str(_get(candidate, "display_name", "") or "").strip(),
-        score=float(_get(candidate, "score", 0.0) or 0.0),
+        score=safe_float(_get(candidate, "score", 0.0)),
         rank=str(_get(candidate, "rank_label", "") or "").strip(),
         research_status=_first_nonempty(
             _get(candidate, "action_label", ""),
@@ -296,7 +297,7 @@ def _snapshot_debates(debates: Any) -> tuple[RuntimeSnapshotDebate, ...]:
             recommended_adjustment=str(
                 _get(item, "recommended_adjustment", "") or ""
             ).strip(),
-            disagreement_score=float(_get(item, "disagreement_score", 0.0) or 0.0),
+            disagreement_score=safe_float(_get(item, "disagreement_score", 0.0)),
             primary_risk_gate=str(_get(item, "primary_risk_gate", "") or "").strip(),
             next_trigger=str(_get(item, "next_trigger", "") or "").strip(),
             active_roles=active_roles,
@@ -307,12 +308,11 @@ def _snapshot_debates(debates: Any) -> tuple[RuntimeSnapshotDebate, ...]:
             process_recorded=False,
             conclusion_recorded=False,
             advisory_only=_strict_bool(_get(item, "advisory_only", True), True),
-            original_score=float(
-                _get(item, "original_score", _get(item, "score", 0.0)) or 0.0
+            original_score=safe_float(
+                _get(item, "original_score", _get(item, "score", 0.0))
             ),
-            deterministic_score=float(
+            deterministic_score=safe_float(
                 _get(item, "deterministic_score", _get(item, "original_score", 0.0))
-                or 0.0
             ),
             deterministic_score_unchanged=_strict_bool(
                 _get(item, "deterministic_score_unchanged", True), True
@@ -377,7 +377,7 @@ def _snapshot_rounds(rounds: Any) -> tuple[RuntimeSnapshotRound, ...]:
                 agent_id=str(_get(opinion, "agent_id", "") or "").strip(),
                 role=str(_get(opinion, "role", "") or "").strip(),
                 stance=str(_get(opinion, "stance", "") or "").strip(),
-                confidence=float(_get(opinion, "confidence", 0.0) or 0.0),
+                confidence=safe_float(_get(opinion, "confidence", 0.0)),
                 arguments=_text_tuple(_get(opinion, "arguments", ())),
                 counterarguments=_text_tuple(_get(opinion, "counterarguments", ())),
                 counterargument_roles=_text_tuple(

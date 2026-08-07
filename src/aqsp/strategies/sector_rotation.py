@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Dict, List
 from collections import defaultdict
@@ -388,7 +389,7 @@ class SectorRotationStrategy(BaseStrategy):
             return 0.0
         current = float(df["close"].iloc[-1])
         past = float(df["close"].iloc[-days - 1])
-        if past <= 0:
+        if past <= 0 or math.isnan(past) or math.isnan(current):
             return 0.0
         return (current - past) / past * 100
 

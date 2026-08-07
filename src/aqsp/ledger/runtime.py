@@ -9,6 +9,7 @@ from typing import Any
 import pandas as pd
 
 from aqsp.core.time import now_shanghai
+from aqsp.core.types import safe_float
 from aqsp.ledger.base import read_ledger
 
 
@@ -117,7 +118,10 @@ def _collect_independent_dates(
             continue
         if status and status not in allowed_statuses:
             continue
-        if not str(row.get("symbol") or "").strip() and status != "run_completed_no_picks":
+        if (
+            not str(row.get("symbol") or "").strip()
+            and status != "run_completed_no_picks"
+        ):
             continue
         has_signal_payload = any(
             row.get(key) not in (None, "")
@@ -329,18 +333,14 @@ def _compound_returns(values: list[float]) -> float:
 def _safe_float(value: object) -> float:
     """Convert *value* to ``float``, returning ``0.0`` for invalid/NaN/inf.
 
-    NaN and inf are treated as missing so that existing ``<= 0`` guards in
-    PnL computation catch them — without this, a NaN close price during the
-    midday gap (11:30–13:00) would slip through ``<= 0`` and pollute the
-    compound return with NaN.
+    Delegates to :func:`aqsp.core.types.safe_float` so that all NaN/inf
+    guarding flows through one canonical implementation.  NaN and inf are
+    treated as missing so that existing ``<= 0`` guards in PnL computation
+    catch them — without this, a NaN close price during the midday gap
+    (11:30–13:00) would slip through ``<= 0`` and pollute the compound
+    return with NaN.
     """
-    try:
-        result = float(value)
-    except (TypeError, ValueError):
-        return 0.0
-    if math.isnan(result) or math.isinf(result):
-        return 0.0
-    return result
+    return safe_float(value)
 
 
 def _previous_close(frame: pd.DataFrame, latest_close: float) -> float:
