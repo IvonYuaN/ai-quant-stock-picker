@@ -2208,6 +2208,12 @@ def test_immutable_deploy_script_requires_full_post_deploy_acceptance() -> None:
     assert "变体产物未通过校验；release 已切换，但本次部署未验收" in script
     assert "immutable release prepared with skipped checks" in script
     assert "immutable release deployment verified" in script
+    variants_check = script[
+        script.index('--url "${CHECK_URL%/}/variants"') : script.index(
+            "for legacy_path in /paper-research /intel"
+        )
+    ]
+    assert '--health-url "${CHECK_URL%/}/api/health"' in variants_check
 
     verified_index = script.index("immutable release deployment verified")
     skipped_index = script.index("immutable release prepared with skipped checks")
