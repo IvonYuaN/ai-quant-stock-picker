@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import bisect
 import inspect
+import math
 import os
 from dataclasses import dataclass
 from collections.abc import Callable, Mapping, Sequence
@@ -153,6 +154,8 @@ class WalkForwardResult:
     parameter_std: float
     deflated_sharpe: float = 0.0
     pbo: float = 0.0
+    pbo_verified: bool = False
+    pbo_configs: int = 0
     regime_winrates: Dict[str, float] = None
     diagnostics: WalkForwardDiagnostics | None = None
 
@@ -268,7 +271,7 @@ class WalkForwardTester:
         dsr = self._calculate_deflated_sharpe(
             overall.sharpe_ratio, n_trials, len(all_returns)
         )
-        pbo = self._calculate_pbo(periods)
+        pbo, pbo_verified, pbo_configs = self._calculate_pbo(None)
 
         regime_winrates_calc: dict[str, list[float]] = {}
         for trade in all_trades:
@@ -287,6 +290,8 @@ class WalkForwardTester:
             parameter_std=self._calculate_parameter_std(periods),
             deflated_sharpe=dsr,
             pbo=pbo,
+            pbo_verified=pbo_verified,
+            pbo_configs=pbo_configs,
             regime_winrates=regime_winrate_dict,
             diagnostics=self._build_diagnostics(all_trades),
         )
@@ -420,10 +425,11 @@ class WalkForwardTester:
                         candidate_train[symbol] = train_batch[symbol]
                         candidate_test[symbol] = test_batch[symbol]
 
-                selected = self._select_stocks(
-                    candidate_signal,
-                    regime=market_regime,
-                ) if candidate_signal else []
+                selected = (
+                    self._select_stocks(candidate_signal, regime=market_regime)
+                    if candidate_signal
+                    else []
+                )
                 trades = self._run_selected_trades(
                     candidate_train,
                     candidate_test,
@@ -457,6 +463,7 @@ class WalkForwardTester:
             regime_winrates.setdefault(trade.market_regime, []).append(
                 1.0 if trade.return_pct > 0 else 0.0
             )
+        pbo, pbo_verified, pbo_configs = self._calculate_pbo(None)
         return WalkForwardResult(
             periods=periods,
             overall=overall,
@@ -467,7 +474,9 @@ class WalkForwardTester:
                 self.n_variants,
                 len(all_returns),
             ),
-            pbo=self._calculate_pbo(periods),
+            pbo=pbo,
+            pbo_verified=pbo_verified,
+            pbo_configs=pbo_configs,
             regime_winrates={
                 regime: sum(values) / len(values)
                 for regime, values in sorted(regime_winrates.items())
@@ -578,6 +587,7 @@ class WalkForwardTester:
         test_data: Dict[str, pd.DataFrame],
         signal_date: str,
     ) -> list[TradeResult]:
+        """Run one walk-forward period using the configured top-N selection."""
         trades: list[TradeResult] = []
 
         signal_data: dict[str, pd.DataFrame] = {}
@@ -933,9 +943,45 @@ class WalkForwardTester:
         return round(float(z_stat), 4)
 
     @staticmethod
-    def _calculate_pbo(periods: list[BacktestResult]) -> float:
-        pbo = WalkForwardTester.calculate_cscv_pbo_from_single(periods)
-        return pbo
+    def _calculate_pbo(
+        config_returns: list[list[float]] | None,
+    ) -> tuple[float, bool, int]:
+        """Estimate PBO (probability of backtest overfitting) via CSCV.
+
+        ``config_returns`` is a per-period list of returns for *fixed* strategy
+        configurations. Per-period stock ranks are not configurations and must
+        not be used here. CSCV needs >= 2 configurations and >= 4 periods;
+        otherwise PBO is *unverifiable* and returned as ``(NaN, False, 0)``.
+
+        This deliberately never returns ``0.0`` for an uncomputable PBO: a
+        silent ``0.0`` masquerades as "no overfitting" and distorts the gate,
+        which is exactly the documented PBO/CSCV implementation bias.
+        """
+        if not config_returns:
+            return float("nan"), False, 0
+        widths = [len(r) for r in config_returns if r]
+        if len(widths) < 4:
+            return float("nan"), False, 0
+        n_configs = min(widths)
+        if n_configs < 2:
+            return float("nan"), False, 0
+        try:
+            matrix = np.array(
+                [r[:n_configs] for r in config_returns if len(r) >= n_configs],
+                dtype=float,
+            )
+        except (ValueError, TypeError):
+            return float("nan"), False, 0
+        if matrix.shape[0] < 4 or matrix.shape[1] < 2:
+            return float("nan"), False, 0
+        s = min(10, matrix.shape[0] // 2)
+        if s < 2:
+            return float("nan"), False, 0
+        try:
+            pbo, _ = WalkForwardTester.calculate_cscv_pbo(matrix, s=s)
+            return float(pbo), True, int(matrix.shape[1])
+        except ValueError:
+            return float("nan"), False, 0
 
     @staticmethod
     def calculate_cscv_pbo(
@@ -1003,12 +1049,20 @@ class WalkForwardTester:
     def calculate_cscv_pbo_from_single(
         periods: list[BacktestResult], s: int = 10
     ) -> float:
+        """Deprecated: a single selected strategy yields N=1 configuration,
+        so CSCV cannot run. Returns NaN (not 0.0) to avoid distorting the gate.
+
+        Prefer feeding a real (periods x configurations) matrix to
+        :meth:`calculate_cscv_pbo` via :meth:`_calculate_pbo`.
+        """
+        if not periods:
+            return float("nan")
         returns = np.array([[p.total_return] for p in periods])
         try:
             pbo, _ = WalkForwardTester.calculate_cscv_pbo(returns, s=s)
             return pbo
         except ValueError:
-            return 0.0
+            return float("nan")
 
     def print_report(self, result: WalkForwardResult) -> None:
         print("=" * 60)
@@ -1017,7 +1071,13 @@ class WalkForwardTester:
         print(f"稳健性评分: {result.robustness_score:.2%}")
         print(f"参数标准差: {result.parameter_std:.4f}")
         print(f"Deflated Sharpe Ratio: {result.deflated_sharpe:.4f}")
-        print(f"PBO (过拟合概率): {result.pbo:.2%}")
+        if result.pbo_verified and math.isfinite(result.pbo):
+            pbo_text = (
+                f"{result.pbo:.2%} (verified across {result.pbo_configs} configs)"
+            )
+        else:
+            pbo_text = "未验证 (配置数 < 2, CSCV 无法估计过拟合概率)"
+        print(f"PBO (过拟合概率): {pbo_text}")
         print("-" * 60)
         print("整体表现:")
         print(f"  总收益: {result.overall.total_return:.2%}")

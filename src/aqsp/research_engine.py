@@ -407,7 +407,9 @@ def _assemble_walkforward_result(
         deflated_sharpe=tester._calculate_deflated_sharpe(
             overall.sharpe_ratio, n_trials, len(all_returns)
         ),
-        pbo=tester._calculate_pbo(periods),
+        pbo=tester._calculate_pbo(None)[0],
+        pbo_verified=False,
+        pbo_configs=0,
         regime_winrates=regime_winrates,
     )
 

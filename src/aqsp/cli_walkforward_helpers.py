@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import math
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
@@ -498,6 +499,7 @@ def _write_walkforward_gate(
     n_periods: int,
     metadata: dict[str, object] | None = None,
     diagnostics: dict[str, object] | None = None,
+    pbo_verified: bool | None = None,
     gate_path: str | Path = WALKFORWARD_GATE_PATH,
 ) -> None:
     """写双门 sidecar，供 run_scheduled 的 notify gate 读取。
@@ -513,6 +515,7 @@ def _write_walkforward_gate(
         end=end,
         n_periods=n_periods,
         metadata=metadata,
+        pbo_verified=pbo_verified,
     )
     if diagnostics:
         payload["grid_diagnostics"] = diagnostics
@@ -631,8 +634,9 @@ def _append_walkforward_diagnostics(report_lines: list[str], result: Any) -> Non
 
 
 def _format_walkforward_pbo(pbo: float, pbo_is_valid: bool) -> str:
-    value = f"{pbo:.2%}"
-    return value if pbo_is_valid else f"{value}（无效占位，需 grid 多变体 CSCV）"
+    if not pbo_is_valid or not math.isfinite(pbo):
+        return "未验证（CSCV 需 ≥2 配置，单策略无法估计过拟合概率）"
+    return f"{pbo:.2%}"
 
 
 def _walkforward_runtime_rows(

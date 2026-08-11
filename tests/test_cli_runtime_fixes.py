@@ -1310,12 +1310,15 @@ def test_cross_market_context_marks_negative_evidence_as_risk_review() -> None:
 
 def test_snapshot_round_trip_keeps_candidate_review_priority(tmp_path: Path) -> None:
     from aqsp.core.types import PickResult
+    from aqsp.core.time import now_shanghai
     from aqsp.portfolio.snapshot import load_snapshot, save_snapshot
+
+    snapshot_date = now_shanghai().date().isoformat()
 
     pick = PickResult(
         symbol="300750",
         name="宁德时代",
-        date="2026-07-10",
+        date=snapshot_date,
         close=180.0,
         score=73.5,
         rating="watch",
@@ -1327,9 +1330,9 @@ def test_snapshot_round_trip_keeps_candidate_review_priority(tmp_path: Path) -> 
         metrics={"candidate_review_priority": "优先复核"},
     )
     path = tmp_path / "snapshots.jsonl"
-    save_snapshot([pick], snapshot_path=str(path), date="2026-07-10")
+    save_snapshot([pick], snapshot_path=str(path), date=snapshot_date)
 
-    loaded = load_snapshot("2026-07-10", snapshot_path=str(path))
+    loaded = load_snapshot(snapshot_date, snapshot_path=str(path))
     assert loaded is not None
     assert loaded[0].candidate_review_priority == "优先复核"
 

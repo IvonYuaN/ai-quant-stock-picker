@@ -169,9 +169,10 @@ def test_walkforward_help_handles_percent_text(capsys) -> None:
 def test_format_walkforward_pbo_marks_invalid_placeholder() -> None:
     from aqsp.cli import _format_walkforward_pbo
 
-    assert (
-        _format_walkforward_pbo(0.0, False) == "0.00%（无效占位，需 grid 多变体 CSCV）"
-    )
+    # Invalid (placeholder 0.0 or unverified NaN) must read as "未验证", never as
+    # a clean "0.00%".
+    assert _format_walkforward_pbo(0.0, False).startswith("未验证")
+    assert not _format_walkforward_pbo(float("nan"), False).startswith("nan")
     assert _format_walkforward_pbo(0.24, True) == "24.00%"
 
 
@@ -2337,6 +2338,7 @@ def test_walkforward_grid_cscv_writes_valid_pbo_gate(monkeypatch, tmp_path):
                 ),
                 deflated_sharpe=0.0,
                 pbo=0.0,
+                pbo_verified=False,
                 robustness_score=0.8,
                 parameter_std=0.1,
                 regime_winrates={},
@@ -2401,6 +2403,10 @@ def test_walkforward_grid_cscv_writes_valid_pbo_gate(monkeypatch, tmp_path):
     )
     assert payload["pbo"] > 0.0
     assert payload["pbo_valid"] is True
+    # grid 模式 PBO 来自真 CSCV（≥2 变体），必须标记为已验证，
+    # 不能用单策略 result.pbo_verified(恒 False) 把它降级成"未验证"。
+    assert payload["pbo_verified"] is True
+    assert payload["pbo_configs"] == 5
     assert payload["n_periods"] == 10
     assert payload["source"] == "sqlite_db"
     assert "price_mode" in payload

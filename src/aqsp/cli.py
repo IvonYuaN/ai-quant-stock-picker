@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
 import os
 import subprocess
 import sys
@@ -3484,15 +3485,17 @@ def run_walkforward(args: argparse.Namespace) -> int:
     tl_dr = []
     dsr_pass = dsr_value > 1.0
     # 宪法 §17.7：PBO 必须经真 CSCV（N>=2 变体）计算。
-    # 单序列回测无法做 CSCV，calculate_cscv_pbo_from_single 会返回占位值 0.0。
-    # 真 CSCV 的 PBO 几乎不可能恰为 0.0（252 组合中通常有 λ<=0）。
-    # 因此 pbo==0.0 视为「未经有效 CSCV 验证」，不予通过门 —— 避免单策略
+    # 单序列回测无法做 CSCV，calculate_cscv_pbo_from_single 会返回 NaN（不再是
+    # 占位 0.0）。真 CSCV 的 PBO 几乎不可能恰为 0.0（252 组合中通常有 λ<=0）。
+    # 因此 pbo<=0 或 NaN 视为「未经有效 CSCV 验证」，不予通过门 —— 避免单策略
     # 用占位 0.0 蒙混过双门。需要 grid（多变体）walkforward 才能得到有效 PBO。
-    pbo_is_valid = pbo_value > 0.0
+    pbo_is_valid = math.isfinite(pbo_value) and pbo_value > 0.0
     pbo_pass = pbo_is_valid and pbo_value < 0.5
     both_pass = dsr_pass and pbo_pass
     verdict = "PASS" if both_pass else "FAIL"
     pbo_display = _format_walkforward_pbo(pbo_value, pbo_is_valid)
+    if args.grid_cscv:
+        pbo_display += "（经 grid 多变体 CSCV 真验证）"
     tl_dr.append(
         f"**TL;DR**: {verdict} — DSR={dsr_value:.4f}, "
         f"PBO={pbo_display}, Sharpe={result.overall.sharpe_ratio:.2f}, "
@@ -3632,20 +3635,28 @@ def run_walkforward(args: argparse.Namespace) -> int:
     print(f"\n报告已保存到: {args.report}")
 
     # 写双门 sidecar（不依赖 args.update_yaml，始终写，供 notify gate 用）
+    # grid 模式：PBO 来自真 CSCV（≥2 变体），权威且已验证，必须显式标记
+    # pbo_verified=True，不能用单策略 result.pbo_verified（恒为 False）覆盖，
+    # 否则会把 grid 的真实 PBO 在 gate JSON 里误降级成"未验证"（gate 失真）。
+    gate_pbo_verified = True if args.grid_cscv else getattr(result, "pbo_verified", None)
+    gate_metadata = _walkforward_gate_metadata(
+        args,
+        effective_symbols=effective_symbols,
+        fee_bps=walkforward_fee_bps,
+        slippage_bps=walkforward_slippage_bps,
+        purge_days=args.purge_days,
+    )
+    if args.grid_cscv:
+        gate_metadata["pbo_configs"] = len(grid_rows)
     _write_walkforward_gate(
         dsr=dsr_value,
         pbo=pbo_value,
+        pbo_verified=gate_pbo_verified,
         run_date=today_shanghai().isoformat(),
         start=args.start,
         end=args.end,
         n_periods=grid_periods if args.grid_cscv else len(result.periods),
-        metadata=_walkforward_gate_metadata(
-            args,
-            effective_symbols=effective_symbols,
-            fee_bps=walkforward_fee_bps,
-            slippage_bps=walkforward_slippage_bps,
-            purge_days=args.purge_days,
-        ),
+        metadata=gate_metadata,
         diagnostics=grid_details if args.grid_cscv and grid_details else None,
         gate_path=getattr(args, "gate_path", WALKFORWARD_GATE_PATH),
     )
