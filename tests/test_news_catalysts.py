@@ -2542,6 +2542,10 @@ def test_build_catalyst_report_uses_rss_when_akshare_is_not_installed(
         "aqsp.news.catalysts.now_shanghai",
         lambda: datetime.fromisoformat("2026-07-11T10:00:00+08:00"),
     )
+    monkeypatch.setattr(
+        "aqsp.news.catalysts.today_shanghai",
+        lambda: date(2026, 7, 11),
+    )
 
     report = build_catalyst_report(
         config=NewsCatalystConfig(allow_undated_news=False),
@@ -2730,6 +2734,10 @@ def test_rss_cross_market_events_reach_catalyst_and_market_context(
     monkeypatch.setattr(
         "aqsp.news.catalysts.now_shanghai",
         lambda: datetime.fromisoformat("2026-07-08T19:00:00+08:00"),
+    )
+    monkeypatch.setattr(
+        "aqsp.news.catalysts.today_shanghai",
+        lambda: date(2026, 7, 8),
     )
     source = RssNewsSource(
         (
