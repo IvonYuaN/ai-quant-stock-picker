@@ -449,6 +449,7 @@ class CircuitBreakerConfig:
 | 39 | cli.py 拆分 Phase 8:candidate annotation helpers 提取 | P2 | cli_candidate_helpers.py 493行(10函数:_candidate_blocker_map/_candidate_review_map/_default_candidate_review/_annotate_candidate_status/_market_context_review_priority/_merge_candidate_note/_annotate_data_quality_context/_annotate_cross_market_context/_append_cross_market_watch_candidates/_news_watch_candidate_limit),cli.py -462行(6523→6061),10函数noqa re-export,移除hashlib+score_symbol import,零test monkeypatch迁移(内部调用不跨模块),向后兼容 | ✅ |
 | 40 | 午盘空值处理 P1:全链路 NaN/inf 防护 | #31 | core/types.py:safe_float 公共工具 + realtime.py/runtime_snapshot.py/dashboard_beginner.py/data_provider.py/morning_breakout.py/sector_rotation.py 共9文件 +70/-32行,41新测试 | ✅ |
 | 41 | walk-forward PBO 统计修正 | #14 #15 | 单策略普通回测 PBO 显式标记未验证；只有固定参数网格的 CSCV 可写入已验证 PBO | ✅ |
+| 42 | AQSP snapshot debate schema 兼容 | #19 #30 | bridge 接受运行快照的可选 `review_kind`，保持未知字段 fail-closed | ✅ |
 
 **P0 三件**(本仓库当前最大风险,Claude 直接修了,不走小米Pro):
 
