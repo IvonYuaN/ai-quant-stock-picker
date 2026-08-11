@@ -1895,7 +1895,7 @@ def test_variant_refresh_runs_after_close_with_bounded_resources() -> None:
     assert "当前未到北京时间 21:00，跳过变体刷新" in script
     assert 'MAX_SYMBOLS="${AQSP_VARIANT_MAX_SYMBOLS:-240}"' in script
     assert "变体股票批次无效(${MAX_SYMBOLS})，使用 240" in script
-    assert 'MAX_RUNTIME_SECONDS="${AQSP_VARIANT_MAX_RUNTIME_SECONDS:-300}"' in script
+    assert 'MAX_RUNTIME_SECONDS="${AQSP_VARIANT_MAX_RUNTIME_SECONDS:-480}"' in script
     assert 'NICE_LEVEL="${AQSP_VARIANT_NICE_LEVEL:-15}"' in script
     assert 'PROFILE_BATCH_SIZE="${AQSP_VARIANT_PROFILE_BATCH_SIZE:-25}"' in script
     assert "MIN_PUBLISHED_VARIANTS=100" in script
@@ -1913,6 +1913,13 @@ def test_variant_refresh_runs_after_close_with_bounded_resources() -> None:
     assert "变体首轮仍在分段构建，首页已更新状态快照" in script
     assert "refresh_home_snapshot" in script
     assert "status=$?" in script
+    assert '变体运行时限 ${MAX_RUNTIME_SECONDS} 秒不足以完成四段发布，提升为 480 秒' in script
+
+    task_script = (PROJECT_ROOT / "scripts" / "bt_task.sh").read_text(encoding="utf-8")
+    assert 'local configured="${AQSP_VARIANT_OUTER_TIMEOUT_SECONDS:-510}"' in task_script
+    assert '变体外层超时 ${configured} 秒不足以覆盖四段发布预算，提升为 510 秒' in task_script
+    assert 'variant_agent_deadline="${AQSP_AGENT_DEADLINE_SECONDS:-540}"' in task_script
+    assert 'export AQSP_VARIANT_MAX_RUNTIME_SECONDS="${AQSP_VARIANT_MAX_RUNTIME_SECONDS:-480}"' in task_script
 
 
 def test_bt_optional_heavy_tasks_check_host_capacity_before_starting() -> None:
@@ -1936,7 +1943,7 @@ def test_bt_optional_heavy_tasks_check_host_capacity_before_starting() -> None:
         in script
     )
     assert 'start_agent_run "${AQSP_AGENT_DEADLINE_SECONDS:-480}"' in script
-    assert 'start_agent_run "${AQSP_AGENT_DEADLINE_SECONDS:-300}"' in script
+    assert 'variant_agent_deadline="${AQSP_AGENT_DEADLINE_SECONDS:-540}"' in script
     assert "finish_agent_run" in script
     daily_block = script[
         script.index("\n    daily)") : script.index("\n    data-refresh)")

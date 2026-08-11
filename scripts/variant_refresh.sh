@@ -87,7 +87,7 @@ if ! is_truthy "${AQSP_VARIANT_ALLOW_EARLY:-false}" && [ "$NOW_HM" -lt 2100 ]; t
     exit 0
 fi
 MAX_SYMBOLS="${AQSP_VARIANT_MAX_SYMBOLS:-240}"
-MAX_RUNTIME_SECONDS="${AQSP_VARIANT_MAX_RUNTIME_SECONDS:-300}"
+MAX_RUNTIME_SECONDS="${AQSP_VARIANT_MAX_RUNTIME_SECONDS:-480}"
 NICE_LEVEL="${AQSP_VARIANT_NICE_LEVEL:-15}"
 PROFILE_BATCH_SIZE="${AQSP_VARIANT_PROFILE_BATCH_SIZE:-25}"
 MAX_STAGE_BATCHES="${AQSP_VARIANT_MAX_STAGE_BATCHES:-4}"
@@ -101,10 +101,13 @@ elif [ "$MAX_SYMBOLS" -gt 240 ] && ! is_truthy "${AQSP_VARIANT_ALLOW_HEAVY:-fals
     MAX_SYMBOLS="240"
 fi
 if ! [[ "$MAX_RUNTIME_SECONDS" =~ ^[0-9]+$ ]] || [ "$MAX_RUNTIME_SECONDS" -le 0 ]; then
-    MAX_RUNTIME_SECONDS="300"
-elif [ "$MAX_RUNTIME_SECONDS" -gt 360 ] && ! is_truthy "${AQSP_VARIANT_ALLOW_HEAVY:-false}"; then
-    log "变体运行时限 ${MAX_RUNTIME_SECONDS} 秒过长，收紧为 360 秒"
-    MAX_RUNTIME_SECONDS="360"
+    MAX_RUNTIME_SECONDS="480"
+elif [ "$MAX_RUNTIME_SECONDS" -lt 480 ]; then
+    log "变体运行时限 ${MAX_RUNTIME_SECONDS} 秒不足以完成四段发布，提升为 480 秒"
+    MAX_RUNTIME_SECONDS="480"
+elif [ "$MAX_RUNTIME_SECONDS" -gt 480 ]; then
+    log "变体运行时限 ${MAX_RUNTIME_SECONDS} 秒过长，收紧为 480 秒"
+    MAX_RUNTIME_SECONDS="480"
 fi
 if ! [[ "$NICE_LEVEL" =~ ^[0-9]+$ ]] || [ "$NICE_LEVEL" -lt 10 ] || [ "$NICE_LEVEL" -gt 19 ]; then
     log "变体 CPU 优先级无效(${NICE_LEVEL})，使用低优先级 15"

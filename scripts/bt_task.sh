@@ -345,11 +345,14 @@ set_daily_research_runner_timeout() {
 }
 
 set_variant_runner_timeout() {
-    local configured="${AQSP_VARIANT_OUTER_TIMEOUT_SECONDS:-300}"
+    local configured="${AQSP_VARIANT_OUTER_TIMEOUT_SECONDS:-510}"
     if ! [[ "$configured" =~ ^[1-9][0-9]*$ ]]; then
-        configured="300"
-    elif [ "$configured" -gt 360 ]; then
-        configured="360"
+        configured="510"
+    elif [ "$configured" -lt 510 ]; then
+        log "变体外层超时 ${configured} 秒不足以覆盖四段发布预算，提升为 510 秒"
+        configured="510"
+    elif [ "$configured" -gt 510 ]; then
+        configured="510"
     fi
     export AQSP_RUNNER_TIMEOUT_SECONDS="$configured"
 }
@@ -900,12 +903,16 @@ case "$ACTION" in
         # Bounded to 240 symbols and 80-row SQLite chunks. The generic 1GB
         # reserve permanently skips this task on the 1.6GB production host.
         AQSP_HEAVY_MIN_FREE_MEMORY_MB="${AQSP_VARIANT_MIN_FREE_MEMORY_MB:-700}" \
-            AQSP_HEAVY_MAX_LOAD_PER_CPU="${AQSP_VARIANT_MAX_LOAD_PER_CPU:-0.50}" \
+        AQSP_HEAVY_MAX_LOAD_PER_CPU="${AQSP_VARIANT_MAX_LOAD_PER_CPU:-0.50}" \
             gate_optional_heavy_task
         acquire_optional_heavy_slot
-        start_agent_run "${AQSP_AGENT_DEADLINE_SECONDS:-300}"
+        variant_agent_deadline="${AQSP_AGENT_DEADLINE_SECONDS:-540}"
+        if ! [[ "$variant_agent_deadline" =~ ^[1-9][0-9]*$ ]] || [ "$variant_agent_deadline" -lt 540 ]; then
+            variant_agent_deadline="540"
+        fi
+        start_agent_run "$variant_agent_deadline"
         set_variant_runner_timeout
-        export AQSP_VARIANT_MAX_RUNTIME_SECONDS="${AQSP_VARIANT_MAX_RUNTIME_SECONDS:-240}"
+        export AQSP_VARIANT_MAX_RUNTIME_SECONDS="${AQSP_VARIANT_MAX_RUNTIME_SECONDS:-480}"
         export AQSP_RUN_TASK_ID="variant_refresh"
         export AQSP_NOTIFY="false"
         export AQSP_GATE_NOTIFY="false"

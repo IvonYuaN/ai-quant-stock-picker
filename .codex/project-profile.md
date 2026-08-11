@@ -38,7 +38,7 @@ Support: Real-Time Data Reliability Engineer, Market Intelligence/News Fusion En
 
 ## Routing Cues
 
-实时行情、分时补齐、quote 新鲜度、fallback 降级交给 Real-Time Data Reliability lens；策略/开源吸收/自动优化边界交给 Quant Research lens；国内外新闻、指数、宏观、政策、资金流和情绪输入交给 Market Intelligence lens；多 Agent 辩论、角色编排、投票汇总和解释文案交给 Multi-Agent Decision lens；虚拟盘/ledger/可成交性交给 Paper-Trading lens；前端展示交给 Dashboard lens；生产验收交给 SRE/Reality Checker lens。合并前必须跑相关 pytest、ruff、脚本语法检查，部署后优先看 immutable release、服务 active、数据状态、公网 health 和用户可见入口。
+实时行情、分时补齐、quote 新鲜度、fallback 降级交给 Real-Time Data Reliability lens；策略/开源吸收/自动优化边界交给 Quant Research lens；国内外新闻、指数、宏观、政策、资金流和情绪输入交给 Market Intelligence lens；多 Agent 辩论、角色编排、投票汇总和解释文案交给 Multi-Agent Decision lens；虚拟盘/ledger/可成交性交给 Paper-Trading lens；前端展示交给 Dashboard lens；生产验收交给 SRE/Reality Checker lens。当前快照过期时必须隐藏候选与依赖候选的讨论，直到数据通过新鲜度与覆盖率验证；变体调度的内外层超时必须覆盖完整 100 个发布门槛。合并前必须跑相关 pytest、ruff、脚本语法检查，部署后优先看 immutable release、服务 active、数据状态、公网 health 和用户可见入口。
 静态导出链路（`scripts/render_dashboard.py`、`scripts/render_agent_dashboard.py`、旧 `reports/`、研究发现 CLI）也属于用户可见面，不能只修 Streamlit 主面板而放任旧口径残留；所有时间戳继续强制带上海时区偏移。任何“优化”若涉及盘中建议，必须先回答它依赖的是实时数据还是历史证据，并验证没有把历史回测口径误接到实时链路。长期巡检由 Codex heartbeat 负责，服务器 health、调度、数据新鲜度和前端入口是交付证据。
 
 如果再次出现“修了很多细节但上线阻塞还在”的情况，优先检查：1) 全市场 walkforward formal/diagnostic 报告链是否完整；2) gate sidecar 是否含有效 `grid_diagnostics`；3) 服务器定时入口是否仍有高频通知或样本口径漂移；不要回到文案层空转。
@@ -54,3 +54,4 @@ Support: Real-Time Data Reliability Engineer, Market Intelligence/News Fusion En
 - 2026-07-09: Production walk-forward follow-up made visible on homepage; low-memory server launch was found unsafe and should be blocked by guardrail rather than repeated manually.
 - 2026-07-10: Intraday route hardened after stale/slow homepage incident. Realtime candidate artifacts must be written as soon as candidates are screened; full diagnostics, portfolio discussion, and multi-agent research may enrich later but must not block the live dashboard.
 - 2026-07-28: Rerouted to production reliability audit. Public routes and API health were available; immutable scheduler release guards fixed prior venv/Git failures, but the scheduler release remained on `codex/monitor-walkforward` rather than `main` and `/opt/aqsp` was a large dirty staging checkout. Treat release provenance, not the mutable checkout, as the deployment source of truth.
+- 2026-08-11: Rerouted to incident remediation after a stale current snapshot displayed candidates and nested variant-refresh budgets stopped at 75 staging variants. The active delivery gate is fail-closed current-data presentation plus an end-to-end budget sufficient for the 100-variant publication threshold.
