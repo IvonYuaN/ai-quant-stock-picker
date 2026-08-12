@@ -180,6 +180,58 @@ def test_aqsp_api_returns_current_snapshot_with_messages_and_agents(
     }
 
 
+def test_aqsp_api_loads_debate_sidecar_next_to_runtime_snapshot(
+    aqsp_client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    snapshot = _snapshot("2026-07-14", stale_after="2026-12-15T09:30:00+08:00")
+    snapshot_path = runtime / "home_dashboard_snapshot.json"
+    snapshot_path.write_text(json.dumps(snapshot), encoding="utf-8")
+    (tmp_path / "debate_results.jsonl").write_text(
+        json.dumps(
+            {
+                "symbol": "600519",
+                "candidate_signal_date": "2026-07-14",
+                "deterministic_score": 72.5,
+                "deterministic_score_unchanged": True,
+                "advisory_boundary_ok": True,
+                "process_recorded": True,
+                "conclusion_recorded": True,
+                "evidence_sufficient": True,
+                "debate_quality_issues": [],
+                "rounds": [
+                    {
+                        "summary": "角色独立复核",
+                        "opinions": [
+                            {
+                                "role": "risk_control",
+                                "stance": "bearish",
+                                "confidence": 0.7,
+                                "arguments": ["候选专属证据: 应隐藏", "量价承接未确认"],
+                                "risk_factors": ["高位波动"],
+                                "opportunity_factors": [],
+                                "counterarguments": [],
+                            }
+                        ],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AQSP_RESEARCH_SURFACE_SNAPSHOT", str(snapshot_path))
+    monkeypatch.delenv("AQSP_RUNTIME_ROOT", raising=False)
+
+    body = aqsp_client.get(SNAPSHOT_ROUTE).json()["data"]
+
+    view = body["debates"][0]["agent_views"][0]
+    assert view["role"] == "risk_control"
+    assert view["arguments"] == ["量价承接未确认"]
+
+
 def test_aqsp_api_keeps_formal_board_sections_independent(
     aqsp_client: TestClient,
 ) -> None:

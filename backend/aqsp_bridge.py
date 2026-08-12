@@ -421,9 +421,13 @@ def _debate_results_path() -> Path:
     if path.is_absolute():
         return path
     runtime_root = os.environ.get("AQSP_RUNTIME_ROOT", "").strip()
-    return (
-        Path(runtime_root).expanduser() / path if runtime_root else _PROJECT_ROOT / path
-    )
+    if runtime_root:
+        return Path(runtime_root).expanduser() / path
+    # A systemd service may only receive the snapshot path. Its sidecar must
+    # remain in private runtime data rather than falling back into a release.
+    runtime_data = snapshot_path().parent.parent
+    sidecar = runtime_data / path.name
+    return sidecar if sidecar.is_file() else _PROJECT_ROOT / path
 
 
 def _attach_runtime_debates(
