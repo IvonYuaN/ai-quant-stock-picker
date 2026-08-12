@@ -26,6 +26,7 @@ from aqsp.backtest.variant_account import (
     variant_result_to_dict,
 )
 from aqsp.core.time import now_shanghai
+from aqsp.data.sqlite_db_source import SqliteDbSource
 from aqsp.utils.jsonl_io import atomic_write_text
 
 
@@ -297,6 +298,27 @@ def load_frames(
     start: str,
     end: str,
 ) -> dict[str, pd.DataFrame]:
+    with sqlite3.connect(db_path) as conn:
+        tables = {
+            str(row[0])
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+    if "daily_qfq" in tables:
+        source = SqliteDbSource(db_path=db_path, cache=None)
+        frames = source.fetch_daily(
+            list(symbols),
+            start=pd.Timestamp(start).date(),
+            end=pd.Timestamp(end).date(),
+            adjust="",
+        )
+        if not frames:
+            raise ValueError("历史 raw/historical OHLCV 为空")
+        return frames
+    if "ohlcv" not in tables:
+        raise ValueError("变体 SQLite 缺少 daily_qfq 或 ohlcv 表")
+
     placeholders = ",".join("?" for _ in symbols)
     with sqlite3.connect(db_path) as conn:
         columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(ohlcv)")}

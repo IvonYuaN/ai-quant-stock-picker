@@ -185,6 +185,52 @@ def test_run_suite_creates_many_explained_nonduplicate_accounts(tmp_path):
     assert validated.variants == len(variants)
 
 
+def test_variant_suite_loads_raw_frames_from_daily_qfq_schema(tmp_path) -> None:
+    db = tmp_path / "raw-rebuild.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute("CREATE TABLE stocks (ts_code TEXT PRIMARY KEY, name TEXT)")
+        conn.execute(
+            """
+            CREATE TABLE daily_qfq (
+                ts_code TEXT NOT NULL, trade_date TEXT NOT NULL,
+                open REAL, high REAL, low REAL, close_qfq REAL,
+                volume REAL, amount REAL, open_qfq REAL, high_qfq REAL,
+                low_qfq REAL, close REAL,
+                UNIQUE(ts_code, trade_date)
+            )
+            """
+        )
+        conn.execute("INSERT INTO stocks VALUES (?, ?)", ("000001.SZ", "平安银行"))
+        conn.executemany(
+            "INSERT INTO daily_qfq VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                (
+                    "000001.SZ",
+                    f"202601{day:02d}",
+                    10.0 + day,
+                    10.5 + day,
+                    9.5 + day,
+                    None,
+                    100000.0,
+                    (10.0 + day) * 100000.0,
+                    None,
+                    None,
+                    None,
+                    10.0 + day,
+                )
+                for day in range(1, 4)
+            ],
+        )
+
+    frames = variant_suite.load_frames(db, ("000001",), "2026-01-01", "2026-01-03")
+
+    assert list(frames) == ["000001"]
+    frame = frames["000001"]
+    assert frame["name"].tolist() == ["平安银行"] * 3
+    assert frame["date"].tolist() == ["2026-01-01", "2026-01-02", "2026-01-03"]
+    assert frame["close"].tolist() == [11.0, 12.0, 13.0]
+
+
 def test_write_home_snapshot_recovers_variant_actions_from_legacy_fills():
     from aqsp.web.home_snapshot import HomeSnapshotHolding
     from scripts.write_home_snapshot import (
