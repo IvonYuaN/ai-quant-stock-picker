@@ -38,7 +38,10 @@ if ! aqsp_require_runtime_python "$PYTHON_BIN"; then
     exit 1
 fi
 
-MARKET_DB="$(resolve_path "${AQSP_VARIANT_MARKET_DB:-${AQSP_SQLITE_DB_PATH:-data/astocks_raw.db}}")"
+# AQSP_VARIANT_DB is the production raw daily database.  The older
+# AQSP_VARIANT_MARKET_DB may point to a qfq research database and must remain
+# a fallback only, otherwise the experiment silently uses stale adjusted data.
+MARKET_DB="$(resolve_path "${AQSP_VARIANT_DB:-${AQSP_VARIANT_MARKET_DB:-${AQSP_SQLITE_DB_PATH:-data/astocks_raw.db}}}")"
 OUTPUT_PATH="$(resolve_path "${AQSP_VARIANT_RESULTS:-data/runtime/variant_results.json}")"
 LOCK_PATH="$(resolve_path "${AQSP_VARIANT_REFRESH_LOCK:-data/.locks/variant-results-refresh.lock}")"
 CURSOR_PATH="$(resolve_path "${AQSP_VARIANT_CURSOR_PATH:-data/runtime/variant_results_cursor.json}")"

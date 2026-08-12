@@ -1905,6 +1905,7 @@ def test_variant_refresh_runs_after_close_with_bounded_resources() -> None:
     )
 
     assert "当前未到北京时间 21:00，跳过变体刷新" in script
+    assert 'AQSP_VARIANT_DB:-${AQSP_VARIANT_MARKET_DB' in script
     assert 'MAX_SYMBOLS="${AQSP_VARIANT_MAX_SYMBOLS:-600}"' in script
     assert "变体股票批次无效(${MAX_SYMBOLS})，使用 600" in script
     assert 'MAX_RUNTIME_SECONDS="${AQSP_VARIANT_MAX_RUNTIME_SECONDS:-480}"' in script
