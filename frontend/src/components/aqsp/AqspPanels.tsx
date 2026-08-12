@@ -339,9 +339,14 @@ export function AqspResearchWorkspace() {
   const visibleDebates = currentSnapshotStale ? [] : data.debates;
   const conclusion = snapshotConclusion(data);
   const intradayOnly = data.phases?.some((phase) => phase.task_id === "intraday" && phase.status === "已产出") && !data.phases?.some((phase) => phase.task_id === "main_chain" && phase.status === "已产出");
-  const overviewTitle = intradayOnly ? "盘中观察" : FORMAL_RESEARCH_SECTIONS[0].label;
-  const overviewCount = intradayOnly ? "未收盘快照" : "独立结论";
-  const overviewConclusion = intradayOnly ? conclusion.replace(/^研究重点：/, "盘中研究重点：") : conclusion;
+  const observationOnly = currentSnapshotStale || intradayOnly;
+  const overviewTitle = currentSnapshotStale ? "数据待刷新" : intradayOnly ? "盘中观察" : FORMAL_RESEARCH_SECTIONS[0].label;
+  const overviewCount = observationOnly ? (currentSnapshotStale ? "仅观察" : "未收盘快照") : "独立结论";
+  const overviewConclusion = currentSnapshotStale
+    ? conclusion.replace(/^研究重点：/, "当前仅保留观察：")
+    : intradayOnly
+      ? conclusion.replace(/^研究重点：/, "盘中研究重点：")
+      : conclusion;
   const formalSections = {
     overview: <section id="overview" className="aqsp-module aqsp-module-overview"><SectionHead number={FORMAL_RESEARCH_SECTIONS[0].number} title={overviewTitle} count={overviewCount} /><div className="aqsp-summary-conclusion"><Sparkles className="h-5 w-5 shrink-0 text-primary" /><div><strong>{overviewConclusion || "当天结论未记录"}</strong>{data.summaries.slice(1, 3).map((line) => <p key={line}>{line}</p>)}</div></div><StatusLine snapshot={data} /><RawCoverageGate snapshot={data} /><PhaseLane snapshot={data} /><GateState snapshot={data} /><EmptyToday snapshot={data} /></section>,
     messages: <section id="messages" className="aqsp-module aqsp-module-messages"><SectionHead number={FORMAL_RESEARCH_SECTIONS[1].number} title={FORMAL_RESEARCH_SECTIONS[1].label} count={`${data.messages.length} 条`} />{data.messages.length === 0 ? <EmptyState title="当天没有有效消息" detail="没有可核验来源时，系统不补写消息或产业链推断。" /> : <div className="aqsp-list">{data.messages.map((message, index) => <MessageCard key={`${message.title}-${message.published_at}-${index}`} message={message} />)}</div>}<MarketContext snapshot={data} /></section>,
