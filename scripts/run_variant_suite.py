@@ -1027,33 +1027,36 @@ def _adjustments(
         for item in previous_holdings
     }
     reasons = _last_reasons(result)
-    lines: list[str] = []
+    changes: list[str] = []
+    retained: list[str] = []
     for symbol in sorted(set(current) | set(previous)):
         name = names.get(symbol, symbol)
         before = previous.get(symbol, 0)
         after = current.get(symbol, 0)
         if before == after and after > 0:
-            lines.append(
+            retained.append(
                 f"保留 {symbol} {name}：昨日 {before} 股，今日 {after} 股；无换票；"
                 f"最近入场证据：{reasons.get((symbol, 'buy'), '入场证据缺失，需重算补齐')}"
             )
         elif before == 0 and after > 0:
-            lines.append(
+            changes.append(
                 f"买入 {symbol} {name}：昨日无，今日 {after} 股；{reasons.get((symbol, 'buy'), '入场规则触发')}"
             )
         elif before > 0 and after == 0:
-            lines.append(
+            changes.append(
                 f"移出 {symbol} {name}：昨日 {before} 股，今日无；{reasons.get((symbol, 'sell'), '退出规则触发')}"
             )
         elif after > before:
-            lines.append(
+            changes.append(
                 f"加仓 {symbol} {name}：昨日 {before} 股，今日 {after} 股；{reasons.get((symbol, 'buy'), '入场规则再次触发')}"
             )
         elif after < before:
-            lines.append(
+            changes.append(
                 f"减仓 {symbol} {name}：昨日 {before} 股，今日 {after} 股；{reasons.get((symbol, 'sell'), '退出规则部分触发')}"
             )
-    return lines[:RECENT_ACTION_LIMIT] or ["今日/昨日持仓无变化，未发生换票。"]
+    # Compact reviews must retain every position change for auditability.
+    lines = changes + retained[: max(0, RECENT_ACTION_LIMIT - len(changes))]
+    return lines or ["今日/昨日持仓无变化，未发生换票。"]
 
 
 def _last_reasons(result: VariantResult) -> dict[tuple[str, str], str]:

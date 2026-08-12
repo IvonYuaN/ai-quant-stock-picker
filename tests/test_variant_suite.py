@@ -2,10 +2,25 @@ import json
 import sqlite3
 from collections import Counter
 from datetime import date, timedelta
+from types import SimpleNamespace
 
 from scripts import run_variant_suite as variant_suite
 from scripts.check_variant_results import validate_variant_results
 from scripts.run_variant_suite import run_suite
+
+
+def test_adjustments_prioritizes_all_position_changes_over_retained_holdings() -> None:
+    holdings = [{"symbol": f"{index:06d}", "quantity": 100} for index in range(1, 10)]
+    previous = [{"symbol": f"{index:06d}", "quantity": 100} for index in range(1, 8)]
+    names = {item["symbol"]: item["symbol"] for item in holdings}
+
+    lines = variant_suite._adjustments(
+        holdings, previous, SimpleNamespace(fills=()), names
+    )
+
+    assert len(lines) == 8
+    assert lines[0].startswith("买入 000008")
+    assert lines[1].startswith("买入 000009")
 
 
 def test_generate_variant_profiles_stays_diverse_and_explained() -> None:
