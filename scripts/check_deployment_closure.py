@@ -25,7 +25,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from aqsp.core.http import urlopen_no_macos_proxy  # noqa: E402
-from aqsp.core.time import latest_completed_trading_day  # noqa: E402
+from aqsp.core.time import latest_completed_trading_day, today_shanghai  # noqa: E402
 from scripts.remote_runtime_probe import build_report as build_probe_report  # noqa: E402
 
 
@@ -235,16 +235,6 @@ def _snapshot_contract(
         return ClosureCheck(
             "snapshot_contract", "failed", "available_dates missing selected_date"
         )
-    if expected_end and selected != expected_end:
-        return ClosureCheck(
-            "snapshot_contract",
-            "failed",
-            f"selected_date {selected} != expected {expected_end}",
-        )
-    if expected_end and expected_end not in available:
-        return ClosureCheck(
-            "snapshot_contract", "failed", "available_dates missing expected_end"
-        )
     source = data.get("source")
     if not isinstance(source, dict):
         return ClosureCheck("snapshot_contract", "failed", "source missing")
@@ -257,12 +247,30 @@ def _snapshot_contract(
         return ClosureCheck(
             "snapshot_contract", "failed", "source latest_trade_date invalid"
         )
-    if expected_end and latest_trade_date != expected_end:
+    is_current_intraday_snapshot = (
+        selected == today_shanghai().isoformat() and latest_trade_date == selected
+    )
+    if expected_end and selected != expected_end and not is_current_intraday_snapshot:
         return ClosureCheck(
             "snapshot_contract",
             "failed",
-            f"source latest_trade_date {latest_trade_date} != expected {expected_end}",
+            f"selected_date {selected} != expected {expected_end}",
         )
+    if (
+        expected_end
+        and expected_end not in available
+        and not is_current_intraday_snapshot
+    ):
+        return ClosureCheck(
+            "snapshot_contract", "failed", "available_dates missing expected_end"
+        )
+    if expected_end and latest_trade_date != expected_end:
+        if not is_current_intraday_snapshot:
+            return ClosureCheck(
+                "snapshot_contract",
+                "failed",
+                f"source latest_trade_date {latest_trade_date} != expected {expected_end}",
+            )
     variant_suite = data.get("variant_suite")
     if not isinstance(variant_suite, dict):
         return ClosureCheck("snapshot_contract", "failed", "variant_suite missing")

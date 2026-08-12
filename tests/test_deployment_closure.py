@@ -286,6 +286,33 @@ def test_snapshot_contract_accepts_explicit_pending_variant_suite(monkeypatch) -
     assert check.detail.endswith("variant_suite=pending")
 
 
+def test_snapshot_contract_accepts_current_intraday_snapshot(monkeypatch) -> None:
+    monkeypatch.setattr(closure, "today_shanghai", lambda: date(2026, 7, 27))
+    monkeypatch.setattr(
+        closure,
+        "_read_json_url",
+        lambda _url, *, timeout: {
+            "data": {
+                "selected_date": "2026-07-27",
+                "available_dates": ["2026-07-27"],
+                "source": {"latest_trade_date": "2026-07-27"},
+                "variant_suite": {
+                    "schema_version": "variant-suite-v2",
+                    "last_error": "变体等待：当前未到北京时间 21:00",
+                },
+                "variants": [],
+            }
+        },
+    )
+
+    check = closure._snapshot_contract(
+        base_url="https://example.test", expected_end="2026-07-24", timeout=1.0
+    )
+
+    assert check.status == "ok"
+    assert check.detail.endswith("variant_suite=pending")
+
+
 def test_snapshot_contract_rejects_incomplete_variant_outside_first(
     monkeypatch,
 ) -> None:
