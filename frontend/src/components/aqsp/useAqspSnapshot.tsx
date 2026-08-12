@@ -98,6 +98,13 @@ export function isAqspSnapshotStale(snapshot: AqspSnapshot): boolean {
   return Number.isNaN(deadline) || Date.now() >= deadline;
 }
 
+export function areAqspCandidatesStale(snapshot: AqspSnapshot): boolean {
+  if (snapshot.meta?.historical) return true;
+  const freshness = snapshot.meta?.freshness?.candidates;
+  if (freshness) return freshness !== "fresh";
+  return isAqspSnapshotStale(snapshot);
+}
+
 export function formatAqspTime(value: string): string {
   if (!value) return "—";
   const timestamp = Date.parse(value);

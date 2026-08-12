@@ -31,7 +31,7 @@ import {
   snapshotConclusion,
   uniqueAgentViews,
 } from "@/lib/research-view";
-import { formatAqspTime, isAqspSnapshotStale, useWorkspaceSnapshot } from "./useAqspSnapshot";
+import { areAqspCandidatesStale, formatAqspTime, isAqspSnapshotStale, useWorkspaceSnapshot } from "./useAqspSnapshot";
 import { useLocation } from "react-router-dom";
 import {
   variantActionText,
@@ -57,7 +57,8 @@ function EmptyState({ title, detail }: { title: string; detail: string }) {
 }
 
 function SnapshotMeta({ snapshot }: { snapshot: AqspSnapshot }) {
-  const stale = isAqspSnapshotStale(snapshot) || snapshot.meta?.freshness?.candidates === "stale";
+  const summaryStale = isAqspSnapshotStale(snapshot);
+  const candidatesStale = areAqspCandidatesStale(snapshot);
   const historical = snapshot.meta?.historical ?? false;
   const freshness = snapshot.meta?.freshness;
   const unavailable = freshness?.candidates === "unavailable";
@@ -65,10 +66,11 @@ function SnapshotMeta({ snapshot }: { snapshot: AqspSnapshot }) {
     <div className="aqsp-meta">
       <span>{snapshot.selected_date || "日期未记录"}</span>
       <span>更新 {formatAqspTime(snapshot.generated_at)}</span>
-      <span className={cn("aqsp-badge", historical || stale || unavailable ? "aqsp-badge-warn" : "aqsp-badge-ok")}>
-        {historical ? "历史日期" : stale ? "当前快照已过期" : unavailable ? "等待数据刷新" : "当前数据"}
+      <span className={cn("aqsp-badge", historical || candidatesStale || unavailable ? "aqsp-badge-warn" : "aqsp-badge-ok")}>
+        {historical ? "历史日期" : candidatesStale ? "等待数据刷新" : "当前数据"}
       </span>
       {freshness?.candidates === "fresh" && <span className="aqsp-badge aqsp-badge-ok">行情新鲜</span>}
+      {summaryStale && !candidatesStale && <span className="aqsp-badge aqsp-badge-warn">研究摘要待刷新</span>}
       {freshness?.messages === "stale" && <span className="aqsp-badge aqsp-badge-warn">消息滞后</span>}
     </div>
   );
@@ -176,16 +178,16 @@ function PhaseLane({ snapshot }: { snapshot: AqspSnapshot }) {
 
 function GateState({ snapshot }: { snapshot: AqspSnapshot }) {
   const gate = snapshot.recommendation_gate;
-  const stale = isAqspSnapshotStale(snapshot) || snapshot.meta?.freshness?.candidates === "stale";
+  const candidatesStale = areAqspCandidatesStale(snapshot);
   if (snapshot.candidates.length === 0) {
     return <div className="aqsp-gate aqsp-gate-warn"><Clock3 className="h-4 w-4 shrink-0" /><span>当天暂无候选，等待盘前或盘中任务产出；不使用历史结果替代。</span></div>;
   }
   const presentation = gatePresentation(gate);
-  if (presentation === "ready" && !stale) {
+  if (presentation === "ready" && !candidatesStale) {
     return <div className="aqsp-gate aqsp-gate-ok"><Check className="h-4 w-4 shrink-0" /><span>当前结果可进入纸面复核，不自动下单。</span></div>;
   }
   if (presentation === "ready") {
-    return <div className="aqsp-gate aqsp-gate-warn"><ShieldAlert className="h-4 w-4 shrink-0" /><span>当前快照已过期，仅保留研究展示；不进入正式推荐或纸面复核。</span></div>;
+    return <div className="aqsp-gate aqsp-gate-warn"><ShieldAlert className="h-4 w-4 shrink-0" /><span>当前候选数据未通过新鲜度校验，仅保留研究展示；不进入正式推荐或纸面复核。</span></div>;
   }
   if (presentation === "unavailable") {
     return <div className="aqsp-gate aqsp-gate-warn"><ShieldAlert className="h-4 w-4 shrink-0" /><span>推荐状态未记录，当前只显示可核验数据。</span></div>;
@@ -332,9 +334,7 @@ export function AqspResearchWorkspace() {
   if (error && !data) return <div className="aqsp-page">{activeView === TEST_VARIANTS_SECTION_ID ? <TestVariantsPanel /> : <ErrorState error={error} onRefresh={refresh} />}</div>;
   if (!data) return <div className="aqsp-page">{activeView === TEST_VARIANTS_SECTION_ID ? <TestVariantsPanel /> : <EmptyState title="当前没有研究快照" detail="等待正式 AQSP 任务产出，当前不显示历史内容。" />}</div>;
 
-  const currentSnapshotStale = !(data.meta?.historical ?? false) && (
-    isAqspSnapshotStale(data) || data.meta?.freshness?.candidates === "stale"
-  );
+  const currentSnapshotStale = areAqspCandidatesStale(data);
   const visibleCandidates = currentSnapshotStale ? [] : data.candidates;
   const visibleDebates = currentSnapshotStale ? [] : data.debates;
   const conclusion = snapshotConclusion(data);

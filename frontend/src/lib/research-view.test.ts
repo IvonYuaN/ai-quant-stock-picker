@@ -12,6 +12,7 @@ import {
   snapshotMatchesSelectedDate,
   uniqueAgentViews,
 } from "./research-view";
+import { areAqspCandidatesStale } from "@/components/aqsp/useAqspSnapshot";
 
 const emptySnapshot = {
   schema_version: "v1",
@@ -88,4 +89,8 @@ export const researchViewContractChecks = {
       { role: "risk_control", stance: "bearish", confidence: 0.7, arguments: ["量价共振"], opportunities: [], risks: ["高位波动"], counterarguments: [] },
     ],
   }).map((view) => `${view.role}:${view.arguments.join("|")}:${view.risks.join("|")}`).join(";") === "bull:量价共振:;risk_control::高位波动",
+  freshCandidatesRemainVisibleWhenSummaryExpires: !areAqspCandidatesStale({
+    ...emptySnapshot,
+    meta: { historical: false, stale: true, freshness: { candidates: "fresh", messages: "no_data", cross_market: "unavailable" } },
+  }),
 };
