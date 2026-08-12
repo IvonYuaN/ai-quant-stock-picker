@@ -121,7 +121,16 @@ def aqsp_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
                         "opportunities": [],
                         "risks": ["高位波动"],
                         "counterarguments": [],
-                    }
+                    },
+                    {
+                        "role": "bull",
+                        "stance": "bullish",
+                        "confidence": 0.7,
+                        "arguments": ["量价共振"],
+                        "risk_factors": [],
+                        "opportunity_factors": ["趋势延续"],
+                        "counterarguments": [],
+                    },
                 ],
             }
         ],
@@ -212,7 +221,16 @@ def test_aqsp_api_loads_debate_sidecar_next_to_runtime_snapshot(
                                 "risk_factors": ["高位波动"],
                                 "opportunity_factors": [],
                                 "counterarguments": [],
-                            }
+                            },
+                            {
+                                "role": "bull",
+                                "stance": "bullish",
+                                "confidence": 0.7,
+                                "arguments": ["量价共振"],
+                                "risk_factors": [],
+                                "opportunity_factors": ["趋势延续"],
+                                "counterarguments": [],
+                            },
                         ],
                     }
                 ],
@@ -228,6 +246,7 @@ def test_aqsp_api_loads_debate_sidecar_next_to_runtime_snapshot(
     body = aqsp_client.get(SNAPSHOT_ROUTE).json()["data"]
 
     view = body["debates"][0]["agent_views"][0]
+    assert body["debates"][0]["review_kind"] == "multi_agent"
     assert view["role"] == "risk_control"
     assert view["arguments"] == ["量价承接未确认"]
 
