@@ -247,6 +247,10 @@ def test_immutable_release_deploy_script_covers_full_server_activation_chain() -
     assert '"$TARGET_SERVICE is not active"' in script
     assert "API cwd drift" in script
     assert "preview cwd drift" in script
+    assert (
+        "public route acceptance failed; previous release restore was attempted"
+        in script
+    )
     assert "snapshot_contract" in script
     assert "selected_date" in script
     assert "available_dates" in script
@@ -522,7 +526,9 @@ def test_server_sync_classifies_runner_timeout_and_records_execution_evidence(
     assert "resource_killed=false" in result_text
 
 
-def test_server_sync_does_not_misclassify_early_timeout_exit_code(tmp_path: Path) -> None:
+def test_server_sync_does_not_misclassify_early_timeout_exit_code(
+    tmp_path: Path,
+) -> None:
     root, runner = _build_sync_runtime(tmp_path)
     runner.write_text("#!/usr/bin/env bash\nexit 124\n", encoding="utf-8")
     runner.chmod(0o755)
@@ -912,15 +918,18 @@ def test_bt_task_script_exposes_panel_safe_actions() -> None:
     assert "data-refresh-retry every 10 min from 15:45-19:30 Mon-Fri" in script
     assert 'run_bounded_raw_refresh "${AQSP_DATA_REFRESH_BATCHES:-0}"' in script
     assert 'run_bounded_raw_refresh "${AQSP_DATA_REFRESH_RETRY_BATCHES:-0}"' in script
-    assert 'latest_completed_trading_day' in script
+    assert "latest_completed_trading_day" in script
     assert '--target-date "$target_day"' in script
-    assert '--candidate-db "${AQSP_RAW_REBUILD_DB_PATH:-${db_path}.rebuild}.${target_day}"' in script
+    assert (
+        '--candidate-db "${AQSP_RAW_REBUILD_DB_PATH:-${db_path}.rebuild}.${target_day}"'
+        in script
+    )
     assert '--batches "$batches"' in script
     assert script.count("refresh_home_snapshot_after_data_refresh") == 3
     assert "原始日线批次完成，首页快照已刷新" in script
     assert "ensure_data_refresh_window()" in script
     assert "ensure_data_refresh_retry_window()" in script
-    assert 'AQSP_DATA_REFRESH_RETRY_WINDOW_START_HM:-1545' in script
+    assert "AQSP_DATA_REFRESH_RETRY_WINDOW_START_HM:-1545" in script
     assert "AQSP_DATA_REFRESH_RETRY_WINDOW_END_HM:-1930" in script
     assert "data-refresh 允许窗口" in script
     assert "data-refresh-retry)" in script
@@ -1899,8 +1908,14 @@ def test_variant_refresh_runs_after_close_with_bounded_resources() -> None:
     assert 'NICE_LEVEL="${AQSP_VARIANT_NICE_LEVEL:-15}"' in script
     assert 'PROFILE_BATCH_SIZE="${AQSP_VARIANT_PROFILE_BATCH_SIZE:-25}"' in script
     assert "MIN_PUBLISHED_VARIANTS=100" in script
-    assert "MIN_PROFILE_BATCH_SIZE=$(( (MIN_PUBLISHED_VARIANTS + MAX_STAGE_BATCHES - 1) / MAX_STAGE_BATCHES ))" in script
-    assert "无法在 ${MAX_STAGE_BATCHES} 段内形成 ${MIN_PUBLISHED_VARIANTS} 个合格变体" in script
+    assert (
+        "MIN_PROFILE_BATCH_SIZE=$(( (MIN_PUBLISHED_VARIANTS + MAX_STAGE_BATCHES - 1) / MAX_STAGE_BATCHES ))"
+        in script
+    )
+    assert (
+        "无法在 ${MAX_STAGE_BATCHES} 段内形成 ${MIN_PUBLISHED_VARIANTS} 个合格变体"
+        in script
+    )
     assert "--profile-batch-size" in script
     assert "--status-file" in script
     assert "--status-only waiting" in script
@@ -1913,13 +1928,24 @@ def test_variant_refresh_runs_after_close_with_bounded_resources() -> None:
     assert "变体首轮仍在分段构建，首页已更新状态快照" in script
     assert "refresh_home_snapshot" in script
     assert "status=$?" in script
-    assert '变体运行时限 ${MAX_RUNTIME_SECONDS} 秒不足以完成四段发布，提升为 480 秒' in script
+    assert (
+        "变体运行时限 ${MAX_RUNTIME_SECONDS} 秒不足以完成四段发布，提升为 480 秒"
+        in script
+    )
 
     task_script = (PROJECT_ROOT / "scripts" / "bt_task.sh").read_text(encoding="utf-8")
-    assert 'local configured="${AQSP_VARIANT_OUTER_TIMEOUT_SECONDS:-510}"' in task_script
-    assert '变体外层超时 ${configured} 秒不足以覆盖四段发布预算，提升为 510 秒' in task_script
+    assert (
+        'local configured="${AQSP_VARIANT_OUTER_TIMEOUT_SECONDS:-510}"' in task_script
+    )
+    assert (
+        "变体外层超时 ${configured} 秒不足以覆盖四段发布预算，提升为 510 秒"
+        in task_script
+    )
     assert 'variant_agent_deadline="${AQSP_AGENT_DEADLINE_SECONDS:-540}"' in task_script
-    assert 'export AQSP_VARIANT_MAX_RUNTIME_SECONDS="${AQSP_VARIANT_MAX_RUNTIME_SECONDS:-480}"' in task_script
+    assert (
+        'export AQSP_VARIANT_MAX_RUNTIME_SECONDS="${AQSP_VARIANT_MAX_RUNTIME_SECONDS:-480}"'
+        in task_script
+    )
 
 
 def test_bt_optional_heavy_tasks_check_host_capacity_before_starting() -> None:
@@ -2235,6 +2261,19 @@ def test_immutable_deploy_preflights_scheduler_before_switching_release() -> Non
     assert script.index('run_scheduler_check "$RELEASE_DIR"') < script.index(
         'switch_links "$RELEASE_DIR"'
     )
+
+
+def test_vibe_systemd_installer_binds_services_to_canonical_release_when_available() -> (
+    None
+):
+    script = (PROJECT_ROOT / "scripts" / "install_vibe_research_systemd.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "CANONICAL_RELEASE_ROOT" in script
+    assert "SERVICE_PROJECT_ROOT" in script
+    assert 'SERVICE_PROJECT_ROOT="$CANONICAL_RELEASE_ROOT"' in script
+    assert 'PROJECT_ROOT_ESCAPED="$(escape_sed "$SERVICE_PROJECT_ROOT")"' in script
 
 
 def test_deployment_closure_gate_is_documented_as_required() -> None:

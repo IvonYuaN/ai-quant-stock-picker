@@ -20,6 +20,19 @@ def test_deploy_immutable_release_updates_tracking_ref_when_deploying_branch() -
     assert "raw_coverage=" in script
     assert "latest_trade_date missing outside blocked raw refresh" in script
     assert "is_current_intraday_snapshot" in script
+    assert "rollback_after_local_service_failure" in script
+    assert "rollback_after_public_route_failure" in script
+    assert "wait_for_local_url" in script
+    assert "AQSP_DEPLOY_LOCAL_HEALTH_TIMEOUT_SECONDS" in script
+    assert 'wait_for_local_url "http://127.0.0.1:${FRONTEND_PORT}/" "AQSP"' in script
+    assert (
+        "local API/frontend acceptance failed; previous release restore was attempted"
+        in script
+    )
+    assert (
+        "public route acceptance failed; previous release restore was attempted"
+        in script
+    )
     guard = (
         'if [ "$SKIP_FRONTEND_BUILD" = "true" ] && { '
         '[ ! -d "$RELEASE_DIR/frontend/node_modules" ] || '

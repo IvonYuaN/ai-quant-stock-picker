@@ -9,7 +9,7 @@ from typing import Any, Literal
 
 import yaml
 
-from aqsp.core.time import today_shanghai
+from aqsp.core.time import latest_completed_trading_day, today_shanghai
 from aqsp.data.trading_calendar import trading_day_lag
 from aqsp.ledger.base import read_ledger
 from aqsp.walkforward_gate import MAX_GATE_AGE_DAYS, validate_walkforward_gate_payload
@@ -315,7 +315,9 @@ class MonitorChecker:
                 message=f"原始日线刷新摘要无效: {exc}",
                 details={"state_path": str(path), "error": str(exc)},
             )
-        expected_day = today_shanghai().isoformat()
+        # The refresh job targets the latest completed close.  Requiring the
+        # calendar date here would falsely alert before today's market close.
+        expected_day = latest_completed_trading_day().isoformat()
         coverage_ratio = target_count / universe_size if universe_size else 0.0
         insufficient = (
             target_day != expected_day

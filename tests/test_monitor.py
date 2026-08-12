@@ -276,6 +276,10 @@ class TestMonitorChecker:
         monkeypatch.setattr(
             "aqsp.monitor.checker.today_shanghai", lambda: date(2026, 7, 29)
         )
+        monkeypatch.setattr(
+            "aqsp.monitor.checker.latest_completed_trading_day",
+            lambda: date(2026, 7, 29),
+        )
         checker = MonitorChecker(config_path=str(sample_config))
 
         result = checker._check_raw_market_coverage(
@@ -305,6 +309,10 @@ class TestMonitorChecker:
         )
         monkeypatch.setattr(
             "aqsp.monitor.checker.today_shanghai", lambda: date(2026, 7, 29)
+        )
+        monkeypatch.setattr(
+            "aqsp.monitor.checker.latest_completed_trading_day",
+            lambda: date(2026, 7, 29),
         )
         checker = MonitorChecker(config_path=str(sample_config))
 
@@ -338,6 +346,10 @@ class TestMonitorChecker:
         monkeypatch.setattr(
             "aqsp.monitor.checker.today_shanghai", lambda: date(2026, 7, 29)
         )
+        monkeypatch.setattr(
+            "aqsp.monitor.checker.latest_completed_trading_day",
+            lambda: date(2026, 7, 29),
+        )
         checker = MonitorChecker(config_path=str(sample_config))
 
         result = checker._check_raw_market_coverage(
@@ -351,6 +363,38 @@ class TestMonitorChecker:
 
         assert result.triggered is False
         assert result.details["state_path"] == str(state_dir / "cursor.json")
+
+    def test_raw_market_coverage_accepts_previous_completed_day_before_close(
+        self, sample_config: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        state_path = tmp_path / "cursor.json"
+        state_path.write_text(
+            json.dumps(
+                {
+                    "target_day": "2026-07-28",
+                    "universe_size": 4613,
+                    "target_day_symbols": [str(index) for index in range(4613)],
+                }
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(
+            "aqsp.monitor.checker.latest_completed_trading_day",
+            lambda: date(2026, 7, 28),
+        )
+        checker = MonitorChecker(config_path=str(sample_config))
+
+        result = checker._check_raw_market_coverage(
+            {
+                "state_path": str(state_path),
+                "min_universe_size": 1000,
+                "min_target_day_symbols": 300,
+                "min_coverage_ratio": 0.98,
+            }
+        )
+
+        assert result.triggered is False
+        assert result.details["expected_day"] == "2026-07-28"
 
     def test_raw_market_coverage_rejects_partial_eligible_symbols(
         self, sample_config: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

@@ -20,12 +20,14 @@ PREVIEW_SERVICE="${AQSP_PREVIEW_SERVICE:-aqsp-vibe-research-preview.service}"
 TARGET_SERVICE="${AQSP_VIBE_SYSTEMD_TARGET:-aqsp-vibe-research.target}"
 API_PORT="${AQSP_API_PORT:-8900}"
 FRONTEND_PORT="${AQSP_FRONTEND_PORT:-5899}"
+LOCAL_HEALTH_TIMEOUT_SECONDS="${AQSP_DEPLOY_LOCAL_HEALTH_TIMEOUT_SECONDS:-20}"
 SERVICE_USER="${AQSP_VIBE_USER:-aqsp-vibe}"
 SERVICE_GROUP="${AQSP_VIBE_GROUP:-${SERVICE_USER}}"
 LOCK_DIR="${AQSP_RUNTIME_LOCK_DIR:-${RUNTIME_DATA_ROOT}/.locks}"
 LOCK_FILE="${LOCK_DIR}/immutable-release-deploy.lock"
 HEADLESS_LOCK_FILE="${AQSP_HEADLESS_LOCK:-/tmp/aqsp-headless-dashboard.lock}"
 EXPECTED_VARIANT_END="${AQSP_DEPLOY_EXPECTED_VARIANT_END:-}"
+PREVIOUS_RELEASE=""
 SKIP_FRONTEND_BUILD="false"
 SKIP_RESTART="false"
 SKIP_PUBLIC_CHECK="false"
@@ -204,30 +206,88 @@ switch_links() {
     if [ -n "$old_current" ] && [ "$old_current" != "$release" ]; then
         ln -sfn "$old_current" "${ROLLBACK_LINK}.tmp"
         mv -Tf "${ROLLBACK_LINK}.tmp" "$ROLLBACK_LINK"
+        PREVIOUS_RELEASE="$old_current"
     fi
     ln -sfn "$release" "${CURRENT_LINK}.tmp"
     mv -Tf "${CURRENT_LINK}.tmp" "$CURRENT_LINK"
 }
 
-restart_services() {
-    local release="$1" api_pid preview_pid api_cwd preview_cwd
+rollback_after_local_service_failure() {
+    [ -n "$PREVIOUS_RELEASE" ] || return 1
+    log "local service acceptance failed; restore previous release=$PREVIOUS_RELEASE"
+    ln -sfn "$PREVIOUS_RELEASE" "${CURRENT_LINK}.tmp"
+    mv -Tf "${CURRENT_LINK}.tmp" "$CURRENT_LINK"
     systemctl restart "$API_SERVICE"
     stop_stale_frontend_port_owner
     systemctl restart "$PREVIEW_SERVICE"
+    systemctl start "$TARGET_SERVICE"
+}
+
+rollback_after_public_route_failure() {
+    [ -n "$PREVIOUS_RELEASE" ] || return 1
+    log "public route acceptance failed; restore previous release=$PREVIOUS_RELEASE"
+    ln -sfn "$PREVIOUS_RELEASE" "${CURRENT_LINK}.tmp"
+    mv -Tf "${CURRENT_LINK}.tmp" "$CURRENT_LINK"
+    systemctl restart "$API_SERVICE"
+    stop_stale_frontend_port_owner
+    systemctl restart "$PREVIEW_SERVICE"
+    systemctl start "$TARGET_SERVICE"
+}
+
+wait_for_local_url() {
+    local url="$1" expected="$2" deadline body
+    deadline=$(( $(date +%s) + LOCAL_HEALTH_TIMEOUT_SECONDS ))
+    while [ "$(date +%s)" -lt "$deadline" ]; do
+        body="$(curl -fsS --max-time 5 "$url" 2>/dev/null || true)"
+        if printf '%s' "$body" | grep -q "$expected"; then
+            return 0
+        fi
+        sleep 1
+    done
+    return 1
+}
+
+restart_services() {
+    local release="$1" api_pid preview_pid api_cwd preview_cwd
+    systemctl restart "$API_SERVICE" || return 1
+    stop_stale_frontend_port_owner
+    systemctl restart "$PREVIEW_SERVICE" || return 1
     # The target is the persistent service contract. Restarting its members
     # alone can leave the group inactive while both ports still respond.
-    systemctl start "$TARGET_SERVICE"
+    systemctl start "$TARGET_SERVICE" || return 1
     sleep 4
-    systemctl is-active --quiet "$API_SERVICE" || fail "$API_SERVICE is not active"
-    systemctl is-active --quiet "$PREVIEW_SERVICE" || fail "$PREVIEW_SERVICE is not active"
-    systemctl is-active --quiet "$TARGET_SERVICE" || fail "$TARGET_SERVICE is not active"
+    systemctl is-active --quiet "$API_SERVICE" || {
+        echo "$API_SERVICE is not active" >&2
+        return 1
+    }
+    systemctl is-active --quiet "$PREVIEW_SERVICE" || {
+        echo "$PREVIEW_SERVICE is not active" >&2
+        return 1
+    }
+    systemctl is-active --quiet "$TARGET_SERVICE" || {
+        echo "$TARGET_SERVICE is not active" >&2
+        return 1
+    }
     api_pid="$(systemctl show -p MainPID --value "$API_SERVICE")"
     preview_pid="$(systemctl show -p MainPID --value "$PREVIEW_SERVICE")"
     api_cwd="$(readlink -f "/proc/$api_pid/cwd")"
     preview_cwd="$(readlink -f "/proc/$preview_pid/cwd")"
-    [ "$api_cwd" = "$release/backend" ] || fail "API cwd drift: $api_cwd"
-    [ "$preview_cwd" = "$release/frontend" ] || fail "preview cwd drift: $preview_cwd"
-    curl -fsS --max-time 10 "http://127.0.0.1:${API_PORT}/api/health" >/dev/null
+    [ "$api_cwd" = "$release/backend" ] || {
+        echo "API cwd drift: $api_cwd" >&2
+        return 1
+    }
+    [ "$preview_cwd" = "$release/frontend" ] || {
+        echo "preview cwd drift: $preview_cwd" >&2
+        return 1
+    }
+    wait_for_local_url "http://127.0.0.1:${API_PORT}/api/health" '"ok":true' || {
+        echo "local API health did not become ready" >&2
+        return 1
+    }
+    wait_for_local_url "http://127.0.0.1:${FRONTEND_PORT}/" "AQSP" || {
+        echo "local frontend health did not become ready" >&2
+        return 1
+    }
 }
 
 check_public_routes() {
@@ -421,9 +481,15 @@ if [ "$SKIP_RESTART" = "true" ] || [ "$SKIP_PUBLIC_CHECK" = "true" ] || [ "$SKIP
 fi
 
 if [ "$SKIP_RESTART" != "true" ]; then
-    restart_services "$RELEASE_DIR"
+    if ! restart_services "$RELEASE_DIR"; then
+        rollback_after_local_service_failure || true
+        fail "local API/frontend acceptance failed; previous release restore was attempted"
+    fi
 fi
-check_public_routes
+if ! check_public_routes; then
+    rollback_after_public_route_failure || true
+    fail "public route acceptance failed; previous release restore was attempted"
+fi
 if ! check_variant_results; then
     VERIFY_LEVEL="partial"
     log "[WARN] 变体产物未通过校验；release 已切换，但本次部署未验收"
