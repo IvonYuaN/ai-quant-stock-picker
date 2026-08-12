@@ -602,6 +602,7 @@ def _runtime_debate_payload(
         "conclusion_recorded": record.get("conclusion_recorded", False),
         "debate_quality_issues": record.get("debate_quality_issues", []),
         "agent_views": agent_views,
+        "review_kind": "multi_agent" if len(agent_views) > 1 else "unverified",
     }
 
 

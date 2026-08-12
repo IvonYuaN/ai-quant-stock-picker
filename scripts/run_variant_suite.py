@@ -863,7 +863,10 @@ def run_suite(
                 symbol_names,
             ) or _technical_evidence(result, symbol_names)
             payload["adjustments"] = _adjustments(
-                payload["holdings"], previous_holdings, result, symbol_names
+                payload["holdings"],
+                previous_holdings,
+                result,
+                symbol_names,
             )
             payload["holdings_signature"] = _holdings_signature(payload["holdings"])
             payload["orders_signature"] = _orders_signature(orders)
@@ -1027,6 +1030,7 @@ def _adjustments(
         for item in previous_holdings
     }
     reasons = _last_reasons(result)
+    evidence = _last_fill_evidence(result)
     changes: list[str] = []
     retained: list[str] = []
     for symbol in sorted(set(current) | set(previous)):
@@ -1040,19 +1044,27 @@ def _adjustments(
             )
         elif before == 0 and after > 0:
             changes.append(
-                f"买入 {symbol} {name}：昨日无，今日 {after} 股；{reasons.get((symbol, 'buy'), '入场规则触发')}"
+                f"买入 {symbol} {name}：昨日无，今日 {after} 股；"
+                f"{reasons.get((symbol, 'buy'), '入场规则触发')}；"
+                f"{_technical_reason(evidence.get((symbol, 'buy'), {}))}"
             )
         elif before > 0 and after == 0:
             changes.append(
-                f"移出 {symbol} {name}：昨日 {before} 股，今日无；{reasons.get((symbol, 'sell'), '退出规则触发')}"
+                f"移出 {symbol} {name}：昨日 {before} 股，今日无；"
+                f"{reasons.get((symbol, 'sell'), '退出规则触发')}；"
+                f"{_technical_reason(evidence.get((symbol, 'sell'), {}))}"
             )
         elif after > before:
             changes.append(
-                f"加仓 {symbol} {name}：昨日 {before} 股，今日 {after} 股；{reasons.get((symbol, 'buy'), '入场规则再次触发')}"
+                f"加仓 {symbol} {name}：昨日 {before} 股，今日 {after} 股；"
+                f"{reasons.get((symbol, 'buy'), '入场规则再次触发')}；"
+                f"{_technical_reason(evidence.get((symbol, 'buy'), {}))}"
             )
         elif after < before:
             changes.append(
-                f"减仓 {symbol} {name}：昨日 {before} 股，今日 {after} 股；{reasons.get((symbol, 'sell'), '退出规则部分触发')}"
+                f"减仓 {symbol} {name}：昨日 {before} 股，今日 {after} 股；"
+                f"{reasons.get((symbol, 'sell'), '退出规则部分触发')}；"
+                f"{_technical_reason(evidence.get((symbol, 'sell'), {}))}"
             )
     # Compact reviews must retain every position change for auditability.
     lines = changes + retained[: max(0, RECENT_ACTION_LIMIT - len(changes))]
@@ -1065,6 +1077,28 @@ def _last_reasons(result: VariantResult) -> dict[tuple[str, str], str]:
         if fill.status == "filled" and fill.reason:
             reasons[(fill.symbol, fill.side)] = fill.reason
     return reasons
+
+
+def _last_fill_evidence(
+    result: VariantResult,
+) -> dict[tuple[str, str], dict[str, object]]:
+    evidence: dict[tuple[str, str], dict[str, object]] = {}
+    for fill in result.fills:
+        if fill.status == "filled" and fill.evidence:
+            evidence[(fill.symbol, fill.side)] = dict(fill.evidence)
+    return evidence
+
+
+def _technical_reason(evidence: dict[str, object]) -> str:
+    values = ("macd_hist", "kdj_j", "volume_ratio", "atr_pct")
+    if not all(_optional_metric(evidence.get(key)) is not None for key in values):
+        return "技术指标未完整记录，拒绝发布"
+    return (
+        f"MACD {_optional_metric(evidence.get('macd_hist')):.3f}；"
+        f"KDJ-J {_optional_metric(evidence.get('kdj_j')):.1f}；"
+        f"量比 {_optional_metric(evidence.get('volume_ratio')):.2f}；"
+        f"ATR {_optional_metric(evidence.get('atr_pct')):.2f}%"
+    )
 
 
 def _last_entry_evidence(
