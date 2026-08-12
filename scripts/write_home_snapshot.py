@@ -1827,6 +1827,9 @@ def _variant_refresh_status_error() -> str:
     status = _text(payload.get("status"))
     message = _text(payload.get("message"))
     reason = _text(payload.get("reason"))
+    generated_at = _text(payload.get("generated_at"))
+    if status == "waiting" and generated_at[:10] != now_shanghai().date().isoformat():
+        return "变体调度状态已过期，等待下一次正式刷新。"
     staged = int(payload.get("profiles_staged") or 0)
     total = int(payload.get("profiles_total") or 0)
     if status == "staged":

@@ -165,6 +165,23 @@ def test_write_variant_refresh_status_is_bounded_and_timestamped(
     assert payload["generated_at"].endswith("+08:00")
 
 
+def test_latest_trade_date_uses_latest_complete_probe_cross_section(tmp_path: Path) -> None:
+    database = tmp_path / "market.db"
+    symbols = tuple(
+        mod.MarketSymbol(f"{index:06d}.SZ", f"{index:06d}", str(index), "深市主板")
+        for index in range(121)
+    )
+    with sqlite3.connect(database) as conn:
+        conn.execute("CREATE TABLE daily_qfq (ts_code TEXT, trade_date TEXT)")
+        conn.executemany(
+            "INSERT INTO daily_qfq VALUES (?, ?)",
+            [(item.ts_code, "20260608") for item in symbols]
+            + [(item.ts_code, "20260623") for item in symbols[:76]],
+        )
+
+    assert mod.latest_trade_date(database, symbols) == "2026-06-08"
+
+
 def test_main_writes_waiting_status_without_reading_market_database(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

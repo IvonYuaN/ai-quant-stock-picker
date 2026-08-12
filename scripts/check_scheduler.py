@@ -8,6 +8,7 @@ from pathlib import Path
 import os
 import re
 import shlex
+import sqlite3
 import subprocess
 import sys
 from collections.abc import Callable
@@ -24,6 +25,9 @@ RUNTIME_LOCK_ROOT = Path(
     os.environ.get("AQSP_RUNTIME_LOCK_DIR", RUNTIME_DATA_ROOT / ".locks")
 ).resolve()
 BT_CRON_DIR = Path(os.environ.get("AQSP_BT_CRON_DIR", "/www/server/cron")).resolve()
+BT_CRONTAB_DB = Path(
+    os.environ.get("AQSP_BT_CRONTAB_DB", "/www/server/panel/data/db/crontab.db")
+).resolve()
 REQUIRED_SCHEDULED_ACTIONS = frozenset(
     {
         "daily",
@@ -323,6 +327,41 @@ def check_bt_panel_actions() -> CheckResult:
         "BT Panel actions",
         not missing,
         "scheduled actions: "
+        + ",".join(sorted(actions))
+        + ("; missing: " + ",".join(missing) if missing else ""),
+    )
+
+
+def check_bt_panel_database_actions() -> CheckResult:
+    """Verify BaoTa's enabled task table, not only leftover wrapper files.
+
+    BaoTa writes executable wrappers before updating its SQLite task table.  A
+    deleted database row can therefore leave a runnable cron line behind while
+    the panel no longer owns or displays the task.  Treat the enabled rows as
+    the configuration source of truth when the panel database is present.
+    """
+    if not BT_CRONTAB_DB.is_file():
+        return CheckResult("BT Panel database actions", True, "database unavailable")
+    try:
+        with sqlite3.connect(f"file:{BT_CRONTAB_DB}?mode=ro", uri=True) as conn:
+            rows = conn.execute(
+                "SELECT sBody FROM crontab WHERE COALESCE(status, 1) = 1"
+            ).fetchall()
+    except sqlite3.Error as exc:
+        return CheckResult(
+            "BT Panel database actions", False, f"database unreadable: {exc}"
+        )
+    actions = {
+        action
+        for (body,) in rows
+        if isinstance(body, str)
+        for action in _bt_wrapper_actions(body)
+    }
+    missing = sorted(REQUIRED_SCHEDULED_ACTIONS - actions)
+    return CheckResult(
+        "BT Panel database actions",
+        not missing,
+        "enabled actions: "
         + ",".join(sorted(actions))
         + ("; missing: " + ",".join(missing) if missing else ""),
     )
@@ -632,6 +671,7 @@ def main() -> int:
         check_crontab(),
         check_cron_lock_collisions(),
         check_bt_panel_actions(),
+        check_bt_panel_database_actions(),
         check_duplicate_bt_panel_actions(),
         check_bt_panel_wrapper_identity(),
         check_bt_panel_wrapper_shell_syntax(),

@@ -47,6 +47,7 @@ DEFAULT_LOCK_WAIT_SECONDS = 0.0
 DEFAULT_PROFILE_BATCH_SIZE = 32
 STAGING_SCHEMA_VERSION = "variant-suite-stage-v1"
 LATEST_DATE_PROBE_SYMBOLS = 240
+MIN_LATEST_DATE_SYMBOLS = 121
 SQL_CHUNK_SIZE = 80
 REQUIRED_MARKET_TABLES = frozenset({"stocks", "daily_qfq"})
 VARIANT_REFRESH_STATUS_SCHEMA_VERSION = "variant-refresh-status-v1"
@@ -277,27 +278,40 @@ def _market_symbols_version(symbols: tuple[MarketSymbol, ...]) -> str:
 
 
 def latest_trade_date(db_path: Path, symbols: tuple[MarketSymbol, ...]) -> str:
-    # daily_qfq is indexed by (ts_code, trade_date), not trade_date alone.
-    # Probe several live-looking symbols through the composite index instead of
-    # scanning the full market table.
-    dates: list[str] = []
+    """Return the newest date with a usable cross-section for publication.
+
+    ``daily_qfq`` is indexed by ``(ts_code, trade_date)``.  Looking only at
+    each symbol's newest row lets a partial importer advance the whole suite
+    to a date that contains too few symbols.  Read a bounded recent history
+    per probe through that index and require enough concurrent symbols for the
+    smallest publishable experiment batch.
+    """
+    coverage: dict[str, set[str]] = {}
+    required_symbols = min(MIN_LATEST_DATE_SYMBOLS, len(symbols))
     with sqlite3.connect(db_path) as conn:
         for item in symbols[:LATEST_DATE_PROBE_SYMBOLS]:
-            raw = conn.execute(
+            rows = conn.execute(
                 """
                 SELECT trade_date
                 FROM daily_qfq
                 WHERE ts_code = ?
                 ORDER BY trade_date DESC
-                LIMIT 1
+                LIMIT 16
                 """,
                 (item.ts_code,),
-            ).fetchone()
-            if raw and raw[0]:
-                dates.append(normalize_trade_date(str(raw[0])))
-    if not dates:
+            ).fetchall()
+            for (raw_date,) in rows:
+                if raw_date:
+                    normalized = normalize_trade_date(str(raw_date))
+                    coverage.setdefault(normalized, set()).add(item.ts_code)
+    eligible_dates = [
+        candidate
+        for candidate, present_symbols in coverage.items()
+        if len(present_symbols) >= required_symbols
+    ]
+    if not eligible_dates:
         raise ValueError("daily_qfq 没有交易日期")
-    return max(dates)
+    return max(eligible_dates)
 
 
 def copy_market_rows(

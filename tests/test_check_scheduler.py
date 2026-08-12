@@ -1,7 +1,49 @@
 from __future__ import annotations
 
+import sqlite3
+
 from scripts import check_scheduler
 from scripts.check_scheduler import CheckResult
+
+
+def test_check_bt_panel_database_actions_rejects_missing_enabled_action(
+    monkeypatch, tmp_path
+) -> None:
+    database = tmp_path / "crontab.db"
+    with sqlite3.connect(database) as conn:
+        conn.execute("CREATE TABLE crontab (sBody TEXT, status INTEGER)")
+        conn.execute(
+            "INSERT INTO crontab VALUES (?, 1)",
+            ("/bin/bash /opt/aqsp/scripts/release_task_entrypoint.sh daily",),
+        )
+    monkeypatch.setattr(check_scheduler, "BT_CRONTAB_DB", database)
+
+    result = check_scheduler.check_bt_panel_database_actions()
+
+    assert result.ok is False
+    assert "variant-refresh" in result.detail
+
+
+def test_check_bt_panel_database_actions_accepts_enabled_actions(
+    monkeypatch, tmp_path
+) -> None:
+    database = tmp_path / "crontab.db"
+    with sqlite3.connect(database) as conn:
+        conn.execute("CREATE TABLE crontab (sBody TEXT, status INTEGER)")
+        conn.executemany(
+            "INSERT INTO crontab VALUES (?, 1)",
+            [
+                (
+                    f"/bin/bash /opt/aqsp/scripts/release_task_entrypoint.sh {action}",
+                )
+                for action in check_scheduler.REQUIRED_SCHEDULED_ACTIONS
+            ],
+        )
+    monkeypatch.setattr(check_scheduler, "BT_CRONTAB_DB", database)
+
+    result = check_scheduler.check_bt_panel_database_actions()
+
+    assert result.ok is True
 
 
 def test_check_cron_lock_collisions_rejects_shared_outer_lock(monkeypatch) -> None:

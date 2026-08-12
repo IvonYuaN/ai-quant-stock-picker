@@ -75,7 +75,7 @@ def test_release_task_entrypoint_maps_relative_runtime_paths_once_to_data(
     )
     (release / "scripts" / "bt_task.sh").write_text(
         "#!/usr/bin/env bash\n"
-        'printf \'%s\\n\' "AQSP_LEDGER=$AQSP_LEDGER" "AQSP_REPORT=$AQSP_REPORT" "AQSP_RUNTIME_PYTHON=$AQSP_RUNTIME_PYTHON" "AQSP_BT_LOGS_DIR=$AQSP_BT_LOGS_DIR" "PYTHONPATH=$PYTHONPATH" "TZ=$TZ" > "$MARKER"\n',
+        'printf \'%s\\n\' "AQSP_LEDGER=$AQSP_LEDGER" "AQSP_REPORT=$AQSP_REPORT" "AQSP_RUNTIME_PYTHON=$AQSP_RUNTIME_PYTHON" "AQSP_BT_LOGS_DIR=$AQSP_BT_LOGS_DIR" "AQSP_VARIANT_REFRESH_STATUS=$AQSP_VARIANT_REFRESH_STATUS" "AQSP_VARIANT_CURSOR_PATH=$AQSP_VARIANT_CURSOR_PATH" "AQSP_VARIANT_REFRESH_LOCK=$AQSP_VARIANT_REFRESH_LOCK" "PYTHONPATH=$PYTHONPATH" "TZ=$TZ" > "$MARKER"\n',
         encoding="utf-8",
     )
     (release / "scripts" / "bt_task.sh").chmod(0o755)
@@ -101,6 +101,9 @@ def test_release_task_entrypoint_maps_relative_runtime_paths_once_to_data(
         f"AQSP_REPORT={runtime / 'data' / 'reports' / 'latest.md'}",
         "AQSP_RUNTIME_PYTHON=/opt/aqsp-vibe-venv/bin/python3",
         f"AQSP_BT_LOGS_DIR={runtime / 'data' / 'logs' / 'bt'}",
+        f"AQSP_VARIANT_REFRESH_STATUS={runtime / 'data' / 'runtime' / 'variant_refresh_status.json'}",
+        f"AQSP_VARIANT_CURSOR_PATH={runtime / 'data' / 'runtime' / 'variant_results_cursor.json'}",
+        f"AQSP_VARIANT_REFRESH_LOCK={runtime / 'data' / '.locks' / 'variant-results-refresh.lock'}",
         f"PYTHONPATH={release / 'src'}:{release}",
         "TZ=Asia/Shanghai",
     ]

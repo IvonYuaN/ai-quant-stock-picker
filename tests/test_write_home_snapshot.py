@@ -874,7 +874,11 @@ def test_variant_suite_exposes_waiting_refresh_window(
     status_path = tmp_path / "variant_refresh_status.json"
     status_path.write_text(
         json.dumps(
-            {"status": "waiting", "message": "等待收盘后错峰运行。"},
+            {
+                "status": "waiting",
+                "message": "等待收盘后错峰运行。",
+                "generated_at": write_home_snapshot.now_shanghai().isoformat(),
+            },
             ensure_ascii=False,
         ),
         encoding="utf-8",
@@ -884,6 +888,27 @@ def test_variant_suite_exposes_waiting_refresh_window(
     suite = write_home_snapshot._variant_suite_snapshot()
 
     assert suite.last_error == "变体等待：等待收盘后错峰运行。"
+
+
+def test_variant_suite_rejects_expired_waiting_status(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("AQSP_VARIANT_RESULTS", str(tmp_path / "missing.json"))
+    status_path = tmp_path / "variant_refresh_status.json"
+    status_path.write_text(
+        json.dumps(
+            {
+                "status": "waiting",
+                "message": "等待收盘后错峰运行。",
+                "generated_at": "2026-08-03T12:06:43+08:00",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AQSP_VARIANT_REFRESH_STATUS", str(status_path))
+
+    suite = write_home_snapshot._variant_suite_snapshot()
+
+    assert suite.last_error == "变体调度状态已过期，等待下一次正式刷新。"
 
 
 def test_research_conclusion_summaries_are_candidate_first_and_flag_missing_metrics() -> (
