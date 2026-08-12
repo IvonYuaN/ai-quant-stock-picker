@@ -323,7 +323,9 @@ def main() -> int:
             "cursor retained for the next retry",
             file=sys.stderr,
         )
-        return 1
+        # 75 is the conventional temporary-unavailable exit status.  The BT
+        # wrapper records it as a bounded waiting state, not as a task failure.
+        return 75
     return 0 if summary.failed_symbols == 0 else 1
 
 

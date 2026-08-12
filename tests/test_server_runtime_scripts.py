@@ -916,8 +916,11 @@ def test_bt_task_script_exposes_panel_safe_actions() -> None:
     assert "daily     18:00 Mon-Fri" in script
     assert "data-refresh 15:35 Mon-Fri" in script
     assert "data-refresh-retry every 10 min from 15:45-19:30 Mon-Fri" in script
-    assert 'run_bounded_raw_refresh "${AQSP_DATA_REFRESH_BATCHES:-0}"' in script
-    assert 'run_bounded_raw_refresh "${AQSP_DATA_REFRESH_RETRY_BATCHES:-0}"' in script
+    assert 'run_raw_refresh_or_wait "${AQSP_DATA_REFRESH_BATCHES:-0}"' in script
+    assert 'run_raw_refresh_or_wait "${AQSP_DATA_REFRESH_RETRY_BATCHES:-0}"' in script
+    assert "run_raw_refresh_or_wait()" in script
+    assert '[ "$exit_code" -eq 75 ]' in script
+    assert "数据源尚未发布目标日线" in script
     assert "latest_completed_trading_day" in script
     assert '--target-date "$target_day"' in script
     assert (

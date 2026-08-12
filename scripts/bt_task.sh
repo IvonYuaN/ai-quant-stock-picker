@@ -475,6 +475,21 @@ refresh_home_snapshot_after_data_refresh() {
     fi
 }
 
+run_raw_refresh_or_wait() {
+    local batches="$1" exit_code
+    if run_bounded_raw_refresh "$batches"; then
+        refresh_home_snapshot_after_data_refresh
+        return 0
+    fi
+    exit_code=$?
+    if [ "$exit_code" -eq 75 ]; then
+        log "数据源尚未发布目标日线，保留游标并等待下一个 30 分钟探测窗口"
+        refresh_home_snapshot_after_data_refresh
+        return 0
+    fi
+    return "$exit_code"
+}
+
 gate_optional_heavy_task() {
     local status_path="${STATE_DIR}/resource-gate-${ACTION}.json"
     # 0 lets resource_gate reserve 25% of known host memory, bounded by its safe floor/cap.
@@ -813,8 +828,7 @@ case "$ACTION" in
         export AQSP_NOTIFY="false"
         export AQSP_GATE_NOTIFY="false"
         sync_code_only
-        run_bounded_raw_refresh "${AQSP_DATA_REFRESH_BATCHES:-0}"
-        refresh_home_snapshot_after_data_refresh
+        run_raw_refresh_or_wait "${AQSP_DATA_REFRESH_BATCHES:-0}"
         ;;
     data-refresh-retry)
         skip_non_trading_day
@@ -828,8 +842,7 @@ case "$ACTION" in
         export AQSP_NOTIFY="false"
         export AQSP_GATE_NOTIFY="false"
         sync_code_only
-        run_bounded_raw_refresh "${AQSP_DATA_REFRESH_RETRY_BATCHES:-0}"
-        refresh_home_snapshot_after_data_refresh
+        run_raw_refresh_or_wait "${AQSP_DATA_REFRESH_RETRY_BATCHES:-0}"
         ;;
     intraday)
         skip_non_trading_day

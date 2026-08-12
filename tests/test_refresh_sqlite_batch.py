@@ -8,6 +8,38 @@ from scripts import refresh_sqlite_batch
 from scripts.update_sqlite_daily import UpdateSummary
 
 
+def test_refresh_sqlite_batch_uses_temporary_exit_for_unpublished_target_day(
+    monkeypatch, tmp_path: Path
+) -> None:
+    summary = UpdateSummary(
+        updated_rows=0,
+        skipped_symbols=1,
+        failed_symbols=0,
+        target_day=date(2026, 7, 30),
+        price_mode="raw",
+        target_day_symbol_count=0,
+        total_symbols=1,
+        raw_max_trade_date=date(2026, 7, 29),
+        processed_symbols=1,
+        empty_response_symbols=1,
+    )
+    monkeypatch.setattr(
+        refresh_sqlite_batch, "refresh_batches", lambda **_kwargs: summary
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "refresh_sqlite_batch.py",
+            "--db",
+            str(tmp_path / "db"),
+            "--state",
+            str(tmp_path / "state"),
+        ],
+    )
+
+    assert refresh_sqlite_batch.main() == 75
+
+
 def test_refresh_sqlite_batch_persists_date_summary_and_advances_cursor(
     monkeypatch, tmp_path: Path
 ) -> None:
