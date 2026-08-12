@@ -169,7 +169,7 @@ def test_latest_trade_date_uses_latest_complete_probe_cross_section(tmp_path: Pa
     database = tmp_path / "market.db"
     symbols = tuple(
         mod.MarketSymbol(f"{index:06d}.SZ", f"{index:06d}", str(index), "深市主板")
-        for index in range(121)
+        for index in range(mod.MIN_LATEST_DATE_SYMBOLS)
     )
     with sqlite3.connect(database) as conn:
         conn.execute("CREATE TABLE daily_qfq (ts_code TEXT, trade_date TEXT)")
@@ -311,6 +311,10 @@ def test_refresh_rejects_invalid_payload_before_write_or_cursor_commit(
     )
     monkeypatch.setattr(mod, "validate_market_db", lambda _path: None)
     monkeypatch.setattr(mod, "load_supported_symbols", lambda _path: symbols)
+    monkeypatch.setattr(
+        mod, "symbols_with_data_at_date", lambda _path, values, _end: values
+    )
+    monkeypatch.setattr(mod, "MIN_LATEST_DATE_SYMBOLS", 1)
     monkeypatch.setattr(mod, "select_variant_batch", lambda *_args: batch)
     monkeypatch.setattr(
         mod,
@@ -428,6 +432,10 @@ def test_refresh_failure_preserves_last_qualified_artifact_and_cursor(
         cycle_id=1,
     )
     monkeypatch.setattr(mod, "load_supported_symbols", lambda _path: symbols)
+    monkeypatch.setattr(
+        mod, "symbols_with_data_at_date", lambda _path, values, _end: values
+    )
+    monkeypatch.setattr(mod, "MIN_LATEST_DATE_SYMBOLS", 1)
     monkeypatch.setattr(mod, "select_variant_batch", lambda *_args: batch)
     monkeypatch.setattr(mod, "copy_market_rows", lambda **_kwargs: ("000001",))
     monkeypatch.setattr(mod, "load_frames", lambda *_args: {})
@@ -528,6 +536,10 @@ def test_refresh_stages_profile_chunks_before_publishing_first_artifact(
     monkeypatch.setattr(mod, "parse_args", args)
     monkeypatch.setattr(mod, "validate_market_db", lambda _path: None)
     monkeypatch.setattr(mod, "load_supported_symbols", lambda _path: symbols)
+    monkeypatch.setattr(
+        mod, "symbols_with_data_at_date", lambda _path, values, _end: values
+    )
+    monkeypatch.setattr(mod, "MIN_LATEST_DATE_SYMBOLS", 1)
     monkeypatch.setattr(mod, "select_variant_batch", lambda *_args: batch)
     monkeypatch.setattr(
         mod,

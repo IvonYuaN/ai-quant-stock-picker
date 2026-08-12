@@ -32,7 +32,7 @@ from scripts.remote_runtime_probe import build_report as build_probe_report  # n
 COMMAND_TIMEOUT_SECONDS = 20.0
 DEFAULT_BASE_URL = "https://lh.ifidy.cn"
 DEFAULT_SSH_TARGET = "aqsp-server"
-MIN_SNAPSHOT_VARIANTS = 100
+MIN_SNAPSHOT_VARIANTS = 24
 REQUIRED_TECHNICAL_METRICS = ("macd_hist", "kdj_j", "volume_ratio", "atr_pct")
 _IGNORED_LOCAL_WORKTREE_PATHS = frozenset({".codex/project-profile.md"})
 

@@ -613,7 +613,7 @@ def test_snapshot_contract_rejects_short_or_incomplete_variant_snapshot(
     )
 
     assert check.status == "failed"
-    assert "snapshot variants < 100" in check.detail
+    assert "snapshot variants < 24" in check.detail
 
 
 def test_snapshot_contract_rejects_non_numeric_technical_evidence(monkeypatch) -> None:

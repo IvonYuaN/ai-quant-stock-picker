@@ -406,8 +406,8 @@ check_variant_results() {
     local command=(
         "$PYTHON_BIN" "$RELEASE_DIR/scripts/check_variant_results.py"
         "$variant_path"
-        --min-variants 100
-        --min-symbols 121
+        --min-variants 24
+        --min-symbols 600
     )
     if [ -n "$EXPECTED_VARIANT_END" ]; then
         command+=(--expected-end "$EXPECTED_VARIANT_END")

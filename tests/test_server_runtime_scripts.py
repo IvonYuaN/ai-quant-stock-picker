@@ -1902,12 +1902,12 @@ def test_variant_refresh_runs_after_close_with_bounded_resources() -> None:
     )
 
     assert "当前未到北京时间 21:00，跳过变体刷新" in script
-    assert 'MAX_SYMBOLS="${AQSP_VARIANT_MAX_SYMBOLS:-240}"' in script
-    assert "变体股票批次无效(${MAX_SYMBOLS})，使用 240" in script
+    assert 'MAX_SYMBOLS="${AQSP_VARIANT_MAX_SYMBOLS:-600}"' in script
+    assert "变体股票批次无效(${MAX_SYMBOLS})，使用 600" in script
     assert 'MAX_RUNTIME_SECONDS="${AQSP_VARIANT_MAX_RUNTIME_SECONDS:-480}"' in script
     assert 'NICE_LEVEL="${AQSP_VARIANT_NICE_LEVEL:-15}"' in script
     assert 'PROFILE_BATCH_SIZE="${AQSP_VARIANT_PROFILE_BATCH_SIZE:-25}"' in script
-    assert "MIN_PUBLISHED_VARIANTS=100" in script
+    assert "MIN_PUBLISHED_VARIANTS=24" in script
     assert (
         "MIN_PROFILE_BATCH_SIZE=$(( (MIN_PUBLISHED_VARIANTS + MAX_STAGE_BATCHES - 1) / MAX_STAGE_BATCHES ))"
         in script
@@ -2234,8 +2234,8 @@ def test_immutable_deploy_script_requires_full_post_deploy_acceptance() -> None:
     assert "--mode raw" in script
     assert "--require-browser" not in script
     assert "check_variant_results.py" in script
-    assert "--min-variants 100" in script
-    assert "--min-symbols 121" in script
+    assert "--min-variants 24" in script
+    assert "--min-symbols 600" in script
     assert "AQSP_DEPLOY_EXPECTED_VARIANT_END" in script
     assert 'VERIFY_LEVEL="partial"' in script
     assert "变体产物未通过校验；release 已切换，但本次部署未验收" in script

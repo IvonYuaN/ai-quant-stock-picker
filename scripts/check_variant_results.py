@@ -18,6 +18,8 @@ TOP_DIVERSITY_WINDOW = 20
 MIN_UNIQUE_HOLDING_SIGNATURE_RATIO = 0.8
 REQUIRED_TECHNICAL_KEYS = ("macd_hist", "kdj_j", "volume_ratio", "atr_pct")
 TECHNICAL_REASON_MARKERS = ("MACD", "KDJ", "量比", "ATR")
+DEFAULT_MIN_VARIANTS = 24
+DEFAULT_MIN_SYMBOLS = 600
 
 
 @dataclass(frozen=True)
@@ -34,8 +36,8 @@ def validate_variant_results(
     path: Path,
     *,
     expected_end: str = "",
-    min_variants: int = 100,
-    min_symbols: int = 121,
+    min_variants: int = DEFAULT_MIN_VARIANTS,
+    min_symbols: int = DEFAULT_MIN_SYMBOLS,
 ) -> VariantResultsCheck:
     payload = _object(json.loads(path.read_text(encoding="utf-8")), "variant_results")
     return validate_variant_payload(
@@ -52,8 +54,8 @@ def validate_variant_payload(
     *,
     path: str = "",
     expected_end: str = "",
-    min_variants: int = 100,
-    min_symbols: int = 121,
+    min_variants: int = DEFAULT_MIN_VARIANTS,
+    min_symbols: int = DEFAULT_MIN_SYMBOLS,
 ) -> VariantResultsCheck:
     payload = _object(payload, "variant_results")
     schema_version = _text(payload.get("schema_version"), "schema_version")
@@ -302,8 +304,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="check_variant_results")
     parser.add_argument("path", type=Path)
     parser.add_argument("--expected-end", default="")
-    parser.add_argument("--min-variants", type=int, default=100)
-    parser.add_argument("--min-symbols", type=int, default=121)
+    parser.add_argument("--min-variants", type=int, default=DEFAULT_MIN_VARIANTS)
+    parser.add_argument("--min-symbols", type=int, default=DEFAULT_MIN_SYMBOLS)
     parser.add_argument("--json", action="store_true")
     return parser.parse_args()
 

@@ -86,19 +86,19 @@ if ! is_truthy "${AQSP_VARIANT_ALLOW_EARLY:-false}" && [ "$NOW_HM" -lt 2100 ]; t
     refresh_home_snapshot
     exit 0
 fi
-MAX_SYMBOLS="${AQSP_VARIANT_MAX_SYMBOLS:-240}"
+MAX_SYMBOLS="${AQSP_VARIANT_MAX_SYMBOLS:-600}"
 MAX_RUNTIME_SECONDS="${AQSP_VARIANT_MAX_RUNTIME_SECONDS:-480}"
 NICE_LEVEL="${AQSP_VARIANT_NICE_LEVEL:-15}"
 PROFILE_BATCH_SIZE="${AQSP_VARIANT_PROFILE_BATCH_SIZE:-25}"
 MAX_STAGE_BATCHES="${AQSP_VARIANT_MAX_STAGE_BATCHES:-4}"
-MIN_PUBLISHED_VARIANTS=100
+MIN_PUBLISHED_VARIANTS=24
 
-if ! [[ "$MAX_SYMBOLS" =~ ^[0-9]+$ ]] || [ "$MAX_SYMBOLS" -lt 121 ]; then
-    log "变体股票批次无效(${MAX_SYMBOLS})，使用 240"
-    MAX_SYMBOLS="240"
-elif [ "$MAX_SYMBOLS" -gt 240 ] && ! is_truthy "${AQSP_VARIANT_ALLOW_HEAVY:-false}"; then
-    log "变体股票批次 ${MAX_SYMBOLS} 过大，收紧为 240"
-    MAX_SYMBOLS="240"
+if ! [[ "$MAX_SYMBOLS" =~ ^[0-9]+$ ]] || [ "$MAX_SYMBOLS" -lt 600 ]; then
+    log "变体股票批次无效(${MAX_SYMBOLS})，使用 600"
+    MAX_SYMBOLS="600"
+elif [ "$MAX_SYMBOLS" -gt 600 ] && ! is_truthy "${AQSP_VARIANT_ALLOW_HEAVY:-false}"; then
+    log "变体股票批次 ${MAX_SYMBOLS} 过大，收紧为 600"
+    MAX_SYMBOLS="600"
 fi
 if ! [[ "$MAX_RUNTIME_SECONDS" =~ ^[0-9]+$ ]] || [ "$MAX_RUNTIME_SECONDS" -le 0 ]; then
     MAX_RUNTIME_SECONDS="480"
@@ -121,7 +121,7 @@ if ! [[ "$MAX_STAGE_BATCHES" =~ ^[0-9]+$ ]] || [ "$MAX_STAGE_BATCHES" -lt 1 ] ||
     log "变体分段次数无效(${MAX_STAGE_BATCHES})，使用 4"
     MAX_STAGE_BATCHES="4"
 fi
-# The runtime artifact validator rejects fewer than 100 variants.  Keep a
+# The runtime artifact validator rejects fewer than 24 diverse variants. Keep a
 # misconfigured small profile batch from silently staging forever across
 # changing trading dates, while retaining the same bounded number of stages.
 MIN_PROFILE_BATCH_SIZE=$(( (MIN_PUBLISHED_VARIANTS + MAX_STAGE_BATCHES - 1) / MAX_STAGE_BATCHES ))

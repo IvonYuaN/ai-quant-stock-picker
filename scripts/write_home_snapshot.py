@@ -88,8 +88,8 @@ MAX_HOME_SUMMARIES = 3
 MAX_HOME_MESSAGES = 5
 MAX_HOME_MESSAGES_PER_SOURCE = 2
 MAX_HOME_VARIANTS = 160
-MIN_HOME_VARIANT_COUNT = 100
-MIN_HOME_VARIANT_SYMBOLS = 121
+MIN_HOME_VARIANT_COUNT = 24
+MIN_HOME_VARIANT_SYMBOLS = 600
 DEFAULT_RAW_PARTIAL_COVERAGE_FLOOR = 0.98
 NEWS_REPORT_MAX_AGE_SECONDS = 6 * 60 * 60
 CURRENT_MESSAGE_WINDOW = timedelta(hours=24)
@@ -1802,7 +1802,7 @@ def _variant_results_payload() -> tuple[dict[str, Any] | None, str]:
     ):
         return (
             None,
-            "变体产物未达到 schema、100 个变体或 121 只合格股票的最低契约。",
+            "变体产物未达到 schema、24 个有效多元变体或 600 只合格股票的最低契约。",
         )
     try:
         validate_variant_payload(

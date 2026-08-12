@@ -46,8 +46,7 @@ DEFAULT_MAX_RUNTIME_SECONDS = 600
 DEFAULT_LOCK_WAIT_SECONDS = 0.0
 DEFAULT_PROFILE_BATCH_SIZE = 32
 STAGING_SCHEMA_VERSION = "variant-suite-stage-v1"
-LATEST_DATE_PROBE_SYMBOLS = 240
-MIN_LATEST_DATE_SYMBOLS = 121
+MIN_LATEST_DATE_SYMBOLS = 600
 SQL_CHUNK_SIZE = 80
 REQUIRED_MARKET_TABLES = frozenset({"stocks", "daily_qfq"})
 VARIANT_REFRESH_STATUS_SCHEMA_VERSION = "variant-refresh-status-v1"
@@ -284,12 +283,12 @@ def latest_trade_date(db_path: Path, symbols: tuple[MarketSymbol, ...]) -> str:
     each symbol's newest row lets a partial importer advance the whole suite
     to a date that contains too few symbols.  Read a bounded recent history
     per probe through that index and require enough concurrent symbols for the
-    smallest publishable experiment batch.
+    600-symbol experiment batch.
     """
     coverage: dict[str, set[str]] = {}
     required_symbols = min(MIN_LATEST_DATE_SYMBOLS, len(symbols))
     with sqlite3.connect(db_path) as conn:
-        for item in symbols[:LATEST_DATE_PROBE_SYMBOLS]:
+        for item in symbols:
             rows = conn.execute(
                 """
                 SELECT trade_date
@@ -312,6 +311,23 @@ def latest_trade_date(db_path: Path, symbols: tuple[MarketSymbol, ...]) -> str:
     if not eligible_dates:
         raise ValueError("daily_qfq 没有交易日期")
     return max(eligible_dates)
+
+
+def symbols_with_data_at_date(
+    db_path: Path, symbols: tuple[MarketSymbol, ...], end: str
+) -> tuple[MarketSymbol, ...]:
+    """Keep only symbols present on the selected cross-section date."""
+    end_raw = compact_trade_date(end)
+    available: set[str] = set()
+    with sqlite3.connect(db_path) as conn:
+        for chunk in _chunks(tuple(item.ts_code for item in symbols), SQL_CHUNK_SIZE):
+            placeholders = ",".join("?" for _ in chunk)
+            rows = conn.execute(
+                f"SELECT DISTINCT ts_code FROM daily_qfq WHERE trade_date = ? AND ts_code IN ({placeholders})",
+                (end_raw, *chunk),
+            ).fetchall()
+            available.update(str(row[0]) for row in rows)
+    return tuple(item for item in symbols if item.ts_code in available)
 
 
 def copy_market_rows(
@@ -649,6 +665,9 @@ def main() -> int:
             validate_market_db(args.market_db)
             supported = load_supported_symbols(args.market_db)
             end = args.end or latest_trade_date(args.market_db, supported)
+            eligible_symbols = symbols_with_data_at_date(args.market_db, supported, end)
+            if len(eligible_symbols) < MIN_LATEST_DATE_SYMBOLS:
+                raise ValueError(f"目标日 {end} 可用标的不足: {len(eligible_symbols)}")
             start = (
                 args.start
                 or (
@@ -656,7 +675,9 @@ def main() -> int:
                     - timedelta(days=args.lookback_calendar_days)
                 ).isoformat()
             )
-            batch = select_variant_batch(supported, args.max_symbols, cursor_path)
+            batch = select_variant_batch(
+                eligible_symbols, args.max_symbols, cursor_path
+            )
             selected = batch.symbols
             selected_symbols = tuple(item.symbol for item in selected)
             if args.temp_db:
@@ -731,7 +752,7 @@ def main() -> int:
             merge_stage_into_payload(payload, staged)
             payload["universe"] = {
                 "market_db": str(args.market_db),
-                "supported_symbols": len(supported),
+                "supported_symbols": len(eligible_symbols),
                 "selected_symbols": len(selected_symbols),
                 "filters": "沪市主板+深市主板+创业板；排除 ST/*ST/PT/退市/科创/北交/B股",
                 "batch_active": args.max_symbols > 0 and len(supported) > len(selected),
