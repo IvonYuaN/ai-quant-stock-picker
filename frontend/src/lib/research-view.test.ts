@@ -10,6 +10,7 @@ import {
   sameResearchText,
   snapshotConclusion,
   snapshotMatchesSelectedDate,
+  uniqueAgentViews,
 } from "./research-view";
 
 const emptySnapshot = {
@@ -80,4 +81,11 @@ export const researchViewContractChecks = {
   differentResearchTextDoesNotMatch: !sameResearchText("标题", "摘要"),
   dateIndexCompletesSnapshotDates: mergeAvailableResearchDates(["2026-07-14"], ["2026-07-14", "2026-07-11"]).join("|") === "2026-07-14|2026-07-11",
   legacyMessageUrlRemainsVisible: messageSourceUrl({ url: "https://example.test/news" }) === "https://example.test/news",
+  duplicateAgentEvidenceCollapses: uniqueAgentViews({
+    ...debateWithoutProcess,
+    agent_views: [
+      { role: "bull", stance: "bullish", confidence: 0.7, arguments: ["量价共振"], opportunities: [], risks: [], counterarguments: [] },
+      { role: "risk_control", stance: "bearish", confidence: 0.7, arguments: ["量价共振"], opportunities: [], risks: ["高位波动"], counterarguments: [] },
+    ],
+  }).map((view) => `${view.role}:${view.arguments.join("|")}:${view.risks.join("|")}`).join(";") === "bull:量价共振:;risk_control::高位波动",
 };

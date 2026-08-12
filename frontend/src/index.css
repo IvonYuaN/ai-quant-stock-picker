@@ -413,6 +413,15 @@
   .aqsp-label { display: flex; align-items: center; gap: 0.3rem; color: hsl(var(--primary)); font-size: 0.63rem; font-weight: 700; }
   .aqsp-discussion > p:not(.aqsp-label) { margin-top: 0.3rem; }
   .aqsp-discussion ol { display: grid; gap: 0.2rem; margin-top: 0.45rem; border-top: 1px solid hsl(var(--border) / 0.45); padding-top: 0.4rem; color: hsl(var(--muted-foreground)); font-size: 0.64rem; }
+  .aqsp-agent-views { display: grid; gap: 0.45rem; margin-top: 0.65rem; }
+  .aqsp-agent-view { display: grid; gap: 0.25rem; border: 1px solid hsl(var(--border) / 0.5); border-left: 2px solid hsl(var(--primary) / 0.65); border-radius: 0.35rem; padding: 0.5rem 0.6rem; color: hsl(var(--muted-foreground)); font-size: 0.65rem; line-height: 1.45; }
+  .aqsp-agent-view-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; color: hsl(var(--foreground) / 0.88); }
+  .aqsp-agent-view p { min-width: 0; overflow-wrap: anywhere; }
+  .aqsp-agent-view p b { display: inline-block; min-width: 2.2rem; margin-right: 0.25rem; color: hsl(var(--primary)); }
+  .aqsp-stance { border-radius: 0.25rem; padding: 0.1rem 0.3rem; font-size: 0.58rem; }
+  .aqsp-stance-bullish { color: hsl(var(--success)); background: hsl(var(--success) / 0.1); }
+  .aqsp-stance-bearish { color: hsl(var(--warning)); background: hsl(var(--warning) / 0.1); }
+  .aqsp-stance-neutral { color: hsl(var(--muted-foreground)); background: hsl(var(--muted) / 0.55); }
   .aqsp-viewpoint-buckets { display: grid; gap: 0.3rem; margin-top: 0.6rem; border-top: 1px solid hsl(var(--border) / 0.45); padding-top: 0.5rem; }
   .aqsp-viewpoint-buckets > div { display: grid; grid-template-columns: 5.2rem minmax(0, 1fr); gap: 0.4rem; color: hsl(var(--muted-foreground)); font-size: 0.64rem; line-height: 1.4; }
   .aqsp-viewpoint-buckets b { color: hsl(var(--foreground) / 0.82); font-weight: 650; }

@@ -96,6 +96,22 @@ class AQSPDebateEvidence:
 
 
 @dataclass(frozen=True)
+class AQSPAgentView:
+    """角色独立观点；只保留最后一轮的可审计内容。"""
+
+    role: str
+    stance: str
+    confidence: float = 0.0
+    arguments: tuple[str, ...] = ()
+    opportunities: tuple[str, ...] = ()
+    risks: tuple[str, ...] = ()
+    counterarguments: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class AQSPDebate:
     symbol: str
     display_name: str
@@ -128,6 +144,7 @@ class AQSPDebate:
     viewpoint_buckets: dict[str, tuple[str, ...]] = field(default_factory=dict)
     disagreement_points: tuple[str, ...] = ()
     uncertainty_points: tuple[str, ...] = ()
+    agent_views: tuple[AQSPAgentView, ...] = ()
 
     @property
     def evidence(self) -> tuple[AQSPDebateEvidence, ...]:
@@ -147,6 +164,7 @@ class AQSPDebate:
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
         payload["evidence"] = [asdict(item) for item in self.evidence]
+        payload["agent_views"] = [item.to_dict() for item in self.agent_views]
         return payload
 
 
@@ -516,6 +534,36 @@ def _runtime_debate_payload(
         if isinstance(rounds, list)
         else []
     )
+    agent_views: list[dict[str, Any]] = []
+    if isinstance(rounds, list) and rounds:
+        opinions = rounds[-1].get("opinions", [])
+        if isinstance(opinions, list):
+            seen_roles: set[str] = set()
+            for opinion in opinions:
+                if not isinstance(opinion, dict):
+                    continue
+                role = str(opinion.get("role", "") or "").strip()
+                if not role or role in seen_roles:
+                    continue
+                seen_roles.add(role)
+                arguments = _distinct_agent_points(opinion.get("arguments", []))
+                agent_views.append(
+                    {
+                        "role": role,
+                        "stance": str(
+                            opinion.get("final_position")
+                            or opinion.get("stance")
+                            or "neutral"
+                        ),
+                        "confidence": opinion.get("confidence", 0.0),
+                        "arguments": arguments,
+                        "opportunities": opinion.get("opportunity_factors", []),
+                        "risks": opinion.get("risk_factors", []),
+                        "counterarguments": _distinct_agent_points(
+                            opinion.get("counterarguments", [])
+                        ),
+                    }
+                )
     return {
         "symbol": candidate.symbol,
         "display_name": candidate.display_name,
@@ -545,7 +593,20 @@ def _runtime_debate_payload(
         "process_recorded": record.get("process_recorded", False),
         "conclusion_recorded": record.get("conclusion_recorded", False),
         "debate_quality_issues": record.get("debate_quality_issues", []),
+        "agent_views": agent_views,
     }
+
+
+def _distinct_agent_points(values: object) -> list[object]:
+    """Exclude shared debate scaffolding from a role's visible viewpoint."""
+    if not isinstance(values, list):
+        return []
+    return [
+        value
+        for value in values
+        if not str(value).strip().startswith("候选专属证据:")
+        and not str(value).strip().startswith("复核对象=")
+    ]
 
 
 def snapshot_payload(selected_date: str | None = None) -> dict[str, Any]:
@@ -1224,6 +1285,7 @@ def _parse_debate(payload: object) -> AQSPDebate:
             "viewpoint_buckets",
             "disagreement_points",
             "uncertainty_points",
+            "agent_views",
         },
     )
     raw_evidence = tuple(
@@ -1273,6 +1335,32 @@ def _parse_debate(payload: object) -> AQSPDebate:
         str(bucket): tuple(_text_list(points, f"debate.viewpoint_buckets.{bucket}"))
         for bucket, points in raw_viewpoint_buckets.items()
     }
+    agent_views = tuple(
+        AQSPAgentView(
+            role=_text(view.get("role", ""), "debate.agent_views.role"),
+            stance=_text(view.get("stance", "neutral"), "debate.agent_views.stance"),
+            confidence=_number(
+                view.get("confidence", 0.0), "debate.agent_views.confidence"
+            ),
+            arguments=tuple(
+                _text_list(view.get("arguments", []), "debate.agent_views.arguments")
+            ),
+            opportunities=tuple(
+                _text_list(
+                    view.get("opportunities", []), "debate.agent_views.opportunities"
+                )
+            ),
+            risks=tuple(_text_list(view.get("risks", []), "debate.agent_views.risks")),
+            counterarguments=tuple(
+                _text_list(
+                    view.get("counterarguments", []),
+                    "debate.agent_views.counterarguments",
+                )
+            ),
+        )
+        for view in _list(item.get("agent_views", []), "debate.agent_views")
+        if isinstance(view, Mapping)
+    )
     return AQSPDebate(
         symbol=_validate_symbol(_text(item["symbol"], "debate.symbol")),
         display_name=_text(item["display_name"], "debate.display_name"),
@@ -1354,6 +1442,7 @@ def _parse_debate(payload: object) -> AQSPDebate:
                 "debate.uncertainty_points",
             )
         ),
+        agent_views=agent_views,
     )
 
 

@@ -72,6 +72,28 @@ export function debateProcessText(result: AqspAgentResult): string {
   return details.join(" · ");
 }
 
+export function uniqueAgentViews(result: AqspAgentResult): NonNullable<AqspAgentResult["agent_views"]> {
+  const seenRoles = new Set<string>();
+  const seenPoints = new Set<string>();
+  const uniquePoints = (points: readonly string[]) => points.filter((point) => {
+    const key = point.trim().replace(/\s+/g, " ");
+    if (!key || seenPoints.has(key)) return false;
+    seenPoints.add(key);
+    return true;
+  });
+  return (result.agent_views ?? []).flatMap((view) => {
+    if (!view.role.trim() || seenRoles.has(view.role)) return [];
+    seenRoles.add(view.role);
+    return [{
+      ...view,
+      arguments: uniquePoints(view.arguments),
+      opportunities: uniquePoints(view.opportunities),
+      risks: uniquePoints(view.risks),
+      counterarguments: uniquePoints(view.counterarguments),
+    }];
+  });
+}
+
 export function formatResearchDate(date: string): { day: string; weekday: string } {
   const value = new Date(`${date}T00:00:00+08:00`);
   if (Number.isNaN(value.getTime())) return { day: date, weekday: "" };

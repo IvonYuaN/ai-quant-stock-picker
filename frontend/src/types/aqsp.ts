@@ -189,7 +189,18 @@ export interface AqspAgentResult {
   viewpoint_buckets?: Readonly<Record<string, readonly string[]>>;
   disagreement_points?: readonly string[];
   uncertainty_points?: readonly string[];
+  agent_views?: readonly AqspAgentView[];
   review_kind?: "multi_agent" | "deterministic_fallback" | "unverified";
+}
+
+export interface AqspAgentView {
+  role: string;
+  stance: "bullish" | "bearish" | "neutral" | string;
+  confidence: number;
+  arguments: readonly string[];
+  opportunities: readonly string[];
+  risks: readonly string[];
+  counterarguments: readonly string[];
 }
 
 export type AqspAgentDiscussion = AqspAgentResult;
