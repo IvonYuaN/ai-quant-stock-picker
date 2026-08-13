@@ -866,6 +866,33 @@ def test_snapshot_debates_preserves_role_specific_views_and_deduplicates_rounds(
     assert snapshots[0].agent_views[1].risks == ("冲高回落将失效",)
 
 
+def test_snapshot_debates_hides_shared_context_without_candidate_disagreement() -> None:
+    debate = SimpleNamespace(
+        symbol="600001",
+        process_recorded=True,
+        conclusion_recorded=True,
+        evidence_sufficient=True,
+        round_count=2,
+        bull_count=1,
+        bear_count=1,
+        neutral_count=1,
+        agent_views=(
+            SimpleNamespace(role_id="bull"),
+            SimpleNamespace(role_id="bear"),
+            SimpleNamespace(role_id="risk_control"),
+        ),
+        viewpoint_buckets={"technical": ("候选专属证据: 模板",)},
+        disagreement_points=("跨市传导质询retail_mood: 当前维持中性",),
+    )
+
+    snapshots = write_home_snapshot._snapshot_debates(
+        SimpleNamespace(debates=(debate,)),
+        (write_home_snapshot._snapshot_candidate(_candidate("600001", 80.0)),),
+    )
+
+    assert snapshots == ()
+
+
 def test_recommendation_gate_keeps_quote_candidates_when_news_refresh_fails() -> None:
     provider = _Provider()
     runtime = provider.runtime_overview("2026-07-10")

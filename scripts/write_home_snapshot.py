@@ -550,6 +550,10 @@ def _snapshot_debates(
             if not _is_raw_debate_template(point)
             and not _is_shared_debate_context(point)
         )[:4]
+        # Shared market context is not an instrument-level rebuttal. Do not
+        # publish a committee result until a real candidate-specific conflict exists.
+        if not disagreement_points:
+            continue
         structured_rounds = tuple(
             f"{bucket}：{_clean_legacy_debate_text(points[0])[:240]}"
             for bucket, points in viewpoint_buckets.items()
