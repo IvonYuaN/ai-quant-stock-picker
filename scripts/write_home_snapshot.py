@@ -23,10 +23,12 @@ if str(PROJECT_ROOT / "src") not in sys.path:
 
 from aqsp.core.time import (
     get_previous_trading_day,
+    latest_completed_trading_day,
     now_shanghai,
     today_shanghai,
     to_shanghai,
 )
+from aqsp.core.errors import DataError
 from aqsp.market_context import MarketContextArtifact, build_market_context_artifact
 from aqsp.news.catalysts import (
     CatalystEvent,
@@ -52,8 +54,10 @@ from aqsp.web.home_snapshot import (
     HomeSnapshotCandidate,
     HomeSnapshotColdstart,
     HomeSnapshotRecommendationGate,
+    HomeSnapshotResearchChain,
     HomeSnapshotCrossMarket,
     HomeSnapshotDebate,
+    HomeSnapshotAgentView,
     HomeSnapshotIndex,
     HomeSnapshotMarketContext,
     HomeSnapshotMessage,
@@ -63,14 +67,19 @@ from aqsp.web.home_snapshot import (
     HomeSnapshotUniverse,
     HomeSnapshotHolding,
     HomeSnapshotVariant,
+    HomeSnapshotVariantSuite,
     MAX_HOME_SNAPSHOT_TECHNICAL_METRICS,
-    HOME_RECOMMENDATION_LABELS,
     is_home_recommendation,
     load_home_snapshot_index,
     stale_after_for_task,
     write_home_dashboard_snapshot,
     write_home_snapshot_index,
 )
+
+try:
+    from check_variant_results import validate_variant_payload
+except ModuleNotFoundError:  # pragma: no cover - package import used by tests.
+    from scripts.check_variant_results import validate_variant_payload
 
 
 DEFAULT_OUTPUT_PATH = "data/runtime/home_dashboard_snapshot.json"
@@ -80,6 +89,10 @@ MAX_HOME_CANDIDATES = MAX_HOME_SNAPSHOT_CANDIDATES
 MAX_HOME_SUMMARIES = 3
 MAX_HOME_MESSAGES = 5
 MAX_HOME_MESSAGES_PER_SOURCE = 2
+MAX_HOME_VARIANTS = 160
+MIN_HOME_VARIANT_COUNT = 24
+MIN_HOME_VARIANT_SYMBOLS = 600
+DEFAULT_RAW_PARTIAL_COVERAGE_FLOOR = 0.98
 NEWS_REPORT_MAX_AGE_SECONDS = 6 * 60 * 60
 CURRENT_MESSAGE_WINDOW = timedelta(hours=24)
 _SOURCE_STATUS_LABELS = {
@@ -231,9 +244,13 @@ def _resolve_selected_date(payload: Any, requested_date: str) -> str:
 
 
 def _snapshot_dates(task_view: Any, selected_date: str) -> tuple[str, ...]:
-    return _bounded_unique_text(
+    completed_date = latest_completed_trading_day().isoformat()
+    dates = _bounded_unique_text(
         (selected_date, *(getattr(task_view, "available_dates", ()) or ())),
         MAX_HOME_DATES,
+    )
+    return tuple(
+        value for value in dates if value == selected_date or value <= completed_date
     )
 
 
@@ -295,34 +312,57 @@ def _candidate_score_breakdown(candidate: Any) -> tuple[str, ...]:
     return _bounded_unique_text(raw, 4)
 
 
+_REQUIRED_TECHNICAL_METRICS = frozenset({"volume_ratio", "macd_hist", "kdj_j"})
+
+
+def _candidate_metric_value(candidate: Any, key: str) -> object:
+    """Read a metric from the card or its preserved runtime metric mapping."""
+    value = getattr(candidate, key, None)
+    if value not in (None, ""):
+        return value
+    for field in ("metrics", "technical_metrics"):
+        raw_metrics = getattr(candidate, field, None)
+        if isinstance(raw_metrics, dict) and raw_metrics.get(key) not in (None, ""):
+            return raw_metrics[key]
+    return None
+
+
 def _candidate_technical_metrics(
     candidate: Any,
 ) -> tuple[HomeSnapshotTechnicalMetric, ...]:
-    """Expose only deterministic short-term fields already present in the card."""
+    """Expose deterministic technical fields and make missing required inputs explicit."""
     specifications = (
         ("close", "现价", "{:.2f}"),
         ("ret5_pct", "5日动能", "{:+.2f}%"),
         ("ret20_pct", "20日动能", "{:+.2f}%"),
         ("volume_ratio", "量比", "{:.2f}x"),
         ("rsi12", "RSI12", "{:.1f}"),
+        ("macd_hist", "MACD柱", "{:+.3f}"),
+        ("kdj_j", "KDJ-J", "{:.1f}"),
         ("bias20_pct", "MA20偏离", "{:+.2f}%"),
         ("stop_loss", "纸面止损", "{:.2f}"),
         ("take_profit", "纸面止盈", "{:.2f}"),
     )
     metrics: list[HomeSnapshotTechnicalMetric] = []
     for key, label, template in specifications:
-        raw = getattr(candidate, key, None)
+        raw = _candidate_metric_value(candidate, key)
         try:
             value = float(raw)
         except (TypeError, ValueError):
-            continue
-        if not math.isfinite(value):
-            continue
-        metrics.append(
-            HomeSnapshotTechnicalMetric(
-                key=key, label=label, value=template.format(value)
+            value = math.nan
+        if math.isfinite(value):
+            metrics.append(
+                HomeSnapshotTechnicalMetric(
+                    key=key, label=label, value=template.format(value)
+                )
             )
-        )
+        elif key in _REQUIRED_TECHNICAL_METRICS:
+            # Do not invent an indicator when its source row omitted it.  The
+            # dashboard still exposes the broken contract instead of silently
+            # presenting an incomplete technical case as complete.
+            metrics.append(
+                HomeSnapshotTechnicalMetric(key=key, label=label, value="未提供")
+            )
         if len(metrics) == MAX_HOME_SNAPSHOT_TECHNICAL_METRICS:
             break
     return tuple(metrics)
@@ -407,6 +447,7 @@ def _snapshot_candidates(payload: Any) -> tuple[HomeSnapshotCandidate, ...]:
     )
     recommendation_labels = (
         "纸面复核",
+        "实时推荐",
         "优先复核",
         "上调优先级",
         "第一顺位",
@@ -458,31 +499,6 @@ def _snapshot_candidates(payload: Any) -> tuple[HomeSnapshotCandidate, ...]:
     return tuple(candidates)
 
 
-def _snapshot_recommendation_count(payload: Any) -> int:
-    """Count all distinct deterministic recommendation cards before the home cap."""
-    ordered = (
-        *(getattr(payload.task_view, "detail_cards", ()) or ()),
-        *(getattr(payload, "spotlights", ()) or ()),
-    )
-    seen: set[str] = set()
-    count = 0
-    for item in ordered:
-        raw_status = _first_text(
-            getattr(item, "action_label", ""),
-            getattr(item, "status_label", ""),
-            getattr(item, "rank_label", ""),
-        )
-        if not any(label in raw_status for label in HOME_RECOMMENDATION_LABELS):
-            continue
-        if not _has_candidate_deterministic_evidence(item):
-            continue
-        symbol = _text(getattr(item, "symbol", ""))
-        if symbol and symbol not in seen:
-            seen.add(symbol)
-            count += 1
-    return count
-
-
 def _apply_recommendation_gate(
     candidates: tuple[HomeSnapshotCandidate, ...],
     gate: HomeSnapshotRecommendationGate,
@@ -500,23 +516,6 @@ def _apply_recommendation_gate(
             ),
         )
         for candidate in candidates
-    )
-
-
-def _align_count_summary(text: str, *, total: int, shown: int) -> str:
-    """Make a legacy count headline explicit when the home card cap hides rows."""
-    if not text:
-        return text
-    match = re.search(r"(?:纸面复核|待复核)\s*(\d+)\s*只", text)
-    reported = int(match.group(1)) if match else 0
-    total = max(total, reported)
-    if total <= shown:
-        return text
-    return re.sub(
-        r"(纸面复核|待复核)\s*\d+\s*只",
-        rf"\1 {total} 只，首页展示 {shown} 只",
-        text,
-        count=1,
     )
 
 
@@ -572,12 +571,18 @@ def _snapshot_debates(
                     else "",
                     *(getattr(debate, "round_summaries", ()) or ())[:1],
                 ),
-                round_summaries=tuple(
-                    _first_text(getattr(round_data, "summary", ""))
-                    for round_data in (getattr(debate, "rounds", ()) or ())
-                    if _first_text(getattr(round_data, "summary", ""))
-                )[:5]
-                or tuple(getattr(debate, "round_summaries", ()) or ())[:5],
+                round_summaries=_distinct_research_lines(
+                    tuple(
+                        _first_text(getattr(round_data, "summary", ""))
+                        for round_data in (getattr(debate, "rounds", ()) or ())
+                        if _first_text(getattr(round_data, "summary", ""))
+                    )
+                    or tuple(getattr(debate, "round_summaries", ()) or ()),
+                    limit=5,
+                ),
+                agent_views=_snapshot_agent_views(
+                    getattr(debate, "agent_views", ()) or ()
+                ),
                 viewpoint_buckets={
                     str(bucket): tuple(points)[:4]
                     for bucket, points in (
@@ -590,11 +595,60 @@ def _snapshot_debates(
                 uncertainty_points=tuple(
                     getattr(debate, "uncertainty_points", ()) or ()
                 )[:4],
+                review_kind="multi_agent",
             )
         )
         selected_symbols.add(symbol)
         if len(selected) == MAX_HOME_SNAPSHOT_DEBATES:
             break
+    return tuple(selected)
+
+
+def _research_text_key(value: object) -> str:
+    return re.sub(r"\s+", "", _text(value)).lower()
+
+
+def _distinct_research_lines(
+    values: Iterable[object], *, limit: int
+) -> tuple[str, ...]:
+    """Keep only semantically non-identical discussion lines in the UI payload."""
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = _text(value)
+        key = _research_text_key(text)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        result.append(text)
+        if len(result) == limit:
+            break
+    return tuple(result)
+
+
+def _snapshot_agent_views(views: Iterable[object]) -> tuple[HomeSnapshotAgentView, ...]:
+    """Serialize the final role views instead of flattening them into one summary."""
+    selected: list[HomeSnapshotAgentView] = []
+    seen: set[str] = set()
+    for view in views:
+        role = _first_text(getattr(view, "role_id", ""), getattr(view, "role", ""))
+        if not role or role in seen:
+            continue
+        seen.add(role)
+        argument = _text(getattr(view, "key_argument", ""))
+        opportunity = _text(getattr(view, "key_opportunity", ""))
+        risk = _text(getattr(view, "key_risk", ""))
+        selected.append(
+            HomeSnapshotAgentView(
+                role=role,
+                stance=_text(getattr(view, "stance", "")) or "neutral",
+                confidence=float(getattr(view, "confidence", 0.0) or 0.0),
+                arguments=(argument,) if argument else (),
+                opportunities=(opportunity,) if opportunity else (),
+                risks=(risk,) if risk else (),
+                counterarguments=(),
+            )
+        )
     return tuple(selected)
 
 
@@ -646,31 +700,75 @@ def _runtime_debates_for_snapshot(
         if not symbol or symbol not in candidate_symbols or symbol in seen:
             continue
         rounds = record.get("rounds")
-        rounds = [item for item in rounds if isinstance(item, dict)] if isinstance(rounds, list) else []
+        rounds = (
+            [item for item in rounds if isinstance(item, dict)]
+            if isinstance(rounds, list)
+            else []
+        )
         if not rounds:
             continue
         final_round = max(
             rounds,
             key=lambda item: int(item.get("round_num") or item.get("round") or 0),
         )
-        opinions = [item for item in final_round.get("opinions", ()) if isinstance(item, dict)]
+        opinions = [
+            item for item in final_round.get("opinions", ()) if isinstance(item, dict)
+        ]
         vote_map = record.get("final_vote")
         if not isinstance(vote_map, dict):
             vote_map = {
-                _text(item.get("role")): _text(item.get("final_position") or item.get("stance"))
+                _text(item.get("role")): _text(
+                    item.get("final_position") or item.get("stance")
+                )
                 for item in opinions
                 if _text(item.get("role"))
             }
         roles = tuple(dict.fromkeys(_text(role) for role in vote_map if _text(role)))
-        if len(roles) < 2:
+        if len(roles) < 3:
             continue
+        opinions_by_role = {
+            _text(item.get("role")): item
+            for item in opinions
+            if _text(item.get("role"))
+        }
         agent_views = tuple(
-            SimpleNamespace(role_id=role, role_label=role) for role in roles
+            SimpleNamespace(
+                role_id=role,
+                role_label=role,
+                stance=_first_text(
+                    vote_map.get(role),
+                    opinions_by_role.get(role, {}).get("final_position"),
+                    opinions_by_role.get(role, {}).get("stance"),
+                    "neutral",
+                ),
+                confidence=float(
+                    opinions_by_role.get(role, {}).get("confidence") or 0.0
+                ),
+                key_argument=_first_text(
+                    *(opinions_by_role.get(role, {}).get("arguments") or ())[:1]
+                ),
+                key_opportunity=_first_text(
+                    *(opinions_by_role.get(role, {}).get("opportunity_factors") or ())[
+                        :1
+                    ]
+                ),
+                key_risk=_first_text(
+                    *(opinions_by_role.get(role, {}).get("risk_factors") or ())[:1]
+                ),
+            )
+            for role in roles
         )
         counts = {
-            "bull_count": sum(str(v).strip().lower() in {"bull", "bullish"} for v in vote_map.values()),
-            "bear_count": sum(str(v).strip().lower() in {"bear", "bearish"} for v in vote_map.values()),
-            "neutral_count": sum(str(v).strip().lower() in {"neutral", "watch"} for v in vote_map.values()),
+            "bull_count": sum(
+                str(v).strip().lower() in {"bull", "bullish"} for v in vote_map.values()
+            ),
+            "bear_count": sum(
+                str(v).strip().lower() in {"bear", "bearish"} for v in vote_map.values()
+            ),
+            "neutral_count": sum(
+                str(v).strip().lower() in {"neutral", "watch"}
+                for v in vote_map.values()
+            ),
         }
         selected.append(
             SimpleNamespace(
@@ -685,7 +783,9 @@ def _runtime_debates_for_snapshot(
                 agent_views=agent_views,
                 round_count=len(rounds),
                 round_summaries=tuple(
-                    _text(item.get("summary")) for item in rounds if _text(item.get("summary"))
+                    _text(item.get("summary"))
+                    for item in rounds
+                    if _text(item.get("summary"))
                 ),
                 process_recorded=record.get("process_recorded"),
                 conclusion_recorded=record.get("conclusion_recorded"),
@@ -694,6 +794,7 @@ def _runtime_debates_for_snapshot(
                 viewpoint_buckets=record.get("viewpoint_buckets", {}),
                 disagreement_points=record.get("disagreement_points", ()),
                 uncertainty_points=record.get("uncertainty_points", ()),
+                review_kind="multi_agent",
                 **counts,
             )
         )
@@ -732,7 +833,7 @@ def _debate_is_complete(debate: Any) -> bool:
             )
         )
     )
-    if len(roles) < 2:
+    if len(roles) < 3:
         return False
     try:
         vote_counts = tuple(
@@ -741,7 +842,15 @@ def _debate_is_complete(debate: Any) -> bool:
         )
     except (TypeError, ValueError):
         return False
-    return all(count >= 0 for count in vote_counts) and sum(vote_counts) == len(roles)
+    if not all(count >= 0 for count in vote_counts) or sum(vote_counts) != len(roles):
+        return False
+    viewpoints = getattr(debate, "viewpoint_buckets", {}) or {}
+    if (
+        not isinstance(viewpoints, dict)
+        or len([points for points in viewpoints.values() if tuple(points or ())]) < 2
+    ):
+        return False
+    return bool(tuple(getattr(debate, "disagreement_points", ()) or ()))
 
 
 def _news_report_path() -> Path:
@@ -751,9 +860,7 @@ def _news_report_path() -> Path:
         return path
     runtime_root = os.getenv("AQSP_RUNTIME_ROOT", "").strip()
     return (
-        Path(runtime_root).expanduser() / path
-        if runtime_root
-        else PROJECT_ROOT / path
+        Path(runtime_root).expanduser() / path if runtime_root else PROJECT_ROOT / path
     )
 
 
@@ -766,9 +873,7 @@ def _news_json_report_path() -> Path:
         return path
     runtime_root = os.getenv("AQSP_RUNTIME_ROOT", "").strip()
     return (
-        Path(runtime_root).expanduser() / path
-        if runtime_root
-        else PROJECT_ROOT / path
+        Path(runtime_root).expanduser() / path if runtime_root else PROJECT_ROOT / path
     )
 
 
@@ -777,7 +882,11 @@ def _news_json_archive_path(signal_date: str) -> Path:
     path = Path(raw_path).expanduser()
     if not path.is_absolute():
         runtime_root = os.getenv("AQSP_RUNTIME_ROOT", "").strip()
-        path = Path(runtime_root).expanduser() / path if runtime_root else PROJECT_ROOT / path
+        path = (
+            Path(runtime_root).expanduser() / path
+            if runtime_root
+            else PROJECT_ROOT / path
+        )
     return path / f"news-{signal_date}.json"
 
 
@@ -786,7 +895,11 @@ def _news_archive_dates() -> tuple[str, ...]:
     path = Path(raw_path).expanduser()
     if not path.is_absolute():
         runtime_root = os.getenv("AQSP_RUNTIME_ROOT", "").strip()
-        path = Path(runtime_root).expanduser() / path if runtime_root else PROJECT_ROOT / path
+        path = (
+            Path(runtime_root).expanduser() / path
+            if runtime_root
+            else PROJECT_ROOT / path
+        )
     if not path.is_dir():
         return ()
     dates: list[str] = []
@@ -1293,29 +1406,66 @@ def _lag_days(value: object) -> int:
         return 0
 
 
-def _snapshot_source(runtime: Any, task_view: Any) -> HomeSnapshotSource:
+def _intraday_source_provenance() -> dict[str, object]:
+    """Read the latest bounded intraday provenance without fetching data."""
+    state = _read_json_object(
+        _runtime_json_path("AQSP_INTRADAY_STATUS", "data/intraday_refresh_status.json")
+    )
+    for field in ("provenance", "source_provenance"):
+        value = state.get(field)
+        if isinstance(value, dict):
+            return value
+    return {}
+
+
+def _intraday_failure_summary() -> str:
+    state = _read_json_object(
+        _runtime_json_path("AQSP_INTRADAY_STATUS", "data/intraday_refresh_status.json")
+    )
+    if str(state.get("status") or "").strip() not in {"failed", "error"}:
+        return ""
+    reason = _text(state.get("reason") or state.get("detail"))
+    return f"盘中任务失败：{reason}" if reason else "盘中任务失败：未记录原因"
+
+
+def _snapshot_source(
+    runtime: Any, task_view: Any, *, selected_date: str
+) -> HomeSnapshotSource:
     source_status = getattr(task_view, "source_status", {}) or {}
     if not isinstance(source_status, dict):
         source_status = {}
+    provenance = _intraday_source_provenance()
+    latest_trade_date = _first_text(
+        getattr(runtime, "data_latest_trade_date", ""),
+        source_status.get("data_latest_trade_date"),
+        provenance.get("latest_trade_date"),
+        "未记录",
+    )
+    completed_date = latest_completed_trading_day().isoformat()
+    if selected_date == completed_date and latest_trade_date > completed_date:
+        latest_trade_date = completed_date
     return HomeSnapshotSource(
         effective=_first_text(
             getattr(runtime, "effective_source", ""),
             getattr(runtime, "requested_source", ""),
             source_status.get("effective_source"),
             source_status.get("actual_source"),
+            provenance.get("actual_source"),
+            provenance.get("requested_source"),
             "未记录",
         ),
-        latest_trade_date=_first_text(
-            getattr(runtime, "data_latest_trade_date", ""),
-            source_status.get("data_latest_trade_date"),
-            "未记录",
-        ),
+        latest_trade_date=latest_trade_date,
         lag_days=_lag_days(
-            _first_text(getattr(runtime, "lag_days", ""), source_status.get("lag_days"))
+            _first_text(
+                getattr(runtime, "lag_days", ""),
+                source_status.get("lag_days"),
+                provenance.get("lag_days"),
+            )
         ),
         status=_first_text(
             getattr(runtime, "run_status", ""),
             source_status.get("status"),
+            provenance.get("status"),
             getattr(runtime, "source_reason", ""),
             "未记录",
         ),
@@ -1346,9 +1496,7 @@ def _runtime_json_path(env_name: str, default: str) -> Path:
         return path
     runtime_root = os.getenv("AQSP_RUNTIME_ROOT", "").strip()
     return (
-        Path(runtime_root).expanduser() / path
-        if runtime_root
-        else PROJECT_ROOT / path
+        Path(runtime_root).expanduser() / path if runtime_root else PROJECT_ROOT / path
     )
 
 
@@ -1358,6 +1506,82 @@ def _read_json_object(path: Path) -> dict[str, object]:
     except (OSError, json.JSONDecodeError):
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def _raw_partial_coverage_floor() -> float:
+    """Return the minimum completed raw-data coverage allowed into research."""
+    raw = os.getenv("AQSP_RAW_PARTIAL_COVERAGE_MIN_RATIO", "").strip()
+    if not raw:
+        return DEFAULT_RAW_PARTIAL_COVERAGE_FLOOR
+    try:
+        value = float(raw)
+    except ValueError:
+        return DEFAULT_RAW_PARTIAL_COVERAGE_FLOOR
+    return value if 0 < value <= 1 else DEFAULT_RAW_PARTIAL_COVERAGE_FLOOR
+
+
+def _raw_rebuild_universe_snapshot() -> HomeSnapshotUniverse | None:
+    """Expose the resumable clean-database rebuild without treating it as live data."""
+    state_path = _runtime_json_path(
+        "AQSP_RAW_REBUILD_STATE_PATH",
+        "data/.state/raw-rebuild-cursor.json",
+    )
+    payload = _read_json_object(state_path)
+    if (
+        not payload
+        or _text(payload.get("target_day"))
+        != latest_completed_trading_day().isoformat()
+    ):
+        return None
+    total = int(payload.get("universe_size") or 0)
+    raw_covered = payload.get("covered_ts_codes")
+    covered_symbols = (
+        tuple(dict.fromkeys(str(symbol) for symbol in raw_covered if symbol))
+        if isinstance(raw_covered, list)
+        else ()
+    )
+    coverage_pct = (len(covered_symbols) / total) if total else 0.0
+    floor = _raw_partial_coverage_floor()
+    complete = bool(payload.get("complete"))
+    publish_ready = bool(payload.get("publish_ready"))
+    missing = max(0, total - len(covered_symbols))
+    if publish_ready:
+        detail = (
+            f"原始日线重建当日可用 {len(covered_symbols)}/{total}；"
+            f"{missing} 只已排除；完成轮次覆盖达到 {floor:.0%} 下限，"
+            "成功股票进入研究池"
+        )
+    elif complete:
+        detail = (
+            f"原始日线重建完成但仅覆盖 {len(covered_symbols)}/{total}；"
+            f"未达到 {floor:.0%} 下限，候选继续阻塞"
+        )
+    else:
+        detail = (
+            f"原始日线重建仅覆盖 {len(covered_symbols)}/{total}；全市场重建尚未完成"
+        )
+    batch = payload.get("update")
+    update = batch if isinstance(batch, dict) else {}
+    batch_size = int(update.get("processed_symbols") or 0)
+    next_offset = int(payload.get("next_offset") or 0)
+    return HomeSnapshotUniverse(
+        total=total,
+        resolved=len(covered_symbols),
+        screened=len(covered_symbols),
+        max_universe=0,
+        source="sqlite_raw_rebuild",
+        batch_active=not publish_ready,
+        batch_id=_text(payload.get("target_day")),
+        batch_size=batch_size,
+        cycle_id=(next_offset // batch_size + 1) if batch_size else 0,
+        coverage_pct=coverage_pct,
+        last_error=detail,
+    )
+
+
+def _universe_coverage_ratio(universe: HomeSnapshotUniverse) -> float:
+    """Calculate the gate input from counts, not the optional display percentage."""
+    return universe.resolved / universe.total if universe.total else 0.0
 
 
 def _walkforward_evidence(*, evaluated_at: datetime) -> tuple[bool, datetime | None]:
@@ -1401,7 +1625,22 @@ def _recommendation_gate(
     message_status: str,
     *,
     evaluated_at: datetime,
+    universe: HomeSnapshotUniverse | None = None,
 ) -> HomeSnapshotRecommendationGate:
+    if (
+        universe is not None
+        and universe.source in {"sqlite_raw_refresh", "sqlite_raw_rebuild"}
+        and universe.total > 0
+        and _universe_coverage_ratio(universe) < _raw_partial_coverage_floor()
+    ):
+        return HomeSnapshotRecommendationGate(
+            recommendation_allowed=False,
+            status="blocked_incomplete_raw_data",
+            reasons=(
+                universe.last_error
+                or f"原始日线仅覆盖 {universe.resolved}/{universe.total}；全市场刷新尚未完成",
+            ),
+        )
     cooldown_until = str(getattr(runtime, "cooldown_until", "") or "").strip()
     cooldown_date = None
     if cooldown_until:
@@ -1493,6 +1732,97 @@ def _phase_snapshot(
 
 
 def _universe_snapshot() -> HomeSnapshotUniverse:
+    daily_cursor = _runtime_json_path(
+        "AQSP_DAILY_RESEARCH_CURSOR_PATH",
+        "data/.state/daily-research-cursor.json",
+    )
+    daily_payload = _read_json_object(daily_cursor)
+    if (
+        daily_payload
+        and str(daily_payload.get("trade_date") or "") == today_shanghai().isoformat()
+    ):
+        universe_count = int(daily_payload.get("universe_count") or 0)
+        scanned_count = int(daily_payload.get("scanned_count") or 0)
+        return HomeSnapshotUniverse(
+            total=universe_count,
+            resolved=scanned_count,
+            screened=scanned_count,
+            max_universe=int(daily_payload.get("batch_size") or 0),
+            source="sqlite_db",
+            batch_active=str(daily_payload.get("active_state") or "") == "selected",
+            batch_id=_text(
+                daily_payload.get("active_batch_id")
+                or daily_payload.get("last_batch_id")
+            ),
+            batch_size=int(daily_payload.get("batch_size") or 0),
+            cycle_id=int(daily_payload.get("cycle_id") or 0),
+            coverage_pct=float(daily_payload.get("coverage_pct") or 0.0),
+            last_error=_text(daily_payload.get("last_error")),
+        )
+    rebuild_universe = _raw_rebuild_universe_snapshot()
+    if rebuild_universe is not None:
+        return rebuild_universe
+    raw_cursor = _runtime_json_path(
+        "AQSP_SQLITE_REFRESH_CURSOR_PATH",
+        "data/.state/sqlite-refresh-cursor.json",
+    )
+    raw_payload = _read_json_object(raw_cursor)
+    if (
+        raw_payload
+        and _text(raw_payload.get("target_day"))
+        == latest_completed_trading_day().isoformat()
+    ):
+        symbols = raw_payload.get("target_day_symbols")
+        covered_symbols = (
+            tuple(dict.fromkeys(str(symbol) for symbol in symbols if symbol))
+            if isinstance(symbols, list)
+            else ()
+        )
+        total = int(raw_payload.get("universe_size") or 0)
+        last_batch = raw_payload.get("last_batch")
+        batch = last_batch if isinstance(last_batch, dict) else {}
+        batch_size = int(batch.get("processed_symbols") or 0)
+        coverage_pct = (len(covered_symbols) / total) if total else 0.0
+        coverage_error = _text(batch.get("coverage_error"))
+        target_day = _text(raw_payload.get("target_day"))
+        partial_coverage_floor = _raw_partial_coverage_floor()
+        verified_exclusions = (
+            total > 0
+            and coverage_pct >= partial_coverage_floor
+            and _text(batch.get("raw_max_trade_date")) == target_day
+        )
+        # A cursor only describes the next bounded refresh chunk. It cannot
+        # keep an otherwise verified raw universe blocked after unavailable
+        # symbols have been explicitly excluded for the target trading day.
+        cycle_complete = bool(covered_symbols) and (
+            int(raw_payload.get("offset") or 0) == 0 or verified_exclusions
+        )
+        if total and len(covered_symbols) < total and not coverage_error:
+            missing = total - len(covered_symbols)
+            coverage_error = (
+                f"原始日线当日可用 {len(covered_symbols)}/{total}；"
+                f"{missing} 只未返回当日日线，已排除；"
+                f"完成轮次覆盖达到 {partial_coverage_floor:.0%} 下限，成功股票进入研究池"
+                if cycle_complete
+                else f"原始日线仅覆盖 {len(covered_symbols)}/{total}；全市场刷新尚未完成"
+            )
+        return HomeSnapshotUniverse(
+            total=total,
+            resolved=len(covered_symbols),
+            screened=len(covered_symbols),
+            max_universe=0,
+            source="sqlite_raw_refresh",
+            batch_active=bool(
+                total and len(covered_symbols) < total and not cycle_complete
+            ),
+            batch_id=_text(raw_payload.get("target_day")),
+            batch_size=batch_size,
+            cycle_id=(int(raw_payload.get("offset") or 0) // batch_size + 1)
+            if batch_size
+            else 0,
+            coverage_pct=coverage_pct,
+            last_error=coverage_error,
+        )
     raw = _runtime_json_path(
         "AQSP_INTRADAY_REFRESH_STATUS_PATH",
         "data/runtime/intraday_refresh_status.json",
@@ -1540,14 +1870,148 @@ def _universe_snapshot() -> HomeSnapshotUniverse:
     )
 
 
-def _variant_snapshot() -> tuple[HomeSnapshotVariant, ...]:
-    """Read only bounded summaries from the isolated experiment artifact."""
+def _variant_results_payload() -> tuple[dict[str, Any] | None, str]:
     path = _runtime_json_path(
         "AQSP_VARIANT_RESULTS",
         "data/runtime/variant_results.json",
     )
     payload = _read_json_object(path)
-    if not payload or payload.get("initial_cash") != 100_000.0:
+    if not payload:
+        return None, "变体产物不存在。"
+    if payload.get("initial_cash") != 100_000.0:
+        return None, "变体初始资金不符合 100000 元纸面账户契约。"
+    universe = payload.get("universe")
+    variants = payload.get("variants")
+    if (
+        payload.get("schema_version") != "variant-suite-v2"
+        or not isinstance(universe, dict)
+        or not isinstance(variants, list)
+        or len(variants) < MIN_HOME_VARIANT_COUNT
+        or int(universe.get("selected_symbols") or 0) < MIN_HOME_VARIANT_SYMBOLS
+    ):
+        return (
+            None,
+            "变体产物未达到 schema、24 个有效多元变体或 600 只合格股票的最低契约。",
+        )
+    try:
+        validate_variant_payload(
+            payload,
+            path=str(path),
+            min_variants=MIN_HOME_VARIANT_COUNT,
+            min_symbols=MIN_HOME_VARIANT_SYMBOLS,
+        )
+    except (TypeError, ValueError) as exc:
+        return None, f"变体数据契约校验失败：{exc}"
+    return payload, ""
+
+
+def _variant_refresh_status_error() -> str:
+    path = _runtime_json_path(
+        "AQSP_VARIANT_REFRESH_STATUS",
+        "data/runtime/variant_refresh_status.json",
+    )
+    payload = _read_json_object(path)
+    if not payload:
+        return ""
+    status = _text(payload.get("status"))
+    message = _text(payload.get("message"))
+    reason = _text(payload.get("reason"))
+    generated_at = _text(payload.get("generated_at"))
+    if status == "waiting" and generated_at[:10] != now_shanghai().date().isoformat():
+        return "变体调度状态已过期，等待下一次正式刷新。"
+    staged = int(payload.get("profiles_staged") or 0)
+    total = int(payload.get("profiles_total") or 0)
+    if status == "staged":
+        progress = f"已完成 {staged}/{total} 个变体" if total else "已写入分段 staging"
+        return f"变体分段构建中：{progress}；{message or '等待下一错峰窗口继续'}"
+    if status == "waiting":
+        return f"变体等待：{message or '等待下一个错峰运行窗口'}"
+    if status == "completed":
+        return ""
+    if status in {"timed_out", "skipped_lock", "rejected", "failed"}:
+        detail = reason or message
+        return f"变体未发布：{detail or status}"
+    return ""
+
+
+def _variant_suite_snapshot() -> HomeSnapshotVariantSuite:
+    """Read bounded metadata from the isolated experiment artifact."""
+    payload, error = _variant_results_payload()
+    if not payload:
+        universe = _universe_snapshot()
+        if universe.last_error:
+            return HomeSnapshotVariantSuite(
+                last_error=f"变体等待：{universe.last_error}"
+            )
+        return HomeSnapshotVariantSuite(
+            last_error=_variant_refresh_status_error() or error
+        )
+    universe = payload.get("universe")
+    if not isinstance(universe, dict):
+        universe = {}
+    return HomeSnapshotVariantSuite(
+        schema_version=_text(payload.get("schema_version")),
+        generated_at=_text(payload.get("generated_at")),
+        data_mode=_text(payload.get("data_mode")),
+        end_date=_text(payload.get("end_date")),
+        variant_count=len(payload.get("variants", ()))
+        if isinstance(payload.get("variants"), list)
+        else 0,
+        selected_symbols=int(universe.get("selected_symbols") or 0),
+        supported_symbols=int(universe.get("supported_symbols") or 0),
+        batch_active=bool(universe.get("batch_active", False)),
+        batch_id=_text(universe.get("batch_id")),
+        batch_size=int(universe.get("batch_size") or 0),
+        cycle_id=int(universe.get("cycle_id") or 0),
+        coverage_pct=float(universe.get("coverage_pct") or 0.0),
+        filters=_text(universe.get("filters")),
+    )
+
+
+def _phase_conclusion_summaries(
+    provider: DashboardDataProvider,
+    signal_date: str,
+    debates: tuple[HomeSnapshotDebate, ...],
+) -> tuple[str, ...]:
+    """Summarize each market phase from its own artifact, never from another phase."""
+    phase_specs = (
+        ("盘前", "main_chain"),
+        ("盘中", "intraday"),
+        ("盘后", "closing_review"),
+    )
+    debate_by_symbol = {debate.symbol: debate for debate in debates}
+    lines: list[str] = []
+    for label, task_id in phase_specs:
+        try:
+            rows = provider._signal_task_rows_for_date(task_id, signal_date)
+        except Exception:
+            rows = []
+        if not rows:
+            lines.append(f"{label}：未产出，等待{label}任务完成。")
+            continue
+        lead = max(rows, key=lambda row: float(row.get("score") or 0.0))
+        symbol = _text(lead.get("symbol"))
+        name = _first_text(_text(lead.get("name")), symbol)
+        score = float(lead.get("score") or 0.0)
+        reasons = _text(lead.get("reasons"))
+        detail = f"{name}（{score:.1f}）"
+        if reasons:
+            detail += f"；规则证据：{reasons.split('；', 1)[0]}"
+        debate = debate_by_symbol.get(symbol)
+        if debate is not None:
+            detail += (
+                f"；复核：{_first_text(debate.primary_risk_gate, debate.next_trigger)}"
+            )
+        elif task_id == "intraday":
+            detail += "；复核：未形成有效独立分歧，保留规则观察"
+        lines.append(f"{label}：{detail}")
+    return tuple(lines)
+
+
+def _variant_snapshot() -> tuple[HomeSnapshotVariant, ...]:
+    """Read only bounded summaries from the isolated experiment artifact."""
+    payload, _ = _variant_results_payload()
+    if not payload:
         return ()
     raw_variants = payload.get("variants")
     if not isinstance(raw_variants, list):
@@ -1560,9 +2024,14 @@ def _variant_snapshot() -> tuple[HomeSnapshotVariant, ...]:
         "含佣金、印花税、滑点",
     )
     variants: list[HomeSnapshotVariant] = []
-    for item in raw_variants[:12]:
+    for item in raw_variants[:MAX_HOME_VARIANTS]:
         if not isinstance(item, dict) or item.get("initial_cash") != 100_000.0:
             continue
+        holdings = _variant_holdings(item.get("holdings", ()), "holding")
+        previous_holdings = _variant_holdings(
+            item.get("previous_holdings", ()), "previous_holding"
+        )
+        recent_actions = _variant_recent_actions(item)
         variants.append(
             HomeSnapshotVariant(
                 variant_id=_text(item.get("variant_id")),
@@ -1578,23 +2047,210 @@ def _variant_snapshot() -> tuple[HomeSnapshotVariant, ...]:
                 start_date=_text(payload.get("start_date")),
                 end_date=_text(payload.get("end_date")),
                 data_mode=_text(payload.get("data_mode")),
-                strategy=_text(item.get("strategy_label")) or _text(item.get("label")),
-                holdings=tuple(
-                    HomeSnapshotHolding(
-                        symbol=_text(holding.get("symbol")),
-                        quantity=int(holding.get("quantity") or 0),
-                        average_price=float(holding.get("average_price") or 0.0),
-                        last_price=float(holding.get("last_price") or 0.0),
-                        market_value=float(holding.get("market_value") or 0.0),
-                        unrealized_pnl=float(holding.get("unrealized_pnl") or 0.0),
-                    )
-                    for holding in item.get("holdings", ())
-                    if isinstance(holding, dict)
+                strategy=_variant_strategy_text(item),
+                holdings=holdings,
+                holdings_date=_text(item.get("holdings_date")),
+                previous_holdings=previous_holdings,
+                previous_holdings_date=_text(item.get("previous_holdings_date")),
+                recent_actions=recent_actions,
+                adjustments=_variant_adjustment_lines(
+                    item, holdings, previous_holdings, recent_actions
                 ),
+                technical_evidence=_variant_technical_evidence(item, recent_actions),
                 hard_rules=rule_labels if isinstance(rules, dict) else (),
             )
         )
     return tuple(variants)
+
+
+def _variant_experiment_symbols() -> tuple[str, ...]:
+    """Return the validated raw experiment pool, separate from current holdings."""
+    payload, _ = _variant_results_payload()
+    if not payload:
+        return ()
+    raw_symbols = payload.get("symbols")
+    if not isinstance(raw_symbols, list):
+        return ()
+    return tuple(dict.fromkeys(_text(value) for value in raw_symbols if _text(value)))
+
+
+def _research_chain_snapshot(
+    candidates: tuple[HomeSnapshotCandidate, ...],
+    debates: tuple[HomeSnapshotDebate, ...],
+    variant_suite: HomeSnapshotVariantSuite,
+    variants: tuple[HomeSnapshotVariant, ...],
+    experiment_symbols: tuple[str, ...] = (),
+) -> HomeSnapshotResearchChain:
+    """Join current-day evidence without allowing variants to affect scoring."""
+    candidate_symbols = tuple(candidate.symbol for candidate in candidates)
+    debated_symbols = tuple(debate.symbol for debate in debates)
+    debated_set = set(debated_symbols)
+    holding_symbols = tuple(
+        dict.fromkeys(
+            holding.symbol
+            for variant in variants
+            for holding in variant.holdings
+            if holding.symbol
+        )
+    )
+    experiment_set = set(experiment_symbols)
+    holding_set = set(holding_symbols)
+    variant_candidate_symbols = tuple(
+        symbol for symbol in candidate_symbols if symbol in experiment_set
+    )
+    variant_review_symbols = tuple(
+        symbol for symbol in debated_symbols if symbol in experiment_set
+    )
+    variant_holding_candidate_symbols = tuple(
+        symbol for symbol in candidate_symbols if symbol in holding_set
+    )
+    variant_holding_review_symbols = tuple(
+        symbol for symbol in debated_symbols if symbol in holding_set
+    )
+    if not variants and not experiment_symbols:
+        return HomeSnapshotResearchChain(
+            status="blocked",
+            candidate_symbols=candidate_symbols,
+            debated_symbols=debated_symbols,
+            pending_review_symbols=tuple(
+                symbol for symbol in candidate_symbols if symbol not in debated_set
+            ),
+            blocker=variant_suite.last_error or "变体产物不存在。",
+        )
+    return HomeSnapshotResearchChain(
+        status="linked" if variant_review_symbols else "waiting_validation",
+        candidate_symbols=candidate_symbols,
+        debated_symbols=debated_symbols,
+        pending_review_symbols=tuple(
+            symbol for symbol in candidate_symbols if symbol not in debated_set
+        ),
+        variant_candidate_symbols=variant_candidate_symbols,
+        variant_review_symbols=variant_review_symbols,
+        variant_holding_candidate_symbols=variant_holding_candidate_symbols,
+        variant_holding_review_symbols=variant_holding_review_symbols,
+        blocker=(
+            "当天有效复核标的未进入本轮 raw 变体实验池，等待下轮覆盖。"
+            if not variant_review_symbols
+            else ""
+        ),
+    )
+
+
+def _variant_strategy_text(item: dict) -> str:
+    raw = item.get("strategy")
+    if isinstance(raw, dict):
+        return json.dumps(raw, ensure_ascii=False, sort_keys=True)
+    return _text(raw) or _text(item.get("strategy_label")) or _text(item.get("label"))
+
+
+def _variant_holdings(
+    payload: object, field_name: str
+) -> tuple[HomeSnapshotHolding, ...]:
+    return tuple(
+        HomeSnapshotHolding(
+            symbol=_text(holding.get("symbol")),
+            quantity=int(holding.get("quantity") or 0),
+            average_price=float(holding.get("average_price") or 0.0),
+            last_price=float(holding.get("last_price") or 0.0),
+            market_value=float(holding.get("market_value") or 0.0),
+            unrealized_pnl=float(holding.get("unrealized_pnl") or 0.0),
+            name=_text(holding.get("name")),
+        )
+        for holding in payload
+        if isinstance(holding, dict) and _text(holding.get("symbol"))
+    )
+
+
+def _variant_recent_actions(item: dict) -> tuple[dict[str, object], ...]:
+    raw_actions = tuple(
+        action for action in item.get("recent_actions", ()) if isinstance(action, dict)
+    )
+    if raw_actions:
+        return raw_actions
+    fills = [
+        fill
+        for fill in item.get("fills", ())
+        if isinstance(fill, dict) and _text(fill.get("status")) == "filled"
+    ][-8:]
+    return tuple(
+        {
+            "date": _text(fill.get("date")),
+            "symbol": _text(fill.get("symbol")),
+            "side": _text(fill.get("side")),
+            "quantity": int(fill.get("quantity") or 0),
+            "price": float(fill.get("price") or 0.0),
+            "reason": _text(fill.get("reason"))
+            or "旧版变体产物只保留成交记录；v2 重算后补齐 MACD/KDJ/量比触发原因。",
+            "evidence": fill.get("evidence")
+            if isinstance(fill.get("evidence"), dict)
+            else {},
+        }
+        for fill in fills
+    )
+
+
+def _variant_technical_evidence(
+    item: dict, recent_actions: tuple[dict[str, object], ...]
+) -> tuple[dict[str, object], ...]:
+    raw = tuple(
+        value for value in item.get("technical_evidence", ()) if isinstance(value, dict)
+    )
+    if raw:
+        return raw[:8]
+    derived = tuple(
+        {
+            **dict(action.get("evidence")),
+            "date": action.get("date", ""),
+            "symbol": action.get("symbol", ""),
+            "name": action.get("name") or action.get("display_name") or "",
+            "side": action.get("side") or action.get("action") or "",
+            "reason": action.get("reason", ""),
+        }
+        for action in recent_actions
+        if isinstance(action.get("evidence"), dict) and action.get("evidence")
+    )
+    return derived[:8]
+
+
+def _variant_adjustment_lines(
+    item: dict,
+    holdings: tuple[HomeSnapshotHolding, ...],
+    previous_holdings: tuple[HomeSnapshotHolding, ...],
+    recent_actions: tuple[dict[str, object], ...],
+) -> tuple[str, ...]:
+    raw = tuple(_text(action) for action in item.get("adjustments", ()) if action)
+    if raw:
+        return raw
+    current = {holding.symbol: holding.quantity for holding in holdings}
+    previous = {holding.symbol: holding.quantity for holding in previous_holdings}
+    lines: list[str] = []
+    for symbol in sorted(set(current) | set(previous)):
+        before = previous.get(symbol, 0)
+        after = current.get(symbol, 0)
+        if before == after and after:
+            lines.append(
+                f"保留 {symbol}：昨日 {before} 股，今日 {after} 股；仓位未变化。"
+            )
+        elif before == 0 and after:
+            lines.append(
+                f"持有 {symbol}：今日 {after} 股；旧版产物无昨日基线，v2 产物会补齐换票原因。"
+            )
+        elif before and after == 0:
+            lines.append(f"移出 {symbol}：昨日 {before} 股，今日无。")
+        elif after > before:
+            lines.append(f"加仓 {symbol}：昨日 {before} 股，今日 {after} 股。")
+        elif after < before:
+            lines.append(f"减仓 {symbol}：昨日 {before} 股，今日 {after} 股。")
+    for action in recent_actions:
+        if len(lines) >= 8:
+            break
+        side = _text(action.get("side"))
+        symbol = _text(action.get("symbol"))
+        quantity = int(action.get("quantity") or 0)
+        reason = _text(action.get("reason"))
+        if side and symbol:
+            lines.append(f"{side} {symbol} {quantity} 股；{reason}")
+    return tuple(lines[:8]) or ("今日/昨日持仓无变化，未发生换票。",)
 
 
 def build_home_snapshot(
@@ -1605,7 +2261,14 @@ def build_home_snapshot(
 ) -> HomeDashboardSnapshot:
     """Build a bounded, file-ready home snapshot from local runtime artifacts only."""
     selected_task_id = _snapshot_task_id(task_id) or provider.default_task_id()
-    requested_date = _text(signal_date) or today_shanghai().isoformat()
+    # Intraday is a realtime surface. Historical daily views remain pinned to
+    # the latest completed close, but the live homepage must use today's
+    # intraday artifact while the market is open.
+    requested_date = _text(signal_date) or (
+        today_shanghai().isoformat()
+        if selected_task_id == "intraday"
+        else latest_completed_trading_day().isoformat()
+    )
     payload = provider.home_digest_payload(
         selected_task_id,
         signal_date=requested_date,
@@ -1613,11 +2276,10 @@ def build_home_snapshot(
     task_view = payload.task_view
     selected_date = _resolve_selected_date(payload, requested_date)
     runtime = provider.runtime_overview(selected_date)
-    overview = payload.overview
+    universe = _universe_snapshot()
     generated_at = to_shanghai(now_shanghai()).isoformat(timespec="seconds")
-    source = _snapshot_source(runtime, task_view)
+    source = _snapshot_source(runtime, task_view, selected_date=selected_date)
     candidates = _snapshot_candidates(payload)
-    recommendation_count = _snapshot_recommendation_count(payload)
     runtime_debates = _runtime_debates_for_snapshot(
         selected_date,
         {candidate.symbol for candidate in candidates},
@@ -1627,17 +2289,6 @@ def build_home_snapshot(
         candidates,
         runtime_debates=runtime_debates,
     )
-    shown_recommendation_count = sum(
-        is_home_recommendation(candidate) for candidate in candidates
-    )
-    candidate_symbols = {candidate.symbol for candidate in candidates}
-    debate_symbols = {debate.symbol for debate in debates}
-    debate_gap_summary = ""
-    if debates and candidate_symbols - debate_symbols:
-        debate_gap_summary = (
-            f"讨论复核 {len(debate_symbols)}/{len(candidate_symbols)} 只；"
-            f"{len(candidate_symbols - debate_symbols)} 只未通过质量门，已隐藏"
-        )
     message_status, messages, catalyst_report = _parse_news_report_payload(
         selected_date
     )
@@ -1667,70 +2318,22 @@ def build_home_snapshot(
         source,
         message_status,
         evaluated_at=now_shanghai(),
+        universe=universe,
     )
     candidates = _apply_recommendation_gate(candidates, recommendation_gate)
-    if not recommendation_gate.recommendation_allowed:
-        recommendation_count = 0
-        shown_recommendation_count = 0
     phases = _phase_snapshot(provider, selected_date)
-    live_phase_produced = any(phase.status != "未产出" for phase in phases)
-    debate_missing = bool(getattr(payload, "debates", ()) or ()) and not debates
-    raw_summaries = (
-        "委员会结论缺少当前候选映射，已隐藏" if debate_missing else "",
-        debate_gap_summary,
-        getattr(runtime, "conclusion", ""),
-        getattr(overview, "focus_headline", ""),
-        getattr(overview, "blocker_headline", ""),
-        getattr(overview, "top_headline", ""),
-        getattr(task_view, "headline", ""),
-    )
-    if not candidates:
-        if messages and not live_phase_produced:
-            empty_day_summary = "今日消息已更新；实时行情任务尚未产出，未使用历史候选"
-        elif messages:
-            empty_day_summary = "今日消息已更新；实时行情筛选暂无候选，未使用历史结果"
-        else:
-            empty_day_summary = "当前日期没有候选，未使用其他日期或旧运行计数填充"
-        raw_summaries = (
-            empty_day_summary,
-            *tuple(
-                summary
-                for summary in raw_summaries
-                if not re.search(
-                    r"(?:\d+\s*个?\s*候选|候选\s*\d+|纸面复核\s*\d+|待复核\s*\d+)",
-                    str(summary),
-                )
-            ),
-        )
-    aligned_summaries = tuple(
-        _align_count_summary(
-            str(summary),
-            total=recommendation_count,
-            shown=shown_recommendation_count,
-        )
-        for summary in raw_summaries
-    )
-    count_summaries = tuple(
-        summary
-        for summary in aligned_summaries
-        if re.search(r"(?:纸面复核|待复核)\s*\d+\s*只", summary)
-    )
-    summaries = _bounded_unique_text(
-        (*count_summaries, debate_gap_summary, *aligned_summaries),
-        MAX_HOME_SUMMARIES,
-    )
+    # Home conclusions are a fixed three-part timeline. Empty-data and
+    # quality blockers have dedicated status surfaces and must not displace a
+    # market phase from this bounded timeline.
+    summaries = _phase_conclusion_summaries(provider, selected_date, debates)
 
+    variant_suite = _variant_suite_snapshot()
+    variants = _variant_snapshot()
     return HomeDashboardSnapshot(
         schema_version=HOME_SNAPSHOT_SCHEMA_VERSION,
         generated_at=generated_at,
         selected_date=selected_date,
-        available_dates=_bounded_unique_text(
-            (
-                selected_date,
-                *_snapshot_dates(task_view, selected_date),
-            ),
-            MAX_HOME_DATES,
-        ),
+        available_dates=_snapshot_dates(task_view, selected_date),
         candidates=candidates,
         # Debate summaries are adjacent advisory cards and never ranking inputs.
         debates=debates,
@@ -1743,8 +2346,16 @@ def build_home_snapshot(
         market_context=market_context,
         recommendation_gate=recommendation_gate,
         phases=phases,
-        universe=_universe_snapshot(),
-        variants=_variant_snapshot(),
+        universe=universe,
+        variant_suite=variant_suite,
+        variants=variants,
+        research_chain=_research_chain_snapshot(
+            candidates,
+            debates,
+            variant_suite,
+            variants,
+            _variant_experiment_symbols(),
+        ),
     )
 
 
@@ -1754,8 +2365,9 @@ def build_home_snapshot_index(
     signal_date: str = "",
     task_id: str = "",
     initial_snapshot: HomeDashboardSnapshot | None = None,
+    existing_index: HomeSnapshotIndex | None = None,
 ) -> HomeSnapshotIndex:
-    """Build at most four exact-date snapshots without substituting history."""
+    """Build at most four exact-date snapshots without making history block today."""
     first = initial_snapshot or build_home_snapshot(
         provider,
         signal_date=signal_date,
@@ -1763,20 +2375,30 @@ def build_home_snapshot_index(
     )
     selected_task_id = _snapshot_task_id(task_id) or provider.default_task_id()
     day_snapshots = [HomeSnapshotDay(date=first.selected_date, snapshot=first)]
+    existing_by_date = {
+        day.date: day
+        for day in (existing_index.days if existing_index is not None else ())
+    }
     for available_date in first.available_dates:
         if available_date == first.selected_date:
             continue
         if len(day_snapshots) >= MAX_HOME_SNAPSHOT_INDEX_DAYS:
             break
-        snapshot = build_home_snapshot(
-            provider,
-            signal_date=available_date,
-            task_id=selected_task_id,
-        )
-        if snapshot.selected_date != available_date:
-            raise ValueError(
-                "provider returned a different date while building the snapshot index"
+        existing = existing_by_date.get(available_date)
+        if existing is not None:
+            day_snapshots.append(existing)
+            continue
+        try:
+            snapshot = build_home_snapshot(
+                provider,
+                signal_date=available_date,
+                task_id=selected_task_id,
             )
+        except (DataError, OSError, ValueError):
+            # A missing historical artifact must never suppress today's snapshot.
+            continue
+        if snapshot.selected_date != available_date:
+            continue
         day_snapshots.append(HomeSnapshotDay(date=available_date, snapshot=snapshot))
 
     generated_at = to_shanghai(now_shanghai()).isoformat(timespec="seconds")
@@ -1802,9 +2424,19 @@ def merge_home_snapshot_index(
     if existing is None:
         return refreshed
 
-    existing_by_date = {day.date: day for day in existing.days}
-    refreshed_by_date = {day.date: day for day in refreshed.days}
-    dates = {day.date for day in existing.days} | set(refreshed_by_date)
+    completed_date = latest_completed_trading_day().isoformat()
+    selected_date = refreshed.selected_date
+    existing_by_date = {
+        day.date: day
+        for day in existing.days
+        if day.date == selected_date or day.date <= completed_date
+    }
+    refreshed_by_date = {
+        day.date: day
+        for day in refreshed.days
+        if day.date == selected_date or day.date <= completed_date
+    }
+    dates = set(existing_by_date) | set(refreshed_by_date)
     ordered_dates = [refreshed.selected_date]
     ordered_dates.extend(
         sorted(
@@ -1851,7 +2483,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--output",
-        default=DEFAULT_OUTPUT_PATH,
+        default=os.environ.get("AQSP_HOME_SNAPSHOT_PATH", DEFAULT_OUTPUT_PATH),
         help="runtime snapshot path, relative to the project root",
     )
     parser.add_argument(
@@ -1884,6 +2516,7 @@ def main(argv: list[str] | None = None) -> int:
         signal_date=args.date.strip(),
         task_id=args.task_id.strip(),
         initial_snapshot=snapshot,
+        existing_index=existing_index,
     )
     index = merge_home_snapshot_index(existing_index, index)
     current_snapshot = next(
