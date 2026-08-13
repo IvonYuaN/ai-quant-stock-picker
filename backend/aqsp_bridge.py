@@ -779,7 +779,9 @@ def _parse_snapshot(payload: Mapping[str, Any]) -> AQSPSnapshot:
         "phases",
         "universe",
         "variant_universe",
+        "variant_suite",
         "variants",
+        "research_chain",
     }
     _check_keys(payload, required, "快照", optional)
     schema_version = _text(payload["schema_version"], "schema_version")
