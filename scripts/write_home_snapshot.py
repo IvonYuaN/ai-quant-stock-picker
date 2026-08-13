@@ -536,6 +536,22 @@ def _snapshot_debates(
         symbol = _text(getattr(debate, "symbol", ""))
         if symbol not in candidate_symbols or symbol in selected_symbols:
             continue
+        viewpoint_buckets = {
+            str(bucket): tuple(points)[:4]
+            for bucket, points in (
+                getattr(debate, "viewpoint_buckets", {}) or {}
+            ).items()
+        }
+        disagreement_points = tuple(getattr(debate, "disagreement_points", ()) or ())[
+            :4
+        ]
+        structured_rounds = tuple(
+            f"{bucket}：{points[0]}"
+            for bucket, points in viewpoint_buckets.items()
+            if points
+        )[:2]
+        if disagreement_points:
+            structured_rounds += (f"分歧：{disagreement_points[0]}",)
         selected.append(
             HomeSnapshotDebate(
                 symbol=symbol,
@@ -567,27 +583,15 @@ def _snapshot_debates(
                     if getattr(debate, "round_count", 0)
                     else ""
                 ),
-                round_summaries=_distinct_research_lines(
-                    tuple(
-                        _first_text(getattr(round_data, "summary", ""))
-                        for round_data in (getattr(debate, "rounds", ()) or ())
-                        if _first_text(getattr(round_data, "summary", ""))
-                    )
-                    or tuple(getattr(debate, "round_summaries", ()) or ()),
-                    limit=3,
+                round_summaries=structured_rounds
+                or _distinct_research_lines(
+                    tuple(getattr(debate, "round_summaries", ()) or ()), limit=3
                 ),
                 agent_views=_snapshot_agent_views(
                     getattr(debate, "agent_views", ()) or ()
                 ),
-                viewpoint_buckets={
-                    str(bucket): tuple(points)[:4]
-                    for bucket, points in (
-                        getattr(debate, "viewpoint_buckets", {}) or {}
-                    ).items()
-                },
-                disagreement_points=tuple(
-                    getattr(debate, "disagreement_points", ()) or ()
-                )[:4],
+                viewpoint_buckets=viewpoint_buckets,
+                disagreement_points=disagreement_points,
                 uncertainty_points=tuple(
                     getattr(debate, "uncertainty_points", ()) or ()
                 )[:4],

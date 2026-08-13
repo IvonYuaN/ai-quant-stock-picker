@@ -852,7 +852,11 @@ def test_snapshot_debates_preserves_role_specific_views_and_deduplicates_rounds(
         (write_home_snapshot._snapshot_candidate(_candidate("600001", 80.0)),),
     )
 
-    assert snapshots[0].round_summaries == ("第 1 轮：技术与风险初筛",)
+    assert snapshots[0].round_summaries == (
+        "technical：量价共振",
+        "risk_counterevidence：承接待确认",
+        "分歧：风控要求先确认成交承接",
+    )
     assert [(view.role, view.stance) for view in snapshots[0].agent_views] == [
         ("bull", "bullish"),
         ("risk_control", "bearish"),
