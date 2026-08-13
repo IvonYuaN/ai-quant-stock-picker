@@ -180,6 +180,8 @@ export interface AqspResearchChain {
   pending_review_symbols: readonly string[];
   variant_candidate_symbols: readonly string[];
   variant_review_symbols: readonly string[];
+  variant_holding_candidate_symbols: readonly string[];
+  variant_holding_review_symbols: readonly string[];
   blocker?: string;
 }
 

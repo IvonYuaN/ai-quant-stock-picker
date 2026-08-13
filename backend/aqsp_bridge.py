@@ -291,6 +291,8 @@ class AQSPResearchChain:
     pending_review_symbols: tuple[str, ...] = ()
     variant_candidate_symbols: tuple[str, ...] = ()
     variant_review_symbols: tuple[str, ...] = ()
+    variant_holding_candidate_symbols: tuple[str, ...] = ()
+    variant_holding_review_symbols: tuple[str, ...] = ()
     blocker: str = ""
 
 
@@ -1191,6 +1193,8 @@ def _parse_research_chain(payload: object) -> AQSPResearchChain:
             "pending_review_symbols",
             "variant_candidate_symbols",
             "variant_review_symbols",
+            "variant_holding_candidate_symbols",
+            "variant_holding_review_symbols",
             "blocker",
         },
     )
@@ -1219,6 +1223,18 @@ def _parse_research_chain(payload: object) -> AQSPResearchChain:
             _text_list(
                 item.get("variant_review_symbols", []),
                 "research_chain.variant_review_symbols",
+            )
+        ),
+        variant_holding_candidate_symbols=tuple(
+            _text_list(
+                item.get("variant_holding_candidate_symbols", []),
+                "research_chain.variant_holding_candidate_symbols",
+            )
+        ),
+        variant_holding_review_symbols=tuple(
+            _text_list(
+                item.get("variant_holding_review_symbols", []),
+                "research_chain.variant_holding_review_symbols",
             )
         ),
         blocker=_optional_text(item.get("blocker"), "research_chain.blocker"),

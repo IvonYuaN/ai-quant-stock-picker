@@ -244,6 +244,8 @@ class HomeSnapshotResearchChain:
     pending_review_symbols: tuple[str, ...] = ()
     variant_candidate_symbols: tuple[str, ...] = ()
     variant_review_symbols: tuple[str, ...] = ()
+    variant_holding_candidate_symbols: tuple[str, ...] = ()
+    variant_holding_review_symbols: tuple[str, ...] = ()
     blocker: str = ""
 
 
@@ -941,6 +943,8 @@ def _research_chain_from_dict(payload: object) -> HomeSnapshotResearchChain:
             "pending_review_symbols",
             "variant_candidate_symbols",
             "variant_review_symbols",
+            "variant_holding_candidate_symbols",
+            "variant_holding_review_symbols",
             "blocker",
         },
     )
@@ -964,6 +968,14 @@ def _research_chain_from_dict(payload: object) -> HomeSnapshotResearchChain:
         variant_review_symbols=_text_tuple(
             mapping.get("variant_review_symbols", ()),
             "research_chain.variant_review_symbols",
+        ),
+        variant_holding_candidate_symbols=_text_tuple(
+            mapping.get("variant_holding_candidate_symbols", ()),
+            "research_chain.variant_holding_candidate_symbols",
+        ),
+        variant_holding_review_symbols=_text_tuple(
+            mapping.get("variant_holding_review_symbols", ()),
+            "research_chain.variant_holding_review_symbols",
         ),
         blocker=_optional_text(mapping.get("blocker"), "research_chain.blocker"),
     )

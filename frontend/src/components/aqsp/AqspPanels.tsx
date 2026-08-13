@@ -158,7 +158,8 @@ function ResearchChain({ snapshot }: { snapshot: AqspSnapshot }) {
       <div className="aqsp-coverage-grid">
         <span><b>研究链</b><em className={cn("aqsp-badge", linked ? "aqsp-badge-ok" : "aqsp-badge-warn")}>{label}</em></span>
         <span>候选 {chain.candidate_symbols.length} · 已复核 {chain.debated_symbols.length} · 待复核 {chain.pending_review_symbols.length}</span>
-        {chain.variant_candidate_symbols.length > 0 && <span>变体交集：候选 {chain.variant_candidate_symbols.join("、")}；复核 {chain.variant_review_symbols.join("、") || "无"}</span>}
+        {chain.variant_candidate_symbols.length > 0 && <span>实验池覆盖：候选 {chain.variant_candidate_symbols.join("、")}；复核 {chain.variant_review_symbols.join("、") || "无"}</span>}
+        {chain.variant_holding_candidate_symbols.length > 0 && <span>当前变体持仓：候选 {chain.variant_holding_candidate_symbols.join("、")}；复核 {chain.variant_holding_review_symbols.join("、") || "无"}</span>}
         {chain.blocker && <p>{chain.blocker}</p>}
       </div>
     </div>

@@ -1979,17 +1979,29 @@ def _variant_snapshot() -> tuple[HomeSnapshotVariant, ...]:
     return tuple(variants)
 
 
+def _variant_experiment_symbols() -> tuple[str, ...]:
+    """Return the validated raw experiment pool, separate from current holdings."""
+    payload, _ = _variant_results_payload()
+    if not payload:
+        return ()
+    raw_symbols = payload.get("symbols")
+    if not isinstance(raw_symbols, list):
+        return ()
+    return tuple(dict.fromkeys(_text(value) for value in raw_symbols if _text(value)))
+
+
 def _research_chain_snapshot(
     candidates: tuple[HomeSnapshotCandidate, ...],
     debates: tuple[HomeSnapshotDebate, ...],
     variant_suite: HomeSnapshotVariantSuite,
     variants: tuple[HomeSnapshotVariant, ...],
+    experiment_symbols: tuple[str, ...] = (),
 ) -> HomeSnapshotResearchChain:
     """Join current-day evidence without allowing variants to affect scoring."""
     candidate_symbols = tuple(candidate.symbol for candidate in candidates)
     debated_symbols = tuple(debate.symbol for debate in debates)
     debated_set = set(debated_symbols)
-    variant_symbols = tuple(
+    holding_symbols = tuple(
         dict.fromkeys(
             holding.symbol
             for variant in variants
@@ -1997,14 +2009,21 @@ def _research_chain_snapshot(
             if holding.symbol
         )
     )
-    variant_set = set(variant_symbols)
+    experiment_set = set(experiment_symbols)
+    holding_set = set(holding_symbols)
     variant_candidate_symbols = tuple(
-        symbol for symbol in candidate_symbols if symbol in variant_set
+        symbol for symbol in candidate_symbols if symbol in experiment_set
     )
     variant_review_symbols = tuple(
-        symbol for symbol in debated_symbols if symbol in variant_set
+        symbol for symbol in debated_symbols if symbol in experiment_set
     )
-    if not variants:
+    variant_holding_candidate_symbols = tuple(
+        symbol for symbol in candidate_symbols if symbol in holding_set
+    )
+    variant_holding_review_symbols = tuple(
+        symbol for symbol in debated_symbols if symbol in holding_set
+    )
+    if not variants and not experiment_symbols:
         return HomeSnapshotResearchChain(
             status="blocked",
             candidate_symbols=candidate_symbols,
@@ -2023,8 +2042,10 @@ def _research_chain_snapshot(
         ),
         variant_candidate_symbols=variant_candidate_symbols,
         variant_review_symbols=variant_review_symbols,
+        variant_holding_candidate_symbols=variant_holding_candidate_symbols,
+        variant_holding_review_symbols=variant_holding_review_symbols,
         blocker=(
-            "变体未持有当天有效复核标的，仍只作为独立历史验证。"
+            "当天有效复核标的未进入本轮 raw 变体实验池，等待下轮覆盖。"
             if not variant_review_symbols
             else ""
         ),
@@ -2245,7 +2266,11 @@ def build_home_snapshot(
         variant_suite=variant_suite,
         variants=variants,
         research_chain=_research_chain_snapshot(
-            candidates, debates, variant_suite, variants
+            candidates,
+            debates,
+            variant_suite,
+            variants,
+            _variant_experiment_symbols(),
         ),
     )
 
