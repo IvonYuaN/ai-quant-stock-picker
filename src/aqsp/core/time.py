@@ -99,6 +99,17 @@ def get_next_trading_day(d: date | None = None) -> date:
     return resolve_next_trading_day(d)
 
 
+def latest_completed_trading_day(dt: datetime | None = None) -> date:
+    """Return the latest trading day whose regular session has closed."""
+    current = to_shanghai(dt or now_shanghai())
+    if not is_trading_day(current.date()):
+        return get_previous_trading_day(current.date())
+    _, close_time = market_hours(current)
+    if current >= close_time:
+        return current.date()
+    return get_previous_trading_day(current.date())
+
+
 def market_hours(dt: datetime) -> tuple[datetime, datetime]:
     dt = to_shanghai(dt)
     open_time = dt.replace(hour=9, minute=30, second=0, microsecond=0)
