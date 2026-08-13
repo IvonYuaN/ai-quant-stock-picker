@@ -5152,6 +5152,7 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
                         df,
                         signal_date=candidate_signal_date,
                         market_context_lines=pick_market_context_lines,
+                        task_id=normalized_task_id,
                     )
                     result.candidate_fingerprint = candidate_fingerprint
 

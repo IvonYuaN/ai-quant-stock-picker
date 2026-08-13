@@ -822,6 +822,18 @@ class DebatePerformanceTracker:
         self._agent_latest_record_at: dict[str, datetime] = {}
         self._load_cache()
 
+    def set_task_scope(self, task_id: str | None) -> None:
+        """Switch the tracker to an isolated task scope before a debate starts."""
+        normalized = _clean_text(task_id)
+        if normalized == self.task_id:
+            return
+        self.task_id = normalized
+        self._performance_cache.clear()
+        self._record_keys.clear()
+        self._agent_signal_days.clear()
+        self._agent_latest_record_at.clear()
+        self._load_cache()
+
     def _load_cache(self) -> None:
         """从文件加载历史表现数据"""
         if not self.storage_path.exists():

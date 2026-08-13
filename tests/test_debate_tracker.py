@@ -553,6 +553,59 @@ def test_debate_result_to_dict_persists_process_and_advisory_boundary() -> None:
     assert payload["real_opposition_count"] >= 1
 
 
+def test_debate_round_summary_changes_to_peer_review_when_second_round() -> None:
+    pick = _make_pick(score=72.0)
+    result = AShareDebateCoordinator(
+        enable_llm=False,
+        max_rounds=2,
+        roles=(AgentRole.BULL, AgentRole.BEAR, AgentRole.RISK_CONTROL),
+    ).run_debate(
+        pick,
+        pd.DataFrame({"close": [100.0, 101.0]}),
+        signal_date=pick.date,
+        task_id="intraday",
+    )
+
+    assert len(result.rounds) == 2
+    assert result.rounds[0].summary != result.rounds[1].summary
+    assert "第2轮复核" in result.rounds[1].summary
+    assert "复核关系:" in result.rounds[1].summary
+
+
+def test_debate_tracker_reloads_history_when_task_scope_changes(tmp_path) -> None:
+    storage_path = tmp_path / "performance.jsonl"
+    intraday = DebatePerformanceTracker(storage_path=str(storage_path), task_id="intraday")
+    intraday.record_prediction(
+        AgentRole.BULL,
+        "bull-a",
+        "bullish",
+        True,
+        task_id="intraday",
+        debate_id="debate-intraday",
+        signal_date="2026-06-30",
+        candidate_fingerprint="intraday-fingerprint",
+    )
+    closing = DebatePerformanceTracker(
+        storage_path=str(storage_path), task_id="closing_review"
+    )
+    closing.record_prediction(
+        AgentRole.BULL,
+        "bull-a",
+        "bullish",
+        False,
+        task_id="closing_review",
+        debate_id="debate-closing",
+        signal_date="2026-06-30",
+        candidate_fingerprint="closing-fingerprint",
+    )
+    tracker = closing
+
+    tracker.set_task_scope("intraday")
+
+    assert tracker.task_id == "intraday"
+    assert tracker.get_agent_metrics(AgentRole.BULL, "bull-a").correct_predictions == 1
+
+
 def test_debate_result_keeps_independent_viewpoint_buckets_and_final_round_counts(
     tmp_path, monkeypatch
 ) -> None:

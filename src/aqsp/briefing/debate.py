@@ -2116,13 +2116,55 @@ class AShareDebateCoordinator:
                 DebateRound(
                     round_num=round_num,
                     opinions=current_opinions,
-                    summary=self._summarize_round(current_opinions),
+                    summary=self._summarize_counter_round(
+                        current_opinions,
+                        round_num=round_num,
+                    ),
                     cross_opinions=self._collect_cross_opinions(current_opinions),
                     interaction_pairs=self._collect_interaction_pairs(current_opinions),
                 )
             )
 
         return result.rounds[-1].opinions
+
+    def _summarize_counter_round(
+        self,
+        opinions: list[AgentOpinion],
+        *,
+        round_num: int,
+    ) -> str:
+        """Summarize what changed in a review round, rather than repeating claims."""
+        vote_counts: dict[str, int] = {"bullish": 0, "bearish": 0, "neutral": 0}
+        reviewed: list[str] = []
+        rebuttals: list[str] = []
+        for opinion in opinions:
+            vote_counts[opinion.stance] = vote_counts.get(opinion.stance, 0) + 1
+            targets = tuple(
+                dict.fromkeys(
+                    (*opinion.counterargument_roles, *opinion.peer_reviewed_roles)
+                )
+            )
+            if targets:
+                reviewed.append(
+                    f"{agent_role_label(opinion.role, self.language)}复核"
+                    f"{'、'.join(targets[:2])}"
+                )
+            point = self._first_meaningful_point(opinion.counterarguments)
+            if point:
+                rebuttals.append(
+                    f"{agent_role_label(opinion.role, self.language)}: {point}"
+                )
+        parts = [
+            f"第{round_num}轮复核：看多{vote_counts['bullish']} / "
+            f"看空{vote_counts['bearish']} / 中性{vote_counts['neutral']}"
+        ]
+        if reviewed:
+            parts.append(f"复核关系: {'；'.join(reviewed[:3])}")
+        if rebuttals:
+            parts.append(f"反驳焦点: {'；'.join(rebuttals[:2])}")
+        else:
+            parts.append("未形成有效反驳，保留待确认事项")
+        return "；".join(parts)
 
     def _call_agent_with_deadline(
         self,
