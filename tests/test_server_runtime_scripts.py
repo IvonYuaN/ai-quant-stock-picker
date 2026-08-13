@@ -1926,6 +1926,8 @@ def test_variant_refresh_runs_after_close_with_bounded_resources() -> None:
     assert "--status-file" in script
     assert "--status-only waiting" in script
     assert "AQSP_VARIANT_REFRESH_STATUS" in script
+    assert 'AQSP_HOME_SNAPSHOT_PATH="${AQSP_HOME_SNAPSHOT_PATH:-${RUNTIME_DATA_ROOT}/runtime/home_dashboard_snapshot.json}"' in script
+    assert 'AQSP_HOME_SNAPSHOT_INDEX_PATH="${AQSP_HOME_SNAPSHOT_INDEX_PATH:-${RUNTIME_DATA_ROOT}/runtime/home_dashboard_snapshot_index.json}"' in script
     assert 'nice -n "$NICE_LEVEL"' in script
     assert "AQSP_VARIANT_ALLOW_HEAVY" in script
     assert "variant-results-refresh.lock" in script
