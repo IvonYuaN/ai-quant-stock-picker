@@ -278,6 +278,19 @@ class AQSPVariantSuite:
 
 
 @dataclass(frozen=True)
+class AQSPResearchChain:
+    status: str = "blocked"
+    candidate_symbols: tuple[str, ...] = ()
+    debated_symbols: tuple[str, ...] = ()
+    pending_review_symbols: tuple[str, ...] = ()
+    variant_candidate_symbols: tuple[str, ...] = ()
+    variant_review_symbols: tuple[str, ...] = ()
+    variant_holding_candidate_symbols: tuple[str, ...] = ()
+    variant_holding_review_symbols: tuple[str, ...] = ()
+    blocker: str = ""
+
+
+@dataclass(frozen=True)
 class AQSPCrossMarket:
     rule_id: str
     theme: str
@@ -325,6 +338,7 @@ class AQSPSnapshot:
     universe: AQSPUniverse = AQSPUniverse()
     variant_suite: AQSPVariantSuite = AQSPVariantSuite()
     variants: tuple[AQSPVariant, ...] = ()
+    research_chain: AQSPResearchChain = AQSPResearchChain()
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -528,6 +542,41 @@ def _runtime_debate_payload(
         if isinstance(rounds, list)
         else []
     )
+    final_round = max(
+        (item for item in rounds if isinstance(item, dict)),
+        key=lambda item: int(item.get("round_num") or item.get("round") or 0),
+        default={},
+    )
+    opinions = {
+        str(item.get("role") or "").strip(): item
+        for item in final_round.get("opinions", [])
+        if isinstance(item, dict) and str(item.get("role") or "").strip()
+    }
+    votes = (
+        record.get("final_vote") if isinstance(record.get("final_vote"), dict) else {}
+    )
+    roles = tuple(dict.fromkeys((*votes.keys(), *opinions.keys())))
+    agent_views = [
+        {
+            "role": str(role),
+            "stance": str(
+                votes.get(role)
+                or opinions.get(role, {}).get("final_position")
+                or opinions.get(role, {}).get("stance")
+                or "neutral"
+            ),
+            "confidence": float(opinions.get(role, {}).get("confidence") or 0.0),
+            "arguments": list(opinions.get(role, {}).get("arguments") or ())[:1],
+            "opportunities": list(
+                opinions.get(role, {}).get("opportunity_factors") or ()
+            )[:1],
+            "risks": list(opinions.get(role, {}).get("risk_factors") or ())[:1],
+            "counterarguments": list(
+                opinions.get(role, {}).get("counterarguments") or ()
+            )[:1],
+        }
+        for role in roles
+    ]
     return {
         "symbol": candidate.symbol,
         "display_name": candidate.display_name,
@@ -557,6 +606,7 @@ def _runtime_debate_payload(
         "process_recorded": record.get("process_recorded", False),
         "conclusion_recorded": record.get("conclusion_recorded", False),
         "debate_quality_issues": record.get("debate_quality_issues", []),
+        "agent_views": agent_views,
     }
 
 
@@ -892,6 +942,7 @@ def _parse_snapshot(payload: Mapping[str, Any]) -> AQSPSnapshot:
         universe=_parse_universe(payload.get("universe")),
         variant_suite=_parse_variant_suite(payload.get("variant_suite")),
         variants=variants,
+        research_chain=_parse_research_chain(payload.get("research_chain")),
     )
 
 
@@ -1102,6 +1153,72 @@ def _parse_variant_suite(payload: object) -> AQSPVariantSuite:
         coverage_pct=float(item.get("coverage_pct", 0.0) or 0.0),
         filters=_optional_text(item.get("filters"), "variant_suite.filters"),
         last_error=_optional_text(item.get("last_error"), "variant_suite.last_error"),
+    )
+
+
+def _parse_research_chain(payload: object) -> AQSPResearchChain:
+    if payload is None:
+        return AQSPResearchChain()
+    item = _object(payload, "research_chain")
+    _check_keys(
+        item,
+        set(),
+        "research_chain",
+        {
+            "status",
+            "candidate_symbols",
+            "debated_symbols",
+            "pending_review_symbols",
+            "variant_candidate_symbols",
+            "variant_review_symbols",
+            "variant_holding_candidate_symbols",
+            "variant_holding_review_symbols",
+            "blocker",
+        },
+    )
+    return AQSPResearchChain(
+        status=_optional_text(item.get("status"), "research_chain.status") or "blocked",
+        candidate_symbols=tuple(
+            _text_list(
+                item.get("candidate_symbols", []), "research_chain.candidate_symbols"
+            )
+        ),
+        debated_symbols=tuple(
+            _text_list(
+                item.get("debated_symbols", []), "research_chain.debated_symbols"
+            )
+        ),
+        pending_review_symbols=tuple(
+            _text_list(
+                item.get("pending_review_symbols", []),
+                "research_chain.pending_review_symbols",
+            )
+        ),
+        variant_candidate_symbols=tuple(
+            _text_list(
+                item.get("variant_candidate_symbols", []),
+                "research_chain.variant_candidate_symbols",
+            )
+        ),
+        variant_review_symbols=tuple(
+            _text_list(
+                item.get("variant_review_symbols", []),
+                "research_chain.variant_review_symbols",
+            )
+        ),
+        variant_holding_candidate_symbols=tuple(
+            _text_list(
+                item.get("variant_holding_candidate_symbols", []),
+                "research_chain.variant_holding_candidate_symbols",
+            )
+        ),
+        variant_holding_review_symbols=tuple(
+            _text_list(
+                item.get("variant_holding_review_symbols", []),
+                "research_chain.variant_holding_review_symbols",
+            )
+        ),
+        blocker=_optional_text(item.get("blocker"), "research_chain.blocker"),
     )
 
 
