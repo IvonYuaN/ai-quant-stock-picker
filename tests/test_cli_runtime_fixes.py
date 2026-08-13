@@ -987,6 +987,48 @@ def test_fetch_special_strategy_frames_uses_sqlite_only_for_history_baseline(
     assert result["600000"].attrs["intraday_overlay_coverage"]["status"] == "complete"
 
 
+def test_fetch_intraday_historical_baseline_tries_runtime_raw_database(
+    monkeypatch, tmp_path: Path
+) -> None:
+    import aqsp.cli as cli_mod
+
+    invalid_db = tmp_path / "runtime.sqlite"
+    invalid_db.touch()
+    raw_db = tmp_path / "astocks_raw.db"
+    raw_db.touch()
+    attempted: list[str] = []
+
+    class FakeSqliteSource:
+        name = "sqlite_db"
+
+        def __init__(self, *, db_path, cache) -> None:
+            attempted.append(str(db_path))
+
+        def set_workload(self, _workload) -> None:
+            pass
+
+    def fake_fetch(source, *_args, **_kwargs):
+        if attempted[-1] == str(invalid_db):
+            raise DataError("invalid schema")
+        return {"600000": _fresh_frame("2026-06-25")}
+
+    monkeypatch.setattr(cli_mod, "resolve_sqlite_db_path", lambda: str(invalid_db))
+    monkeypatch.setenv("AQSP_RUNTIME_DATA_ROOT", str(tmp_path))
+    monkeypatch.setattr("aqsp.data.sqlite_db_source.SqliteDbSource", FakeSqliteSource)
+    monkeypatch.setattr(cli_mod, "fetch_with_source", fake_fetch)
+
+    frames = cli_mod._fetch_intraday_historical_baseline(
+        ["600000"],
+        benchmark_symbol=None,
+        days=60,
+        target_day=date(2026, 6, 26),
+    )
+
+    assert attempted == [str(invalid_db), str(raw_db)]
+    assert frames["600000"].attrs["source_name"] == "sqlite_db"
+    assert frames["600000"].attrs["workload"] == "historical"
+
+
 def test_intraday_actual_source_uses_current_overlay_provenance() -> None:
     import aqsp.cli as cli_mod
 

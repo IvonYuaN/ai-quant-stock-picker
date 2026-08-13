@@ -2552,26 +2552,39 @@ def _fetch_intraday_historical_baseline(
     target_day: date,
 ) -> dict[str, pd.DataFrame]:
     """Load a raw historical baseline without assigning it a live source role."""
-    if not resolve_sqlite_db_path():
+    candidates = [resolve_sqlite_db_path()]
+    runtime_data_root = os.getenv("AQSP_RUNTIME_DATA_ROOT", "").strip()
+    if runtime_data_root:
+        candidates.append(str(Path(runtime_data_root) / "astocks_raw.db"))
+    candidates.append("/opt/aqsp/data/astocks_raw.db")
+    frames: dict[str, pd.DataFrame] = {}
+    last_error = ""
+    for raw_path in dict.fromkeys(path for path in candidates if path):
+        if not Path(raw_path).exists():
+            continue
+        from aqsp.data.sqlite_db_source import SqliteDbSource
+
+        source = SqliteDbSource(db_path=raw_path, cache=DataCache())
+        source.set_workload("historical")
+        try:
+            frames = fetch_with_source(
+                source,
+                symbols,
+                days=days,
+                benchmark_symbol=benchmark_symbol,
+                end_date=target_day,
+            )
+        except DataError as exc:
+            last_error = str(exc)
+            continue
+        finally:
+            source.set_workload(None)
+        if frames:
+            break
+    if not frames:
+        if last_error:
+            LOGGER.warning("盘中历史基线不可用，回退实时源历史: %s", last_error)
         return {}
-    source = build_sqlite_db_source(cache=DataCache())
-    workload_setter = getattr(source, "set_workload", None)
-    if callable(workload_setter):
-        workload_setter("historical")
-    try:
-        frames = fetch_with_source(
-            source,
-            symbols,
-            days=days,
-            benchmark_symbol=benchmark_symbol,
-            end_date=target_day,
-        )
-    except DataError as exc:
-        LOGGER.warning("盘中历史基线不可用，回退实时源历史: %s", exc)
-        return {}
-    finally:
-        if callable(workload_setter):
-            workload_setter(None)
 
     fetched_at = now_shanghai().isoformat()
     for frame in frames.values():
