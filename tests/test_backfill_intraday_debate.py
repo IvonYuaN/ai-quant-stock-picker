@@ -209,6 +209,52 @@ def test_debate_quality_gate_rejects_failure_and_any_quality_issue() -> None:
     assert backfill_intraday_debate._debate_payload_quality_failure({}) == ""
 
 
+def test_debate_quality_gate_rejects_character_split_evidence() -> None:
+    payload = {
+        "rounds": [
+            {
+                "opinions": [
+                    {
+                        "arguments": [
+                            "趋",
+                            "势",
+                            "：",
+                            "均",
+                            "线",
+                            "多",
+                            "头",
+                            "向",
+                            "上",
+                        ],
+                    }
+                ]
+            }
+        ]
+    }
+
+    assert (
+        "character-split"
+        in backfill_intraday_debate._debate_payload_quality_failure(payload)
+    )
+
+
+def test_debate_quality_gate_rejects_repeated_rounds_without_new_claims() -> None:
+    opinion = {
+        "role": "bull",
+        "stance": "bullish",
+        "arguments": ["趋势向上"],
+        "risk_factors": ["回落则失效"],
+        "opportunity_factors": [],
+        "counterarguments": [],
+    }
+    payload = {"rounds": [{"opinions": [opinion]}, {"opinions": [opinion]}]}
+
+    assert (
+        "repeat without new evidence"
+        in backfill_intraday_debate._debate_payload_quality_failure(payload)
+    )
+
+
 def test_debate_quality_gate_rejects_neutral_only_opposition_payload(
     tmp_path: Path, monkeypatch
 ) -> None:

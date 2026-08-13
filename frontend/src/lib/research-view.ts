@@ -48,6 +48,20 @@ export function dedupeResearchText(values: readonly string[]): string[] {
   }, []);
 }
 
+export function readableResearchText(value: string): string {
+  const text = value.trim();
+  // A bad legacy serializer emitted one character per evidence entry.
+  const pieces = text.split("、").filter(Boolean);
+  if (pieces.length >= 8 && pieces.filter((piece) => [...piece.trim()].length <= 1).length >= 8) return "";
+  return text;
+}
+
+export function compactDebateRounds(values: readonly string[], conclusion = ""): string[] {
+  return dedupeResearchText(values.map(readableResearchText))
+    .filter((item) => !sameResearchText(item, conclusion))
+    .slice(0, 1);
+}
+
 export function mergeAvailableResearchDates(
   snapshotDates: readonly string[],
   indexedDates: readonly string[],

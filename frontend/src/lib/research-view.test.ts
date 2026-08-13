@@ -1,6 +1,7 @@
 import type { AqspAgentResult, AqspSnapshot } from "./api";
 import {
   debateProcessText,
+  compactDebateRounds,
   dedupeResearchText,
   gatePresentation,
   isCurrentEmptyObservation,
@@ -78,6 +79,8 @@ export const researchViewContractChecks = {
   selectedDateRejectsPreviousSnapshot: !snapshotMatchesSelectedDate(emptySnapshot, "2026-07-14"),
   emptySelectionAcceptsCurrentSnapshot: snapshotMatchesSelectedDate(emptySnapshot, ""),
   duplicateResearchTextCollapses: dedupeResearchText(["  过程摘要  ", "过程   摘要", "另一条"]).join("|") === "过程摘要|另一条",
+  characterSplitRoundIsHidden: compactDebateRounds(["（、'、趋、势、：、均、线、多、头", "正常讨论"], "").join("|") === "正常讨论",
+  repeatedRoundsAreCompact: compactDebateRounds(["同一结论", "同一结论", "补充内容"], "").join("|") === "同一结论",
   equalResearchTextMatches: sameResearchText("标题", "标题"),
   differentResearchTextDoesNotMatch: !sameResearchText("标题", "摘要"),
   dateIndexCompletesSnapshotDates: mergeAvailableResearchDates(["2026-07-14"], ["2026-07-14", "2026-07-11"]).join("|") === "2026-07-14|2026-07-11",

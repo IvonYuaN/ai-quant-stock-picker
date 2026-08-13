@@ -823,6 +823,11 @@ def _debate_payload_quality_failure(
         return "debate advisory boundary is not valid"
     if payload.get("deterministic_score_unchanged") is False:
         return "deterministic score changed by advisory debate"
+    malformed = _malformed_debate_text(payload)
+    if malformed:
+        return malformed
+    if _has_repeated_rounds(payload):
+        return "debate rounds repeat without new evidence"
     if expected_roles:
         audit = audit_debate_quality(
             payload,
@@ -834,6 +839,51 @@ def _debate_payload_quality_failure(
         if audit.issues:
             return f"debate quality issues: {'、'.join(audit.issues)}"[:500]
     return ""
+
+
+def _malformed_debate_text(payload: dict[str, Any]) -> str:
+    """Reject character-split evidence before it reaches the shared snapshot."""
+    for round_data in payload.get("rounds", []):
+        if not isinstance(round_data, dict):
+            continue
+        for opinion in round_data.get("opinions", []):
+            if not isinstance(opinion, dict):
+                continue
+            for field in (
+                "arguments",
+                "risk_factors",
+                "opportunity_factors",
+                "counterarguments",
+            ):
+                points = opinion.get(field, [])
+                if isinstance(points, list) and len(points) >= 8:
+                    if sum(len(str(point).strip()) <= 1 for point in points) >= 8:
+                        return f"character-split debate evidence in {field}"
+    return ""
+
+
+def _has_repeated_rounds(payload: dict[str, Any]) -> bool:
+    rounds = [item for item in payload.get("rounds", []) if isinstance(item, dict)]
+    for previous, current in zip(rounds, rounds[1:]):
+
+        def claims(round_data: dict[str, Any]) -> set[str]:
+            return {
+                str(point).strip()
+                for opinion in round_data.get("opinions", [])
+                if isinstance(opinion, dict)
+                for field in (
+                    "arguments",
+                    "risk_factors",
+                    "opportunity_factors",
+                    "counterarguments",
+                )
+                for point in opinion.get(field, [])
+                if str(point).strip()
+            }
+
+        if claims(current) and claims(current) <= claims(previous):
+            return True
+    return False
 
 
 def run_backfill(
