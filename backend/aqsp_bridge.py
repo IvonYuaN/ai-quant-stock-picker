@@ -96,6 +96,17 @@ class AQSPDebateEvidence:
 
 
 @dataclass(frozen=True)
+class AQSPAgentView:
+    role: str
+    stance: str
+    confidence: float
+    arguments: tuple[str, ...] = ()
+    opportunities: tuple[str, ...] = ()
+    risks: tuple[str, ...] = ()
+    counterarguments: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class AQSPDebate:
     symbol: str
     display_name: str
@@ -123,10 +134,12 @@ class AQSPDebate:
     advisory_boundary_ok: bool = True
     process_recorded: bool = False
     conclusion_recorded: bool = False
+    review_kind: str = "unverified"
     quality_issues: tuple[str, ...] = ()
     viewpoint_buckets: dict[str, tuple[str, ...]] = field(default_factory=dict)
     disagreement_points: tuple[str, ...] = ()
     uncertainty_points: tuple[str, ...] = ()
+    agent_views: tuple[AQSPAgentView, ...] = ()
 
     @property
     def evidence(self) -> tuple[AQSPDebateEvidence, ...]:
@@ -1110,11 +1123,13 @@ def _parse_debate(payload: object) -> AQSPDebate:
             "pending_confirmations",
             "process_recorded",
             "conclusion_recorded",
+            "review_kind",
             "debate_quality_issues",
             "evidence",
             "viewpoint_buckets",
             "disagreement_points",
             "uncertainty_points",
+            "agent_views",
         },
     )
     raw_evidence = tuple(
@@ -1164,6 +1179,33 @@ def _parse_debate(payload: object) -> AQSPDebate:
         str(bucket): tuple(_text_list(points, f"debate.viewpoint_buckets.{bucket}"))
         for bucket, points in raw_viewpoint_buckets.items()
     }
+    agent_views = tuple(
+        AQSPAgentView(
+            role=_text(view.get("role", ""), "debate.agent_views.role"),
+            stance=_text(view.get("stance", "neutral"), "debate.agent_views.stance"),
+            confidence=_number(
+                view.get("confidence", 0.0), "debate.agent_views.confidence"
+            ),
+            arguments=tuple(
+                _text_list(view.get("arguments", []), "debate.agent_views.arguments")
+            ),
+            opportunities=tuple(
+                _text_list(
+                    view.get("opportunities", []),
+                    "debate.agent_views.opportunities",
+                )
+            ),
+            risks=tuple(_text_list(view.get("risks", []), "debate.agent_views.risks")),
+            counterarguments=tuple(
+                _text_list(
+                    view.get("counterarguments", []),
+                    "debate.agent_views.counterarguments",
+                )
+            ),
+        )
+        for view in _list(item.get("agent_views", []), "debate.agent_views")
+        if isinstance(view, dict)
+    )
     return AQSPDebate(
         symbol=_validate_symbol(_text(item["symbol"], "debate.symbol")),
         display_name=_text(item["display_name"], "debate.display_name"),
@@ -1222,6 +1264,10 @@ def _parse_debate(payload: object) -> AQSPDebate:
         conclusion_recorded=_boolean(
             item.get("conclusion_recorded", False), "debate.conclusion_recorded"
         ),
+        review_kind=(
+            _optional_text(item.get("review_kind"), "debate.review_kind")
+            or "unverified"
+        ),
         quality_issues=tuple(
             _text_list(
                 item.get("debate_quality_issues", []),
@@ -1241,6 +1287,7 @@ def _parse_debate(payload: object) -> AQSPDebate:
                 "debate.uncertainty_points",
             )
         ),
+        agent_views=agent_views,
     )
 
 
