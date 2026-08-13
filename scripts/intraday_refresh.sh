@@ -6,10 +6,18 @@
 
 set -euo pipefail
 
-PROJECT_ROOT="${AQSP_PROJECT_ROOT:-/opt/aqsp}"
-RUNTIME_ROOT="${AQSP_RUNTIME_ROOT:-$PROJECT_ROOT}"
-RUNTIME_DATA_ROOT="${AQSP_RUNTIME_DATA_ROOT:-${RUNTIME_ROOT}/data}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# In immutable-release mode, code follows the release that invoked this script.
+# Runtime data remains on the server overlay configured by .env.
+SCRIPT_REAL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+SCRIPT_RELEASE_ROOT="$(cd "${SCRIPT_REAL_DIR}/.." && pwd)"
+CONFIGURED_PROJECT_ROOT="${AQSP_PROJECT_ROOT:-}"
+PROJECT_ROOT="${CONFIGURED_PROJECT_ROOT:-/opt/aqsp}"
+if [[ "$SCRIPT_RELEASE_ROOT" == /opt/aqsp-releases/* ]]; then
+    PROJECT_ROOT="$SCRIPT_RELEASE_ROOT"
+fi
+RUNTIME_ROOT="${AQSP_RUNTIME_ROOT:-${CONFIGURED_PROJECT_ROOT:-$PROJECT_ROOT}}"
+RUNTIME_DATA_ROOT="${AQSP_RUNTIME_DATA_ROOT:-${RUNTIME_ROOT}/data}"
 RUNTIME_PYTHON_HELPER="${PROJECT_ROOT}/scripts/runtime_python.sh"
 if [ ! -f "$RUNTIME_PYTHON_HELPER" ] && [ -f "${SCRIPT_DIR}/runtime_python.sh" ]; then
     RUNTIME_PYTHON_HELPER="${SCRIPT_DIR}/runtime_python.sh"
@@ -23,6 +31,8 @@ source "$RUNTIME_PYTHON_HELPER"
 VENV_DIR="${AQSP_INTRADAY_VENV_DIR:-${AQSP_RUNTIME_VENV_DIR:-${AQSP_VIBE_VENV_DIR:-}}}"
 PYTHON_BIN="$(aqsp_runtime_python "$PROJECT_ROOT")"
 INITIAL_PROJECT_ROOT="$PROJECT_ROOT"
+INITIAL_RUNTIME_ROOT="$RUNTIME_ROOT"
+INITIAL_RUNTIME_DATA_ROOT="$RUNTIME_DATA_ROOT"
 INITIAL_VENV_DIR="$VENV_DIR"
 LOG_DIR="${AQSP_INTRADAY_LOG_DIR:-${RUNTIME_DATA_ROOT}/logs/intraday}"
 RESULT_LOG="${LOG_DIR}/intraday-$(date +%Y-%m-%d).log"
@@ -112,6 +122,8 @@ if [ -f "${PROJECT_ROOT}/.env" ]; then
     # Runtime paths are resolved before loading project secrets/config. A .env
     # file must not silently redirect an explicit release to another worktree.
     PROJECT_ROOT="$INITIAL_PROJECT_ROOT"
+    RUNTIME_ROOT="$INITIAL_RUNTIME_ROOT"
+    RUNTIME_DATA_ROOT="$INITIAL_RUNTIME_DATA_ROOT"
     VENV_DIR="$INITIAL_VENV_DIR"
     PYTHON_BIN="$(aqsp_runtime_python "$PROJECT_ROOT")"
     log "已加载 .env 配置"
