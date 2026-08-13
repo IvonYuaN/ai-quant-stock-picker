@@ -85,6 +85,7 @@ _TUPLE_METRIC_FIELDS = {
     "opposition_points",
     "watch_items",
     "role_reliability_lines",
+    "technical_evidence",
 }
 
 _INT_METRIC_FIELDS = {

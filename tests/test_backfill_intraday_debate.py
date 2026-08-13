@@ -255,6 +255,17 @@ def test_debate_quality_gate_rejects_repeated_rounds_without_new_claims() -> Non
     )
 
 
+def test_pick_from_row_parses_technical_evidence_tuple_text() -> None:
+    pick = backfill_intraday_debate._pick_from_row(
+        {
+            "symbol": "000001",
+            "technical_evidence": "('趋势：均线多头', '量能：放量确认')",
+        }
+    )
+
+    assert pick.metrics["technical_evidence"] == ("趋势：均线多头", "量能：放量确认")
+
+
 def test_debate_quality_gate_rejects_neutral_only_opposition_payload(
     tmp_path: Path, monkeypatch
 ) -> None:
