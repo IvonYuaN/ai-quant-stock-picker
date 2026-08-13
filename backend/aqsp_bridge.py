@@ -661,7 +661,14 @@ def _apply_latest_intraday_failure(payload: dict[str, Any]) -> None:
         path = Path(raw_path).expanduser()
     else:
         runtime_data_root = os.getenv("AQSP_RUNTIME_DATA_ROOT", "").strip()
-        base = Path(runtime_data_root) if runtime_data_root else _PROJECT_ROOT / "data"
+        # The public service always knows its snapshot path, while older
+        # systemd units may not export AQSP_RUNTIME_DATA_ROOT. Infer the
+        # private data root from .../data/runtime/home_dashboard_snapshot.json.
+        base = (
+            Path(runtime_data_root)
+            if runtime_data_root
+            else snapshot_path().parent.parent
+        )
         path = base / "intraday_refresh_status.json"
     try:
         status = json.loads(path.read_text(encoding="utf-8"))

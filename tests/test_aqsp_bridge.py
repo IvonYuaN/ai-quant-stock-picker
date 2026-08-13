@@ -743,6 +743,29 @@ def test_aqsp_bridge_surfaces_latest_intraday_failure_without_replacing_snapshot
     )
 
 
+def test_aqsp_bridge_infers_intraday_status_from_snapshot_runtime_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime = tmp_path / "data" / "runtime"
+    runtime.mkdir(parents=True)
+    path = runtime / "home_dashboard_snapshot.json"
+    path.write_text(json.dumps(_snapshot("2026-07-14")), encoding="utf-8")
+    (runtime.parent / "intraday_refresh_status.json").write_text(
+        json.dumps({"status": "failed", "reason": "行情源无当日有效日线"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AQSP_RESEARCH_SURFACE_SNAPSHOT", str(path))
+    monkeypatch.delenv("AQSP_INTRADAY_STATUS", raising=False)
+    monkeypatch.delenv("AQSP_RUNTIME_DATA_ROOT", raising=False)
+
+    response = client.get("/api/aqsp/snapshot")
+
+    assert response.status_code == 200
+    assert response.json()["data"]["source"]["status"] == (
+        "盘中任务失败：行情源无当日有效日线"
+    )
+
+
 def test_aqsp_bridge_exposes_structured_debate_process_without_changing_score(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
