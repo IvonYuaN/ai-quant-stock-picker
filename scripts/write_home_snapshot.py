@@ -1973,7 +1973,7 @@ def _phase_conclusion_summaries(
     signal_date: str,
     debates: tuple[HomeSnapshotDebate, ...],
 ) -> tuple[str, ...]:
-    """Summarize each market phase from its own artifact, never from another phase."""
+    """Produce one decision statement per phase from that phase's own artifact."""
     phase_specs = (
         ("盘前", "main_chain"),
         ("盘中", "intraday"),
@@ -1991,19 +1991,31 @@ def _phase_conclusion_summaries(
             continue
         lead = max(rows, key=lambda row: float(row.get("score") or 0.0))
         symbol = _text(lead.get("symbol"))
-        name = _first_text(_text(lead.get("name")), symbol)
-        score = float(lead.get("score") or 0.0)
+        name = _first_text(_text(lead.get("name")), symbol, "主线对象")
         reasons = _text(lead.get("reasons"))
-        detail = f"{name}（{score:.1f}）"
-        if reasons:
-            detail += f"；规则证据：{reasons.split('；', 1)[0]}"
+        rule = reasons.split("；", 1)[0] if reasons else "规则条件"
         debate = debate_by_symbol.get(symbol)
-        if debate is not None:
-            detail += (
-                f"；复核：{_first_text(debate.primary_risk_gate, debate.next_trigger)}"
+
+        if task_id == "main_chain":
+            detail = (
+                f"计划：{len(rows)} 个对象进入开盘观察；优先核对 {name} 的{rule}，"
+                "开盘后只确认量价承接与数据新鲜度。"
             )
         elif task_id == "intraday":
-            detail += "；复核：未形成有效独立分歧，保留规则观察"
+            review = (
+                _first_text(debate.primary_risk_gate, debate.next_trigger)
+                if debate is not None
+                else "未形成独立复核结论"
+            )
+            detail = (
+                f"判断：{len(rows)} 个对象通过盘中筛选；{name} 的{rule}仍有效。"
+                f"约束：{review}。"
+            )
+        else:
+            detail = (
+                f"复盘：{len(rows)} 个对象写入收盘记录；{name} 的{rule}"
+                "仅保留为次日观察依据，不把盘中信号外推为结论。"
+            )
         lines.append(f"{label}：{detail}")
     return tuple(lines)
 
