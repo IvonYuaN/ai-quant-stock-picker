@@ -1436,6 +1436,10 @@ def _snapshot_source(
     if not isinstance(source_status, dict):
         source_status = {}
     provenance = _intraday_source_provenance()
+    intraday_state = _read_json_object(
+        _runtime_json_path("AQSP_INTRADAY_STATUS", "data/intraday_refresh_status.json")
+    )
+    intraday_status = _text(intraday_state.get("status"))
     latest_trade_date = _first_text(
         getattr(runtime, "data_latest_trade_date", ""),
         source_status.get("data_latest_trade_date"),
@@ -1464,6 +1468,11 @@ def _snapshot_source(
             )
         ),
         status=_first_text(
+            (
+                _intraday_failure_summary()
+                if intraday_status in {"failed", "error", "partial_failed"}
+                else ""
+            ),
             getattr(runtime, "run_status", ""),
             source_status.get("status"),
             provenance.get("status"),

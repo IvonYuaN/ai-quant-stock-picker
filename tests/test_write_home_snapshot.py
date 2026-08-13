@@ -2206,6 +2206,39 @@ def test_snapshot_source_uses_intraday_provenance_for_completed_day(
     assert source.status == "verified"
 
 
+def test_snapshot_source_surfaces_latest_intraday_failure_over_old_run_status(
+    monkeypatch, tmp_path
+) -> None:
+    status_path = tmp_path / "intraday_refresh_status.json"
+    status_path.write_text(
+        json.dumps(
+            {
+                "status": "failed",
+                "reason": "盘中任务被中断，保留上一版盘中产物",
+                "provenance": {
+                    "actual_source": "tencent",
+                    "latest_trade_date": "2026-07-10",
+                    "lag_days": 0,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AQSP_INTRADAY_STATUS", str(status_path))
+
+    source = write_home_snapshot._snapshot_source(
+        SimpleNamespace(
+            run_status="blocked_by_circuit_breaker",
+            effective_source="tencent",
+            lag_days=0,
+        ),
+        SimpleNamespace(source_status={}),
+        selected_date="2026-07-10",
+    )
+
+    assert source.status == "盘中任务失败：盘中任务被中断，保留上一版盘中产物"
+
+
 def test_write_home_snapshot_builds_optional_four_day_index(monkeypatch) -> None:
     provider = _DateAwareProvider()
     monkeypatch.setattr(
