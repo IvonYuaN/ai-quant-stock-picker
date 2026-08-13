@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import hashlib
 import os
+import plistlib
 import shutil
 import subprocess
 from datetime import date, timedelta
@@ -128,6 +129,7 @@ def _run_fake_coldstart(
     today: str = "2026-07-07",
     weekday: int = 2,
     is_trading_day: bool = True,
+    extra_env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     root, db_path, fake_python = _build_coldstart_runtime(tmp_path)
     cli_args_path = tmp_path / "cli-args.txt"
@@ -158,6 +160,8 @@ def _run_fake_coldstart(
     }
     if aqsp_source is not None:
         env["AQSP_SOURCE"] = aqsp_source
+    if extra_env:
+        env.update(extra_env)
     return subprocess.run(
         ["bash", str(root / "scripts" / "coldstart_daily.sh")],
         env=env,
@@ -184,7 +188,7 @@ def test_server_sync_script_supports_custom_runner() -> None:
     assert 'bash "${RUNNER_PATH}"' in script
     assert "printf 'GIT_SYNC_LOCK_STARTED_AT=%q\\n'" in script
     assert "printf 'LOCK_STARTED_AT=%q\\n'" in script
-    assert 'RUNNER_TIMEOUT_SECONDS="${AQSP_RUNNER_TIMEOUT_SECONDS:-0}"' in script
+    assert 'RUNNER_TIMEOUT_SECONDS="${AQSP_RUNNER_TIMEOUT_SECONDS:-5400}"' in script
     assert (
         'RUNTIME_OVERLAY_MANIFEST="${AQSP_RUNTIME_OVERLAY_MANIFEST:-${STATE_DIR}/runtime-sync-overlay.json}"'
         in script
@@ -213,6 +217,81 @@ def test_server_sync_script_supports_custom_runner() -> None:
     assert 'RUNNER_KILL_AFTER_SECONDS="${AQSP_RUNNER_KILL_AFTER_SECONDS:-15}"' in script
     assert "printf 'exit_class=%s\\n' \"$RUNNER_EXIT_CLASS\"" in script
     assert "主链路执行超时，被保护性终止" in script
+
+
+def test_immutable_release_deploy_script_covers_full_server_activation_chain() -> None:
+    script = (PROJECT_ROOT / "scripts" / "deploy_immutable_release.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "git archive --format=tar" in script
+    assert "AQSP_RELEASE_REF" in script
+    assert '"$NPM_BIN" ci' in script
+    assert '"$NPM_BIN" run build' in script
+    assert "check_frontend_audit.py" in script
+    assert '--frontend-dir "$root/frontend"' in script
+    assert "write_release_manifest.py" in script
+    assert '--root "$root"' in script
+    assert "check_release_consistency.py" in script
+    assert "--canonical-link" in script
+    assert "--executable-file scripts/health_vibe_research.sh" in script
+    assert "aqsp-scheduler-current" in script
+    assert "aqsp-scheduler-rollback" in script
+    assert 'systemctl restart "$API_SERVICE"' in script
+    assert 'systemctl restart "$PREVIEW_SERVICE"' in script
+    assert (
+        'TARGET_SERVICE="${AQSP_VIBE_SYSTEMD_TARGET:-aqsp-vibe-research.target}"'
+        in script
+    )
+    assert 'systemctl start "$TARGET_SERVICE"' in script
+    assert '"$TARGET_SERVICE is not active"' in script
+    assert "API cwd drift" in script
+    assert "preview cwd drift" in script
+    assert (
+        "public route acceptance failed; previous release restore was attempted"
+        in script
+    )
+    assert "snapshot_contract" in script
+    assert "selected_date" in script
+    assert "available_dates" in script
+    assert "expected_end" in script
+    assert "latest_trade_date" in script
+    assert "check_variant_results.py" in script
+    assert "变体产物未通过校验；release 已切换" in script
+    assert "previous_holdings_date" not in script
+    assert "technical_evidence" not in script
+    assert "check_runtime_storage.py" in script
+    assert "--apply --json" in script
+    assert "check_scheduler.py" in script
+    assert "AQSP_SCHEDULER_STRICT_SCHEDULE=true" in script
+    assert "stop stale frontend port owner" in script
+    assert "legacy runtime frontend still has a live process" in script
+    assert 'rm -rf -- "$RUNTIME_ROOT/data/vibe-research/frontend"' in script
+    assert 'find "$RELEASES_ROOT" -mindepth 1 -maxdepth 1 -type f -delete' in script
+
+
+def test_immutable_release_deploy_script_has_safe_defaults_and_no_git_clean() -> None:
+    script = (PROJECT_ROOT / "scripts" / "deploy_immutable_release.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'RELEASES_ROOT="${AQSP_RELEASES_ROOT:-/opt/aqsp-releases}"' in script
+    assert (
+        'RUNTIME_DATA_ROOT="${AQSP_RUNTIME_DATA_ROOT:-${RUNTIME_ROOT}/data}"' in script
+    )
+    assert 'SHARED_VENV_DIR="${AQSP_SHARED_VENV_DIR:-/opt/aqsp-vibe-venv}"' in script
+    assert 'SERVICE_USER="${AQSP_VIBE_USER:-aqsp-vibe}"' in script
+    assert 'SERVICE_GROUP="${AQSP_VIBE_GROUP:-${SERVICE_USER}}"' in script
+    assert "prepare_frontend_runtime_cache" in script
+    assert "$root/frontend/node_modules/.vite-temp" in script
+    assert "$root/frontend/node_modules/.vite" in script
+    assert 'chown -R "$SERVICE_USER:$SERVICE_GROUP"' in script
+    assert 'mkdir "$LOCK_FILE"' in script
+    assert "another immutable release deployment is running" in script
+    assert "git clean" not in script
+    assert "rm -rf /opt/aqsp" not in script
+    assert "streamlit" not in script
+    assert "8501" not in script
 
 
 def _init_git_repo(root: Path, *tracked_files: Path) -> None:
@@ -447,6 +526,57 @@ def test_server_sync_classifies_runner_timeout_and_records_execution_evidence(
     assert "resource_killed=false" in result_text
 
 
+def test_server_sync_does_not_misclassify_early_timeout_exit_code(
+    tmp_path: Path,
+) -> None:
+    root, runner = _build_sync_runtime(tmp_path)
+    runner.write_text("#!/usr/bin/env bash\nexit 124\n", encoding="utf-8")
+    runner.chmod(0o755)
+    manifest = _write_overlay_manifest(root, ("runner.sh",))
+    result_path = root / ".state" / "result.env"
+    marker_path = root / "marker.txt"
+
+    result = _run_server_sync(
+        root,
+        runner=runner,
+        result_path=result_path,
+        marker_path=marker_path,
+        extra_env={
+            "AQSP_RUNTIME_OVERLAY_MANIFEST": str(manifest),
+            "AQSP_RUNNER_TIMEOUT_SECONDS": "30",
+        },
+    )
+
+    assert result.returncode == 124
+    result_text = result_path.read_text(encoding="utf-8")
+    assert "status=failed" in result_text
+    assert "exit_class=completed" in result_text
+    assert "timed_out=false" in result_text
+
+
+def test_server_sync_rejects_disabled_or_invalid_timeout(tmp_path: Path) -> None:
+    root, runner = _build_sync_runtime(tmp_path)
+    runner.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    runner.chmod(0o755)
+    manifest = _write_overlay_manifest(root, ("runner.sh",))
+    result_path = root / ".state" / "result.env"
+
+    result = _run_server_sync(
+        root,
+        runner=runner,
+        result_path=result_path,
+        marker_path=root / "marker.txt",
+        extra_env={
+            "AQSP_RUNTIME_OVERLAY_MANIFEST": str(manifest),
+            "AQSP_RUNNER_TIMEOUT_SECONDS": "0",
+        },
+    )
+
+    assert result.returncode == 2
+    assert "AQSP_RUNNER_TIMEOUT_SECONDS 必须是正整数: 0" in result.stdout
+    assert "status=invalid_timeout" in result_path.read_text(encoding="utf-8")
+
+
 def test_intraday_refresh_script_uses_isolated_outputs() -> None:
     script = (PROJECT_ROOT / "scripts" / "intraday_refresh.sh").read_text(
         encoding="utf-8"
@@ -479,6 +609,12 @@ def test_intraday_refresh_script_uses_isolated_outputs() -> None:
         'export AQSP_INTRADAY_FAST_FILL_CACHE="${AQSP_INTRADAY_FAST_FILL_CACHE:-true}"'
         in script
     )
+    assert 'if is_truthy "${AQSP_IMMUTABLE_RELEASE:-false}"; then' in script
+    assert 'REQUIRE_MARKET_HOURS="true"' in script
+    assert (
+        'AGENT_RUNS_PATH="$(resolve_path "${AQSP_AGENT_RUNS_PATH:-data/runtime/agent_runs.jsonl}")"'
+        in script
+    )
     assert 'PRESET_AQSP_INTRADAY_SOURCE="${AQSP_INTRADAY_SOURCE:-}"' in script
     assert (
         'PRESET_AQSP_INTRADAY_MAX_UNIVERSE="${AQSP_INTRADAY_MAX_UNIVERSE:-${AQSP_MAX_UNIVERSE:-}}"'
@@ -509,9 +645,11 @@ def test_intraday_refresh_script_uses_isolated_outputs() -> None:
     assert "${AQSP_SOURCE:-eastmoney}" not in script
     assert 'INTRADAY_MODE="${AQSP_INTRADAY_MODE:-open}"' in script
     assert (
-        'INTRADAY_RUN_TIMEOUT_SECONDS="${AQSP_INTRADAY_RUN_TIMEOUT_SECONDS:-420}"'
+        'INTRADAY_RUN_TIMEOUT_SECONDS="${AQSP_INTRADAY_RUN_TIMEOUT_SECONDS:-240}"'
         in script
     )
+    assert 'INTRADAY_RUN_TIMEOUT_SECONDS="300"' in script
+    assert "AQSP_INTRADAY_ALLOW_LONG_RUNTIME" in script
     assert (
         'timeout --foreground --signal=TERM --kill-after=15s "${INTRADAY_RUN_TIMEOUT_SECONDS}s"'
         in script
@@ -533,9 +671,11 @@ def test_intraday_refresh_script_uses_isolated_outputs() -> None:
     )
     assert "launch_intraday_debate_backfill" in script
     assert "scripts/backfill_intraday_debate.py" in script
+    assert "AQSP_INTRADAY_DEBATE_BACKFILL:-true" in script
     assert "AQSP_INTRADAY_DEBATE_BACKFILL_BACKGROUND:-false" in script
     assert "AQSP_INTRADAY_DEBATE_BACKFILL_FORCE:-true" in script
-    assert "AQSP_INTRADAY_DEBATE_BACKFILL_MAX_CANDIDATES:-5" in script
+    assert "AQSP_INTRADAY_DEBATE_BACKFILL_MAX_CANDIDATES:-3" in script
+    assert "盘中 Agent 候选数超过资源上限，收紧为 3" in script
     assert '"AQSP_ENABLE_DEBATE=true"' in script
     assert "AQSP_INTRADAY_DEBATE_ENABLE_LLM:-false" in script
     assert '"AQSP_DEBATE_ENABLE_LLM=${AQSP_INTRADAY_DEBATE_ENABLE_LLM}"' in script
@@ -556,7 +696,17 @@ def test_intraday_refresh_script_uses_isolated_outputs() -> None:
         'rm -f "$INTRADAY_LEDGER" "$INTRADAY_REPORT" "$INTRADAY_OUTPUT_CSV"'
         not in script
     )
-    assert 'RUNTIME_DATA_ROOT="${AQSP_RUNTIME_DATA_ROOT:-${RUNTIME_ROOT}/data}"' in script
+    assert (
+        'RUNTIME_DATA_ROOT="${AQSP_RUNTIME_DATA_ROOT:-${RUNTIME_ROOT}/data}"' in script
+    )
+    assert (
+        'INTRADAY_CURSOR_PATH="$(resolve_path "${AQSP_INTRADAY_CURSOR_PATH:-${RUNTIME_DATA_ROOT}/runtime/intraday_universe_cursor.json}")"'
+        in script
+    )
+    assert (
+        'INTRADAY_UNIVERSE_CACHE="$(resolve_path "${AQSP_INTRADAY_UNIVERSE_CACHE:-${RUNTIME_DATA_ROOT}/runtime/intraday_live_universe.json}")"'
+        in script
+    )
     assert (
         'LOG_DIR="${AQSP_INTRADAY_LOG_DIR:-${RUNTIME_DATA_ROOT}/logs/intraday}"'
         in script
@@ -739,18 +889,53 @@ def test_news_script_preserves_valid_same_day_report_on_source_failure() -> None
 def test_bt_task_script_exposes_panel_safe_actions() -> None:
     script = (PROJECT_ROOT / "scripts" / "bt_task.sh").read_text(encoding="utf-8")
 
+    assert 'configured="${AQSP_INTRADAY_OUTER_TIMEOUT_SECONDS:-360}"' in script
+    assert '[ "$configured" -gt 420 ]' in script
+    assert 'export AQSP_RUNNER_TIMEOUT_SECONDS="$configured"' in script
+    assert script.count("set_realtime_runner_timeout") == 3
+    assert 'configured="${AQSP_DAILY_OUTER_TIMEOUT_SECONDS:-900}"' in script
+    assert '[ "$configured" -gt 1200 ]' in script
+    assert "set_daily_runner_timeout" in script
+    assert 'configured="${AQSP_DAILY_RESEARCH_OUTER_TIMEOUT_SECONDS:-360}"' in script
+    assert '[ "$configured" -gt 480 ]' in script
+    assert "set_daily_research_runner_timeout" in script
+
     assert "宝塔面板计划任务统一入口" in script
     assert 'ACTION="${1:-}"' in script
     assert 'if [ -z "$ACTION" ]' in script
     assert (
-        "daily|intraday|midday|coldstart|walkforward-gate|monitor|news|status" in script
+        "daily|daily-research|intraday|midday|data-refresh|data-refresh-retry|coldstart|variant-refresh|walkforward-gate|monitor|news|status"
+        in script
     )
     assert "AQSP_RUNNER_TIMEOUT_SECONDS=5400" in script
-    assert "AQSP_MONITOR_TIMEOUT_SECONDS=600" in script
+    assert "AQSP_MONITOR_TIMEOUT_SECONDS=120" in script
+    assert "硬上限 3 分钟" in script
     assert "AQSP_LOCK_STALE_MINUTES=360" in script
     assert "Recommended BT schedule (Asia/Shanghai)" in script
     assert "news      08:35 Mon-Fri trading days only; 09:05 Sat/Sun" in script
     assert "daily     18:00 Mon-Fri" in script
+    assert "data-refresh 15:35 Mon-Fri" in script
+    assert "data-refresh-retry every 10 min from 15:45-19:30 Mon-Fri" in script
+    assert 'run_raw_refresh_or_wait "${AQSP_DATA_REFRESH_BATCHES:-0}"' in script
+    assert 'run_raw_refresh_or_wait "${AQSP_DATA_REFRESH_RETRY_BATCHES:-0}"' in script
+    assert "run_raw_refresh_or_wait()" in script
+    assert '[ "$exit_code" -eq 75 ]' in script
+    assert "数据源尚未发布目标日线" in script
+    assert "latest_completed_trading_day" in script
+    assert '--target-date "$target_day"' in script
+    assert (
+        '--candidate-db "${AQSP_RAW_REBUILD_DB_PATH:-${db_path}.rebuild}.${target_day}"'
+        in script
+    )
+    assert '--batches "$batches"' in script
+    assert script.count("refresh_home_snapshot_after_data_refresh") == 3
+    assert "原始日线批次完成，首页快照已刷新" in script
+    assert "ensure_data_refresh_window()" in script
+    assert "ensure_data_refresh_retry_window()" in script
+    assert "AQSP_DATA_REFRESH_RETRY_WINDOW_START_HM:-1545" in script
+    assert "AQSP_DATA_REFRESH_RETRY_WINDOW_END_HM:-1930" in script
+    assert "data-refresh 允许窗口" in script
+    assert "data-refresh-retry)" in script
     assert "coldstart 19:40 Mon-Fri" in script
     assert "walkforward-gate 22:00 Sat" in script
     assert '"正常跳过/互斥保护"' in script
@@ -784,6 +969,8 @@ def test_bt_task_script_exposes_panel_safe_actions() -> None:
     assert 'export AQSP_GATE_NOTIFY="false"' in script
     assert 'export AQSP_RUN_TASK_ID="midday"' in script
     assert "should_bridge_intraday_to_midday" in script
+    assert "ensure_intraday_dispatch_window" in script
+    assert "不抢占收盘主链锁" in script
     assert "AQSP_INTRADAY_MIDDAY_BRIDGE" in script
     assert "midday-$(date +%Y-%m-%d).done" in script
     assert "scripts/server_sync_and_run.sh" in script
@@ -802,6 +989,17 @@ def test_bt_task_script_exposes_panel_safe_actions() -> None:
     assert 'export AQSP_GATE_NOTIFY="false"' in news_block
     assert "scripts/server_status.sh" in script
     assert "logs/bt" in script
+
+
+def test_simple_server_mode_documents_delayed_data_refresh_task() -> None:
+    guide = (PROJECT_ROOT / "docs" / "simple-server-mode.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "10 条自动任务 + 1 条手动自检命令" in guide
+    assert "AQSP-日线延迟重试" in guide
+    assert "data-refresh-retry" in guide
+    assert "daily-research" in guide
 
 
 def test_bt_task_propagates_intraday_runner_failure_to_cron(
@@ -847,6 +1045,7 @@ def test_bt_task_propagates_intraday_runner_failure_to_cron(
             "AQSP_RUNTIME_OVERLAY_MANIFEST": str(manifest),
             "AQSP_GIT_REMOTE": "origin",
             "AQSP_INTRADAY_MIDDAY_BRIDGE": "false",
+            "AQSP_INTRADAY_ENFORCE_DISPATCH_WINDOW": "false",
         },
         check=False,
         capture_output=True,
@@ -908,12 +1107,19 @@ def test_news_catalysts_script_sends_research_notification() -> None:
     assert "AQSP_NEWS_LLM_TIMEOUT_SECONDS" in script
     assert "AQSP_NEWS_MAX_LLM_REVIEW_EVENTS" in script
     assert "AQSP_NEWS_TASK_TIMEOUT_SECONDS" in script
+    assert "AQSP_NEWS_LOCK_CONFLICT_EXIT_CODE" in script
     assert "AQSP_NEWS_JSON_OUTPUT" in script
     assert '--json-output "$JSON_OUTPUT"' in script
     assert 'MAX_LLM_REVIEW_EVENTS="${AQSP_NEWS_MAX_LLM_REVIEW_EVENTS:-1}"' in script
     assert 'SOURCE_TIMEOUT_SECONDS="${AQSP_NEWS_SOURCE_TIMEOUT_SECONDS:-8}"' in script
-    assert 'TASK_TIMEOUT_SECONDS="${AQSP_NEWS_TASK_TIMEOUT_SECONDS:-300}"' in script
-    assert 'timeout "${TASK_TIMEOUT_SECONDS}"' in script
+    assert 'TASK_TIMEOUT_SECONDS="${AQSP_NEWS_TASK_TIMEOUT_SECONDS:-120}"' in script
+    assert (
+        'LOCK_DIR="${AQSP_NEWS_LOCK_DIR:-${LOCK_BASE_DIR}/news-catalysts.lock}"'
+        in script
+    )
+    assert "消息面任务已在运行，本次正常跳过" in script
+    assert "--kill-after=5s" in script
+    assert 'timeout --signal=TERM --kill-after=5s "${TASK_TIMEOUT_SECONDS}s"' in script
     assert "消息面雷达超时:" in script
     assert "write_failed_report()" in script
     assert 'write_failed_report "消息面雷达命令失败: exit=${NEWS_EXIT}"' in script
@@ -1058,6 +1264,121 @@ def test_news_catalysts_failure_replaces_old_report_and_json(tmp_path: Path) -> 
     assert payload["source_status"] == "failed"
     assert payload["event_status"] == "source_failed"
     assert "exit=23" in payload["warnings"][0]
+
+
+def test_news_catalysts_preserves_same_day_news_from_any_working_directory(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "project"
+    python_bin = project_root / ".venv" / "bin" / "python3"
+    python_bin.parent.mkdir(parents=True)
+    python_bin.write_text(
+        "#!/usr/bin/env bash\n"
+        'if [ "${1:-}" = "-m" ]; then exit 23; fi\n'
+        'exec "$(command -v python3)" "$@"\n',
+        encoding="utf-8",
+    )
+    python_bin.chmod(0o755)
+    report_path = project_root / "reports" / "news_catalysts.md"
+    json_path = project_root / "data" / "runtime" / "news_catalysts_latest.json"
+    report_path.parent.mkdir(parents=True)
+    json_path.parent.mkdir(parents=True)
+    report_path.write_text("CURRENT NEWS REPORT\n", encoding="utf-8")
+    today = date.today().isoformat()
+    json_path.write_text(
+        json.dumps(
+            {
+                "date": today,
+                "source_status": "ok",
+                "event_status": "no_high_impact",
+                "raw_news_count": 1,
+                "events": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        ["bash", str(PROJECT_ROOT / "scripts" / "news_catalysts.sh")],
+        cwd=tmp_path,
+        env={
+            **os.environ,
+            "AQSP_PROJECT_ROOT": str(project_root),
+            "AQSP_NEWS_TASK_TIMEOUT_SECONDS": "5",
+            "AQSP_NEWS_NOTIFY": "false",
+            "PYTHONPATH": f"{PROJECT_ROOT / 'src'}:{PROJECT_ROOT}",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=10,
+    )
+
+    assert result.returncode == 23, result.stdout + result.stderr
+    assert report_path.read_text(encoding="utf-8") == "CURRENT NEWS REPORT\n"
+    assert json.loads(json_path.read_text(encoding="utf-8"))["source_status"] == "ok"
+
+
+def test_news_catalysts_skips_when_another_run_owns_the_lock(tmp_path: Path) -> None:
+    lock_dir = tmp_path / "news-catalysts.lock"
+    lock_dir.mkdir()
+    (lock_dir / "meta.env").write_text(f"LOCK_PID={os.getpid()}\n", encoding="utf-8")
+
+    result = subprocess.run(
+        ["bash", str(PROJECT_ROOT / "scripts" / "news_catalysts.sh")],
+        cwd=PROJECT_ROOT,
+        env={
+            **os.environ,
+            "AQSP_PROJECT_ROOT": str(PROJECT_ROOT),
+            "AQSP_NEWS_LOCK_DIR": str(lock_dir),
+            "AQSP_NEWS_LOG_DIR": str(tmp_path / "logs"),
+            "AQSP_PYTHON": shutil.which("python3") or "python3",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=10,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "消息面任务已在运行，本次正常跳过" in result.stdout
+
+
+def test_news_catalysts_reclaims_lock_when_recorded_pid_has_exited(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "project"
+    scripts_dir = project_root / "scripts"
+    scripts_dir.mkdir(parents=True)
+    shutil.copy2(PROJECT_ROOT / "scripts" / "news_catalysts.sh", scripts_dir)
+    shutil.copy2(PROJECT_ROOT / "scripts" / "runtime_python.sh", scripts_dir)
+    fake_python = tmp_path / "fake-python"
+    fake_python.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    fake_python.chmod(0o755)
+    lock_dir = tmp_path / "news-catalysts.lock"
+    lock_dir.mkdir()
+    (lock_dir / "meta.env").write_text("LOCK_PID=999999\n", encoding="utf-8")
+
+    result = subprocess.run(
+        ["bash", str(scripts_dir / "news_catalysts.sh")],
+        cwd=project_root,
+        env={
+            **os.environ,
+            "AQSP_PROJECT_ROOT": str(project_root),
+            "AQSP_NEWS_LOCK_DIR": str(lock_dir),
+            "AQSP_NEWS_LOG_DIR": str(tmp_path / "logs"),
+            "AQSP_PYTHON": str(fake_python),
+            "AQSP_NEWS_NOTIFY": "false",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=10,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "检测到陈旧消息锁，自动回收 pid=999999" in result.stdout
+    assert not lock_dir.exists()
 
 
 def test_server_status_surfaces_bt_task_logs() -> None:
@@ -1232,6 +1553,60 @@ def test_launchd_daily_wrapper_loads_env_before_daily_run() -> None:
     )
 
 
+def test_launchd_daily_wrapper_has_local_project_root_fallback() -> None:
+    script = (
+        PROJECT_ROOT / "scripts" / "launchd" / "aqsp_daily_run_wrapper.sh"
+    ).read_text(encoding="utf-8")
+
+    assert 'PROJECT_ROOT="${AQSP_PROJECT_ROOT:-$HOME/Documents/AI量化选股}"' in script
+    assert 'echo "AQSP_PROJECT_ROOT does not exist: $PROJECT_ROOT" >&2' in script
+
+
+def test_launchd_daily_wrapper_runs_with_default_project_root(tmp_path: Path) -> None:
+    fake_root = tmp_path / "Documents" / "AI量化选股"
+    fake_script = fake_root / "scripts" / "daily_run.sh"
+    fake_script.parent.mkdir(parents=True)
+    fake_script.write_text(
+        "#!/usr/bin/env bash\n"
+        'printf \'root=%s task=%s\\n\' "$PWD" "$AQSP_RUN_TASK_ID"\n',
+        encoding="utf-8",
+    )
+    fake_script.chmod(0o755)
+    env = os.environ.copy()
+    env.pop("AQSP_PROJECT_ROOT", None)
+    env["HOME"] = str(tmp_path)
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(PROJECT_ROOT / "scripts" / "launchd" / "aqsp_daily_run_wrapper.sh"),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == f"root={fake_root} task=daily"
+
+
+def test_launchd_daily_schedule_runs_inside_daily_window() -> None:
+    with (PROJECT_ROOT / "scripts" / "launchd" / "com.aqsp.daily.plist").open(
+        "rb"
+    ) as handle:
+        plist = plistlib.load(handle)
+
+    schedule = plist["StartCalendarInterval"]
+    assert [(item["Weekday"], item["Hour"], item["Minute"]) for item in schedule] == [
+        (1, 18, 0),
+        (2, 18, 0),
+        (3, 18, 0),
+        (4, 18, 0),
+        (5, 18, 0),
+    ]
+
+
 def test_clear_locks_is_conservative_by_default() -> None:
     script = (PROJECT_ROOT / "scripts" / "clear_locks.sh").read_text(encoding="utf-8")
 
@@ -1280,8 +1655,13 @@ def test_server_monitor_script_has_lock_guard() -> None:
 
     assert "server-monitor.lock" in script
     assert 'LOCK_INFO_FILE="${LOCK_FILE}/meta.env"' in script
-    assert 'MONITOR_TIMEOUT_SECONDS="${AQSP_MONITOR_TIMEOUT_SECONDS:-0}"' in script
-    assert 'timeout --foreground "${MONITOR_TIMEOUT_SECONDS}" "${PYTHON_BIN}"' in script
+    assert 'MONITOR_TIMEOUT_SECONDS="${AQSP_MONITOR_TIMEOUT_SECONDS:-120}"' in script
+    assert "MONITOR_TIMEOUT_MAX_SECONDS=180" in script
+    assert "normalize_monitor_timeout" in script
+    assert (
+        'timeout --foreground --signal=TERM --kill-after=10s "${MONITOR_TIMEOUT_SECONDS}s" "${PYTHON_BIN}"'
+        in script
+    )
     assert "lock_is_stale" in script
     assert "检测到陈旧监控锁，自动回收" in script
     assert "监控执行超时，被保护性终止" in script
@@ -1306,8 +1686,7 @@ def test_coldstart_daily_script_updates_db_then_runs_cli() -> None:
     assert "AQSP_COLDSTART_PRICE_MODE" in script
     assert 'TARGET_DATE="${AQSP_COLDSTART_TARGET_DATE:-}"' in script
     assert 'RUN_AS_OF="$(' in script
-    assert "is_trading_day(today)" in script
-    assert "get_previous_trading_day(today)" in script
+    assert "latest_completed_trading_day" in script
     assert 'log "运行数据日: ${RUN_AS_OF}"' in script
     assert 'COLDSTART_RUNTIME_SOURCE="${AQSP_COLDSTART_SOURCE:-online_first}"' in script
     assert "历史源生成候选" in script
@@ -1326,11 +1705,19 @@ def test_coldstart_daily_script_updates_db_then_runs_cli() -> None:
     assert "AQSP_COLDSTART_BACKFILL_FORCE" in script
     assert "AQSP_COLDSTART_FILL_HISTORY_GAPS" in script
     assert (
-        'COLDSTART_MAX_UNIVERSE="${AQSP_COLDSTART_MAX_UNIVERSE:-${AQSP_MAX_UNIVERSE:-3000}}"'
+        'COLDSTART_SAFE_MAX_UNIVERSE="${AQSP_COLDSTART_SAFE_MAX_UNIVERSE:-600}"'
+        in script
+    )
+    assert (
+        'COLDSTART_MAX_UNIVERSE="${AQSP_COLDSTART_MAX_UNIVERSE:-${AQSP_MAX_UNIVERSE:-$COLDSTART_SAFE_MAX_UNIVERSE}}"'
         in script
     )
     assert '[ "$COLDSTART_MAX_UNIVERSE" -le 0 ]' in script
-    assert 'COLDSTART_MAX_UNIVERSE="3000"' in script
+    assert "AQSP_COLDSTART_ALLOW_HEAVY_UNIVERSE" in script
+    assert (
+        'AQSP_TENCENT_DAILY_FETCH_WORKERS="${AQSP_TENCENT_DAILY_FETCH_WORKERS:-2}"'
+        in script
+    )
     assert (
         'COLDSTART_MIN_TARGET_COVERAGE="${AQSP_COLDSTART_MIN_TARGET_COVERAGE:-3000}"'
         in script
@@ -1376,6 +1763,39 @@ def test_coldstart_daily_script_updates_db_then_runs_cli() -> None:
     assert "今日非交易日，跳过冷启动任务" in script
 
 
+def test_launchd_strategy_wrappers_gate_non_trading_days_before_execution() -> None:
+    cases = (
+        ("aqsp_morning_wrapper.sh", "早盘策略正常跳过", 'log "运行早盘'),
+        ("aqsp_closing_wrapper.sh", "尾盘策略正常跳过", 'log "运行尾盘'),
+    )
+    for filename, skip_message, run_marker in cases:
+        script = (PROJECT_ROOT / "scripts" / "launchd" / filename).read_text(
+            encoding="utf-8"
+        )
+
+        assert "from aqsp.core.time import is_trading_day, today_shanghai" in script
+        assert skip_message in script
+        assert script.index(skip_message) < script.index(run_marker)
+
+
+def test_production_task_entrypoints_force_shanghai_timezone() -> None:
+    scripts = (
+        "bt_task.sh",
+        "daily_pipeline.sh",
+        "daily_run.sh",
+        "coldstart_daily.sh",
+        "intraday_refresh.sh",
+        "midday_refresh.sh",
+        "news_catalysts.sh",
+        "release_task_entrypoint.sh",
+    )
+
+    for filename in scripts:
+        script = (PROJECT_ROOT / "scripts" / filename).read_text(encoding="utf-8")
+        assert 'export TZ="Asia/Shanghai"' in script
+        assert 'TZ="${TZ:-Asia/Shanghai}"' not in script
+
+
 def test_coldstart_daily_continues_when_update_fails_but_target_coverage_is_enough(
     tmp_path: Path,
 ) -> None:
@@ -1395,6 +1815,22 @@ def test_coldstart_daily_continues_when_update_fails_but_target_coverage_is_enou
     cli_args = (tmp_path / "cli-args.txt").read_text(encoding="utf-8")
     assert "--source online_first" in cli_args
     assert "--source sqlite_db" not in cli_args
+
+
+def test_coldstart_daily_caps_legacy_heavy_universe_without_explicit_opt_in(
+    tmp_path: Path,
+) -> None:
+    result = _run_fake_coldstart(
+        tmp_path,
+        coverage="3200",
+        update_exit=0,
+        extra_env={"AQSP_COLDSTART_MAX_UNIVERSE": "3000"},
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "超过安全上限 600，已收紧" in result.stdout
+    cli_args = (tmp_path / "cli-args.txt").read_text(encoding="utf-8")
+    assert "--max-universe 600" in cli_args
 
 
 def test_coldstart_daily_skips_when_signal_days_already_completed(
@@ -1450,7 +1886,7 @@ def test_intraday_bridge_marks_failed_attempt_without_blocking_midday_task() -> 
     assert "午盘桥接失败，今日不再重复桥接" in script
     assert 'touch "$AQSP_MIDDAY_MARKER_FILE"' in script
     assert "12:05 午盘任务仍会独立重试" in script
-    assert '午盘任务未真实执行，不写完成标记；后续定时仍可重试' in script
+    assert "午盘任务未真实执行，不写完成标记；后续定时仍可重试" in script
 
 
 def test_intraday_refresh_default_batch_can_rotate_full_market_in_session() -> None:
@@ -1458,8 +1894,168 @@ def test_intraday_refresh_default_batch_can_rotate_full_market_in_session() -> N
         encoding="utf-8"
     )
 
-    assert 'INTRADAY_BATCH_SIZE="${AQSP_INTRADAY_BATCH_SIZE:-256}"' in script
+    assert 'INTRADAY_BATCH_SIZE="${AQSP_INTRADAY_BATCH_SIZE:-32}"' in script
+    assert 'INTRADAY_BATCH_SIZE="48"' in script
     assert "AQSP_INTRADAY_BATCH_SIZE" in script
+
+
+def test_variant_refresh_runs_after_close_with_bounded_resources() -> None:
+    script = (PROJECT_ROOT / "scripts" / "variant_refresh.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "当前未到北京时间 21:00，跳过变体刷新" in script
+    assert 'export PYTHONPATH="${PROJECT_ROOT}/src:${PROJECT_ROOT}${PYTHONPATH:+:${PYTHONPATH}}"' in script
+    assert "无法确认交易日，拒绝运行变体刷新" in script
+    assert "AQSP_VARIANT_DB:-${AQSP_SQLITE_DB_PATH:-${AQSP_VARIANT_MARKET_DB" in script
+    assert 'MAX_SYMBOLS="${AQSP_VARIANT_MAX_SYMBOLS:-600}"' in script
+    assert "变体股票批次无效(${MAX_SYMBOLS})，使用 600" in script
+    assert 'MAX_RUNTIME_SECONDS="${AQSP_VARIANT_MAX_RUNTIME_SECONDS:-480}"' in script
+    assert 'NICE_LEVEL="${AQSP_VARIANT_NICE_LEVEL:-15}"' in script
+    assert 'PROFILE_BATCH_SIZE="${AQSP_VARIANT_PROFILE_BATCH_SIZE:-6}"' in script
+    assert "MIN_PUBLISHED_VARIANTS=24" in script
+    assert (
+        "MIN_PROFILE_BATCH_SIZE=$(( (MIN_PUBLISHED_VARIANTS + MAX_STAGE_BATCHES - 1) / MAX_STAGE_BATCHES ))"
+        in script
+    )
+    assert (
+        "无法在 ${MAX_STAGE_BATCHES} 段内形成 ${MIN_PUBLISHED_VARIANTS} 个合格变体"
+        in script
+    )
+    assert "--profile-batch-size" in script
+    assert "--status-file" in script
+    assert "--status-only waiting" in script
+    assert "AQSP_VARIANT_REFRESH_STATUS" in script
+    assert 'AQSP_HOME_SNAPSHOT_PATH="${AQSP_HOME_SNAPSHOT_PATH:-${RUNTIME_DATA_ROOT}/runtime/home_dashboard_snapshot.json}"' in script
+    assert 'AQSP_HOME_SNAPSHOT_INDEX_PATH="${AQSP_HOME_SNAPSHOT_INDEX_PATH:-${RUNTIME_DATA_ROOT}/runtime/home_dashboard_snapshot_index.json}"' in script
+    assert 'nice -n "$NICE_LEVEL"' in script
+    assert "AQSP_VARIANT_ALLOW_HEAVY" in script
+    assert "variant-results-refresh.lock" in script
+    assert "refresh_variant_results_from_market_db.py" in script
+    assert "write_home_snapshot.py" in script
+    assert "变体首轮仍在分段构建，首页已更新状态快照" in script
+    assert "refresh_home_snapshot" in script
+    assert "status=$?" in script
+    assert (
+        "变体运行时限 ${MAX_RUNTIME_SECONDS} 秒不足以完成四段发布，提升为 480 秒"
+        in script
+    )
+
+    task_script = (PROJECT_ROOT / "scripts" / "bt_task.sh").read_text(encoding="utf-8")
+    assert (
+        'local configured="${AQSP_VARIANT_OUTER_TIMEOUT_SECONDS:-510}"' in task_script
+    )
+    assert (
+        "变体外层超时 ${configured} 秒不足以覆盖四段发布预算，提升为 510 秒"
+        in task_script
+    )
+    assert 'variant_agent_deadline="${AQSP_AGENT_DEADLINE_SECONDS:-540}"' in task_script
+    assert (
+        'export AQSP_VARIANT_MAX_RUNTIME_SECONDS="${AQSP_VARIANT_MAX_RUNTIME_SECONDS:-480}"'
+        in task_script
+    )
+
+
+def test_bt_optional_heavy_tasks_check_host_capacity_before_starting() -> None:
+    script = (PROJECT_ROOT / "scripts" / "bt_task.sh").read_text(encoding="utf-8")
+
+    assert "resource_gate.py" in script
+    assert "AQSP_HEAVY_MIN_FREE_MEMORY_MB:-0" in script
+    assert "AQSP_HEAVY_MAX_LOAD_PER_CPU" in script
+    assert "AQSP_VARIANT_MIN_FREE_MEMORY_MB:-700" in script
+    assert "AQSP_VARIANT_MAX_LOAD_PER_CPU:-0.50" in script
+    assert "AQSP_DAILY_MIN_FREE_MEMORY_MB:-700" in script
+    assert "AQSP_DAILY_MAX_LOAD_PER_CPU:-0.50" in script
+    assert "gate_optional_heavy_task" in script
+    assert 'HEAVY_SLOT_LOCK_FILE="${LOCK_DIR}/heavy-compute.lock"' in script
+    assert "acquire_optional_heavy_slot" in script
+    assert "printf 'HEAVY_SLOT_PID=%q\\n' \"$$\"" in script
+    assert "optional_heavy_slot_is_stale" in script
+    assert "agent_run_registry.py" in script
+    assert (
+        'AGENT_RUNS_PATH="${AQSP_AGENT_RUNS_PATH:-${RUNTIME_DATA_ROOT}/runtime/agent_runs.jsonl}"'
+        in script
+    )
+    assert 'start_agent_run "${AQSP_AGENT_DEADLINE_SECONDS:-480}"' in script
+    assert 'variant_agent_deadline="${AQSP_AGENT_DEADLINE_SECONDS:-540}"' in script
+    assert "finish_agent_run" in script
+    daily_block = script[
+        script.index("\n    daily)") : script.index("\n    data-refresh)")
+    ]
+    assert "gate_optional_heavy_task" in daily_block
+    assert "acquire_optional_heavy_slot" in daily_block
+    assert "set_daily_runner_timeout" in daily_block
+    research_block = script[
+        script.index("\n    daily-research)") : script.index("\n    data-refresh)")
+    ]
+    assert "gate_optional_heavy_task" in research_block
+    assert "acquire_optional_heavy_slot" in research_block
+    assert "set_daily_research_runner_timeout" in research_block
+    assert 'export AQSP_DAILY_RESEARCH_ONLY="true"' in research_block
+
+
+def test_bt_task_skips_optional_heavy_task_when_shared_slot_is_held(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "runtime"
+    scripts_dir = root / "scripts"
+    scripts_dir.mkdir(parents=True)
+    for filename in ("bt_task.sh", "runtime_python.sh"):
+        shutil.copy2(PROJECT_ROOT / "scripts" / filename, scripts_dir)
+
+    fake_python = tmp_path / "runtime-python"
+    fake_python.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    fake_python.chmod(0o755)
+    lock_dir = root / "data" / ".locks" / "heavy-compute.lock"
+    lock_dir.mkdir(parents=True)
+    metadata = lock_dir / "meta.env"
+    metadata.write_text(
+        "HEAVY_SLOT_PID=%s\nHEAVY_SLOT_RUNNER=bt_task:variant-refresh\n"
+        "HEAVY_SLOT_STARTED_AT=2026-07-27\\ 21:00:00\n" % os.getpid(),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        ["bash", str(scripts_dir / "bt_task.sh"), "coldstart"],
+        cwd=root,
+        env={
+            **os.environ,
+            "AQSP_PROJECT_ROOT": str(root),
+            "AQSP_RUNTIME_DATA_ROOT": str(root / "data"),
+            "AQSP_PYTHON": str(fake_python),
+            "AQSP_IMMUTABLE_RELEASE": "true",
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "重任务槽位已被占用" in result.stdout
+    assert metadata.exists()
+    assert "bt_task:variant-refresh" in metadata.read_text(encoding="utf-8")
+
+
+def test_cron_installer_schedules_variant_refresh_after_coldstart() -> None:
+    script = (PROJECT_ROOT / "scripts" / "install_server_cron.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "AQSP_ENABLE_VARIANT_REFRESH_CRON" in script
+    assert "30 22 * * 1-5" in script
+    assert "bt_task.sh variant-refresh" in script
+
+
+def test_cron_installer_schedules_daily_research_after_raw_data_retry() -> None:
+    script = (PROJECT_ROOT / "scripts" / "install_server_cron.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "AQSP_ENABLE_DAILY_RESEARCH_CRON" in script
+    assert "0,20,40 20-21 * * 1-5" in script
+    assert "0,20 22 * * 1-5" in script
+    assert "bt_task.sh daily-research" in script
 
 
 def test_coldstart_daily_stops_when_update_fails_and_target_coverage_is_too_low(
@@ -1480,14 +2076,19 @@ def test_coldstart_daily_stops_when_update_fails_and_target_coverage_is_too_low(
     assert not (tmp_path / "cli-args.txt").exists()
 
 
-def test_install_coldstart_cron_script_installs_single_daily_job() -> None:
+def test_install_coldstart_cron_script_requires_explicit_migration_and_uses_bt_task() -> (
+    None
+):
     script = (PROJECT_ROOT / "scripts" / "install_coldstart_cron.sh").read_text(
         encoding="utf-8"
     )
 
     assert "AQSP_COLDSTART_CRON_SCHEDULE" in script
-    assert "30 17 * * 1-5" in script
-    assert "/scripts/coldstart_daily.sh" in script
+    assert "40 19 * * 1-5" in script
+    assert "AQSP_INSTALL_SYSTEM_CRON" in script
+    assert "system cron install skipped" in script
+    assert "printf '%s /bin/bash %s coldstart >> %s 2>&1\\n'" in script
+    assert "/scripts/coldstart_daily\\.sh" in script
 
 
 def test_production_walkforward_gate_wrapper_suggests_gap_filling_raw_backfill() -> (
@@ -1533,6 +2134,25 @@ def test_deploy_setup_env_template_matches_production_readiness() -> None:
     assert "AQSP_SOURCE=sqlite_db" in script
     assert "AQSP_ALLOW_ONLINE_FALLBACK=false" in script
     assert "AQSP_SQLITE_DB_PATH=/opt/market-data/astocks_raw.db" in script
+
+
+def test_legacy_setup_does_not_overwrite_existing_git_checkout() -> None:
+    script = (PROJECT_ROOT / "deploy" / "setup.sh").read_text(encoding="utf-8")
+
+    assert "setup.sh 不再覆盖或清理生产 checkout" in script
+    assert "scripts/deploy_immutable_release.sh" in script
+    assert 'git reset --hard "origin/${GIT_BRANCH}"' not in script
+    assert "git clean -fd" not in script
+
+
+def test_daily_pipeline_requires_explicit_legacy_dashboard_sync() -> None:
+    script = (PROJECT_ROOT / "scripts" / "daily_pipeline.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "AQSP_ALLOW_LEGACY_DASHBOARD_DEPLOY" in script
+    assert "不是生产公网发布" in script
+    assert "生产只允许不可变 release + React/FastAPI" in script
 
 
 def test_env_example_defaults_match_production_readiness() -> None:
@@ -1608,3 +2228,66 @@ def test_parallel_entry_scripts_pass_bash_syntax_check() -> None:
             check=False,
         )
         assert result.returncode == 0, f"{path}: {result.stderr}"
+
+
+def test_immutable_deploy_script_requires_full_post_deploy_acceptance() -> None:
+    script = (PROJECT_ROOT / "scripts" / "deploy_immutable_release.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'git rev-parse "refs/remotes/${REMOTE}/${BRANCH}^{commit}"' in script
+    assert "headless_dashboard_check.py" in script
+    assert 'PYTHONPATH="$RELEASE_DIR/src${PYTHONPATH:+:$PYTHONPATH}"' in script
+    assert script.count('PYTHONPATH="$RELEASE_DIR/src${PYTHONPATH:+:$PYTHONPATH}"') == 3
+    assert "--mode raw" in script
+    assert "--require-browser" not in script
+    assert "check_variant_results.py" in script
+    assert "--min-variants 24" in script
+    assert "--min-symbols 600" in script
+    assert "AQSP_DEPLOY_EXPECTED_VARIANT_END" in script
+    assert 'VERIFY_LEVEL="partial"' in script
+    assert "变体产物未通过校验；release 已切换，但本次部署未验收" in script
+    assert "immutable release prepared with skipped checks" in script
+    assert "immutable release deployment verified" in script
+    variants_check = script[
+        script.index('--url "${CHECK_URL%/}/variants"') : script.index(
+            "for legacy_path in /paper-research /intel"
+        )
+    ]
+    assert '--health-url "${CHECK_URL%/}/api/health"' in variants_check
+
+    verified_index = script.index("immutable release deployment verified")
+    skipped_index = script.index("immutable release prepared with skipped checks")
+    assert verified_index < skipped_index
+
+
+def test_immutable_deploy_preflights_scheduler_before_switching_release() -> None:
+    script = (PROJECT_ROOT / "scripts" / "deploy_immutable_release.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert script.index('run_scheduler_check "$RELEASE_DIR"') < script.index(
+        'switch_links "$RELEASE_DIR"'
+    )
+
+
+def test_vibe_systemd_installer_binds_services_to_canonical_release_when_available() -> (
+    None
+):
+    script = (PROJECT_ROOT / "scripts" / "install_vibe_research_systemd.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "CANONICAL_RELEASE_ROOT" in script
+    assert "SERVICE_PROJECT_ROOT" in script
+    assert 'SERVICE_PROJECT_ROOT="$CANONICAL_RELEASE_ROOT"' in script
+    assert 'PROJECT_ROOT_ESCAPED="$(escape_sed "$SERVICE_PROJECT_ROOT")"' in script
+
+
+def test_deployment_closure_gate_is_documented_as_required() -> None:
+    doc = (PROJECT_ROOT / "docs" / "agent-operating-boundaries.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "scripts/check_deployment_closure.py" in doc
+    assert "未通过时，不允许" in doc

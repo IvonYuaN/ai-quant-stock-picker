@@ -1530,3 +1530,205 @@ def test_debate_coordinator_deadline_reports_block_without_changing_score(
     assert result.task_id == "intraday"
     assert result.heartbeat_count >= 1
     assert heartbeats
+
+
+def test_audit_debate_quality_rejects_missing_falsifiable_condition() -> None:
+    """辩论结论缺少可证伪条件时审计应阻断。"""
+    pick = _make_pick()
+    result = AShareDebateCoordinator(
+        max_rounds=2,
+        roles=(
+            AgentRole.BULL,
+            AgentRole.BEAR,
+            AgentRole.RISK_CONTROL,
+            AgentRole.SECTOR_LEADER,
+            AgentRole.CROSS_MARKET,
+            AgentRole.POLICY_SENSITIVE,
+        ),
+    ).run_debate(pick, pd.DataFrame({"close": [100.0, 101.0, 102.0]}))
+
+    # 清除所有可证伪条件标记
+    cleaned_rounds = []
+    for rd in result.rounds:
+        cleaned_opinions = []
+        for op in rd.opinions:
+            cleaned_opinions.append(
+                AgentOpinion(
+                    agent_id=op.agent_id,
+                    role=op.role,
+                    stance=op.stance,
+                    confidence=op.confidence,
+                    arguments=["趋势延续"],
+                    risk_factors=["波动风险"],
+                    counterarguments=list(op.counterarguments),
+                    peer_reviewed_roles=list(op.peer_reviewed_roles),
+                    rebuttal_records=list(op.rebuttal_records),
+                )
+            )
+        cleaned_rounds.append(
+            DebateRound(round_num=rd.round_num, opinions=cleaned_opinions)
+        )
+    result.rounds = tuple(cleaned_rounds)
+    result.falsifiable_conditions = ()
+    result.pending_confirmations = ()
+    result.market_context_lines = ()
+
+    audit = audit_debate_quality(result, candidate=pick)
+    assert not audit.passed
+    assert "missing_falsifiable_condition" in audit.issues
+
+
+def test_audit_debate_quality_rejects_duplicate_role_in_same_round() -> None:
+    """同一轮内出现重复角色时审计应阻断。"""
+    pick = _make_pick()
+    result = DebateResult(
+        debate_id="dup-role",
+        symbol=pick.symbol,
+        name=pick.name,
+        original_score=pick.score,
+        rating="watch",
+        deterministic_score=pick.score,
+        rounds=[
+            DebateRound(
+                round_num=1,
+                opinions=[
+                    AgentOpinion(
+                        agent_id="bull-1",
+                        role=AgentRole.BULL,
+                        stance="bullish",
+                        confidence=0.7,
+                        arguments=["放量突破"],
+                    ),
+                    AgentOpinion(
+                        agent_id="bull-2",
+                        role=AgentRole.BULL,
+                        stance="bullish",
+                        confidence=0.6,
+                        arguments=["趋势确认"],
+                    ),
+                    AgentOpinion(
+                        agent_id="bear-1",
+                        role=AgentRole.BEAR,
+                        stance="bearish",
+                        confidence=0.6,
+                        arguments=["估值偏高"],
+                    ),
+                ],
+            ),
+            DebateRound(
+                round_num=2,
+                opinions=[
+                    AgentOpinion(
+                        agent_id="bull-1",
+                        role=AgentRole.BULL,
+                        stance="bullish",
+                        confidence=0.7,
+                        arguments=["量价配合"],
+                        counterarguments=["估值偏高但增速可消化"],
+                        peer_reviewed_roles=[AgentRole.BEAR],
+                        rebuttal_records=[
+                            RebuttalRecord(
+                                challenged_role=AgentRole.BEAR,
+                                challenged_claim="估值偏高",
+                                rebuttal_reason="增速可消化估值",
+                            )
+                        ],
+                    ),
+                    AgentOpinion(
+                        agent_id="bear-1",
+                        role=AgentRole.BEAR,
+                        stance="bearish",
+                        confidence=0.6,
+                        arguments=["需观察持续性"],
+                        counterarguments=["突破有效"],
+                        peer_reviewed_roles=[AgentRole.BULL],
+                    ),
+                ],
+            ),
+        ],
+        final_consensus="bullish",
+        final_vote={
+            AgentRole.BULL.value: "bullish",
+            AgentRole.BEAR.value: "bearish",
+        },
+        next_trigger="若跌破10日均线则失效",
+        falsifiable_conditions=("若跌破10日均线则失效",),
+    )
+
+    audit = audit_debate_quality(
+        result,
+        candidate=pick,
+        expected_roles=(AgentRole.BULL, AgentRole.BEAR),
+    )
+    assert not audit.passed
+    assert "duplicate_role" in audit.issues
+
+
+def test_audit_debate_quality_rejects_invalid_round_sequence() -> None:
+    """轮次编号不连续(跳号)时审计应阻断。"""
+    pick = _make_pick()
+    result = DebateResult(
+        debate_id="skip-round",
+        symbol=pick.symbol,
+        name=pick.name,
+        original_score=pick.score,
+        rating="watch",
+        deterministic_score=pick.score,
+        rounds=[
+            DebateRound(
+                round_num=1,
+                opinions=[
+                    AgentOpinion(
+                        agent_id="bull-1",
+                        role=AgentRole.BULL,
+                        stance="bullish",
+                        confidence=0.7,
+                        arguments=["放量突破"],
+                    ),
+                    AgentOpinion(
+                        agent_id="bear-1",
+                        role=AgentRole.BEAR,
+                        stance="bearish",
+                        confidence=0.6,
+                        arguments=["估值偏高"],
+                    ),
+                ],
+            ),
+            DebateRound(
+                round_num=3,
+                opinions=[
+                    AgentOpinion(
+                        agent_id="bull-1",
+                        role=AgentRole.BULL,
+                        stance="bullish",
+                        confidence=0.7,
+                        arguments=["量价配合"],
+                        counterarguments=["估值偏高但增速可消化"],
+                        peer_reviewed_roles=[AgentRole.BEAR],
+                        rebuttal_records=[
+                            RebuttalRecord(
+                                challenged_role=AgentRole.BEAR,
+                                challenged_claim="估值偏高",
+                                rebuttal_reason="增速可消化估值",
+                            )
+                        ],
+                    ),
+                ],
+            ),
+        ],
+        final_consensus="bullish",
+        final_vote={
+            AgentRole.BULL.value: "bullish",
+            AgentRole.BEAR.value: "bearish",
+        },
+        next_trigger="若跌破10日均线则失效",
+        falsifiable_conditions=("若跌破10日均线则失效",),
+    )
+
+    audit = audit_debate_quality(
+        result,
+        candidate=pick,
+        expected_roles=(AgentRole.BULL, AgentRole.BEAR),
+    )
+    assert not audit.passed
+    assert "invalid_round_sequence" in audit.issues

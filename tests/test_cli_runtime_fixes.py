@@ -201,7 +201,9 @@ def test_special_strategy_ledger_guard_requires_fresh_data(monkeypatch) -> None:
     import aqsp.cli as cli_mod
 
     monkeypatch.setattr("aqsp.core.time.is_trading_day", lambda _day: True)
-    monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 26))
+    monkeypatch.setattr(
+        "aqsp.cli_intraday_helpers.today_shanghai", lambda: date(2026, 6, 26)
+    )
 
     allowed, reason = cli_mod._special_strategy_ledger_write_allowed(
         {"600000": _fresh_frame("2026-06-20")},
@@ -520,8 +522,7 @@ def test_load_runtime_market_context_catalyst_report_reuses_preview_report(
     ]
 
     monkeypatch.setattr(
-        cli_mod,
-        "_build_runtime_catalyst_report",
+        "aqsp.cli_runtime_catalyst_helpers._build_runtime_catalyst_report",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             AssertionError("should reuse preview report")
         ),
@@ -551,8 +552,7 @@ def test_load_runtime_market_context_catalyst_report_refetches_when_preview_is_i
         return "rebuilt-report"
 
     monkeypatch.setattr(
-        cli_mod,
-        "_build_runtime_catalyst_report",
+        "aqsp.cli_runtime_catalyst_helpers._build_runtime_catalyst_report",
         fake_build_runtime_catalyst_report,
     )
     picks = [
@@ -848,8 +848,7 @@ def test_fetch_special_strategy_frames_keeps_daily_when_intraday_overlay_is_empt
     }
 
     monkeypatch.setattr(
-        cli_mod,
-        "_fetch_frames_for_cli_with_metadata",
+        "aqsp.cli_intraday_helpers._fetch_frames_for_cli_with_metadata",
         lambda *_args, **_kwargs: (frames, "eastmoney"),
     )
 
@@ -866,8 +865,12 @@ def test_fetch_special_strategy_frames_keeps_daily_when_intraday_overlay_is_empt
                 complete=False,
             )
 
-    monkeypatch.setattr(cli_mod, "IntradayService", FakeIntradayService)
-    monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 26))
+    monkeypatch.setattr(
+        "aqsp.cli_intraday_helpers.IntradayService", FakeIntradayService
+    )
+    monkeypatch.setattr(
+        "aqsp.cli_intraday_helpers.today_shanghai", lambda: date(2026, 6, 26)
+    )
 
     result, actual_source = cli_mod._fetch_special_strategy_frames(
         "eastmoney",
@@ -878,6 +881,148 @@ def test_fetch_special_strategy_frames_keeps_daily_when_intraday_overlay_is_empt
     assert set(result) == {"600000", "000300"}
     assert actual_source == "eastmoney"
     assert result["600000"].attrs["intraday_overlay_coverage"]["status"] == "partial"
+
+
+def test_fetch_special_strategy_frames_uses_sqlite_base_then_realtime_overlay(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import aqsp.cli as cli_mod
+
+    base = {
+        "600000": _fresh_frame("2026-06-25"),
+        "000300": _fresh_frame("2026-06-25"),
+    }
+    overlay_frame = _fresh_frame("2026-06-26")
+    overlay_frame.attrs.update(
+        {
+            "source_name": "tencent",
+            "source": "tencent",
+            "workload": "live_short",
+            "fetched_at": "2026-06-26T10:00:00+08:00",
+            "timestamp_source": "bar_time",
+            "freshness": "fresh",
+        }
+    )
+    monkeypatch.setattr(
+        "aqsp.cli_intraday_helpers._fetch_frames_for_cli_with_metadata",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            DataError("online unavailable")
+        ),
+    )
+    monkeypatch.setattr(
+        "aqsp.cli_intraday_helpers._fetch_intraday_historical_base",
+        lambda *_args, **_kwargs: base,
+    )
+    monkeypatch.setattr(
+        "aqsp.cli_intraday_helpers.today_shanghai", lambda: date(2026, 6, 26)
+    )
+
+    class FakeIntradayService:
+        def __init__(self, _source) -> None:
+            pass
+
+        def merge_intraday_bar_into_daily_with_coverage(self, *_args, **_kwargs):
+            return SimpleNamespace(
+                frames={"600000": overlay_frame},
+                requested_symbols=("600000", "000300"),
+                covered_symbols=("600000",),
+                missing_symbols=("000300",),
+                complete=False,
+            )
+
+    monkeypatch.setattr(
+        "aqsp.cli_intraday_helpers.IntradayService", FakeIntradayService
+    )
+
+    result, actual_source = cli_mod._fetch_special_strategy_frames(
+        "online_first", ["600000"], benchmark_symbol="000300"
+    )
+
+    assert result["600000"] is overlay_frame
+    assert result["000300"] is base["000300"]
+    assert actual_source == "tencent"
+    assert result["000300"].attrs["intraday_overlay_coverage"]["missing_symbols"] == (
+        "000300",
+    )
+
+
+def test_fetch_intraday_historical_base_ends_at_previous_trading_day(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import aqsp.cli as cli_mod
+
+    captured: dict[str, object] = {}
+    frame = _fresh_frame("2026-06-25")
+    monkeypatch.setattr(
+        "aqsp.cli_intraday_helpers._build_sqlite_db_source", lambda **_kwargs: object()
+    )
+
+    def fake_fetch(source, symbols, **kwargs):
+        captured.update({"source": source, "symbols": symbols, **kwargs})
+        return {"600000": frame}
+
+    monkeypatch.setattr("aqsp.cli_intraday_helpers.fetch_with_source", fake_fetch)
+    monkeypatch.setattr(
+        "aqsp.cli_intraday_helpers.get_previous_trading_day",
+        lambda day: date(2026, 6, 25),
+    )
+    monkeypatch.setattr(
+        "aqsp.cli_intraday_helpers.now_shanghai",
+        lambda: datetime.fromisoformat("2026-06-26T10:00:00+08:00"),
+    )
+
+    result = cli_mod._fetch_intraday_historical_base(
+        ["600000"],
+        benchmark_symbol="000300",
+        days=250,
+        target_day=date(2026, 6, 26),
+    )
+
+    assert captured["end_date"] == date(2026, 6, 25)
+    assert result["600000"].attrs["source_name"] == "sqlite_db"
+    assert result["600000"].attrs["workload"] == "historical_base"
+
+
+def test_ensure_pick_technical_metrics_fills_missing_values_from_current_frame() -> (
+    None
+):
+    import aqsp.cli as cli_mod
+    from aqsp.core.types import PickResult
+
+    dates = pd.date_range("2026-05-01", periods=30, freq="B").strftime("%Y-%m-%d")
+    close = pd.Series(range(10, 40), dtype=float)
+    frame = pd.DataFrame(
+        {
+            "date": dates,
+            "symbol": ["600000"] * len(dates),
+            "open": close - 0.2,
+            "high": close + 0.5,
+            "low": close - 0.5,
+            "close": close,
+            "volume": [1_000 + index * 10 for index in range(len(dates))],
+            "amount": close * 100_000,
+        }
+    )
+    pick = PickResult(
+        symbol="600000",
+        name="测试股份",
+        date="2026-06-11",
+        close=39.0,
+        score=80.0,
+        rating="buy_candidate",
+        entry_type="next_open",
+        ideal_buy=39.0,
+        stop_loss=37.0,
+        take_profit=43.0,
+        position="watch",
+        metrics={"volume_ratio": 9.99},
+    )
+
+    result = cli_mod._ensure_pick_technical_metrics([pick], {"600000": frame})[0]
+
+    assert result.metrics["volume_ratio"] == 9.99
+    assert pd.notna(result.metrics["macd_hist"])
+    assert pd.notna(result.metrics["kdj_j"])
 
 
 def test_intraday_actual_source_uses_current_overlay_provenance() -> None:
@@ -904,8 +1049,7 @@ def test_fetch_special_strategy_frames_blocks_historical_only_live_short_source(
     import aqsp.cli as cli_mod
 
     monkeypatch.setattr(
-        cli_mod,
-        "_fetch_frames_for_cli_with_metadata",
+        "aqsp.cli._fetch_frames_for_cli_with_metadata",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             AssertionError("should not fetch historical-only live_short source")
         ),
@@ -1166,12 +1310,15 @@ def test_cross_market_context_marks_negative_evidence_as_risk_review() -> None:
 
 def test_snapshot_round_trip_keeps_candidate_review_priority(tmp_path: Path) -> None:
     from aqsp.core.types import PickResult
+    from aqsp.core.time import now_shanghai
     from aqsp.portfolio.snapshot import load_snapshot, save_snapshot
+
+    snapshot_date = now_shanghai().date().isoformat()
 
     pick = PickResult(
         symbol="300750",
         name="宁德时代",
-        date="2026-07-10",
+        date=snapshot_date,
         close=180.0,
         score=73.5,
         rating="watch",
@@ -1183,9 +1330,9 @@ def test_snapshot_round_trip_keeps_candidate_review_priority(tmp_path: Path) -> 
         metrics={"candidate_review_priority": "优先复核"},
     )
     path = tmp_path / "snapshots.jsonl"
-    save_snapshot([pick], snapshot_path=str(path), date="2026-07-10")
+    save_snapshot([pick], snapshot_path=str(path), date=snapshot_date)
 
-    loaded = load_snapshot("2026-07-10", snapshot_path=str(path))
+    loaded = load_snapshot(snapshot_date, snapshot_path=str(path))
     assert loaded is not None
     assert loaded[0].candidate_review_priority == "优先复核"
 
@@ -1221,16 +1368,14 @@ def test_fetch_special_strategy_frames_blocks_history_actual_source_after_fallba
     import aqsp.cli as cli_mod
 
     monkeypatch.setattr(
-        cli_mod,
-        "_fetch_frames_for_cli_with_metadata",
+        "aqsp.cli_intraday_helpers._fetch_frames_for_cli_with_metadata",
         lambda *_args, **_kwargs: (
             {"600000": _fresh_frame("2026-06-26")},
             "tdx_vipdoc",
         ),
     )
     monkeypatch.setattr(
-        cli_mod,
-        "_get_source",
+        "aqsp.cli_intraday_helpers._get_source",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             AssertionError("should not build intraday service for historical fallback")
         ),
@@ -1258,8 +1403,7 @@ def test_special_strategy_runtime_ready_requires_enabled_and_regime(
         regime_required = ("stable_bull",)
 
     monkeypatch.setattr(
-        cli_mod,
-        "_detect_runtime_regime",
+        "aqsp.cli_intraday_helpers._detect_runtime_regime",
         lambda *_args, **_kwargs: "stable_bear",
     )
 
@@ -1286,8 +1430,7 @@ def test_special_strategy_runtime_ready_blocks_disabled_threshold(monkeypatch) -
         regime_required = ()
 
     monkeypatch.setattr(
-        cli_mod,
-        "_detect_runtime_regime",
+        "aqsp.cli_intraday_helpers._detect_runtime_regime",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             AssertionError("should not detect regime")
         ),
@@ -1412,8 +1555,7 @@ def test_run_scheduled_intraday_merges_today_intraday_before_freshness(
     monkeypatch.setenv("AQSP_RUN_TASK_ID", "intraday")
     monkeypatch.setattr(cli_mod, "_resolve_run_symbols", lambda *_, **__: ["600519"])
     monkeypatch.setattr(
-        cli_mod,
-        "_fetch_frames_for_cli_with_metadata",
+        "aqsp.cli._fetch_frames_for_cli_with_metadata",
         lambda *_, **__: (_ for _ in ()).throw(
             AssertionError("intraday run must use merged intraday frames")
         ),
@@ -1479,8 +1621,7 @@ def test_run_scheduled_live_short_task_requires_intraday_overlay(
     monkeypatch.setenv("AQSP_RUN_TASK_ID", "live_short")
     monkeypatch.setattr(cli_mod, "_resolve_run_symbols", lambda *_, **__: ["600519"])
     monkeypatch.setattr(
-        cli_mod,
-        "_fetch_frames_for_cli_with_metadata",
+        "aqsp.cli._fetch_frames_for_cli_with_metadata",
         lambda *_, **__: (_ for _ in ()).throw(
             AssertionError("live_short task must use intraday overlay")
         ),
@@ -1498,7 +1639,7 @@ def test_run_scheduled_live_short_task_requires_intraday_overlay(
         raise RuntimeError("stop after live_short overlay")
 
     monkeypatch.setattr(cli_mod, "_fetch_special_strategy_frames", fake_fetch_special)
-    monkeypatch.setattr(cli_mod, "assert_fresh_data", fake_assert_fresh_data)
+    monkeypatch.setattr("aqsp.cli.assert_fresh_data", fake_assert_fresh_data)
 
     args = Namespace(
         mode="open",
@@ -1587,8 +1728,7 @@ def test_run_scheduled_daily_blocks_history_actual_source_after_fallback(
         lambda *_args, **_kwargs: ["600519"],
     )
     monkeypatch.setattr(
-        cli_mod,
-        "_fetch_frames_for_cli_with_metadata",
+        "aqsp.cli._fetch_frames_for_cli_with_metadata",
         lambda *_args, **_kwargs: (
             {"600519": _fresh_frame("2026-06-26")},
             "tdx_vipdoc",
@@ -1650,8 +1790,7 @@ def test_run_screen_blocks_history_only_source_before_fetch(
     import aqsp.cli as cli_mod
 
     monkeypatch.setattr(
-        cli_mod,
-        "_fetch_frames_for_cli_with_metadata",
+        "aqsp.cli._fetch_frames_for_cli_with_metadata",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             AssertionError("should not fetch frames for blocked source")
         ),
@@ -1743,8 +1882,7 @@ def test_run_screen_blocks_history_actual_source_after_fallback(
     import aqsp.cli as cli_mod
 
     monkeypatch.setattr(
-        cli_mod,
-        "_fetch_frames_for_cli_with_metadata",
+        "aqsp.cli_intraday_helpers._fetch_frames_for_cli_with_metadata",
         lambda *_args, **_kwargs: (
             {"600519": _fresh_frame("2026-06-26")},
             "tdx_vipdoc",
@@ -1968,7 +2106,9 @@ def test_run_scheduled_skips_runtime_chain_on_non_trading_day(
 ) -> None:
     import aqsp.cli as cli_mod
 
-    monkeypatch.setattr(cli_mod, "today_shanghai", lambda: datetime(2026, 6, 19).date())
+    monkeypatch.setattr(
+        "aqsp.cli_intraday_helpers.today_shanghai", lambda: datetime(2026, 6, 19).date()
+    )
     monkeypatch.setattr("aqsp.core.time.is_trading_day", lambda _day: False)
     monkeypatch.setattr(
         cli_mod,
@@ -1985,8 +2125,7 @@ def test_run_scheduled_skips_runtime_chain_on_non_trading_day(
         ),
     )
     monkeypatch.setattr(
-        cli_mod,
-        "notify_markdown",
+        "aqsp.cli_notify_helpers.notify_markdown",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             AssertionError("non-trading day must not notify")
         ),
@@ -2105,8 +2244,7 @@ def test_run_scheduled_as_of_controls_universe_and_fetch_end_date(
 
     monkeypatch.setattr(cli_mod, "_resolve_run_symbols", fake_resolve_run_symbols)
     monkeypatch.setattr(
-        cli_mod,
-        "_fetch_frames_for_cli_with_metadata",
+        "aqsp.cli._fetch_frames_for_cli_with_metadata",
         fake_fetch_frames_for_cli_with_metadata,
     )
 
@@ -2155,8 +2293,7 @@ def test_run_scheduled_live_short_caps_env_lag_before_freshness(
     monkeypatch.setenv("AQSP_MAX_DATA_LAG_DAYS", "3")
     monkeypatch.setattr(cli_mod, "_resolve_run_symbols", lambda *_, **__: ["600519"])
     monkeypatch.setattr(
-        cli_mod,
-        "_fetch_frames_for_cli_with_metadata",
+        "aqsp.cli._fetch_frames_for_cli_with_metadata",
         lambda *_, **__: (frames, "sina"),
     )
 
@@ -2165,7 +2302,7 @@ def test_run_scheduled_live_short_caps_env_lag_before_freshness(
         seen["workload"] = kwargs.get("workload")
         raise RuntimeError("stop after freshness")
 
-    monkeypatch.setattr(cli_mod, "assert_fresh_data", fake_assert_fresh_data)
+    monkeypatch.setattr("aqsp.cli.assert_fresh_data", fake_assert_fresh_data)
 
     args = Namespace(
         mode="close",
@@ -2209,8 +2346,7 @@ def test_run_scheduled_as_of_keeps_configured_lag_for_history(
     monkeypatch.setenv("AQSP_MAX_DATA_LAG_DAYS", "3")
     monkeypatch.setattr(cli_mod, "_resolve_run_symbols", lambda *_, **__: ["600519"])
     monkeypatch.setattr(
-        cli_mod,
-        "_fetch_frames_for_cli_with_metadata",
+        "aqsp.cli._fetch_frames_for_cli_with_metadata",
         lambda *_, **__: (frames, "sqlite_db"),
     )
 
@@ -2219,7 +2355,7 @@ def test_run_scheduled_as_of_keeps_configured_lag_for_history(
         seen["workload"] = kwargs.get("workload")
         raise RuntimeError("stop after freshness")
 
-    monkeypatch.setattr(cli_mod, "assert_fresh_data", fake_assert_fresh_data)
+    monkeypatch.setattr("aqsp.cli.assert_fresh_data", fake_assert_fresh_data)
 
     args = Namespace(
         mode="close",
@@ -2262,8 +2398,7 @@ def test_run_screen_live_short_caps_env_lag_before_freshness(
 
     monkeypatch.setenv("AQSP_MAX_DATA_LAG_DAYS", "3")
     monkeypatch.setattr(
-        cli_mod,
-        "_fetch_frames_for_cli_with_metadata",
+        "aqsp.cli._fetch_frames_for_cli_with_metadata",
         lambda *_, **__: (frames, "sina"),
     )
     monkeypatch.setattr(
@@ -2277,7 +2412,7 @@ def test_run_screen_live_short_caps_env_lag_before_freshness(
         seen["workload"] = kwargs.get("workload")
         raise RuntimeError("stop after freshness")
 
-    monkeypatch.setattr(cli_mod, "assert_fresh_data", fake_assert_fresh_data)
+    monkeypatch.setattr("aqsp.cli.assert_fresh_data", fake_assert_fresh_data)
 
     args = Namespace(
         mode="close",
@@ -2309,8 +2444,7 @@ def test_run_screen_open_live_short_requires_intraday_overlay(
     seen: dict[str, object] = {}
 
     monkeypatch.setattr(
-        cli_mod,
-        "_fetch_frames_for_cli_with_metadata",
+        "aqsp.cli._fetch_frames_for_cli_with_metadata",
         lambda *_, **__: (_ for _ in ()).throw(
             AssertionError("open live_short screen must use intraday overlay")
         ),
@@ -2328,7 +2462,7 @@ def test_run_screen_open_live_short_requires_intraday_overlay(
         raise RuntimeError("stop after screen overlay")
 
     monkeypatch.setattr(cli_mod, "_fetch_special_strategy_frames", fake_fetch_special)
-    monkeypatch.setattr(cli_mod, "assert_fresh_data", fake_assert_fresh_data)
+    monkeypatch.setattr("aqsp.cli.assert_fresh_data", fake_assert_fresh_data)
 
     args = Namespace(
         mode="open",
@@ -2395,10 +2529,9 @@ def test_run_screen_injects_threshold_screening_config(
     monkeypatch.setattr(
         cli_mod, "_resolve_run_symbols", lambda *_args, **_kwargs: ["600519"]
     )
-    monkeypatch.setattr(cli_mod, "latest_trade_date", lambda *_args: "2026-06-22")
+    monkeypatch.setattr("aqsp.cli.latest_trade_date", lambda *_args: "2026-06-22")
     monkeypatch.setattr(
-        cli_mod,
-        "assert_fresh_data",
+        "aqsp.cli.assert_fresh_data",
         lambda *_args, **_kwargs: date(2026, 6, 22),
     )
     monkeypatch.setattr(cli_mod, "_runtime_data_lag_days", lambda *_args: 0)
@@ -2413,8 +2546,7 @@ def test_run_screen_injects_threshold_screening_config(
         lambda *_args, **_kwargs: ("healthy", "ok", False),
     )
     monkeypatch.setattr(
-        cli_mod,
-        "_detect_runtime_regime",
+        "aqsp.cli._detect_runtime_regime",
         lambda *_args, **_kwargs: "stable_bull",
     )
     monkeypatch.setattr(
@@ -2553,13 +2685,11 @@ def test_run_scheduled_composite_rescore_updates_frozen_pick_results(
         cli_mod, "_resolve_run_symbols", lambda *args, **kwargs: ["600519", "000001"]
     )
     monkeypatch.setattr(
-        cli_mod,
-        "_fetch_frames_for_cli_with_metadata",
+        "aqsp.cli._fetch_frames_for_cli_with_metadata",
         lambda *args, **kwargs: (frames, "eastmoney"),
     )
     monkeypatch.setattr(
-        cli_mod,
-        "assert_fresh_data",
+        "aqsp.cli.assert_fresh_data",
         lambda *_args, **_kwargs: datetime.fromisoformat(
             "2026-06-15T15:00:00+08:00"
         ).date(),
@@ -2588,7 +2718,9 @@ def test_run_scheduled_composite_rescore_updates_frozen_pick_results(
         "aqsp.data.freshness.check_freshness", lambda *_args, **_kwargs: []
     )
     monkeypatch.setattr(cli_mod, "validate_predictions", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(cli_mod, "notify_markdown", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        "aqsp.cli_notify_helpers.notify_markdown", lambda *_args, **_kwargs: []
+    )
     monkeypatch.setattr(cli_mod, "_log_run_decisions", lambda **_kwargs: None)
     monkeypatch.setattr(
         cli_mod, "_annotate_candidate_status", lambda picks, **_kwargs: picks
@@ -2784,8 +2916,7 @@ def test_run_scheduled_skips_formal_ledger_writes_when_circuit_breaker_triggers(
 
     monkeypatch.setattr(cli_mod, "_resolve_run_symbols", lambda *_, **__: ["600519"])
     monkeypatch.setattr(
-        cli_mod,
-        "_fetch_frames_for_cli_with_metadata",
+        "aqsp.cli._fetch_frames_for_cli_with_metadata",
         lambda *_, **__: (frames, "eastmoney"),
     )
     monkeypatch.setattr(
@@ -2794,8 +2925,7 @@ def test_run_scheduled_skips_formal_ledger_writes_when_circuit_breaker_triggers(
         lambda *_, **__: (frames, "eastmoney"),
     )
     monkeypatch.setattr(
-        cli_mod,
-        "assert_fresh_data",
+        "aqsp.cli.assert_fresh_data",
         lambda *_args, **_kwargs: datetime.fromisoformat(
             "2026-06-15T15:00:00+08:00"
         ).date(),
@@ -2824,7 +2954,7 @@ def test_run_scheduled_skips_formal_ledger_writes_when_circuit_breaker_triggers(
     )
     # Portfolio protection must not block fresh research generation.
     monkeypatch.setattr(cli_mod, "_count_independent_signal_days", lambda *_, **__: 0)
-    monkeypatch.setattr(cli_mod, "_detect_runtime_regime", lambda *_, **__: "")
+    monkeypatch.setattr("aqsp.cli._detect_runtime_regime", lambda *_, **__: "")
     monkeypatch.setattr("aqsp.data.anomaly.detect_anomalies", lambda *_, **__: [])
     monkeypatch.setattr("aqsp.data.freshness.check_freshness", lambda *_, **__: [])
     monkeypatch.setattr(
@@ -2883,7 +3013,9 @@ def test_run_scheduled_skips_formal_ledger_writes_when_circuit_breaker_triggers(
     monkeypatch.setattr(cli_mod, "_log_run_decisions", lambda **_kwargs: None)
     monkeypatch.setattr(cli_mod, "to_dataframe", lambda picks: pd.DataFrame())
     monkeypatch.setattr(cli_mod, "to_markdown", lambda *_args, **_kwargs: "# report")
-    monkeypatch.setattr(cli_mod, "notify_markdown", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        "aqsp.cli_notify_helpers.notify_markdown", lambda *_args, **_kwargs: []
+    )
     monkeypatch.setattr(
         "aqsp.portfolio.snapshot.save_snapshot",
         lambda *_args, **_kwargs: None,
@@ -2958,8 +3090,7 @@ def test_run_scheduled_intraday_keeps_observation_output_during_circuit_breaker(
     monkeypatch.setenv("AQSP_RUN_TASK_ID", "intraday")
     monkeypatch.setattr(cli_mod, "_resolve_run_symbols", lambda *_, **__: ["600519"])
     monkeypatch.setattr(
-        cli_mod,
-        "_fetch_frames_for_cli_with_metadata",
+        "aqsp.cli._fetch_frames_for_cli_with_metadata",
         lambda *_, **__: (frames, "eastmoney"),
     )
     monkeypatch.setattr(
@@ -2968,8 +3099,7 @@ def test_run_scheduled_intraday_keeps_observation_output_during_circuit_breaker(
         lambda *_, **__: (frames, "eastmoney"),
     )
     monkeypatch.setattr(
-        cli_mod,
-        "assert_fresh_data",
+        "aqsp.cli.assert_fresh_data",
         lambda *_args, **_kwargs: datetime.fromisoformat(
             "2026-06-15T15:00:00+08:00"
         ).date(),
@@ -2990,7 +3120,7 @@ def test_run_scheduled_intraday_keeps_observation_output_during_circuit_breaker(
         cli_mod, "_compute_real_pnl", lambda *_args, **_kwargs: (-4.0, 0.0, 0.0)
     )
     monkeypatch.setattr(cli_mod, "_count_independent_signal_days", lambda *_, **__: 35)
-    monkeypatch.setattr(cli_mod, "_detect_runtime_regime", lambda *_, **__: "")
+    monkeypatch.setattr("aqsp.cli._detect_runtime_regime", lambda *_, **__: "")
     monkeypatch.setattr("aqsp.data.anomaly.detect_anomalies", lambda *_, **__: [])
     monkeypatch.setattr("aqsp.data.freshness.check_freshness", lambda *_, **__: [])
     monkeypatch.setattr(
@@ -3069,7 +3199,9 @@ def test_run_scheduled_intraday_keeps_observation_output_during_circuit_breaker(
         lambda picks: pd.DataFrame([{"symbol": p.symbol} for p in picks]),
     )
     monkeypatch.setattr(cli_mod, "to_markdown", lambda *_args, **_kwargs: "# report")
-    monkeypatch.setattr(cli_mod, "notify_markdown", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        "aqsp.cli_notify_helpers.notify_markdown", lambda *_args, **_kwargs: []
+    )
     saved_snapshots: list[object] = []
     monkeypatch.setattr(
         "aqsp.portfolio.snapshot.save_snapshot",
@@ -3160,13 +3292,11 @@ def test_run_scheduled_logs_learning_proposal_failure(
         cli_mod, "_resolve_run_symbols", lambda *args, **kwargs: ["600519"]
     )
     monkeypatch.setattr(
-        cli_mod,
-        "_fetch_frames_for_cli_with_metadata",
+        "aqsp.cli._fetch_frames_for_cli_with_metadata",
         lambda *args, **kwargs: (frames, "eastmoney"),
     )
     monkeypatch.setattr(
-        cli_mod,
-        "assert_fresh_data",
+        "aqsp.cli.assert_fresh_data",
         lambda *_args, **_kwargs: datetime.fromisoformat(
             "2026-06-15T15:00:00+08:00"
         ).date(),
@@ -3202,7 +3332,9 @@ def test_run_scheduled_logs_learning_proposal_failure(
         "aqsp.data.freshness.check_freshness", lambda *_args, **_kwargs: []
     )
     monkeypatch.setattr(cli_mod, "validate_predictions", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(cli_mod, "notify_markdown", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        "aqsp.cli_notify_helpers.notify_markdown", lambda *_args, **_kwargs: []
+    )
     monkeypatch.setattr(cli_mod, "_log_run_decisions", lambda **_kwargs: None)
     monkeypatch.setattr(
         cli_mod, "_annotate_candidate_status", lambda picks, **_kwargs: picks

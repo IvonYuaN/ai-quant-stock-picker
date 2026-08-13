@@ -238,11 +238,7 @@ def audit_debate_quality(
     real_opposition_count = _real_opposition_count(rounds)
     # Count final positions only. Counting every round made a two-round
     # debate look like two independent votes per role.
-    final_opinions = tuple(
-        _field(rounds[-1], "opinions", ()) or ()
-        if rounds
-        else ()
-    )
+    final_opinions = tuple(_field(rounds[-1], "opinions", ()) or () if rounds else ())
     stance_counts = tuple(
         (
             stance,
@@ -259,7 +255,9 @@ def audit_debate_quality(
             bucket,
             bool(
                 _substantive_values(
-                    raw_buckets.get(bucket, ()) if isinstance(raw_buckets, Mapping) else ()
+                    raw_buckets.get(bucket, ())
+                    if isinstance(raw_buckets, Mapping)
+                    else ()
                 )
             ),
         )
@@ -675,7 +673,22 @@ def _has_falsifiable_condition(result: Any, rounds: tuple[Any, ...]) -> bool:
         for opinion in _field(round_data, "opinions", ()) or ():
             values.extend(_field(opinion, "risk_factors", ()) or ())
             values.extend(_field(opinion, "arguments", ()) or ())
-    markers = ("失效", "若", "跌破", "低于", "不达")
+    markers = (
+        "失效",
+        "若跌破",
+        "若低于",
+        "若不达",
+        "跌破",
+        "低于",
+        "不达",
+        "若冲高",
+        "若回落",
+        "若失守",
+        "若破",
+        "则降级",
+        "若无法",
+        "若未能",
+    )
     return any(
         _has_substantive_text(value)
         and any(marker in _clean_text(value) for marker in markers)

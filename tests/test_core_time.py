@@ -13,6 +13,7 @@ from aqsp.core.time import (
     is_trading_day,
     get_previous_trading_day,
     get_next_trading_day,
+    latest_completed_trading_day,
     market_hours,
     is_market_open,
     SHANGHAI_TZ,
@@ -74,10 +75,30 @@ def test_is_trading_day_a_share_2026_holidays():
     assert not is_trading_day(date(2026, 4, 6))
     assert not is_trading_day(date(2026, 6, 19))
     assert not is_trading_day(date(2026, 9, 25))
+    assert is_trading_day(date(2026, 7, 27))
     assert is_trading_day(date(2026, 6, 18))
     assert is_trading_day(date(2026, 6, 22))
     assert get_previous_trading_day(date(2026, 6, 22)) == date(2026, 6, 18)
     assert get_next_trading_day(date(2026, 6, 18)) == date(2026, 6, 22)
+
+
+def test_is_trading_day_uses_local_calendar_when_runtime_calendar_is_wrong(
+    monkeypatch,
+):
+    import aqsp.data.trading_calendar as trading_calendar
+
+    def unexpected_runtime_lookup(*_args, **_kwargs):
+        raise AssertionError("scheduler calendar gate must not query Tushare")
+
+    monkeypatch.setattr(
+        trading_calendar,
+        "_load_runtime_calendar",
+        unexpected_runtime_lookup,
+    )
+
+    assert is_trading_day(date(2026, 7, 27))
+    assert get_previous_trading_day(date(2026, 7, 28)) == date(2026, 7, 27)
+    assert get_next_trading_day(date(2026, 7, 24)) == date(2026, 7, 27)
 
 
 def test_static_holiday_overrides_runtime_calendar_open_flag():
@@ -102,9 +123,9 @@ def test_static_holiday_overrides_runtime_calendar_previous_and_next_trade_day()
         ]
     )
 
-    assert resolve_previous_trading_day(date(2026, 6, 22), calendar_df=calendar) == date(
-        2026, 6, 18
-    )
+    assert resolve_previous_trading_day(
+        date(2026, 6, 22), calendar_df=calendar
+    ) == date(2026, 6, 18)
     assert resolve_next_trading_day(date(2026, 6, 18), calendar_df=calendar) == date(
         2026, 6, 22
     )
@@ -115,6 +136,18 @@ def test_get_previous_trading_day():
     assert get_previous_trading_day(friday) == date(2026, 5, 29)
     tuesday = date(2026, 6, 3)
     assert get_previous_trading_day(tuesday) == date(2026, 6, 2)
+
+
+def test_latest_completed_trading_day_uses_current_day_after_close():
+    after_close = datetime(2026, 7, 27, 15, 1, tzinfo=SHANGHAI_TZ)
+
+    assert latest_completed_trading_day(after_close) == date(2026, 7, 27)
+
+
+def test_latest_completed_trading_day_uses_previous_day_before_close():
+    before_close = datetime(2026, 7, 27, 14, 59, tzinfo=SHANGHAI_TZ)
+
+    assert latest_completed_trading_day(before_close) == date(2026, 7, 24)
 
 
 def test_market_hours():

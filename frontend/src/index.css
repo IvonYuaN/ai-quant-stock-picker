@@ -339,6 +339,10 @@
   .aqsp-summary-conclusion { display: flex; align-items: flex-start; gap: 0.65rem; border-left: 2px solid hsl(var(--primary)); background: hsl(var(--primary) / 0.07); padding: 0.8rem 0.85rem; }
   .aqsp-summary-conclusion strong { display: block; font-size: 0.95rem; line-height: 1.5; }
   .aqsp-summary-conclusion p { margin-top: 0.25rem; color: hsl(var(--muted-foreground)); font-size: 0.72rem; line-height: 1.45; }
+  .aqsp-phase-conclusions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.45rem; margin-top: 0.7rem; }
+  .aqsp-phase-conclusions > div { min-width: 0; border-bottom: 1px solid hsl(var(--border) / 0.65); padding: 0.45rem 0.1rem 0.55rem; }
+  .aqsp-phase-conclusions b { color: hsl(var(--primary)); font-size: 0.72rem; }
+  .aqsp-phase-conclusions p { margin-top: 0.25rem; color: hsl(var(--muted-foreground)); font-size: 0.72rem; line-height: 1.45; }
   .aqsp-status-line { display: flex; flex-wrap: wrap; gap: 0.5rem 1.1rem; border-bottom: 1px solid hsl(var(--border) / 0.6); padding: 0.75rem 0; color: hsl(var(--muted-foreground)); font-size: 0.68rem; }
   .aqsp-status-line b { margin-right: 0.25rem; color: hsl(var(--foreground)); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.83rem; }
   .aqsp-status-muted { color: hsl(var(--muted-foreground) / 0.72); }
@@ -351,6 +355,11 @@
   .aqsp-gate, .aqsp-observation { display: flex; align-items: flex-start; gap: 0.5rem; margin-top: 0.75rem; border: 1px solid hsl(var(--border) / 0.65); border-radius: 0.45rem; padding: 0.6rem 0.7rem; font-size: 0.7rem; line-height: 1.45; }
   .aqsp-gate-ok { color: hsl(var(--success)); background: hsl(var(--success) / 0.055); }
   .aqsp-gate-warn, .aqsp-observation { color: hsl(var(--warning)); border-color: hsl(var(--warning) / 0.3); background: hsl(var(--warning) / 0.055); }
+  .aqsp-coverage-gate { align-items: flex-start; }
+  .aqsp-coverage-grid { display: grid; flex: 1; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.3rem 1rem; min-width: 0; }
+  .aqsp-coverage-grid span { color: hsl(var(--muted-foreground)); font-size: 0.68rem; }
+  .aqsp-coverage-grid b { display: block; margin-bottom: 0.1rem; color: hsl(var(--foreground)); font-size: 0.64rem; }
+  .aqsp-coverage-grid p { grid-column: 1 / -1; color: hsl(var(--warning)); font-size: 0.68rem; line-height: 1.4; }
   .aqsp-observation strong { display: block; color: hsl(var(--foreground)); font-size: 0.74rem; }
   .aqsp-observation p { margin-top: 0.18rem; color: hsl(var(--muted-foreground)); }
   .aqsp-observation button { margin-top: 0.25rem; color: hsl(var(--primary)); text-decoration: underline; text-underline-offset: 2px; }
@@ -369,11 +378,14 @@
   .aqsp-tag-good { color: hsl(var(--success)); background: hsl(var(--success) / 0.13); }
   .aqsp-tag-bad { color: hsl(var(--danger)); background: hsl(var(--danger) / 0.13); }
   .aqsp-card-summary { margin-top: 0.55rem; color: hsl(var(--foreground) / 0.78); font-size: 0.72rem; line-height: 1.5; }
-  .aqsp-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.4rem; margin-top: 0.65rem; border-top: 1px solid hsl(var(--border) / 0.45); padding-top: 0.6rem; }
+  .aqsp-strategies { margin-top: 0.4rem; color: hsl(var(--primary)); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.62rem; }
+  .aqsp-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.5rem 0.75rem; margin-top: 0.6rem; border-top: 1px solid hsl(var(--border) / 0.45); padding-top: 0.55rem; }
   .aqsp-metrics div { min-width: 0; }
   .aqsp-metrics span { display: block; overflow: hidden; color: hsl(var(--muted-foreground)); font-size: 0.58rem; text-overflow: ellipsis; white-space: nowrap; }
   .aqsp-metrics b { display: block; overflow: hidden; margin-top: 0.12rem; color: hsl(var(--foreground) / 0.88); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.7rem; text-overflow: ellipsis; white-space: nowrap; }
-  .aqsp-reasons { display: grid; gap: 0.25rem; margin-top: 0.6rem; color: hsl(var(--foreground) / 0.8); font-size: 0.68rem; line-height: 1.4; }
+  .aqsp-evidence { margin-top: 0.55rem; border-top: 1px solid hsl(var(--border) / 0.45); padding-top: 0.5rem; }
+  .aqsp-evidence > b { color: hsl(var(--muted-foreground)); font-size: 0.58rem; font-weight: 650; }
+  .aqsp-reasons { display: grid; gap: 0.2rem; margin-top: 0.3rem; color: hsl(var(--foreground) / 0.8); font-size: 0.68rem; line-height: 1.4; }
   .aqsp-score-breakdown { margin-top: 0.6rem; border-top: 1px solid hsl(var(--border) / 0.45); padding-top: 0.55rem; color: hsl(var(--muted-foreground)); font-size: 0.65rem; line-height: 1.45; }
   .aqsp-score-breakdown b { margin-right: 0.35rem; color: hsl(var(--primary)); font-weight: 650; }
   .aqsp-reasons li, .aqsp-next, .aqsp-debate-foot span, .aqsp-source { display: flex; align-items: flex-start; gap: 0.3rem; }
@@ -405,6 +417,15 @@
   .aqsp-label { display: flex; align-items: center; gap: 0.3rem; color: hsl(var(--primary)); font-size: 0.63rem; font-weight: 700; }
   .aqsp-discussion > p:not(.aqsp-label) { margin-top: 0.3rem; }
   .aqsp-discussion ol { display: grid; gap: 0.2rem; margin-top: 0.45rem; border-top: 1px solid hsl(var(--border) / 0.45); padding-top: 0.4rem; color: hsl(var(--muted-foreground)); font-size: 0.64rem; }
+  .aqsp-agent-views { display: grid; gap: 0.45rem; margin-top: 0.65rem; }
+  .aqsp-agent-view { display: grid; gap: 0.25rem; border: 1px solid hsl(var(--border) / 0.5); border-left: 2px solid hsl(var(--primary) / 0.65); border-radius: 0.35rem; padding: 0.5rem 0.6rem; color: hsl(var(--muted-foreground)); font-size: 0.65rem; line-height: 1.45; }
+  .aqsp-agent-view-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; color: hsl(var(--foreground) / 0.88); }
+  .aqsp-agent-view p { min-width: 0; overflow-wrap: anywhere; }
+  .aqsp-agent-view p b { display: inline-block; min-width: 2.2rem; margin-right: 0.25rem; color: hsl(var(--primary)); }
+  .aqsp-stance { border-radius: 0.25rem; padding: 0.1rem 0.3rem; font-size: 0.58rem; }
+  .aqsp-stance-bullish { color: hsl(var(--success)); background: hsl(var(--success) / 0.1); }
+  .aqsp-stance-bearish { color: hsl(var(--warning)); background: hsl(var(--warning) / 0.1); }
+  .aqsp-stance-neutral { color: hsl(var(--muted-foreground)); background: hsl(var(--muted) / 0.55); }
   .aqsp-viewpoint-buckets { display: grid; gap: 0.3rem; margin-top: 0.6rem; border-top: 1px solid hsl(var(--border) / 0.45); padding-top: 0.5rem; }
   .aqsp-viewpoint-buckets > div { display: grid; grid-template-columns: 5.2rem minmax(0, 1fr); gap: 0.4rem; color: hsl(var(--muted-foreground)); font-size: 0.64rem; line-height: 1.4; }
   .aqsp-viewpoint-buckets b { color: hsl(var(--foreground) / 0.82); font-weight: 650; }
@@ -431,19 +452,32 @@
   .aqsp-lab-grid div { display: grid; gap: 0.25rem; border: 1px solid hsl(var(--border) / 0.65); border-radius: 0.4rem; padding: 0.65rem; font-size: 0.68rem; }
   .aqsp-lab-grid span { color: hsl(var(--muted-foreground)); }
   .aqsp-lab-snapshot { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.8rem; margin-bottom: 0.65rem; color: hsl(var(--muted-foreground)); font-size: 0.66rem; }
-  .aqsp-variant-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.65rem; }
+  .aqsp-variant-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.65rem; }
+  .aqsp-variant-pagination { display: flex; align-items: center; justify-content: center; gap: 0.45rem; margin-top: 0.75rem; color: hsl(var(--muted-foreground)); font-size: 0.68rem; }
+  .aqsp-variant-pagination button { display: inline-grid; width: 2rem; height: 2rem; place-items: center; border: 1px solid hsl(var(--border)); border-radius: 0.4rem; background: hsl(var(--card)); color: hsl(var(--foreground)); }
+  .aqsp-variant-pagination button:disabled { cursor: not-allowed; opacity: 0.4; }
   .aqsp-variant-card { min-width: 0; border: 1px solid hsl(var(--border) / 0.75); border-radius: 0.5rem; padding: 0.75rem; background: hsl(var(--card) / 0.62); }
   .aqsp-variant-head { display: flex; justify-content: space-between; gap: 0.5rem; }
   .aqsp-variant-head h3 { font-size: 0.82rem; font-weight: 700; }
   .aqsp-variant-head span { display: block; margin-top: 0.2rem; color: hsl(var(--muted-foreground)); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.6rem; }
   .aqsp-variant-head strong { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 1rem; }
   .aqsp-variant-strategy { display: grid; gap: 0.18rem; margin-top: 0.45rem; color: hsl(var(--primary)); font-size: 0.64rem; line-height: 1.4; overflow-wrap: anywhere; }
-  .aqsp-variant-strategy b, .aqsp-variant-holdings > b { color: hsl(var(--muted-foreground)); font-size: 0.58rem; font-weight: 650; }
-  .aqsp-variant-account { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0.35rem; margin-top: 0.7rem; border-top: 1px solid hsl(var(--border) / 0.45); padding-top: 0.55rem; }
+  .aqsp-variant-strategy b, .aqsp-variant-ledger b, .aqsp-variant-actions b { color: hsl(var(--muted-foreground)); font-size: 0.58rem; font-weight: 650; }
+  .aqsp-variant-account { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.35rem; margin-top: 0.7rem; border-top: 1px solid hsl(var(--border) / 0.45); padding-top: 0.55rem; }
   .aqsp-variant-account div { min-width: 0; }
   .aqsp-variant-account span { display: block; color: hsl(var(--muted-foreground)); font-size: 0.58rem; }
   .aqsp-variant-account b { display: block; overflow: hidden; margin-top: 0.12rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.68rem; text-overflow: ellipsis; white-space: nowrap; }
-  .aqsp-variant-holdings { display: grid; gap: 0.2rem; margin-top: 0.55rem; color: hsl(var(--foreground) / 0.78); font-size: 0.62rem; line-height: 1.4; overflow-wrap: anywhere; }
+  .aqsp-variant-ledger { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.45rem; margin-top: 0.55rem; }
+  .aqsp-variant-ledger div, .aqsp-variant-actions { display: grid; gap: 0.2rem; min-width: 0; color: hsl(var(--foreground) / 0.78); font-size: 0.62rem; line-height: 1.4; overflow-wrap: anywhere; }
+  .aqsp-variant-holding-column { min-height: 5.4rem; border: 1px solid hsl(var(--border) / 0.55); border-radius: 0.35rem; padding: 0.45rem; background: hsl(var(--background) / 0.18); }
+  .aqsp-variant-holding-column > b { display: flex; align-items: baseline; justify-content: space-between; gap: 0.35rem; margin-bottom: 0.25rem; color: hsl(var(--primary)); font-size: 0.65rem; }
+  .aqsp-variant-column-title small { color: hsl(var(--muted-foreground)); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.58rem; font-weight: 500; }
+  .aqsp-variant-holding { display: grid; gap: 0.08rem; border-top: 1px solid hsl(var(--border) / 0.35); padding-top: 0.25rem; }
+  .aqsp-variant-holding + .aqsp-variant-holding { margin-top: 0.25rem; }
+  .aqsp-variant-holding strong { overflow: hidden; color: hsl(var(--foreground)); font-size: 0.68rem; text-overflow: ellipsis; white-space: nowrap; }
+  .aqsp-variant-holding strong small { color: hsl(var(--muted-foreground)); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.58rem; font-weight: 500; }
+  .aqsp-variant-holding span, .aqsp-variant-holding em { color: hsl(var(--muted-foreground)); font-size: 0.58rem; font-style: normal; }
+  .aqsp-variant-actions { margin-top: 0.55rem; border-top: 1px solid hsl(var(--border) / 0.35); padding-top: 0.5rem; }
   .aqsp-variant-positive { color: hsl(var(--success)); }
   .aqsp-variant-negative { color: hsl(var(--danger)); }
   .aqsp-variant-rules { margin-top: 0.6rem; color: hsl(var(--muted-foreground)); font-size: 0.6rem; line-height: 1.45; }
@@ -455,8 +489,10 @@
   .aqsp-list, .aqsp-lab-grid, .aqsp-variant-grid { grid-template-columns: minmax(0, 1fr); }
   .aqsp-module, .aqsp-lab { padding: 0.8rem; }
   .aqsp-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .aqsp-variant-account { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .aqsp-variant-account, .aqsp-variant-ledger { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .aqsp-phase-lane { grid-template-columns: minmax(0, 1fr); }
+  .aqsp-phase-conclusions { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .aqsp-coverage-grid { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (min-width: 768px) and (max-width: 1180px) {

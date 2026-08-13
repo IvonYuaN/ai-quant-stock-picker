@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import date
 from pathlib import Path
 
 from scripts.repair_gate_notify_state import repair_gate_notify_state
@@ -14,11 +15,17 @@ def _write_jsonl(path: Path, rows: list[dict[str, object]]) -> None:
     )
 
 
-def test_repair_gate_notify_state_overwrites_stale_cold_start_entry(tmp_path: Path) -> None:
+def test_repair_gate_notify_state_overwrites_stale_cold_start_entry(
+    tmp_path: Path, monkeypatch
+) -> None:
     _write_jsonl(
         tmp_path / "data" / "predictions.jsonl",
         [
-            {"signal_date": f"2026-05-{day:02d}", "symbol": "600519", "status": "watch_only"}
+            {
+                "signal_date": f"2026-05-{day:02d}",
+                "symbol": "600519",
+                "status": "watch_only",
+            }
             for day in range(1, 31)
         ],
     )
@@ -59,6 +66,13 @@ def test_repair_gate_notify_state_overwrites_stale_cold_start_entry(tmp_path: Pa
         encoding="utf-8",
     )
 
+    # Pin today to 1 day after run_date so the gate is not considered stale.
+    # Patch in cli_notification_gate because _check_notification_gate calls
+    # today_shanghai() from that module's namespace, not from aqsp.cli.
+    import aqsp.cli_notification_gate as gate_mod
+
+    monkeypatch.setattr(gate_mod, "today_shanghai", lambda: date(2026, 6, 30))
+
     result = repair_gate_notify_state(tmp_path)
     payload = json.loads(
         (tmp_path / "data" / "gate_notify_state.json").read_text(encoding="utf-8")
@@ -70,11 +84,17 @@ def test_repair_gate_notify_state_overwrites_stale_cold_start_entry(tmp_path: Pa
     assert payload["sent_by_date"]["2026-06-29"]["fingerprint"] == "dsr|pbo"
 
 
-def test_repair_gate_notify_state_clears_file_when_gate_passes(tmp_path: Path) -> None:
+def test_repair_gate_notify_state_clears_file_when_gate_passes(
+    tmp_path: Path, monkeypatch
+) -> None:
     _write_jsonl(
         tmp_path / "data" / "predictions.jsonl",
         [
-            {"signal_date": f"2026-05-{day:02d}", "symbol": "600519", "status": "watch_only"}
+            {
+                "signal_date": f"2026-05-{day:02d}",
+                "symbol": "600519",
+                "status": "watch_only",
+            }
             for day in range(1, 31)
         ],
     )
@@ -101,6 +121,13 @@ def test_repair_gate_notify_state_clears_file_when_gate_passes(tmp_path: Path) -
     )
     state_path = tmp_path / "data" / "gate_notify_state.json"
     state_path.write_text('{"status":"suppressed"}\n', encoding="utf-8")
+
+    # Pin today to 1 day after run_date so the gate is not considered stale.
+    # Patch in cli_notification_gate because _check_notification_gate calls
+    # today_shanghai() from that module's namespace, not from aqsp.cli.
+    import aqsp.cli_notification_gate as gate_mod
+
+    monkeypatch.setattr(gate_mod, "today_shanghai", lambda: date(2026, 6, 30))
 
     result = repair_gate_notify_state(tmp_path)
 

@@ -50,15 +50,18 @@ curl -Ik https://lh.ifidy.cn/api/health
 2. 本地跑相关测试；重要 UI/通知改动至少跑 `tests/test_dashboard.py` 或 `tests/test_notify_templates.py`。
 3. 跑 secret 扫描。
 4. commit + push。
-5. 服务器 `git fetch && git reset --hard <commit>`，重启服务或运行目标脚本。
+5. 服务器从指定 commit 构建不可变 release，原子切换 `aqsp-scheduler-current`，再重启服务或运行目标脚本；不得在 `/opt/aqsp` staging checkout 上执行 `reset/clean`。
 6. 用服务器日志、公网 health 和隔离无头检查验证。
 
 推荐验证命令：
 
 ```bash
+python3 scripts/check_deployment_closure.py --branch codex/monitor-walkforward
 python3 scripts/headless_dashboard_check.py --url https://lh.ifidy.cn --mode raw
 python3 scripts/headless_dashboard_check.py --url https://lh.ifidy.cn --screenshot outputs/dashboard-check.png --headless-lock /tmp/aqsp-headless-dashboard.lock
 ```
+
+`check_deployment_closure.py` 未通过时，不允许把本次工作描述为“已部署/已上线/已验收”。
 
 服务器只接受 GitHub commit，不把服务器当开发机。若服务器出现受 Git 管理的脏改，先查明来源；除非用户明确要求，不直接覆盖用户改动。
 
@@ -99,6 +102,7 @@ python3 scripts/headless_dashboard_check.py --url https://lh.ifidy.cn --screensh
 - 只有本地定向测试通过、完整验证单独通过、部署后 health/数据契约检查通过，才算交付；并行速度不能替代验证闭环。
 - 每个子任务记录 `parent_run_id`、`agent_run_id`、PID、开始时间、deadline 和退出原因；超时或锁冲突必须降级/退出，不得无限等待。
 - 运行登记统一使用 `aqsp.audit.agent_runs.AgentRunRegistry`，生产记录写入私有
-  `/opt/aqsp/data/runtime/agent_runs.jsonl`；同一文件范围不可并行，单父任务最多 3 个活跃子任务。
+  `/opt/aqsp/data/runtime/agent_runs.jsonl`；同一文件范围不可并行，单父任务和全局最多各 3 个活跃子任务；超时必须写为 `timed_out`。
+- 受资源门禁保护的收盘、数据刷新、变体、冷启动和 walk-forward 任务必须在启动后登记，在退出时写入完成或失败状态；注册冲突视为正常跳过，不能绕过资源锁重复运行。
 - 资源不足时优先保护用户前台和生产主链，允许跳过旁路 Agent；旁路 Agent 的输出只能补充证据，不能覆盖确定性评分或交易边界。
 - 用户影响是硬门禁：任何任务只要可能拖慢、重启、覆盖或污染用户正在使用的服务，必须先降级为只读诊断或隔离环境；部署后未完成 health、数据新鲜度、页面入口和关键结果检查，不得宣称完成。

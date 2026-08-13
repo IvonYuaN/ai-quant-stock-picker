@@ -57,6 +57,34 @@ def test_agent_run_registry_enforces_parent_parallel_limit(tmp_path) -> None:
         )
 
 
+def test_agent_run_registry_enforces_global_parallel_limit(tmp_path) -> None:
+    registry = AgentRunRegistry(
+        tmp_path / "agent_runs.jsonl",
+        max_parallel_per_parent=3,
+        max_parallel_global=2,
+    )
+    current = datetime(2026, 7, 24, 9, tzinfo=SHANGHAI_TZ)
+    for index in range(2):
+        registry.register(
+            parent_run_id=f"parent-{index}",
+            agent_run_id=f"agent-{index}",
+            scope=f"scope-{index}",
+            pid=101 + index,
+            deadline_seconds=60,
+            current=current,
+        )
+
+    with pytest.raises(ValueError, match="global parallel limit"):
+        registry.register(
+            parent_run_id="parent-3",
+            agent_run_id="agent-3",
+            scope="scope-3",
+            pid=103,
+            deadline_seconds=60,
+            current=current,
+        )
+
+
 def test_agent_run_registry_releases_scope_after_terminal_record(tmp_path) -> None:
     registry = AgentRunRegistry(tmp_path / "agent_runs.jsonl")
     current = datetime(2026, 7, 24, 9, tzinfo=SHANGHAI_TZ)
@@ -106,3 +134,10 @@ def test_agent_run_registry_drops_expired_runs_from_capacity(tmp_path) -> None:
         current=current + timedelta(seconds=2),
     )
     assert replacement.status == "running"
+    records = [
+        line
+        for line in (tmp_path / "agent_runs.jsonl").read_text().splitlines()
+        if line
+    ]
+    assert '"exit_reason": "deadline_exceeded"' in records[-2]
+    assert '"status": "timed_out"' in records[-2]

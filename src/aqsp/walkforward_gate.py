@@ -72,8 +72,12 @@ def build_walkforward_gate_payload(
     n_periods: int,
     thresholds_version: str | None = None,
     metadata: Mapping[str, object] | None = None,
+    pbo_verified: bool | None = None,
 ) -> dict[str, object]:
-    pbo_valid = pbo > 0.0
+    pbo_valid = math.isfinite(pbo) and pbo > 0.0
+    # When the caller doesn't say, infer: a finite positive PBO was verified.
+    if pbo_verified is None:
+        pbo_verified = pbo_valid
     dsr_pass = dsr > MIN_DSR
     pbo_pass = pbo_valid and pbo < MAX_PBO
     payload: dict[str, object] = {
@@ -81,6 +85,7 @@ def build_walkforward_gate_payload(
         "deflated_sharpe": dsr,
         "pbo": pbo,
         "pbo_valid": pbo_valid,
+        "pbo_verified": pbo_verified,
         "dsr_pass": dsr_pass,
         "pbo_pass": pbo_pass,
         "both_pass": dsr_pass and pbo_pass,

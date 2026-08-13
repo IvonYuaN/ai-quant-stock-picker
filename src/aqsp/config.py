@@ -81,17 +81,25 @@ class DebateRoleRuntime:
 _TASK_DEBATE_ROLE_PRESETS: dict[str, tuple[str, ...]] = {
     "main_chain": (
         "bull",
+        "bear",
         "risk_control",
         "sector_leader",
         "cross_market",
+        "policy_sensitive",
+        "margin_trading",
         "northbound",
+        "retail_mood",
     ),
     "morning_breakout": (
         "bull",
+        "bear",
         "risk_control",
         "sector_leader",
         "cross_market",
+        "policy_sensitive",
+        "margin_trading",
         "northbound",
+        "retail_mood",
     ),
     "intraday": (
         "bull",
@@ -110,6 +118,9 @@ _TASK_DEBATE_ROLE_PRESETS: dict[str, tuple[str, ...]] = {
         "risk_control",
         "sector_leader",
         "cross_market",
+        "policy_sensitive",
+        "margin_trading",
+        "northbound",
         "retail_mood",
     ),
     "closing_review": (
@@ -119,7 +130,9 @@ _TASK_DEBATE_ROLE_PRESETS: dict[str, tuple[str, ...]] = {
         "sector_leader",
         "cross_market",
         "policy_sensitive",
+        "margin_trading",
         "northbound",
+        "retail_mood",
     ),
     "briefing": (
         "bull",
@@ -128,9 +141,17 @@ _TASK_DEBATE_ROLE_PRESETS: dict[str, tuple[str, ...]] = {
         "sector_leader",
         "cross_market",
         "policy_sensitive",
+        "margin_trading",
         "northbound",
+        "retail_mood",
     ),
 }
+
+# Advisory debate is bounded independently of the stock universe. Keeping the
+# full role set for a few top candidates preserves diverse evidence without
+# allowing an environment override to turn a market refresh into an LLM fan-out.
+MAX_DEBATE_ROUNDS = 3
+MAX_DEBATE_CANDIDATES = 3
 
 
 def online_fallback_allowed() -> bool:
@@ -222,8 +243,14 @@ def load_debate_runtime_config(task_id: str | None = None) -> DebateRuntimeConfi
         "multi_agent_advisory_layer", default=True
     ) and _env_flag("AQSP_ENABLE_DEBATE", "true")
     global_enable_llm = enabled and _env_flag("AQSP_DEBATE_ENABLE_LLM")
-    max_rounds = max(1, _env_int("AQSP_DEBATE_MAX_ROUNDS", 2, minimum=1))
-    max_candidates = max(1, _env_int("AQSP_DEBATE_MAX_CANDIDATES", 5, minimum=1))
+    max_rounds = min(
+        MAX_DEBATE_ROUNDS,
+        max(1, _env_int("AQSP_DEBATE_MAX_ROUNDS", MAX_DEBATE_ROUNDS, minimum=1)),
+    )
+    max_candidates = min(
+        MAX_DEBATE_CANDIDATES,
+        max(1, _env_int("AQSP_DEBATE_MAX_CANDIDATES", 3, minimum=1)),
+    )
     language = os.getenv("AQSP_DEBATE_LANGUAGE", "zh-CN").strip() or "zh-CN"
     normalized_task_id = _normalize_debate_task_id(task_id)
     explicit_roles = os.getenv("AQSP_DEBATE_ROLES")

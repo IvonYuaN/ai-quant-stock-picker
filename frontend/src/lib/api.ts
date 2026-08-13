@@ -14,6 +14,7 @@ export type {
   AqspMessage,
   AqspPhase,
   AqspRecommendationGate,
+  AqspResearchChain,
   AqspSnapshot,
   AqspSnapshotEnvelope,
   AqspSnapshotMeta,
@@ -86,6 +87,10 @@ function hasDataField(payload: unknown): payload is { data: unknown } {
   return typeof payload === "object" && payload !== null && "data" in payload;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
 function errorDetail(payload: unknown): string | undefined {
   if (typeof payload !== "object" || payload === null || !("detail" in payload)) return undefined;
   return typeof payload.detail === "string" ? payload.detail : undefined;
@@ -132,8 +137,28 @@ async function request<T>(path: string, method: "GET" | "POST" | "DELETE" = "GET
 }
 
 const get = <T>(path: string) => request<T>(path, "GET");
-const getEnvelope = <T>(path: string, options?: AqspRequestOptions): Promise<T> =>
-  requestPayload(path, "GET", undefined, options) as Promise<T>;
+function isAqspSnapshotEnvelope(payload: unknown): payload is AqspSnapshotEnvelope {
+  if (!isRecord(payload) || !isRecord(payload.data) || !isRecord(payload.meta)) return false;
+  const { data, meta } = payload;
+  return (
+    typeof data.selected_date === "string" &&
+    Array.isArray(data.available_dates) &&
+    Array.isArray(data.candidates) &&
+    Array.isArray(data.debates) &&
+    Array.isArray(data.summaries) &&
+    Array.isArray(data.messages) &&
+    typeof meta.historical === "boolean" &&
+    typeof meta.stale === "boolean"
+  );
+}
+
+/** Normalize the HTTP envelope before it reaches the view state. */
+export function normalizeAqspSnapshotEnvelope(payload: unknown): AqspSnapshotView {
+  if (!isAqspSnapshotEnvelope(payload)) {
+    throw new ApiError("研究快照格式错误：缺少 data 或 meta", 502);
+  }
+  return { ...payload.data, meta: payload.meta };
+}
 
 export interface Quote {
   name: string; price: number; last_close: number; change_pct: number;
@@ -289,11 +314,12 @@ export interface GlobalStock {
 export const api = {
   health: () => get<{ ok: boolean }>("/health"),
   aqspSnapshot: (date?: string, options?: AqspRequestOptions): Promise<AqspSnapshotView> =>
-    getEnvelope<AqspSnapshotEnvelope>(
+    requestPayload(
       date ? `/aqsp/snapshot?date=${encodeURIComponent(date)}` : "/aqsp/snapshot",
+      "GET",
+      undefined,
       options,
-    )
-      .then(({ data, meta }) => ({ ...data, meta })),
+    ).then(normalizeAqspSnapshotEnvelope),
   aqspDates: (): Promise<AqspDateIndex> => get<AqspDateIndex>("/aqsp/dates"),
   indices: () => get<IndexQuote[]>("/indices"),
   marketOverview: () => get<MarketOverview>("/market/overview"),

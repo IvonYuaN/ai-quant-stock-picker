@@ -7,6 +7,7 @@
 ## Active
 
 - `architecture.md`: 项目架构、边界、模块契约、PR 顺序
+- `long-term-operations.md`: 研究、发布、前端、服务器与长期巡检闭环
 - `agent-operating-boundaries.md`: Codex/agent 远程托管、本地开发、服务器运行和公网入口边界
 - `checklist_before_live.md`: 半实盘/人工参考前的实盘前清单
 - `CONSTITUTION.md`: 运行与验证约束

@@ -6,6 +6,7 @@ executable dashboard is ``aqsp.web.dashboard``.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import time as dtime
 
@@ -37,7 +38,9 @@ class TimeLane:
 
 _TIME_LANES: tuple[TimeLane, ...] = (
     TimeLane("09:25", "开盘前", "main_chain", "先看今天最重要的股票和卡点。"),
-    TimeLane("10:00", "早盘看一眼", "morning_breakout", "只看早上有没有明显走强的股票。"),
+    TimeLane(
+        "10:00", "早盘看一眼", "morning_breakout", "只看早上有没有明显走强的股票。"
+    ),
     TimeLane("12:00", "午盘回看", "intraday", "中午只回看上午变化，不急着下结论。"),
     TimeLane("14:40", "尾盘确认", "closing_premium", "收盘前确认下午有没有继续走强。"),
     TimeLane("15:30", "收盘复盘", "closing_review", "看今天哪些判断对了，哪些需要改。"),
@@ -86,16 +89,18 @@ def load_runtime_snapshot() -> dict[str, object]:
 
 def _to_float(value: object) -> float:
     try:
-        return 0.0 if value in (None, "", "-") else float(value)
+        result = 0.0 if value in (None, "", "-") else float(value)
     except (TypeError, ValueError):
         return 0.0
+    return result if math.isfinite(result) else 0.0
 
 
 def _to_optional_float(value: object) -> float | None:
     try:
-        return None if value in (None, "", "-") else float(value)
+        result = None if value in (None, "", "-") else float(value)
     except (TypeError, ValueError):
         return None
+    return result if (result is not None and math.isfinite(result)) else None
 
 
 def _to_optional_int(value: object) -> int | None:

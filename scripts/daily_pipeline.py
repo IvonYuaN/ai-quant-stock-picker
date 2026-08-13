@@ -21,11 +21,13 @@ from aqsp.presentation import (
 )
 from aqsp.core.errors import DataError, FreshnessError
 from aqsp.core.time import now_shanghai, today_shanghai
+from aqsp.universe.intraday_cursor import IntradayBatch, IntradayUniverseCursor
 from aqsp.utils.jsonl_io import append_jsonl, atomic_write_text
 
 _DEFAULT_FETCH_HISTORY_DAYS = 260
 _DEFAULT_FETCH_LOOKBACK_DAYS = max(_DEFAULT_FETCH_HISTORY_DAYS * 2, 365)
 _DEFAULT_DAILY_MAX_UNIVERSE = 300
+_DEFAULT_DAILY_RESEARCH_BATCH_SIZE = 10
 
 
 def _runtime_path_env(
@@ -60,6 +62,17 @@ def _runtime_output_path(
     path = Path(raw or default).expanduser()
     if path.is_absolute():
         return path.resolve(strict=False)
+    if base != project_root and path.parts and path.parts[0] == "data":
+        path = Path(*path.parts[1:]) if len(path.parts) > 1 else Path("")
+    return (base / path).resolve(strict=False)
+
+
+def _runtime_config_path(project_root: Path, configured_path: str) -> Path:
+    """Resolve a configured runtime artifact path outside immutable releases."""
+    path = Path(configured_path).expanduser()
+    if path.is_absolute():
+        return path.resolve(strict=False)
+    base = _runtime_data_root(project_root)
     if base != project_root and path.parts and path.parts[0] == "data":
         path = Path(*path.parts[1:]) if len(path.parts) > 1 else Path("")
     return (base / path).resolve(strict=False)
@@ -102,6 +115,7 @@ class PipelineConfig:
     enable_auto_evolution: bool
     requested_source: str = ""
     source_override_reason: str = ""
+    research_only: bool = False
     daily_digest_path: str = "reports/daily_digest.md"
     daily_digest_json_path: str = "reports/daily_digest.json"
 
@@ -268,15 +282,25 @@ def _format_validation_digest_lines(result: PipelineResult) -> list[str]:
 
 def _step_update_data(config: PipelineConfig, logger: logging.Logger) -> dict[str, Any]:
     from aqsp.data import fetch_with_source
+    from aqsp.freshness import assert_fresh_data
 
     logger.info("  拉取最新行情数据 (source=%s)", config.source)
 
     source = _build_data_source(config)
-    symbols = _resolve_symbols(config, logger)
     workload_setter = getattr(source, "set_workload", None)
     if not callable(workload_setter):
         raise DataError("生产日行情源缺少 live_short workload contract")
-    workload_setter("live_short")
+    local_close_source = config.source == "sqlite_db"
+    if local_close_source:
+        symbols = _sqlite_refreshed_symbols(config)
+        if not symbols:
+            raise DataError(
+                "sqlite_db 收盘研究缺少当日 refresh 覆盖集，先运行 data-refresh"
+            )
+        logger.info("  使用当日 SQLite refresh 覆盖集 %d 只", len(symbols))
+    else:
+        symbols = _resolve_symbols(config, logger)
+    workload_setter(None if local_close_source else "live_short")
     try:
         frames = fetch_with_source(source, symbols, days=260)
     finally:
@@ -293,6 +317,11 @@ def _step_update_data(config: PipelineConfig, logger: logging.Logger) -> dict[st
         raise DataError(
             "生产日行情取数不完整，拒绝继续: " + ", ".join(missing_symbols[:20])
         )
+
+    if local_close_source:
+        # 收盘研究只能使用本交易日已经写入的 raw 本地库；不够就阻断，
+        # 绝不能退化为对全池逐票联网重试。
+        assert_fresh_data(frames, max_lag_days=0)
 
     fresh_count = sum(1 for df in frames.values() if df is not None and not df.empty)
     logger.info("  获取到 %d 只标的数据", fresh_count)
@@ -319,6 +348,8 @@ def _build_data_source(config: PipelineConfig) -> Any:
 def _build_resilient_history_source(config: PipelineConfig) -> Any:
     from aqsp.data.source_factory import build_data_source
 
+    if config.source == "sqlite_db":
+        return build_data_source("sqlite_db")
     if config.source in {"auto", "local_first"}:
         return build_data_source("local_first")
     return build_data_source("online_first")
@@ -352,6 +383,18 @@ def _resolve_live_runtime_source(
             "不能形成正式 live_short 结果。"
         )
     return "online_first", guard
+
+
+def _resolve_daily_runtime_source(source_name: str) -> tuple[str, str]:
+    """Keep close research on a fresh raw local store when it is configured."""
+    normalized = str(source_name or "auto").strip() or "auto"
+    if normalized == "sqlite_db":
+        return (
+            normalized,
+            "daily 收盘研究使用 sqlite_db 原始日线；覆盖或新鲜度不足时快速阻断，"
+            "禁止切换为在线全池重试。",
+        )
+    return _resolve_live_runtime_source(normalized)
 
 
 def _live_runtime_max_data_lag_days(configured_days: int) -> int:
@@ -478,11 +521,88 @@ def _explicit_runtime_symbols() -> list[str]:
         ]
 
 
+def _sqlite_refreshed_symbols(config: PipelineConfig) -> list[str]:
+    state_dir_raw = str(os.getenv("AQSP_RUNTIME_STATE_DIR", "") or "").strip()
+    state_dir = (
+        Path(state_dir_raw)
+        if state_dir_raw
+        else _runtime_data_root(config.project_root) / ".state"
+    )
+    cursor_path = state_dir / "sqlite-refresh-cursor.json"
+    try:
+        payload = json.loads(cursor_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    if (
+        not isinstance(payload, dict)
+        or payload.get("target_day") != today_shanghai().isoformat()
+    ):
+        return []
+    raw_symbols = payload.get("target_day_symbols", [])
+    if not isinstance(raw_symbols, list):
+        return []
+    symbols = list(
+        dict.fromkeys(
+            str(symbol).strip() for symbol in raw_symbols if str(symbol).strip()
+        )
+    )
+    return symbols[: config.max_universe] if config.max_universe > 0 else symbols
+
+
+def _daily_research_batch_size(max_universe: int) -> int:
+    raw = str(os.getenv("AQSP_DAILY_RESEARCH_BATCH_SIZE", "") or "").strip()
+    try:
+        configured = int(raw) if raw else _DEFAULT_DAILY_RESEARCH_BATCH_SIZE
+    except ValueError:
+        configured = _DEFAULT_DAILY_RESEARCH_BATCH_SIZE
+    upper_bound = max_universe if max_universe > 0 else configured
+    return max(1, min(configured, upper_bound))
+
+
+def _select_sqlite_research_batch(
+    config: PipelineConfig,
+) -> tuple[IntradayUniverseCursor, IntradayBatch]:
+
+    symbols = _sqlite_refreshed_symbols(config)
+    if not symbols:
+        raise DataError("sqlite_db 收盘研究缺少当日 refresh 覆盖集，拒绝运行策略")
+    state_dir_raw = str(os.getenv("AQSP_RUNTIME_STATE_DIR", "") or "").strip()
+    state_dir = (
+        Path(state_dir_raw)
+        if state_dir_raw
+        else _runtime_data_root(config.project_root) / ".state"
+    )
+    cursor_path = Path(
+        os.getenv(
+            "AQSP_DAILY_RESEARCH_CURSOR_PATH",
+            str(state_dir / "daily-research-cursor.json"),
+        )
+    )
+    cursor = IntradayUniverseCursor(cursor_path)
+    batch = cursor.select(
+        symbols,
+        trade_date=today_shanghai(),
+        batch_size=_daily_research_batch_size(config.max_universe),
+    )
+    return cursor, batch
+
+
 def _step_run_strategy(
     config: PipelineConfig, logger: logging.Logger
 ) -> dict[str, Any]:
     logger.info("  执行选股策略 (mode=%s, limit=%d)", config.mode, config.limit)
     explicit_symbols = _explicit_runtime_symbols()
+    research_cursor: IntradayUniverseCursor | None = None
+    research_batch: IntradayBatch | None = None
+    if config.source == "sqlite_db":
+        research_cursor, research_batch = _select_sqlite_research_batch(config)
+        explicit_symbols = list(research_batch.symbols)
+        logger.info(
+            "  收盘研究分块: batch=%s symbols=%d coverage=%.1f%%",
+            research_batch.batch_id,
+            len(explicit_symbols),
+            research_batch.coverage_pct * 100,
+        )
 
     argv = [
         "run",
@@ -509,6 +629,8 @@ def _step_run_strategy(
         "--output-csv",
         config.csv_path,
     ]
+    if config.source == "sqlite_db":
+        argv.extend(["--as-of", today_shanghai().isoformat()])
     if config.enable_debate:
         argv.append("--enable-debate")
     if config.enable_online_factors:
@@ -516,13 +638,22 @@ def _step_run_strategy(
 
     from aqsp.cli import main
 
-    exit_code = main(argv)
+    try:
+        exit_code = main(argv)
+    except Exception as exc:
+        if research_cursor is not None and research_batch is not None:
+            research_cursor.fail(research_batch, str(exc))
+        raise
 
-    if exit_code != 0:
-        if exit_code == 2:
-            logger.warning("  策略运行完成但熔断器触发 (exit_code=2)")
-        else:
-            raise DataError(f"策略运行失败, exit_code={exit_code}")
+    if exit_code not in (0, 2):
+        if research_cursor is not None and research_batch is not None:
+            research_cursor.fail(research_batch, f"strategy exit_code={exit_code}")
+        raise DataError(f"策略运行失败, exit_code={exit_code}")
+    if exit_code == 2:
+        logger.warning("  策略运行完成但熔断器触发 (exit_code=2)")
+
+    if research_cursor is not None and research_batch is not None:
+        research_cursor.commit(research_batch, scanned_count=len(explicit_symbols))
 
     report_path = Path(config.project_root / config.report_path)
     report_size = report_path.stat().st_size if report_path.exists() else 0
@@ -541,6 +672,13 @@ def _step_run_strategy(
         "report_size": report_size,
         "gate_ok": not gate_blocked,
     }
+    if research_batch is not None:
+        result["research_batch"] = {
+            "batch_id": research_batch.batch_id,
+            "symbols": len(explicit_symbols),
+            "universe_count": research_batch.universe_count,
+            "coverage_pct": research_batch.coverage_pct,
+        }
     if exit_code == 2:
         result["circuit_breaker"] = True
         result["circuit_breaker_message"] = "组合保护已触发"
@@ -649,18 +787,26 @@ def _step_validate_predictions(
         return {"checked": 0, "skipped": True}
 
     from aqsp.ledger import validate_predictions
-    from aqsp.ledger.base import read_ledger
+    from aqsp.ledger.base import is_ledger_row_paper_review_eligible, read_ledger
+    from aqsp.ratings import is_tradable_rating
 
     rows = read_ledger(str(ledger_path))
     if not rows:
         logger.info("  Ledger 为空, 跳过验证")
         return {"checked": 0, "skipped": True}
 
+    validation_rows = [
+        row
+        for row in rows
+        if row.get("status") == "pending"
+        and (row.get("rating") in (None, "") or is_tradable_rating(row.get("rating")))
+        and is_ledger_row_paper_review_eligible(row)
+    ]
     symbols_in_ledger: list[str] = []
     benchmark_symbols: list[str] = []
     seen_symbols: set[str] = set()
     seen_benchmarks: set[str] = set()
-    for row in rows:
+    for row in validation_rows:
         sym = str(row.get("symbol", "") or "")
         if sym and sym not in seen_symbols:
             seen_symbols.add(sym)
@@ -735,9 +881,22 @@ def _step_sync_paper_trades(
         logger.info("  Ledger 为空, 跳过虚拟盘同步")
         return {"skipped": True}
 
+    # A paper run only admits signals produced for this trading day.  Replaying
+    # every historical ledger row causes a large, useless history fetch after
+    # the rows have already been validated or closed.
+    run_date = today_shanghai().isoformat()
+    signal_dates = {run_date}
+    paper_rows = read_paper_trades(paper_ledger_path)
     symbols: list[str] = []
     seen: set[str] = set()
-    for row in signal_rows + read_paper_trades(paper_ledger_path):
+    tracked_rows = [
+        row for row in signal_rows if str(row.get("signal_date", "")) == run_date
+    ] + [
+        row
+        for row in paper_rows
+        if str(row.get("status", "")) in {"open", "pending_entry"}
+    ]
+    for row in tracked_rows:
         symbol = str(row.get("symbol", "")).strip()
         if symbol and symbol not in seen:
             seen.add(symbol)
@@ -757,6 +916,7 @@ def _step_sync_paper_trades(
         signal_ledger=ledger_path,
         paper_ledger=paper_ledger_path,
         frames=frames,
+        signal_dates=signal_dates,
     )
     paper_rows = read_paper_trades(paper_ledger_path)
     report = render_paper_report(summary=summary, trades=paper_rows)
@@ -1039,9 +1199,14 @@ def _refresh_home_snapshot(
     """Refresh the legacy-compatible home artifact from the daily inputs."""
     try:
         sys.path.insert(0, str(config.project_root / "scripts"))
-        from write_home_snapshot import build_home_snapshot, build_home_snapshot_index
+        from write_home_snapshot import (
+            build_home_snapshot,
+            build_home_snapshot_index,
+            merge_home_snapshot_index,
+        )
         from aqsp.web.data_provider import DashboardDataProvider
         from aqsp.web.home_snapshot import (
+            load_home_snapshot_index,
             write_home_dashboard_snapshot,
             write_home_snapshot_index,
         )
@@ -1053,35 +1218,35 @@ def _refresh_home_snapshot(
             )
             or "data/runtime/home_dashboard_snapshot.json"
         ).strip()
-        snapshot_path = Path(snapshot_path_raw).expanduser()
-        if not snapshot_path.is_absolute():
-            snapshot_path = config.project_root / snapshot_path
+        snapshot_path = _runtime_config_path(config.project_root, snapshot_path_raw)
         index_path = snapshot_path.with_name("home_dashboard_snapshot_index.json")
         configured_index = os.getenv("AQSP_HOME_SNAPSHOT_INDEX_PATH", "").strip()
         if configured_index:
-            index_path = Path(configured_index).expanduser()
-            if not index_path.is_absolute():
-                index_path = config.project_root / index_path
+            index_path = _runtime_config_path(config.project_root, configured_index)
+
+        runtime_data_root = _runtime_data_root(config.project_root)
+        report_path = _runtime_config_path(config.project_root, config.report_path)
 
         provider = DashboardDataProvider(
-            ledger_path=str(config.project_root / config.ledger_path),
-            paper_ledger_path=str(config.project_root / config.paper_ledger),
-            reports_dir=str(config.project_root / "reports"),
-            debate_results_path=str(
-                config.project_root / "data" / "debate_results.jsonl"
+            ledger_path=str(
+                _runtime_config_path(config.project_root, config.ledger_path)
             ),
-            intraday_ledger_path=str(
-                config.project_root / "data" / "intraday_predictions.jsonl"
+            paper_ledger_path=str(
+                _runtime_config_path(config.project_root, config.paper_ledger)
             ),
-            intraday_latest_path=str(
-                config.project_root / "reports" / "intraday_latest.csv"
-            ),
+            reports_dir=str(report_path.parent),
+            debate_results_path=str(runtime_data_root / "debate_results.jsonl"),
+            intraday_ledger_path=str(runtime_data_root / "intraday_predictions.jsonl"),
+            intraday_latest_path=str(report_path.parent / "intraday_latest.csv"),
         )
         snapshot = build_home_snapshot(provider)
-        index = build_home_snapshot_index(
+        existing_index = load_home_snapshot_index(index_path)
+        refreshed_index = build_home_snapshot_index(
             provider,
             initial_snapshot=snapshot,
+            existing_index=existing_index,
         )
+        index = merge_home_snapshot_index(existing_index, refreshed_index)
         write_home_dashboard_snapshot(snapshot_path, snapshot)
         write_home_snapshot_index(index_path, index)
         logger.info(
@@ -1165,6 +1330,15 @@ def run_pipeline(config: PipelineConfig) -> PipelineResult:
         ("Dashboard刷新", lambda: _step_refresh_dashboard(config, logger)),
         ("数据清理", lambda: _step_cleanup(config, logger)),
     ]
+    if config.research_only:
+        pipeline_steps = [
+            ("策略运行", lambda: _step_run_strategy(config, logger)),
+            (
+                "报告生成",
+                lambda: _step_generate_report(config, logger, allow_notify=False),
+            ),
+            ("Dashboard刷新", lambda: _step_refresh_dashboard(config, logger)),
+        ]
     if not _is_trade_day(today):
         pipeline_steps = [
             (
@@ -2031,7 +2205,7 @@ def _build_config(args: argparse.Namespace) -> PipelineConfig:
 
     env = load_runtime_config()
     requested_source = args.source or os.getenv("AQSP_SOURCE", "auto").strip() or "auto"
-    runtime_source, source_override_reason = _resolve_live_runtime_source(
+    runtime_source, source_override_reason = _resolve_daily_runtime_source(
         requested_source
     )
 
@@ -2108,6 +2282,7 @@ def _build_config(args: argparse.Namespace) -> PipelineConfig:
         enable_auto_evolution=env.enable_auto_evolution,
         requested_source=requested_source,
         source_override_reason=source_override_reason,
+        research_only=bool(getattr(args, "research_only", False)),
     )
 
 
@@ -2173,6 +2348,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--verbose", action="store_true", help="详细日志输出")
     parser.add_argument("--notify", action="store_true", help="发送通知")
     parser.add_argument(
+        "--research-only",
+        action="store_true",
+        help="只执行一块收盘研究、报告和首页刷新，不重复纸面同步或学习",
+    )
+    parser.add_argument(
         "--enable-debate", action="store_true", help="启用多Agent辩论分析"
     )
     parser.add_argument(
@@ -2210,7 +2390,8 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         result = run_pipeline(config)
-        _send_pipeline_digest(config, result, logger)
+        if not config.research_only:
+            _send_pipeline_digest(config, result, logger)
         _write_result_file(result, config.project_root)
 
         if result.overall_success:

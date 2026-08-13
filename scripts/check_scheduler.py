@@ -8,6 +8,7 @@ from pathlib import Path
 import os
 import re
 import shlex
+import sqlite3
 import subprocess
 import sys
 from collections.abc import Callable
@@ -23,26 +24,49 @@ RUNTIME_DATA_ROOT = Path(
 RUNTIME_LOCK_ROOT = Path(
     os.environ.get("AQSP_RUNTIME_LOCK_DIR", RUNTIME_DATA_ROOT / ".locks")
 ).resolve()
-SCHEDULED_ACTIONS = frozenset(
+BT_CRON_DIR = Path(os.environ.get("AQSP_BT_CRON_DIR", "/www/server/cron")).resolve()
+BT_CRONTAB_DB = Path(
+    os.environ.get("AQSP_BT_CRONTAB_DB", "/www/server/panel/data/db/crontab.db")
+).resolve()
+REQUIRED_SCHEDULED_ACTIONS = frozenset(
     {
         "daily",
         "intraday",
         "midday",
+        "data-refresh",
+        "data-refresh-retry",
         "coldstart",
+        "variant-refresh",
         "walkforward-gate",
         "monitor",
         "news",
     }
 )
+SCHEDULED_ACTIONS = REQUIRED_SCHEDULED_ACTIONS
+MULTI_WINDOW_ACTIONS = frozenset({"news"})
 LEGACY_CRON_TERMS = (
     "daily_run.sh",
     "intraday_refresh.sh",
+    "midday_refresh.sh",
     "daily_pipeline.sh",
+    "coldstart_daily.sh",
+    "server_monitor.sh",
+    "news_catalysts.sh",
     "streamlit",
     "8501",
     "dist/dashboard",
     "release_task_entrypoint.sh",
     "bt_task.sh",
+)
+BT_LEGACY_ENTRY_PATTERN = re.compile(
+    r"(?:AQSP_RUNNER_SCRIPT=|/scripts/)"
+    r"(?:daily_run|daily_pipeline|intraday_refresh|midday_refresh|coldstart_daily|"
+    r"variant_refresh|run_production_walkforward_gate|server_monitor|news_catalysts)\.sh"
+)
+BT_ACTION_PATTERN = re.compile(
+    r"(?:release_task_entrypoint|bt_task)\.sh\s+("
+    + "|".join(sorted(SCHEDULED_ACTIONS, key=lambda action: (-len(action), action)))
+    + r")(?=\s|$)"
 )
 for candidate in (PROJECT_ROOT / "src", PROJECT_ROOT):
     candidate_str = str(candidate)
@@ -142,7 +166,16 @@ def check_bt_script() -> CheckResult:
     if not script.exists():
         return CheckResult("bt_task.sh", False, "missing")
     text = script.read_text(encoding="utf-8")
-    expected = ["daily", "intraday", "midday", "coldstart", "monitor", "news", "status"]
+    expected = [
+        "daily",
+        "intraday",
+        "midday",
+        "coldstart",
+        "variant-refresh",
+        "monitor",
+        "news",
+        "status",
+    ]
     missing = [item for item in expected if item not in text]
     return CheckResult(
         "bt_task.sh",
@@ -234,14 +267,14 @@ def check_cron_lock_collisions() -> CheckResult:
     return CheckResult("cron outer locks", True, "no cross-task flock collisions")
 
 
-def _scheduled_actions(
+def _scheduled_action_sources(
     crontab: str, read_wrapper: Callable[[Path], str | None]
-) -> set[str]:
-    actions: set[str] = set()
+) -> dict[str, set[str]]:
+    sources: dict[str, set[str]] = {}
     action_pattern = re.compile(
         r"(?:release_task_entrypoint|bt_task)\.sh\s+("
-        + "|".join(sorted(SCHEDULED_ACTIONS))
-        + r")\b"
+        + "|".join(sorted(SCHEDULED_ACTIONS, key=lambda action: (-len(action), action)))
+        + r")(?=\s|$)"
     )
     for line in crontab.splitlines():
         owner = _flock_owner(line)
@@ -262,8 +295,15 @@ def _scheduled_actions(
         text = read_wrapper(wrapper)
         if text is None:
             continue
-        actions.update(action_pattern.findall(text))
-    return actions
+        for action in action_pattern.findall(text):
+            sources.setdefault(action, set()).add(str(wrapper))
+    return sources
+
+
+def _scheduled_actions(
+    crontab: str, read_wrapper: Callable[[Path], str | None]
+) -> set[str]:
+    return set(_scheduled_action_sources(crontab, read_wrapper))
 
 
 def check_bt_panel_actions() -> CheckResult:
@@ -282,13 +322,258 @@ def check_bt_panel_actions() -> CheckResult:
         return CheckResult(
             "BT Panel actions", True, "no readable BT Panel wrappers in system crontab"
         )
-    missing = sorted(SCHEDULED_ACTIONS - actions)
+    missing = sorted(REQUIRED_SCHEDULED_ACTIONS - actions)
     return CheckResult(
         "BT Panel actions",
         not missing,
         "scheduled actions: "
         + ",".join(sorted(actions))
         + ("; missing: " + ",".join(missing) if missing else ""),
+    )
+
+
+def check_bt_panel_database_actions() -> CheckResult:
+    """Verify BaoTa's enabled task table, not only leftover wrapper files.
+
+    BaoTa writes executable wrappers before updating its SQLite task table.  A
+    deleted database row can therefore leave a runnable cron line behind while
+    the panel no longer owns or displays the task.  Treat the enabled rows as
+    the configuration source of truth when the panel database is present.
+    """
+    if not BT_CRONTAB_DB.is_file():
+        return CheckResult("BT Panel database actions", True, "database unavailable")
+    try:
+        with sqlite3.connect(f"file:{BT_CRONTAB_DB}?mode=ro", uri=True) as conn:
+            rows = conn.execute(
+                "SELECT sBody FROM crontab WHERE COALESCE(status, 1) = 1"
+            ).fetchall()
+    except sqlite3.Error as exc:
+        return CheckResult(
+            "BT Panel database actions", False, f"database unreadable: {exc}"
+        )
+    actions = {
+        action
+        for (body,) in rows
+        if isinstance(body, str)
+        for action in _bt_wrapper_actions(body)
+    }
+    missing = sorted(REQUIRED_SCHEDULED_ACTIONS - actions)
+    return CheckResult(
+        "BT Panel database actions",
+        not missing,
+        "enabled actions: "
+        + ",".join(sorted(actions))
+        + ("; missing: " + ",".join(missing) if missing else ""),
+    )
+
+
+def check_duplicate_bt_panel_actions() -> CheckResult:
+    """Reject duplicate BaoTa wrappers that launch the same heavy action."""
+    code, output = _run(["crontab", "-l"])
+    if code != 0:
+        return CheckResult(
+            "BT Panel duplicate actions", True, output or "crontab unavailable"
+        )
+
+    def read_wrapper(path: Path) -> str | None:
+        try:
+            return path.read_text(encoding="utf-8")
+        except OSError:
+            return None
+
+    sources = _scheduled_action_sources(output, read_wrapper)
+    duplicates = {
+        action: sorted(wrappers)
+        for action, wrappers in sources.items()
+        if len(wrappers) > 1 and action not in MULTI_WINDOW_ACTIONS
+    }
+    if duplicates:
+        detail = "; ".join(
+            f"{action} -> {','.join(wrappers)}"
+            for action, wrappers in sorted(duplicates.items())
+        )
+        return CheckResult(
+            "BT Panel duplicate actions",
+            False,
+            "same action is scheduled by multiple wrappers: " + detail,
+        )
+    return CheckResult("BT Panel duplicate actions", True, "no duplicate task actions")
+
+
+def check_bt_panel_wrapper_identity() -> CheckResult:
+    """Reject scheduled BaoTa wrappers that write another task's runtime files."""
+    code, output = _run(["crontab", "-l"])
+    if code != 0:
+        return CheckResult(
+            "BT Panel wrapper identity", True, output or "crontab unavailable"
+        )
+    mismatches: list[str] = []
+    for line in output.splitlines():
+        owner = _flock_owner(line)
+        if owner is None:
+            continue
+        try:
+            tokens = shlex.split(owner[1])
+        except ValueError:
+            continue
+        wrapper = next(
+            (
+                Path(token)
+                for token in tokens
+                if not token.startswith("-") and Path(token).name not in {"bash", "sh"}
+            ),
+            None,
+        )
+        if wrapper is None or not wrapper.is_file() or wrapper.parent != BT_CRON_DIR:
+            continue
+        try:
+            references = set(
+                re.findall(
+                    r"/www/server/cron/([A-Za-z0-9]+)\.(?:pl|log)",
+                    wrapper.read_text(encoding="utf-8"),
+                )
+            )
+        except OSError:
+            continue
+        expected = wrapper.name
+        unexpected = sorted(
+            reference for reference in references if reference != expected
+        )
+        if unexpected:
+            mismatches.append(f"{wrapper} -> {','.join(unexpected)}")
+    return CheckResult(
+        "BT Panel wrapper identity",
+        not mismatches,
+        "wrapper runtime-file identity ok"
+        if not mismatches
+        else "scheduled wrapper references another task runtime file: "
+        + "; ".join(mismatches),
+    )
+
+
+def check_bt_panel_wrapper_shell_syntax() -> CheckResult:
+    """Reject scheduled BaoTa wrappers with malformed serialized shell bodies."""
+    code, output = _run(["crontab", "-l"])
+    if code != 0:
+        return CheckResult(
+            "BT Panel wrapper shell", True, output or "crontab unavailable"
+        )
+    errors: list[str] = []
+    for line in output.splitlines():
+        owner = _flock_owner(line)
+        if owner is None:
+            continue
+        try:
+            tokens = shlex.split(owner[1])
+        except ValueError:
+            continue
+        wrapper = next(
+            (
+                Path(token)
+                for token in tokens
+                if not token.startswith("-") and Path(token).name not in {"bash", "sh"}
+            ),
+            None,
+        )
+        if wrapper is None or not wrapper.is_file() or wrapper.parent != BT_CRON_DIR:
+            continue
+        try:
+            text = wrapper.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if r"\n" in text or r"\"" in text:
+            errors.append(f"{wrapper}: literal shell escape")
+            continue
+        syntax_code, syntax_output = _run(["bash", "-n", str(wrapper)])
+        if syntax_code != 0:
+            errors.append(f"{wrapper}: {syntax_output or 'bash -n failed'}")
+    return CheckResult(
+        "BT Panel wrapper shell",
+        not errors,
+        "scheduled wrapper shell syntax ok" if not errors else "; ".join(errors),
+    )
+
+
+def _bt_wrapper_actions(text: str) -> set[str]:
+    """Extract real scheduler commands, ignoring wrapper comments."""
+    return {
+        action
+        for line in text.splitlines()
+        if not line.lstrip().startswith("#")
+        for action in BT_ACTION_PATTERN.findall(line)
+    }
+
+
+def check_bt_panel_wrapper_integrity(
+    cron_dir: Path = BT_CRON_DIR,
+    expected_actions: frozenset[str] = REQUIRED_SCHEDULED_ACTIONS,
+) -> CheckResult:
+    """Detect old or duplicate AQSP BaoTa wrappers before they can overlap."""
+    if not cron_dir.is_dir():
+        return CheckResult(
+            "BT Panel wrapper audit", True, "BT Panel cron dir unavailable"
+        )
+
+    action_sources: dict[str, list[Path]] = {}
+    legacy_sources: list[Path] = []
+    for wrapper in sorted(
+        path
+        for path in cron_dir.iterdir()
+        if path.is_file() and path.suffix not in {".lock", ".log", ".pl"}
+    ):
+        try:
+            text = wrapper.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        active_lines = "\n".join(
+            line for line in text.splitlines() if not line.lstrip().startswith("#")
+        )
+        if BT_LEGACY_ENTRY_PATTERN.search(active_lines):
+            legacy_sources.append(wrapper)
+        for action in _bt_wrapper_actions(text):
+            action_sources.setdefault(action, []).append(wrapper)
+
+    if legacy_sources:
+        return CheckResult(
+            "BT Panel wrapper audit",
+            False,
+            "legacy direct AQSP task wrapper(s): "
+            + ",".join(str(path) for path in legacy_sources),
+        )
+    duplicates = {
+        action: paths
+        for action, paths in action_sources.items()
+        if len(paths) > 1 and action not in MULTI_WINDOW_ACTIONS
+    }
+    if duplicates:
+        detail = "; ".join(
+            f"{action} -> {','.join(str(path) for path in paths)}"
+            for action, paths in sorted(duplicates.items())
+        )
+        return CheckResult(
+            "BT Panel wrapper audit",
+            False,
+            "same action is scheduled by multiple BT wrappers: " + detail,
+        )
+    if not action_sources:
+        return CheckResult(
+            "BT Panel wrapper audit",
+            not expected_actions,
+            "no AQSP BT Panel wrappers"
+            if not expected_actions
+            else "missing scheduled actions: " + ",".join(sorted(expected_actions)),
+        )
+    missing = sorted(expected_actions - set(action_sources))
+    if missing:
+        return CheckResult(
+            "BT Panel wrapper audit",
+            False,
+            "missing scheduled actions: " + ",".join(missing),
+        )
+    return CheckResult(
+        "BT Panel wrapper audit",
+        True,
+        "scheduled actions: " + ",".join(sorted(action_sources)),
     )
 
 
@@ -379,13 +664,21 @@ def main() -> int:
     print(f"project: {PROJECT_ROOT}")
     print()
 
-    checks = [
+    scheduler_checks = [
         check_project_root(),
         check_python_import(),
         check_bt_script(),
         check_crontab(),
         check_cron_lock_collisions(),
         check_bt_panel_actions(),
+        check_bt_panel_database_actions(),
+        check_duplicate_bt_panel_actions(),
+        check_bt_panel_wrapper_identity(),
+        check_bt_panel_wrapper_shell_syntax(),
+        check_bt_panel_wrapper_integrity(),
+    ]
+    checks = [
+        *scheduler_checks,
         *check_logs(),
         *check_locks(),
     ]
@@ -396,7 +689,13 @@ def main() -> int:
         print(f"[{marker}] {result.label}: {result.detail}")
         has_error = has_error or not result.ok
 
+    strict_schedule_error = any(not result.ok for result in scheduler_checks)
     if _truthy(os.environ.get("AQSP_SCHEDULER_STRICT")) and has_error:
+        return 1
+    if (
+        _truthy(os.environ.get("AQSP_SCHEDULER_STRICT_SCHEDULE"))
+        and strict_schedule_error
+    ):
         return 1
     return 0
 

@@ -104,6 +104,20 @@ def test_storage_audit_rejects_runtime_artifact_outside_data(tmp_path: Path) -> 
     assert (layout.releases / "old-ccc").is_dir()
 
 
+def test_storage_audit_rejects_variant_results_outside_data(tmp_path: Path) -> None:
+    layout = _layout(tmp_path)
+    assert layout.env_file is not None
+    layout.env_file.write_text(
+        f"AQSP_VARIANT_RESULTS={layout.releases}/current-aaa/variant_results.json\n",
+        encoding="utf-8",
+    )
+
+    report = inspect_storage(layout)
+
+    assert not report.ok
+    assert any(item.code == "runtime_env_outside_data" for item in report.findings)
+
+
 def test_storage_audit_rejects_current_and_rollback_aliasing(tmp_path: Path) -> None:
     layout = _layout(tmp_path)
     layout.rollback.unlink()

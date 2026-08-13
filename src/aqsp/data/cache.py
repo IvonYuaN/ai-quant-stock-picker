@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sqlite3
 from collections.abc import Collection
 from datetime import date, datetime
@@ -153,18 +154,13 @@ class DataCache:
             for column in ("workload", "timestamp_source"):
                 if column not in columns:
                     conn.execute(f"ALTER TABLE ohlcv ADD COLUMN {column} TEXT")
-            indexes = {
-                row[1] for row in conn.execute("PRAGMA index_list(ohlcv)").fetchall()
-            }
-            if "idx_ohlcv_symbol_date" not in indexes:
-                conn.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_ohlcv_symbol_date "
-                    "ON ohlcv(symbol, date)"
-                )
+            # The primary key already indexes (symbol, date, price_mode,
+            # workload).  Extra prefix/duplicate indexes only inflate the
+            # large walk-forward cache and increase every write cost.
+            conn.execute("DROP INDEX IF EXISTS idx_ohlcv_symbol_date")
             conn.execute("DROP INDEX IF EXISTS idx_ohlcv_symbol_date_price_mode")
             conn.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS idx_ohlcv_symbol_date_price_mode_workload "
-                "ON ohlcv(symbol, date, price_mode, workload)"
+                "DROP INDEX IF EXISTS idx_ohlcv_symbol_date_price_mode_workload"
             )
             self._migrate_index_workload(conn)
             conn.execute(
@@ -882,7 +878,7 @@ class DataCache:
 
     def clear_expired(
         self,
-        max_age_hours: int = 168,
+        max_age_hours: int | None = None,
         *,
         workloads: Collection[str] | None = None,
     ) -> int:
@@ -891,7 +887,14 @@ class DataCache:
         The legacy call with ``workloads=None`` keeps broad maintenance
         semantics. Production daily runs pass ``workloads=("live_short",)``
         so historical and walk-forward rows are not deleted by routine cleanup.
+
+        ``max_age_hours`` defaults to ``AQSP_CACHE_MAX_AGE_HOURS`` env var
+        (168 hours = 7 days) so retention is configurable without code changes.
         """
+        if max_age_hours is None:
+            max_age_hours = int(os.getenv("AQSP_CACHE_MAX_AGE_HOURS", "168"))
+            if max_age_hours <= 0:
+                max_age_hours = 168
         cutoff = (now_shanghai() - pd.Timedelta(hours=max_age_hours)).isoformat()
         with sqlite3.connect(self.db_path, timeout=_SQLITE_TIMEOUT_SECONDS) as conn:
             if workloads is None:

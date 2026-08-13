@@ -26,9 +26,9 @@
 - 主链裁决：Portfolio Manager 汇总候选、降级高相关/高集中暴露标的，输出可执行主链和候选观察池。
 - 多 Agent：支持中文角色注册表、角色级 provider/model 配置；LLM 只做摘要增强，不直接改写打分。
 - 通知：Server 酱、Webhook、Telegram、企业微信、飞书等通道；收盘汇总默认走 `summary`，避免重复轰炸。
-- 服务器：`server_sync_and_run.sh` 自动拉代码并跑批；`install_server_cron.sh` 安装盘中、收盘、监控 cron。
+- 服务器：不可变 release 由 `deploy_immutable_release.sh` 发布并验证；宝塔只调用当前 release 的 `bt_task.sh`。
 - 监控：`server_monitor.sh` 和 `aqsp doctor` 可检查运行文件、数据源登录、Tushare、GLM/Agnes、通知通道。
-- CI：本地全量测试最近通过 `658 passed`；GitHub Actions 已做路径过滤和重复运行降噪。
+- 验证：本地测试、前端构建、服务器调度、数据新鲜度和公网 health 共同构成验收；GitHub Actions 仅保留手动入口。
 
 ## GitHub 仓库说明
 
@@ -125,7 +125,7 @@ python -m aqsp.cli pit --kind disclosure_dates --symbols 600519,300750 --start 2
 - `tests/README.md`: 测试分层说明，方便定位该跑哪一组回归
 - `scripts/README.md`: 脚本边界说明，避免把临时采集工具误接入主链路
 
-## GitHub 备份与可选定时通知
+## GitHub 备份
 
 1. 新建 GitHub 仓库并上传本项目代码。
 2. 在 `Settings -> Secrets and variables -> Actions -> Variables` 配置：
@@ -138,9 +138,9 @@ python -m aqsp.cli pit --kind disclosure_dates --symbols 600519,300750 --start 2
    - 企业微信: `WECHAT_WEBHOOK_URL`
    - 飞书: `FEISHU_WEBHOOK_URL`
    - 通用 Webhook: `GENERIC_WEBHOOK_URL`
-4. Workflow 默认北京时间工作日 09:10 和 14:45 运行，也支持手动运行。
+4. GitHub Actions 不参与生产调度；如需验证，只手动触发 workflow。
 
-如果你主要在本地跑，这一节可以完全不启用；GitHub 只保留仓库备份也没问题。
+GitHub 只保留仓库备份和可追溯 commit，不上传 ledger、报告、缓存或密钥。
 
 数据新鲜度由 `aqsp.freshness.assert_fresh_data` 强制检查。超过允许滞后时任务直接失败，不发送陈旧选股。
 若已配置 `TUSHARE_TOKEN`，运行时会优先用 Tushare 交易日历按真实交易日判断滞后和 T+1，长假期间不会把正常停市误判成数据过期。
@@ -149,10 +149,10 @@ python -m aqsp.cli pit --kind disclosure_dates --symbols 600519,300750 --start 2
 
 推荐把代码放 GitHub 备份，把每日结果留在你自己的机器或服务器:
 
-- GitHub Actions 定时跑 `aqsp run`。
+- 服务器宝塔计划任务运行当前 immutable release 的 `scripts/bt_task.sh`。
 - `bash scripts/start_vibe_research.sh` 启动当前 AQSP React + FastAPI 看板；`aqsp dashboard-static` / `scripts/render_dashboard.py` 仅生成离线归档 `dist/dashboard/archive.html`，不作为公网根入口。
 - `scripts/export_dashboard_db.py` 生成 `dist/dashboard/aqsp.db`。
-- `scripts/deploy_dashboard.sh` 通过 SSH/rsync 发布到服务器。
+- `scripts/deploy_immutable_release.sh` 负责发布、切换 current/rollback symlink 并验证公网入口。
 
 开启方式见 `docs/server-dashboard-deployment.md`。敏感信息只放 GitHub Actions Secrets,不要放仓库文件:
 
@@ -162,7 +162,7 @@ python -m aqsp.cli pit --kind disclosure_dates --symbols 600519,300750 --start 2
 - `AQSP_DEPLOY_PATH`
 - `AQSP_DEPLOY_SSH_KEY`
 
-是否部署由 GitHub Variable `AQSP_DEPLOY_DASHBOARD=true` 控制。默认不发布前端,也不上传 ledger/report/cache。
+发布不由 GitHub Actions 控制；服务器发布脚本显式验证后才切换 release。默认不上传 ledger/report/cache。
 
 ## 每日验证与自优化
 

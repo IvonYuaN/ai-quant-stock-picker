@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import logging
+import math
 import os
-import inspect
 import subprocess
 import sys
 from dataclasses import dataclass, replace
@@ -19,7 +18,7 @@ from aqsp.config import (
     load_debate_runtime_config,
     load_runtime_config,
 )
-from aqsp.core.errors import DataError, MissingDataError
+from aqsp.core.errors import DataError
 from aqsp.core.time import now_shanghai, today_shanghai
 from aqsp.core.types import RunMetadata
 from aqsp.data.registry import (
@@ -30,32 +29,19 @@ from aqsp.data.registry import (
 )
 from aqsp.data.registry import get_registry_entry
 from aqsp.data.source_readiness import (
-    WorkloadId,
     inspect_source_readiness,
-    source_role_for_workload,
-    source_supports_workload,
-    workload_guard_message,
 )
 from aqsp.data.source_health import (
     describe_source_health,
     read_source_health,
-    record_source_failure,
-    record_source_success,
 )
 from aqsp.data import (
-    IntradayService,
-    fetch_frames_for_cli_with_metadata,
-    fetch_with_source,
     load_csv,
 )
-from aqsp.data.index_constituents import load_optional_index_constituents
+from aqsp.indicators import enrich_indicators
 from aqsp.data.cache import DataCache
 from aqsp.data.source_factory import (
-    build_data_source,
-    build_sqlite_db_source,
     load_sqlite_symbol_name_map,
-    resolve_sqlite_db_path,
-    sqlite_price_mode,
 )
 from aqsp.data.tushare_pit import TusharePitClient
 from aqsp.data.trading_calendar import trading_day_lag
@@ -64,17 +50,12 @@ from aqsp.freshness import assert_fresh_data, latest_trade_date
 from aqsp.ledger import (
     ExecutionConfig,
     append_predictions,
-    cold_start_min_days,
     append_run_event,
-    compute_paper_mark_to_market_pnl,
     execution_config_from_thresholds,
-    compute_real_pnl,
-    count_independent_signal_days,
     strategy_weights_from_ledger,  # noqa: F401 - kept for legacy monkeypatches.
     validate_predictions,
 )
 from aqsp.models import ScreeningConfig
-from aqsp.universe.runtime import resolve_run_symbols as resolve_runtime_run_symbols
 from aqsp.notify_templates import (
     build_daily_run_notification,
     build_closing_premium_notification,
@@ -83,19 +64,11 @@ from aqsp.notify_templates import (
 )
 from aqsp.notification_runtime import (
     dispatch_gate_notification,
-    dispatch_notification_once as _dispatch_notification_once_impl,
     dispatch_scheduled_daily_notification,
     finalize_scheduled_notification,
     finalize_scheduled_outputs,
-    mark_notification_failed,
-    mark_notification_sent,
-    reserve_notification,
 )
-from aqsp.notifier import (
-    notify_markdown as _notify_markdown_default,
-    notify_markdown_via_config,
-    print_notify_results,
-)
+from aqsp.notifier import notify_markdown as _notify_markdown_default
 from aqsp.research.summary import load_research_summary
 from aqsp.runtime_snapshot import build_runtime_research_snapshot
 from aqsp.research_engine import (
@@ -104,11 +77,7 @@ from aqsp.research_engine import (
     resolve_walkforward_engine,
 )
 from aqsp.regime import (
-    build_synthetic_regime_frame,
     build_runtime_strategy_mix,
-    detect_runtime_regime,
-    detect_runtime_regime_context,
-    format_runtime_regime_lines,
 )
 from aqsp.report import to_dataframe, to_intraday_dataframe, to_markdown
 from aqsp.risk.circuit_breaker import (
@@ -116,289 +85,142 @@ from aqsp.risk.circuit_breaker import (
     CircuitBreaker,
     CircuitBreakerConfig,
 )
-from aqsp.runtime.gate_notify import (
-    mark_gate_notification_suppressed,
-    mark_gate_notification_sent,
-    mark_gate_notification_failed,
-    should_send_gate_notification,
-)
 from aqsp.strategy import (
     apply_candidate_quality_gate,
     screen_universe,
-    score_symbol,
 )
 from aqsp.strategies.thresholds import load_thresholds
-from aqsp.universe import DEFAULT_SYMBOLS
 from aqsp.utils.jsonl_io import advisory_lock, atomic_write_text
-from aqsp.walkforward_gate import (
-    MAX_GATE_AGE_DAYS,
-    WalkForwardGateValidation,
-    build_walkforward_gate_payload,
-    validate_walkforward_gate_payload,
-    validate_walkforward_market_coverage,
+from aqsp.cli_debate_helpers import (
+    _apply_debate_results_to_picks,
+    _build_debate_coordinator,
+    _candidate_debate_fingerprint,
+    _debate_execution_enabled,
+    _merge_debate_records,
+    _read_retained_debates,
+    _resolve_pick_debate_roles,
+    _write_debate_records,
+    serialize_debate_result,
 )
-from aqsp.briefing.debate import (
-    AShareDebateCoordinator,
-    DebateResult,
-    debate_active_role_summary,
-    debate_active_roles,
-    parse_agent_roles,
+from aqsp.cli_notification_gate import (
+    HELDOUT_TRAIN_CUTOFF,  # noqa: F401 - re-exported for test_heldout_guard.
+    GATE_NOTIFY_STATE_PATH,
+    WALKFORWARD_GATE_PATH,
+    _check_notification_gate,
+    _cold_start_min_days,
+    _format_notification_gate_block,
+    _mark_gate_notification_failed,
+    _mark_gate_notification_sent,
+    _mark_gate_notification_suppressed,
+    _notification_gate_actions,
+    _resolve_runtime_state_path,
+    _should_send_gate_notification,
 )
-from aqsp.goal_switches import goal_switch_enabled
+from aqsp.cli_walkforward_helpers import (
+    _append_walkforward_diagnostics,
+    _assert_not_heldout,
+    _find_thresholds_yaml,  # noqa: F401 - re-exported for test_cli_walkforward.
+    _format_walkforward_pbo,
+    _get_hs300_symbols,
+    _regime_description,
+    _resolve_sqlite_db_path,  # noqa: F401 - re-exported for test_cli_walkforward.
+    _resolve_walkforward_window_args,
+    _update_thresholds_metadata,
+    _walkforward_fetch_days,
+    _walkforward_gate_metadata,
+    _walkforward_runtime_rows,
+    _write_walkforward_gate,
+)
+from aqsp import cli_notify_helpers
+from aqsp.cli_notify_helpers import _dispatch_notification_once
+from aqsp.cli_runtime_catalyst_helpers import (
+    _build_runtime_catalyst_report,
+    _effective_live_short_max_data_lag_days,
+    _filter_catalyst_report_for_symbols,  # noqa: F401 - re-exported for tests.
+    _is_high_frequency_task,
+    _load_runtime_market_context_catalyst_report,
+    _market_context_source_timeout_seconds,  # noqa: F401 - re-exported for tests.
+    _requires_intraday_overlay_task,
+    _runtime_catalyst_isolate_external_sources,  # noqa: F401 - re-exported for tests.
+    _runtime_catalyst_max_news_age_days,  # noqa: F401 - re-exported for tests.
+    _runtime_realtime_cross_market_payload,
+    _should_build_market_context,
+)
+from aqsp.cli_runtime_source_helpers import (
+    _build_sqlite_db_source,  # noqa: F401 - re-exported for tests/scripts.
+    _drop_benchmark_frame,  # noqa: F401 - re-exported for tests/scripts.
+    _fetch_frames_for_cli,  # noqa: F401 - re-exported for tests.
+    _fetch_frames_for_cli_with_metadata,  # noqa: F401 - re-exported for tests.
+    _get_source,  # noqa: F401 - re-exported for tests.
+    _get_source_optional_cache,  # noqa: F401 - re-exported for tests.
+    _resolve_run_symbols,  # noqa: F401 - re-exported for tests/scripts.
+)
+from aqsp.cli_candidate_helpers import (
+    _annotate_candidate_status,  # noqa: F401 - re-exported for tests.
+    _annotate_cross_market_context,  # noqa: F401 - re-exported for tests.
+    _annotate_data_quality_context,  # noqa: F401 - re-exported for tests.
+    _append_cross_market_watch_candidates,  # noqa: F401 - re-exported for tests.
+    _candidate_blocker_map,  # noqa: F401 - re-exported for tests.
+    _candidate_review_map,  # noqa: F401 - re-exported for tests.
+    _default_candidate_review,  # noqa: F401 - re-exported for tests.
+    _market_context_review_priority,  # noqa: F401 - re-exported for tests.
+    _merge_candidate_note,  # noqa: F401 - re-exported for tests.
+    _news_watch_candidate_limit,  # noqa: F401 - re-exported for tests.
+)
+from aqsp.cli_regime_helpers import (
+    _INTRADAY_CATALYST_PREVIEW_MAX,  # noqa: F401 - re-exported for tests.
+    _INTRADAY_CATALYST_PREVIEW_MIN,  # noqa: F401 - re-exported for tests.
+    _augment_summary_with_market_context,  # noqa: F401 - re-exported for tests.
+    _augment_summary_with_t1_blockers,  # noqa: F401 - re-exported for tests.
+    _attach_runtime_weight_snapshot,  # noqa: F401 - re-exported for tests.
+    _blend_base_and_regime_scores,  # noqa: F401 - re-exported for tests.
+    _build_execution_preview,  # noqa: F401 - re-exported for tests.
+    _build_execution_summary_line,  # noqa: F401 - re-exported for tests.
+    _build_synthetic_regime_frame,  # noqa: F401 - re-exported for tests/scripts.
+    _check_sector_concentration_with_runtime_hints,  # noqa: F401 - re-exported.
+    _detect_runtime_regime,  # noqa: F401 - re-exported for tests/scripts.
+    _log_run_decisions,  # noqa: F401 - re-exported for tests.
+    _market_context_preview_count,  # noqa: F401 - re-exported for tests.
+    _resolve_audit_action,  # noqa: F401 - re-exported for tests.
+    _runtime_regime_market_context_lines,  # noqa: F401 - re-exported for tests.
+    _runtime_weight_snapshot,  # noqa: F401 - re-exported for tests.
+)
+from aqsp.cli_intraday_helpers import (
+    _apply_protection_observation_boundary,  # noqa: F401 - re-exported for tests.
+    _fetch_intraday_historical_base,  # noqa: F401 - re-exported for tests.
+    _fetch_special_strategy_frames,  # noqa: F401 - re-exported for tests.
+    _force_intraday_observation,  # noqa: F401 - re-exported for tests.
+    _intraday_actual_source,  # noqa: F401 - re-exported for tests.
+    _intraday_overlay_coverage,  # noqa: F401 - re-exported for tests.
+    _relevant_intraday_missing_symbols,  # noqa: F401 - re-exported for tests.
+    _runtime_actual_source_workload_allowed,  # noqa: F401 - re-exported for tests.
+    _runtime_source_workload_allowed,  # noqa: F401 - re-exported for tests.
+    _special_strategy_ledger_write_allowed,  # noqa: F401 - re-exported for tests.
+    _special_strategy_run_metadata,  # noqa: F401 - re-exported for tests.
+    _special_strategy_runtime_ready,  # noqa: F401 - re-exported for tests.
+)
+from aqsp.cli_ledger_helpers import (
+    _allow_observation_during_circuit_breaker,  # noqa: F401 - re-exported for tests.
+    _compute_real_pnl,  # noqa: F401 - re-exported for tests.
+    _count_independent_signal_days,  # noqa: F401 - re-exported for tests.
+    _execution_cost_bps_from_thresholds,  # noqa: F401 - re-exported for tests.
+    _formal_runtime_ledger_path,  # noqa: F401 - re-exported for tests.
+    _format_validation_summary_lines,  # noqa: F401 - re-exported for tests.
+    _handle_circuit_breaker_block,  # noqa: F401 - re-exported for tests.
+    _ledger_signal_date,  # noqa: F401 - re-exported for tests.
+    _no_candidate_reason,  # noqa: F401 - re-exported for tests.
+    _resolve_execution_cost_bps,  # noqa: F401 - re-exported for tests/scripts.
+    _safe_write_ledger_path,  # noqa: F401 - re-exported for tests.
+    _trim_high_frequency_markdown,  # noqa: F401 - re-exported for tests.
+    _validation_summary_payload,  # noqa: F401 - re-exported for tests.
+    _write_high_frequency_provisional_outputs,  # noqa: F401 - re-exported for tests.
+)
 from aqsp.models import PickResult
-from aqsp.presentation import format_symbol_name, has_meaningful_name
+from aqsp.presentation import has_meaningful_name
 
 LOGGER = logging.getLogger(__name__)
-notify_markdown = _notify_markdown_default
 DEBATE_RETENTION_DAYS = 30
 DEBATE_COOLDOWN_DAYS = 3
-# Keep the intraday catalyst fan-out bounded even when the final screen limit
-# is large. These are resource guards, not scoring or recommendation thresholds.
-_INTRADAY_CATALYST_PREVIEW_MIN = 3
-_INTRADAY_CATALYST_PREVIEW_MAX = 5
-_INTRADAY_CATALYST_THREAD_MODES = frozenset({"thread", "in_process", "same_process"})
-
-
-def serialize_debate_result(result: DebateResult) -> dict:
-    """将辩论结果序列化为可JSON化的字典"""
-    return result.to_dict()
-
-
-def _build_debate_coordinator(
-    debate_runtime: Any,
-    *,
-    thresholds_version: str,
-    regime: str,
-    data_source: str,
-    roles_override: tuple[str, ...] | None = None,
-) -> AShareDebateCoordinator:
-    active_roles = parse_agent_roles(roles_override or debate_runtime.roles)
-    active_role_names = {role.value for role in active_roles}
-    role_runtime = tuple(
-        item for item in debate_runtime.role_runtime if item.role in active_role_names
-    )
-    return AShareDebateCoordinator(
-        enable_llm=debate_runtime.enable_llm,
-        # 实时盘中讨论必须至少完成一轮反驳，避免只产出单轮观点。
-        max_rounds=(
-            max(2, debate_runtime.max_rounds)
-            if str(regime).strip().lower() == "intraday"
-            else debate_runtime.max_rounds
-        ),
-        thresholds_version=thresholds_version,
-        regime=regime,
-        data_source=data_source,
-        language=debate_runtime.language,
-        roles=active_roles,
-        role_runtime=role_runtime,
-    )
-
-
-def _resolve_pick_debate_roles(
-    debate_runtime: Any,
-    *,
-    pick: PickResult,
-    market_context_lines: tuple[str, ...],
-) -> tuple[str, ...]:
-    if getattr(debate_runtime, "context_roles_locked", False):
-        return tuple(debate_runtime.roles)
-
-    from aqsp.briefing.agent_roles import infer_context_agent_roles
-
-    return tuple(
-        role.value
-        for role in infer_context_agent_roles(
-            pick,
-            base_roles=debate_runtime.roles,
-            market_context_lines=market_context_lines,
-            disabled_roles=getattr(debate_runtime, "disabled_roles", ()),
-        )
-    )
-
-
-def _debate_execution_enabled(args: Any, debate_runtime: Any) -> bool:
-    return goal_switch_enabled("multi_agent_advisory_layer", default=True) and (
-        getattr(args, "enable_debate", False) or debate_runtime.enabled
-    )
-
-
-def _apply_debate_results_to_picks(
-    picks: list[PickResult],
-    debate_results: list[DebateResult],
-) -> tuple[list[PickResult], int]:
-    debate_by_symbol = {result.symbol: result for result in debate_results}
-    if not debate_by_symbol:
-        return picks, 0
-
-    rewritten = 0
-    updated_picks: list[PickResult] = []
-    for pick in picks:
-        result = debate_by_symbol.get(pick.symbol)
-        if result is None:
-            updated_picks.append(pick)
-            continue
-
-        metrics = dict(pick.metrics)
-        deterministic_baseline = (
-            result.deterministic_score
-            if result.deterministic_score
-            else result.original_score
-        )
-        metrics["deterministic_score"] = float(pick.score)
-        metrics["deterministic_score_unchanged"] = bool(
-            result.deterministic_score_unchanged
-            and deterministic_baseline == result.original_score == pick.score
-        )
-        metrics["advisory_only"] = bool(result.advisory_only)
-        metrics["debate_id"] = result.debate_id
-        metrics["debate_disagreement_score"] = result.disagreement_score
-        metrics["debate_final_vote"] = {
-            role.value: stance for role, stance in result.final_vote.items()
-        }
-        metrics["debate_active_roles"] = [
-            role.value for role in debate_active_roles(result)
-        ]
-        active_role_summary = debate_active_role_summary(result)
-        if active_role_summary:
-            metrics["debate_active_role_summary"] = active_role_summary
-        if result.role_selection_summary:
-            metrics["debate_role_selection_summary"] = result.role_selection_summary
-        if result.role_selection_plan:
-            metrics["debate_role_selection_plan"] = result.role_selection_plan
-        if result.research_verdict:
-            metrics["debate_research_verdict"] = result.research_verdict
-        if result.primary_risk_gate:
-            metrics["debate_primary_risk_gate"] = result.primary_risk_gate
-        if result.next_trigger:
-            metrics["debate_next_trigger"] = result.next_trigger
-        if result.support_points:
-            metrics["support_points"] = list(result.support_points)
-        if result.opposition_points:
-            metrics["opposition_points"] = list(result.opposition_points)
-        if result.watch_items:
-            metrics["watch_items"] = list(result.watch_items)
-        if result.role_reliability_lines:
-            metrics["role_reliability_lines"] = list(result.role_reliability_lines)
-        if result.historical_context_note:
-            metrics["debate_historical_context_note"] = result.historical_context_note
-        if result.historical_context_bucket:
-            metrics["debate_historical_context_bucket"] = (
-                result.historical_context_bucket
-            )
-        if result.historical_context_sample_count > 0:
-            metrics["debate_historical_context_sample_count"] = (
-                result.historical_context_sample_count
-            )
-            metrics["debate_historical_context_accuracy"] = (
-                result.historical_context_accuracy
-            )
-        elif result.historical_context_accuracy > 0:
-            metrics["debate_historical_context_accuracy"] = (
-                result.historical_context_accuracy
-            )
-        if result.cross_market_support_event_count > 0:
-            metrics["cross_market_support_event_count"] = (
-                result.cross_market_support_event_count
-            )
-        if result.cross_market_conflict_event_count > 0:
-            metrics["cross_market_conflict_event_count"] = (
-                result.cross_market_conflict_event_count
-            )
-        if result.cross_market_evidence_stack_summary:
-            metrics["cross_market_evidence_stack_summary"] = (
-                result.cross_market_evidence_stack_summary
-            )
-
-        pick = replace(
-            pick,
-            metrics=metrics,
-            debate_consensus=result.final_consensus,
-        )
-        updated_picks.append(pick)
-    return updated_picks, rewritten
-
-
-def _read_retained_debates(debate_file: Path, cutoff_date: str) -> dict[str, dict]:
-    retained: dict[str, dict] = {}
-    if not debate_file.exists():
-        return retained
-    for line in debate_file.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        try:
-            data = json.loads(line)
-            debate_date = str(
-                data.get("related_signal_date", "") or data.get("debate_date", "")
-            )
-            if debate_date < cutoff_date:
-                continue
-            key = _debate_record_key(data)
-            if key not in retained or retained[key].get("created_at", "") < data.get(
-                "created_at", ""
-            ):
-                retained[key] = data
-        except (json.JSONDecodeError, KeyError):
-            pass
-    return retained
-
-
-def _merge_debate_records(target: dict[str, dict], updates: dict[str, dict]) -> None:
-    for data in updates.values():
-        debate_date = str(
-            data.get("related_signal_date", "") or data.get("debate_date", "")
-        )
-        symbol = str(data.get("symbol", ""))
-        if not symbol or not debate_date:
-            continue
-        key = _debate_record_key(data)
-        if key not in target or target[key].get("created_at", "") < data.get(
-            "created_at", ""
-        ):
-            target[key] = data
-
-
-def _write_debate_records(debate_file: Path, records: dict[str, dict]) -> None:
-    text = "".join(
-        json.dumps(data, ensure_ascii=False) + "\n"
-        for data in sorted(
-            records.values(),
-            key=lambda item: (
-                str(item.get("related_signal_date", "") or item.get("debate_date", "")),
-                str(item.get("symbol", "")),
-                str(item.get("task_id", "")),
-                str(item.get("candidate_fingerprint", "")),
-                str(item.get("created_at", "")),
-            ),
-        )
-    )
-    atomic_write_text(debate_file, text)
-
-
-def _debate_record_key(data: dict[str, Any]) -> str:
-    symbol = str(data.get("symbol", "") or "")
-    debate_date = str(
-        data.get("related_signal_date", "") or data.get("debate_date", "")
-    )
-    task_id = str(data.get("task_id", "") or "")
-    fingerprint = str(data.get("candidate_fingerprint", "") or "")
-    if task_id or fingerprint:
-        return "|".join((symbol, debate_date, task_id, fingerprint))
-    return f"{symbol}_{debate_date}"
-
-
-def _candidate_debate_fingerprint(pick: PickResult) -> str:
-    payload = {
-        "symbol": pick.symbol,
-        "date": pick.date,
-        "score": round(float(pick.score or 0.0), 4),
-        "rating": pick.rating,
-        "strategies": list(pick.strategies),
-        "reasons": list(pick.reasons),
-        "risks": list(pick.risks),
-    }
-    return hashlib.sha256(
-        json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
-    ).hexdigest()[:16]
 
 
 SOURCE_CHOICES = [
@@ -426,108 +248,6 @@ WALKFORWARD_SOURCE_CHOICES = [
     "baostock",
     "sqlite_db",
 ]
-# 宪法 §1.3 #9：held-out 区间（2025-01~2026-04）绝对禁止用于训练
-HELDOUT_TRAIN_CUTOFF = "2024-12-31"
-# 宪法 §1.3 #12/#14：双门 gate 的 sidecar 文件
-WALKFORWARD_GATE_PATH = "data/walkforward_gate.json"
-GATE_NOTIFY_STATE_PATH = "data/gate_notify_state.json"
-NOTIFY_STATE_PATH = "data/notify_state.json"
-DEFAULT_WALKFORWARD_LOOKBACK_YEARS = 3
-
-
-def _cold_start_min_days() -> int:
-    return cold_start_min_days()
-
-
-def _shift_years(raw: date, years: int) -> date:
-    try:
-        return raw.replace(year=raw.year - years)
-    except ValueError:
-        return raw.replace(month=2, day=28, year=raw.year - years)
-
-
-def _default_walkforward_end() -> str:
-    return today_shanghai().isoformat()
-
-
-def _default_walkforward_start(
-    *, end: str, lookback_years: int = DEFAULT_WALKFORWARD_LOOKBACK_YEARS
-) -> str:
-    return (
-        _shift_years(date.fromisoformat(end), max(int(lookback_years), 1))
-        + timedelta(days=1)
-    ).isoformat()
-
-
-def _resolve_runtime_state_path(path: str) -> str:
-    state_path = Path(path)
-    if state_path.is_absolute():
-        return str(state_path)
-    project_root = Path(__file__).resolve().parents[2]
-    return str(project_root / state_path)
-
-
-def _notify_via_config(markdown: str, *, mode: str) -> list:
-    if notify_markdown is not _notify_markdown_default:
-        return notify_markdown(markdown)
-    return notify_markdown_via_config(markdown, mode=mode)
-
-
-def _dispatch_notification_once(
-    markdown: str,
-    *,
-    prefix: str,
-    mode: str,
-    kind: str,
-    summary_markdown: str | None = None,
-) -> list:
-    state_path = _resolve_runtime_state_path(
-        os.getenv("AQSP_NOTIFY_STATE_PATH", NOTIFY_STATE_PATH)
-    )
-    if notify_markdown is not _notify_markdown_default:
-        payload = (
-            summary_markdown
-            if str(mode).strip().lower() == "summary" and summary_markdown
-            else markdown
-        )
-        if not reserve_notification(
-            kind=kind,
-            markdown=payload,
-            state_path=state_path,
-        ):
-            print(f"{prefix}: skipped duplicate")
-            return []
-        try:
-            results = notify_markdown(payload)
-            print_notify_results(results, prefix=prefix)
-        except Exception:
-            mark_notification_failed(
-                kind=kind,
-                markdown=payload,
-                state_path=state_path,
-            )
-            raise
-        if any(result.ok for result in results):
-            mark_notification_sent(
-                kind=kind,
-                markdown=payload,
-                state_path=state_path,
-            )
-        else:
-            mark_notification_failed(
-                kind=kind,
-                markdown=payload,
-                state_path=state_path,
-            )
-        return results
-    return _dispatch_notification_once_impl(
-        markdown,
-        mode=mode,
-        prefix=prefix,
-        kind=kind,
-        state_path=state_path,
-        summary_markdown=summary_markdown,
-    )
 
 
 def _screen_universe_with_thresholds(
@@ -542,6 +262,45 @@ def _screen_universe_with_thresholds(
             raise
         picks = screen_universe(frames, config)
     return apply_candidate_quality_gate(picks)
+
+
+def _ensure_pick_technical_metrics(
+    picks: list[PickResult],
+    frames: dict[str, pd.DataFrame],
+) -> list[PickResult]:
+    """Fill missing display evidence from the same point-in-time screening frame."""
+    specifications = (
+        ("macd_hist", 4),
+        ("kdj_j", 2),
+        ("volume_ratio", 2),
+    )
+    enriched: list[PickResult] = []
+    for pick in picks:
+        frame = frames.get(pick.symbol)
+        if frame is None or frame.empty:
+            enriched.append(pick)
+            continue
+        try:
+            last_row = enrich_indicators(frame).iloc[-1]
+        except (KeyError, TypeError, ValueError, IndexError):
+            enriched.append(pick)
+            continue
+        metrics = dict(pick.metrics)
+        for key, digits in specifications:
+            try:
+                existing = float(metrics.get(key))
+            except (TypeError, ValueError):
+                existing = float("nan")
+            if pd.notna(existing):
+                continue
+            try:
+                value = float(last_row.get(key))
+            except (TypeError, ValueError):
+                continue
+            if pd.notna(value):
+                metrics[key] = round(value, digits)
+        enriched.append(replace(pick, metrics=metrics))
+    return enriched
 
 
 def _runtime_strategy_weights(
@@ -659,15 +418,8 @@ def _enrich_pick_names(
     return enriched
 
 
-def _resolve_sqlite_db_path() -> str | None:
-    return resolve_sqlite_db_path()
-
-
-def _build_sqlite_db_source(*, cache: DataCache | None):
-    return build_sqlite_db_source(cache=cache)
-
-
 def main(argv: list[str] | None = None) -> int:
+    """CLI 总入口，构建 argparse 并分发子命令。"""
     parser = argparse.ArgumentParser(prog="aqsp")
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -1122,6 +874,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def run_sources(args: argparse.Namespace) -> int:
+    """列出已注册的数据源及其本地状态。"""
     entries = sort_registry_entries(ready_only=args.ready_only)
     health = read_source_health()
     source_health = health.get("sources", {})
@@ -1178,6 +931,7 @@ def run_sources(args: argparse.Namespace) -> int:
 
 
 def run_doctor(args: argparse.Namespace) -> int:
+    """执行服务器与运行时就绪诊断。"""
     from scripts.server_doctor import main as doctor_main
 
     argv: list[str] = []
@@ -1189,6 +943,7 @@ def run_doctor(args: argparse.Namespace) -> int:
 
 
 def run_research(args: argparse.Namespace) -> int:
+    """查看研究报告摘要。"""
     summary = load_research_summary()
     if summary is None:
         print("research summary unavailable")
@@ -1337,6 +1092,7 @@ def run_runtime_snapshot(args: argparse.Namespace) -> int:
 
 
 def run_pit(args: argparse.Namespace) -> int:
+    """检查 point-in-time 数据端点。"""
     client = TusharePitClient()
     start = date.fromisoformat(args.start)
     end = date.fromisoformat(args.end)
@@ -1356,6 +1112,7 @@ def run_pit(args: argparse.Namespace) -> int:
 
 
 def run_compare_snapshots(args: argparse.Namespace) -> int:
+    """对比两个日期的持仓快照差异。"""
     from aqsp.portfolio.snapshot import compare_snapshots, format_snapshot_diff
 
     date2 = args.date2 or today_shanghai().isoformat()
@@ -1424,1918 +1181,6 @@ def _source_runtime_metadata(
     )
 
 
-def _get_source(source_name: str, *, cache: DataCache | None = None):
-    return build_data_source(source_name, cache=cache or DataCache())
-
-
-def _get_source_optional_cache(source_name: str, *, cache: DataCache | None = None):
-    if cache is None:
-        return _get_source(source_name)
-    try:
-        signature = inspect.signature(_get_source)
-    except (TypeError, ValueError):
-        signature = None
-    if signature is not None and not any(
-        parameter.kind == inspect.Parameter.VAR_KEYWORD
-        or (
-            parameter.name == "cache"
-            and parameter.kind
-            in {
-                inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                inspect.Parameter.KEYWORD_ONLY,
-            }
-        )
-        for parameter in signature.parameters.values()
-    ):
-        return _get_source(source_name)
-    try:
-        return _get_source(source_name, cache=cache)
-    except TypeError as exc:
-        if "cache" not in str(exc):
-            raise
-        return _get_source(source_name)
-
-
-def _fetch_frames_for_cli(
-    source_name: str,
-    symbols: list[str],
-    *,
-    benchmark_symbol: str | None,
-    cache_path: str | None = None,
-    days: int = 260,
-    end_date: date | None = None,
-    workload: WorkloadId | None = None,
-) -> dict[str, pd.DataFrame]:
-    frames, _actual_source = _fetch_frames_for_cli_with_metadata(
-        source_name,
-        symbols,
-        benchmark_symbol=benchmark_symbol,
-        cache_path=cache_path,
-        days=days,
-        end_date=end_date,
-        workload=workload,
-    )
-    return frames
-
-
-def _fetch_frames_for_cli_with_metadata(
-    source_name: str,
-    symbols: list[str],
-    *,
-    benchmark_symbol: str | None,
-    cache_path: str | None = None,
-    days: int = 260,
-    end_date: date | None = None,
-    workload: WorkloadId | None = None,
-) -> tuple[dict[str, pd.DataFrame], str]:
-    return fetch_frames_for_cli_with_metadata(
-        source_name,
-        symbols,
-        benchmark_symbol=benchmark_symbol,
-        cache_path=cache_path,
-        days=days,
-        end_date=end_date,
-        workload=workload,
-        get_source_fn=_get_source,
-        fetch_with_source_fn=fetch_with_source,
-        record_source_success_fn=record_source_success,
-        record_source_failure_fn=record_source_failure,
-    )
-
-
-def _drop_benchmark_frame(
-    frames: dict[str, pd.DataFrame],
-    benchmark_symbol: str | None,
-) -> dict[str, pd.DataFrame]:
-    if not benchmark_symbol:
-        return frames
-    return {symbol: df for symbol, df in frames.items() if symbol != benchmark_symbol}
-
-
-def _build_synthetic_regime_frame(
-    frames: dict[str, pd.DataFrame],
-) -> pd.DataFrame | None:
-    return build_synthetic_regime_frame(frames)
-
-
-def _detect_runtime_regime(
-    frames: dict[str, pd.DataFrame],
-    *,
-    benchmark_symbol: str | None,
-    thresholds: Any | None = None,
-) -> str:
-    return detect_runtime_regime(
-        frames,
-        benchmark_symbol=benchmark_symbol,
-        thresholds=thresholds,
-    )
-
-
-def _runtime_regime_market_context_lines(
-    frames: dict[str, pd.DataFrame],
-    *,
-    benchmark_symbol: str | None,
-    thresholds: Any | None = None,
-) -> tuple[str, ...]:
-    return format_runtime_regime_lines(
-        detect_runtime_regime_context(
-            frames,
-            benchmark_symbol=benchmark_symbol,
-            thresholds=thresholds,
-        )
-    )
-
-
-def _blend_base_and_regime_scores(
-    *,
-    base_score: float,
-    regime_score: float,
-    thresholds: Any,
-) -> float:
-    composite = thresholds.composite
-    base_weight = float(composite.base_blend_weight)
-    regime_weight = float(composite.regime_blend_weight)
-    total_weight = base_weight + regime_weight
-    if total_weight <= 0:
-        return round(base_score, 2)
-    blended = (base_score * base_weight + regime_score * regime_weight) / total_weight
-    return round(blended, 2)
-
-
-def _runtime_weight_snapshot(
-    *,
-    thresholds: Any,
-    regime: str,
-    strategy_weights: dict[str, float],
-    strategy_weight_reasons: dict[str, str],
-) -> dict[str, Any]:
-    composite = thresholds.composite
-    return {
-        "source": "runtime_strategy_mix",
-        "regime": regime,
-        "strategy_weights": {
-            str(key): round(float(value), 6)
-            for key, value in sorted(strategy_weights.items())
-        },
-        "strategy_weight_reasons": {
-            str(key): str(value)
-            for key, value in sorted(strategy_weight_reasons.items())
-        },
-        "base_blend_weight": float(composite.base_blend_weight),
-        "regime_blend_weight": float(composite.regime_blend_weight),
-        "thresholds_version": str(thresholds.version),
-    }
-
-
-def _attach_runtime_weight_snapshot(
-    picks: list[PickResult],
-    *,
-    thresholds: Any,
-    regime: str,
-    strategy_weights: dict[str, float],
-    strategy_weight_reasons: dict[str, str],
-) -> list[PickResult]:
-    snapshot = _runtime_weight_snapshot(
-        thresholds=thresholds,
-        regime=regime,
-        strategy_weights=strategy_weights,
-        strategy_weight_reasons=strategy_weight_reasons,
-    )
-    return [
-        replace(
-            pick,
-            metrics={
-                **pick.metrics,
-                "strategy_weight_snapshot": snapshot,
-            },
-        )
-        for pick in picks
-    ]
-
-
-def _augment_summary_with_t1_blockers(
-    summary: Any | None,
-    *,
-    removed_symbols: list[str],
-    removed_name_map: dict[str, str],
-) -> Any | None:
-    if summary is None or not removed_symbols:
-        return summary
-
-    removed_displays = tuple(
-        format_symbol_name(symbol, removed_name_map.get(symbol, ""))
-        for symbol in removed_symbols
-    )
-    hotspot = "T+1 持仓约束：昨日已买标的今日不纳入纸面复核名单"
-    blockers = tuple(
-        f"{display}: T+1 持仓约束，昨日已买，今日仅保留观察"
-        for display in removed_displays
-    )
-    existing_watchlist = tuple(getattr(summary, "watchlist", ()) or ())
-    existing_hotspots = tuple(getattr(summary, "action_hotspots", ()) or ())
-    existing_blockers = tuple(getattr(summary, "execution_blockers", ()) or ())
-    merged_watchlist = tuple(
-        dict.fromkeys(existing_watchlist + removed_displays).keys()
-    )[:5]
-    merged_hotspots = tuple(dict.fromkeys(existing_hotspots + (hotspot,)).keys())[:3]
-    merged_blockers = tuple(dict.fromkeys(existing_blockers + blockers).keys())[:5]
-    note = str(getattr(summary, "allocation_note", "") or "")
-    t1_note = (
-        f"T+1 限制：昨日已买 {len(removed_symbols)} 只"
-        f"（{'、'.join(removed_symbols[:3])}）仅保留观察"
-    )
-    merged_note = f"{note}；{t1_note}" if note else t1_note
-    return replace(
-        summary,
-        watchlist=merged_watchlist,
-        action_hotspots=merged_hotspots,
-        execution_blockers=merged_blockers,
-        allocation_note=merged_note,
-    )
-
-
-def _augment_summary_with_market_context(
-    summary: Any | None,
-    *,
-    market_context: Any | None,
-) -> Any | None:
-    if summary is None or market_context is None:
-        return summary
-
-    from aqsp.market_context import combine_cross_market_overview
-
-    combined = combine_cross_market_overview(
-        str(getattr(summary, "cross_market_overview", "") or ""),
-        market_context,
-    )
-    if not combined:
-        return summary
-    return replace(summary, cross_market_overview=combined)
-
-
-def _market_context_preview_count(
-    limit: int,
-    total: int,
-    *,
-    task_id: str = "",
-) -> int:
-    if total <= 0:
-        return 0
-    if not _is_high_frequency_task(task_id):
-        return min(total, max(int(limit) * 2, 6))
-    bounded_limit = max(0, int(limit))
-    preview_count = min(
-        max(bounded_limit, _INTRADAY_CATALYST_PREVIEW_MIN),
-        _INTRADAY_CATALYST_PREVIEW_MAX,
-    )
-    return min(total, preview_count)
-
-
-def _build_execution_summary_line(
-    tradable: list[PickResult],
-    portfolio_summary: Any | None,
-) -> str:
-    has_allocations = bool(getattr(portfolio_summary, "allocations", ()) or ())
-    if tradable and has_allocations:
-        top = tradable[0]
-        return (
-            f"🎯 **优先纸面复核**: {top.symbol} {top.name} | 评分 {top.score:.0f} | "
-            f"观察参考 {top.ideal_buy} / 防守 {top.stop_loss} / 目标 {top.take_profit}"
-        )
-    watchlist = tuple(getattr(portfolio_summary, "watchlist", ()) or ())
-    blockers = tuple(getattr(portfolio_summary, "execution_blockers", ()) or ())
-    if watchlist:
-        names = "、".join(watchlist[:2])
-        return f"👀 **今日无纸面复核对象**，转入继续观察名单：{names}"
-    if tradable:
-        top = tradable[0]
-        return (
-            f"👀 **首位观察**: {top.symbol} {top.name} | 评分 {top.score:.0f} | "
-            "等待 PM 阻塞解除"
-        )
-    if blockers:
-        return "👀 **今日无纸面复核对象**，受纸面约束影响，暂仅观察。"
-    return "👀 **今日无纸面复核对象**，仅观察。等待更强信号。"
-
-
-def _resolve_audit_action(
-    pick: PickResult,
-    *,
-    allocation_symbols: set[str],
-) -> str:
-    if pick.symbol in allocation_symbols:
-        return "PAPER_REVIEW"
-    return "SKIP"
-
-
-def _build_execution_preview(
-    pick: PickResult,
-    *,
-    frame: pd.DataFrame,
-    action: str,
-) -> dict[str, Any]:
-    if action != "PAPER_REVIEW" or frame.empty:
-        return {}
-
-    recent_frame = frame.tail(20).copy()
-    if "volume" not in recent_frame.columns or "close" not in recent_frame.columns:
-        return {}
-
-    avg_daily_volume = float(recent_frame["volume"].fillna(0).mean() or 0.0)
-    estimated_price = float(pick.ideal_buy or pick.close or 0.0)
-    if avg_daily_volume <= 0 or estimated_price <= 0:
-        return {}
-
-    from aqsp.execution.executor import ExecutionCoordinator
-
-    coordinator = ExecutionCoordinator()
-    plan = coordinator.plan_execution(
-        symbol=pick.symbol,
-        target_shares=100,
-        avg_daily_volume=avg_daily_volume,
-        estimated_price=estimated_price,
-        is_sell=False,
-    )
-    return {
-        "board_lot_shares": 100,
-        "estimated_amount": round(estimated_price * 100, 2),
-        "estimated_total_cost": round(plan.estimated_total_cost, 4),
-        "estimated_cost_rate_pct": round(plan.estimated_cost_rate, 4),
-        "twap_order_count": len(plan.twap_plan.orders),
-        "plan_valid": bool(plan.is_valid),
-        "validation_errors": list(plan.validation_errors),
-    }
-
-
-def _log_run_decisions(
-    *,
-    picks: list[PickResult],
-    frames: dict[str, pd.DataFrame],
-    debate_results: list[DebateResult],
-    portfolio_summary: Any | None,
-    circuit_breaker_triggered: bool,
-    regime: str,
-    run_metadata: RunMetadata,
-) -> None:
-    if not picks:
-        return
-
-    from aqsp.audit.trade_logger import TradeDecisionLog, TradeLogger
-
-    allocation_symbols = {
-        str(item.symbol)
-        for item in tuple(getattr(portfolio_summary, "allocations", ()) or ())
-    }
-    blocker_map = _candidate_blocker_map(portfolio_summary)
-    review_map = _candidate_review_map(portfolio_summary)
-    debate_by_symbol = {result.symbol: result for result in debate_results}
-    trade_logger = TradeLogger(log_dir=os.getenv("AQSP_TRADE_LOG_DIR", "logs/trades"))
-    timestamp = now_shanghai()
-
-    for pick in picks:
-        action = _resolve_audit_action(
-            pick,
-            allocation_symbols=allocation_symbols,
-        )
-        review_meta = review_map.get(pick.symbol, {})
-        blocker = blocker_map.get(pick.symbol, "")
-        debate = debate_by_symbol.get(pick.symbol)
-        execution_preview = _build_execution_preview(
-            pick,
-            frame=frames.get(pick.symbol, pd.DataFrame()),
-            action=action,
-        )
-        reason_parts = [
-            f"PM裁决 {str(pick.metrics.get('portfolio_action', '') or 'keep')}",
-            f"评级 {pick.rating}",
-        ]
-        candidate_status = str(pick.metrics.get("candidate_status", "") or "").strip()
-        if candidate_status:
-            reason_parts.append(f"状态 {candidate_status}")
-        if blocker:
-            reason_parts.append(f"阻塞 {blocker}")
-
-        context: dict[str, Any] = {
-            "thresholds_version": run_metadata.thresholds_version,
-            "signal_date": pick.date,
-            "requested_source": run_metadata.requested_source,
-            "actual_source": run_metadata.actual_source,
-            "source_health_label": run_metadata.source_health_label,
-            "source_health_message": run_metadata.source_health_message,
-            "data_latest_trade_date": run_metadata.data_latest_trade_date,
-            "data_lag_days": run_metadata.data_lag_days,
-            "portfolio_action": str(pick.metrics.get("portfolio_action", "") or "keep"),
-            "candidate_status": candidate_status,
-            "candidate_blocker": blocker,
-            "candidate_next_step": str(review_meta.get("next_step", "") or ""),
-            "candidate_review_window": str(review_meta.get("review_window", "") or ""),
-            "candidate_review_priority": str(review_meta.get("priority", "") or ""),
-            "intended_entry": pick.entry_type,
-            "ideal_buy": pick.ideal_buy,
-            "stop_loss": pick.stop_loss,
-            "take_profit": pick.take_profit,
-            "paper_position": pick.position,
-            "run_task_id": run_metadata.task_id,
-        }
-        if execution_preview:
-            context["paper_execution_preview"] = execution_preview
-        if debate is not None:
-            context["debate_consensus"] = debate.final_consensus
-            context["debate_adjustment"] = debate.recommended_adjustment
-            context["debate_disagreement_score"] = debate.disagreement_score
-
-        trade_logger.log_decision(
-            TradeDecisionLog(
-                timestamp=timestamp,
-                symbol=pick.symbol,
-                name=pick.name,
-                action=action,
-                score=float(pick.score),
-                strategies=list(pick.strategies),
-                debate_summary=(
-                    str(debate.final_consensus)
-                    if debate is not None
-                    else "no_debate_attached"
-                ),
-                risk_check_passed=(
-                    action == "PAPER_REVIEW"
-                    and not circuit_breaker_triggered
-                    and not blocker
-                ),
-                regime=regime or "unknown",
-                reason="；".join(reason_parts),
-                context=context,
-            )
-        )
-
-    from aqsp.audit.decision_chain import append_decision_record, new_decision_record
-
-    evidence_ids = tuple(
-        sorted(
-            {
-                str(item)
-                for pick in picks
-                for item in tuple(pick.metrics.get("artifact_ids", ()) or ())
-                if str(item).strip()
-            }
-        )
-    )
-    advisory_ids = tuple(
-        sorted(result.debate_id for result in debate_results if result.debate_id)
-    )
-    append_decision_record(
-        os.getenv("AQSP_DECISION_AUDIT_PATH", "data/audit/decision-chain.jsonl"),
-        new_decision_record(
-            run_id=f"{run_metadata.task_id or 'scheduled'}:{run_metadata.data_latest_trade_date}",
-            thresholds_version=run_metadata.thresholds_version,
-            regime=regime or "unknown",
-            source=run_metadata.actual_source,
-            candidates=tuple(
-                {
-                    "symbol": pick.symbol,
-                    "score": round(float(pick.score), 4),
-                    "deterministic_score": round(
-                        float(
-                            pick.metrics.get("deterministic_score", pick.score)
-                            or pick.score
-                        ),
-                        4,
-                    ),
-                    "deterministic_score_unchanged": bool(
-                        pick.metrics.get("deterministic_score_unchanged", True)
-                    ),
-                    "advisory_only": bool(pick.metrics.get("advisory_only", True)),
-                    "rating": pick.rating,
-                    "position": pick.position,
-                    "strategies": tuple(pick.strategies),
-                }
-                for pick in picks
-            ),
-            evidence_ids=evidence_ids,
-            advisory_ids=advisory_ids,
-        ),
-    )
-
-
-def _candidate_blocker_map(portfolio_summary: Any | None) -> dict[str, str]:
-    blockers: dict[str, str] = {}
-    if portfolio_summary is None:
-        return blockers
-    for item in tuple(getattr(portfolio_summary, "execution_blockers", ()) or ()):
-        raw = str(item).strip()
-        if not raw or ":" not in raw:
-            continue
-        display, reason = raw.split(":", 1)
-        symbol = display.split(" ", 1)[0].strip()
-        clean_reason = reason.strip()
-        if symbol and clean_reason:
-            blockers[symbol] = clean_reason
-    return blockers
-
-
-def _candidate_review_map(portfolio_summary: Any | None) -> dict[str, dict[str, str]]:
-    reviews: dict[str, dict[str, str]] = {}
-    if portfolio_summary is None:
-        return reviews
-    for item in tuple(getattr(portfolio_summary, "watch_reviews", ()) or ()):
-        symbol = str(getattr(item, "symbol", "") or "").strip()
-        if not symbol:
-            continue
-        reviews[symbol] = {
-            "blocker": str(getattr(item, "blocker", "") or ""),
-            "next_step": str(getattr(item, "next_step", "") or ""),
-            "review_window": str(getattr(item, "review_window", "") or ""),
-            "priority": str(getattr(item, "priority", "") or ""),
-        }
-    return reviews
-
-
-def _default_candidate_review(status: str) -> dict[str, str]:
-    if status == "新晋":
-        return {
-            "next_step": "等待量价继续走强后，再评估是否转入纸面复核名单",
-            "review_window": "盘中走强后",
-            "priority": "high",
-        }
-    if status == "延续上升":
-        return {
-            "next_step": "优先复核趋势延续与承接强度，再决定是否提升纸面复核优先级",
-            "review_window": "午前确认后",
-            "priority": "medium",
-        }
-    if status == "延续下降":
-        return {
-            "next_step": "若弱势延续则继续观察，等待重新企稳后再恢复关注",
-            "review_window": "尾盘前",
-            "priority": "low",
-        }
-    return {}
-
-
-def _annotate_candidate_status(
-    picks: list[PickResult],
-    *,
-    diff: Any | None,
-    portfolio_summary: Any | None,
-) -> list[PickResult]:
-    if not picks:
-        return picks
-
-    from aqsp.portfolio.snapshot import build_candidate_status_map
-
-    status_map = build_candidate_status_map(diff)
-    blocker_map = _candidate_blocker_map(portfolio_summary)
-    review_map = _candidate_review_map(portfolio_summary)
-
-    enriched: list[PickResult] = []
-    for pick in picks:
-        status = status_map.get(pick.symbol, "")
-        review = review_map.get(pick.symbol, {})
-        blocker_reason = str(
-            review.get("blocker", "") or blocker_map.get(pick.symbol, "")
-        )
-        if not status and blocker_reason:
-            status = "观察阻塞"
-        if not review and status:
-            review = _default_candidate_review(status)
-        if not status and not blocker_reason:
-            enriched.append(pick)
-            continue
-        metrics = dict(pick.metrics)
-        if status:
-            metrics["candidate_status"] = status
-        if blocker_reason:
-            metrics["candidate_blocker"] = blocker_reason
-        if review:
-            metrics["candidate_next_step"] = str(review.get("next_step", "") or "")
-            metrics["candidate_review_window"] = str(
-                review.get("review_window", "") or ""
-            )
-            # 消息后置复核优先级是证据派生字段，不能被快照状态的通用优先级覆盖。
-            context_priority = str(
-                metrics.get("candidate_review_priority", "") or ""
-            ).strip()
-            metrics["candidate_review_priority"] = (
-                context_priority
-                if context_priority in {"优先复核", "风险复核", "常规"}
-                else str(review.get("priority", "") or "")
-            )
-        enriched.append(replace(pick, metrics=metrics))
-    return enriched
-
-
-def _market_context_review_priority(metrics: dict[str, Any]) -> tuple[str, str]:
-    """Map post-screening evidence to a display-only review priority."""
-    news_judgement = str(metrics.get("news_catalyst_judgement", "") or "").strip()
-    news_priority = int(metrics.get("news_catalyst_priority_score", 0) or 0)
-    cross_action = str(metrics.get("cross_market_action", "") or "").strip()
-    cross_priority = float(metrics.get("cross_market_priority_score", 0) or 0)
-    support_count = int(metrics.get("news_catalyst_support_count", 0) or 0)
-    oppose_count = int(metrics.get("news_catalyst_oppose_count", 0) or 0)
-    conflict_count = int(metrics.get("cross_market_conflict_event_count", 0) or 0)
-    has_evidence = bool(
-        news_judgement
-        or news_priority > 0
-        or cross_action
-        or cross_priority > 0
-        or metrics.get("cross_market_rule_ids")
-        or metrics.get("cross_market_summaries")
-    )
-    if not has_evidence:
-        return "", ""
-    if (
-        news_judgement == "opposes"
-        or cross_action == "风险复核"
-        or oppose_count > 0
-        or conflict_count > support_count
-    ):
-        return "风险复核", "存在负向或冲突证据，先做风险复核"
-    if (
-        cross_action == "优先复核"
-        or news_priority >= 3
-        or cross_priority >= 3
-        or news_judgement == "supports"
-        and support_count > 0
-    ):
-        return "优先复核", "存在明确正向消息或跨市场传导证据"
-    return "常规", "存在消息或跨市场线索，但尚未达到强复核条件"
-
-
-def _merge_candidate_note(existing: str, note: str) -> str:
-    existing = str(existing or "").strip()
-    note = str(note or "").strip()
-    if not existing:
-        return note
-    if not note or note in existing:
-        return existing
-    return f"{existing}；{note}"
-
-
-def _annotate_data_quality_context(
-    picks: list[PickResult],
-    *,
-    anomaly_alerts: list[Any],
-    freshness_reports: list[Any],
-    current_dates: dict[str, str] | None = None,
-) -> list[PickResult]:
-    if not picks:
-        return picks
-
-    alerts_by_symbol: dict[str, list[Any]] = {}
-    for alert in anomaly_alerts:
-        symbol = str(getattr(alert, "symbol", "") or "").strip()
-        if symbol:
-            observed_date = str(getattr(alert, "observed_date", "") or "").strip()
-            current_date = str((current_dates or {}).get(symbol, "") or "").strip()
-            if current_date and observed_date and observed_date != current_date:
-                continue
-            alerts_by_symbol.setdefault(symbol, []).append(alert)
-
-    freshness_by_symbol = {
-        str(getattr(report, "symbol", "") or "").strip(): report
-        for report in freshness_reports
-        if str(getattr(report, "symbol", "") or "").strip()
-    }
-
-    enriched: list[PickResult] = []
-    for pick in picks:
-        alerts = alerts_by_symbol.get(pick.symbol, [])
-        freshness = freshness_by_symbol.get(pick.symbol)
-        quality_notes: list[str] = []
-        severe_notes: list[str] = []
-
-        if freshness is not None and getattr(freshness, "status", "fresh") != "fresh":
-            note = (
-                f"数据新鲜度{getattr(freshness, 'status', '')}: "
-                f"{getattr(freshness, 'last_date', '') or 'N/A'}"
-                f"/延迟{getattr(freshness, 'delay_days', 'N/A')}天"
-            )
-            quality_notes.append(note)
-            if getattr(freshness, "status", "") == "critical":
-                severe_notes.append(note)
-
-        for alert in alerts:
-            note = str(getattr(alert, "detail", "") or "").strip()
-            if not note:
-                continue
-            quality_notes.append(note)
-            if getattr(alert, "severity", "") == "critical":
-                severe_notes.append(note)
-
-        if not quality_notes:
-            enriched.append(pick)
-            continue
-
-        metrics = dict(pick.metrics)
-        metrics["data_quality_status"] = "critical" if severe_notes else "watch"
-        metrics["data_quality_alerts"] = tuple(quality_notes[:5])
-        if severe_notes:
-            metrics["candidate_next_step"] = _merge_candidate_note(
-                str(metrics.get("candidate_next_step", "") or ""),
-                "先复核数据质量: " + "；".join(severe_notes[:2]),
-            )
-
-        risks = tuple(
-            dict.fromkeys(
-                (*pick.risks, *(f"数据质量: {note}" for note in quality_notes[:3]))
-            )
-        )
-        enriched.append(replace(pick, risks=risks, metrics=metrics))
-    return enriched
-
-
-def _annotate_cross_market_context(
-    picks: list[PickResult],
-    *,
-    market_context: Any | None,
-) -> list[PickResult]:
-    if not picks or market_context is None:
-        return picks
-
-    from aqsp.market_context import market_context_metrics_for_pick
-
-    context_by_symbol: dict[str, dict[str, object]] = {}
-    symbols_by_rule: dict[str, list[str]] = {}
-    for pick in picks:
-        context_metrics = market_context_metrics_for_pick(pick, market_context)
-        if not context_metrics:
-            continue
-        context_by_symbol[pick.symbol] = context_metrics
-        for rule_id in tuple(context_metrics.get("cross_market_rule_ids", ()) or ()):
-            clean_rule_id = str(rule_id).strip()
-            if clean_rule_id and pick.symbol not in symbols_by_rule.setdefault(
-                clean_rule_id, []
-            ):
-                symbols_by_rule[clean_rule_id].append(pick.symbol)
-
-    enriched: list[PickResult] = []
-    for pick in picks:
-        context_metrics = context_by_symbol.get(pick.symbol)
-        if not context_metrics:
-            enriched.append(pick)
-            continue
-        metrics = dict(pick.metrics)
-        metrics.update(context_metrics)
-        rule_ids = tuple(context_metrics.get("cross_market_rule_ids", ()) or ())
-        mapped_symbols = tuple(
-            symbol
-            for rule_id in rule_ids
-            for symbol in symbols_by_rule.get(str(rule_id).strip(), ())
-            if symbol != pick.symbol
-        )
-        metrics["cross_market_candidate_symbols"] = tuple(dict.fromkeys(mapped_symbols))
-        metrics["cross_market_candidate_count"] = len(
-            metrics["cross_market_candidate_symbols"]
-        )
-        metrics["cross_market_candidate_mapping_status"] = (
-            "matched_current_candidates"
-            if mapped_symbols
-            else "single_current_candidate"
-        )
-        evidence_ids = {
-            str(item).strip()
-            for item in tuple(metrics.get("artifact_ids", ()) or ())
-            if str(item).strip()
-        }
-        news_payload = "|".join(
-            str(metrics.get(key, "") or "").strip()
-            for key in (
-                "news_catalyst_source",
-                "news_catalyst_url",
-                "news_catalyst_title",
-                "news_catalyst_published_at",
-            )
-        )
-        if news_payload.strip("|"):
-            evidence_ids.add(
-                "news:" + hashlib.sha256(news_payload.encode("utf-8")).hexdigest()[:16]
-            )
-        rule_payload = "|".join(
-            str(metrics.get(key, "") or "")
-            for key in ("cross_market_rule_ids", "cross_market_chain_summary")
-        )
-        if rule_payload.strip("|"):
-            evidence_ids.add(
-                "market-context:"
-                + hashlib.sha256(rule_payload.encode("utf-8")).hexdigest()[:16]
-            )
-        if evidence_ids:
-            metrics["artifact_ids"] = tuple(sorted(evidence_ids))
-        review_priority, review_reason = _market_context_review_priority(metrics)
-        if review_priority:
-            metrics["candidate_review_priority"] = review_priority
-            metrics["candidate_review_priority_reason"] = review_reason
-        enriched.append(replace(pick, metrics=metrics))
-    return enriched
-
-
-def _append_cross_market_watch_candidates(
-    picks: list[PickResult],
-    screened_picks: list[PickResult],
-    *,
-    market_context: Any | None,
-    screen_frames: dict[str, pd.DataFrame] | None = None,
-    screening_config: ScreeningConfig | None = None,
-    thresholds: Any | None = None,
-    max_candidates: int = 0,
-) -> list[PickResult]:
-    """Expose message-linked candidates after an independent technical check.
-
-    The regular ranking can omit a symbol before the news layer sees it. For
-    affected symbols with a fresh frame, score it with the same deterministic
-    technical function, then keep it observation-only instead of promoting it
-    into the ranked picks.
-    """
-    if market_context is None or max_candidates < 0:
-        return picks
-
-    from aqsp.market_context import market_context_metrics_for_pick
-
-    candidate_pool = list(screened_picks)
-    news_watch_candidates = tuple(
-        getattr(market_context, "news_watch_candidates", ()) or ()
-    )
-    if screen_frames and screening_config is not None and thresholds is not None:
-        ranked_symbols = {candidate.symbol for candidate in candidate_pool}
-        affected_symbols = {
-            str(symbol).strip()
-            for implication in getattr(market_context, "cross_market_implications", ())
-            for symbol in tuple(getattr(implication, "affected_symbols", ()) or ())
-            if str(symbol).strip()
-        }
-        affected_symbols.update(
-            str(getattr(candidate, "symbol", "") or "").strip()
-            for candidate in news_watch_candidates
-            if str(getattr(candidate, "symbol", "") or "").strip()
-        )
-        for symbol in sorted(affected_symbols - ranked_symbols):
-            frame = screen_frames.get(symbol)
-            if frame is None or frame.empty:
-                continue
-            try:
-                technical_candidate = score_symbol(
-                    symbol,
-                    frame,
-                    screening_config,
-                    thresholds.scoring,
-                    thresholds,
-                )
-            except (ValueError, IndexError, KeyError, TypeError) as exc:
-                LOGGER.debug("消息关联标的技术确认失败 %s: %s", symbol, exc)
-                continue
-            if technical_candidate is not None:
-                candidate_pool.append(technical_candidate)
-
-    selected_symbols = {pick.symbol for pick in picks}
-    watch_candidates: list[PickResult] = []
-    for candidate in candidate_pool:
-        if candidate.symbol in selected_symbols:
-            continue
-        metrics = market_context_metrics_for_pick(candidate, market_context)
-        if not metrics:
-            watch = next(
-                (
-                    item
-                    for item in news_watch_candidates
-                    if str(getattr(item, "symbol", "") or "").strip()
-                    == candidate.symbol
-                ),
-                None,
-            )
-            if watch is not None:
-                metrics = {
-                    "cross_market_primary_theme": str(
-                        getattr(watch, "relation", "") or ""
-                    ),
-                    "cross_market_rule_ids": (
-                        "news_watch:"
-                        + str(getattr(watch, "relation", "") or "industry"),
-                    ),
-                    "cross_market_action": "观察为主",
-                    "cross_market_priority_score": int(
-                        getattr(watch, "priority_score", 0) or 0
-                    ),
-                    "cross_market_affected_sectors": tuple(
-                        getattr(watch, "affected_sectors", ()) or ()
-                    ),
-                    "cross_market_transmission_path": tuple(
-                        getattr(watch, "transmission_path", ()) or ()
-                    ),
-                    "cross_market_validation_signals": tuple(
-                        getattr(watch, "validation_signals", ()) or ()
-                    ),
-                    "cross_market_invalidation_signals": tuple(
-                        getattr(watch, "invalidation_signals", ()) or ()
-                    ),
-                    "news_catalyst_title": str(getattr(watch, "event_title", "") or ""),
-                    "news_catalyst_summary": str(getattr(watch, "summary", "") or ""),
-                    "news_catalyst_source": str(getattr(watch, "source", "") or ""),
-                    "news_catalyst_url": str(getattr(watch, "source_url", "") or ""),
-                    "news_catalyst_published_at": str(
-                        getattr(watch, "published_at", "") or ""
-                    ),
-                }
-        rule_ids = tuple(metrics.get("cross_market_rule_ids", ()) or ())
-        priority = int(metrics.get("cross_market_priority_score", 0) or 0)
-        if not rule_ids or priority < 2:
-            continue
-        validation = tuple(metrics.get("cross_market_validation_signals", ()) or ())
-        next_step = (
-            str(validation[0]).strip()
-            if validation and str(validation[0]).strip()
-            else "等待盘中量价与板块扩散确认"
-        )
-        metrics.update(
-            {
-                "candidate_status": "消息产业链观察",
-                "observation_only": True,
-                "portfolio_action": "observation_only",
-                "candidate_review_priority": "优先复核",
-                "candidate_review_priority_reason": "实时消息规则与当前技术扫描结果匹配，尚未进入正式排序",
-                "candidate_next_step": next_step,
-                "cross_market_candidate_origin": "news_to_current_universe",
-                "news_watch_relation": str(
-                    getattr(
-                        next(
-                            (
-                                item
-                                for item in news_watch_candidates
-                                if str(getattr(item, "symbol", "") or "").strip()
-                                == candidate.symbol
-                            ),
-                            None,
-                        ),
-                        "relation",
-                        "",
-                    )
-                    or "",
-                ),
-            }
-        )
-        watch_candidates.append(replace(candidate, metrics=metrics))
-        selected_symbols.add(candidate.symbol)
-        if max_candidates > 0 and len(watch_candidates) >= max_candidates:
-            break
-    return [*picks, *watch_candidates]
-
-
-def _news_watch_candidate_limit() -> int:
-    """Read the optional observation-card cap; zero means keep all matches."""
-    raw = os.getenv("AQSP_NEWS_WATCH_MAX_CANDIDATES", "0").strip()
-    try:
-        value = int(raw)
-    except ValueError:
-        return 0
-    return max(value, 0)
-
-
-def _resolve_run_symbols(
-    source_name: str,
-    explicit_symbols: str,
-    *,
-    pool_name: str = "",
-    as_of: date | None = None,
-    max_universe: int,
-    min_avg_amount: float,
-) -> list[str]:
-    return resolve_runtime_run_symbols(
-        source_name,
-        explicit_symbols,
-        get_source_fn=_get_source,
-        default_symbols=DEFAULT_SYMBOLS,
-        pool_name=pool_name,
-        as_of=as_of,
-        max_universe=max_universe,
-        min_avg_amount=min_avg_amount,
-    )
-
-
-def _runtime_source_workload_allowed(
-    source_name: str,
-    *,
-    workload: str,
-) -> tuple[bool, str]:
-    if source_supports_workload(source_name, workload):  # type: ignore[arg-type]
-        return True, ""
-    return False, workload_guard_message(source_name, workload)  # type: ignore[arg-type]
-
-
-def _runtime_actual_source_workload_allowed(
-    requested_source: str,
-    actual_source: str,
-    *,
-    workload: str,
-) -> tuple[bool, str]:
-    resolved_actual = (actual_source or requested_source).strip()
-    allowed, reason = _runtime_source_workload_allowed(
-        resolved_actual,
-        workload=workload,
-    )
-    if workload == "live_short" and resolved_actual not in {
-        "auto",
-        "local_first",
-        "online_first",
-        "multi",
-    }:
-        role = source_role_for_workload(resolved_actual, "live_short")
-        if role != "realtime":
-            reason = (
-                f"数据源 {resolved_actual} 仅可作为 {role or 'unknown'} 层，"
-                "不能形成正式 live_short 候选"
-            )
-            requested = requested_source.strip()
-            if requested and requested != resolved_actual:
-                return False, f"请求源 {requested} 实际落到 {resolved_actual}；{reason}"
-            return False, reason
-    if allowed:
-        return True, ""
-    requested = requested_source.strip()
-    if requested and requested != resolved_actual:
-        return False, f"请求源 {requested} 实际落到 {resolved_actual}；{reason}"
-    return False, reason
-
-
-def _special_strategy_ledger_write_allowed(
-    frames: dict[str, pd.DataFrame],
-    *,
-    max_data_lag_days: int,
-) -> tuple[bool, str]:
-    from aqsp.core.time import is_trading_day
-
-    today = today_shanghai()
-    if not is_trading_day(today):
-        return False, f"{today.isoformat()} 非交易日"
-    try:
-        latest = assert_fresh_data(
-            frames,
-            max_data_lag_days,
-            workload="live_short",
-        )
-    except Exception as exc:
-        return False, f"数据新鲜度未通过: {exc}"
-    return True, f"latest={latest.isoformat()}"
-
-
-def _special_strategy_run_metadata(
-    *,
-    requested_source: str,
-    actual_source: str,
-    frames: dict[str, pd.DataFrame],
-    thresholds_version: str,
-    task_id: str,
-) -> RunMetadata:
-    """Build the same provenance envelope used by the main runtime ledger."""
-    latest = latest_trade_date(frames)
-    freshness_tier, coverage_tier, source_local_status = _source_runtime_metadata(
-        actual_source,
-        latest_trade_day=latest,
-    )
-    health_label, health_message, fallback_used = describe_source_health(
-        requested_source,
-        actual_source,
-    )
-    return RunMetadata(
-        requested_source=requested_source,
-        actual_source=actual_source,
-        source_freshness_tier=freshness_tier,
-        source_coverage_tier=coverage_tier,
-        source_local_status=source_local_status,
-        source_health_label=health_label,
-        source_health_message=health_message,
-        fallback_used=fallback_used,
-        explicit_symbol_count=len(frames),
-        resolved_symbol_count=len(frames),
-        fetched_frame_count=len(frames),
-        screened_count=0,
-        final_count=0,
-        min_price=0.0,
-        max_price=0.0,
-        min_avg_amount=0.0,
-        online_factors_enabled=False,
-        thresholds_version=thresholds_version,
-        data_latest_trade_date=latest.isoformat() if latest is not None else "",
-        data_lag_days=_runtime_data_lag_days(latest),
-        regime="",
-        task_id=task_id,
-        workload="live_short",
-    )
-
-
-def _special_strategy_runtime_ready(
-    *,
-    strategy: Any,
-    frames: dict[str, pd.DataFrame],
-    benchmark_symbol: str | None,
-) -> tuple[bool, str, str]:
-    threshold_config = getattr(strategy, "mb", None) or getattr(strategy, "cfg", None)
-    if threshold_config is not None and not bool(
-        getattr(threshold_config, "enabled", True)
-    ):
-        return False, "", "策略已禁用"
-    regime = _detect_runtime_regime(
-        frames,
-        benchmark_symbol=benchmark_symbol,
-        thresholds=getattr(strategy, "thresholds", None),
-    )
-    required = tuple(getattr(strategy, "regime_required", ()) or ())
-    if required and regime not in required:
-        regime_text = regime or "unknown"
-        return False, regime, f"市场状态不匹配: {regime_text} not in {required}"
-    return True, regime, regime or "ok"
-
-
-def _fetch_special_strategy_frames(
-    source_name: str,
-    symbols: list[str],
-    *,
-    benchmark_symbol: str | None,
-    days: int = 250,
-    intraday_period: str = "5",
-) -> tuple[dict[str, pd.DataFrame], str]:
-    allowed, reason = _runtime_source_workload_allowed(
-        source_name,
-        workload="live_short",
-    )
-    if not allowed:
-        raise DataError(reason)
-    frames, actual_source = _fetch_frames_for_cli_with_metadata(
-        source_name,
-        symbols,
-        benchmark_symbol=benchmark_symbol,
-        days=days,
-        workload="live_short",
-    )
-    target_day = today_shanghai()
-    frames = {
-        symbol: frame
-        for symbol, frame in frames.items()
-        if not frame.empty
-        and "date" in frame.columns
-        and pd.to_datetime(frame["date"], errors="coerce").max().date()
-        >= target_day
-    }
-    actual_allowed, actual_reason = _runtime_actual_source_workload_allowed(
-        source_name,
-        actual_source,
-        workload="live_short",
-    )
-    if not actual_allowed:
-        raise DataError(actual_reason)
-    if not frames:
-        raise MissingDataError(symbols[0], reason="无法获取历史日线数据")
-    data_source = _get_source(source_name)
-    intraday_service = IntradayService(data_source)
-    overlay_symbols = list(symbols)
-    if benchmark_symbol and benchmark_symbol not in overlay_symbols:
-        overlay_symbols.append(benchmark_symbol)
-    overlay = intraday_service.merge_intraday_bar_into_daily_with_coverage(
-        frames,
-        overlay_symbols,
-        period=intraday_period,
-        target_date=today_shanghai(),
-        index_symbols=(benchmark_symbol,) if benchmark_symbol else (),
-    )
-    coverage = {
-        "status": "complete" if overlay.complete else "partial",
-        "requested_symbols": overlay.requested_symbols,
-        "covered_symbols": overlay.covered_symbols,
-        "missing_symbols": overlay.missing_symbols,
-    }
-    # A failed intraday overlay must not erase a valid live daily batch. Keep
-    # the daily frames, expose the overlay gap, and let the downstream quality
-    # boundary downgrade affected candidates explicitly.
-    output_frames = overlay.frames or frames
-    for frame in output_frames.values():
-        frame.attrs["intraday_overlay_coverage"] = coverage
-    return output_frames, _intraday_actual_source(output_frames, actual_source)
-
-
-def _intraday_overlay_coverage(
-    frames: dict[str, pd.DataFrame],
-) -> tuple[str, tuple[str, ...]]:
-    for frame in frames.values():
-        coverage = frame.attrs.get("intraday_overlay_coverage")
-        if not isinstance(coverage, dict):
-            continue
-        missing = tuple(
-            str(item) for item in coverage.get("missing_symbols", ()) if str(item)
-        )
-        status = str(coverage.get("status", "partial" if missing else "complete"))
-        return status, missing
-    return "not_available", ()
-
-
-def _intraday_actual_source(
-    frames: dict[str, pd.DataFrame],
-    fallback: str,
-) -> str:
-    """Summarize the sources that supplied the current-day overlay."""
-    sources = {
-        str(frame.attrs.get("source_name", "") or "").strip()
-        for frame in frames.values()
-        if str(frame.attrs.get("source_name", "") or "").strip()
-    }
-    if len(sources) == 1:
-        return next(iter(sources))
-    if len(sources) > 1:
-        return "multi"
-    return fallback
-
-
-def _force_intraday_observation(
-    picks: list[PickResult],
-    *,
-    missing_symbols: tuple[str, ...],
-    benchmark_symbol: str = "000300",
-) -> list[PickResult]:
-    """Keep deterministic scores visible while forbidding partial-live recommendations."""
-    if not picks or not missing_symbols:
-        return picks
-    benchmark = str(benchmark_symbol or "000300").strip()
-    benchmark_missing = benchmark in missing_symbols
-    observed: list[PickResult] = []
-    for pick in picks:
-        pick_missing = tuple(
-            symbol for symbol in missing_symbols if symbol == str(pick.symbol).strip()
-        )
-        if not benchmark_missing and not pick_missing:
-            observed.append(pick)
-            continue
-        reason_symbols = (benchmark,) if benchmark_missing else pick_missing
-        reason = "盘中覆盖不完整，缺少: " + "、".join(reason_symbols)
-        metrics = dict(pick.metrics)
-        alerts = tuple(metrics.get("data_quality_alerts", ()) or ())
-        metrics.update(
-            {
-                "observation_only": True,
-                "intraday_coverage_status": "partial",
-                "intraday_missing_symbols": missing_symbols,
-                "data_quality_status": "critical",
-                "data_quality_alerts": tuple(dict.fromkeys((*alerts, reason))),
-                "candidate_status": "盘中覆盖观察",
-                "candidate_blocker": reason,
-                "candidate_review_priority": "low",
-                "candidate_next_step": "补齐全部盘中报价后，再重新评估纸面复核",
-                "candidate_review_window": "盘中数据覆盖完整后",
-                "portfolio_action": "observation_only",
-            }
-        )
-        risks = tuple(dict.fromkeys((*pick.risks, reason)))
-        observed.append(replace(pick, metrics=metrics, risks=risks))
-    return observed
-
-
-def _apply_protection_observation_boundary(
-    picks: list[PickResult],
-    *,
-    reason: str,
-) -> list[PickResult]:
-    """Keep research candidates intact while limiting only paper actions.
-
-    Portfolio protection is not evidence about the current quote or signal. It
-    must therefore not rewrite a candidate into a low-priority observation or
-    hide its deterministic research qualification.
-    """
-    if not picks:
-        return picks
-    clean_reason = str(reason or "组合保护已触发").strip()
-    observed: list[PickResult] = []
-    for pick in picks:
-        metrics = dict(pick.metrics)
-        if str(metrics.get("quality_gate_action", "clean")) == "blocked":
-            observed.append(pick)
-            continue
-        alerts = tuple(metrics.get("quality_gate_reasons", ()) or ())
-        is_recommendation = pick.rating in {
-            "strong_buy_candidate",
-            "buy_candidate",
-        }
-        metrics.update(
-            {
-                "observation_only": True,
-                "paper_review_eligible": False,
-                # Circuit-breaker state is a portfolio-action constraint. It
-                # must not downgrade a fresh, deterministic research signal.
-                "research_recommendation": is_recommendation,
-                "candidate_status": (
-                    "实时推荐" if is_recommendation else "实时观察"
-                ),
-                "candidate_next_step": (
-                    "按实时信号继续复核；组合保护仅限制纸面动作"
-                ),
-                "candidate_review_window": "当前盘中窗口",
-                "quality_gate_reasons": alerts,
-                "portfolio_action": "observation_only",
-            }
-        )
-        risks = tuple(
-            dict.fromkeys(
-                (*pick.risks, f"组合保护仅限制纸面动作: {clean_reason}")
-            )
-        )
-        observed.append(replace(pick, metrics=metrics, risks=risks))
-    return observed
-
-
-def _relevant_intraday_missing_symbols(
-    picks: list[PickResult],
-    *,
-    missing_symbols: tuple[str, ...],
-    benchmark_symbol: str,
-) -> tuple[str, ...]:
-    """Only candidate or benchmark gaps can block a live recommendation batch."""
-    candidate_symbols = {str(pick.symbol).strip() for pick in picks if pick.symbol}
-    benchmark = str(benchmark_symbol or "").strip()
-    return tuple(
-        symbol
-        for symbol in missing_symbols
-        if symbol in candidate_symbols or (benchmark and symbol == benchmark)
-    )
-
-
-def _check_sector_concentration_with_runtime_hints(
-    symbols: list[str],
-    *,
-    max_concentration: float | None = None,
-    sector_map: dict[str, str] | None = None,
-    industry_map: dict[str, str] | None = None,
-):
-    from aqsp.portfolio.sector_check import check_sector_concentration
-
-    try:
-        return check_sector_concentration(
-            symbols,
-            max_concentration=max_concentration
-            if max_concentration is not None
-            else 0.4,
-            sector_map=sector_map,
-            industry_map=industry_map,
-        )
-    except TypeError:
-        return check_sector_concentration(symbols)
-
-
-def _count_independent_signal_days(ledger_path: str) -> int:
-    return count_independent_signal_days(ledger_path)
-
-
-def _formal_runtime_ledger_path(current_ledger_path: str, *, task_id: str) -> str:
-    normalized_task_id = str(task_id or "").strip().lower()
-    current = str(current_ledger_path or "").strip()
-    if normalized_task_id in {"intraday", "midday"}:
-        env_ledger = str(
-            os.getenv("AQSP_LEDGER", "data/predictions.jsonl") or ""
-        ).strip()
-        return env_ledger or current
-    return current
-
-
-def _is_high_frequency_task(task_id: str) -> bool:
-    return str(task_id or "").strip().lower() in {"intraday", "midday"}
-
-
-def _runtime_catalyst_isolate_external_sources(task_id: str) -> bool:
-    """Keep fork isolation by default; allow an explicit HF thread fallback."""
-    if sys.platform == "darwin":
-        return False
-    if not _is_high_frequency_task(task_id):
-        return True
-
-    mode = (
-        str(os.getenv("AQSP_INTRADAY_CATALYST_FETCH_MODE", "process") or "process")
-        .strip()
-        .lower()
-    )
-    if mode in _INTRADAY_CATALYST_THREAD_MODES:
-        return False
-    return True
-
-
-def _requires_intraday_overlay_task(task_id: str) -> bool:
-    return str(task_id or "").strip().lower() in {"intraday", "midday", "live_short"}
-
-
-def _effective_live_short_max_data_lag_days(
-    configured_days: int,
-    *,
-    requires_live_short_source: bool,
-    csv_path: str,
-    as_of_raw: str = "",
-) -> int:
-    lag_days = max(0, int(configured_days))
-    if not requires_live_short_source or str(csv_path or "").strip() or as_of_raw:
-        return lag_days
-    return min(lag_days, 1)
-
-
-def _should_build_market_context(task_id: str) -> bool:
-    normalized_task_id = str(task_id or "").strip().lower()
-    if not _is_high_frequency_task(normalized_task_id):
-        return True
-    return goal_switch_enabled("live_short_runtime", default=True)
-
-
-def _runtime_realtime_cross_market_payload(task_id: str) -> dict | None:
-    """Load live macro context only for explicitly enabled short-term runs."""
-    if not _is_high_frequency_task(task_id):
-        return None
-    enabled = str(os.getenv("AQSP_MARKET_CONTEXT_LIVE_SOURCE", "false")).strip().lower()
-    if enabled not in {"1", "true", "yes", "on"}:
-        return None
-    try:
-        from aqsp.data.market_context_source import fetch_live_market_context_payload
-
-        return fetch_live_market_context_payload(
-            timeout_seconds=_market_context_source_timeout_seconds(task_id)
-        )
-    except Exception as exc:
-        LOGGER.warning("实时跨市场上下文获取失败，保留不可用状态: %s", exc)
-        return None
-
-
-def _market_context_source_timeout_seconds(task_id: str) -> float:
-    if _is_high_frequency_task(task_id):
-        return 1.0
-    return 4.0
-
-
-def _runtime_catalyst_cache_path(task_id: str) -> str:
-    configured = str(os.getenv("AQSP_CATALYST_REPORT_CACHE_PATH", "") or "").strip()
-    if configured:
-        return configured
-    if _is_high_frequency_task(task_id):
-        return "data/runtime/catalyst_report_cache.json"
-    return ""
-
-
-def _runtime_catalyst_cache_ttl_seconds(task_id: str) -> float:
-    configured = str(
-        os.getenv("AQSP_CATALYST_REPORT_CACHE_TTL_SECONDS", "") or ""
-    ).strip()
-    if configured:
-        try:
-            return max(0.0, float(configured))
-        except ValueError:
-            return 0.0
-    if _is_high_frequency_task(task_id):
-        return 120.0
-    return 0.0
-
-
-def _runtime_catalyst_allow_stale_cache_on_failure(task_id: str) -> bool:
-    configured = str(
-        os.getenv("AQSP_CATALYST_REPORT_ALLOW_STALE_CACHE", "") or ""
-    ).strip()
-    if configured.lower() in {"1", "true", "yes", "on"}:
-        return True
-    if configured.lower() in {"0", "false", "no", "off"}:
-        return False
-    return _is_high_frequency_task(task_id)
-
-
-def _runtime_catalyst_max_stale_cache_age_seconds(task_id: str) -> float:
-    configured = str(
-        os.getenv("AQSP_CATALYST_REPORT_MAX_STALE_CACHE_AGE_SECONDS", "") or ""
-    ).strip()
-    if configured:
-        try:
-            return max(0.0, float(configured))
-        except ValueError:
-            return 30 * 60
-    if _is_high_frequency_task(task_id):
-        return 30 * 60
-    return 0.0
-
-
-def _runtime_catalyst_max_news_age_days(task_id: str) -> int:
-    configured = str(
-        os.getenv("AQSP_CATALYST_REPORT_MAX_NEWS_AGE_DAYS", "") or ""
-    ).strip()
-    if configured:
-        try:
-            return max(1, int(configured))
-        except ValueError:
-            return 30
-    if _is_high_frequency_task(task_id):
-        return 5
-    return 30
-
-
-def _runtime_news_artifact_path(task_id: str) -> str:
-    configured = str(os.getenv("AQSP_NEWS_JSON_OUTPUT", "") or "").strip()
-    if configured:
-        return configured
-    return (
-        "data/runtime/news_catalysts_latest.json"
-        if _is_high_frequency_task(task_id)
-        else ""
-    )
-
-
-def _runtime_news_artifact_max_age_seconds(task_id: str) -> float:
-    configured = str(
-        os.getenv("AQSP_NEWS_RUNTIME_ARTIFACT_MAX_AGE_SECONDS", "") or ""
-    ).strip()
-    if configured:
-        try:
-            return max(0.0, float(configured))
-        except ValueError:
-            return 0.0
-    return 6 * 60 * 60 if _is_high_frequency_task(task_id) else 0.0
-
-
-def _build_runtime_catalyst_report(
-    picks: list[PickResult],
-    *,
-    task_id: str,
-) -> Any | None:
-    if not picks:
-        return None
-
-    from aqsp.news.catalysts import NewsCatalystConfig, build_catalyst_report
-
-    source_timeout_seconds = _market_context_source_timeout_seconds(task_id)
-    cache_path = _runtime_catalyst_cache_path(task_id)
-    cache_ttl_seconds = _runtime_catalyst_cache_ttl_seconds(task_id)
-    max_stale_cache_age_seconds = _runtime_catalyst_max_stale_cache_age_seconds(task_id)
-    max_news_age_days = _runtime_catalyst_max_news_age_days(task_id)
-    symbols = tuple(pick.symbol for pick in picks)
-    symbol_names = {pick.symbol: pick.name for pick in picks}
-    return build_catalyst_report(
-        symbols=symbols,
-        symbol_names=symbol_names,
-        config=NewsCatalystConfig(
-            symbols=symbols,
-            max_symbol_news=3,
-            max_global_news=6,
-            max_events=4,
-            max_news_age_days=max_news_age_days,
-            source_timeout_seconds=source_timeout_seconds,
-            enable_llm_review=False,
-            cache_path=cache_path,
-            cache_ttl_seconds=cache_ttl_seconds,
-            max_stale_cache_age_seconds=max_stale_cache_age_seconds,
-            allow_stale_cache_on_failure=_runtime_catalyst_allow_stale_cache_on_failure(
-                task_id
-            ),
-            isolate_external_sources=_runtime_catalyst_isolate_external_sources(
-                task_id
-            ),
-        ),
-    )
-
-
-def _filter_catalyst_report_for_symbols(
-    report: Any | None,
-    symbols: tuple[str, ...],
-) -> Any | None:
-    if report is None:
-        return None
-
-    from aqsp.news.catalysts import CatalystReport
-
-    allowed_symbols = {str(symbol).strip() for symbol in symbols if str(symbol).strip()}
-    if not allowed_symbols:
-        return report
-
-    events = tuple(
-        event
-        for event in getattr(report, "events", ())
-        if not getattr(event, "symbol", "")
-        or getattr(event, "symbol", "") in allowed_symbols
-    )
-    return CatalystReport(
-        date=str(getattr(report, "date", "")).strip(),
-        generated_at=str(getattr(report, "generated_at", "")).strip(),
-        events=events,
-        source_status=str(getattr(report, "source_status", "")).strip(),
-        warnings=tuple(getattr(report, "warnings", ()) or ()),
-        source_statuses=tuple(getattr(report, "source_statuses", ()) or ()),
-        event_status=str(getattr(report, "event_status", "") or ""),
-        raw_news_count=int(getattr(report, "raw_news_count", 0) or 0),
-        stale_news_count=int(getattr(report, "stale_news_count", 0) or 0),
-        undated_news_count=int(getattr(report, "undated_news_count", 0) or 0),
-        future_news_count=int(getattr(report, "future_news_count", 0) or 0),
-    )
-
-
-def _load_runtime_market_context_catalyst_report(
-    *,
-    preview_report: Any | None,
-    preview_symbols: tuple[str, ...],
-    picks: list[PickResult],
-    task_id: str,
-) -> Any | None:
-    from aqsp.news.catalysts import load_catalyst_report_artifact
-
-    debate_runtime = load_debate_runtime_config(task_id=task_id)
-    target_picks = picks[: max(1, int(debate_runtime.max_candidates))]
-    if not target_picks:
-        return None
-
-    target_symbols = tuple(pick.symbol for pick in target_picks)
-    artifact_path = _runtime_news_artifact_path(task_id)
-    if artifact_path:
-        artifact = load_catalyst_report_artifact(
-            artifact_path,
-            expected_date=today_shanghai().isoformat(),
-            max_age_seconds=_runtime_news_artifact_max_age_seconds(task_id),
-        )
-        if artifact is not None:
-            return _filter_catalyst_report_for_symbols(artifact, target_symbols)
-    if preview_report is not None and set(target_symbols).issubset(
-        set(preview_symbols)
-    ):
-        return _filter_catalyst_report_for_symbols(preview_report, target_symbols)
-    return _build_runtime_catalyst_report(target_picks, task_id=task_id)
-
-
-def _trim_high_frequency_markdown(markdown: str) -> str:
-    if not markdown.strip():
-        return markdown
-    keep_sections = {
-        "## 数据与规则",
-        "## 市场上下文",
-        "## 今日重点看板",
-        "## 组合保护",
-        "## 选股变化",
-        "## 板块集中度",
-        "## 候选股相关性",
-    }
-    lines = markdown.splitlines()
-    kept: list[str] = []
-    current_header = ""
-    keep_current = True
-    for line in lines:
-        if line.startswith("## "):
-            current_header = line.strip()
-            keep_current = current_header in keep_sections or current_header == ""
-        if keep_current:
-            kept.append(line)
-    return "\n".join(kept).rstrip() + "\n"
-
-
-def _write_high_frequency_provisional_outputs(
-    *,
-    task_id: str,
-    args: argparse.Namespace,
-    picks: list[PickResult],
-    latest: date,
-    mode: str,
-    run_metadata: RunMetadata,
-) -> None:
-    if not _is_high_frequency_task(task_id):
-        return
-    report_path = str(getattr(args, "report", "") or "").strip()
-    output_csv_path = str(getattr(args, "output_csv", "") or "").strip()
-    mirror_report_path = str(os.environ.get("AQSP_PROVISIONAL_REPORT") or "").strip()
-    mirror_csv_path = str(os.environ.get("AQSP_PROVISIONAL_OUTPUT_CSV") or "").strip()
-    if not any((report_path, output_csv_path, mirror_report_path, mirror_csv_path)):
-        return
-
-    table = to_intraday_dataframe(picks, metadata=run_metadata)
-    markdown = to_markdown(
-        picks,
-        title=f"AI 量化选股盘中快照({mode}, 数据日期 {latest.isoformat()})",
-        metadata=replace(
-            run_metadata,
-            final_count=len(picks),
-        ),
-    )
-    markdown = _trim_high_frequency_markdown(markdown)
-    report_targets = tuple(
-        dict.fromkeys(p for p in (report_path, mirror_report_path) if p)
-    )
-    csv_targets = tuple(
-        dict.fromkeys(p for p in (output_csv_path, mirror_csv_path) if p)
-    )
-    for target in report_targets:
-        Path(target).parent.mkdir(parents=True, exist_ok=True)
-        atomic_write_text(target, markdown)
-    csv_payload = table.to_csv(index=False)
-    for target in csv_targets:
-        Path(target).parent.mkdir(parents=True, exist_ok=True)
-        atomic_write_text(target, csv_payload)
-    print("盘中候选快照已先行落盘")
-
-
-def _no_candidate_reason(*, screened_count: int, final_count: int) -> str:
-    """Explain an empty result without turning prior candidates into fallback data."""
-    if final_count > 0:
-        return ""
-    if screened_count <= 0:
-        return "策略筛选未产生符合条件的候选"
-    return "筛选出的候选在排雷、T+1 或组合约束后全部移除"
-
-
-def _ledger_signal_date(row: dict[str, Any]) -> str:
-    from aqsp.ledger.runtime import ledger_signal_date
-
-    return ledger_signal_date(row)
-
-
-def _compute_real_pnl(
-    ledger_path: str,
-    paper_ledger_path: str | None = None,
-    frames: dict[str, pd.DataFrame] | None = None,
-) -> tuple[float, float, float]:
-    if paper_ledger_path and frames:
-        paper_pnl = compute_paper_mark_to_market_pnl(paper_ledger_path, frames)
-        if paper_pnl is not None:
-            return paper_pnl
-    return compute_real_pnl(ledger_path)
-
-
-def _format_validation_summary_lines(validation: Any) -> list[str]:
-    skipped = int(getattr(validation, "skipped_not_executable", 0) or 0)
-    if skipped <= 0:
-        return []
-
-    lines = [f"- 不可成交跳过: {skipped} 条"]
-    reasons = getattr(validation, "not_executable_reasons", None) or {}
-    if isinstance(reasons, dict) and reasons:
-        top_reasons = sorted(
-            ((str(reason), int(count)) for reason, count in reasons.items()),
-            key=lambda item: (-item[1], item[0]),
-        )[:3]
-        lines.append(
-            "- 不可成交原因: "
-            + ", ".join(f"{reason}×{count}" for reason, count in top_reasons)
-        )
-    rates = getattr(validation, "strategy_not_executable_rates", None) or {}
-    if isinstance(rates, dict) and rates:
-        top_rates = sorted(
-            ((str(strategy), float(rate)) for strategy, rate in rates.items()),
-            key=lambda item: (-item[1], item[0]),
-        )[:3]
-        lines.append(
-            "- 不可成交策略: "
-            + ", ".join(f"{strategy} {rate:.0%}" for strategy, rate in top_rates)
-        )
-    return lines
-
-
-def _validation_summary_payload(validation: Any) -> dict[str, object] | None:
-    if validation is None:
-        return None
-    return {
-        "checked": int(getattr(validation, "checked", 0) or 0),
-        "wins": int(getattr(validation, "wins", 0) or 0),
-        "avg_return_pct": float(getattr(validation, "avg_return_pct", 0.0) or 0.0),
-        "avg_excess_pct": float(getattr(validation, "avg_excess_pct", 0.0) or 0.0),
-        "skipped_not_executable": int(
-            getattr(validation, "skipped_not_executable", 0) or 0
-        ),
-        "not_executable_reasons": getattr(validation, "not_executable_reasons", None)
-        or {},
-        "strategy_not_executable_rates": getattr(
-            validation, "strategy_not_executable_rates", None
-        )
-        or {},
-    }
-
-
-def _handle_circuit_breaker_block(
-    *,
-    args: argparse.Namespace,
-    status: Any,
-    latest: date,
-    run_metadata: RunMetadata,
-    validation: Any,
-    cold_start_days: int,
-    cold_start_min_days: int,
-    daily_pnl: float,
-    weekly_pnl: float,
-    monthly_pnl: float,
-    task_id: str,
-) -> int:
-    print(f"🛡️ 组合保护已触发，停止新增候选生成: {status.reason}")
-    append_run_event(
-        args.ledger,
-        event_date=latest.isoformat(),
-        status="blocked_by_circuit_breaker",
-        reason=status.reason,
-        run_metadata=run_metadata,
-        details={
-            "daily_pnl_pct": round(daily_pnl, 4),
-            "weekly_pnl_pct": round(weekly_pnl, 4),
-            "monthly_pnl_pct": round(monthly_pnl, 4),
-        },
-    )
-
-    markdown = "\n".join(
-        [
-            f"# AI 量化选股报告(组合保护, 数据日期 {latest.isoformat()})",
-            "",
-            "## 执行摘要",
-            "",
-            f"🛡️ **组合保护已触发**: {status.reason}，本次停止新增纸面复核。",
-            "",
-            "## 组合保护",
-            "",
-            f"- 日度损益: {daily_pnl:.2f}%",
-            f"- 周度损益: {weekly_pnl:.2f}%",
-            f"- 月度损益: {monthly_pnl:.2f}%",
-        ]
-    )
-    if validation is not None:
-        markdown += "\n\n## 策略自检\n"
-        if cold_start_days < cold_start_min_days:
-            markdown += f"- 冷启动期: 已积累 {cold_start_days}/{cold_start_min_days} 个独立信号日\n"
-        elif getattr(validation, "checked", 0):
-            markdown += f"- 本次验证历史预测: {validation.checked} 条\n"
-        else:
-            markdown += "- 本次暂无可验证历史预测\n"
-        validation_summary_lines = _format_validation_summary_lines(validation)
-        if validation_summary_lines:
-            markdown += "\n".join(validation_summary_lines) + "\n"
-
-    notification_artifacts = finalize_scheduled_notification(
-        markdown=markdown,
-        args_notify=args.notify,
-        gate_ok=False,
-        gate_reasons=[status.reason],
-        next_actions=["组合保护解除前暂停新增纸面复核，仅保留风险观察。"],
-        latest_iso=latest.isoformat(),
-        notify_mode=load_runtime_config().notify_mode,
-        dispatch_gate_notification_fn=dispatch_gate_notification,
-        should_send_gate_notification_fn=lambda **kwargs: (
-            _should_send_gate_notification(
-                gate_ok=kwargs["gate_ok"],
-                gate_reasons=kwargs["gate_reasons"],
-                run_date=kwargs["run_date"],
-            )
-        ),
-        format_notification_gate_block_fn=_format_notification_gate_block,
-        legacy_notify_fn=notify_markdown
-        if notify_markdown is not _notify_markdown_default
-        else None,
-        print_fn=print,
-        mark_gate_notification_sent_fn=lambda **kwargs: _mark_gate_notification_sent(
-            gate_reasons=kwargs["gate_reasons"],
-            run_date=kwargs["run_date"],
-        ),
-        mark_gate_notification_failed_fn=lambda **kwargs: (
-            _mark_gate_notification_failed(
-                gate_reasons=kwargs["gate_reasons"],
-                run_date=kwargs["run_date"],
-            )
-        ),
-        mark_gate_notification_suppressed_fn=lambda **kwargs: (
-            _mark_gate_notification_suppressed(
-                gate_reasons=kwargs["gate_reasons"],
-                run_date=kwargs["run_date"],
-            )
-        ),
-        gate_state_path=_resolve_runtime_state_path(
-            os.getenv("AQSP_GATE_NOTIFY_STATE_PATH", GATE_NOTIFY_STATE_PATH)
-        ),
-        task_id=task_id,
-    )
-    report_path = str(getattr(args, "report", "") or "").strip()
-    if report_path:
-        Path(report_path).parent.mkdir(parents=True, exist_ok=True)
-    finalize_scheduled_outputs(
-        markdown=notification_artifacts.markdown,
-        report_path=report_path,
-        output_csv_path=str(getattr(args, "output_csv", "") or "").strip(),
-        table=to_dataframe([]),
-        print_fn=print,
-    )
-    return 2
-
-
-def _allow_observation_during_circuit_breaker(task_id: str) -> bool:
-    """Keep research generation independent from paper-portfolio protection.
-
-    The breaker is an account-level action constraint.  It must not suppress
-    fresh candidate generation or evidence collection for any scheduled task.
-    Paper actions remain marked as restricted by the caller.
-    """
-    del task_id
-    return True
-
-
-def _execution_cost_bps_from_thresholds(thresholds: Any) -> tuple[float, float]:
-    execution = execution_config_from_thresholds(thresholds)
-    return execution.fee_bps, execution.slippage_bps
-
-
-def _resolve_execution_cost_bps(
-    thresholds: Any,
-    *,
-    fee_bps: float | None,
-    slippage_bps: float | None,
-) -> tuple[float, float]:
-    default_fee_bps, default_slippage_bps = _execution_cost_bps_from_thresholds(
-        thresholds
-    )
-    return (
-        default_fee_bps if fee_bps is None else float(fee_bps),
-        default_slippage_bps if slippage_bps is None else float(slippage_bps),
-    )
-
-
 def _read_symbols_file(path: str | Path) -> list[str]:
     raw_path = Path(path)
     symbols: list[str] = []
@@ -3383,7 +1228,7 @@ def _build_streaming_sqlite_context(
     if benchmark:
         fixed_frames = source.fetch_index([benchmark], start_day, end_day)
 
-    with sqlite3.connect(source.db_path) as conn:
+    with sqlite3.connect(source.db_path, timeout=30.0) as conn:
         raw_dates = conn.execute(
             """
             SELECT DISTINCT trade_date
@@ -3443,850 +1288,8 @@ def _build_streaming_sqlite_context(
     )
 
 
-def _walkforward_fetch_days(start: str, end: str) -> int:
-    start_d = date.fromisoformat(start)
-    end_d = date.fromisoformat(end)
-    span_days = max((end_d - start_d).days, 0)
-    return max(260, int(span_days * 1.8) + 90)
-
-
-def _get_hs300_symbols(as_of: date | None = None) -> list[str]:
-    """沪深300成分股的近似快照（手工维护，去重后保序）。
-
-    若本地已配置 `TUSHARE_TOKEN`，优先按 `as_of` 读取 000300.SH 成分；
-    否则回退到手工快照。
-    """
-    target_day = as_of or today_shanghai()
-    live_symbols = load_optional_index_constituents("000300.SH", target_day)
-    if live_symbols:
-        return live_symbols
-
-    raw = [
-        "600519",
-        "601318",
-        "600036",
-        "000858",
-        "600276",
-        "601166",
-        "600900",
-        "601888",
-        "000333",
-        "002415",
-        "300750",
-        "601012",
-        "000001",
-        "600000",
-        "002594",
-        "600887",
-        "002475",
-        "300059",
-        "000725",
-        "002714",
-        "601398",
-        "601288",
-        "600030",
-        "600048",
-        "601668",
-        "600050",
-        "601857",
-        "601985",
-        "600104",
-        "600016",
-        "601328",
-        "600019",
-        "601601",
-        "601628",
-        "600585",
-        "601138",
-        "600837",
-        "601225",
-        "600309",
-        "601211",
-        "600547",
-        "601360",
-        "600196",
-        "601390",
-        "600031",
-        "601186",
-        "600009",
-        "601766",
-        "601669",
-        "600436",
-        "600028",
-        "600015",
-        "601919",
-        "601111",
-        "600690",
-        "600089",
-        "601006",
-        "601800",
-        "600346",
-        "601117",
-        "601688",
-        "600570",
-        "600176",
-        "601236",
-        "601877",
-        "600183",
-        "600010",
-        "600029",
-        "601155",
-        "600061",
-        "600741",
-        "600660",
-        "601881",
-        "600115",
-        "601336",
-        "601939",
-        "601998",
-        "600011",
-        "600018",
-        "600025",
-        "600085",
-        "600111",
-        "600150",
-        "600256",
-        "600332",
-        "600352",
-        "600362",
-        "600406",
-        "600438",
-        "600489",
-        "600588",
-        "600600",
-        "600655",
-        "600703",
-        "600745",
-        "600760",
-        "600795",
-        "600809",
-        "600845",
-        "600848",
-        "600867",
-        "600871",
-        "600875",
-        "600885",
-        "600886",
-        "600893",
-        "600918",
-        "600919",
-        "600926",
-        "600938",
-        "600941",
-        "600989",
-        "601009",
-        "601021",
-        "601066",
-        "601077",
-        "601088",
-        "601100",
-        "601108",
-        "601162",
-        "601169",
-        "601229",
-        "601231",
-        "601238",
-        "601298",
-        "601319",
-        "601377",
-        "601456",
-        "601555",
-        "601577",
-        "601607",
-        "601618",
-        "601633",
-        "601658",
-        "601698",
-        "601728",
-        "601788",
-        "601816",
-        "601818",
-        "601838",
-        "601878",
-        "601898",
-        "601899",
-        "601901",
-        "601916",
-        "601933",
-        "601966",
-        "601988",
-        "601989",
-        "601992",
-        "603019",
-        "603077",
-        "603127",
-        "603160",
-        "603195",
-        "603233",
-        "603259",
-        "603288",
-        "603290",
-        "603345",
-        "603369",
-        "603392",
-        "603486",
-        "603501",
-        "603517",
-        "603568",
-        "603605",
-        "603613",
-        "603658",
-        "603799",
-        "603806",
-        "603816",
-        "603833",
-        "603882",
-        "603886",
-        "603899",
-        "603986",
-        "603993",
-        "000002",
-        "000063",
-        "000066",
-        "000069",
-        "000100",
-        "000157",
-        "000166",
-        "000301",
-        "000338",
-        "000425",
-        "000538",
-        "000568",
-        "000596",
-        "000625",
-        "000651",
-        "000661",
-        "000703",
-        "000708",
-        "000723",
-        "000728",
-        "000768",
-        "000776",
-        "000783",
-        "000786",
-        "000800",
-        "000876",
-        "000895",
-        "000938",
-        "000963",
-        "000977",
-        "001979",
-        "002001",
-        "002007",
-        "002008",
-        "002024",
-        "002027",
-        "002032",
-        "002044",
-        "002049",
-        "002050",
-        "002065",
-        "002074",
-        "002120",
-        "002128",
-        "002142",
-        "002146",
-        "002157",
-        "002179",
-        "002180",
-        "002202",
-        "002230",
-        "002236",
-        "002241",
-        "002252",
-        "002271",
-        "002304",
-        "002311",
-        "002340",
-        "002352",
-        "002371",
-        "002375",
-        "002382",
-        "002410",
-        "002414",
-        "002422",
-        "002430",
-        "002456",
-        "002460",
-        "002463",
-        "002466",
-        "002468",
-        "002493",
-        "002507",
-        "002508",
-        "002555",
-        "002557",
-        "002568",
-        "002600",
-        "002601",
-        "002602",
-        "002607",
-        "002624",
-        "002625",
-        "002736",
-        "002739",
-        "002745",
-        "002756",
-        "002812",
-        "002821",
-        "002832",
-        "002841",
-        "002916",
-        "002920",
-        "002938",
-        "002939",
-        "002945",
-        "002958",
-        "003816",
-        "004997",
-        "300003",
-        "300014",
-        "300015",
-        "300033",
-        "300122",
-        "300124",
-        "300142",
-        "300144",
-        "300146",
-        "300347",
-        "300408",
-        "300413",
-        "300433",
-        "300450",
-        "300454",
-        "300498",
-        "300529",
-        "300601",
-        "300628",
-        "300661",
-        "300676",
-        "300760",
-        "300763",
-        "300782",
-        "300832",
-        "300866",
-        "300896",
-        "300919",
-        "300999",
-    ]
-    # 去重保序
-    seen: set[str] = set()
-    out: list[str] = []
-    for s in raw:
-        if s not in seen:
-            seen.add(s)
-            out.append(s)
-    return out
-
-
-def _regime_description(regime: str) -> str:
-    descriptions = {
-        "stable_bull": "稳定上涨：低波动+正趋势",
-        "volatile_bull": "波动上涨：高波动+正趋势",
-        "stable_bear": "稳定下跌：低波动+负趋势",
-        "volatile_bear": "波动下跌：高波动+负趋势",
-        "stable_sideways": "稳定盘整：低波动+无趋势",
-        "volatile_sideways": "波动盘整：高波动+无趋势",
-        "bull_trend": "牛市趋势：20日均收益 > 0.5%",
-        "mild_bear": "温和熊市：20日均收益 -0.5% ~ -2%",
-        "sideways": "震荡市：20日均收益 -0.5% ~ 0.5%",
-        "bear_filter": "熊市过滤：20日均收益 < -2%",
-    }
-    return descriptions.get(regime, "未知 regime")
-
-
-def _find_thresholds_yaml() -> Path | None:
-    """Locate config/thresholds.yaml relative to this file or CWD.
-
-    cli.py lives at <repo>/src/aqsp/cli.py — repo root is parents[2].
-    Fall back to CWD-relative for non-standard installs.
-    """
-    candidate = Path(__file__).resolve().parents[2] / "config" / "thresholds.yaml"
-    if candidate.exists():
-        return candidate
-    cwd_candidate = Path.cwd() / "config" / "thresholds.yaml"
-    if cwd_candidate.exists():
-        return cwd_candidate
-    return None
-
-
-def _update_thresholds_metadata(run_date: str) -> bool:
-    """Rewrite last_walkforward_run in thresholds.yaml.
-
-    Returns True if the field was found and updated, False otherwise.
-    Tolerant to double-quoted, single-quoted, or bare values.
-    """
-    import re
-
-    path = _find_thresholds_yaml()
-    if path is None:
-        return False
-    content = path.read_text(encoding="utf-8")
-    pattern = re.compile(
-        r'^(last_walkforward_run:\s*)("[^"]*"|\'[^\']*\'|[^\s#].*?)(\s*(?:#.*)?)$',
-        flags=re.MULTILINE,
-    )
-    new_content, n = pattern.subn(
-        lambda m: f'{m.group(1)}"{run_date}"{m.group(3)}',
-        content,
-    )
-    if n == 0:
-        return False
-    path.write_text(new_content, encoding="utf-8")
-    return True
-
-
-def _assert_not_heldout(end: str, *, allow: bool, logger=None) -> None:
-    """宪法 §1.3 #9：end 不得越过 held-out 边界。
-
-    end > 2024-12-31 且未显式 --allow-heldout → fail loud（SystemExit）。
-    开了 --allow-heldout → 红字警告放行并留痕（一次性 held-out 验收专用）。
-
-    日期用 date.fromisoformat 解析后比较，而非字符串字典序——避免
-    "2024/12/31" 或带空格等非标准格式被误判。非法日期本身 fail loud。
-    """
-    from datetime import date
-
-    cutoff = date.fromisoformat(HELDOUT_TRAIN_CUTOFF)
-    try:
-        end_d = date.fromisoformat(end.strip())
-    except (ValueError, AttributeError) as exc:
-        raise SystemExit(
-            f"[宪法 §1.3 #9] --end={end!r} 不是合法 ISO 日期 (YYYY-MM-DD): {exc}"
-        ) from exc
-
-    if end_d <= cutoff:
-        return
-    msg = f"[宪法 §1.3 #9] --end={end} 越过 held-out 边界 {HELDOUT_TRAIN_CUTOFF}，会把 2025-01~2026-04 held-out 区间卷入训练。"
-    if not allow:
-        raise SystemExit(
-            msg
-            + "\n  这是绝对禁止条款。如确为 held-out 一次性验收，显式加 --allow-heldout（且必须在双门通过后）。"
-        )
-    warn = (
-        "⚠️  "
-        + msg
-        + "\n  已显式 --allow-heldout 放行。请确认这是双门通过后的一次性 held-out 验收，结果不得回灌训练。"
-    )
-    print(warn)
-    if logger:
-        logger.warning(warn)
-
-
-def _resolve_walkforward_window_args(args: argparse.Namespace) -> None:
-    if not str(getattr(args, "end", "") or "").strip():
-        args.end = _default_walkforward_end()
-    if not str(getattr(args, "start", "") or "").strip():
-        args.start = _default_walkforward_start(end=str(args.end))
-
-
-def _write_walkforward_gate(
-    *,
-    dsr: float,
-    pbo: float,
-    run_date: str,
-    start: str,
-    end: str,
-    n_periods: int,
-    metadata: dict[str, object] | None = None,
-    diagnostics: dict[str, object] | None = None,
-    gate_path: str | Path = WALKFORWARD_GATE_PATH,
-) -> None:
-    """写双门 sidecar，供 run_scheduled 的 notify gate 读取。
-    独立 JSON，不污染 thresholds.yaml，不 bump version（§1.3 #12/#14）。
-    """
-    import json
-
-    payload = build_walkforward_gate_payload(
-        dsr=dsr,
-        pbo=pbo,
-        run_date=run_date,
-        start=start,
-        end=end,
-        n_periods=n_periods,
-        metadata=metadata,
-    )
-    if diagnostics:
-        payload["grid_diagnostics"] = diagnostics
-    p = Path(gate_path)
-    atomic_write_text(p, json.dumps(payload, indent=2, ensure_ascii=False))
-    print(f"✅ 双门 sidecar 已写入: {p}（both_pass={payload['both_pass']}）")
-
-
-def _walkforward_gate_metadata(
-    args: argparse.Namespace, *, effective_symbols: int | None = None
-) -> dict[str, object]:
-    metadata: dict[str, object] = {
-        "source": str(getattr(args, "source", "") or ""),
-        "window_mode": str(
-            getattr(args, "window_mode", "rolling_recent") or "rolling_recent"
-        ),
-        "skip_pit_financials": bool(getattr(args, "skip_pit_financials", False)),
-    }
-    if effective_symbols is not None:
-        metadata["effective_symbols"] = int(effective_symbols)
-    if bool(getattr(args, "grid_cscv", False)):
-        metadata["grid_profile"] = str(
-            getattr(args, "grid_profile", "stable") or "stable"
-        )
-    if bool(getattr(args, "streaming", False)):
-        metadata["memory_mode"] = "streaming"
-        metadata["stream_batch_size"] = int(getattr(args, "stream_batch_size", 0) or 0)
-    if metadata["source"] == "sqlite_db":
-        db_path = _resolve_sqlite_db_path()
-        if db_path:
-            metadata["sqlite_db_path"] = db_path
-            try:
-                metadata["price_mode"] = sqlite_price_mode(db_path)
-            except Exception:  # noqa: BLE001
-                metadata["price_mode"] = "unknown"
-        else:
-            metadata["price_mode"] = "unknown"
-    return metadata
-
-
-def _format_walkforward_count_map(
-    items: dict[str, int] | tuple[tuple[str, int], ...],
-) -> str:
-    if not items:
-        return "无"
-    pairs = items.items() if isinstance(items, dict) else items
-    return "；".join(f"{key}: {value}" for key, value in sorted(pairs))
-
-
-def _append_walkforward_diagnostics(report_lines: list[str], result: Any) -> None:
-    diagnostics = getattr(result, "diagnostics", None)
-    if diagnostics is None:
-        return
-
-    report_lines.extend(
-        [
-            "",
-            "## 失败诊断",
-            "",
-            "| 指标 | 值 |",
-            "|------|-----|",
-            f"| 总信号交易 | {diagnostics.total_trades} |",
-            f"| 可成交交易 | {diagnostics.executable_trades} |",
-            f"| 不可成交 | {diagnostics.not_executable} |",
-            f"| 退出原因 | {_format_walkforward_count_map(diagnostics.exit_reason_counts)} |",
-            f"| 不可成交原因 | {_format_walkforward_count_map(diagnostics.not_executable_reason_counts)} |",
-            "",
-        ]
-    )
-
-    if diagnostics.worst_symbols:
-        report_lines.extend(
-            [
-                "### 拖累最大的标的",
-                "",
-                "| Symbol | 交易次数 | 平均收益点 | 累计收益点 |",
-                "|--------|----------|------------|------------|",
-            ]
-        )
-        for symbol, trades, avg_return, sum_return in diagnostics.worst_symbols:
-            report_lines.append(
-                f"| {symbol} | {trades} | {avg_return:.4f}% | {sum_return:.4f}% |"
-            )
-    else:
-        report_lines.append("*无可成交标的诊断*")
-
-
-def _format_walkforward_pbo(pbo: float, pbo_is_valid: bool) -> str:
-    value = f"{pbo:.2%}"
-    return value if pbo_is_valid else f"{value}（无效占位，需 grid 多变体 CSCV）"
-
-
-def _walkforward_runtime_rows(
-    args: argparse.Namespace,
-    effective_horizon: int,
-    *,
-    fee_bps: float,
-    slippage_bps: float,
-) -> list[tuple[str, str]]:
-    min_score = "thresholds.yaml"
-    if getattr(args, "min_score", None) is not None:
-        min_score = str(args.min_score)
-    return [
-        ("source", str(args.source)),
-        ("pool", str(getattr(args, "pool", ""))),
-        ("symbols", str(args.symbols or "AQSP_WALKFORWARD_SYMBOLS/default_pool")),
-        ("engine", str(getattr(args, "engine", "") or "runtime_config/auto")),
-        ("min_score", min_score),
-        ("horizon_days", str(effective_horizon)),
-        (
-            "grid_profile",
-            str(getattr(args, "grid_profile", "stable") or "stable")
-            if bool(getattr(args, "grid_cscv", False))
-            else "-",
-        ),
-        ("fee_bps", f"{fee_bps:.4g}"),
-        ("slippage_bps", f"{slippage_bps:.4g}"),
-        ("tiered_stop", str(bool(getattr(args, "tiered_stop", False)))),
-        ("cache_path", str(getattr(args, "cache_path", "") or "")),
-        ("allow_heldout", str(bool(getattr(args, "allow_heldout", False)))),
-    ]
-
-
-def _check_notification_gate(
-    *,
-    cold_start_days: int,
-    gate_path: str = WALKFORWARD_GATE_PATH,
-    validation_date: date | None = None,
-) -> tuple[bool, list[str]]:
-    """宪法 §1.3 #12/#14：返回 (是否放行, 未达原因列表)。
-
-    三个串联条件，缺一不可（#14 明确串联）：
-      1. 冷启动 >= {COLD_START_MIN_DAYS} 个独立信号日
-      2. DSR >1.0
-      3. PBO <0.5
-    sidecar 缺失/解析失败/过期 → fail-closed（不放行）。
-    """
-    reasons: list[str] = []
-    cold_start_min_days = _cold_start_min_days()
-
-    if cold_start_days < cold_start_min_days:
-        reasons.append(
-            f"冷启动未满: {cold_start_days}/{cold_start_min_days} 个独立信号日"
-        )
-
-    p = Path(gate_path)
-    if not p.exists():
-        reasons.append(f"双门 sidecar 不存在（{gate_path}）—— 请先跑 walkforward")
-        return False, reasons
-
-    try:
-        gate = json.loads(p.read_text(encoding="utf-8"))
-    except Exception as exc:  # noqa: BLE001
-        reasons.append(f"双门 sidecar 解析失败: {exc}")
-        return False, reasons
-    if not isinstance(gate, dict):
-        reasons.append("双门 sidecar 解析失败: JSON 顶层不是对象")
-        return False, reasons
-
-    validation = validate_walkforward_gate_payload(
-        gate,
-        today=validation_date or today_shanghai(),
-        max_age_days=MAX_GATE_AGE_DAYS,
-        heldout_cutoff=date.fromisoformat(HELDOUT_TRAIN_CUTOFF),
-    )
-    reasons.extend(_notification_gate_reasons(gate, validation))
-    reasons.extend(_notification_gate_market_coverage_reasons(gate))
-
-    return len(reasons) == 0, reasons
-
-
-def _notification_gate_market_coverage_reasons(gate: dict[str, Any]) -> list[str]:
-    validation = validate_walkforward_market_coverage(gate)
-    if validation.effective_symbols is None:
-        return ["双门全市场覆盖缺失: effective_symbols missing"]
-    if not validation.ok:
-        return [
-            "双门全市场覆盖不足: "
-            f"{validation.effective_symbols}/{validation.min_symbols} 个有效标的"
-        ]
-    return []
-
-
-def _notification_gate_reasons(
-    gate: dict[str, Any], validation: WalkForwardGateValidation
-) -> list[str]:
-    raw_reasons: list[str] = []
-    internal_flags: list[str] = []
-    for blocker in validation.blockers:
-        if blocker.startswith("run_date"):
-            raw_reasons.append(f"双门 sidecar run_date 异常: {gate.get('run_date')!r}")
-        elif blocker.startswith("gate stale"):
-            age = validation.age_days if validation.age_days is not None else "?"
-            raw_reasons.append(
-                f"双门结果过期: {age} 天前（上限 {MAX_GATE_AGE_DAYS} 天）—— 请重新跑 walkforward"
-            )
-        elif blocker.startswith("deflated_sharpe"):
-            raw_reasons.append("DSR 字段缺失或格式异常")
-        elif blocker.startswith("DSR="):
-            raw_reasons.append(f"DSR 未过门: {validation.dsr:.4f}（需 >1.0）")
-        elif blocker.startswith("pbo missing"):
-            raw_reasons.append("PBO 字段缺失或格式异常")
-        elif blocker.startswith("PBO="):
-            if validation.pbo == 0.0 and validation.pbo_valid is not True:
-                raw_reasons.append(
-                    "PBO 未通过: 当前为单策略占位 0.00%，缺少多变体 CSCV 证据"
-                )
-            else:
-                raw_reasons.append(
-                    f"PBO 未过门: {validation.pbo:.2%}（需 0 < PBO < 50%）"
-                )
-        elif blocker.startswith("dsr_pass"):
-            internal_flags.append("dsr_pass")
-        elif blocker.startswith("pbo_pass"):
-            internal_flags.append("pbo_pass")
-        elif blocker.startswith("pbo_valid"):
-            internal_flags.append("pbo_valid")
-        elif blocker.startswith("both_pass"):
-            internal_flags.append("both_pass")
-        elif blocker.startswith("n_periods"):
-            raw_reasons.append(
-                f"双门 sidecar 无有效回测周期（n_periods={gate.get('n_periods')}）"
-                "—— 需真正跑 walkforward 后重写"
-            )
-        elif blocker.startswith("data_end malformed"):
-            raw_reasons.append(
-                f"双门 sidecar 的 data_end 格式异常（{gate.get('data_end')!r}）—— fail-closed"
-            )
-        elif blocker.startswith("data_end="):
-            raw_reasons.append(
-                f"双门成绩用了 held-out 数据（data_end={gate.get('data_end')} > "
-                f"{HELDOUT_TRAIN_CUTOFF}）—— 不得用于解锁推送（§1.3 #9）"
-            )
-        else:
-            raw_reasons.append(f"双门 sidecar 未通过: {blocker}")
-
-    has_metric_reason = any(
-        item.startswith(("DSR 未过门", "PBO 未过门", "PBO 未通过"))
-        for item in raw_reasons
-    )
-    if internal_flags and not has_metric_reason:
-        raw_reasons.append("双门 sidecar 内部通过标志未全部为真")
-
-    return _dedupe_gate_reasons(raw_reasons)
-
-
-def _dedupe_gate_reasons(reasons: list[str]) -> list[str]:
-    deduped: list[str] = []
-    for reason in reasons:
-        if reason not in deduped:
-            deduped.append(reason)
-    return deduped
-
-
-def _notification_gate_actions(
-    reasons: list[str],
-    *,
-    cold_start_days: int,
-) -> list[str]:
-    actions: list[str] = []
-    joined = " ".join(reasons)
-
-    if "冷启动未满" in joined:
-        cold_start_min_days = _cold_start_min_days()
-        remaining_days = max(cold_start_min_days - cold_start_days, 0)
-        actions.append(
-            "继续按日运行主链，先把冷启动样本积累到 "
-            f"{cold_start_min_days} 个独立信号日"
-            + (f"（当前还差 {remaining_days} 天）" if remaining_days > 0 else "")
-            + "。"
-        )
-    if (
-        "sidecar 不存在" in joined
-        or "n_periods=0" in joined
-        or "过期" in joined
-        or "解析失败" in joined
-    ):
-        actions.append(
-            "重跑双门回测以刷新 gate：`.venv/bin/python3 -m aqsp walkforward --source sqlite_db --window-mode rolling_recent --grid-cscv`。"
-        )
-    if "单策略占位" in joined or "多变体 CSCV" in joined:
-        actions.append(
-            "生成多变体 grid CSCV 证据后再刷新 gate；旧归档 Markdown 不作为生产放行依据。"
-        )
-    if "DSR 未过门" in joined or "PBO 未过门" in joined or "PBO 未通过" in joined:
-        if cold_start_days >= _cold_start_min_days():
-            actions.append(
-                "冷启动样本门已达标；当前不是冷启动卡住，是 walk-forward 双门质量门未过。"
-            )
-        actions.append("在双门过线前保留观察模式，不要开启自动通知或放大纸面仓位。")
-    if "held-out" in joined:
-        actions.append(
-            "legacy_train 研究窗口需要退回 held-out 边界内，生产模式统一走 rolling_recent。"
-        )
-
-    if not actions:
-        actions.append("先处理上述门禁原因，再重新执行 `aqsp run --notify`。")
-
-    return actions
-
-
-def _format_notification_gate_block(
-    gate_reasons: list[str],
-    next_actions: list[str],
-) -> str:
-    lines = [
-        "> ⚠️ **未通过 walk-forward 双门验证，仅供观察，请勿实盘使用**",
-        ">",
-        "> 未达原因：",
-    ]
-    lines.extend(f"> - {reason}" for reason in gate_reasons)
-    lines.append(">")
-    lines.append("> 处理项：")
-    lines.extend(f"> - {action}" for action in next_actions)
-    lines.append("")
-    return "\n".join(lines) + "\n"
-
-
-def _gate_notification_allowed(task_id: str | None = None) -> bool:
-    value = task_id if task_id is not None else os.getenv("AQSP_RUN_TASK_ID", "")
-    return str(value or "").strip().lower() in {"daily", "scheduled"}
-
-
-def _should_send_gate_notification(
-    *,
-    gate_ok: bool,
-    gate_reasons: list[str],
-    run_date: str,
-) -> bool:
-    return should_send_gate_notification(
-        gate_ok=gate_ok,
-        gate_reasons=gate_reasons,
-        state_path=_resolve_runtime_state_path(
-            os.getenv("AQSP_GATE_NOTIFY_STATE_PATH", GATE_NOTIFY_STATE_PATH)
-        ),
-        run_date=run_date,
-    )
-
-
-def _mark_gate_notification_sent(
-    *,
-    gate_reasons: list[str],
-    run_date: str,
-) -> None:
-    mark_gate_notification_sent(
-        gate_reasons=gate_reasons,
-        state_path=_resolve_runtime_state_path(
-            os.getenv("AQSP_GATE_NOTIFY_STATE_PATH", GATE_NOTIFY_STATE_PATH)
-        ),
-        run_date=run_date,
-    )
-
-
-def _mark_gate_notification_failed(
-    *,
-    gate_reasons: list[str],
-    run_date: str,
-) -> None:
-    mark_gate_notification_failed(
-        gate_reasons=gate_reasons,
-        state_path=_resolve_runtime_state_path(
-            os.getenv("AQSP_GATE_NOTIFY_STATE_PATH", GATE_NOTIFY_STATE_PATH)
-        ),
-        run_date=run_date,
-    )
-
-
-def _mark_gate_notification_suppressed(
-    *,
-    gate_reasons: list[str],
-    run_date: str,
-) -> None:
-    mark_gate_notification_suppressed(
-        gate_reasons=gate_reasons,
-        state_path=_resolve_runtime_state_path(
-            os.getenv("AQSP_GATE_NOTIFY_STATE_PATH", GATE_NOTIFY_STATE_PATH)
-        ),
-        run_date=run_date,
-    )
-
-
 def run_screen(args: argparse.Namespace) -> int:
+    """候选池单次筛选，作为 live_short 入口。"""
     actual_source = "csv"
     explicit_symbol_count = 0
     symbols: list[str] = []
@@ -4429,6 +1432,7 @@ def run_screen(args: argparse.Namespace) -> int:
 
 
 def run_scheduled(args: argparse.Namespace) -> int:
+    """定时运行与信号生成主函数，委托 service 层执行。"""
     from aqsp.services import scheduled
 
     return scheduled.run_scheduled_service(args, legacy_runner=_run_scheduled_legacy)
@@ -4679,6 +1683,7 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         strategy_weights=weights,
         strategy_weight_reasons=strategy_weight_reasons,
     )
+    screened_picks = _ensure_pick_technical_metrics(screened_picks, screen_frames)
     relevant_intraday_missing_symbols = _relevant_intraday_missing_symbols(
         screened_picks,
         missing_symbols=intraday_missing_symbols,
@@ -4773,6 +1778,27 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         print(f"T+1 过滤剔除 {len(removed)} 只（昨日已买）: {removed}")
     picks = [r for r in picks if r.symbol in kept]
 
+    # Stop-loss check on open paper positions (advisory, no order placement).
+    # Uses the same frames and paper ledger already loaded for T+1/PnL.
+    from aqsp.risk.stop_loss_service import (
+        check_open_position_stop_losses,
+        format_stop_loss_report,
+    )
+
+    stop_loss_report = check_open_position_stop_losses(paper_ledger_path, frames)
+    for _line in format_stop_loss_report(stop_loss_report):
+        print(_line)
+
+    # Position overview with T+1 freeze/unfreeze status (advisory only).
+    from aqsp.portfolio.position_service import (
+        format_position_report,
+        get_position_report,
+    )
+
+    position_report = get_position_report(paper_ledger_path)
+    for _line in format_position_report(position_report):
+        print(_line)
+
     execution_fee_bps, execution_slippage_bps = _resolve_execution_cost_bps(
         thresholds,
         fee_bps=args.fee_bps,
@@ -4787,6 +1813,9 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
 
     nb_z = 0.0
     margin_z = 0.0
+    sentiment_z = 0.0
+    macro_climate = ""
+    macro_detail = ""
     if enable_online_factors:
         try:
             from aqsp.data.cn.northbound import (
@@ -4807,6 +1836,23 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         except Exception as exc:
             LOGGER.warning("两融因子计算失败，按 0 处理: %s", exc)
             margin_z = 0.0
+        try:
+            from aqsp.data.cn.sentiment import compute_sentiment_factor
+
+            sentiment_z = compute_sentiment_factor()
+        except Exception as exc:
+            LOGGER.warning("市场情绪因子计算失败，按 0 处理: %s", exc)
+            sentiment_z = 0.0
+        try:
+            from aqsp.data.cn.macro import get_macro_summary
+
+            macro_summary = get_macro_summary()
+            macro_climate = str(macro_summary.get("climate", "") or "")
+            macro_detail = str(macro_summary.get("climate_detail", "") or "")
+        except Exception as exc:
+            LOGGER.warning("宏观气候因子计算失败，跳过: %s", exc)
+            macro_climate = ""
+            macro_detail = ""
 
     market_context = None
     market_context_overview = ""
@@ -4850,6 +1896,9 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
                 catalyst_report=catalyst_report,
                 northbound_flow_5d_z=nb_z,
                 margin_balance_change_5d=margin_z,
+                sentiment_z=sentiment_z,
+                macro_climate=macro_climate,
+                macro_detail=macro_detail,
                 realtime_cross_market=realtime_cross_market,
                 news_universe=build_current_news_universe(
                     current_news_symbols,
@@ -5295,10 +2344,14 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
             },
         )
 
+    write_ledger = _safe_write_ledger_path(args.ledger, task_id=run_metadata.task_id)
+    if write_ledger != str(args.ledger or "").strip():
+        print(f"📌 盘中任务 ledger 已隔离: {args.ledger} → {write_ledger}")
+
     if status.triggered and _is_high_frequency_task(normalized_task_id):
         print(f"🛡️ 组合保护已触发，跳过正式信号 ledger 写入: {status.reason}")
         append_run_event(
-            args.ledger,
+            write_ledger,
             event_date=latest.isoformat(),
             status="blocked_by_circuit_breaker",
             reason=status.reason,
@@ -5311,18 +2364,19 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         )
     else:
         append_predictions(
-            args.ledger,
+            write_ledger,
             picks,
             execution=execution,
             thresholds_version=thresholds.version,
             regime=regime,
             northbound_flow_5d_z=nb_z,
             margin_balance_change_5d=margin_z,
+            sentiment_z=sentiment_z,
             run_metadata=run_metadata,
         )
         if not picks:
             append_run_event(
-                args.ledger,
+                write_ledger,
                 event_date=latest.isoformat(),
                 status="run_completed_no_picks",
                 reason="screened_no_formal_candidates",
@@ -5543,7 +2597,9 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         os.environ.get("AQSP_NOTIFY_TITLE_LABEL", "") or "收盘研究日报"
     ).strip()
     legacy_notify = (
-        notify_markdown if notify_markdown is not _notify_markdown_default else None
+        cli_notify_helpers.notify_markdown
+        if cli_notify_helpers.notify_markdown is not _notify_markdown_default
+        else None
     )
     print(
         f"冷启动统计: ledger={formal_ledger_path} days={cold_start_days}/{cold_start_min_days}"
@@ -5655,6 +2711,7 @@ def run_dashboard(args: argparse.Namespace) -> int:
 
 
 def run_dashboard_static(args: argparse.Namespace) -> int:
+    """渲染并输出静态仪表盘 HTML。"""
     from scripts.render_dashboard import render_all_panels
     from aqsp.web.entrypoint import write_dashboard_artifact
 
@@ -6134,6 +3191,7 @@ def _append_walkforward_grid_rows(
 
 
 def run_walkforward(args: argparse.Namespace) -> int:
+    """执行 walk-forward 回测。"""
     import logging
     import sys
     from aqsp.core.time import now_shanghai, today_shanghai
@@ -6143,12 +3201,19 @@ def run_walkforward(args: argparse.Namespace) -> int:
 
     log_path = Path(args.log) if args.log else None
     if log_path:
+        from logging.handlers import RotatingFileHandler
+
         log_path.parent.mkdir(parents=True, exist_ok=True)
         logging.basicConfig(
             level=logging.INFO,
             format="%(asctime)s %(levelname)s %(message)s",
             handlers=[
-                logging.FileHandler(log_path, encoding="utf-8"),
+                RotatingFileHandler(
+                    log_path,
+                    maxBytes=10 * 1024 * 1024,
+                    backupCount=5,
+                    encoding="utf-8",
+                ),
                 logging.StreamHandler(sys.stdout),
             ],
         )
@@ -6420,15 +3485,17 @@ def run_walkforward(args: argparse.Namespace) -> int:
     tl_dr = []
     dsr_pass = dsr_value > 1.0
     # 宪法 §17.7：PBO 必须经真 CSCV（N>=2 变体）计算。
-    # 单序列回测无法做 CSCV，calculate_cscv_pbo_from_single 会返回占位值 0.0。
-    # 真 CSCV 的 PBO 几乎不可能恰为 0.0（252 组合中通常有 λ<=0）。
-    # 因此 pbo==0.0 视为「未经有效 CSCV 验证」，不予通过门 —— 避免单策略
+    # 单序列回测无法做 CSCV，calculate_cscv_pbo_from_single 会返回 NaN（不再是
+    # 占位 0.0）。真 CSCV 的 PBO 几乎不可能恰为 0.0（252 组合中通常有 λ<=0）。
+    # 因此 pbo<=0 或 NaN 视为「未经有效 CSCV 验证」，不予通过门 —— 避免单策略
     # 用占位 0.0 蒙混过双门。需要 grid（多变体）walkforward 才能得到有效 PBO。
-    pbo_is_valid = pbo_value > 0.0
+    pbo_is_valid = math.isfinite(pbo_value) and pbo_value > 0.0
     pbo_pass = pbo_is_valid and pbo_value < 0.5
     both_pass = dsr_pass and pbo_pass
     verdict = "PASS" if both_pass else "FAIL"
     pbo_display = _format_walkforward_pbo(pbo_value, pbo_is_valid)
+    if args.grid_cscv:
+        pbo_display += "（经 grid 多变体 CSCV 真验证）"
     tl_dr.append(
         f"**TL;DR**: {verdict} — DSR={dsr_value:.4f}, "
         f"PBO={pbo_display}, Sharpe={result.overall.sharpe_ratio:.2f}, "
@@ -6568,14 +3635,28 @@ def run_walkforward(args: argparse.Namespace) -> int:
     print(f"\n报告已保存到: {args.report}")
 
     # 写双门 sidecar（不依赖 args.update_yaml，始终写，供 notify gate 用）
+    # grid 模式：PBO 来自真 CSCV（≥2 变体），权威且已验证，必须显式标记
+    # pbo_verified=True，不能用单策略 result.pbo_verified（恒为 False）覆盖，
+    # 否则会把 grid 的真实 PBO 在 gate JSON 里误降级成"未验证"（gate 失真）。
+    gate_pbo_verified = True if args.grid_cscv else getattr(result, "pbo_verified", None)
+    gate_metadata = _walkforward_gate_metadata(
+        args,
+        effective_symbols=effective_symbols,
+        fee_bps=walkforward_fee_bps,
+        slippage_bps=walkforward_slippage_bps,
+        purge_days=args.purge_days,
+    )
+    if args.grid_cscv:
+        gate_metadata["pbo_configs"] = len(grid_rows)
     _write_walkforward_gate(
         dsr=dsr_value,
         pbo=pbo_value,
+        pbo_verified=gate_pbo_verified,
         run_date=today_shanghai().isoformat(),
         start=args.start,
         end=args.end,
         n_periods=grid_periods if args.grid_cscv else len(result.periods),
-        metadata=_walkforward_gate_metadata(args, effective_symbols=effective_symbols),
+        metadata=gate_metadata,
         diagnostics=grid_details if args.grid_cscv and grid_details else None,
         gate_path=getattr(args, "gate_path", WALKFORWARD_GATE_PATH),
     )
@@ -6610,6 +3691,7 @@ def _ledger_text_tuple(value: object) -> tuple[str, ...]:
 
 
 def run_briefing(args: argparse.Namespace) -> int:
+    """生成每日简报。"""
     from aqsp.briefing import (
         BriefingGenerator,
         compose_briefing_notification_markdown,
@@ -6921,6 +4003,7 @@ def run_briefing(args: argparse.Namespace) -> int:
 
 
 def run_monitor(args: argparse.Namespace) -> int:
+    """运行监控检查并发送告警。"""
     from aqsp.monitor.checker import MonitorChecker
     from aqsp.monitor.notifier import format_alert, send_alerts
 
@@ -6983,6 +4066,7 @@ def run_monitor(args: argparse.Namespace) -> int:
 
 
 def run_news_catalysts(args: argparse.Namespace) -> int:
+    """分析新闻催化剂对标的的影响。"""
     from aqsp.news import (
         NewsCatalystConfig,
         build_catalyst_report,
@@ -7059,6 +4143,7 @@ def _parse_symbol_names(raw: str) -> dict[str, str]:
 
 
 def run_optimize(args: argparse.Namespace) -> int:
+    """执行策略参数优化。"""
     from aqsp.optimizer.param_optimizer import (
         BayesianOptimizer,
         GridSearchOptimizer,
@@ -7166,6 +4251,7 @@ def _apply_best_params(best_params: dict[str, float]) -> None:
 
 
 def run_discover(args: argparse.Namespace) -> int:
+    """从 ledger 中发现交易形态与策略。"""
     from aqsp.ledger.base import read_ledger
     from aqsp.optimizer.pattern_discovery import (
         PatternDiscoveryEngine,
@@ -7254,6 +4340,7 @@ def run_discover(args: argparse.Namespace) -> int:
 
 
 def run_mine_factors(args: argparse.Namespace) -> int:
+    """自动挖掘有效因子。"""
     from aqsp.strategies.auto_factor_mining import AutoFactorMiner, FactorLibrary
 
     print("开始自动因子挖掘...")
@@ -7331,6 +4418,7 @@ def run_mine_factors(args: argparse.Namespace) -> int:
 
 
 def run_evolve(args: argparse.Namespace) -> int:
+    """运行策略自动进化。"""
     from aqsp.strategies.auto_evolution import AutoEvolution
 
     print("开始自动进化...")
@@ -7410,6 +4498,7 @@ def run_evolve(args: argparse.Namespace) -> int:
 
 
 def run_multi_factor(args: argparse.Namespace) -> int:
+    """运行多因子轮动策略分析。"""
     from aqsp.strategies.multi_factor_rotation import MultiFactorRotationStrategy
 
     print("运行多因子轮动策略...")
@@ -7486,6 +4575,7 @@ def run_multi_factor(args: argparse.Namespace) -> int:
 
 
 def run_morning_breakout(args: argparse.Namespace) -> int:
+    """扫描早盘突破信号。"""
     from aqsp.strategies.morning_breakout import (
         MorningBreakoutStrategy,
         format_morning_signals,
@@ -7651,6 +4741,7 @@ def run_morning_breakout(args: argparse.Namespace) -> int:
 
 
 def run_closing_premium(args: argparse.Namespace) -> int:
+    """分析收盘溢价信号。"""
     from aqsp.strategies.closing_premium import (
         ClosingPremiumStrategy,
         format_closing_signals,
@@ -7817,6 +4908,7 @@ def run_closing_premium(args: argparse.Namespace) -> int:
 
 
 def run_closing_review(args: argparse.Namespace) -> int:
+    """生成收盘复盘报告。"""
     from aqsp.briefing.closing_review import (
         ClosingReviewer,
         format_daily_review,

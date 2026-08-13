@@ -16,6 +16,12 @@ from aqsp.core.time import today_shanghai  # noqa: E402
 from aqsp.data.source_factory import build_data_source  # noqa: E402
 from aqsp.universe import DEFAULT_SYMBOLS  # noqa: E402
 from aqsp.universe.intraday_cursor import IntradayUniverseCursor  # noqa: E402
+from aqsp.universe.intraday_universe_cache import (  # noqa: E402
+    DEFAULT_MIN_SYMBOLS,
+    bootstrap_intraday_universe_cache,
+    load_intraday_universe_cache,
+    write_intraday_universe_cache,
+)
 from aqsp.universe.runtime import resolve_run_symbols  # noqa: E402
 
 
@@ -27,7 +33,7 @@ def main() -> int:
     parser.add_argument(
         "--batch-size",
         type=int,
-        default=int(os.getenv("AQSP_INTRADAY_BATCH_SIZE", "256")),
+        default=int(os.getenv("AQSP_INTRADAY_BATCH_SIZE", "32")),
     )
     parser.add_argument(
         "--min-avg-amount",
@@ -42,6 +48,26 @@ def main() -> int:
     )
     parser.add_argument("--commit", action="store_true")
     parser.add_argument("--fail", default="")
+    parser.add_argument("--max-retries", type=int, default=2)
+    parser.add_argument(
+        "--cache-path",
+        default=os.getenv(
+            "AQSP_INTRADAY_UNIVERSE_CACHE",
+            "data/runtime/intraday_live_universe.json",
+        ),
+    )
+    parser.add_argument("--cache-only", action="store_true")
+    parser.add_argument(
+        "--bootstrap-state",
+        default=os.getenv(
+            "AQSP_SQLITE_REFRESH_CURSOR_PATH", "data/.state/sqlite-refresh-cursor.json"
+        ),
+    )
+    parser.add_argument(
+        "--cache-min-symbols",
+        type=int,
+        default=int(os.getenv("AQSP_INTRADAY_CACHE_MIN_SYMBOLS", DEFAULT_MIN_SYMBOLS)),
+    )
     args = parser.parse_args()
     cursor = IntradayUniverseCursor(args.cursor)
     if args.commit:
@@ -50,20 +76,46 @@ def main() -> int:
         )
         return 0
     if args.fail:
-        cursor.fail_current(args.fail)
+        skipped = cursor.fail_current(args.fail, max_retries=args.max_retries)
+        print("skipped" if skipped else "retry", file=sys.stderr)
         return 0
 
-    def get_source(name: str):
-        return build_data_source(name)
+    if args.cache_only:
+        cached = load_intraday_universe_cache(
+            args.cache_path,
+            trade_date=today_shanghai(),
+            source=(args.source, "sqlite_previous_close"),
+            min_symbols=args.cache_min_symbols,
+        )
+        if cached is None:
+            cached = bootstrap_intraday_universe_cache(
+                args.cache_path,
+                refresh_cursor_path=args.bootstrap_state,
+                trade_date=today_shanghai(),
+                min_symbols=args.cache_min_symbols,
+            )
+        if cached is None:
+            raise RuntimeError("盘中实时名单缓存缺失、过期或校验失败")
+        symbols = list(cached.symbols)
+    else:
 
-    symbols = resolve_run_symbols(
-        args.source,
-        "",
-        get_source_fn=get_source,
-        default_symbols=DEFAULT_SYMBOLS,
-        max_universe=0,
-        min_avg_amount=args.min_avg_amount,
-    )
+        def get_source(name: str):
+            return build_data_source(name)
+
+        symbols = resolve_run_symbols(
+            args.source,
+            "",
+            get_source_fn=get_source,
+            default_symbols=DEFAULT_SYMBOLS,
+            max_universe=0,
+            min_avg_amount=args.min_avg_amount,
+        )
+        write_intraday_universe_cache(
+            args.cache_path,
+            symbols=symbols,
+            source=args.source,
+            trade_date=today_shanghai(),
+        )
     batch = cursor.select(
         symbols, trade_date=today_shanghai(), batch_size=args.batch_size
     )

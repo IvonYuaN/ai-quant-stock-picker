@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Any, Literal, Protocol
@@ -7,6 +8,25 @@ import pandas as pd
 
 
 OhlcvFrame = pd.DataFrame
+
+
+def safe_float(value: object, *, default: float = 0.0) -> float:
+    """Convert *value* to ``float``, returning *default* for invalid/NaN/inf.
+
+    During the midday gap (11:30–13:00) data sources may return NaN prices.
+    ``float(x or 0.0)`` does **not** catch NaN because ``nan`` is truthy, and
+    ``nan <= 0`` is ``False`` so downstream guards also miss it.  This function
+    is the single canonical entry point that guarantees a finite result.
+
+    Use this everywhere a raw quote/dict value enters numeric computation.
+    """
+    try:
+        result = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+    if math.isnan(result) or math.isinf(result):
+        return default
+    return result
 
 
 @dataclass(frozen=True)

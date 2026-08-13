@@ -20,7 +20,7 @@ DEFAULT_SNAPSHOT_PATH = "data/runtime/home_dashboard_snapshot.json"
 DEFAULT_DEBATE_RESULTS_PATH = "data/debate_results.jsonl"
 SNAPSHOT_SCHEMA_VERSION = "v1"
 INDEX_SCHEMA_VERSION = "v1-index"
-MAX_SNAPSHOT_BYTES = 512 * 1024
+MAX_SNAPSHOT_BYTES = 1024 * 1024
 MAX_DATES = 4
 MAX_CANDIDATES = 5
 MAX_DEBATES = 3
@@ -96,6 +96,22 @@ class AQSPDebateEvidence:
 
 
 @dataclass(frozen=True)
+class AQSPAgentView:
+    """角色独立观点；只保留最后一轮的可审计内容。"""
+
+    role: str
+    stance: str
+    confidence: float = 0.0
+    arguments: tuple[str, ...] = ()
+    opportunities: tuple[str, ...] = ()
+    risks: tuple[str, ...] = ()
+    counterarguments: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class AQSPDebate:
     symbol: str
     display_name: str
@@ -123,10 +139,12 @@ class AQSPDebate:
     advisory_boundary_ok: bool = True
     process_recorded: bool = False
     conclusion_recorded: bool = False
+    review_kind: str = "unverified"
     quality_issues: tuple[str, ...] = ()
     viewpoint_buckets: dict[str, tuple[str, ...]] = field(default_factory=dict)
     disagreement_points: tuple[str, ...] = ()
     uncertainty_points: tuple[str, ...] = ()
+    agent_views: tuple[AQSPAgentView, ...] = ()
 
     @property
     def evidence(self) -> tuple[AQSPDebateEvidence, ...]:
@@ -146,6 +164,7 @@ class AQSPDebate:
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
         payload["evidence"] = [asdict(item) for item in self.evidence]
+        payload["agent_views"] = [item.to_dict() for item in self.agent_views]
         return payload
 
 
@@ -237,7 +256,44 @@ class AQSPVariant:
     rank: int = 0
     strategy: str = ""
     holdings: tuple[dict[str, Any], ...] = ()
+    holdings_date: str = ""
+    previous_holdings: tuple[dict[str, Any], ...] = ()
+    previous_holdings_date: str = ""
+    recent_actions: tuple[dict[str, Any], ...] = ()
+    adjustments: tuple[str, ...] = ()
+    technical_evidence: tuple[dict[str, Any], ...] = ()
     hard_rules: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class AQSPVariantSuite:
+    schema_version: str = ""
+    generated_at: str = ""
+    data_mode: str = ""
+    end_date: str = ""
+    variant_count: int = 0
+    selected_symbols: int = 0
+    supported_symbols: int = 0
+    batch_active: bool = False
+    batch_id: str = ""
+    batch_size: int = 0
+    cycle_id: int = 0
+    coverage_pct: float = 0.0
+    filters: str = ""
+    last_error: str = ""
+
+
+@dataclass(frozen=True)
+class AQSPResearchChain:
+    status: str = "blocked"
+    candidate_symbols: tuple[str, ...] = ()
+    debated_symbols: tuple[str, ...] = ()
+    pending_review_symbols: tuple[str, ...] = ()
+    variant_candidate_symbols: tuple[str, ...] = ()
+    variant_review_symbols: tuple[str, ...] = ()
+    variant_holding_candidate_symbols: tuple[str, ...] = ()
+    variant_holding_review_symbols: tuple[str, ...] = ()
+    blocker: str = ""
 
 
 @dataclass(frozen=True)
@@ -286,7 +342,9 @@ class AQSPSnapshot:
     recommendation_gate: AQSPRecommendationGate | None = None
     phases: tuple[AQSPPhase, ...] = ()
     universe: AQSPUniverse = AQSPUniverse()
+    variant_suite: AQSPVariantSuite = AQSPVariantSuite()
     variants: tuple[AQSPVariant, ...] = ()
+    research_chain: AQSPResearchChain = AQSPResearchChain()
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -377,9 +435,13 @@ def _debate_results_path() -> Path:
     if path.is_absolute():
         return path
     runtime_root = os.environ.get("AQSP_RUNTIME_ROOT", "").strip()
-    return (
-        Path(runtime_root).expanduser() / path if runtime_root else _PROJECT_ROOT / path
-    )
+    if runtime_root:
+        return Path(runtime_root).expanduser() / path
+    # A systemd service may only receive the snapshot path. Its sidecar must
+    # remain in private runtime data rather than falling back into a release.
+    runtime_data = snapshot_path().parent.parent
+    sidecar = runtime_data / path.name
+    return sidecar if sidecar.is_file() else _PROJECT_ROOT / path
 
 
 def _attach_runtime_debates(
@@ -399,10 +461,14 @@ def _read_runtime_debate_records() -> dict[str, tuple[dict[str, Any], ...]]:
     """Read optional local debate output; malformed lines are ignored."""
     path = _debate_results_path()
     try:
-        raw = path.read_bytes()
+        size = path.stat().st_size
+        with path.open("rb") as handle:
+            if size > MAX_DEBATE_RESULTS_BYTES:
+                handle.seek(-MAX_DEBATE_RESULTS_BYTES, 2)
+                # The first bytes belong to an incomplete JSONL record.
+                handle.readline()
+            raw = handle.read(MAX_DEBATE_RESULTS_BYTES)
     except OSError:
-        return {}
-    if len(raw) > MAX_DEBATE_RESULTS_BYTES:
         return {}
     by_date: dict[str, list[dict[str, Any]]] = {}
     for line in raw.splitlines():
@@ -490,6 +556,36 @@ def _runtime_debate_payload(
         if isinstance(rounds, list)
         else []
     )
+    agent_views: list[dict[str, Any]] = []
+    if isinstance(rounds, list) and rounds:
+        opinions = rounds[-1].get("opinions", [])
+        if isinstance(opinions, list):
+            seen_roles: set[str] = set()
+            for opinion in opinions:
+                if not isinstance(opinion, dict):
+                    continue
+                role = str(opinion.get("role", "") or "").strip()
+                if not role or role in seen_roles:
+                    continue
+                seen_roles.add(role)
+                arguments = _distinct_agent_points(opinion.get("arguments", []))
+                agent_views.append(
+                    {
+                        "role": role,
+                        "stance": str(
+                            opinion.get("final_position")
+                            or opinion.get("stance")
+                            or "neutral"
+                        ),
+                        "confidence": opinion.get("confidence", 0.0),
+                        "arguments": arguments,
+                        "opportunities": opinion.get("opportunity_factors", []),
+                        "risks": opinion.get("risk_factors", []),
+                        "counterarguments": _distinct_agent_points(
+                            opinion.get("counterarguments", [])
+                        ),
+                    }
+                )
     return {
         "symbol": candidate.symbol,
         "display_name": candidate.display_name,
@@ -519,7 +615,21 @@ def _runtime_debate_payload(
         "process_recorded": record.get("process_recorded", False),
         "conclusion_recorded": record.get("conclusion_recorded", False),
         "debate_quality_issues": record.get("debate_quality_issues", []),
+        "agent_views": agent_views,
+        "review_kind": "multi_agent" if len(agent_views) > 1 else "unverified",
     }
+
+
+def _distinct_agent_points(values: object) -> list[object]:
+    """Exclude shared debate scaffolding from a role's visible viewpoint."""
+    if not isinstance(values, list):
+        return []
+    return [
+        value
+        for value in values
+        if not str(value).strip().startswith("候选专属证据:")
+        and not str(value).strip().startswith("复核对象=")
+    ]
 
 
 def snapshot_payload(selected_date: str | None = None) -> dict[str, Any]:
@@ -779,7 +889,9 @@ def _parse_snapshot(payload: Mapping[str, Any]) -> AQSPSnapshot:
         "phases",
         "universe",
         "variant_universe",
+        "variant_suite",
         "variants",
+        "research_chain",
     }
     _check_keys(payload, required, "快照", optional)
     schema_version = _text(payload["schema_version"], "schema_version")
@@ -850,7 +962,9 @@ def _parse_snapshot(payload: Mapping[str, Any]) -> AQSPSnapshot:
             _parse_phase(item) for item in _list(payload.get("phases", []), "phases")
         ),
         universe=_parse_universe(payload.get("universe")),
+        variant_suite=_parse_variant_suite(payload.get("variant_suite")),
         variants=variants,
+        research_chain=_parse_research_chain(payload.get("research_chain")),
     )
 
 
@@ -883,6 +997,7 @@ def _parse_variant(payload: object) -> AQSPVariant:
             "previous_holdings_date",
             "recent_actions",
             "adjustments",
+            "technical_evidence",
         },
     )
     variant = AQSPVariant(
@@ -908,6 +1023,34 @@ def _parse_variant(payload: object) -> AQSPVariant:
         holdings=tuple(
             value
             for value in _list(item.get("holdings", []), "variant.holdings")
+            if isinstance(value, dict)
+        ),
+        holdings_date=_optional_text(
+            item.get("holdings_date"), "variant.holdings_date"
+        ),
+        previous_holdings=tuple(
+            value
+            for value in _list(
+                item.get("previous_holdings", []), "variant.previous_holdings"
+            )
+            if isinstance(value, dict)
+        ),
+        previous_holdings_date=_optional_text(
+            item.get("previous_holdings_date"), "variant.previous_holdings_date"
+        ),
+        recent_actions=tuple(
+            value
+            for value in _list(item.get("recent_actions", []), "variant.recent_actions")
+            if isinstance(value, dict)
+        ),
+        adjustments=tuple(
+            _text_list(item.get("adjustments", []), "variant.adjustments")
+        ),
+        technical_evidence=tuple(
+            value
+            for value in _list(
+                item.get("technical_evidence", []), "variant.technical_evidence"
+            )
             if isinstance(value, dict)
         ),
         hard_rules=tuple(_text_list(item.get("hard_rules", []), "variant.hard_rules")),
@@ -979,6 +1122,122 @@ def _parse_universe(payload: object) -> AQSPUniverse:
         cycle_id=_integer(item.get("cycle_id", 0), "universe.cycle_id"),
         coverage_pct=float(item.get("coverage_pct", 0.0) or 0.0),
         last_error=_optional_text(item.get("last_error"), "universe.last_error"),
+    )
+
+
+def _parse_variant_suite(payload: object) -> AQSPVariantSuite:
+    if payload is None:
+        return AQSPVariantSuite()
+    item = _object(payload, "variant_suite")
+    _check_keys(
+        item,
+        set(),
+        "variant_suite",
+        {
+            "schema_version",
+            "generated_at",
+            "data_mode",
+            "end_date",
+            "variant_count",
+            "selected_symbols",
+            "supported_symbols",
+            "batch_active",
+            "batch_id",
+            "batch_size",
+            "cycle_id",
+            "coverage_pct",
+            "filters",
+            "last_error",
+        },
+    )
+    return AQSPVariantSuite(
+        schema_version=_optional_text(
+            item.get("schema_version"), "variant_suite.schema_version"
+        ),
+        generated_at=_optional_text(
+            item.get("generated_at"), "variant_suite.generated_at"
+        ),
+        data_mode=_optional_text(item.get("data_mode"), "variant_suite.data_mode"),
+        end_date=_optional_text(item.get("end_date"), "variant_suite.end_date"),
+        variant_count=_integer(
+            item.get("variant_count", 0), "variant_suite.variant_count"
+        ),
+        selected_symbols=_integer(
+            item.get("selected_symbols", 0), "variant_suite.selected_symbols"
+        ),
+        supported_symbols=_integer(
+            item.get("supported_symbols", 0), "variant_suite.supported_symbols"
+        ),
+        batch_active=bool(item.get("batch_active", False)),
+        batch_id=_optional_text(item.get("batch_id"), "variant_suite.batch_id"),
+        batch_size=_integer(item.get("batch_size", 0), "variant_suite.batch_size"),
+        cycle_id=_integer(item.get("cycle_id", 0), "variant_suite.cycle_id"),
+        coverage_pct=float(item.get("coverage_pct", 0.0) or 0.0),
+        filters=_optional_text(item.get("filters"), "variant_suite.filters"),
+        last_error=_optional_text(item.get("last_error"), "variant_suite.last_error"),
+    )
+
+
+def _parse_research_chain(payload: object) -> AQSPResearchChain:
+    if payload is None:
+        return AQSPResearchChain()
+    item = _object(payload, "research_chain")
+    _check_keys(
+        item,
+        set(),
+        "research_chain",
+        {
+            "status",
+            "candidate_symbols",
+            "debated_symbols",
+            "pending_review_symbols",
+            "variant_candidate_symbols",
+            "variant_review_symbols",
+            "variant_holding_candidate_symbols",
+            "variant_holding_review_symbols",
+            "blocker",
+        },
+    )
+    return AQSPResearchChain(
+        status=_optional_text(item.get("status"), "research_chain.status")
+        or "blocked",
+        candidate_symbols=tuple(
+            _text_list(item.get("candidate_symbols", []), "research_chain.candidate_symbols")
+        ),
+        debated_symbols=tuple(
+            _text_list(item.get("debated_symbols", []), "research_chain.debated_symbols")
+        ),
+        pending_review_symbols=tuple(
+            _text_list(
+                item.get("pending_review_symbols", []),
+                "research_chain.pending_review_symbols",
+            )
+        ),
+        variant_candidate_symbols=tuple(
+            _text_list(
+                item.get("variant_candidate_symbols", []),
+                "research_chain.variant_candidate_symbols",
+            )
+        ),
+        variant_review_symbols=tuple(
+            _text_list(
+                item.get("variant_review_symbols", []),
+                "research_chain.variant_review_symbols",
+            )
+        ),
+        variant_holding_candidate_symbols=tuple(
+            _text_list(
+                item.get("variant_holding_candidate_symbols", []),
+                "research_chain.variant_holding_candidate_symbols",
+            )
+        ),
+        variant_holding_review_symbols=tuple(
+            _text_list(
+                item.get("variant_holding_review_symbols", []),
+                "research_chain.variant_holding_review_symbols",
+            )
+        ),
+        blocker=_optional_text(item.get("blocker"), "research_chain.blocker"),
     )
 
 
@@ -1108,11 +1367,13 @@ def _parse_debate(payload: object) -> AQSPDebate:
             "pending_confirmations",
             "process_recorded",
             "conclusion_recorded",
+            "review_kind",
             "debate_quality_issues",
             "evidence",
             "viewpoint_buckets",
             "disagreement_points",
             "uncertainty_points",
+            "agent_views",
         },
     )
     raw_evidence = tuple(
@@ -1162,6 +1423,32 @@ def _parse_debate(payload: object) -> AQSPDebate:
         str(bucket): tuple(_text_list(points, f"debate.viewpoint_buckets.{bucket}"))
         for bucket, points in raw_viewpoint_buckets.items()
     }
+    agent_views = tuple(
+        AQSPAgentView(
+            role=_text(view.get("role", ""), "debate.agent_views.role"),
+            stance=_text(view.get("stance", "neutral"), "debate.agent_views.stance"),
+            confidence=_number(
+                view.get("confidence", 0.0), "debate.agent_views.confidence"
+            ),
+            arguments=tuple(
+                _text_list(view.get("arguments", []), "debate.agent_views.arguments")
+            ),
+            opportunities=tuple(
+                _text_list(
+                    view.get("opportunities", []), "debate.agent_views.opportunities"
+                )
+            ),
+            risks=tuple(_text_list(view.get("risks", []), "debate.agent_views.risks")),
+            counterarguments=tuple(
+                _text_list(
+                    view.get("counterarguments", []),
+                    "debate.agent_views.counterarguments",
+                )
+            ),
+        )
+        for view in _list(item.get("agent_views", []), "debate.agent_views")
+        if isinstance(view, Mapping)
+    )
     return AQSPDebate(
         symbol=_validate_symbol(_text(item["symbol"], "debate.symbol")),
         display_name=_text(item["display_name"], "debate.display_name"),
@@ -1220,6 +1507,10 @@ def _parse_debate(payload: object) -> AQSPDebate:
         conclusion_recorded=_boolean(
             item.get("conclusion_recorded", False), "debate.conclusion_recorded"
         ),
+        review_kind=(
+            _optional_text(item.get("review_kind"), "debate.review_kind")
+            or "unverified"
+        ),
         quality_issues=tuple(
             _text_list(
                 item.get("debate_quality_issues", []),
@@ -1239,6 +1530,7 @@ def _parse_debate(payload: object) -> AQSPDebate:
                 "debate.uncertainty_points",
             )
         ),
+        agent_views=agent_views,
     )
 
 

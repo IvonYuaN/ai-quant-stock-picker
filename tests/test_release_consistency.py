@@ -39,7 +39,22 @@ def _manifest(root: Path, commit: str = SHA_A) -> Path:
     return path
 
 
-def test_release_consistency_rejects_release_not_published(monkeypatch, tmp_path: Path) -> None:
+def _immutable_manifest(root: Path, commit: str = SHA_A) -> Path:
+    manifest = build_manifest(
+        root,
+        commit=commit,
+        branch="main",
+        remote="origin",
+        remote_url="https://github.com/example/aqsp.git",
+    )
+    path = root / ".aqsp-release.json"
+    write_manifest(manifest, path)
+    return path
+
+
+def test_release_consistency_rejects_release_not_published(
+    monkeypatch, tmp_path: Path
+) -> None:
     _manifest(tmp_path)
     _fake_git(
         monkeypatch,
@@ -59,6 +74,7 @@ def test_release_consistency_rejects_release_not_published(monkeypatch, tmp_path
         manifest_path=tmp_path / ".aqsp-release.json",
         overlay_path=tmp_path / "missing-overlay.json",
         active_files=[],
+        executable_files=[],
         require_overlay=False,
     )
 
@@ -100,6 +116,7 @@ def test_release_consistency_rejects_overlay_from_another_release(
         manifest_path=tmp_path / ".aqsp-release.json",
         overlay_path=overlay,
         active_files=[],
+        executable_files=[],
         require_overlay=True,
     )
 
@@ -119,13 +136,66 @@ def test_release_consistency_rejects_legacy_active_entry(tmp_path: Path) -> None
         manifest_path=tmp_path / ".aqsp-release.json",
         overlay_path=tmp_path / "missing-overlay.json",
         active_files=["active.sh"],
+        executable_files=[],
         require_overlay=False,
     )
 
     assert {item.code for item in findings} >= {"legacy_entry_reference"}
 
 
-def test_write_release_manifest_contains_commit_and_content_digest(tmp_path: Path) -> None:
+def test_release_consistency_rejects_non_executable_required_entry(
+    tmp_path: Path,
+) -> None:
+    _manifest(tmp_path)
+    entry = tmp_path / "scripts" / "health_vibe_research.sh"
+    entry.parent.mkdir()
+    entry.write_text("#!/usr/bin/env bash\necho ok\n", encoding="utf-8")
+    entry.chmod(0o644)
+
+    findings = checker.audit(
+        project_root=tmp_path,
+        runtime_root=tmp_path,
+        remote="origin",
+        branch="main",
+        canonical_link=None,
+        manifest_path=tmp_path / ".aqsp-release.json",
+        overlay_path=tmp_path / "missing-overlay.json",
+        active_files=[],
+        executable_files=["scripts/health_vibe_research.sh"],
+        require_overlay=False,
+    )
+
+    assert any(item.code == "executable_entry_not_executable" for item in findings)
+
+
+def test_release_consistency_accepts_executable_required_entry(
+    tmp_path: Path,
+) -> None:
+    _manifest(tmp_path)
+    entry = tmp_path / "scripts" / "health_vibe_research.sh"
+    entry.parent.mkdir()
+    entry.write_text("#!/usr/bin/env bash\necho ok\n", encoding="utf-8")
+    entry.chmod(0o755)
+
+    findings = checker.audit(
+        project_root=tmp_path,
+        runtime_root=tmp_path,
+        remote="origin",
+        branch="main",
+        canonical_link=None,
+        manifest_path=tmp_path / ".aqsp-release.json",
+        overlay_path=tmp_path / "missing-overlay.json",
+        active_files=[],
+        executable_files=["scripts/health_vibe_research.sh"],
+        require_overlay=False,
+    )
+
+    assert not any(item.code.startswith("executable_entry") for item in findings)
+
+
+def test_write_release_manifest_contains_commit_and_content_digest(
+    tmp_path: Path,
+) -> None:
     (tmp_path / ".git").mkdir()
     (tmp_path / "tracked.txt").write_text("value\n", encoding="utf-8")
     monkeypatch_values = {
@@ -172,24 +242,44 @@ def test_push_with_report_exposes_github_failure(monkeypatch, tmp_path: Path) ->
         return next(calls)
 
     monkeypatch.setattr(push_with_report.subprocess, "run", fake_run)
-    code, payload = push_with_report.push(
-        tmp_path, remote="origin", branch="main"
-    )
+    code, payload = push_with_report.push(tmp_path, remote="origin", branch="main")
 
     assert code == 128
     assert payload["status"] == "failed"
     assert "HTTP/2" in payload["output"]
 
 
-def test_push_with_report_rejects_remote_commit_mismatch(monkeypatch, tmp_path: Path) -> None:
+def test_push_with_report_rejects_remote_commit_mismatch(
+    monkeypatch, tmp_path: Path
+) -> None:
     monkeypatch.setattr(
         push_with_report,
         "_run",
         lambda _root, command: {
-            ("git", "rev-parse", "HEAD"): subprocess.CompletedProcess(command, 0, SHA_A + "\n", ""),
-            ("git", "status", "--porcelain", "--untracked-files=all"): subprocess.CompletedProcess(command, 0, "", ""),
-            ("git", "push", "--porcelain", "origin", "HEAD:refs/heads/main"): subprocess.CompletedProcess(command, 0, "", ""),
-            ("git", "ls-remote", "origin", "refs/heads/main"): subprocess.CompletedProcess(command, 0, SHA_B + "\trefs/heads/main\n", ""),
+            ("git", "rev-parse", "HEAD"): subprocess.CompletedProcess(
+                command, 0, SHA_A + "\n", ""
+            ),
+            (
+                "git",
+                "status",
+                "--porcelain",
+                "--untracked-files=all",
+            ): subprocess.CompletedProcess(command, 0, "", ""),
+            (
+                "git",
+                "push",
+                "--porcelain",
+                "origin",
+                "HEAD:refs/heads/main",
+            ): subprocess.CompletedProcess(command, 0, "", ""),
+            (
+                "git",
+                "ls-remote",
+                "origin",
+                "refs/heads/main",
+            ): subprocess.CompletedProcess(
+                command, 0, SHA_B + "\trefs/heads/main\n", ""
+            ),
         }[tuple(command)],
     )
 
@@ -233,16 +323,17 @@ def test_release_consistency_rejects_dirty_release(monkeypatch, tmp_path: Path) 
         manifest_path=tmp_path / ".aqsp-release.json",
         overlay_path=tmp_path / "missing-overlay.json",
         active_files=[],
+        executable_files=[],
         require_overlay=False,
     )
 
     assert any(item.code == "release_dirty" for item in findings)
 
 
-def test_release_consistency_immutable_release_ignores_remote_and_overlay(
+def test_release_consistency_immutable_release_verifies_remote_and_ignores_overlay(
     monkeypatch, tmp_path: Path
 ) -> None:
-    manifest = _manifest(tmp_path)
+    manifest = _immutable_manifest(tmp_path)
     _fake_git(
         monkeypatch,
         {
@@ -253,6 +344,7 @@ def test_release_consistency_immutable_release_ignores_remote_and_overlay(
             ),
         },
     )
+    monkeypatch.setattr(checker, "_remote_head", lambda *_args: (True, SHA_A))
 
     findings = checker.audit(
         project_root=tmp_path,
@@ -263,6 +355,7 @@ def test_release_consistency_immutable_release_ignores_remote_and_overlay(
         manifest_path=manifest,
         overlay_path=tmp_path / "runtime" / "overlay.json",
         active_files=[],
+        executable_files=[],
         require_overlay=False,
         immutable_release=True,
     )
@@ -270,10 +363,43 @@ def test_release_consistency_immutable_release_ignores_remote_and_overlay(
     assert findings == []
 
 
+def test_release_consistency_rejects_immutable_release_not_published(
+    monkeypatch, tmp_path: Path
+) -> None:
+    manifest = _immutable_manifest(tmp_path)
+    _fake_git(
+        monkeypatch,
+        {
+            ("rev-parse", "HEAD"): (False, "git metadata unavailable"),
+            ("status", "--porcelain=v1", "--untracked-files=all"): (
+                False,
+                "git metadata unavailable",
+            ),
+        },
+    )
+    monkeypatch.setattr(checker, "_remote_head", lambda *_args: (True, SHA_B))
+
+    findings = checker.audit(
+        project_root=tmp_path,
+        runtime_root=tmp_path / "runtime",
+        remote="origin",
+        branch="main",
+        canonical_link=None,
+        manifest_path=manifest,
+        overlay_path=tmp_path / "runtime" / "overlay.json",
+        active_files=[],
+        executable_files=[],
+        require_overlay=False,
+        immutable_release=True,
+    )
+
+    assert any(item.code == "release_not_published" for item in findings)
+
+
 def test_release_consistency_immutable_release_allows_release_generated_files(
     monkeypatch, tmp_path: Path
 ) -> None:
-    manifest = _manifest(tmp_path)
+    manifest = _immutable_manifest(tmp_path)
     _fake_git(
         monkeypatch,
         {
@@ -284,6 +410,7 @@ def test_release_consistency_immutable_release_allows_release_generated_files(
             ),
         },
     )
+    monkeypatch.setattr(checker, "_remote_head", lambda *_args: (True, SHA_A))
 
     findings = checker.audit(
         project_root=tmp_path,
@@ -294,11 +421,163 @@ def test_release_consistency_immutable_release_allows_release_generated_files(
         manifest_path=manifest,
         overlay_path=tmp_path / "runtime" / "overlay.json",
         active_files=[],
+        executable_files=[],
         require_overlay=False,
         immutable_release=True,
     )
 
     assert findings == []
+
+
+def test_write_release_manifest_verifies_archive_root_without_git(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "runner.sh").write_text(
+        "#!/usr/bin/env bash\n", encoding="utf-8"
+    )
+
+    payload = build_manifest(tmp_path, commit=SHA_A)
+
+    assert payload["file_count"] == 1
+    assert payload["content_digest"] != "unverified"
+    assert len(str(payload["content_digest"])) == 64
+
+
+def test_write_release_manifest_ignores_vite_runtime_cache(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "payload.txt").write_text("value\n", encoding="utf-8")
+    (tmp_path / "frontend" / "node_modules" / ".vite-temp").mkdir(parents=True)
+    (tmp_path / "frontend" / "node_modules" / ".vite").mkdir(parents=True)
+    (
+        tmp_path
+        / "frontend"
+        / "node_modules"
+        / ".vite-temp"
+        / "vite.config.timestamp.mjs"
+    ).write_text("cache\n", encoding="utf-8")
+    (tmp_path / "frontend" / "node_modules" / ".vite" / "deps.json").write_text(
+        "cache\n", encoding="utf-8"
+    )
+
+    payload = build_manifest(tmp_path, commit=SHA_A)
+
+    assert payload["file_count"] == 1
+
+
+def test_release_consistency_ignores_vite_cache_written_after_manifest(
+    monkeypatch, tmp_path: Path
+) -> None:
+    (tmp_path / "payload.txt").write_text("value\n", encoding="utf-8")
+    manifest = _immutable_manifest(tmp_path)
+    (tmp_path / "frontend" / "node_modules" / ".vite-temp").mkdir(parents=True)
+    (
+        tmp_path
+        / "frontend"
+        / "node_modules"
+        / ".vite-temp"
+        / "vite.config.timestamp.mjs"
+    ).write_text("cache\n", encoding="utf-8")
+    _fake_git(
+        monkeypatch,
+        {
+            ("rev-parse", "HEAD"): (False, "git metadata unavailable"),
+            ("status", "--porcelain=v1", "--untracked-files=all"): (
+                False,
+                "git metadata unavailable",
+            ),
+        },
+    )
+    monkeypatch.setattr(checker, "_remote_head", lambda *_args: (True, SHA_A))
+
+    findings = checker.audit(
+        project_root=tmp_path,
+        runtime_root=tmp_path / "runtime",
+        remote="origin",
+        branch="main",
+        canonical_link=None,
+        manifest_path=manifest,
+        overlay_path=tmp_path / "runtime" / "overlay.json",
+        active_files=[],
+        executable_files=[],
+        require_overlay=False,
+        immutable_release=True,
+    )
+
+    assert findings == []
+
+
+def test_release_consistency_rejects_immutable_content_digest_mismatch(
+    monkeypatch, tmp_path: Path
+) -> None:
+    (tmp_path / "payload.txt").write_text("original\n", encoding="utf-8")
+    manifest = _immutable_manifest(tmp_path)
+    (tmp_path / "payload.txt").write_text("changed\n", encoding="utf-8")
+    _fake_git(
+        monkeypatch,
+        {
+            ("rev-parse", "HEAD"): (False, "git metadata unavailable"),
+            ("status", "--porcelain=v1", "--untracked-files=all"): (
+                False,
+                "git metadata unavailable",
+            ),
+        },
+    )
+    monkeypatch.setattr(checker, "_remote_head", lambda *_args: (True, SHA_A))
+
+    findings = checker.audit(
+        project_root=tmp_path,
+        runtime_root=tmp_path / "runtime",
+        remote="origin",
+        branch="main",
+        canonical_link=None,
+        manifest_path=manifest,
+        overlay_path=tmp_path / "runtime" / "overlay.json",
+        active_files=[],
+        executable_files=[],
+        require_overlay=False,
+        immutable_release=True,
+    )
+
+    assert any(item.code == "content_digest_mismatch" for item in findings)
+
+
+def test_release_consistency_rejects_immutable_file_count_mismatch(
+    monkeypatch, tmp_path: Path
+) -> None:
+    (tmp_path / "payload.txt").write_text("value\n", encoding="utf-8")
+    manifest = _immutable_manifest(tmp_path)
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    payload["file_count"] = 99
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+    _fake_git(
+        monkeypatch,
+        {
+            ("rev-parse", "HEAD"): (False, "git metadata unavailable"),
+            ("status", "--porcelain=v1", "--untracked-files=all"): (
+                False,
+                "git metadata unavailable",
+            ),
+        },
+    )
+    monkeypatch.setattr(checker, "_remote_head", lambda *_args: (True, SHA_A))
+
+    findings = checker.audit(
+        project_root=tmp_path,
+        runtime_root=tmp_path / "runtime",
+        remote="origin",
+        branch="main",
+        canonical_link=None,
+        manifest_path=manifest,
+        overlay_path=tmp_path / "runtime" / "overlay.json",
+        active_files=[],
+        executable_files=[],
+        require_overlay=False,
+        immutable_release=True,
+    )
+
+    assert any(item.code == "file_count_mismatch" for item in findings)
 
 
 def test_write_release_manifest_refuses_dirty_git_source(tmp_path: Path) -> None:

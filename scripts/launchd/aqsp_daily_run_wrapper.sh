@@ -3,7 +3,11 @@
 # because macOS may block launchd from executing scripts under Documents.
 set -e
 
-PROJECT_ROOT="${AQSP_PROJECT_ROOT:?AQSP_PROJECT_ROOT must point to the repo root}"
+PROJECT_ROOT="${AQSP_PROJECT_ROOT:-$HOME/Documents/AI量化选股}"
+if [ ! -d "$PROJECT_ROOT" ]; then
+    echo "AQSP_PROJECT_ROOT does not exist: $PROJECT_ROOT" >&2
+    exit 2
+fi
 cd "$PROJECT_ROOT"
 
 export PATH="/Library/Frameworks/Python.framework/Versions/3.11/bin:/usr/local/bin:/opt/homebrew/bin:$HOME/Library/Python/3.11/bin:$PATH"

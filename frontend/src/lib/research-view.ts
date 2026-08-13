@@ -48,6 +48,21 @@ export function dedupeResearchText(values: readonly string[]): string[] {
   }, []);
 }
 
+export function readableResearchText(value: string): string {
+  const text = value.trim();
+  // A bad legacy serializer emitted one character per evidence entry.
+  const pieces = text.split("、").filter(Boolean);
+  if (pieces.length >= 8 && pieces.filter((piece) => [...piece.trim()].length <= 1).length >= 8) return "";
+  return text;
+}
+
+export function compactDebateRounds(values: readonly string[], conclusion = ""): string[] {
+  return dedupeResearchText(values.map(readableResearchText))
+    .filter((item) => !sameResearchText(item, conclusion))
+    .filter((item) => !/^看多\s*\d+\s*\/\s*看空\s*\d+\s*\/\s*中性\s*\d+/.test(item))
+    .slice(0, 1);
+}
+
 export function mergeAvailableResearchDates(
   snapshotDates: readonly string[],
   indexedDates: readonly string[],
@@ -65,11 +80,38 @@ export function sameResearchText(left: string, right: string): boolean {
 }
 
 export function debateProcessText(result: AqspAgentResult): string {
-  if (result.process_summary) return result.process_summary;
+  if (result.process_summary) {
+    if (/看多\s*\d+\s*\/\s*看空\s*\d+\s*\/\s*中性\s*\d+/.test(result.process_summary)) {
+      return result.round_count > 1 ? `${result.round_count} 轮：初始证据与反方复核` : "已完成证据复核";
+    }
+    return result.process_summary;
+  }
   const details: string[] = [];
   if (result.round_count > 0) details.push(`${result.round_count} 轮讨论`);
   if (result.active_roles.length > 0) details.push(`角色 ${result.active_roles.slice(0, 3).join("、")}`);
   return details.join(" · ");
+}
+
+export function uniqueAgentViews(result: AqspAgentResult): NonNullable<AqspAgentResult["agent_views"]> {
+  const seenRoles = new Set<string>();
+  const seenPoints = new Set<string>();
+  const uniquePoints = (points: readonly string[]) => points.filter((point) => {
+    const key = point.trim().replace(/\s+/g, " ");
+    if (!key || seenPoints.has(key)) return false;
+    seenPoints.add(key);
+    return true;
+  });
+  return (result.agent_views ?? []).flatMap((view) => {
+    if (!view.role.trim() || seenRoles.has(view.role)) return [];
+    seenRoles.add(view.role);
+    return [{
+      ...view,
+      arguments: uniquePoints(view.arguments),
+      opportunities: uniquePoints(view.opportunities),
+      risks: uniquePoints(view.risks),
+      counterarguments: uniquePoints(view.counterarguments),
+    }];
+  });
 }
 
 export function formatResearchDate(date: string): { day: string; weekday: string } {

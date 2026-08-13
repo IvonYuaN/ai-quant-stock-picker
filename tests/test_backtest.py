@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
+import math
 
 import numpy as np
 import pandas as pd
@@ -974,11 +975,13 @@ def test_walkforward_keeps_zero_trade_periods_for_cscv_stability(monkeypatch) ->
         "_calculate_deflated_sharpe",
         lambda sharpe, n_trials, n_obs, **_kwargs: float(n_obs),
     )
-    monkeypatch.setattr(
-        tester,
-        "_calculate_pbo",
-        lambda periods: float(len(periods)),
-    )
+    pbo_inputs: list[object] = []
+
+    def calculate_pbo(config_returns: object) -> tuple[float, bool, int]:
+        pbo_inputs.append(config_returns)
+        return float("nan"), False, 0
+
+    monkeypatch.setattr(tester, "_calculate_pbo", calculate_pbo)
     monkeypatch.setattr(
         tester,
         "_build_diagnostics",
@@ -996,6 +999,10 @@ def test_walkforward_keeps_zero_trade_periods_for_cscv_stability(monkeypatch) ->
 
     assert len(result.periods) > 0
     assert all(period.trades == 0 for period in result.periods)
+    assert pbo_inputs == [None]
+    assert not math.isfinite(result.pbo)
+    assert result.pbo_verified is False
+    assert result.pbo_configs == 0
 
 
 def test_walkforward_planned_period_count_matches_window_math() -> None:
@@ -1007,6 +1014,84 @@ def test_walkforward_planned_period_count_matches_window_math() -> None:
     )
 
     assert tester._planned_period_count(0, 707) == 19
+
+
+def test_calculate_pbo_verified_across_multiple_configs() -> None:
+    # 6 periods x 4 configurations. Configuration 0 is strong in the first
+    # half but weak in the second, so CSCV should flag it as overfit-prone
+    # (non-trivial PBO, and crucially: *verified*, not a silent NaN/0.0).
+    rng = np.random.default_rng(42)
+    matrix = rng.normal(0.0, 1.0, size=(6, 4))
+    matrix[:3, 0] += 2.0
+    matrix[3:, 0] -= 2.0
+    config_returns = [list(matrix[i]) for i in range(matrix.shape[0])]
+
+    pbo, verified, n_configs = WalkForwardTester._calculate_pbo(config_returns)
+
+    assert verified is True
+    assert n_configs == 4
+    assert math.isfinite(pbo)
+    assert 0.0 <= pbo <= 1.0
+
+
+def test_calculate_pbo_unverified_when_single_config() -> None:
+    # One configuration per period -> CSCV cannot run -> NaN + unverified.
+    # This is the previously-broken path that silently returned 0.0.
+    config_returns = [[0.5], [1.2], [-0.3], [0.8]]
+    pbo, verified, n_configs = WalkForwardTester._calculate_pbo(config_returns)
+
+    assert not math.isfinite(pbo)
+    assert verified is False
+    assert n_configs == 0
+
+
+def test_calculate_pbo_unverified_when_too_few_periods() -> None:
+    config_returns = [[0.5, 0.2], [1.2, -0.4]]  # 2 periods < 4
+    pbo, verified, n_configs = WalkForwardTester._calculate_pbo(config_returns)
+
+    assert not math.isfinite(pbo)
+    assert verified is False
+    assert n_configs == 0
+
+
+def test_calculate_cscv_pbo_from_single_no_longer_returns_placeholder_zero() -> None:
+    periods = [
+        BacktestResult(
+            period="p1",
+            total_return=0.1,
+            annual_return=0.1,
+            max_drawdown=0.0,
+            sharpe_ratio=1.0,
+            win_rate=0.5,
+            profit_factor=1.0,
+            trades=1,
+            not_executable=0,
+        )
+    ]
+    pbo = WalkForwardTester.calculate_cscv_pbo_from_single(periods)
+    # Must be NaN, never the old 0.0 placeholder that distorted the gate.
+    assert not math.isfinite(pbo)
+
+
+def test_walkforward_result_exposes_pbo_verified_fields() -> None:
+    result = WalkForwardResult(
+        periods=[],
+        overall=BacktestResult(
+            period="x",
+            total_return=0.0,
+            annual_return=0.0,
+            max_drawdown=0.0,
+            sharpe_ratio=0.0,
+            win_rate=0.0,
+            profit_factor=0.0,
+            trades=0,
+            not_executable=0,
+        ),
+        robustness_score=0.0,
+        parameter_std=0.0,
+    )
+    assert result.pbo_verified is False
+    assert result.pbo_configs == 0
 
 
 def test_walkforward_streaming_matches_full_run_when_data_is_loaded_in_batches() -> None:
@@ -1088,7 +1173,11 @@ def test_walkforward_streaming_matches_full_run_when_data_is_loaded_in_batches()
     assert streamed.periods == full.periods
     assert streamed.overall == full.overall
     assert streamed.deflated_sharpe == full.deflated_sharpe
-    assert streamed.pbo == full.pbo
+    assert math.isnan(streamed.pbo)
+    assert math.isnan(full.pbo)
+    assert streamed.pbo_verified is False
+    assert full.pbo_verified is False
+    assert streamed.pbo_configs == full.pbo_configs == 0
     assert streamed.diagnostics == full.diagnostics
 
 

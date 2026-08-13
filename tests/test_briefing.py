@@ -771,7 +771,7 @@ class TestDebateAgent:
             metrics={"ret5_pct": 2.0, "ret20_pct": -2.5},
             risks=("盘中覆盖不完整，缺少: 000300",),
         )
-        assert agent.generate_initial_opinion(common_blocker, frame).stance == "bearish"
+        assert agent.generate_initial_opinion(common_blocker, frame).stance == "neutral"
         assert agent.generate_initial_opinion(weak, frame).stance == "bearish"
 
     def test_strong_buy_rating_is_not_misclassified_as_st_risk(self):
@@ -1141,7 +1141,8 @@ class TestDebateAgent:
         assert result.final_vote[AgentRole.BULL] == "bullish"
         assert result.final_vote[AgentRole.BEAR] == "bearish"
         assert any(
-            record for opinion in result.rounds[-1].opinions
+            record
+            for opinion in result.rounds[-1].opinions
             for record in opinion.rebuttal_records
         )
         assert "missing_real_opposition" not in result.failure
@@ -2493,7 +2494,9 @@ class TestGenerateSmartSummary:
             "sector_leader",
             "cross_market",
             "policy_sensitive",
+            "margin_trading",
             "northbound",
+            "retail_mood",
         )
 
     def test_briefing_generator_respects_goal_switch_when_constructor_requests_debate(
@@ -2616,6 +2619,8 @@ switches:
             "risk_control",
             "northbound",
             "bear",
+            "margin_trading",
+            "retail_mood",
         )
 
     def test_briefing_focus_roles_do_not_lock_context_role_expansion(self, monkeypatch):
@@ -2645,7 +2650,7 @@ switches:
         assert "cross_market" in roles
         assert "sector_leader" in roles
         assert "retail_mood" in roles
-        assert len(roles) == 8
+        assert len(roles) == 9
 
     def test_briefing_generator_expands_debate_coverage_with_runtime_max_candidates(
         self, monkeypatch
@@ -2697,8 +2702,8 @@ switches:
             frames=frames,
         )
 
-        assert seen_symbols == ["300750", "300751", "300752", "300753"]
-        assert len(briefing.debate_results) == 4
+        assert seen_symbols == ["300750", "300751", "300752"]
+        assert len(briefing.debate_results) == 3
 
     def test_realtime_debate_marks_missing_frame_as_visible_failure(self, monkeypatch):
         monkeypatch.setenv("AQSP_RUN_TASK_ID", "intraday")

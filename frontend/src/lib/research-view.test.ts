@@ -1,6 +1,7 @@
 import type { AqspAgentResult, AqspSnapshot } from "./api";
 import {
   debateProcessText,
+  compactDebateRounds,
   dedupeResearchText,
   gatePresentation,
   isCurrentEmptyObservation,
@@ -10,7 +11,9 @@ import {
   sameResearchText,
   snapshotConclusion,
   snapshotMatchesSelectedDate,
+  uniqueAgentViews,
 } from "./research-view";
+import { areAqspCandidatesStale } from "@/components/aqsp/useAqspSnapshot";
 
 const emptySnapshot = {
   schema_version: "v1",
@@ -72,12 +75,27 @@ export const researchViewContractChecks = {
     available_dates: ["2026-07-19"],
   }) === "",
   processFallback: debateProcessText(debateWithoutProcess) === "2 轮讨论 · 角色 风险视角",
+  voteTemplateProcessIsRewritten: debateProcessText({ ...debateWithoutProcess, process_summary: "2 轮；看多 2 / 看空 2 / 中性 5" }) === "2 轮：初始证据与反方复核",
   selectedDateMatches: snapshotMatchesSelectedDate(emptySnapshot, "2026-07-15"),
   selectedDateRejectsPreviousSnapshot: !snapshotMatchesSelectedDate(emptySnapshot, "2026-07-14"),
   emptySelectionAcceptsCurrentSnapshot: snapshotMatchesSelectedDate(emptySnapshot, ""),
   duplicateResearchTextCollapses: dedupeResearchText(["  过程摘要  ", "过程   摘要", "另一条"]).join("|") === "过程摘要|另一条",
+  characterSplitRoundIsHidden: compactDebateRounds(["（、'、趋、势、：、均、线、多、头", "正常讨论"], "").join("|") === "正常讨论",
+  repeatedRoundsAreCompact: compactDebateRounds(["同一结论", "同一结论", "补充内容"], "").join("|") === "同一结论",
+  voteTemplateRoundIsHidden: compactDebateRounds(["看多2 / 看空2 / 中性5；模板摘要", "独立摘要"], "").join("|") === "独立摘要",
   equalResearchTextMatches: sameResearchText("标题", "标题"),
   differentResearchTextDoesNotMatch: !sameResearchText("标题", "摘要"),
   dateIndexCompletesSnapshotDates: mergeAvailableResearchDates(["2026-07-14"], ["2026-07-14", "2026-07-11"]).join("|") === "2026-07-14|2026-07-11",
   legacyMessageUrlRemainsVisible: messageSourceUrl({ url: "https://example.test/news" }) === "https://example.test/news",
+  duplicateAgentEvidenceCollapses: uniqueAgentViews({
+    ...debateWithoutProcess,
+    agent_views: [
+      { role: "bull", stance: "bullish", confidence: 0.7, arguments: ["量价共振"], opportunities: [], risks: [], counterarguments: [] },
+      { role: "risk_control", stance: "bearish", confidence: 0.7, arguments: ["量价共振"], opportunities: [], risks: ["高位波动"], counterarguments: [] },
+    ],
+  }).map((view) => `${view.role}:${view.arguments.join("|")}:${view.risks.join("|")}`).join(";") === "bull:量价共振:;risk_control::高位波动",
+  freshCandidatesRemainVisibleWhenSummaryExpires: !areAqspCandidatesStale({
+    ...emptySnapshot,
+    meta: { historical: false, stale: true, freshness: { candidates: "fresh", messages: "no_data", cross_market: "unavailable" } },
+  }),
 };

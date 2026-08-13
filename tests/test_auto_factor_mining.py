@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from aqsp.core.errors import DataError
 from aqsp.strategies.auto_factor_mining import AutoFactorMiner
 
 
@@ -40,3 +41,38 @@ def test_auto_factor_mining_does_not_rank_quantiles_by_forward_returns() -> None
     ).read_text(encoding="utf-8")
 
     assert ".groupby(quantile_labels).mean()" not in text
+
+
+def _synthetic_ohlcv(rows: int) -> pd.DataFrame:
+    """Deterministic OHLCV frame (no network, no RNG)."""
+    return pd.DataFrame(
+        {
+            "date": pd.date_range("2026-01-01", periods=rows, freq="D"),
+            "open": np.linspace(10.0, 12.0, rows),
+            "high": np.linspace(11.0, 13.0, rows),
+            "low": np.linspace(9.0, 11.0, rows),
+            "close": np.linspace(10.0, 12.0, rows),
+            "volume": np.linspace(100.0, 200.0, rows),
+        }
+    )
+
+
+def test_auto_factor_mining_raises_when_live_short_workload_passed() -> None:
+    """live_short workload must be rejected at the mine_factors entry."""
+    miner = AutoFactorMiner()
+    frame = _synthetic_ohlcv(10)
+    frame.attrs["workload"] = "live_short"
+
+    with pytest.raises(DataError, match="live_short workload cannot enter"):
+        miner.mine_factors({"600519": frame})
+
+
+def test_auto_factor_mining_passes_when_workload_is_offline() -> None:
+    """Non-live workloads (e.g. backtest) pass the guard without raising."""
+    miner = AutoFactorMiner(min_samples=5)
+    frame = _synthetic_ohlcv(60)
+    frame.attrs["workload"] = "backtest"
+
+    result = miner.mine_factors({"600519": frame})
+
+    assert isinstance(result, list)

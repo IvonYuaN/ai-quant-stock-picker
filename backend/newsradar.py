@@ -18,6 +18,8 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone, timedelta
 from email.utils import parsedate_to_datetime
 
+from aqsp.core.http import urlopen_no_macos_proxy
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 SOURCES_FILE = os.path.join(HERE, "news_sources.json")
 CACHE_DIR = os.path.join(HERE, ".cache")
@@ -60,7 +62,7 @@ def _fetch_source(src: dict, per: int, cutoff, redline: list[str]):
             "User-Agent": UA,
             "Accept": "application/rss+xml,application/atom+xml,application/xml,text/xml,*/*",
         })
-        with urllib.request.urlopen(req, timeout=14) as r:
+        with urlopen_no_macos_proxy(req, timeout=14) as r:
             raw = r.read()
         root = ET.fromstring(raw)
         out = []

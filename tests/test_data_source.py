@@ -1576,6 +1576,33 @@ def test_sqlite_db_source_marks_raw_database_price_mode(tmp_path: Path) -> None:
     assert source.price_mode() == "raw"
 
 
+def test_sqlite_db_source_rejects_adjusted_prices_stored_as_raw(tmp_path: Path) -> None:
+    db = tmp_path / "astocks_raw.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute("create table stocks (ts_code text, name text)")
+        conn.execute(
+            """
+            create table daily_qfq (
+                ts_code text, trade_date text, open real, high real, low real,
+                close real, open_qfq real, high_qfq real, low_qfq real,
+                close_qfq real, volume real, amount real
+            )
+            """
+        )
+        for index in range(5):
+            conn.execute(
+                "insert into daily_qfq values (?, ?, 1450, 1460, 1440, 1452, "
+                "null, null, null, 1452, 1000, 10000)",
+                ("000001.SZ", f"2026010{index + 2}"),
+            )
+
+    source = SqliteDbSource(db_path=db)
+
+    assert source.price_mode() == "invalid"
+    with pytest.raises(DataError, match="价格口径校验失败"):
+        source.fetch_daily(["000001"], date(2026, 1, 2), date(2026, 1, 6))
+
+
 def test_sqlite_db_source_default_path_prefers_raw_database(
     tmp_path: Path, monkeypatch
 ) -> None:

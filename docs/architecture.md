@@ -3,7 +3,7 @@
 本文件是项目的 **唯一规划源**。所有新模块、PR、阈值变更必须先来这里对齐。
 两人协作:小米Pro 编码,Claude 审查。任何与本文件冲突的代码默认不合并。
 
-最后更新:2026-07-20。实时短线研究与独立 T+1 变体账户已纳入当前主线。
+最后更新:2026-08-08。午盘空值处理 P1 完成:全链路 NaN/inf 防护(core/types.py:safe_float + 9文件),41新测试,3633 passed。
 
 ---
 
@@ -50,7 +50,27 @@ src/aqsp/
 │   ├── multi_source.py    # 故障切换包装器
 │   ├── cache.py           # SQLite/Parquet 本地缓存
 │   ├── adjust.py          # 复权因子表(point-in-time)
-│   └── intraday.py        # 盘中分时 + 5min bar 合成
+│   ├── intraday.py        # 盘中分时 + 5min bar 合成
+│   ├── realtime.py        # 实时行情 + 失败可见性
+│   ├── pit_financial.py   # PIT 财务数据 + as_of 截断
+│   ├── news_source.py     # 新闻源抽象(RSS/AKShare/Eastmoney)
+│   └── cn/                # 国内专属数据源
+│       ├── northbound.py      # 北向资金因子(入ledger,不进评分)
+│       ├── margin_trading.py  # 融资融券因子(入ledger,不进评分)
+│       ├── sentiment.py       # 市场情绪因子(涨停池 z-score)
+│       └── macro.py           # 宏观经济因子(CPI/PMI/M2/LPR 气候信号)
+├── news/                  # 新闻催化引擎
+│   ├── catalysts.py       # 催化事件构建 + 多源并行抓取
+│   ├── entity_graph.py    # 公司/板块实体关系图谱
+│   └── watch_candidates.py # 催化驱动的观察候选发现
+├── market_context.py      # 跨市场信息融合引擎
+│                          # (催化/北向/融资/情绪/全球风险 → 决策上下文层)
+├── market_context_realtime.py # 实时跨市场观测归一化与新鲜度门控
+│                          # (SPX/HSI/DXY/US10Y/WTI/GOLD → RealtimeCrossMarketContext)
+├── market_context_cross_market.py # 跨市场传导规则与运行时摘要
+│                          # (规则表 + 传导路径 → CrossMarketImplication/RuntimeSummary)
+├── market_context_implications.py # 跨市场传导计算引擎
+│                          # (事件+实时观测 → 证据栈+强度评级+行动建议)
 ├── universe/
 │   ├── pool.py            # 默认股票池
 │   └── filters.py         # ST、退市、停牌、新股过滤
@@ -63,20 +83,35 @@ src/aqsp/
 │   ├── ma_pullback.py
 │   ├── bowl_rebound.py
 │   ├── low_vol_trend.py
+│   ├── auto_factor_mining.py  # 离线因子挖掘(禁止 live_short)
 │   └── thresholds.yaml    # 所有魔法数字,带版本号 + 生效日
 ├── regime/
 │   └── detector.py        # 简单二分类:趋势市 vs 震荡市
 ├── portfolio/
 │   ├── correlation.py     # 候选池内相关性去重
 │   ├── sector.py          # 行业去重
-│   └── sizing.py          # 等权 / 风险平价
+│   ├── sizing.py          # 等权 / 风险平价
+│   ├── position_tracker.py # T+1 持仓追踪器(冻结/解冻/可卖数量)
+│   └── position_service.py # 纸面持仓状态报告服务(advisory)
 ├── ledger/
+│   ├── base.py            # 读写 jsonl + append_predictions
 │   ├── store.py           # 读写 jsonl
 │   ├── validator.py       # 验证 pending 信号
 │   ├── learner.py         # 策略权重学习
 │   └── execution.py       # ExecutionConfig + 涨跌停/停牌判定
 ├── risk/
-│   └── circuit_breaker.py # 账户级熔断
+│   ├── circuit_breaker.py # 账户级熔断
+│   ├── stop_loss.py       # 止损管理器(单只/组合/移动止损)
+│   └── stop_loss_service.py # 纸面持仓止损检查服务(advisory)
+├── briefing/              # 多Agent研判层(advisory-only)
+│   ├── agent_roles.py     # 9角色定义 + 运行时角色选择
+│   ├── debate.py          # 辩论引擎(多轮 + 投票 + 汇总)
+│   ├── debate_tracker.py  # Agent表现追踪(21日窗口 + 冷却期)
+│   ├── conclusion.py      # 结论视图 + 质量审计门控
+│   └── generator.py       # 简报生成主入口
+├── backtest/              # 回测与验证
+│   ├── audit.py           # 回测假设审计
+│   └── walkforward.py     # Purged + Embargoed Walk-Forward
 ├── reports/                # 现有 report.py
 ├── notify/                 # 现有 notifier.py
 ├── cli.py
@@ -307,6 +342,64 @@ class CircuitBreakerConfig:
 
 熔断状态持久化到 `data/risk_state.json`,通知模板内 banner 显示"组合保护中,本期信号仅供参考"。
 
+### 6.3 信息融合层(market_context + news + data/cn)
+
+**边界**:信息融合是"决策上下文层",不是评分层。所有因子进入 ledger 上下文和辩论素材,**不直接修改 deterministic score**。
+
+**模块契约**:
+
+| 模块 | 职责 | 输出 | 进评分? |
+|------|------|------|---------|
+| `data/cn/northbound.py` | 北向资金5日 z-score | `float` | ❌ 入 ledger |
+| `data/cn/margin_trading.py` | 融资余额5日变化率 | `float` | ❌ 入 ledger |
+| `data/cn/sentiment.py` | 涨停池 z-score + 温度标签 | `float` + `dict` | ❌ 入 ledger |
+| `data/cn/macro.py` | CPI/PMI/M2/LPR 宏观气候信号 | `dict` | ❌ 入上下文 |
+| `news/catalysts.py` | 多源新闻催化事件构建 | `CatalystReport` | ❌ 入上下文 |
+| `market_context.py` | 融合催化/北向/融资/情绪/全球风险 | `list[str]` 上下文行 | ❌ 增强解释 |
+| `market_context_realtime.py` | 实时跨市场观测归一化与新鲜度门控 | `RealtimeCrossMarketContext` | ❌ 入上下文 |
+| `market_context_cross_market.py` | 跨市场传导规则表 + 运行时摘要 | `CrossMarketImplication` / `CrossMarketRuleRuntimeSummary` | ❌ 入上下文 |
+| `market_context_implications.py` | 跨市场传导计算引擎(证据栈+强度评级) | `CrossMarketImplication` | ❌ 入上下文 |
+
+**硬约束**:
+- 全局新闻不能直接改写个股 score,只能增强建议解释或风控提示
+- 跨市场传导线索进入候选优先级增强层,但必须走确定性规则与配置化阈值
+- 所有信息源必须标注时效、来源和可操作性
+- `auto_factor_mining` 禁止处理 `live_short` 数据(仅限离线研究)
+
+### 6.4 多Agent研判层(briefing/)
+
+**边界**:多Agent是"建议增强与质疑机制",advisory-only。agent 输出不能覆盖 deterministic score。
+
+**9角色定义**:
+
+| 角色 | 关注焦点 | 证据泳道 |
+|------|---------|---------|
+| BULL(技术多头) | 趋势延续、量价共振 | bullish / technical |
+| BEAR(基本面空头) | 估值透支、业绩兑现压力 | bearish / event_fundamental |
+| RISK_CONTROL(风控) | 流动性、不可成交、止损难度 | risk_counterevidence |
+| SECTOR_LEADER(板块轮动) | 板块强弱切换、龙头扩散 | technical |
+| CROSS_MARKET(跨市传导) | 海外事件到A股映射 | event_fundamental |
+| POLICY_SENSITIVE(政策) | 监管导向、产业催化 | event_fundamental |
+| MARGIN_TRADING(融资融券) | 杠杆拥挤、踩踏风险 | risk_counterevidence |
+| NORTHBOUND(北向资金) | 外资配置偏好、流向持续性 | event_fundamental |
+| RETAIL_MOOD(散户情绪) | 情绪温度、拥挤度、反身性 | risk_counterevidence |
+
+**运行时裁剪**:
+- `AQSP_DEBATE_ROLES`:显式指定角色集
+- `AQSP_DEBATE_FOCUS_ROLES`:重点视角排前(不裁掉其他)
+- `AQSP_DEBATE_DISABLED_ROLES`:停用角色
+- 未显式指定时,按 `AQSP_RUN_TASK_ID` 自动选默认角色集
+
+**表现追踪**(`debate_tracker.py`):
+- 21天滚动窗口,最低5样本 + 3独立信号日 + 3天冷却期才解锁学习
+- 权重计算:准确率映射 + 时间衰减 + 市场状态自适应 + 跨市场上下文因子
+- `auto_optimization_apply_runtime=false`:学习结果仅用于评估展示,不写回运行参数
+
+**质量审计**(`audit_debate_quality`):
+- 候选映射完整性、轮次完整性、角色覆盖、真实交锋、可证伪条件
+- advisory 边界检查(`deterministic_score_unchanged=True`)
+- 审计不通过则阻断结论输出
+
 ---
 
 ## 7. 任务拆分(PR 顺序)
@@ -335,6 +428,28 @@ class CircuitBreakerConfig:
 | 18 | 北向资金 + 融资融券观察因子 | #2 | northbound_flow_5d_z/margin_balance_change_5d 入 ledger,不进评分 | ✅ |
 | 19 | 简报生成 briefing 模块 | #13 | jinja2 模板降级 + LLM 可选 + notifier 复用 | ✅ |
 | 20 | 监控告警 aqsp monitor | #12 | monitors.yaml 配置 + GitHub Actions 每30分钟 | ✅ |
+| 21 | P0 实时/历史边界修复:backtest_assumptions + ledger隔离 + realtime失败可见 + PIT as_of + factor mining guard | #18 #19 | 116测试通过 + ruff clean | ✅ |
+| 22 | 市场情绪量化数据模块 data/cn/sentiment.py | #18 | 涨停池 z-score 入 ledger/market_context,不进评分 | ✅ |
+| 23 | 宏观经济数据模块 data/cn/macro.py | #18 | CPI/PMI/M2/LPR 气候信号入 market_context,不进评分 | ✅ |
+| 24 | 多Agent审计质量收敛:可证伪关键词修复 + 薄弱测试补齐 | #19 | falsifiable markers 精确化 + 3个负向审计测试 | ✅ |
+| 25 | market_context 拆分:实时跨市场模块独立 | #18 | market_context_realtime.py 提取(375行),向后兼容 | ✅ |
+| 26 | market_context 拆分:跨市场传导规则模块独立 | #18 | market_context_cross_market.py 提取(774行),向后兼容 | ✅ |
+| 27 | market_context 拆分:传导计算引擎独立 | #18 | market_context_implications.py 提取(769行),主模块降至1463行,向后兼容 | ✅ |
+| 28 | StopLossManager 集成:纸面持仓止损检查 | #18 | stop_loss_service.py + cli.py T+1后注入,advisory-only,16测试 | ✅ |
+| 29 | PositionTracker 集成:纸面持仓 T+1 状态概览 | #18 | position_service.py + cli.py 止损后注入,advisory-only,17测试 | ✅ |
+| 30 | 术语表 UI 渲染接入 canonical dashboard | #19 | dashboard.py 底部注入 BEGINNER_GLOSSARY expander,2测试 | ✅ |
+| 31 | 午盘空值保护:NaN/inf 价格不污染 PnL | #21 | _safe_float NaN→0.0 + compute_real_pnl 跳过 NaN return_pct,5测试 | ✅ |
+| 32 | cli.py 拆分 Phase 1:debate record I/O 提取 | P2 | cli_debate_helpers.py 提取5函数,cli.py -83行,向后兼容 | ✅ |
+| 33 | cli.py 拆分 Phase 2:debate coordinator/pick 提取 | P2 | cli_debate_helpers.py 再提取5函数,cli.py -160行,backfill 脚本导入源迁移,向后兼容 | ✅ |
+| 34 | cli.py 拆分 Phase 3:notification gate 提取 | P2 | cli_notification_gate.py 310行(11函数+3常量),cli.py -274行,3脚本导入源迁移,test monkeypatch 目标修正,向后兼容 | ✅ |
+| 35 | cli.py 拆分 Phase 4:walkforward helpers 提取 | P2 | cli_walkforward_helpers.py 666行(16函数+1常量+HS300列表),cli.py -629行(7562→6933),test monkeypatch 目标迁移到 cli_walkforward_helpers,向后兼容 | ✅ |
+| 36 | cli.py 拆分 Phase 5:notify dispatch helpers 提取 | P2 | cli_notify_helpers.py 94行(2函数+notify_markdown可变引用+NOTIFY_STATE_PATH),cli.py -69行(6933→6864),23处test monkeypatch迁移到字符串路径格式,向后兼容 | ✅ |
+| 37 | cli.py 拆分 Phase 6:runtime catalyst helpers 提取 | P2 | cli_runtime_catalyst_helpers.py 284行(17函数+_INTRADAY_CATALYST_THREAD_MODES),cli.py -248行(6884→6636),3处test monkeypatch迁移,4函数noqa re-export,向后兼容 | ✅ |
+| 38 | cli.py 拆分 Phase 7:runtime source helpers 提取 | P2 | cli_runtime_source_helpers.py 139行(7函数:_build_sqlite_db_source/_get_source/_get_source_optional_cache/_fetch_frames_for_cli/_fetch_frames_for_cli_with_metadata/_drop_benchmark_frame/_resolve_run_symbols),cli.py -113行(6636→6523),11处test monkeypatch迁移到cli_runtime_source_helpers,7函数noqa re-export,移除9个不再需要的import,向后兼容 | ✅ |
+| 39 | cli.py 拆分 Phase 8:candidate annotation helpers 提取 | P2 | cli_candidate_helpers.py 493行(10函数:_candidate_blocker_map/_candidate_review_map/_default_candidate_review/_annotate_candidate_status/_market_context_review_priority/_merge_candidate_note/_annotate_data_quality_context/_annotate_cross_market_context/_append_cross_market_watch_candidates/_news_watch_candidate_limit),cli.py -462行(6523→6061),10函数noqa re-export,移除hashlib+score_symbol import,零test monkeypatch迁移(内部调用不跨模块),向后兼容 | ✅ |
+| 40 | 午盘空值处理 P1:全链路 NaN/inf 防护 | #31 | core/types.py:safe_float 公共工具 + realtime.py/runtime_snapshot.py/dashboard_beginner.py/data_provider.py/morning_breakout.py/sector_rotation.py 共9文件 +70/-32行,41新测试 | ✅ |
+| 41 | walk-forward PBO 统计修正 | #14 #15 | 单策略普通回测 PBO 显式标记未验证；只有固定参数网格的 CSCV 可写入已验证 PBO | ✅ |
+| 42 | AQSP snapshot debate schema 兼容 | #19 #30 | bridge 接受运行快照的可选 `review_kind`，保持未知字段 fail-closed | ✅ |
 
 **P0 三件**(本仓库当前最大风险,Claude 直接修了,不走小米Pro):
 

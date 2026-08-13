@@ -209,6 +209,63 @@ def test_debate_quality_gate_rejects_failure_and_any_quality_issue() -> None:
     assert backfill_intraday_debate._debate_payload_quality_failure({}) == ""
 
 
+def test_debate_quality_gate_rejects_character_split_evidence() -> None:
+    payload = {
+        "rounds": [
+            {
+                "opinions": [
+                    {
+                        "arguments": [
+                            "趋",
+                            "势",
+                            "：",
+                            "均",
+                            "线",
+                            "多",
+                            "头",
+                            "向",
+                            "上",
+                        ],
+                    }
+                ]
+            }
+        ]
+    }
+
+    assert (
+        "character-split"
+        in backfill_intraday_debate._debate_payload_quality_failure(payload)
+    )
+
+
+def test_debate_quality_gate_rejects_repeated_rounds_without_new_claims() -> None:
+    opinion = {
+        "role": "bull",
+        "stance": "bullish",
+        "arguments": ["趋势向上"],
+        "risk_factors": ["回落则失效"],
+        "opportunity_factors": [],
+        "counterarguments": [],
+    }
+    payload = {"rounds": [{"opinions": [opinion]}, {"opinions": [opinion]}]}
+
+    assert (
+        "repeat without new evidence"
+        in backfill_intraday_debate._debate_payload_quality_failure(payload)
+    )
+
+
+def test_pick_from_row_parses_technical_evidence_tuple_text() -> None:
+    pick = backfill_intraday_debate._pick_from_row(
+        {
+            "symbol": "000001",
+            "technical_evidence": "('趋势：均线多头', '量能：放量确认')",
+        }
+    )
+
+    assert pick.metrics["technical_evidence"] == ("趋势：均线多头", "量能：放量确认")
+
+
 def test_debate_quality_gate_rejects_neutral_only_opposition_payload(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -284,6 +341,39 @@ def test_backfill_continues_after_candidate_failure_and_persists_success(
     assert failed_state["attempts"] == 2
     assert failed_state["retryable"] is True
     assert not lock_path.exists()
+
+
+def test_backfill_registers_advisory_agent_run_and_finishes_it(
+    tmp_path: Path, monkeypatch
+) -> None:
+    input_csv = tmp_path / "intraday_latest.csv"
+    output_path = tmp_path / "debate_results.jsonl"
+    status_path = tmp_path / "status.json"
+    lock_path = tmp_path / "backfill.lock"
+    agent_runs_path = tmp_path / "runtime" / "agent_runs.jsonl"
+    _write_candidates(input_csv, ("000001",))
+    _patch_runtime(monkeypatch)
+
+    count = backfill_intraday_debate.run_backfill(
+        input_csv=input_csv,
+        output_path=output_path,
+        task_id="intraday",
+        max_candidates=5,
+        force=True,
+        status_path=status_path,
+        lock_path=lock_path,
+        agent_runs_path=agent_runs_path,
+        parent_run_id="intraday-parent",
+        agent_deadline_seconds=120,
+    )
+
+    records = [json.loads(line) for line in agent_runs_path.read_text().splitlines()]
+    assert count == 1
+    assert [record["status"] for record in records] == ["running", "completed"]
+    assert {record["parent_run_id"] for record in records} == {"intraday-parent"}
+    assert {record["scope"] for record in records} == {
+        backfill_intraday_debate.AGENT_SCOPE
+    }
 
 
 def test_load_intraday_picks_includes_observation_only_only_when_explicit(

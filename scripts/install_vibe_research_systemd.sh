@@ -3,6 +3,8 @@
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CANONICAL_RELEASE_ROOT="${AQSP_RELEASE_CURRENT_LINK:-/opt/aqsp-releases/aqsp-scheduler-current}"
+SERVICE_PROJECT_ROOT="${AQSP_VIBE_PROJECT_ROOT:-$PROJECT_ROOT}"
 SYSTEMD_SOURCE_DIR="${PROJECT_ROOT}/deploy/systemd"
 SYSTEMD_DEST_DIR="/etc/systemd/system"
 SYSTEMCTL_BIN="${SYSTEMCTL_BIN:-systemctl}"
@@ -62,6 +64,12 @@ done
     || { echo "不是可用的 AQSP 项目根目录: ${PROJECT_ROOT}" >&2; exit 1; }
 [[ -f "${SYSTEMD_SOURCE_DIR}/aqsp-vibe-research-api.service" ]] \
     || { echo "缺少 systemd 模板: ${SYSTEMD_SOURCE_DIR}" >&2; exit 1; }
+
+if [[ -z "${AQSP_VIBE_PROJECT_ROOT:-}" && -L "$CANONICAL_RELEASE_ROOT" ]]; then
+    SERVICE_PROJECT_ROOT="$CANONICAL_RELEASE_ROOT"
+fi
+[[ -f "${SERVICE_PROJECT_ROOT}/pyproject.toml" && -f "${SERVICE_PROJECT_ROOT}/backend/app.py" ]] \
+    || { echo "systemd 服务根目录不可用: ${SERVICE_PROJECT_ROOT}" >&2; exit 1; }
 
 if getent passwd "$SERVICE_USER" >/dev/null 2>&1; then
     [[ "$(id -u "$SERVICE_USER")" -ne 0 ]] \
@@ -171,7 +179,7 @@ runuser -u "$SERVICE_USER" -- env \
 escape_sed() {
     printf '%s' "$1" | sed 's/[\\&|]/\\&/g'
 }
-PROJECT_ROOT_ESCAPED="$(escape_sed "$PROJECT_ROOT")"
+PROJECT_ROOT_ESCAPED="$(escape_sed "$SERVICE_PROJECT_ROOT")"
 SERVICE_USER_ESCAPED="$(escape_sed "$SERVICE_USER")"
 SERVICE_GROUP_ESCAPED="$(escape_sed "$SERVICE_GROUP")"
 VENV_DIR_ESCAPED="$(escape_sed "$VENV_DIR")"

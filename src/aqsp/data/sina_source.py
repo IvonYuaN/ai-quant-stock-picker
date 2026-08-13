@@ -21,6 +21,7 @@ from aqsp.data.quote_metadata import (
     quote_timestamp_metadata,
 )
 from aqsp.core.errors import DataError
+from aqsp.core.http import trust_environment_proxy_enabled
 from aqsp.core.time import now_shanghai
 
 _REQUEST_DELAY = 0.3
@@ -41,6 +42,7 @@ class SinaSource(DataSource):
 
     def __init__(self, cache: DataCache | None = None) -> None:
         self._session = requests.Session()
+        self._session.trust_env = trust_environment_proxy_enabled()
         self._session.headers.update(
             {
                 "Referer": "http://finance.sina.com.cn",

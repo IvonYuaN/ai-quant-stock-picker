@@ -12,6 +12,8 @@ if [[ -f "${RUNTIME_ROOT}/.env" ]]; then
     source "${RUNTIME_ROOT}/.env"
     set +a
 fi
+# Immutable release 的所有下游任务必须使用北京时间，不继承服务器或 .env 的 TZ。
+export TZ="Asia/Shanghai"
 
 runtime_path() {
     local raw relative candidate
@@ -68,6 +70,9 @@ esac
 export AQSP_PROJECT_ROOT="$RELEASE_ROOT"
 export AQSP_RUNTIME_ROOT="$RUNTIME_ROOT"
 export AQSP_RUNTIME_DATA_ROOT="$RUNTIME_DATA_ROOT"
+# Scheduled tasks use the shared runtime interpreter, which has no release
+# package installed. Keep imports tied to the immutable release being run.
+export PYTHONPATH="${RELEASE_ROOT}/src:${RELEASE_ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
 export AQSP_IMMUTABLE_RELEASE="${AQSP_IMMUTABLE_RELEASE:-true}"
 export AQSP_RELEASE_MANIFEST="${AQSP_RELEASE_MANIFEST:-${RELEASE_ROOT}/.aqsp-release.json}"
 if [[ -f "$AQSP_RELEASE_MANIFEST" ]]; then
@@ -115,12 +120,16 @@ export_runtime_path AQSP_INTRADAY_OUTPUT_CSV reports/intraday_latest.csv
 export_runtime_path AQSP_INTRADAY_STATUS data/intraday_refresh_status.json
 export AQSP_INTRADAY_REFRESH_STATUS_PATH="$AQSP_INTRADAY_STATUS"
 export_runtime_path AQSP_INTRADAY_CURSOR_PATH data/runtime/intraday_universe_cursor.json
+export_runtime_path AQSP_AGENT_RUNS_PATH data/runtime/agent_runs.jsonl
 # React + FastAPI is the public surface. Offline archives stay private runtime data.
 export_runtime_path AQSP_DASHBOARD_HTML data/runtime/archive/dashboard/index.html
 export_runtime_path AQSP_DASHBOARD_DB data/runtime/archive/dashboard/aqsp.db
 export_runtime_path AQSP_HOME_SNAPSHOT_PATH data/runtime/home_dashboard_snapshot.json
 export_runtime_path AQSP_HOME_SNAPSHOT_INDEX_PATH data/runtime/home_dashboard_snapshot_index.json
 export_runtime_path AQSP_VARIANT_RESULTS data/runtime/variant_results.json
+export_runtime_path AQSP_VARIANT_REFRESH_STATUS data/runtime/variant_refresh_status.json
+export_runtime_path AQSP_VARIANT_CURSOR_PATH data/runtime/variant_results_cursor.json
+export_runtime_path AQSP_VARIANT_REFRESH_LOCK .locks/variant-results-refresh.lock
 export_runtime_path AQSP_NEWS_OUTPUT reports/news_catalysts.md
 export_runtime_path AQSP_NEWS_JSON_OUTPUT data/runtime/news_catalysts_latest.json
 export_runtime_path AQSP_NEWS_ARCHIVE_DIR data/runtime/news_archive
@@ -133,6 +142,7 @@ export_runtime_path AQSP_DAILY_RUN_HISTORY data/daily_run_history.jsonl
 export_runtime_path AQSP_CATALYST_REPORT_CACHE_PATH data/runtime/catalyst_report_cache.json
 export_runtime_path AQSP_RUNTIME_LOCK_DIR .locks
 export_runtime_path AQSP_RUNTIME_STATE_DIR .state
+export_runtime_path AQSP_SQLITE_REFRESH_CURSOR_PATH .state/sqlite-refresh-cursor.json
 export_runtime_path AQSP_RUNTIME_TMP_ROOT .tmp
 export_runtime_path AQSP_DEPLOY_LOG_DIR logs/deploy
 export_runtime_path AQSP_MONITOR_LOG_DIR logs/monitor

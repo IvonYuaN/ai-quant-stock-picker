@@ -16,9 +16,11 @@ Support: Real-Time Data Reliability Engineer, Market Intelligence/News Fusion En
 
 ## Current Goal
 
-将 AQSP 演进为面向短线决策研究的实时多源数据与多代理研判系统。实时数据优先于历史数据，历史数据只用于回测、walk-forward 验证和阈值冻结证据；盘中链路优先保证新鲜度、可成交性和信息时效。策略默认围绕短线/超短线机会检测，允许受控自动优化，但优化结果只能进入阈值与权重层，不能直接覆盖确定性评分与人工决策边界。
+长期目标：把 AQSP 维护成覆盖研究、开发、部署、前端与运行巡检的可审计闭环，定期发现问题并在仓库内形成可验证修复，不把工作局限为代码提交。生产服务器的实际运行、数据新鲜度和公网结果是第一成功标准。
 
-当前主线分四条并行推进：1) 压实实时行情/分时/quote 新鲜度与降级链路；2) 明确历史数据只进回测与验证、不反向污染盘中决策；3) 把国内外高价值信息源作为决策上下文接入并排序；4) 收敛多 Agent 讨论、投票和意见汇总，使其成为候选建议增强层而非下单层。
+将 AQSP 演进为面向短线决策研究的实时多源数据与多代理研判系统。实时数据优先于历史数据，历史数据只用于回测、walk-forward 验证和阈值冻结证据；盘中链路优先保证新鲜度、可成交性和信息时效。策略默认围绕短线/超短线机会检测，允许受控自动优化，但优化结果只能进入阈值与权重层，不能直接覆盖确定性评分与人工决策边界。GitHub 只作代码归档和按需手动校验，不作为线上成功门禁，也不因 CI 噪声扩大工作范围。
+
+当前主线分五条并行推进：1) 压实实时行情/分时/quote 新鲜度与降级链路；2) 明确历史数据只进回测与验证、不反向污染盘中决策；3) 把国内外高价值信息源作为决策上下文接入并排序；4) 收敛多 Agent 讨论、投票和意见汇总，使其成为候选建议增强层而非下单层；5) 建立以服务器不可变 release、调度、数据新鲜度、公网 health 和前端结果为主的长期巡检闭环，见 `docs/long-term-operations.md`。GitHub 只作代码归档和手动验证入口，不作为线上成功门禁。
 
 并行执行硬门禁：凡是可以拆分的工作，默认拆为最多 3 个互不重叠的子任务；子任务必须有明确文件范围、超时和退出路径，后台任务不得重启、拖慢或污染用户正在使用的服务。主线继续处理不依赖子任务的工作，不以等待 Agent 作为默认流程；完成或失去价值的 Agent 立即关闭。任何子任务的结果都必须经过主线复核，部署前后分别执行本地测试、线上 health、入口、数据新鲜度和关键结果检查，未通过不得宣称上线。
 
@@ -36,8 +38,8 @@ Support: Real-Time Data Reliability Engineer, Market Intelligence/News Fusion En
 
 ## Routing Cues
 
-实时行情、分时补齐、quote 新鲜度、fallback 降级交给 Real-Time Data Reliability lens；策略/开源吸收/自动优化边界交给 Quant Research lens；国内外新闻、指数、宏观、政策、资金流和情绪输入交给 Market Intelligence lens；多 Agent 辩论、角色编排、投票汇总和解释文案交给 Multi-Agent Decision lens；虚拟盘/ledger/可成交性交给 Paper-Trading lens；前端展示交给 Dashboard lens；合并前必须跑相关 pytest、ruff、脚本语法检查。
-静态导出链路（`scripts/render_dashboard.py`、`scripts/render_agent_dashboard.py`、旧 `reports/`、研究发现 CLI）也属于用户可见面，不能只修 Streamlit 主面板而放任旧口径残留；所有时间戳继续强制带上海时区偏移。任何“优化”若涉及盘中建议，必须先回答它依赖的是实时数据还是历史证据，并验证没有把历史回测口径误接到实时链路。
+实时行情、分时补齐、quote 新鲜度、fallback 降级交给 Real-Time Data Reliability lens；策略/开源吸收/自动优化边界交给 Quant Research lens；国内外新闻、指数、宏观、政策、资金流和情绪输入交给 Market Intelligence lens；多 Agent 辩论、角色编排、投票汇总和解释文案交给 Multi-Agent Decision lens；虚拟盘/ledger/可成交性交给 Paper-Trading lens；前端展示交给 Dashboard lens；生产验收交给 SRE/Reality Checker lens。当前快照过期时必须隐藏候选与依赖候选的讨论，直到数据通过新鲜度与覆盖率验证；变体调度的内外层超时必须覆盖完整 100 个发布门槛。合并前必须跑相关 pytest、ruff、脚本语法检查，部署后优先看 immutable release、服务 active、数据状态、公网 health 和用户可见入口。
+静态导出链路（`scripts/render_dashboard.py`、`scripts/render_agent_dashboard.py`、旧 `reports/`、研究发现 CLI）也属于用户可见面，不能只修 Streamlit 主面板而放任旧口径残留；所有时间戳继续强制带上海时区偏移。任何“优化”若涉及盘中建议，必须先回答它依赖的是实时数据还是历史证据，并验证没有把历史回测口径误接到实时链路。长期巡检由 Codex heartbeat 负责，服务器 health、调度、数据新鲜度和前端入口是交付证据。
 
 如果再次出现“修了很多细节但上线阻塞还在”的情况，优先检查：1) 全市场 walkforward formal/diagnostic 报告链是否完整；2) gate sidecar 是否含有效 `grid_diagnostics`；3) 服务器定时入口是否仍有高频通知或样本口径漂移；不要回到文案层空转。
 生产全市场 walk-forward 不得在低内存小服务器上白天直接启动；2026-07-09 实测会拖死 SSH/公网看板。默认依赖 `scripts/run_production_walkforward_gate.py` 的低内存 guard，需更大机器或显式 `AQSP_ALLOW_LOW_MEMORY_WALKFORWARD=1` 才能运行正式子进程。
@@ -51,3 +53,6 @@ Support: Real-Time Data Reliability Engineer, Market Intelligence/News Fusion En
 - 2026-06-30: Rerouted to short-term realtime decision support. Active priorities are realtime freshness, historical-vs-runtime boundary enforcement, domestic/global market intelligence fusion, and multi-agent discussion as an advisory layer.
 - 2026-07-09: Production walk-forward follow-up made visible on homepage; low-memory server launch was found unsafe and should be blocked by guardrail rather than repeated manually.
 - 2026-07-10: Intraday route hardened after stale/slow homepage incident. Realtime candidate artifacts must be written as soon as candidates are screened; full diagnostics, portfolio discussion, and multi-agent research may enrich later but must not block the live dashboard.
+- 2026-07-28: Rerouted to production reliability audit. Public routes and API health were available; immutable scheduler release guards fixed prior venv/Git failures, but the scheduler release remained on `codex/monitor-walkforward` rather than `main` and `/opt/aqsp` was a large dirty staging checkout. Treat release provenance, not the mutable checkout, as the deployment source of truth.
+- 2026-08-11: Rerouted to incident remediation after a stale current snapshot displayed candidates and nested variant-refresh budgets stopped at 75 staging variants. The active delivery gate is fail-closed current-data presentation plus an end-to-end budget sufficient for the 100-variant publication threshold.
+- 2026-08-13: Rerouted to evidence-chain repair. Homepage conclusions, qualified multi-agent reviews, and isolated raw-price variants must be joined through an explicit trace state. Missing raw-data variants are a visible blocker, never a synthetic result or a silent independent panel.

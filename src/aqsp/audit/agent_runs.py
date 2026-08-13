@@ -50,11 +50,20 @@ class AgentRunRecord:
 class AgentRunRegistry:
     """File-backed registry enforcing the project's bounded parallelism contract."""
 
-    def __init__(self, path: str | Path, *, max_parallel_per_parent: int = 3) -> None:
+    def __init__(
+        self,
+        path: str | Path,
+        *,
+        max_parallel_per_parent: int = 3,
+        max_parallel_global: int = 3,
+    ) -> None:
         if max_parallel_per_parent < 1:
             raise ValueError("max_parallel_per_parent must be positive")
+        if max_parallel_global < 1:
+            raise ValueError("max_parallel_global must be positive")
         self.path = Path(path)
         self.max_parallel_per_parent = max_parallel_per_parent
+        self.max_parallel_global = max_parallel_global
 
     def register(
         self,
@@ -86,11 +95,16 @@ class AgentRunRegistry:
             status="running",
         )
         with advisory_lock(self.path):
+            self._expire_unlocked(current)
             active = self._active_unlocked(current)
             if any(item.agent_run_id == agent_run_id for item in active):
                 raise ValueError(f"agent_run_id is already active: {agent_run_id}")
             if any(item.scope == scope for item in active):
                 raise ValueError(f"scope is already active: {scope}")
+            if len(active) >= self.max_parallel_global:
+                raise ValueError(
+                    f"global parallel limit reached: {self.max_parallel_global}"
+                )
             parent_count = sum(item.parent_run_id == parent_run_id for item in active)
             if parent_count >= self.max_parallel_per_parent:
                 raise ValueError(
@@ -131,7 +145,25 @@ class AgentRunRegistry:
         """Return live records; deadline-expired work is intentionally excluded."""
         current = current or now_shanghai()
         with advisory_lock(self.path):
+            self._expire_unlocked(current)
             return tuple(self._active_unlocked(current))
+
+    def _expire_unlocked(self, current: datetime) -> None:
+        for record in self._latest_unlocked().values():
+            if (
+                record.status != "running"
+                or parse_iso8601(record.deadline_at) > current
+            ):
+                continue
+            self._append_unlocked(
+                AgentRunRecord(
+                    **{
+                        **record.to_dict(),
+                        "status": "timed_out",
+                        "exit_reason": "deadline_exceeded",
+                    }
+                )
+            )
 
     def _active_unlocked(self, current: datetime) -> list[AgentRunRecord]:
         return [

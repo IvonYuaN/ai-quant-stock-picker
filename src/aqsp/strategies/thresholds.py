@@ -157,6 +157,15 @@ class RiskThresholds:
     dynamic_stop_recent_low_days: int = 5
     dynamic_stop_trailing_pct: float = 0.03
     dynamic_stop_support_lookback: int = 20
+    # Keywords that flag a pick as high-risk in daily notifications.
+    high_risk_keywords: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        # YAML lists arrive as list; normalize to tuple for frozen dataclass.
+        if not isinstance(self.high_risk_keywords, tuple):
+            object.__setattr__(
+                self, "high_risk_keywords", tuple(self.high_risk_keywords)
+            )
 
 
 @dataclass(frozen=True)

@@ -138,6 +138,36 @@ def test_low_memory_guard_blocks_when_memory_detection_is_unavailable(
     assert "fail-closed" in detail
 
 
+def test_main_blocks_child_walkforward_when_available_memory_is_low(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    import scripts.run_production_walkforward_gate as gate
+
+    status_path = tmp_path / "walkforward_production_status.json"
+    monkeypatch.setattr(gate, "_available_memory_mb", lambda: 512)
+    monkeypatch.setattr(gate, "_total_memory_gib", lambda: 8.0)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_production_walkforward_gate.py",
+            "--status-path",
+            str(status_path),
+            "--min-free-memory-mb",
+            "768",
+        ],
+    )
+
+    assert gate.main() == 2
+    output = capsys.readouterr().out
+    payload = json.loads(status_path.read_text(encoding="utf-8"))
+
+    assert "server free memory 512MB < required 768MB" in output
+    assert payload["status"] == "blocked_resources"
+
+
 def test_total_memory_uses_sysconf_when_proc_meminfo_is_missing(monkeypatch) -> None:
     import scripts.run_production_walkforward_gate as gate
 

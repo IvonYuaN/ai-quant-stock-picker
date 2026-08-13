@@ -17,6 +17,28 @@ def test_cache_init(tmp_path):
     assert cache.db_path.exists()
 
 
+def test_cache_init_removes_redundant_ohlcv_indexes(tmp_path):
+    cache_path = tmp_path / "test_cache.db"
+    with sqlite3.connect(cache_path) as conn:
+        conn.execute(
+            "CREATE TABLE ohlcv ("
+            "symbol TEXT, date TEXT, price_mode TEXT, workload TEXT, "
+            "PRIMARY KEY (symbol, date, price_mode, workload))"
+        )
+        conn.execute("CREATE INDEX idx_ohlcv_symbol_date ON ohlcv(symbol, date)")
+        conn.execute(
+            "CREATE UNIQUE INDEX idx_ohlcv_symbol_date_price_mode_workload "
+            "ON ohlcv(symbol, date, price_mode, workload)"
+        )
+
+    DataCache(db_path=cache_path)
+
+    with sqlite3.connect(cache_path) as conn:
+        names = {row[1] for row in conn.execute("PRAGMA index_list(ohlcv)")}
+    assert "idx_ohlcv_symbol_date" not in names
+    assert "idx_ohlcv_symbol_date_price_mode_workload" not in names
+
+
 def test_cache_set_and_get_ohlcv(tmp_path):
     cache = DataCache(db_path=tmp_path / "test_cache.db")
     df = pd.DataFrame(
@@ -310,16 +332,44 @@ def test_cache_targeted_cleanup_preserves_historical_rows(tmp_path):
     deleted = cache.clear_expired(max_age_hours=0, workloads=("live_short",))
 
     assert deleted == 1
-    assert cache.get_ohlcv(
-        "600000", date(2024, 1, 2), date(2024, 1, 2), source="eastmoney"
-    ) is not None
-    assert cache.get_ohlcv(
-        "600000",
-        date(2024, 1, 2),
-        date(2024, 1, 2),
-        source="eastmoney",
-        workload="live_short",
-    ) is None
+    assert (
+        cache.get_ohlcv(
+            "600000", date(2024, 1, 2), date(2024, 1, 2), source="eastmoney"
+        )
+        is not None
+    )
+    assert (
+        cache.get_ohlcv(
+            "600000",
+            date(2024, 1, 2),
+            date(2024, 1, 2),
+            source="eastmoney",
+            workload="live_short",
+        )
+        is None
+    )
+
+
+def test_cache_clear_expired_reads_max_age_from_env(monkeypatch, tmp_path):
+    """clear_expired 不传 max_age_hours 时从 AQSP_CACHE_MAX_AGE_HOURS 读取。"""
+    monkeypatch.setenv("AQSP_CACHE_MAX_AGE_HOURS", "0")
+    cache = DataCache(db_path=tmp_path / "test_env_cache.db")
+    df = pd.DataFrame(
+        {
+            "date": ["2026-05-27"],
+            "open": [10.0],
+            "high": [10.5],
+            "low": [9.9],
+            "close": [10.2],
+            "volume": [1000],
+            "amount": [10000],
+        }
+    )
+    cache.set_ohlcv("600000", df, source="test")
+    # env=0 → 回退 168 → 刚写入的数据不删除
+    assert cache.clear_expired() == 0
+    # 显式传 0 不走 env → 删除全部
+    assert cache.clear_expired(max_age_hours=0) >= 1
 
 
 def test_adjustment_apply_qfq():

@@ -36,6 +36,7 @@ from aqsp.presentation import (
 )
 from aqsp.strategies.closing_premium import PremiumSignal
 from aqsp.strategies.morning_breakout import BreakoutSignal
+from aqsp.strategies.thresholds import load_thresholds
 
 NotifyMode = Literal["summary", "full", "fanout"]
 
@@ -590,6 +591,10 @@ def build_daily_run_notification(
                 f"{_debate_adjustment_label(lead.recommended_adjustment)} | {consensus}"
             )
 
+    high_risk_lines = _high_risk_alert_lines(tradable, candidates)
+    if high_risk_lines:
+        lines.extend(["", *high_risk_lines])
+
     risk_lines = _daily_risk_summary_lines(
         tradable=tradable,
         candidates=candidates,
@@ -803,6 +808,50 @@ def _daily_primary_blocker_line(
         if blocker:
             return f"{format_symbol_name(pick.symbol, pick.name)}：{blocker}"
     return ""
+
+
+def _high_risk_alert_lines(
+    tradable: Sequence[PickResult],
+    candidates: Sequence[PickResult],
+    *,
+    keywords: tuple[str, ...] | None = None,
+) -> list[str]:
+    """Build a high-risk alert block for picks matching configured risk keywords.
+
+    Keywords are loaded from ``thresholds.yaml`` (risk.high_risk_keywords)
+    and matched case-insensitively as substrings against each pick's risk
+    strings.  Returns an empty list when no picks match.
+    """
+    if keywords is None:
+        keywords = load_thresholds().risk.high_risk_keywords
+    if not keywords:
+        return []
+
+    lower_keywords = tuple(kw.lower() for kw in keywords)
+
+    def _matching_risks(pick: PickResult) -> list[str]:
+        return [
+            risk
+            for risk in pick.risks
+            if any(kw in risk.lower() for kw in lower_keywords)
+        ]
+
+    high_risk: list[tuple[PickResult, list[str]]] = []
+    for pick in (*tradable, *candidates):
+        matching = _matching_risks(pick)
+        if matching:
+            high_risk.append((pick, matching))
+
+    if not high_risk:
+        return []
+
+    lines = ["## 高风险提示", ""]
+    for pick, matching in high_risk[:3]:
+        name = format_symbol_name(pick.symbol, pick.name)
+        lines.append(f"- **{name}**: {'; '.join(matching[:2])}")
+    if len(high_risk) > 3:
+        lines.append(f"- ...及其他 {len(high_risk) - 3} 只")
+    return lines
 
 
 def _daily_risk_summary_lines(

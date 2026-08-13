@@ -21,6 +21,22 @@ def test_cursor_rotates_batches_and_commits_only_after_success(tmp_path) -> None
     assert retry.symbols == second.symbols
 
 
+def test_cursor_skips_batch_after_bounded_failures(tmp_path) -> None:
+    cursor = IntradayUniverseCursor(tmp_path / "cursor.json")
+    symbols = ["000001", "000002", "000003", "000004"]
+    batch = cursor.select(symbols, trade_date=date(2026, 7, 20), batch_size=2)
+
+    assert cursor.fail_current("source unavailable", max_retries=1) is False
+    retry = cursor.select(symbols, trade_date=date(2026, 7, 20), batch_size=2)
+    assert retry.symbols == batch.symbols
+    assert cursor.fail_current("source unavailable", max_retries=1) is True
+
+    next_batch = cursor.select(symbols, trade_date=date(2026, 7, 20), batch_size=2)
+    assert next_batch.symbols == ("000003", "000004")
+    state = (tmp_path / "cursor.json").read_text(encoding="utf-8")
+    assert '"last_skipped_batch_id": "2026-07-20:1:0"' in state
+
+
 def test_cursor_resets_when_trade_date_or_universe_changes(tmp_path) -> None:
     cursor = IntradayUniverseCursor(tmp_path / "cursor.json")
     first = cursor.select(

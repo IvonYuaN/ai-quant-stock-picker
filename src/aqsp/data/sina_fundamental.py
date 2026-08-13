@@ -4,7 +4,8 @@ import json
 from typing import Any
 
 import pandas as pd
-import requests
+
+from aqsp.core.http import requests_session_without_implicit_proxy
 
 
 class SinaFundamentalSource:
@@ -31,6 +32,7 @@ class SinaFundamentalSource:
         url = "http://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeData"
         all_data: dict[str, dict[str, Any]] = {}
         page = 1
+        session = requests_session_without_implicit_proxy()
         while True:
             params = {
                 "page": page,
@@ -42,7 +44,7 @@ class SinaFundamentalSource:
                 "_s_r_a": "init",
             }
             try:
-                r = requests.get(url, params=params, timeout=30)
+                r = session.get(url, params=params, timeout=30)
                 data = json.loads(r.text)
                 if not data:
                     break

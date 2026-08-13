@@ -12132,7 +12132,7 @@ switches:
         lines[1]
         == "运行开关: 守卫 关(仅本地实验) / 回退链 开 / 国内情报 关 / 海外情报 关。"
     )
-    assert "讨论层: 已启用 6 个角色" in lines[2]
+    assert "讨论层: 已启用 8 个角色" in lines[2]
     assert "结论仅供复核，不改写候选排序。" in lines[2]
     assert lines[3] == "轨道裁剪: 聚焦 跨市传导、风控 / 停用 北向资金。"
     assert "优化层: 当前关闭自动优化提案" in lines[4]
@@ -12847,7 +12847,7 @@ def test_dashboard_debate_lane_status_context_summarizes_active_and_missing_trac
 
     title, lines, tone = _debate_lane_status_context(_TaskView(), debates)
 
-    assert title == "7 轨道待命 / 2 已出场"
+    assert title == "9 轨道待命 / 2 已出场"
     assert tone == "pressure"
     assert lines[1] == "今日讨论: 1 场 / 覆盖 1 个标的 / 已出场 2 个角色"
     assert lines[2] == "实际出场: 技术多头、跨市传导"
@@ -12866,7 +12866,7 @@ def test_dashboard_debate_lane_status_context_surfaces_track_tuning_before_activ
 
     title, lines, tone = _debate_lane_status_context(_TaskView(), ())
 
-    assert title == "6 轨道待命 / 0 已出场"
+    assert title == "8 轨道待命 / 0 已出场"
     assert tone == "archive"
     assert lines[0].startswith("默认轨道: 跨市传导、风控、技术多头")
     assert lines[1] == "轨道裁剪: 聚焦 跨市传导、风控 / 停用 北向资金。"
@@ -17152,3 +17152,50 @@ def test_dashboard_snapshot_without_stale_after_is_expired() -> None:
 
     assert dashboard._snapshot_is_expired(snapshot) is True
     assert dashboard._snapshot_is_expired(snapshot, historical=True) is False
+
+
+def test_glossary_expander_renders_all_categories() -> None:
+    """Glossary expander should render all BEGINNER_GLOSSARY categories."""
+    import aqsp.web.dashboard as dashboard
+    from aqsp.web.dashboard_beginner_compat import BEGINNER_GLOSSARY
+
+    markdown_blocks: list[str] = []
+
+    class _StubExpander:
+        def __init__(self, label: str, expanded: bool) -> None:
+            self.label = label
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    original_expander = dashboard.st.expander
+    original_markdown = dashboard.st.markdown
+
+    dashboard.st.expander = _StubExpander
+    dashboard.st.markdown = lambda text, **kw: markdown_blocks.append(text)
+
+    try:
+        dashboard._render_glossary_expander()
+    finally:
+        dashboard.st.expander = original_expander
+        dashboard.st.markdown = original_markdown
+
+    rendered = "\n".join(markdown_blocks)
+    for category in BEGINNER_GLOSSARY:
+        assert f"**{category}**" in rendered
+    for terms in BEGINNER_GLOSSARY.values():
+        for term, explanation in terms:
+            assert f"**{term}**" in rendered
+            assert explanation in rendered
+
+
+def test_glossary_expander_imported_in_dashboard_module() -> None:
+    """dashboard module must import BEGINNER_GLOSSARY from compat module."""
+    import aqsp.web.dashboard as dashboard
+
+    assert hasattr(dashboard, "BEGINNER_GLOSSARY")
+    assert hasattr(dashboard, "_render_glossary_expander")
+    assert callable(dashboard._render_glossary_expander)

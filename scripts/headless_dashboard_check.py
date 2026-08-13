@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from collections.abc import Iterator
 from pathlib import Path
 
+from aqsp.core.http import urlopen_no_macos_proxy
 from aqsp.web.entrypoint import (
     LEGACY_HEALTH_PATH,
     classify_entry_text,
@@ -85,7 +86,7 @@ def fetch_text(url: str, *, timeout_seconds: float) -> str:
         url,
         headers={"User-Agent": "aqsp-headless-check/1.0"},
     )
-    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+    with urlopen_no_macos_proxy(request, timeout=timeout_seconds) as response:
         status = getattr(response, "status", 200)
         if status < 200 or status >= 400:
             raise RuntimeError(f"{url} returned HTTP {status}")

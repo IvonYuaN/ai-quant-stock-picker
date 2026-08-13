@@ -19,6 +19,9 @@ def test_update_sqlite_daily_cli_exposes_historical_backfill_flags() -> None:
     assert "--force-from-start" in text
     assert "--price-mode" in text
     assert "--query-timeout-seconds" in text
+    assert "--offset" in text
+    assert "--max-runtime-seconds" in text
+    assert "--allow-partial-target-coverage" in text
     assert "fill_history_gaps=args.fill_history_gaps" in text
     assert "force_from_start=args.force_from_start" in text
     assert "price_mode=args.price_mode" in text
@@ -137,6 +140,10 @@ def test_update_sqlite_daily_counts_target_day_coverage(
             "INSERT OR REPLACE INTO stocks(ts_code, name) VALUES(?, ?)",
             ("000001.SZ", "SZ Bank"),
         )
+        conn.execute(
+            "INSERT OR REPLACE INTO daily_qfq(ts_code, trade_date, close) VALUES(?, ?, ?)",
+            ("688001.SH", "20260618", 1.0),
+        )
         conn.commit()
         return ["000001.SZ", "600000.SH"]
 
@@ -164,6 +171,131 @@ def test_update_sqlite_daily_counts_target_day_coverage(
     assert summary.target_day_symbol_count == 1
     assert summary.total_symbols == 2
     assert summary.raw_max_trade_date == date(2026, 6, 18)
+    assert summary.coverage_error is None
+
+
+def test_update_sqlite_daily_counts_only_requested_symbols_for_coverage(
+    monkeypatch, tmp_path: Path
+) -> None:
+    class FakeBaostock:
+        def login(self):
+            return type("Login", (), {"error_code": "0", "error_msg": ""})()
+
+        def logout(self) -> None:
+            return None
+
+    db = tmp_path / "astocks_raw.db"
+    monkeypatch.setattr(update_sqlite_daily, "_load_baostock", FakeBaostock)
+    monkeypatch.setattr(
+        update_sqlite_daily,
+        "_sync_stock_list_compat",
+        lambda conn, _bs, preserve_existing=True: ["600000.SH"],
+    )
+    monkeypatch.setattr(
+        update_sqlite_daily, "_query_history_rows", lambda **_kwargs: ("0", [])
+    )
+    with sqlite3.connect(db) as conn:
+        update_sqlite_daily.ensure_schema(conn)
+        conn.execute(
+            "INSERT INTO daily_qfq(ts_code, trade_date, close) VALUES(?, ?, ?)",
+            ("688001.SH", "20260618", 1.0),
+        )
+
+    summary = update_sqlite_daily.update_sqlite_daily(
+        db,
+        target_day=date(2026, 6, 18),
+        sleep_seconds=0.0,
+        limit=0,
+        price_mode="raw",
+        require_target_coverage=False,
+    )
+
+    assert summary.target_day_symbol_count == 0
+    assert summary.empty_response_symbols == 1
+
+
+def test_update_sqlite_daily_skips_stock_list_sync_for_explicit_batch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    class FakeBaostock:
+        def login(self):
+            return type("Login", (), {"error_code": "0", "error_msg": ""})()
+
+        def logout(self) -> None:
+            return None
+
+    db = tmp_path / "astocks_raw.db"
+    monkeypatch.setattr(update_sqlite_daily, "_load_baostock", FakeBaostock)
+    monkeypatch.setattr(
+        update_sqlite_daily,
+        "_sync_stock_list_compat",
+        lambda *_args, **_kwargs: pytest.fail(
+            "explicit batch must not sync stock list"
+        ),
+    )
+    seen: list[str] = []
+
+    def fake_query(**kwargs):
+        seen.append(kwargs["ts_code"])
+        return "0", []
+
+    monkeypatch.setattr(update_sqlite_daily, "_query_history_rows", fake_query)
+
+    summary = update_sqlite_daily.update_sqlite_daily(
+        db,
+        target_day=date(2026, 6, 18),
+        sleep_seconds=0.0,
+        limit=0,
+        symbols=("600000", "000001.SZ", "300750"),
+        price_mode="raw",
+        require_target_coverage=False,
+    )
+
+    assert seen == ["000001.SZ", "300750.SZ", "600000.SH"]
+    assert summary.total_symbols == 3
+
+
+def test_update_sqlite_daily_uses_offset_and_defers_coverage_for_bounded_batch(
+    monkeypatch, tmp_path: Path
+) -> None:
+    class FakeBaostock:
+        def login(self):
+            return type("Login", (), {"error_code": "0", "error_msg": ""})()
+
+        def logout(self) -> None:
+            return None
+
+    db = tmp_path / "astocks_raw.db"
+    monkeypatch.setattr(update_sqlite_daily, "_load_baostock", FakeBaostock)
+    monkeypatch.setattr(
+        update_sqlite_daily,
+        "_sync_stock_list_compat",
+        lambda conn, _bs, preserve_existing=True: [
+            "000001.SZ",
+            "000002.SZ",
+            "600000.SH",
+        ],
+    )
+    queried: list[str] = []
+    monkeypatch.setattr(
+        update_sqlite_daily,
+        "_query_history_rows",
+        lambda **kwargs: (queried.append(kwargs["ts_code"]) or "0", []),
+    )
+
+    summary = update_sqlite_daily.update_sqlite_daily(
+        db,
+        target_day=date(2026, 6, 18),
+        sleep_seconds=0.0,
+        limit=1,
+        offset=1,
+        price_mode="raw",
+        require_target_coverage=False,
+    )
+
+    assert queried == ["000002.SZ"]
+    assert summary.total_symbols == 1
+    assert summary.processed_symbols == 1
     assert summary.coverage_error is None
 
 
@@ -348,6 +480,29 @@ def test_update_sqlite_daily_marks_symbol_failed_after_retry_exhausted(
     assert fake_bs.logout_calls == 3
 
 
+def test_query_retry_stops_when_shared_deadline_is_exhausted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(update_sqlite_daily.time, "monotonic", lambda: 10.0)
+    monkeypatch.setattr(
+        update_sqlite_daily,
+        "_query_history_rows",
+        lambda **_kwargs: pytest.fail("query must not start after deadline"),
+    )
+
+    status, rows = update_sqlite_daily._query_history_rows_with_retry(
+        bs=object(),
+        ts_code="600000.SH",
+        fetch_start_day=date(2026, 6, 18),
+        target_day=date(2026, 6, 18),
+        price_mode="raw",
+        timeout_seconds=4.0,
+        deadline=10.0,
+    )
+
+    assert (status, rows) == ("timeout", [])
+
+
 def test_sync_stock_list_preserves_existing_historical_symbols_by_default(
     tmp_path: Path,
 ) -> None:
@@ -465,5 +620,38 @@ def test_run_with_timeout_raises_for_stalled_query() -> None:
 
 
 def test_adjustflag_for_price_mode_keeps_raw_unadjusted() -> None:
-    assert update_sqlite_daily._adjustflag_for_price_mode("raw") == "1"
+    assert update_sqlite_daily._adjustflag_for_price_mode("raw") == "3"
     assert update_sqlite_daily._adjustflag_for_price_mode("qfq") == "2"
+
+
+def test_update_sqlite_daily_rejects_existing_invalid_price_basis(
+    tmp_path: Path, monkeypatch
+) -> None:
+    db = tmp_path / "astocks_raw.db"
+    with sqlite3.connect(db) as conn:
+        update_sqlite_daily.ensure_schema(conn)
+        conn.execute("insert into stocks values ('000001.SZ', '平安银行')")
+        for index in range(5):
+            conn.execute(
+                """
+                insert into daily_qfq(
+                    ts_code, trade_date, open, high, low, close_qfq,
+                    volume, amount, close
+                ) values (?, ?, 1450, 1460, 1440, 1452, 1000, 10000, 1452)
+                """,
+                ("000001.SZ", f"2026010{index + 2}"),
+            )
+    monkeypatch.setattr(
+        update_sqlite_daily,
+        "_load_baostock",
+        lambda: (_ for _ in ()).throw(AssertionError("network must not start")),
+    )
+
+    with pytest.raises(RuntimeError, match="price basis is invalid"):
+        update_sqlite_daily.update_sqlite_daily(
+            db,
+            target_day=date(2026, 1, 8),
+            sleep_seconds=0,
+            limit=1,
+            price_mode="raw",
+        )

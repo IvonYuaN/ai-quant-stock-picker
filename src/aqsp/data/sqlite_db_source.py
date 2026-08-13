@@ -24,6 +24,10 @@ _ALLOW_QFQ_SQLITE_SOURCE_ENV = "AQSP_ALLOW_QFQ_SQLITE_SOURCE"
 _PREFILTERED_SYMBOLS_ENV = "AQSP_SQLITE_PREFILTERED_SYMBOLS"
 _LIQUID_SYMBOL_MIN_HISTORY_ROWS = 250
 _LIQUID_SYMBOL_LOOKBACK_CALENDAR_DAYS = 500
+_PRICE_BASIS_SAMPLE_LIMIT = 200
+_PRICE_BASIS_MIN_SAMPLES = 5
+_PRICE_BASIS_MAX_MISMATCH_RATIO = 0.5
+_PRICE_BASIS_MAX_CLOSE_VWAP_DEVIATION = 0.35
 
 
 def _chunks(items: list[str], size: int) -> list[list[str]]:
@@ -193,6 +197,7 @@ class SqliteDbSource(DataSource):
     def price_mode(self) -> str:
         columns: set[str] = set()
         samples: list[tuple[object, ...]] = []
+        price_basis_samples: list[tuple[object, ...]] = []
         try:
             with sqlite3.connect(self.db_path, timeout=_SQLITE_TIMEOUT_SECONDS) as conn:
                 columns = {
@@ -208,9 +213,22 @@ class SqliteDbSource(DataSource):
                         LIMIT 50
                         """
                     ).fetchall()
+                    price_basis_samples = conn.execute(
+                        """
+                        SELECT close, volume, amount
+                        FROM daily_qfq
+                        WHERE close > 0 AND volume > 0 AND amount > 0
+                        ORDER BY trade_date DESC
+                        LIMIT ?
+                        """,
+                        (_PRICE_BASIS_SAMPLE_LIMIT,),
+                    ).fetchall()
         except sqlite3.Error:
             columns = set()
             samples = []
+
+        if _price_basis_is_inconsistent(price_basis_samples):
+            return "invalid"
 
         if {"open", "high", "low", "close"} <= columns:
             for sample in samples:
@@ -501,6 +519,11 @@ class SqliteDbSource(DataSource):
 
     def _assert_price_mode_allowed(self, adjust: str) -> None:
         mode = self.price_mode()
+        if mode == "invalid":
+            raise DataError(
+                "sqlite_db 价格口径校验失败：OHLC 与成交额/成交量隐含价格不一致，"
+                "疑似把复权价格写入 raw 列；拒绝用于候选、指标或回测"
+            )
         if adjust == "" and mode == "qfq":
             allowed = os.getenv(_ALLOW_QFQ_SQLITE_SOURCE_ENV, "").strip().lower()
             if allowed not in {"1", "true", "yes", "on"}:
@@ -623,3 +646,28 @@ class SqliteDbSource(DataSource):
         require_non_empty_fetch_result(self.name, "指数", index_codes, out)
 
         return out
+
+
+def _price_basis_is_inconsistent(samples: list[tuple[object, ...]]) -> bool:
+    """Detect adjusted OHLC stored beside unadjusted amount and volume."""
+    usable = 0
+    mismatches = 0
+    for close_raw, volume_raw, amount_raw in samples:
+        try:
+            close = float(close_raw)
+            volume = float(volume_raw)
+            amount = float(amount_raw)
+        except (TypeError, ValueError):
+            continue
+        if close <= 0 or volume <= 0 or amount <= 0:
+            continue
+        implied_vwap = amount / volume
+        if implied_vwap <= 0:
+            continue
+        usable += 1
+        if abs(close / implied_vwap - 1.0) > _PRICE_BASIS_MAX_CLOSE_VWAP_DEVIATION:
+            mismatches += 1
+    return (
+        usable >= _PRICE_BASIS_MIN_SAMPLES
+        and mismatches / usable > _PRICE_BASIS_MAX_MISMATCH_RATIO
+    )

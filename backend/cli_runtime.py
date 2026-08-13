@@ -13,6 +13,7 @@ import os
 import queue
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -58,6 +59,13 @@ _MAX_ARG_BYTES = 110_000  # 位置参数投递的提示词字节上限
 
 class CliUnavailable(RuntimeError):
     """本机未检测到对应 CLI（未安装 / 不在 PATH）。"""
+
+
+def _subprocess_launch_kwargs(tmpdir: str, env: dict[str, str]) -> dict[str, object]:
+    """Keep local CLI launch on the macOS posix_spawn path when possible."""
+    if sys.platform == "darwin":
+        return {"env": env, "close_fds": False}
+    return {"cwd": tmpdir, "env": env}
 
 
 def _find_bin(name: str) -> str | None:
@@ -121,8 +129,7 @@ def run_cli(kind: str, system_prompt: str, user_prompt: str) -> str:
                 input=stdin_payload,
                 capture_output=True,
                 text=True,
-                cwd=tmpdir,
-                env=env,
+                **_subprocess_launch_kwargs(tmpdir, env),
                 timeout=_CLI_TIMEOUT_S,
             )
         except subprocess.TimeoutExpired as e:
@@ -167,7 +174,8 @@ def run_cli_stream(kind: str, system_prompt: str, user_prompt: str):
 
         proc = subprocess.Popen(
             [bin_path, *args], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL, cwd=tmpdir, env=env, text=True, bufsize=1,
+            stderr=subprocess.DEVNULL, text=True, bufsize=1,
+            **_subprocess_launch_kwargs(tmpdir, env),
         )
         if stdin_payload is not None:
             try:

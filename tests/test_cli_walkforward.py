@@ -23,11 +23,22 @@ def _isolate_walkforward_gate(monkeypatch, tmp_path):
         "AQSP_RUNTIME_SYMBOL_CACHE", str(tmp_path / "missing-cache.json")
     )
     monkeypatch.setattr("aqsp.cli.today_shanghai", lambda: TEST_TRADE_DAY)
-    monkeypatch.setattr("aqsp.universe.runtime.today_shanghai", lambda: TEST_TRADE_DAY)
     monkeypatch.setattr(
-        "aqsp.data.intraday.now_shanghai",
-        lambda: datetime.combine(TEST_TRADE_DAY, datetime.min.time(), tzinfo=timezone.utc),
+        "aqsp.cli_walkforward_helpers.today_shanghai", lambda: TEST_TRADE_DAY
     )
+    monkeypatch.setattr(
+        "aqsp.cli_intraday_helpers.today_shanghai", lambda: TEST_TRADE_DAY
+    )
+    monkeypatch.setattr("aqsp.universe.runtime.today_shanghai", lambda: TEST_TRADE_DAY)
+
+    def _now_mock():
+        return datetime.combine(
+            TEST_TRADE_DAY, datetime.min.time(), tzinfo=timezone.utc
+        )
+
+    monkeypatch.setattr("aqsp.data.intraday.now_shanghai", _now_mock)
+    monkeypatch.setattr("aqsp.cli_intraday_helpers.now_shanghai", _now_mock)
+    monkeypatch.setattr("aqsp.cli_regime_helpers.now_shanghai", _now_mock)
 
 
 def _make_sample_data(n_days: int = 200) -> pd.DataFrame:
@@ -158,9 +169,10 @@ def test_walkforward_help_handles_percent_text(capsys) -> None:
 def test_format_walkforward_pbo_marks_invalid_placeholder() -> None:
     from aqsp.cli import _format_walkforward_pbo
 
-    assert (
-        _format_walkforward_pbo(0.0, False) == "0.00%（无效占位，需 grid 多变体 CSCV）"
-    )
+    # Invalid (placeholder 0.0 or unverified NaN) must read as "未验证", never as
+    # a clean "0.00%".
+    assert _format_walkforward_pbo(0.0, False).startswith("未验证")
+    assert not _format_walkforward_pbo(float("nan"), False).startswith("nan")
     assert _format_walkforward_pbo(0.24, True) == "24.00%"
 
 
@@ -258,10 +270,10 @@ class TestCLIUpdateThresholdsMetadata:
         yaml_file = tmp_path / "thresholds.yaml"
         yaml_file.write_text(yaml_content, encoding="utf-8")
 
-        import aqsp.cli as cli_mod
+        import aqsp.cli_walkforward_helpers as wf_helpers
 
-        original = cli_mod._find_thresholds_yaml
-        cli_mod._find_thresholds_yaml = lambda: yaml_file
+        original = wf_helpers._find_thresholds_yaml
+        wf_helpers._find_thresholds_yaml = lambda: yaml_file
         try:
             ok = _update_thresholds_metadata("2026-05-28")
             assert ok is True
@@ -269,7 +281,7 @@ class TestCLIUpdateThresholdsMetadata:
             assert 'last_walkforward_run: "2026-05-28"' in result
             assert 'version: "2.0.0"' in result
         finally:
-            cli_mod._find_thresholds_yaml = original
+            wf_helpers._find_thresholds_yaml = original
 
     def test_update_returns_false_when_field_missing(self, tmp_path):
         from aqsp.cli import _update_thresholds_metadata
@@ -278,27 +290,27 @@ class TestCLIUpdateThresholdsMetadata:
         yaml_file = tmp_path / "thresholds.yaml"
         yaml_file.write_text(yaml_content, encoding="utf-8")
 
-        import aqsp.cli as cli_mod
+        import aqsp.cli_walkforward_helpers as wf_helpers
 
-        original = cli_mod._find_thresholds_yaml
-        cli_mod._find_thresholds_yaml = lambda: yaml_file
+        original = wf_helpers._find_thresholds_yaml
+        wf_helpers._find_thresholds_yaml = lambda: yaml_file
         try:
             ok = _update_thresholds_metadata("2026-05-28")
             assert ok is False
         finally:
-            cli_mod._find_thresholds_yaml = original
+            wf_helpers._find_thresholds_yaml = original
 
     def test_update_returns_false_when_file_not_found(self):
         from aqsp.cli import _update_thresholds_metadata
-        import aqsp.cli as cli_mod
+        import aqsp.cli_walkforward_helpers as wf_helpers
 
-        original = cli_mod._find_thresholds_yaml
-        cli_mod._find_thresholds_yaml = lambda: None
+        original = wf_helpers._find_thresholds_yaml
+        wf_helpers._find_thresholds_yaml = lambda: None
         try:
             ok = _update_thresholds_metadata("2026-05-28")
             assert ok is False
         finally:
-            cli_mod._find_thresholds_yaml = original
+            wf_helpers._find_thresholds_yaml = original
 
 
 class TestCLIMinScoreParam:
@@ -498,7 +510,10 @@ class TestWalkforwardPitEnrichment:
                 disclosure_symbol_count=1,
             )
 
-        monkeypatch.setattr("aqsp.cli._get_source", lambda _name: DummyBaostockSource())
+        monkeypatch.setattr(
+            "aqsp.cli_runtime_source_helpers._get_source",
+            lambda _name: DummyBaostockSource(),
+        )
         monkeypatch.setattr(
             "aqsp.data.pit_financial.enrich_ohlcv_with_pit_financials",
             mock_enrich,
@@ -627,7 +642,7 @@ class TestCLIDataSources:
         def boom(*args, **kwargs):
             raise RuntimeError("proxy died")
 
-        monkeypatch.setattr(cli_mod, "_get_source", boom)
+        monkeypatch.setattr("aqsp.cli_runtime_source_helpers._get_source", boom)
 
         try:
             cli_mod._fetch_frames_for_cli("akshare", ["600519"], benchmark_symbol=None)
@@ -653,13 +668,11 @@ class TestCLIDataSources:
             name = "akshare"
 
         monkeypatch.setattr(
-            cli_mod,
-            "_get_source",
+            "aqsp.cli_runtime_source_helpers._get_source",
             lambda _source_name: DummySource(),
         )
         monkeypatch.setattr(
-            cli_mod,
-            "fetch_with_source",
+            "aqsp.cli_runtime_source_helpers.fetch_with_source",
             lambda *args, **kwargs: {"600519": sample},
         )
 
@@ -677,7 +690,7 @@ class TestCLIDataSources:
         def fail(*args, **kwargs):
             raise DataError("upstream failed")
 
-        monkeypatch.setattr(cli_mod, "fetch_with_source", fail)
+        monkeypatch.setattr("aqsp.cli_runtime_source_helpers.fetch_with_source", fail)
         try:
             cli_mod._fetch_frames_for_cli_with_metadata(
                 "akshare",
@@ -710,10 +723,11 @@ class TestCLIDataSources:
             seen["cache_path"] = str(cache.db_path) if cache is not None else None
             return DummySource()
 
-        monkeypatch.setattr(cli_mod, "_get_source", fake_get_source)
         monkeypatch.setattr(
-            cli_mod,
-            "fetch_with_source",
+            "aqsp.cli_runtime_source_helpers._get_source", fake_get_source
+        )
+        monkeypatch.setattr(
+            "aqsp.cli_runtime_source_helpers.fetch_with_source",
             lambda *args, **kwargs: {"600519": sample},
         )
 
@@ -909,7 +923,6 @@ class TestCLIDataSources:
     def test_resolve_run_symbols_uses_source_universe_when_no_symbols(
         self, monkeypatch
     ):
-        import aqsp.cli as cli_mod
         from aqsp.cli import _resolve_run_symbols
 
         class SourceWithUniverse:
@@ -918,7 +931,10 @@ class TestCLIDataSources:
             def get_available_symbols(self):
                 return ["600000", "000001"]
 
-        monkeypatch.setattr(cli_mod, "_get_source", lambda _name: SourceWithUniverse())
+        monkeypatch.setattr(
+            "aqsp.cli_runtime_source_helpers._get_source",
+            lambda _name: SourceWithUniverse(),
+        )
 
         assert _resolve_run_symbols(
             "auto",
@@ -928,13 +944,14 @@ class TestCLIDataSources:
         ) == ["600000", "000001"]
 
     def test_resolve_run_symbols_prefers_explicit_symbols(self, monkeypatch):
-        import aqsp.cli as cli_mod
         from aqsp.cli import _resolve_run_symbols
 
         def fail_if_called(_name):
             raise AssertionError("source should not be constructed")
 
-        monkeypatch.setattr(cli_mod, "_get_source", fail_if_called)
+        monkeypatch.setattr(
+            "aqsp.cli_runtime_source_helpers._get_source", fail_if_called
+        )
 
         assert _resolve_run_symbols(
             "auto",
@@ -955,7 +972,7 @@ class TestCLIDataSources:
         def fail_build(_name):
             raise DataError("tdx vipdoc missing")
 
-        monkeypatch.setattr("aqsp.cli._get_source", fail_build)
+        monkeypatch.setattr("aqsp.cli_runtime_source_helpers._get_source", fail_build)
 
         assert _resolve_run_symbols(
             "auto",
@@ -977,7 +994,7 @@ class TestCLIDataSources:
                 raise DataError("all sources failed")
 
         monkeypatch.setattr(
-            "aqsp.cli._get_source",
+            "aqsp.cli_runtime_source_helpers._get_source",
             lambda _name: SourceWithBrokenUniverse(),
         )
 
@@ -1099,7 +1116,7 @@ class TestCLIHs300Symbols:
         from aqsp.cli import _get_hs300_symbols
 
         monkeypatch.setattr(
-            "aqsp.cli.load_optional_index_constituents",
+            "aqsp.cli_walkforward_helpers.load_optional_index_constituents",
             lambda index_code, as_of: ["300750", "600519"],
         )
 
@@ -1652,7 +1669,7 @@ class TestCLIPoolSelection:
             lambda pool_name: DummyPool(),
         )
         monkeypatch.setattr(
-            "aqsp.cli._fetch_frames_for_cli_with_metadata",
+            "aqsp.cli_intraday_helpers._fetch_frames_for_cli_with_metadata",
             mock_fetch_frames,
         )
         monkeypatch.setattr("aqsp.cli.screen_universe", lambda *_args, **_kwargs: [])
@@ -1909,6 +1926,101 @@ def test_walkforward_sqlite_main_passes_cache_path_to_sqlite_source(
     assert seen == {"cache_path": str(cache_path)}
 
 
+def test_walkforward_gate_metadata_includes_valid_backtest_assumptions() -> None:
+    """_walkforward_gate_metadata 必须产出能通过 audit_backtest_assumptions 的声明。"""
+    from aqsp.backtest.audit import audit_backtest_assumptions
+    from aqsp.cli import _walkforward_gate_metadata
+
+    args = SimpleNamespace(
+        source="akshare",
+        window_mode="rolling_recent",
+        skip_pit_financials=True,
+        grid_cscv=False,
+        streaming=False,
+        end="2026-06-30",
+        purge_days=5,
+    )
+    metadata = _walkforward_gate_metadata(
+        args,
+        effective_symbols=4000,
+        fee_bps=3.0,
+        slippage_bps=5.0,
+        purge_days=5,
+    )
+    assumptions = metadata.get("backtest_assumptions")
+    assert isinstance(assumptions, dict)
+    audit = audit_backtest_assumptions(assumptions)
+    assert audit.ok is True, f"assumption audit blockers: {audit.blockers}"
+    assert assumptions["uses_raw_prices"] is True
+    assert assumptions["has_purge_window"] is True
+    assert assumptions["excludes_not_executable"] is True
+    assert assumptions["future_data_used"] is False
+
+
+def test_walkforward_gate_metadata_flags_zero_fee_as_incomplete() -> None:
+    """fee_bps=0 时 includes_transaction_costs=False,audit 应失败。"""
+    from aqsp.backtest.audit import audit_backtest_assumptions
+    from aqsp.cli import _walkforward_gate_metadata
+
+    args = SimpleNamespace(
+        source="akshare",
+        window_mode="rolling_recent",
+        skip_pit_financials=True,
+        grid_cscv=False,
+        streaming=False,
+        end="2026-06-30",
+        purge_days=5,
+    )
+    metadata = _walkforward_gate_metadata(
+        args,
+        fee_bps=0.0,
+        slippage_bps=5.0,
+        purge_days=5,
+    )
+    assumptions = metadata["backtest_assumptions"]
+    assert assumptions["includes_transaction_costs"] is False
+    audit = audit_backtest_assumptions(assumptions)
+    assert audit.ok is False
+    assert any("includes_transaction_costs" in b for b in audit.blockers)
+
+
+def test_walkforward_gate_metadata_marks_unknown_price_mode_as_not_raw(
+    monkeypatch,
+) -> None:
+    """sqlite_db 源但 price_mode=unknown 时,uses_raw_prices=False,audit 应失败。"""
+    from aqsp.backtest.audit import audit_backtest_assumptions
+    from aqsp.cli import _walkforward_gate_metadata
+
+    monkeypatch.setattr(
+        "aqsp.cli_walkforward_helpers._resolve_sqlite_db_path", lambda: "/fake/path.db"
+    )
+    monkeypatch.setattr(
+        "aqsp.cli_walkforward_helpers.sqlite_price_mode", lambda _p: "unknown"
+    )
+
+    args = SimpleNamespace(
+        source="sqlite_db",
+        window_mode="rolling_recent",
+        skip_pit_financials=True,
+        grid_cscv=False,
+        streaming=False,
+        end="2026-06-30",
+        purge_days=5,
+    )
+    metadata = _walkforward_gate_metadata(
+        args,
+        fee_bps=3.0,
+        slippage_bps=5.0,
+        purge_days=5,
+    )
+    assumptions = metadata["backtest_assumptions"]
+    assert assumptions["uses_raw_prices"] is False
+    assert assumptions["price_mode"] == "unknown"
+    audit = audit_backtest_assumptions(assumptions)
+    assert audit.ok is False
+    assert any("uses_raw_prices" in b for b in audit.blockers)
+
+
 def test_walkforward_defaults_to_recent_window_dates(monkeypatch, tmp_path) -> None:
     import aqsp.cli as cli_mod
 
@@ -1966,6 +2078,9 @@ def test_walkforward_defaults_to_recent_window_dates(monkeypatch, tmp_path) -> N
             )
 
     monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 20))
+    monkeypatch.setattr(
+        "aqsp.cli_walkforward_helpers.today_shanghai", lambda: date(2026, 6, 20)
+    )
     monkeypatch.setattr(
         cli_mod,
         "_build_sqlite_db_source",
@@ -2138,6 +2253,9 @@ def test_walkforward_grid_cscv_writes_valid_pbo_gate(monkeypatch, tmp_path):
     monkeypatch.setattr(cli_mod, "WALKFORWARD_GATE_PATH", str(default_gate_path))
     monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 20))
     monkeypatch.setattr(
+        "aqsp.cli_walkforward_helpers.today_shanghai", lambda: date(2026, 6, 20)
+    )
+    monkeypatch.setattr(
         cli_mod,
         "_get_hs300_symbols",
         lambda as_of: ["600519"],
@@ -2220,6 +2338,7 @@ def test_walkforward_grid_cscv_writes_valid_pbo_gate(monkeypatch, tmp_path):
                 ),
                 deflated_sharpe=0.0,
                 pbo=0.0,
+                pbo_verified=False,
                 robustness_score=0.8,
                 parameter_std=0.1,
                 regime_winrates={},
@@ -2284,6 +2403,10 @@ def test_walkforward_grid_cscv_writes_valid_pbo_gate(monkeypatch, tmp_path):
     )
     assert payload["pbo"] > 0.0
     assert payload["pbo_valid"] is True
+    # grid 模式 PBO 来自真 CSCV（≥2 变体），必须标记为已验证，
+    # 不能用单策略 result.pbo_verified(恒 False) 把它降级成"未验证"。
+    assert payload["pbo_verified"] is True
+    assert payload["pbo_configs"] == 5
     assert payload["n_periods"] == 10
     assert payload["source"] == "sqlite_db"
     assert "price_mode" in payload
@@ -2361,7 +2484,7 @@ def test_walkforward_grid_dsr_uses_period_level_observation_count(
         lambda thresholds, variant: thresholds,
     )
     monkeypatch.setattr(
-        "aqsp.cli._execution_cost_bps_from_thresholds",
+        "aqsp.cli_ledger_helpers._execution_cost_bps_from_thresholds",
         lambda thresholds: (3.0, 20.0),
     )
     monkeypatch.setattr(

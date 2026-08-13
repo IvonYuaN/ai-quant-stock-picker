@@ -125,10 +125,13 @@ def test_build_source_refs_skips_missing_optional_adapter(monkeypatch) -> None:
     assert [item.name for item in refs] == ["tencent"]
 
 
-def test_build_data_source_online_first_prioritizes_concurrent_tencent_daily_source() -> (
-    None
-):
+def test_build_data_source_online_first_prioritizes_concurrent_tencent_daily_source(
+    monkeypatch,
+) -> None:
     from aqsp.data import source_factory as sf
+
+    # Isolate from real source_health.json so the input order is preserved.
+    monkeypatch.setattr(sf, "prioritize_source_ids", lambda ids, **kw: list(ids))
 
     class DummySource:
         def __init__(self, name: str) -> None:

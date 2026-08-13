@@ -12,6 +12,7 @@ import re
 import urllib.request
 import warnings
 
+from aqsp.core.http import urlopen_no_macos_proxy
 from aqsp.core.time import now_shanghai
 
 warnings.filterwarnings("ignore")
@@ -48,7 +49,7 @@ def fetch_tencent_quote(ticker: str) -> dict:
     market = detect_market(ticker)
     url = f"http://qt.gtimg.cn/q={market}{ticker}"
     req = urllib.request.Request(url)
-    with urllib.request.urlopen(req, timeout=10) as resp:
+    with urlopen_no_macos_proxy(req, timeout=10) as resp:
         raw = resp.read().decode("gbk", errors="replace")
 
     match = re.search(r'v_\w+="(.+)"', raw)

@@ -18,6 +18,7 @@ for script in \
     start_vibe_research_service.sh \
     stop_vibe_research_service.sh \
     rollback_vibe_research.sh \
+    deploy_immutable_release.sh \
     install_vibe_research_systemd.sh; do
     path="${PROJECT_ROOT}/scripts/${script}"
     assert_file "$path"
@@ -29,6 +30,7 @@ for script in \
     check_release_consistency.py \
     write_release_manifest.py \
     push_with_report.py \
+    check_frontend_audit.py \
     check_runtime_storage.py; do
     path="${PROJECT_ROOT}/scripts/${script}"
     assert_file "$path"

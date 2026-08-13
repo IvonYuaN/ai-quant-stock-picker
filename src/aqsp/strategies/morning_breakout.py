@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Dict, List
 
@@ -132,7 +133,7 @@ class MorningBreakoutStrategy(BaseStrategy):
             return 0.0
         prev_close = float(df["close"].iloc[-2])
         current = float(df["close"].iloc[-1])
-        if prev_close <= 0:
+        if prev_close <= 0 or math.isnan(prev_close) or math.isnan(current):
             return 0.0
         return (current - prev_close) / prev_close * 100
 

@@ -130,8 +130,7 @@ def test_news_catalysts_cli_sends_research_notification(monkeypatch, capsys) -> 
     )
 
     monkeypatch.setattr(
-        cli_mod,
-        "notify_markdown",
+        "aqsp.cli_notify_helpers.notify_markdown",
         lambda markdown: (
             sent.append(markdown)
             or [MagicMock(channel="serverchan", ok=True, detail="HTTP 200")]
@@ -176,8 +175,7 @@ def test_news_catalysts_cli_suppresses_notification_when_sources_failed(
     )
 
     monkeypatch.setattr(
-        cli_mod,
-        "notify_markdown",
+        "aqsp.cli_notify_helpers.notify_markdown",
         lambda markdown: (
             sent.append(markdown)
             or [MagicMock(channel="serverchan", ok=True, detail="HTTP 200")]
@@ -216,9 +214,7 @@ def test_news_catalysts_cli_writes_structured_runtime_artifact(
         warnings=("国际源超时",),
         event_status="no_valid_news",
     )
-    monkeypatch.setattr(
-        "aqsp.news.build_catalyst_report", lambda **_kwargs: report
-    )
+    monkeypatch.setattr("aqsp.news.build_catalyst_report", lambda **_kwargs: report)
     output = tmp_path / "news.json"
 
     assert (
@@ -256,8 +252,7 @@ def test_run_briefing_prints_notify_channel_results(
         "aqsp.briefing.notifier.send_smart_summary_card", lambda briefing: None
     )
     monkeypatch.setattr(
-        cli_mod,
-        "notify_markdown",
+        "aqsp.cli_notify_helpers.notify_markdown",
         lambda markdown: [MagicMock(channel="serverchan", ok=True, detail="HTTP 200")],
     )
 
@@ -440,8 +435,9 @@ def test_run_briefing_rehydrates_candidate_quality_boundary_from_ledger(
     captured: dict[str, object] = {}
     monkeypatch.setattr(
         "aqsp.briefing.enhance_briefing",
-        lambda briefing, enable_llm: captured.setdefault("briefing", briefing)
-        or briefing,
+        lambda briefing, enable_llm: (
+            captured.setdefault("briefing", briefing) or briefing
+        ),
     )
     monkeypatch.setattr(
         "aqsp.briefing.notifier.send_smart_summary_card", lambda briefing: None
@@ -576,8 +572,7 @@ def test_dispatch_notification_once_dedupes_when_notifier_is_patched(
     calls: list[str] = []
     monkeypatch.setenv("AQSP_NOTIFY_STATE_PATH", str(tmp_path / "notify_state.json"))
     monkeypatch.setattr(
-        cli_mod,
-        "notify_markdown",
+        "aqsp.cli_notify_helpers.notify_markdown",
         lambda markdown: (
             calls.append(markdown)
             or [MagicMock(channel="serverchan", ok=True, detail="HTTP 200")]
@@ -629,8 +624,7 @@ def test_run_closing_review_prints_notify_failure(monkeypatch, capsys) -> None:
         lambda **_kwargs: "# notify",
     )
     monkeypatch.setattr(
-        cli_mod,
-        "notify_markdown",
+        "aqsp.cli_notify_helpers.notify_markdown",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("notify boom")),
     )
 
@@ -815,8 +809,7 @@ def test_run_scheduled_notify_prepends_source_status_banner(
     )
     seen: list[str] = []
     monkeypatch.setattr(
-        cli_mod,
-        "notify_markdown",
+        "aqsp.cli_notify_helpers.notify_markdown",
         lambda markdown: seen.append(markdown) or [],
     )
 
@@ -972,7 +965,7 @@ def test_run_scheduled_enriches_pick_name_from_symbol_map(
         "describe_source_health",
         lambda *_args, **_kwargs: ("healthy", "eastmoney 健康", False),
     )
-    monkeypatch.setattr(cli_mod, "notify_markdown", lambda markdown: [])
+    monkeypatch.setattr("aqsp.cli_notify_helpers.notify_markdown", lambda markdown: [])
 
     args = Namespace(
         mode="close",
@@ -1143,8 +1136,7 @@ def test_run_scheduled_sends_gate_block_alert_when_notify_is_disabled_by_gate(
     )
     seen: list[str] = []
     monkeypatch.setattr(
-        cli_mod,
-        "notify_markdown",
+        "aqsp.cli_notify_helpers.notify_markdown",
         lambda markdown: seen.append(markdown) or [],
     )
 
@@ -1274,7 +1266,8 @@ def test_run_scheduled_uses_env_notify_when_cli_notify_is_false(
     )
     seen: list[str] = []
     monkeypatch.setattr(
-        cli_mod, "notify_markdown", lambda markdown: seen.append(markdown) or []
+        "aqsp.cli_notify_helpers.notify_markdown",
+        lambda markdown: seen.append(markdown) or [],
     )
 
     args = Namespace(
@@ -1394,7 +1387,8 @@ def test_run_scheduled_ignores_env_notify_without_daily_task_id(
     )
     seen: list[str] = []
     monkeypatch.setattr(
-        cli_mod, "notify_markdown", lambda markdown: seen.append(markdown) or []
+        "aqsp.cli_notify_helpers.notify_markdown",
+        lambda markdown: seen.append(markdown) or [],
     )
 
     args = Namespace(
@@ -1645,7 +1639,9 @@ def test_run_scheduled_debate_writes_back_adjustment_keeps_runtime_score(
                 market_context_lines=tuple(market_context_lines),
             )
 
-    monkeypatch.setattr(cli_mod, "AShareDebateCoordinator", DummyDebateCoordinator)
+    monkeypatch.setattr(
+        "aqsp.cli_debate_helpers.AShareDebateCoordinator", DummyDebateCoordinator
+    )
 
     captured: list[PickResult] = []
 
@@ -1879,9 +1875,7 @@ def test_serialize_debate_result_preserves_discussion_rounds() -> None:
     payload = cli_mod.serialize_debate_result(result)
 
     assert [item["round_num"] for item in payload["rounds"]] == [1, 2]
-    assert payload["rounds"][1]["opinions"][0]["counterarguments"] == [
-        "量能尚未确认"
-    ]
+    assert payload["rounds"][1]["opinions"][0]["counterarguments"] == ["量能尚未确认"]
 
 
 def test_resolve_pick_debate_roles_adds_policy_role_for_event_context(
@@ -2247,8 +2241,7 @@ def test_run_scheduled_notify_continues_when_benchmark_frame_missing(
 
     seen: list[str] = []
     monkeypatch.setattr(
-        cli_mod,
-        "notify_markdown",
+        "aqsp.cli_notify_helpers.notify_markdown",
         lambda markdown: seen.append(markdown) or [],
     )
 
@@ -2576,8 +2569,7 @@ def test_run_scheduled_fails_closed_on_regime_when_benchmark_missing(
 
     seen: list[str] = []
     monkeypatch.setattr(
-        cli_mod,
-        "notify_markdown",
+        "aqsp.cli_notify_helpers.notify_markdown",
         lambda markdown: seen.append(markdown) or [],
     )
 
@@ -2724,7 +2716,7 @@ def test_run_scheduled_report_downgrades_realtime_tier_when_data_is_prior_trade_
         "describe_source_health",
         lambda *_args, **_kwargs: ("fallback", "fallback 到 sina", True),
     )
-    monkeypatch.setattr(cli_mod, "notify_markdown", lambda markdown: [])
+    monkeypatch.setattr("aqsp.cli_notify_helpers.notify_markdown", lambda markdown: [])
 
     args = Namespace(
         mode="close",
@@ -2936,8 +2928,7 @@ def test_run_scheduled_surfaces_t1_blockers_in_report_and_notification(
 
     seen: list[str] = []
     monkeypatch.setattr(
-        cli_mod,
-        "notify_markdown",
+        "aqsp.cli_notify_helpers.notify_markdown",
         lambda markdown: seen.append(markdown) or [],
     )
 
@@ -3161,8 +3152,7 @@ def test_run_scheduled_surfaces_snapshot_lifecycle_in_summary_and_notification(
 
     seen: list[str] = []
     monkeypatch.setattr(
-        cli_mod,
-        "notify_markdown",
+        "aqsp.cli_notify_helpers.notify_markdown",
         lambda markdown: seen.append(markdown) or [],
     )
 
@@ -3434,8 +3424,7 @@ def test_run_scheduled_annotates_candidate_status_in_report_and_notify(
 
     seen: list[str] = []
     monkeypatch.setattr(
-        cli_mod,
-        "notify_markdown",
+        "aqsp.cli_notify_helpers.notify_markdown",
         lambda markdown: seen.append(markdown) or [],
     )
 
@@ -3733,7 +3722,9 @@ def test_run_scheduled_intraday_uses_formal_ledger_for_runtime_stats_and_compact
     )
     monkeypatch.setattr(cli_mod, "append_predictions", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(cli_mod, "append_run_event", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(cli_mod, "notify_markdown", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        "aqsp.cli_notify_helpers.notify_markdown", lambda *_args, **_kwargs: []
+    )
     monkeypatch.setattr(
         "aqsp.portfolio.snapshot.save_snapshot",
         lambda *_args, **_kwargs: None,

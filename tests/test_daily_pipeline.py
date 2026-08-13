@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import importlib.util
 import json
 import logging
@@ -90,7 +91,7 @@ def test_build_config_prefers_env_source_when_cli_source_missing(monkeypatch) ->
     assert config.source == "eastmoney"
 
 
-def test_build_config_switches_historical_only_runtime_source_to_online_first(
+def test_build_config_uses_sqlite_raw_source_for_daily_close_research(
     monkeypatch,
 ) -> None:
     daily_pipeline = _load_daily_pipeline_module()
@@ -121,11 +122,10 @@ def test_build_config_switches_historical_only_runtime_source_to_online_first(
 
     config = daily_pipeline._build_config(args)
 
-    assert config.source == "online_first"
+    assert config.source == "sqlite_db"
     assert config.requested_source == "sqlite_db"
-    assert "sqlite_db" in config.source_override_reason
-    assert "live_short" in config.source_override_reason
-    assert "fit=avoid" in config.source_override_reason
+    assert "sqlite_db 原始日线" in config.source_override_reason
+    assert "禁止切换为在线全池重试" in config.source_override_reason
 
 
 def test_build_config_switches_realtime_alias_to_online_first(monkeypatch) -> None:
@@ -296,7 +296,7 @@ def test_build_config_allows_daily_universe_override(monkeypatch) -> None:
     assert config.max_universe == 120
 
 
-def test_build_config_switches_historical_only_runtime_source_to_online_first_without_online_fallback(
+def test_build_config_keeps_sqlite_daily_research_local_when_online_fallback_disabled(
     monkeypatch,
 ) -> None:
     daily_pipeline = _load_daily_pipeline_module()
@@ -327,11 +327,10 @@ def test_build_config_switches_historical_only_runtime_source_to_online_first_wi
 
     config = daily_pipeline._build_config(args)
 
-    assert config.source == "online_first"
+    assert config.source == "sqlite_db"
     assert config.requested_source == "sqlite_db"
-    assert "sqlite_db" in config.source_override_reason
-    assert "live_short" in config.source_override_reason
-    assert "fit=avoid" in config.source_override_reason
+    assert "sqlite_db 原始日线" in config.source_override_reason
+    assert "禁止切换为在线全池重试" in config.source_override_reason
 
 
 def test_build_config_enables_debate_from_env(monkeypatch) -> None:
@@ -1923,6 +1922,106 @@ def test_refresh_dashboard_marks_home_snapshot_failure_as_pipeline_failure(
     assert result["error"] == "首页快照刷新失败: snapshot write failed"
 
 
+def test_refresh_home_snapshot_merges_existing_index(
+    monkeypatch, tmp_path: Path
+) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+    captured: dict[str, object] = {}
+    existing_index = SimpleNamespace(
+        selected_date="2026-07-24",
+        days=(SimpleNamespace(date="2026-07-24"), SimpleNamespace(date="2026-07-23")),
+    )
+    refreshed_index = SimpleNamespace(
+        selected_date="2026-07-27",
+        days=(SimpleNamespace(date="2026-07-27"),),
+    )
+    merged_index = SimpleNamespace(
+        selected_date="2026-07-27",
+        days=(
+            SimpleNamespace(date="2026-07-27"),
+            SimpleNamespace(date="2026-07-24"),
+            SimpleNamespace(date="2026-07-23"),
+        ),
+    )
+    snapshot = SimpleNamespace(
+        selected_date="2026-07-27",
+        candidates=[{"symbol": "000001"}],
+    )
+
+    write_home_snapshot = type(sys)("write_home_snapshot")
+    write_home_snapshot.build_home_snapshot = lambda _provider: snapshot
+    write_home_snapshot.build_home_snapshot_index = (
+        lambda _provider, *, initial_snapshot, existing_index: refreshed_index
+    )
+
+    def fake_merge(existing, refreshed):
+        captured["merge_existing"] = existing
+        captured["merge_refreshed"] = refreshed
+        return merged_index
+
+    write_home_snapshot.merge_home_snapshot_index = fake_merge
+
+    data_provider = type(sys)("aqsp.web.data_provider")
+
+    def fake_data_provider(**kwargs):
+        captured["provider_kwargs"] = kwargs
+        return SimpleNamespace(kwargs=kwargs)
+
+    data_provider.DashboardDataProvider = fake_data_provider
+
+    home_snapshot = type(sys)("aqsp.web.home_snapshot")
+    home_snapshot.load_home_snapshot_index = lambda path: existing_index
+
+    def fake_write_snapshot(path, value):
+        captured["snapshot_path"] = Path(path)
+        captured["snapshot"] = value
+
+    def fake_write_index(path, value):
+        captured["index_path"] = Path(path)
+        captured["index"] = value
+
+    home_snapshot.write_home_dashboard_snapshot = fake_write_snapshot
+    home_snapshot.write_home_snapshot_index = fake_write_index
+
+    monkeypatch.setitem(sys.modules, "write_home_snapshot", write_home_snapshot)
+    monkeypatch.setitem(sys.modules, "aqsp.web.data_provider", data_provider)
+    monkeypatch.setitem(sys.modules, "aqsp.web.home_snapshot", home_snapshot)
+    monkeypatch.setenv(
+        "AQSP_HOME_SNAPSHOT_PATH",
+        str(tmp_path / "data" / "runtime" / "home_dashboard_snapshot.json"),
+    )
+    runtime_data_root = tmp_path / "runtime-data"
+    runtime_report = runtime_data_root / "reports" / "latest.md"
+    monkeypatch.setenv("AQSP_RUNTIME_DATA_ROOT", str(runtime_data_root))
+    config = dataclasses.replace(
+        _pipeline_config(daily_pipeline, tmp_path),
+        ledger_path=str(runtime_data_root / "predictions.jsonl"),
+        paper_ledger=str(runtime_data_root / "paper_trades.jsonl"),
+        report_path=str(runtime_report),
+    )
+
+    result = daily_pipeline._refresh_home_snapshot(config, logging.getLogger("test"))
+
+    assert captured["merge_existing"] is existing_index
+    assert captured["merge_refreshed"] is refreshed_index
+    assert captured["index"] is merged_index
+    assert result["day_count"] == 3
+    assert result["date"] == "2026-07-27"
+    assert captured["index_path"] == (
+        tmp_path / "data" / "runtime" / "home_dashboard_snapshot_index.json"
+    )
+    assert captured["provider_kwargs"] == {
+        "ledger_path": str(runtime_data_root / "predictions.jsonl"),
+        "paper_ledger_path": str(runtime_data_root / "paper_trades.jsonl"),
+        "reports_dir": str(runtime_data_root / "reports"),
+        "debate_results_path": str(runtime_data_root / "debate_results.jsonl"),
+        "intraday_ledger_path": str(runtime_data_root / "intraday_predictions.jsonl"),
+        "intraday_latest_path": str(
+            runtime_data_root / "reports" / "intraday_latest.csv"
+        ),
+    }
+
+
 def test_generate_report_suppresses_fanout_notify_when_non_trade_day(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -2014,8 +2113,8 @@ def test_step_run_strategy_uses_real_benchmark_for_regime(
     monkeypatch.setattr("aqsp.cli.main", fake_main)
     monkeypatch.setattr(
         daily_pipeline,
-        "_explicit_runtime_symbols",
-        lambda: ["000001", "000002"],
+        "_sqlite_refreshed_symbols",
+        lambda _config: ["000001", "000002"],
     )
     config = daily_pipeline.PipelineConfig(
         project_root=tmp_path,
@@ -2050,6 +2149,136 @@ def test_step_run_strategy_uses_real_benchmark_for_regime(
     assert argv[argv.index("--symbols") + 1] == "000001,000002"
     assert argv[argv.index("--benchmark-symbol") + 1] == "000300"
     assert "--notify" not in argv
+
+
+def test_step_run_strategy_commits_sqlite_research_chunk_when_successful(
+    monkeypatch, tmp_path: Path
+) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+    report_path = tmp_path / "reports" / "latest.md"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text("# report\n", encoding="utf-8")
+    monkeypatch.setenv("AQSP_RUNTIME_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("AQSP_DAILY_RESEARCH_BATCH_SIZE", "2")
+    monkeypatch.setattr("aqsp.cli.main", lambda _argv: 0)
+    monkeypatch.setattr(
+        daily_pipeline,
+        "_sqlite_refreshed_symbols",
+        lambda _config: ["000001", "000002", "000003"],
+    )
+    config = dataclasses.replace(
+        _pipeline_config(daily_pipeline, tmp_path),
+        source="sqlite_db",
+        report_path="reports/latest.md",
+    )
+
+    result = daily_pipeline._step_run_strategy(config, logging.getLogger("test"))
+
+    cursor = json.loads(
+        (tmp_path / "state" / "daily-research-cursor.json").read_text(encoding="utf-8")
+    )
+    assert result["research_batch"] == {
+        "batch_id": f"{daily_pipeline.today_shanghai().isoformat()}:1:0",
+        "symbols": 2,
+        "universe_count": 3,
+        "coverage_pct": pytest.approx(2 / 3),
+    }
+    assert cursor["active_state"] == "committed"
+    assert cursor["next_offset"] == 2
+    assert cursor["scanned_count"] == 2
+
+
+def test_step_run_strategy_does_not_advance_sqlite_research_chunk_when_failed(
+    monkeypatch, tmp_path: Path
+) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+    monkeypatch.setenv("AQSP_RUNTIME_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setattr("aqsp.cli.main", lambda _argv: 1)
+    monkeypatch.setattr(
+        daily_pipeline,
+        "_sqlite_refreshed_symbols",
+        lambda _config: ["000001", "000002"],
+    )
+    config = dataclasses.replace(
+        _pipeline_config(daily_pipeline, tmp_path), source="sqlite_db"
+    )
+
+    with pytest.raises(daily_pipeline.DataError, match="策略运行失败"):
+        daily_pipeline._step_run_strategy(config, logging.getLogger("test"))
+
+    cursor = json.loads(
+        (tmp_path / "state" / "daily-research-cursor.json").read_text(encoding="utf-8")
+    )
+    assert cursor["active_state"] == "failed"
+    assert cursor["next_offset"] == 0
+
+
+def test_run_pipeline_runs_only_research_steps_when_research_only(
+    monkeypatch, tmp_path: Path
+) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+    executed: list[str] = []
+    monkeypatch.setattr(daily_pipeline, "_is_trade_day", lambda _day: True)
+    for name in (
+        "_step_run_strategy",
+        "_step_generate_report",
+        "_step_refresh_dashboard",
+    ):
+        monkeypatch.setattr(
+            daily_pipeline,
+            name,
+            lambda *args, _name=name, **kwargs: executed.append(_name) or {},
+        )
+    config = dataclasses.replace(
+        _pipeline_config(daily_pipeline, tmp_path), research_only=True
+    )
+
+    result = daily_pipeline.run_pipeline(config)
+
+    assert result.overall_success is True
+    assert executed == [
+        "_step_run_strategy",
+        "_step_generate_report",
+        "_step_refresh_dashboard",
+    ]
+
+
+def test_step_update_data_uses_only_current_sqlite_refresh_symbols(
+    monkeypatch, tmp_path: Path
+) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+    seen: dict[str, object] = {}
+
+    class FakeSource:
+        def set_workload(self, _workload: str | None) -> None:
+            pass
+
+    monkeypatch.setattr(
+        daily_pipeline, "_build_data_source", lambda _config: FakeSource()
+    )
+    monkeypatch.setattr(
+        daily_pipeline,
+        "_sqlite_refreshed_symbols",
+        lambda _config: ["600000", "300001"],
+    )
+    monkeypatch.setattr(
+        "aqsp.data.fetch_with_source",
+        lambda _source, symbols, **_kwargs: (
+            seen.update(symbols=symbols)
+            or {symbol: pd.DataFrame([{"date": "2026-07-29"}]) for symbol in symbols}
+        ),
+    )
+    monkeypatch.setattr(
+        "aqsp.freshness.assert_fresh_data", lambda *_args, **_kwargs: None
+    )
+
+    config = dataclasses.replace(
+        _pipeline_config(daily_pipeline, tmp_path), source="sqlite_db"
+    )
+    result = daily_pipeline._step_update_data(config, logging.getLogger("test"))
+
+    assert seen["symbols"] == ["600000", "300001"]
+    assert result["symbol_count"] == 2
 
 
 def test_step_run_strategy_leaves_symbols_empty_for_runtime_universe(
@@ -2184,8 +2413,8 @@ def test_step_run_strategy_treats_circuit_breaker_as_controlled_result(
     monkeypatch.setattr("aqsp.cli.main", lambda _argv: 2)
     monkeypatch.setattr(
         daily_pipeline,
-        "_explicit_runtime_symbols",
-        lambda: ["000001", "000002"],
+        "_sqlite_refreshed_symbols",
+        lambda _config: ["000001", "000002"],
     )
     config = daily_pipeline.PipelineConfig(
         project_root=tmp_path,
@@ -2397,6 +2626,80 @@ def test_validate_predictions_uses_resilient_history_when_primary_fails(
     assert result["sources_attempted"] == ["eastmoney", "resilient_history"]
 
 
+def test_validate_predictions_fetches_only_pending_paper_eligible_symbols(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+    ledger_path = tmp_path / "predictions.jsonl"
+    ledger_path.write_text("{}\n", encoding="utf-8")
+    rows = [
+        {"symbol": "600519", "status": "pending", "rating": "buy_candidate"},
+        {"symbol": "000001", "status": "validated", "rating": "buy_candidate"},
+        {"symbol": "300750", "status": "pending", "rating": "watch"},
+        {
+            "symbol": "002594",
+            "status": "pending",
+            "rating": "buy_candidate",
+            "paper_review_eligible": False,
+        },
+    ]
+    seen: dict[str, object] = {}
+    monkeypatch.setattr("aqsp.ledger.base.read_ledger", lambda _path: rows)
+    monkeypatch.setattr(daily_pipeline, "_build_data_source", lambda _config: object())
+    monkeypatch.setattr(
+        "aqsp.data.fetch_with_source",
+        lambda _source, symbols, **_kwargs: (
+            seen.update({"symbols": symbols})
+            or {"600519": pd.DataFrame([{"date": "2026-07-29", "close": 1.0}])}
+        ),
+    )
+    monkeypatch.setattr(
+        "aqsp.ledger.validate_predictions",
+        lambda *_args, **_kwargs: type(
+            "Validation",
+            (),
+            {
+                "checked": 0,
+                "wins": 0,
+                "avg_return_pct": 0.0,
+                "avg_excess_pct": 0.0,
+                "skipped_not_executable": 0,
+                "not_executable_reasons": {},
+            },
+        )(),
+    )
+
+    config = daily_pipeline.PipelineConfig(
+        project_root=tmp_path,
+        source="eastmoney",
+        mode="close",
+        limit=10,
+        max_universe=50,
+        min_avg_amount=50_000_000,
+        max_data_lag_days=3,
+        enable_online_factors=False,
+        allow_online_fallback=True,
+        ledger_path=ledger_path.name,
+        report_path="reports/latest.md",
+        csv_path="reports/latest.csv",
+        briefing_path="reports/briefing.md",
+        paper_report_path="reports/paper.md",
+        dashboard_html="dist/dashboard/index.html",
+        dashboard_db="dist/dashboard/aqsp.db",
+        paper_ledger="data/paper_trades.jsonl",
+        closing_review_path="reports/closing_review.md",
+        notify=False,
+        notify_mode="summary",
+        dry_run=False,
+        enable_debate=False,
+        enable_auto_evolution=False,
+    )
+    daily_pipeline._step_validate_predictions(config, logging.getLogger("test"))
+
+    assert seen["symbols"] == ["600519"]
+
+
 def test_validate_predictions_returns_not_executable_summary(
     monkeypatch,
     tmp_path: Path,
@@ -2474,7 +2777,12 @@ def test_validate_predictions_returns_not_executable_summary(
 def test_sync_paper_trades_writes_report(monkeypatch, tmp_path: Path) -> None:
     daily_pipeline = _load_daily_pipeline_module()
     ledger_path = tmp_path / "predictions.jsonl"
-    ledger_path.write_text('{"symbol":"600519","status":"pending"}\n', encoding="utf-8")
+    today = daily_pipeline.today_shanghai().isoformat()
+    ledger_path.write_text(
+        f'{{"symbol":"600519","status":"pending","signal_date":"{today}"}}\n',
+        encoding="utf-8",
+    )
+    seen: dict[str, object] = {}
 
     monkeypatch.setattr(
         daily_pipeline,
@@ -2483,13 +2791,14 @@ def test_sync_paper_trades_writes_report(monkeypatch, tmp_path: Path) -> None:
     )
     monkeypatch.setattr(
         "aqsp.data.fetch_with_source",
-        lambda _source, _symbols, days=60: {
-            "600519": pd.DataFrame([{"date": "2026-06-02"}])
-        },
+        lambda _source, _symbols, days=60: (
+            seen.update(symbols=list(_symbols))
+            or {"600519": pd.DataFrame([{"date": "2026-06-02"}])}
+        ),
     )
     monkeypatch.setattr(
         "aqsp.ledger.base.read_ledger",
-        lambda _path: [{"symbol": "600519", "status": "pending"}],
+        lambda _path: [{"symbol": "600519", "status": "pending", "signal_date": today}],
     )
     monkeypatch.setattr(
         "aqsp.paper.read_paper_trades",
@@ -2505,7 +2814,9 @@ def test_sync_paper_trades_writes_report(monkeypatch, tmp_path: Path) -> None:
 
     monkeypatch.setattr(
         "aqsp.paper.sync_paper_trades",
-        lambda **_kwargs: FakeSummary(),
+        lambda **kwargs: (
+            seen.update(signal_dates=kwargs["signal_dates"]) or FakeSummary()
+        ),
     )
     monkeypatch.setattr(
         "aqsp.paper.render_paper_report",
@@ -2542,9 +2853,61 @@ def test_sync_paper_trades_writes_report(monkeypatch, tmp_path: Path) -> None:
 
     assert result["opened"] == 1
     assert result["open_positions"] == 1
+    assert seen["symbols"] == ["600519"]
+    assert seen["signal_dates"] == {today}
     assert (tmp_path / "reports" / "paper.md").read_text(
         encoding="utf-8"
     ) == "opened=1, rows=1"
+
+
+def test_sync_paper_trades_does_not_fetch_closed_historical_signals(
+    monkeypatch, tmp_path: Path
+) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+    ledger_path = tmp_path / "predictions.jsonl"
+    ledger_path.write_text(
+        '{"symbol":"600519","status":"validated","signal_date":"2026-07-01"}\n',
+        encoding="utf-8",
+    )
+    fetch_called = False
+
+    def fail_fetch(*_args: object, **_kwargs: object) -> dict[str, pd.DataFrame]:
+        nonlocal fetch_called
+        fetch_called = True
+        raise AssertionError("closed historical rows must not fetch history")
+
+    monkeypatch.setattr(daily_pipeline, "_fetch_history_frames_resilient", fail_fetch)
+    monkeypatch.setattr(
+        "aqsp.ledger.base.read_ledger",
+        lambda _path: [
+            {"symbol": "600519", "status": "validated", "signal_date": "2026-07-01"}
+        ],
+    )
+    monkeypatch.setattr("aqsp.paper.read_paper_trades", lambda _path: [])
+
+    class FakeSummary:
+        opened = 0
+        closed = 0
+        open_positions = 0
+        pending_entry = 0
+        not_executable = 0
+
+    seen: dict[str, object] = {}
+    monkeypatch.setattr(
+        "aqsp.paper.sync_paper_trades",
+        lambda **kwargs: (
+            seen.update(signal_dates=kwargs["signal_dates"]) or FakeSummary()
+        ),
+    )
+    monkeypatch.setattr("aqsp.paper.render_paper_report", lambda **_kwargs: "paper")
+    config = _pipeline_config(daily_pipeline, tmp_path)
+    config = dataclasses.replace(config, ledger_path=ledger_path.name)
+
+    result = daily_pipeline._step_sync_paper_trades(config, logging.getLogger("test"))
+
+    assert fetch_called is False
+    assert result == {"skipped": True}
+    assert seen == {}
 
 
 def test_resolve_symbols_keeps_full_available_universe_when_max_universe_zero(
@@ -2687,7 +3050,7 @@ def test_resolve_symbols_samples_live_liquid_universe_across_turnover_ladder(
     assert daily_pipeline._resolve_symbols(config, logging.getLogger("test")) == [
         "600000",
         "300750",
-        "688981",
+        "002594",
     ]
     assert seen == {"limit": 0, "min_amount": 50_000_000}
 

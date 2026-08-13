@@ -4,7 +4,9 @@
 #   /bin/bash /opt/aqsp/scripts/bt_task.sh daily
 #   /bin/bash /opt/aqsp/scripts/bt_task.sh intraday
 #   /bin/bash /opt/aqsp/scripts/bt_task.sh midday
+#   /bin/bash /opt/aqsp/scripts/bt_task.sh data-refresh
 #   /bin/bash /opt/aqsp/scripts/bt_task.sh coldstart
+#   /bin/bash /opt/aqsp/scripts/bt_task.sh variant-refresh
 #   /bin/bash /opt/aqsp/scripts/bt_task.sh walkforward-gate
 #   /bin/bash /opt/aqsp/scripts/bt_task.sh monitor
 #   /bin/bash /opt/aqsp/scripts/bt_task.sh news
@@ -24,6 +26,8 @@ if [ -f "${PROJECT_ROOT}/.env" ]; then
     # .env may configure the runtime, but must not redirect this checkout.
     PROJECT_ROOT="$INITIAL_PROJECT_ROOT"
 fi
+# 计划任务按北京时间解释日期、交易日和时段；不可继承宿主机或 .env 的 TZ。
+export TZ="Asia/Shanghai"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUNTIME_PYTHON_HELPER="${PROJECT_ROOT}/scripts/runtime_python.sh"
 if [ ! -f "$RUNTIME_PYTHON_HELPER" ] && [ -f "${SCRIPT_DIR}/runtime_python.sh" ]; then
@@ -42,6 +46,13 @@ BRANCH="${AQSP_GIT_BRANCH:-main}"
 REMOTE="${AQSP_GIT_REMOTE:-origin}"
 LOCK_DIR="${AQSP_RUNTIME_LOCK_DIR:-${RUNTIME_DATA_ROOT}/.locks}"
 STATE_DIR="${AQSP_RUNTIME_STATE_DIR:-${RUNTIME_DATA_ROOT}/.state}"
+HEAVY_SLOT_LOCK_FILE="${LOCK_DIR}/heavy-compute.lock"
+HEAVY_SLOT_LOCK_INFO_FILE="${HEAVY_SLOT_LOCK_FILE}/meta.env"
+AGENT_RUNS_PATH="${AQSP_AGENT_RUNS_PATH:-${RUNTIME_DATA_ROOT}/runtime/agent_runs.jsonl}"
+AGENT_RUN_REGISTRY_SCRIPT="${PROJECT_ROOT}/scripts/agent_run_registry.py"
+AGENT_RUN_ID=""
+AGENT_RUN_ACTIVE="false"
+HEAVY_SLOT_ACQUIRED="false"
 GIT_SYNC_LOCK_FILE="${LOCK_DIR}/server-git-sync.lock"
 GIT_SYNC_LOCK_INFO_FILE="${GIT_SYNC_LOCK_FILE}/meta.env"
 GIT_SYNC_WAIT_SECONDS="${AQSP_GIT_SYNC_WAIT_SECONDS:-180}"
@@ -55,13 +66,16 @@ log() {
 
 usage() {
     cat <<'EOF'
-Usage: bt_task.sh <daily|intraday|midday|coldstart|walkforward-gate|monitor|news|status>
+Usage: bt_task.sh <daily|daily-research|intraday|midday|data-refresh|data-refresh-retry|coldstart|variant-refresh|walkforward-gate|monitor|news|status>
 
 BT panel examples:
   /bin/bash /opt/aqsp/scripts/bt_task.sh intraday
   /bin/bash /opt/aqsp/scripts/bt_task.sh daily
+  /bin/bash /opt/aqsp/scripts/bt_task.sh daily-research
   /bin/bash /opt/aqsp/scripts/bt_task.sh midday
+  /bin/bash /opt/aqsp/scripts/bt_task.sh data-refresh
   /bin/bash /opt/aqsp/scripts/bt_task.sh coldstart
+  /bin/bash /opt/aqsp/scripts/bt_task.sh variant-refresh
   /bin/bash /opt/aqsp/scripts/bt_task.sh walkforward-gate
   /bin/bash /opt/aqsp/scripts/bt_task.sh monitor
   /bin/bash /opt/aqsp/scripts/bt_task.sh news
@@ -71,7 +85,11 @@ Recommended BT schedule (Asia/Shanghai):
   intraday  every 10 min; script gates 09:35-11:30 / 13:05-14:57, Mon-Fri
   midday    12:05 Mon-Fri
   daily     18:00 Mon-Fri
+  daily-research 18:20-22:20 every 20 min Mon-Fri; one bounded cursor chunk
+  data-refresh 15:35 Mon-Fri; bounded raw daily-data batch before daily research
+  data-refresh-retry every 10 min from 15:45-19:30 Mon-Fri; bounded delayed refresh while the source publishes
   coldstart 19:40 Mon-Fri
+  variant-refresh 22:30 Mon-Fri; bounded isolated experiment refresh after daily research
   walkforward-gate 22:00 Sat; controlled production evidence only, no threshold apply
   monitor   every 15 min
   status    manual only
@@ -82,7 +100,7 @@ Notes:
 
 Optional env:
   AQSP_RUNNER_TIMEOUT_SECONDS=5400   # 主链路最长 90 分钟
-  AQSP_MONITOR_TIMEOUT_SECONDS=600   # 监控最长 10 分钟
+  AQSP_MONITOR_TIMEOUT_SECONDS=120   # 监控默认 2 分钟，硬上限 3 分钟
   AQSP_LOCK_STALE_MINUTES=360        # 无活跃 PID 时，6 小时后视为陈旧锁
 EOF
 }
@@ -290,6 +308,310 @@ is_truthy() {
     [[ "$value" =~ ^(1|true|yes|on)$ ]]
 }
 
+set_realtime_runner_timeout() {
+    local configured="${AQSP_INTRADAY_OUTER_TIMEOUT_SECONDS:-360}"
+    if ! [[ "$configured" =~ ^[1-9][0-9]*$ ]]; then
+        log "盘中主链超时配置无效(${configured})，使用 360 秒"
+        configured="360"
+    elif [ "$configured" -gt 420 ]; then
+        log "盘中主链超时配置过长(${configured})，收紧为 420 秒"
+        configured="420"
+    fi
+    export AQSP_RUNNER_TIMEOUT_SECONDS="$configured"
+}
+
+set_daily_runner_timeout() {
+    local configured="${AQSP_DAILY_OUTER_TIMEOUT_SECONDS:-900}"
+    if ! [[ "$configured" =~ ^[1-9][0-9]*$ ]]; then
+        log "收盘主链超时配置无效(${configured})，使用 900 秒"
+        configured="900"
+    elif [ "$configured" -gt 1200 ]; then
+        log "收盘主链超时配置过长(${configured})，收紧为 1200 秒"
+        configured="1200"
+    fi
+    export AQSP_RUNNER_TIMEOUT_SECONDS="$configured"
+}
+
+set_daily_research_runner_timeout() {
+    local configured="${AQSP_DAILY_RESEARCH_OUTER_TIMEOUT_SECONDS:-360}"
+    if ! [[ "$configured" =~ ^[1-9][0-9]*$ ]]; then
+        log "收盘分块超时配置无效(${configured})，使用 360 秒"
+        configured="360"
+    elif [ "$configured" -gt 480 ]; then
+        log "收盘分块超时配置过长(${configured})，收紧为 480 秒"
+        configured="480"
+    fi
+    export AQSP_RUNNER_TIMEOUT_SECONDS="$configured"
+}
+
+set_variant_runner_timeout() {
+    local configured="${AQSP_VARIANT_OUTER_TIMEOUT_SECONDS:-510}"
+    if ! [[ "$configured" =~ ^[1-9][0-9]*$ ]]; then
+        configured="510"
+    elif [ "$configured" -lt 510 ]; then
+        log "变体外层超时 ${configured} 秒不足以覆盖四段发布预算，提升为 510 秒"
+        configured="510"
+    elif [ "$configured" -gt 510 ]; then
+        configured="510"
+    fi
+    export AQSP_RUNNER_TIMEOUT_SECONDS="$configured"
+}
+
+ensure_data_refresh_window() {
+    local start_hm="${AQSP_DATA_REFRESH_WINDOW_START_HM:-1530}"
+    local end_hm="${AQSP_DATA_REFRESH_WINDOW_END_HM:-1750}"
+    local now_hm
+    if ! [[ "$start_hm" =~ ^[0-9]{3,4}$ && "$end_hm" =~ ^[0-9]{3,4}$ ]]; then
+        log "数据刷新窗口配置无效，拒绝运行 start=${start_hm} end=${end_hm}"
+        exit 2
+    fi
+    now_hm=$((10#$(date +%H%M)))
+    if [ "$now_hm" -lt "$start_hm" ] || [ "$now_hm" -gt "$end_hm" ]; then
+        log "当前时间 ${now_hm} 不在 data-refresh 允许窗口 ${start_hm}-${end_hm}，跳过原始日线刷新"
+        exit 0
+    fi
+}
+
+ensure_data_refresh_retry_window() {
+    # 北京时间 15:45：首轮 15:35 刷新结束后立即给 raw rebuild 留出连续窗口。
+    local start_hm="${AQSP_DATA_REFRESH_RETRY_WINDOW_START_HM:-1545}"
+    local end_hm="${AQSP_DATA_REFRESH_RETRY_WINDOW_END_HM:-1930}"
+    local now_hm
+    if ! [[ "$start_hm" =~ ^[0-9]{3,4}$ && "$end_hm" =~ ^[0-9]{3,4}$ ]]; then
+        log "延迟数据刷新窗口配置无效，拒绝运行 start=${start_hm} end=${end_hm}"
+        exit 2
+    fi
+    now_hm=$((10#$(date +%H%M)))
+    if [ "$now_hm" -lt "$start_hm" ] || [ "$now_hm" -gt "$end_hm" ]; then
+        log "当前时间 ${now_hm} 不在 data-refresh-retry 允许窗口 ${start_hm}-${end_hm}，跳过延迟原始日线刷新"
+        exit 0
+    fi
+}
+
+sqlite_price_basis_is_invalid() {
+    local db_path="$1"
+    PYTHONPATH="${PROJECT_ROOT}/src:${PROJECT_ROOT}:${PYTHONPATH:-}" \
+        "$AQSP_RUNTIME_PYTHON" - "$db_path" <<'AQSP_PRICE_BASIS_PY'
+import sys
+from pathlib import Path
+
+from aqsp.data.sqlite_db_source import SqliteDbSource
+
+raise SystemExit(0 if SqliteDbSource(Path(sys.argv[1]), cache=None).price_mode() == "invalid" else 1)
+AQSP_PRICE_BASIS_PY
+}
+
+run_bounded_raw_refresh() {
+    local batches="${1:-${AQSP_DATA_REFRESH_BATCHES:-0}}"
+    local db_path="${AQSP_SQLITE_DB_PATH:?AQSP_SQLITE_DB_PATH is required}"
+    local state_path="${STATE_DIR}/sqlite-refresh-cursor.json"
+    local batch_size="${AQSP_DATA_REFRESH_BATCH_SIZE:-120}"
+    local runtime_seconds="${AQSP_DATA_REFRESH_MAX_RUNTIME_SECONDS:-480}"
+    local query_timeout="${AQSP_DATA_REFRESH_QUERY_TIMEOUT_SECONDS:-4}"
+    local target_day
+    target_day="$(PYTHONPATH="${PROJECT_ROOT}/src:${PROJECT_ROOT}:${PYTHONPATH:-}" \
+        ${AQSP_RUNTIME_PYTHON} - "${STATE_DIR}/raw-rebuild-cursor.json" <<'AQSP_RAW_REBUILD_TARGET_PY'
+import json
+import sys
+from datetime import date
+
+from aqsp.core.time import latest_completed_trading_day
+
+latest = latest_completed_trading_day()
+try:
+    state = json.loads(open(sys.argv[1], encoding="utf-8").read())
+except (OSError, ValueError, TypeError):
+    state = {}
+candidate = str(state.get("target_day") or "")
+try:
+    candidate_day = date.fromisoformat(candidate)
+except ValueError:
+    candidate_day = None
+if not bool(state.get("complete")) and candidate_day is not None and candidate_day <= latest:
+    print(candidate_day.isoformat())
+else:
+    print(latest.isoformat())
+AQSP_RAW_REBUILD_TARGET_PY
+    )"
+    if sqlite_price_basis_is_invalid "$db_path"; then
+        log "现有 SQLite 价格基准无效，转入旁路 raw 重建；正式库保持只读"
+        run_python_script "${PROJECT_ROOT}/scripts/rebuild_raw_sqlite_batches.py" \
+            --source-db "$db_path" \
+            --candidate-db "${AQSP_RAW_REBUILD_DB_PATH:-${db_path}.rebuild}.${target_day}" \
+            --state "${STATE_DIR}/raw-rebuild-cursor.json" \
+            --target-date "$target_day" \
+            --start-date "${AQSP_RAW_REBUILD_START_DATE:-2024-01-01}" \
+            --batch-size "${AQSP_RAW_REBUILD_BATCH_SIZE:-16}" \
+            --query-timeout-seconds "$query_timeout" \
+            --max-runtime-seconds "$runtime_seconds" \
+            --batches "$batches" \
+            --min-coverage-ratio "${AQSP_RAW_REBUILD_MIN_COVERAGE_RATIO:-0.98}" \
+            --intraday-cache "${AQSP_INTRADAY_UNIVERSE_CACHE:-${RUNTIME_DATA_ROOT}/runtime/intraday_live_universe.json}" \
+            --activate-active-db
+        return
+    fi
+    run_python_script "${PROJECT_ROOT}/scripts/refresh_sqlite_batch.py" \
+        --db "$db_path" \
+        --state "$state_path" \
+        --batch-size "$batch_size" \
+        --universe-limit "${AQSP_DATA_REFRESH_UNIVERSE_LIMIT:-0}" \
+        --min-amount "${AQSP_MIN_AVG_AMOUNT:-50000000}" \
+        --query-timeout-seconds "$query_timeout" \
+        --max-runtime-seconds "$runtime_seconds" \
+        --batches "$batches"
+}
+
+refresh_home_snapshot_after_data_refresh() {
+    local snapshot_script="${PROJECT_ROOT}/scripts/write_home_snapshot.py"
+    [ -f "$snapshot_script" ] || return 0
+    if run_python_script "$snapshot_script" \
+        --date "$(date +%F)" \
+        --task-id "$AQSP_RUN_TASK_ID" \
+        --output "${AQSP_HOME_SNAPSHOT_PATH:-data/runtime/home_dashboard_snapshot.json}" \
+        --index-output "${AQSP_HOME_SNAPSHOT_INDEX_PATH:-data/runtime/home_dashboard_snapshot_index.json}"; then
+        log "原始日线批次完成，首页快照已刷新"
+    else
+        log "[WARN] 原始日线批次完成，但首页快照刷新失败；保留上一版快照"
+    fi
+}
+
+run_raw_refresh_or_wait() {
+    local batches="$1" exit_code
+    if run_bounded_raw_refresh "$batches"; then
+        refresh_home_snapshot_after_data_refresh
+        return 0
+    fi
+    exit_code=$?
+    if [ "$exit_code" -eq 75 ]; then
+        log "数据源尚未发布目标日线，保留游标并等待下一个 30 分钟探测窗口"
+        refresh_home_snapshot_after_data_refresh
+        return 0
+    fi
+    return "$exit_code"
+}
+
+gate_optional_heavy_task() {
+    local status_path="${STATE_DIR}/resource-gate-${ACTION}.json"
+    # 0 lets resource_gate reserve 25% of known host memory, bounded by its safe floor/cap.
+    local min_memory_mb="${AQSP_HEAVY_MIN_FREE_MEMORY_MB:-0}"
+    local max_load_per_cpu="${AQSP_HEAVY_MAX_LOAD_PER_CPU:-0.70}"
+    local exit_code
+    mkdir -p "$LOG_DIR" "$STATE_DIR"
+    set +e
+    PYTHONPATH="${PROJECT_ROOT}/src:${PROJECT_ROOT}:${PYTHONPATH:-}" \
+        "$AQSP_RUNTIME_PYTHON" "${PROJECT_ROOT}/scripts/resource_gate.py" \
+        --task "$ACTION" \
+        --min-free-memory-mb "$min_memory_mb" \
+        --max-load-per-cpu "$max_load_per_cpu" \
+        --blocked-lock "${LOCK_DIR}/server-runtime.lock" \
+        --blocked-lock "${LOCK_DIR}/intraday-refresh.lock" \
+        --status-path "$status_path" >>"$RUN_LOG" 2>&1
+    exit_code=$?
+    set -e
+    if [ "$exit_code" -eq 75 ]; then
+        log "主机资源不足或主链仍在运行，跳过可选重任务 ${ACTION}；下一个错峰窗口重试"
+        exit 0
+    fi
+    if [ "$exit_code" -ne 0 ]; then
+        log "[ERROR] 资源门禁异常，拒绝启动可选重任务 ${ACTION}，exit=${exit_code}"
+        exit "$exit_code"
+    fi
+}
+
+release_optional_heavy_slot() {
+    rm -f "$HEAVY_SLOT_LOCK_INFO_FILE"
+    rmdir "$HEAVY_SLOT_LOCK_FILE" 2>/dev/null || true
+}
+
+finish_agent_run() {
+    local exit_code="$1" status="completed"
+    [ "$AGENT_RUN_ACTIVE" = "true" ] || return 0
+    if [ "$exit_code" -ne 0 ]; then
+        status="failed"
+    fi
+    PYTHONPATH="${PROJECT_ROOT}/src:${PROJECT_ROOT}:${PYTHONPATH:-}" \
+        "$AQSP_RUNTIME_PYTHON" "$AGENT_RUN_REGISTRY_SCRIPT" finish \
+        --path "$AGENT_RUNS_PATH" \
+        --agent-run-id "$AGENT_RUN_ID" \
+        --status "$status" \
+        --exit-reason "bt_task_exit_${exit_code}" >>"$RUN_LOG" 2>&1 || \
+        log "[ERROR] agent 任务审计完成状态写入失败: ${AGENT_RUN_ID}"
+    AGENT_RUN_ACTIVE="false"
+}
+
+cleanup_task() {
+    local exit_code="$1"
+    if [ "$HEAVY_SLOT_ACQUIRED" = "true" ]; then
+        release_optional_heavy_slot
+    fi
+    finish_agent_run "$exit_code"
+    return "$exit_code"
+}
+
+start_agent_run() {
+    local deadline_seconds="$1" registry_exit_code
+    [ -f "$AGENT_RUN_REGISTRY_SCRIPT" ] || {
+        log "[ERROR] 缺少 agent 任务注册器: ${AGENT_RUN_REGISTRY_SCRIPT}"
+        exit 1
+    }
+    AGENT_RUN_ID="bt-task:${ACTION}:$(date +%Y%m%d%H%M%S):$$"
+    set +e
+    PYTHONPATH="${PROJECT_ROOT}/src:${PROJECT_ROOT}:${PYTHONPATH:-}" \
+        "$AQSP_RUNTIME_PYTHON" "$AGENT_RUN_REGISTRY_SCRIPT" start \
+        --path "$AGENT_RUNS_PATH" \
+        --parent-run-id "scheduler:$(date +%F)" \
+        --agent-run-id "$AGENT_RUN_ID" \
+        --scope "scheduled:${ACTION}" \
+        --pid "$$" \
+        --deadline-seconds "$deadline_seconds" >>"$RUN_LOG" 2>&1
+    registry_exit_code=$?
+    set -e
+    if [ "$registry_exit_code" -eq 75 ]; then
+        log "agent 任务槽位已占用，本次 ${ACTION} 正常跳过"
+        exit 0
+    fi
+    if [ "$registry_exit_code" -ne 0 ]; then
+        log "[ERROR] agent 任务注册失败，拒绝运行 ${ACTION}"
+        exit "$registry_exit_code"
+    fi
+    AGENT_RUN_ACTIVE="true"
+}
+
+optional_heavy_slot_is_stale() {
+    if [ ! -f "$HEAVY_SLOT_LOCK_INFO_FILE" ]; then
+        return 1
+    fi
+    # shellcheck disable=SC1090
+    . "$HEAVY_SLOT_LOCK_INFO_FILE"
+    [ -n "${HEAVY_SLOT_PID:-}" ] && ! kill -0 "$HEAVY_SLOT_PID" 2>/dev/null
+}
+
+acquire_optional_heavy_slot() {
+    mkdir -p "$LOCK_DIR"
+    if [ -d "$HEAVY_SLOT_LOCK_FILE" ] && optional_heavy_slot_is_stale; then
+        # The previous owner has exited. A missing metadata file is deliberately
+        # retained so an in-progress atomic acquisition is never stolen.
+        rm -f "$HEAVY_SLOT_LOCK_INFO_FILE"
+        rmdir "$HEAVY_SLOT_LOCK_FILE" 2>/dev/null || true
+    fi
+    if ! mkdir "$HEAVY_SLOT_LOCK_FILE" 2>/dev/null; then
+        if [ -f "$HEAVY_SLOT_LOCK_INFO_FILE" ]; then
+            # shellcheck disable=SC1090
+            . "$HEAVY_SLOT_LOCK_INFO_FILE"
+            log "重任务槽位已被占用，本次 ${ACTION} 正常跳过；runner=${HEAVY_SLOT_RUNNER:-unknown} pid=${HEAVY_SLOT_PID:-unknown} started_at=${HEAVY_SLOT_STARTED_AT:-unknown}"
+        else
+            log "重任务槽位初始化中，本次 ${ACTION} 正常跳过；下一个错峰窗口重试"
+        fi
+        exit 0
+    fi
+    {
+        printf 'HEAVY_SLOT_PID=%q\n' "$$"
+        printf 'HEAVY_SLOT_RUNNER=%q\n' "bt_task:${ACTION}"
+        printf 'HEAVY_SLOT_STARTED_AT=%q\n' "$(date '+%Y-%m-%d %H:%M:%S')"
+    } >"$HEAVY_SLOT_LOCK_INFO_FILE"
+    HEAVY_SLOT_ACQUIRED="true"
+}
+
 is_market_trading_day() {
     local python_bin="${AQSP_RUNTIME_PYTHON}"
     local target_date="${AQSP_TRADING_DAY_OVERRIDE_DATE:-}"
@@ -362,6 +684,21 @@ should_bridge_intraday_to_midday() {
     mkdir -p "$marker_dir"
     export AQSP_MIDDAY_MARKER_FILE="$marker_file"
     return 0
+}
+
+ensure_intraday_dispatch_window() {
+    if ! is_truthy "${AQSP_INTRADAY_ENFORCE_DISPATCH_WINDOW:-true}"; then
+        return 0
+    fi
+    local now_hm
+    now_hm=$((10#$(date +%H%M)))
+    if { [ "$now_hm" -ge 935 ] && [ "$now_hm" -le 1130 ]; } || \
+       { [ "$now_hm" -ge 1135 ] && [ "$now_hm" -le 1230 ]; } || \
+       { [ "$now_hm" -ge 1305 ] && [ "$now_hm" -le 1457 ]; }; then
+        return 0
+    fi
+    log "当前不在盘中或午盘桥接时段，跳过 intraday，不抢占收盘主链锁"
+    exit 0
 }
 
 run_script() {
@@ -444,17 +781,73 @@ if [ "${AQSP_IMMUTABLE_RELEASE:-false}" != "true" ] && [ ! -d "${PROJECT_ROOT}/.
 fi
 
 export AQSP_PROJECT_ROOT="$PROJECT_ROOT"
-export TZ="${TZ:-Asia/Shanghai}"
+export TZ="Asia/Shanghai"
+trap 'cleanup_task "$?"' EXIT
 
 case "$ACTION" in
     daily)
         skip_non_trading_day
+        # Daily research can allocate substantially more memory than a raw-data
+        # refresh. Keep it mutually exclusive and fail closed on the small host.
+        AQSP_HEAVY_MIN_FREE_MEMORY_MB="${AQSP_DAILY_MIN_FREE_MEMORY_MB:-700}" \
+            AQSP_HEAVY_MAX_LOAD_PER_CPU="${AQSP_DAILY_MAX_LOAD_PER_CPU:-0.50}" \
+            gate_optional_heavy_task
+        acquire_optional_heavy_slot
+        set_daily_runner_timeout
+        start_agent_run "${AQSP_AGENT_DEADLINE_SECONDS:-${AQSP_RUNNER_TIMEOUT_SECONDS}}"
         export AQSP_RUN_TASK_ID="daily"
         export AQSP_RUNNER_SCRIPT=scripts/daily_pipeline.sh
         run_script "${PROJECT_ROOT}/scripts/server_sync_and_run.sh"
         ;;
+    daily-research)
+        skip_non_trading_day
+        AQSP_HEAVY_MIN_FREE_MEMORY_MB="${AQSP_DAILY_MIN_FREE_MEMORY_MB:-700}" \
+            AQSP_HEAVY_MAX_LOAD_PER_CPU="${AQSP_DAILY_MAX_LOAD_PER_CPU:-0.50}" \
+            gate_optional_heavy_task
+        acquire_optional_heavy_slot
+        set_daily_research_runner_timeout
+        start_agent_run "${AQSP_AGENT_DEADLINE_SECONDS:-${AQSP_RUNNER_TIMEOUT_SECONDS}}"
+        export AQSP_RUN_TASK_ID="daily_research"
+        export AQSP_DAILY_RESEARCH_ONLY="true"
+        export AQSP_NOTIFY="false"
+        export AQSP_GATE_NOTIFY="false"
+        export AQSP_RUNNER_SCRIPT=scripts/daily_pipeline.sh
+        run_script "${PROJECT_ROOT}/scripts/server_sync_and_run.sh"
+        ;;
+    data-refresh)
+        skip_non_trading_day
+        ensure_data_refresh_window
+        # This task only writes a bounded raw-data chunk. It has a lower memory
+        # reserve than backtests, but remains mutually exclusive with all heavy work.
+        AQSP_HEAVY_MIN_FREE_MEMORY_MB="${AQSP_DATA_REFRESH_MIN_FREE_MEMORY_MB:-640}" \
+            AQSP_HEAVY_MAX_LOAD_PER_CPU="${AQSP_DATA_REFRESH_MAX_LOAD_PER_CPU:-0.50}" \
+            gate_optional_heavy_task
+        acquire_optional_heavy_slot
+        start_agent_run "${AQSP_AGENT_DEADLINE_SECONDS:-480}"
+        export AQSP_RUN_TASK_ID="data_refresh"
+        export AQSP_NOTIFY="false"
+        export AQSP_GATE_NOTIFY="false"
+        sync_code_only
+        run_raw_refresh_or_wait "${AQSP_DATA_REFRESH_BATCHES:-0}"
+        ;;
+    data-refresh-retry)
+        skip_non_trading_day
+        ensure_data_refresh_retry_window
+        AQSP_HEAVY_MIN_FREE_MEMORY_MB="${AQSP_DATA_REFRESH_MIN_FREE_MEMORY_MB:-640}" \
+            AQSP_HEAVY_MAX_LOAD_PER_CPU="${AQSP_DATA_REFRESH_MAX_LOAD_PER_CPU:-0.50}" \
+            gate_optional_heavy_task
+        acquire_optional_heavy_slot
+        start_agent_run "${AQSP_AGENT_DEADLINE_SECONDS:-480}"
+        export AQSP_RUN_TASK_ID="data_refresh_retry"
+        export AQSP_NOTIFY="false"
+        export AQSP_GATE_NOTIFY="false"
+        sync_code_only
+        run_raw_refresh_or_wait "${AQSP_DATA_REFRESH_RETRY_BATCHES:-0}"
+        ;;
     intraday)
         skip_non_trading_day
+        ensure_intraday_dispatch_window
+        set_realtime_runner_timeout
         export AQSP_RUN_TASK_ID="intraday"
         export AQSP_NOTIFY="false"
         export AQSP_GATE_NOTIFY="false"
@@ -488,6 +881,7 @@ case "$ACTION" in
         ;;
     midday)
         skip_non_trading_day
+        set_realtime_runner_timeout
         export AQSP_RUN_TASK_ID="midday"
         export AQSP_NOTIFY="false"
         export AQSP_GATE_NOTIFY="false"
@@ -508,13 +902,40 @@ case "$ACTION" in
         ;;
     coldstart)
         skip_non_trading_day
+        gate_optional_heavy_task
+        acquire_optional_heavy_slot
+        start_agent_run "${AQSP_AGENT_DEADLINE_SECONDS:-900}"
         export AQSP_RUN_TASK_ID="coldstart"
         export AQSP_NOTIFY="false"
         export AQSP_GATE_NOTIFY="false"
         sync_code_only
         run_script "${PROJECT_ROOT}/scripts/coldstart_daily.sh"
         ;;
+    variant-refresh)
+        skip_non_trading_day
+        # Bounded to 240 symbols and 80-row SQLite chunks. The generic 1GB
+        # reserve permanently skips this task on the 1.6GB production host.
+        AQSP_HEAVY_MIN_FREE_MEMORY_MB="${AQSP_VARIANT_MIN_FREE_MEMORY_MB:-700}" \
+        AQSP_HEAVY_MAX_LOAD_PER_CPU="${AQSP_VARIANT_MAX_LOAD_PER_CPU:-0.50}" \
+            gate_optional_heavy_task
+        acquire_optional_heavy_slot
+        variant_agent_deadline="${AQSP_AGENT_DEADLINE_SECONDS:-540}"
+        if ! [[ "$variant_agent_deadline" =~ ^[1-9][0-9]*$ ]] || [ "$variant_agent_deadline" -lt 540 ]; then
+            variant_agent_deadline="540"
+        fi
+        start_agent_run "$variant_agent_deadline"
+        set_variant_runner_timeout
+        export AQSP_VARIANT_MAX_RUNTIME_SECONDS="${AQSP_VARIANT_MAX_RUNTIME_SECONDS:-480}"
+        export AQSP_RUN_TASK_ID="variant_refresh"
+        export AQSP_NOTIFY="false"
+        export AQSP_GATE_NOTIFY="false"
+        export AQSP_RUNNER_SCRIPT=scripts/variant_refresh.sh
+        run_synced_task_with_result
+        ;;
     walkforward-gate)
+        gate_optional_heavy_task
+        acquire_optional_heavy_slot
+        start_agent_run "${AQSP_AGENT_DEADLINE_SECONDS:-900}"
         export AQSP_RUN_TASK_ID="walkforward_gate"
         export AQSP_NOTIFY="false"
         export AQSP_GATE_NOTIFY="${AQSP_WALKFORWARD_GATE_NOTIFY:-false}"

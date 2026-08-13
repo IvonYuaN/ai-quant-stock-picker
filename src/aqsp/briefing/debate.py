@@ -390,7 +390,15 @@ def _pick_risk_items(pick: PickResult) -> tuple[str, ...]:
 
 def _pick_actionable_risk_items(pick: PickResult) -> tuple[str, ...]:
     """Exclude run-wide data blockers from candidate-specific vote evidence."""
-    shared_blockers = ("盘中覆盖不完整", "数据质量", "质量门阻塞", "新鲜度")
+    shared_blockers = (
+        "盘中覆盖不完整",
+        "数据质量",
+        "质量门阻塞",
+        "新鲜度",
+        "组合保护",
+        "组合亏损",
+        "组合止损",
+    )
     return tuple(
         item
         for item in _pick_risk_items(pick)
@@ -709,22 +717,17 @@ class AShareDebateAgent:
                 or (bias20 is not None and bias20 >= 8.0)
             ):
                 return "bearish"
-            # A populated short-term evidence set gives the bear role a real
-            # falsifiable counter-thesis. Missing metrics remain neutral rather
-            # than manufacturing an opposition vote.
-            return "bearish" if pick.score < 50 or any(
-                value is not None for value in (ret5, ret20, bias20, rsi12)
-            ) else "neutral"
+            return "bearish" if pick.score < 50 else "neutral"
         elif self.role == AgentRole.RISK_CONTROL:
             # 风控更保守
             if _is_st_risk_pick(pick) or _pick_actionable_risk_items(pick):
                 return "bearish"
             if invalidation_signals or pressure_targets or conflict_count > 0:
                 return "bearish"
-            if (rsi12 is not None and rsi12 >= 80.0) or (
-                bias20 is not None and bias20 >= 8.0
-            ) or (
-                ret20 is not None and ret20 <= -2.0
+            if (
+                (rsi12 is not None and rsi12 >= 80.0)
+                or (bias20 is not None and bias20 >= 8.0)
+                or (ret20 is not None and ret20 <= -2.0)
             ):
                 return "bearish"
             return "bearish" if pick.score < 60 else "neutral"
@@ -1000,12 +1003,8 @@ class AShareDebateAgent:
             window = str(
                 pick.metrics.get("cross_market_observation_window", "") or ""
             ).strip()
-            execution_watchpoints = tuple(
-                str(item).strip()
-                for item in (
-                    pick.metrics.get("cross_market_execution_watchpoints") or ()
-                )
-                if str(item).strip()
+            execution_watchpoints = _text_items(
+                pick.metrics.get("cross_market_execution_watchpoints")
             )
             evidence_stack_summary = self._cross_market_evidence_stack_summary(
                 pick,
@@ -1095,9 +1094,10 @@ class AShareDebateAgent:
     def _candidate_signature(pick: PickResult) -> str:
         """Keep each role anchored to the candidate's own evidence."""
         metrics = pick.metrics or {}
-        sector = str(metrics.get("sector") or metrics.get("industry") or "行业未记录").strip()
-        technical = metrics.get("technical_evidence") or ()
-        technical_text = "、".join(str(item).strip() for item in technical if str(item).strip())
+        sector = str(
+            metrics.get("sector") or metrics.get("industry") or "行业未记录"
+        ).strip()
+        technical_text = "、".join(_text_items(metrics.get("technical_evidence")))
         return (
             f"候选专属证据: {pick.symbol} {pick.name or '名称未记录'}；"
             f"行业={sector}；ret5={metrics.get('ret5_pct', '—')}%；"
@@ -2112,6 +2112,11 @@ class AShareDebateCoordinator:
                 current_opinions.append(updated)
                 self._heartbeat()
 
+            if not self._round_has_new_information(
+                current_opinions, prev_round.opinions
+            ):
+                logger.info("讨论第 %s 轮没有新增证据，停止发布重复轮次", round_num)
+                break
             result.rounds.append(
                 DebateRound(
                     round_num=round_num,
@@ -2123,6 +2128,35 @@ class AShareDebateCoordinator:
             )
 
         return result.rounds[-1].opinions
+
+    @staticmethod
+    def _round_has_new_information(
+        current: list[AgentOpinion],
+        previous: list[AgentOpinion],
+    ) -> bool:
+        """Only publish a follow-up round when it adds a claim or real rebuttal."""
+        previous_by_role = {item.role: item for item in previous}
+        for opinion in current:
+            prior = previous_by_role.get(opinion.role)
+            if prior is None or opinion.stance != prior.stance:
+                return True
+            prior_points = set(
+                _text_items(prior.arguments)
+                + _text_items(prior.risk_factors)
+                + _text_items(prior.opportunity_factors)
+                + _text_items(prior.counterarguments)
+            )
+            current_points = (
+                _text_items(opinion.arguments)
+                + _text_items(opinion.risk_factors)
+                + _text_items(opinion.opportunity_factors)
+                + _text_items(opinion.counterarguments)
+            )
+            if any(point not in prior_points for point in current_points):
+                return True
+            if set(opinion.counterargument_roles) - set(prior.counterargument_roles):
+                return True
+        return False
 
     def _call_agent_with_deadline(
         self,
@@ -2385,7 +2419,11 @@ class AShareDebateCoordinator:
         def add(bucket: str, values: list[str]) -> None:
             for raw in values:
                 text = str(raw).strip()
-                if text and not _is_non_evidence_text(text) and text not in buckets[bucket]:
+                if (
+                    text
+                    and not _is_non_evidence_text(text)
+                    and text not in buckets[bucket]
+                ):
                     buckets[bucket] = (*buckets[bucket], text)
 
         for opinion in final_opinions:
@@ -2435,9 +2473,9 @@ class AShareDebateCoordinator:
             bucket: tuple(points[:4]) for bucket, points in buckets.items()
         }
         result.disagreement_points = tuple(dict.fromkeys(disagreement))[:4]
-        result.uncertainty_points = tuple(dict.fromkeys(
-            item for item in uncertainty if str(item).strip()
-        ))[:4]
+        result.uncertainty_points = tuple(
+            dict.fromkeys(item for item in uncertainty if str(item).strip())
+        )[:4]
 
     def _build_support_points(
         self,
