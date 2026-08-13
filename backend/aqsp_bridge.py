@@ -1479,7 +1479,7 @@ def _parse_debate(payload: object) -> AQSPDebate:
         advisory_only=_boolean(item.get("advisory_only", True), "debate.advisory_only"),
         deterministic_score=(
             _number(item["deterministic_score"], "debate.deterministic_score")
-            if "deterministic_score" in item
+            if item.get("deterministic_score") is not None
             else None
         ),
         deterministic_score_unchanged=_boolean(
