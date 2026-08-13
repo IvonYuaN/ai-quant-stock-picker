@@ -987,61 +987,6 @@ def _parse_variant(payload: object) -> AQSPVariant:
     return variant
 
 
-def _parse_variant_suite(payload: object) -> AQSPVariantSuite:
-    if payload is None:
-        return AQSPVariantSuite()
-    item = _object(payload, "variant_suite")
-    _check_keys(
-        item,
-        set(),
-        "variant_suite",
-        {
-            "schema_version",
-            "generated_at",
-            "data_mode",
-            "end_date",
-            "variant_count",
-            "selected_symbols",
-            "supported_symbols",
-            "batch_active",
-            "batch_id",
-            "batch_size",
-            "cycle_id",
-            "coverage_pct",
-            "filters",
-            "last_error",
-        },
-    )
-    return AQSPVariantSuite(
-        schema_version=_optional_text(
-            item.get("schema_version"), "variant_suite.schema_version"
-        ),
-        generated_at=_optional_text(
-            item.get("generated_at"), "variant_suite.generated_at"
-        ),
-        data_mode=_optional_text(item.get("data_mode"), "variant_suite.data_mode"),
-        end_date=_optional_text(item.get("end_date"), "variant_suite.end_date"),
-        variant_count=_integer(
-            item.get("variant_count", 0), "variant_suite.variant_count"
-        ),
-        selected_symbols=_integer(
-            item.get("selected_symbols", 0), "variant_suite.selected_symbols"
-        ),
-        supported_symbols=_integer(
-            item.get("supported_symbols", 0), "variant_suite.supported_symbols"
-        ),
-        batch_active=bool(item.get("batch_active", False)),
-        batch_id=_optional_text(item.get("batch_id"), "variant_suite.batch_id"),
-        batch_size=_integer(item.get("batch_size", 0), "variant_suite.batch_size"),
-        cycle_id=_integer(item.get("cycle_id", 0), "variant_suite.cycle_id"),
-        coverage_pct=_number(
-            item.get("coverage_pct", 0.0), "variant_suite.coverage_pct"
-        ),
-        filters=_optional_text(item.get("filters"), "variant_suite.filters"),
-        last_error=_optional_text(item.get("last_error"), "variant_suite.last_error"),
-    )
-
-
 def _parse_phase(payload: object) -> AQSPPhase:
     item = _object(payload, "phase")
     _check_keys(

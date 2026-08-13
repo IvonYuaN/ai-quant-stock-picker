@@ -156,9 +156,7 @@ def test_aqsp_api_returns_current_snapshot_with_messages_and_agents(
     assert body["data"]["selected_date"] == "2026-07-14"
     assert body["data"]["messages"]
     assert body["data"]["debates"]
-    assert body["data"]["debates"][0]["round_summaries"] == [
-        "第1轮完成技术与风险初筛"
-    ]
+    assert body["data"]["debates"][0]["round_summaries"] == ["第1轮完成技术与风险初筛"]
     assert body["data"]["debates"][0]["review_kind"] == "multi_agent"
     assert body["data"]["stale_after"]
     assert body["meta"] == {
@@ -183,6 +181,58 @@ def test_aqsp_api_keeps_formal_board_sections_independent(
     assert len(body["debates"]) == 1
     assert body["messages"][0]["title"] != body["candidates"][0]["display_name"]
     assert body["debates"][0]["symbol"] == body["candidates"][0]["symbol"]
+
+
+def test_aqsp_api_keeps_runtime_variant_evidence_when_snapshot_is_extended(
+    aqsp_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    current = _snapshot(
+        "2026-07-14",
+        stale_after="2099-01-01T09:30:00+08:00",
+        messages=[],
+        debates=[],
+    )
+    current["variants"] = [
+        {
+            "variant_id": "pullback_lb30_basket",
+            "label": "回踩篮子",
+            "initial_cash": 100000.0,
+            "cash": 2500.0,
+            "final_equity": 101250.0,
+            "total_pnl": 1250.0,
+            "return_pct": 1.25,
+            "filled_orders": 2,
+            "rejected_orders": 0,
+            "start_date": "2026-07-01",
+            "end_date": "2026-07-14",
+            "data_mode": "historical_raw_unadjusted",
+            "rank": 1,
+            "strategy": "pullback",
+            "holdings": [{"symbol": "600519", "quantity": 100}],
+            "holdings_date": "2026-07-14",
+            "previous_holdings": [{"symbol": "600519", "quantity": 0}],
+            "previous_holdings_date": "2026-07-13",
+            "recent_actions": [{"symbol": "600519", "side": "buy"}],
+            "adjustments": ["新增纸面持有"],
+            "technical_evidence": [{"symbol": "600519", "mode": "pullback"}],
+            "hard_rules": ["T+1"],
+        }
+    ]
+    _write_snapshot_files(tmp_path, current=current)
+    monkeypatch.setenv(
+        "AQSP_RESEARCH_SURFACE_SNAPSHOT",
+        str(tmp_path / "home_dashboard_snapshot.json"),
+    )
+
+    response = aqsp_client.get(SNAPSHOT_ROUTE)
+
+    assert response.status_code == 200
+    variant = response.json()["data"]["variants"][0]
+    assert variant["holdings_date"] == "2026-07-14"
+    assert variant["recent_actions"] == [{"symbol": "600519", "side": "buy"}]
+    assert variant["technical_evidence"] == [{"symbol": "600519", "mode": "pullback"}]
 
 
 def test_aqsp_api_returns_503_when_current_snapshot_lacks_stale_after(
