@@ -390,7 +390,15 @@ def _pick_risk_items(pick: PickResult) -> tuple[str, ...]:
 
 def _pick_actionable_risk_items(pick: PickResult) -> tuple[str, ...]:
     """Exclude run-wide data blockers from candidate-specific vote evidence."""
-    shared_blockers = ("盘中覆盖不完整", "数据质量", "质量门阻塞", "新鲜度")
+    shared_blockers = (
+        "盘中覆盖不完整",
+        "数据质量",
+        "质量门阻塞",
+        "新鲜度",
+        "组合保护",
+        "组合亏损",
+        "组合止损",
+    )
     return tuple(
         item
         for item in _pick_risk_items(pick)
@@ -709,15 +717,7 @@ class AShareDebateAgent:
                 or (bias20 is not None and bias20 >= 8.0)
             ):
                 return "bearish"
-            # A populated short-term evidence set gives the bear role a real
-            # falsifiable counter-thesis. Missing metrics remain neutral rather
-            # than manufacturing an opposition vote.
-            return (
-                "bearish"
-                if pick.score < 50
-                or any(value is not None for value in (ret5, ret20, bias20, rsi12))
-                else "neutral"
-            )
+            return "bearish" if pick.score < 50 else "neutral"
         elif self.role == AgentRole.RISK_CONTROL:
             # 风控更保守
             if _is_st_risk_pick(pick) or _pick_actionable_risk_items(pick):
