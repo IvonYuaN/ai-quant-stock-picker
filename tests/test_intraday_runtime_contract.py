@@ -98,6 +98,8 @@ def test_intraday_runtime_contract_uses_configured_benchmark_and_quality_gate() 
     assert "DEBATE_LOCK_PID=%q" in script
     assert '"${BASHPID:-$$}"' in script
     assert "AQSP_INTRADAY_DEBATE_BACKFILL_BACKGROUND:-false" in script
+    assert 'grep -q \'"status": "running"\' "$INTRADAY_STATUS"' in script
+    assert '"盘中任务被中断，保留上一版盘中产物"' in script
     assert script.index(
         'export AQSP_PROVISIONAL_REPORT="${TMP_INTRADAY_REPORT}"'
     ) < script.index('if apply_intraday_quality_gate "$TMP_INTRADAY_OUTPUT_CSV"')

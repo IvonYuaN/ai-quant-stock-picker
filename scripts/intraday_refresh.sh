@@ -1538,12 +1538,22 @@ AQSP_INTRADAY_STATUS_PY
 }
 
 cleanup() {
+    local exit_code=$?
     if [ "$INTRADAY_BATCH_ACTIVE" = "true" ] && [ "$BATCH_COMMITTED" != "true" ] && \
        [ "$BATCH_FAILURE_RECORDED" != "true" ]; then
         "${PYTHON_BIN}" "${PROJECT_ROOT}/scripts/prepare_intraday_batch.py" \
             --cursor "$INTRADAY_CURSOR_PATH" \
             --fail "${BATCH_FAILURE_REASON:-intraday_run_incomplete}" \
             >>"$RESULT_LOG" 2>&1 || true
+    fi
+    # A TERM/KILL timeout can bypass the explicit failure branch below. Do not
+    # leave the public runtime state as "running" after its lock is released.
+    if [ "$exit_code" -ne 0 ] && [ -f "$INTRADAY_STATUS" ] && \
+       grep -q '"status": "running"' "$INTRADAY_STATUS"; then
+        write_intraday_status \
+            "failed" \
+            "盘中任务被中断，保留上一版盘中产物" \
+            "$exit_code" || true
     fi
     cleanup_tmp_dir
     # The initial EXIT trap is replaced below, so remove the lock metadata
