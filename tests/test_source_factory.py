@@ -143,3 +143,33 @@ def test_build_data_source_online_first_prioritizes_concurrent_tencent_daily_sou
     )
 
     assert source.primary.name == "tencent"
+
+
+def test_build_data_source_online_first_does_not_reorder_live_sources_by_history(
+    monkeypatch,
+) -> None:
+    from aqsp.data import source_factory as sf
+
+    class DummySource:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+    monkeypatch.setattr(
+        sf,
+        "prioritize_source_ids",
+        lambda source_ids: list(reversed(source_ids)),
+    )
+
+    source = sf.build_data_source(
+        "online_first",
+        overrides={
+            name: lambda *, cache=None, name=name: DummySource(name)
+            for name in ("tencent", "eastmoney", "sina", "akshare", "tdx_vipdoc")
+        },
+    )
+
+    assert source.primary.name == "tencent"
+    assert [fallback.name for fallback in source.fallbacks[:2]] == [
+        "eastmoney",
+        "sina",
+    ]

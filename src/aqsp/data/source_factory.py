@@ -128,16 +128,14 @@ def build_data_source(
             validate_consistency=False,
         )
     if source_name == "online_first":
-        online_sources = _reorder_source_refs(
-            _build_source_refs(
-                # Tencent batches daily requests concurrently. It is the only
-                # online adapter suitable as the first choice for a large
-                # live universe; Eastmoney retries each symbol serially.
-                ("tencent", "eastmoney", "sina", "akshare"),
-                builders,
-                source_cache,
-            ),
-            pinned_last=("akshare",),
+        # Tencent batches daily requests concurrently. It is the only online
+        # adapter suitable as the first choice for a large live universe;
+        # source-health history must not promote Eastmoney's serial retries
+        # ahead of it and turn a ten-minute intraday task into a timeout.
+        online_sources = _build_source_refs(
+            ("tencent", "eastmoney", "sina", "akshare"),
+            builders,
+            source_cache,
         )
         return MultiSource(
             online_sources[0],
