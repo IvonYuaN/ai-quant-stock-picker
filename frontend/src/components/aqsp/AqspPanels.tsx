@@ -29,7 +29,6 @@ import {
   gatePresentation,
   messageSourceUrl,
   sameResearchText,
-  snapshotConclusion,
   uniqueAgentViews,
 } from "@/lib/research-view";
 import { areAqspCandidatesStale, formatAqspTime, isAqspSnapshotStale, useWorkspaceSnapshot } from "./useAqspSnapshot";
@@ -148,6 +147,24 @@ function RawCoverageGate({ snapshot }: { snapshot: AqspSnapshot }) {
   );
 }
 
+function ResearchChain({ snapshot }: { snapshot: AqspSnapshot }) {
+  const chain = snapshot.research_chain;
+  if (!chain) return null;
+  const linked = chain.status === "linked";
+  const label = linked ? "已联动验证" : chain.status === "waiting_validation" ? "等待联动验证" : "变体阻塞";
+  return (
+    <div className={cn("aqsp-coverage-gate", linked ? "aqsp-gate-ok" : "aqsp-gate-warn")} role="status">
+      <FlaskConical className="h-4 w-4 shrink-0" />
+      <div className="aqsp-coverage-grid">
+        <span><b>研究链</b><em className={cn("aqsp-badge", linked ? "aqsp-badge-ok" : "aqsp-badge-warn")}>{label}</em></span>
+        <span>候选 {chain.candidate_symbols.length} · 已复核 {chain.debated_symbols.length} · 待复核 {chain.pending_review_symbols.length}</span>
+        {chain.variant_candidate_symbols.length > 0 && <span>变体交集：候选 {chain.variant_candidate_symbols.join("、")}；复核 {chain.variant_review_symbols.join("、") || "无"}</span>}
+        {chain.blocker && <p>{chain.blocker}</p>}
+      </div>
+    </div>
+  );
+}
+
 const MARKET_PHASES = [
   { id: "pre", label: "盘前", keywords: ["盘前", "pre_market", "pre-market"] },
   { id: "intraday", label: "盘中", keywords: ["盘中", "intraday"] },
@@ -175,6 +192,13 @@ function PhaseLane({ snapshot }: { snapshot: AqspSnapshot }) {
       })}
     </div>
   );
+}
+
+function PhaseConclusions({ snapshot }: { snapshot: AqspSnapshot }) {
+  return <div className="aqsp-phase-conclusions" aria-label="当天分阶段结论">{MARKET_PHASES.map((phase) => {
+    const summary = snapshot.summaries.find((line) => line.startsWith(`${phase.label}：`)) || `${phase.label}：未记录`;
+    return <div key={phase.id}><b>{phase.label}</b><p>{summary.replace(`${phase.label}：`, "")}</p></div>;
+  })}</div>;
 }
 
 function GateState({ snapshot }: { snapshot: AqspSnapshot }) {
@@ -338,18 +362,17 @@ export function AqspResearchWorkspace() {
   const currentSnapshotStale = areAqspCandidatesStale(data);
   const visibleCandidates = currentSnapshotStale ? [] : data.candidates;
   const visibleDebates = currentSnapshotStale ? [] : data.debates;
-  const conclusion = snapshotConclusion(data);
   const intradayOnly = data.phases?.some((phase) => phase.task_id === "intraday" && phase.status === "已产出") && !data.phases?.some((phase) => phase.task_id === "main_chain" && phase.status === "已产出");
   const observationOnly = currentSnapshotStale || intradayOnly;
   const overviewTitle = currentSnapshotStale ? "数据待刷新" : intradayOnly ? "盘中观察" : FORMAL_RESEARCH_SECTIONS[0].label;
   const overviewCount = observationOnly ? (currentSnapshotStale ? "仅观察" : "未收盘快照") : "独立结论";
   const overviewConclusion = currentSnapshotStale
-    ? conclusion.replace(/^研究重点：/, "当前仅保留观察：")
+    ? "当前数据未通过新鲜度校验，以下仅保留各阶段产出记录。"
     : intradayOnly
-      ? conclusion.replace(/^研究重点：/, "盘中研究重点：")
-      : conclusion;
+      ? "盘中结果尚未形成收盘结论，以下按阶段保留独立记录。"
+      : "当天结论按盘前、盘中、盘后独立记录，不混用不同阶段数据。";
   const formalSections = {
-    overview: <section id="overview" className="aqsp-module aqsp-module-overview"><SectionHead number={FORMAL_RESEARCH_SECTIONS[0].number} title={overviewTitle} count={overviewCount} /><div className="aqsp-summary-conclusion"><Sparkles className="h-5 w-5 shrink-0 text-primary" /><div><strong>{overviewConclusion || "当天结论未记录"}</strong>{data.summaries.slice(1, 3).map((line) => <p key={line}>{line}</p>)}</div></div><StatusLine snapshot={data} /><RawCoverageGate snapshot={data} /><PhaseLane snapshot={data} /><GateState snapshot={data} /><EmptyToday snapshot={data} /></section>,
+    overview: <section id="overview" className="aqsp-module aqsp-module-overview"><SectionHead number={FORMAL_RESEARCH_SECTIONS[0].number} title={overviewTitle} count={overviewCount} /><div className="aqsp-summary-conclusion"><Sparkles className="h-5 w-5 shrink-0 text-primary" /><div><strong>{overviewConclusion || "当天结论未记录"}</strong></div></div><PhaseConclusions snapshot={data} /><StatusLine snapshot={data} /><ResearchChain snapshot={data} /><RawCoverageGate snapshot={data} /><PhaseLane snapshot={data} /><GateState snapshot={data} /><EmptyToday snapshot={data} /></section>,
     messages: <section id="messages" className="aqsp-module aqsp-module-messages"><SectionHead number={FORMAL_RESEARCH_SECTIONS[1].number} title={FORMAL_RESEARCH_SECTIONS[1].label} count={`${data.messages.length} 条`} />{data.messages.length === 0 ? <EmptyState title="当天没有有效消息" detail="没有可核验来源时，系统不补写消息或产业链推断。" /> : <div className="aqsp-list">{data.messages.map((message, index) => <MessageCard key={`${message.title}-${message.published_at}-${index}`} message={message} />)}</div>}<MarketContext snapshot={data} /></section>,
     candidates: <section id="candidates" className="aqsp-module aqsp-module-candidates"><SectionHead number={FORMAL_RESEARCH_SECTIONS[2].number} title={FORMAL_RESEARCH_SECTIONS[2].label} count={`${visibleCandidates.length} 个`} />{currentSnapshotStale ? <EmptyState title="当前候选不可用" detail="收盘数据未通过新鲜度或覆盖率验证，已隐藏过期候选。" /> : visibleCandidates.length === 0 ? <EmptyState title="当天没有候选" detail="当前没有通过数据质量与短线筛选的对象，不用历史候选填充。" /> : <div className="aqsp-list">{visibleCandidates.map((candidate) => <CandidateCard key={candidate.symbol} candidate={candidate} />)}</div>}</section>,
     discussion: <section id="discussion" className="aqsp-module aqsp-module-discussion"><SectionHead number={FORMAL_RESEARCH_SECTIONS[3].number} title={FORMAL_RESEARCH_SECTIONS[3].label} count={`${visibleDebates.length} 条`} />{currentSnapshotStale ? <EmptyState title="当前讨论不可用" detail="依赖过期候选的研判已隐藏，等待数据通过验证后重新生成。" /> : visibleDebates.length === 0 ? <EmptyState title="当天没有有效讨论" detail="没有可核验的分歧和风险条件时，不显示推断内容。" /> : <div className="aqsp-list">{visibleDebates.map((result) => <DebateCard key={result.symbol} result={result} />)}</div>}</section>,

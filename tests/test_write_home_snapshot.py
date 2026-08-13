@@ -351,6 +351,63 @@ def test_variant_snapshot_keeps_all_standard_experiment_variants(
     assert len(variants) == 148
 
 
+def test_research_chain_links_current_candidate_review_and_variant(
+    monkeypatch, tmp_path: Path
+) -> None:
+    path = tmp_path / "variant_results.json"
+    payload = _variant_result_payload()
+    first = payload["variants"][0]
+    assert isinstance(first, dict)
+    first["holdings"][0]["symbol"] = "600001"
+    first["holdings"][0]["entry_evidence"]["symbol"] = "600001"
+    first["holdings_signature"] = "600001:100"
+    first["recent_actions"][0]["symbol"] = "600001"
+    first["recent_actions"][0]["evidence"]["symbol"] = "600001"
+    first["technical_evidence"][0]["symbol"] = "600001"
+    first["adjustments"] = ["买入 600001：MACD/KDJ/量比/ATR 技术面确认。"]
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setenv("AQSP_VARIANT_RESULTS", str(path))
+
+    candidate = write_home_snapshot._snapshot_candidate(_candidate("600001", 88.0))
+    assert candidate is not None
+    debate = write_home_snapshot.HomeSnapshotDebate(
+        symbol="600001",
+        display_name="600001 示例",
+        conclusion="规则证据与独立风险条件齐全。",
+        primary_risk_gate="跌破纸面止损则复核失效。",
+        next_trigger="下一交易日确认量能。",
+        active_roles=("量化研究员", "风险审查员", "反方审查员"),
+    )
+    chain = write_home_snapshot._research_chain_snapshot(
+        (candidate,),
+        (debate,),
+        write_home_snapshot._variant_suite_snapshot(),
+        write_home_snapshot._variant_snapshot(),
+    )
+
+    assert chain.status == "linked"
+    assert chain.candidate_symbols == ("600001",)
+    assert chain.debated_symbols == ("600001",)
+    assert chain.variant_candidate_symbols == ("600001",)
+    assert chain.variant_review_symbols == ("600001",)
+
+
+def test_research_chain_exposes_missing_variant_as_blocker(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("AQSP_VARIANT_RESULTS", str(tmp_path / "missing.json"))
+    candidate = write_home_snapshot._snapshot_candidate(_candidate("600001", 88.0))
+    assert candidate is not None
+
+    chain = write_home_snapshot._research_chain_snapshot(
+        (candidate,),
+        (),
+        write_home_snapshot._variant_suite_snapshot(),
+        (),
+    )
+
+    assert chain.status == "blocked"
+    assert chain.blocker == "变体产物不存在。"
+
+
 def test_variant_suite_snapshot_hides_legacy_or_insufficient_artifact(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -676,8 +733,11 @@ def test_write_home_snapshot_builds_bounded_advisory_only_payload(monkeypatch) -
     assert snapshot.debate is None
     assert "999" not in snapshot.to_json()
     assert "raise" not in snapshot.to_json()
-    assert snapshot.summaries[0].startswith("研究重点：600001 示例（纸面复核）")
-    assert snapshot.summaries[1].startswith("复核条件：600001 示例，")
+    assert snapshot.summaries == (
+        "盘前：未产出，等待盘前任务完成。",
+        "盘中：未产出，等待盘中任务完成。",
+        "盘后：未产出，等待盘后任务完成。",
+    )
     assert "讨论复核 1/5 只；4 只未通过质量门，已隐藏" not in snapshot.summaries
     assert snapshot.stale_after == "2026-07-10T15:31:00+08:00"
 
@@ -913,24 +973,18 @@ def test_variant_suite_rejects_expired_waiting_status(
     assert suite.last_error == "变体调度状态已过期，等待下一次正式刷新。"
 
 
-def test_research_conclusion_summaries_are_candidate_first_and_flag_missing_metrics() -> (
-    None
-):
-    candidate = write_home_snapshot._snapshot_candidate(_candidate("600006", 70.0))
-    assert candidate is not None
-    candidate = replace(
-        candidate,
-        technical_metrics=tuple(
-            replace(metric, value="未提供") if metric.key == "macd_hist" else metric
-            for metric in candidate.technical_metrics
-        ),
+def test_phase_conclusion_summaries_keep_each_market_phase_separate() -> None:
+    provider = _Provider()
+
+    summaries = write_home_snapshot._phase_conclusion_summaries(
+        provider,
+        "2026-07-10",
+        (),
     )
 
-    summaries = write_home_snapshot._research_conclusion_summaries((candidate,))
-
-    assert summaries[0].startswith("研究重点：600006 示例（纸面复核）；依据：")
-    assert summaries[1].startswith("复核条件：600006 示例，")
-    assert "MACD柱/KDJ-J 未提供" in summaries[2]
+    assert summaries[0].startswith("盘前：")
+    assert summaries[1].startswith("盘中：")
+    assert summaries[2] == "盘后：未产出，等待盘后任务完成。"
 
 
 def test_snapshot_candidate_maps_freshness_label_when_status_is_missing() -> None:
@@ -1074,7 +1128,9 @@ def test_write_home_snapshot_keeps_candidate_conclusion_first_when_list_is_cappe
     )
 
     assert len(snapshot.candidates) == 5
-    assert snapshot.summaries[0].startswith("研究重点：600001 示例（纸面复核）")
+    assert snapshot.summaries[0].startswith("盘前：")
+    assert snapshot.summaries[1].startswith("盘中：")
+    assert snapshot.summaries[2].startswith("盘后：")
     assert not any("首页展示" in summary for summary in snapshot.summaries)
 
 
@@ -1647,9 +1703,10 @@ def test_write_home_snapshot_hides_debate_for_non_current_candidate(
     )
 
     assert snapshot.debate is None
-    assert snapshot.summaries[0].startswith("研究重点：600001 示例（纸面复核）")
-    assert (
-        "多 Agent 讨论未达到独立证据、分歧与角色数量门槛，已隐藏" in snapshot.summaries
+    assert snapshot.summaries == (
+        "盘前：未产出，等待盘前任务完成。",
+        "盘中：未产出，等待盘中任务完成。",
+        "盘后：未产出，等待盘后任务完成。",
     )
     assert "600999" not in snapshot.to_json()
 

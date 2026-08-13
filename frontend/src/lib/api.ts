@@ -14,6 +14,7 @@ export type {
   AqspMessage,
   AqspPhase,
   AqspRecommendationGate,
+  AqspResearchChain,
   AqspSnapshot,
   AqspSnapshotEnvelope,
   AqspSnapshotMeta,

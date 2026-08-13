@@ -173,6 +173,16 @@ export interface AqspVariantSuite {
   last_error?: string;
 }
 
+export interface AqspResearchChain {
+  status: "linked" | "waiting_validation" | "blocked" | string;
+  candidate_symbols: readonly string[];
+  debated_symbols: readonly string[];
+  pending_review_symbols: readonly string[];
+  variant_candidate_symbols: readonly string[];
+  variant_review_symbols: readonly string[];
+  blocker?: string;
+}
+
 export interface AqspAgentResult {
   symbol: string;
   display_name: string;
@@ -231,6 +241,7 @@ export interface AqspSnapshot {
   universe?: AqspUniverse;
   variant_suite?: AqspVariantSuite;
   variants?: readonly AqspVariant[];
+  research_chain?: AqspResearchChain;
   /** Present after the HTTP envelope is normalized; absent in the raw data payload. */
   meta?: AqspSnapshotMeta;
 }

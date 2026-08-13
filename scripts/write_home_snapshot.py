@@ -54,6 +54,7 @@ from aqsp.web.home_snapshot import (
     HomeSnapshotCandidate,
     HomeSnapshotColdstart,
     HomeSnapshotRecommendationGate,
+    HomeSnapshotResearchChain,
     HomeSnapshotCrossMarket,
     HomeSnapshotDebate,
     HomeSnapshotIndex,
@@ -1883,35 +1884,43 @@ def _variant_suite_snapshot() -> HomeSnapshotVariantSuite:
     )
 
 
-def _research_conclusion_summaries(
-    candidates: tuple[HomeSnapshotCandidate, ...],
+def _phase_conclusion_summaries(
+    provider: DashboardDataProvider,
+    signal_date: str,
+    debates: tuple[HomeSnapshotDebate, ...],
 ) -> tuple[str, ...]:
-    """Build concise, candidate-first research conclusions without action language."""
-    if not candidates:
-        return ()
-    lead = candidates[0]
-    name = _first_text(lead.display_name, lead.symbol)
-    evidence = "；".join(lead.deterministic_reasons[:2])
-    lines = [
-        f"研究重点：{name}（{lead.research_status}）"
-        + (f"；依据：{evidence}" if evidence else "；规则证据不足，保留观察"),
-    ]
-    if lead.next_step:
-        lines.append(f"复核条件：{name}，{lead.next_step}")
-    incomplete = [
-        _first_text(candidate.display_name, candidate.symbol)
-        for candidate in candidates
-        if any(
-            metric.key in _REQUIRED_TECHNICAL_METRICS and metric.value == "未提供"
-            for metric in candidate.technical_metrics
-        )
-    ]
-    if incomplete:
-        lines.append(
-            "技术缺口："
-            + "、".join(incomplete[:3])
-            + " 的 MACD柱/KDJ-J 未提供，不以动量指标形成结论"
-        )
+    """Summarize each market phase from its own artifact, never from another phase."""
+    phase_specs = (
+        ("盘前", "main_chain"),
+        ("盘中", "intraday"),
+        ("盘后", "closing_review"),
+    )
+    debate_by_symbol = {debate.symbol: debate for debate in debates}
+    lines: list[str] = []
+    for label, task_id in phase_specs:
+        try:
+            rows = provider._signal_task_rows_for_date(task_id, signal_date)
+        except Exception:
+            rows = []
+        if not rows:
+            lines.append(f"{label}：未产出，等待{label}任务完成。")
+            continue
+        lead = max(rows, key=lambda row: float(row.get("score") or 0.0))
+        symbol = _text(lead.get("symbol"))
+        name = _first_text(_text(lead.get("name")), symbol)
+        score = float(lead.get("score") or 0.0)
+        reasons = _text(lead.get("reasons"))
+        detail = f"{name}（{score:.1f}）"
+        if reasons:
+            detail += f"；规则证据：{reasons.split('；', 1)[0]}"
+        debate = debate_by_symbol.get(symbol)
+        if debate is not None:
+            detail += (
+                f"；复核：{_first_text(debate.primary_risk_gate, debate.next_trigger)}"
+            )
+        elif task_id == "intraday":
+            detail += "；复核：未形成有效独立分歧，保留规则观察"
+        lines.append(f"{label}：{detail}")
     return tuple(lines)
 
 
@@ -1968,6 +1977,58 @@ def _variant_snapshot() -> tuple[HomeSnapshotVariant, ...]:
             )
         )
     return tuple(variants)
+
+
+def _research_chain_snapshot(
+    candidates: tuple[HomeSnapshotCandidate, ...],
+    debates: tuple[HomeSnapshotDebate, ...],
+    variant_suite: HomeSnapshotVariantSuite,
+    variants: tuple[HomeSnapshotVariant, ...],
+) -> HomeSnapshotResearchChain:
+    """Join current-day evidence without allowing variants to affect scoring."""
+    candidate_symbols = tuple(candidate.symbol for candidate in candidates)
+    debated_symbols = tuple(debate.symbol for debate in debates)
+    debated_set = set(debated_symbols)
+    variant_symbols = tuple(
+        dict.fromkeys(
+            holding.symbol
+            for variant in variants
+            for holding in variant.holdings
+            if holding.symbol
+        )
+    )
+    variant_set = set(variant_symbols)
+    variant_candidate_symbols = tuple(
+        symbol for symbol in candidate_symbols if symbol in variant_set
+    )
+    variant_review_symbols = tuple(
+        symbol for symbol in debated_symbols if symbol in variant_set
+    )
+    if not variants:
+        return HomeSnapshotResearchChain(
+            status="blocked",
+            candidate_symbols=candidate_symbols,
+            debated_symbols=debated_symbols,
+            pending_review_symbols=tuple(
+                symbol for symbol in candidate_symbols if symbol not in debated_set
+            ),
+            blocker=variant_suite.last_error or "变体产物不存在。",
+        )
+    return HomeSnapshotResearchChain(
+        status="linked" if variant_review_symbols else "waiting_validation",
+        candidate_symbols=candidate_symbols,
+        debated_symbols=debated_symbols,
+        pending_review_symbols=tuple(
+            symbol for symbol in candidate_symbols if symbol not in debated_set
+        ),
+        variant_candidate_symbols=variant_candidate_symbols,
+        variant_review_symbols=variant_review_symbols,
+        blocker=(
+            "变体未持有当天有效复核标的，仍只作为独立历史验证。"
+            if not variant_review_symbols
+            else ""
+        ),
+    )
 
 
 def _variant_strategy_text(item: dict) -> str:
@@ -2111,7 +2172,6 @@ def build_home_snapshot(
     selected_date = _resolve_selected_date(payload, requested_date)
     runtime = provider.runtime_overview(selected_date)
     universe = _universe_snapshot()
-    overview = payload.overview
     generated_at = to_shanghai(now_shanghai()).isoformat(timespec="seconds")
     source = _snapshot_source(runtime, task_view, selected_date=selected_date)
     candidates = _snapshot_candidates(payload)
@@ -2157,38 +2217,13 @@ def build_home_snapshot(
     )
     candidates = _apply_recommendation_gate(candidates, recommendation_gate)
     phases = _phase_snapshot(provider, selected_date)
-    live_phase_produced = any(phase.status != "未产出" for phase in phases)
-    intraday_failure_summary = _intraday_failure_summary()
-    debate_missing = bool(getattr(payload, "debates", ()) or ()) and not debates
-    raw_summaries = (
-        *_research_conclusion_summaries(candidates),
-        "多 Agent 讨论未达到独立证据、分歧与角色数量门槛，已隐藏"
-        if debate_missing
-        else "",
-        getattr(overview, "blocker_headline", ""),
-    )
-    if not candidates:
-        if intraday_failure_summary:
-            empty_day_summary = intraday_failure_summary
-        elif messages and not live_phase_produced:
-            empty_day_summary = "今日消息已更新；实时行情任务尚未产出，未使用历史候选"
-        elif messages:
-            empty_day_summary = "今日消息已更新；实时行情筛选暂无候选，未使用历史结果"
-        else:
-            empty_day_summary = "当前日期没有候选，未使用其他日期或旧运行计数填充"
-        raw_summaries = (
-            empty_day_summary,
-            *tuple(
-                summary
-                for summary in raw_summaries
-                if not re.search(
-                    r"(?:\d+\s*个?\s*候选|候选\s*\d+|纸面复核\s*\d+|待复核\s*\d+)",
-                    str(summary),
-                )
-            ),
-        )
-    summaries = _bounded_unique_text(raw_summaries, MAX_HOME_SUMMARIES)
+    # Home conclusions are a fixed three-part timeline. Empty-data and
+    # quality blockers have dedicated status surfaces and must not displace a
+    # market phase from this bounded timeline.
+    summaries = _phase_conclusion_summaries(provider, selected_date, debates)
 
+    variant_suite = _variant_suite_snapshot()
+    variants = _variant_snapshot()
     return HomeDashboardSnapshot(
         schema_version=HOME_SNAPSHOT_SCHEMA_VERSION,
         generated_at=generated_at,
@@ -2207,8 +2242,11 @@ def build_home_snapshot(
         recommendation_gate=recommendation_gate,
         phases=phases,
         universe=universe,
-        variant_suite=_variant_suite_snapshot(),
-        variants=_variant_snapshot(),
+        variant_suite=variant_suite,
+        variants=variants,
+        research_chain=_research_chain_snapshot(
+            candidates, debates, variant_suite, variants
+        ),
     )
 
 

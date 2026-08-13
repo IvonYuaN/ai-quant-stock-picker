@@ -235,6 +235,19 @@ class HomeSnapshotVariantSuite:
 
 
 @dataclass(frozen=True)
+class HomeSnapshotResearchChain:
+    """Trace the current-day conclusion through review and isolated variants."""
+
+    status: str = "blocked"
+    candidate_symbols: tuple[str, ...] = ()
+    debated_symbols: tuple[str, ...] = ()
+    pending_review_symbols: tuple[str, ...] = ()
+    variant_candidate_symbols: tuple[str, ...] = ()
+    variant_review_symbols: tuple[str, ...] = ()
+    blocker: str = ""
+
+
+@dataclass(frozen=True)
 class HomeSnapshotSource:
     """Freshness and effective source status for the current run."""
 
@@ -315,6 +328,7 @@ class HomeDashboardSnapshot:
     universe: HomeSnapshotUniverse = HomeSnapshotUniverse()
     variant_suite: HomeSnapshotVariantSuite = HomeSnapshotVariantSuite()
     variants: tuple[HomeSnapshotVariant, ...] = ()
+    research_chain: HomeSnapshotResearchChain = HomeSnapshotResearchChain()
 
     def __init__(
         self,
@@ -338,6 +352,7 @@ class HomeDashboardSnapshot:
         universe: HomeSnapshotUniverse | None = None,
         variant_suite: HomeSnapshotVariantSuite | None = None,
         variants: tuple[HomeSnapshotVariant, ...] = (),
+        research_chain: HomeSnapshotResearchChain | None = None,
     ) -> None:
         normalized_debates = tuple(debates or ())
         if debate is not None:
@@ -374,6 +389,9 @@ class HomeDashboardSnapshot:
             self, "variant_suite", variant_suite or HomeSnapshotVariantSuite()
         )
         object.__setattr__(self, "variants", tuple(variants or ()))
+        object.__setattr__(
+            self, "research_chain", research_chain or HomeSnapshotResearchChain()
+        )
         self.__post_init__()
 
     @property
@@ -706,6 +724,7 @@ def _snapshot_from_dict(payload: object) -> HomeDashboardSnapshot:
             "universe",
             "variant_suite",
             "variants",
+            "research_chain",
         },
     )
     if "debates" in mapping:
@@ -761,6 +780,7 @@ def _snapshot_from_dict(payload: object) -> HomeDashboardSnapshot:
             _variant_from_dict(item)
             for item in _list(mapping.get("variants", ()), "variants")
         ),
+        research_chain=_research_chain_from_dict(mapping.get("research_chain", {})),
     )
 
 
@@ -903,6 +923,49 @@ def _variant_suite_from_dict(payload: object) -> HomeSnapshotVariantSuite:
         last_error=_optional_text(
             mapping.get("last_error"), "variant_suite.last_error"
         ),
+    )
+
+
+def _research_chain_from_dict(payload: object) -> HomeSnapshotResearchChain:
+    if payload is None:
+        return HomeSnapshotResearchChain()
+    mapping = _mapping(payload, "research_chain")
+    _require_keys(
+        mapping,
+        set(),
+        "research_chain",
+        optional={
+            "status",
+            "candidate_symbols",
+            "debated_symbols",
+            "pending_review_symbols",
+            "variant_candidate_symbols",
+            "variant_review_symbols",
+            "blocker",
+        },
+    )
+    return HomeSnapshotResearchChain(
+        status=_optional_text(mapping.get("status"), "research_chain.status")
+        or "blocked",
+        candidate_symbols=_text_tuple(
+            mapping.get("candidate_symbols", ()), "research_chain.candidate_symbols"
+        ),
+        debated_symbols=_text_tuple(
+            mapping.get("debated_symbols", ()), "research_chain.debated_symbols"
+        ),
+        pending_review_symbols=_text_tuple(
+            mapping.get("pending_review_symbols", ()),
+            "research_chain.pending_review_symbols",
+        ),
+        variant_candidate_symbols=_text_tuple(
+            mapping.get("variant_candidate_symbols", ()),
+            "research_chain.variant_candidate_symbols",
+        ),
+        variant_review_symbols=_text_tuple(
+            mapping.get("variant_review_symbols", ()),
+            "research_chain.variant_review_symbols",
+        ),
+        blocker=_optional_text(mapping.get("blocker"), "research_chain.blocker"),
     )
 
 
@@ -1285,6 +1348,8 @@ def _validate_snapshot(snapshot: HomeDashboardSnapshot) -> None:
         raise ValueError("universe must be a HomeSnapshotUniverse value")
     if not isinstance(snapshot.variant_suite, HomeSnapshotVariantSuite):
         raise ValueError("variant_suite must be a HomeSnapshotVariantSuite value")
+    if not isinstance(snapshot.research_chain, HomeSnapshotResearchChain):
+        raise ValueError("research_chain must be a HomeSnapshotResearchChain value")
     if not all(isinstance(value, HomeSnapshotVariant) for value in snapshot.variants):
         raise ValueError("variants must contain HomeSnapshotVariant values")
     if any(value.initial_cash != 100_000.0 for value in snapshot.variants):
@@ -1333,6 +1398,11 @@ def _validate_snapshot(snapshot: HomeDashboardSnapshot) -> None:
     if len(set(debate_symbols)) != len(debate_symbols):
         raise ValueError("debates must not contain duplicate symbols")
     candidate_symbol_set = set(candidate_symbols)
+    chain = snapshot.research_chain
+    if not set(chain.candidate_symbols).issubset(candidate_symbol_set):
+        raise ValueError("research_chain candidates must belong to candidates")
+    if not set(chain.debated_symbols).issubset(candidate_symbol_set):
+        raise ValueError("research_chain debates must belong to candidates")
     missing_debate_symbols = set(debate_symbols) - candidate_symbol_set
     if missing_debate_symbols:
         raise ValueError("debates symbols must belong to candidates")

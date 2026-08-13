@@ -339,6 +339,10 @@
   .aqsp-summary-conclusion { display: flex; align-items: flex-start; gap: 0.65rem; border-left: 2px solid hsl(var(--primary)); background: hsl(var(--primary) / 0.07); padding: 0.8rem 0.85rem; }
   .aqsp-summary-conclusion strong { display: block; font-size: 0.95rem; line-height: 1.5; }
   .aqsp-summary-conclusion p { margin-top: 0.25rem; color: hsl(var(--muted-foreground)); font-size: 0.72rem; line-height: 1.45; }
+  .aqsp-phase-conclusions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.45rem; margin-top: 0.7rem; }
+  .aqsp-phase-conclusions > div { min-width: 0; border-bottom: 1px solid hsl(var(--border) / 0.65); padding: 0.45rem 0.1rem 0.55rem; }
+  .aqsp-phase-conclusions b { color: hsl(var(--primary)); font-size: 0.72rem; }
+  .aqsp-phase-conclusions p { margin-top: 0.25rem; color: hsl(var(--muted-foreground)); font-size: 0.72rem; line-height: 1.45; }
   .aqsp-status-line { display: flex; flex-wrap: wrap; gap: 0.5rem 1.1rem; border-bottom: 1px solid hsl(var(--border) / 0.6); padding: 0.75rem 0; color: hsl(var(--muted-foreground)); font-size: 0.68rem; }
   .aqsp-status-line b { margin-right: 0.25rem; color: hsl(var(--foreground)); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.83rem; }
   .aqsp-status-muted { color: hsl(var(--muted-foreground) / 0.72); }
@@ -487,6 +491,7 @@
   .aqsp-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .aqsp-variant-account, .aqsp-variant-ledger { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .aqsp-phase-lane { grid-template-columns: minmax(0, 1fr); }
+  .aqsp-phase-conclusions { grid-template-columns: minmax(0, 1fr); gap: 0; }
   .aqsp-coverage-grid { grid-template-columns: minmax(0, 1fr); }
 }
 
