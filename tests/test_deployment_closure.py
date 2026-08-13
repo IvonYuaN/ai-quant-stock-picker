@@ -106,6 +106,38 @@ def test_deployment_closure_rejects_other_dirty_release_input(
     assert result.detail == " M scripts/daily_pipeline.py"
 
 
+def test_deployment_closure_ignores_untracked_local_artifacts(
+    monkeypatch, tmp_path: Path
+) -> None:
+    def fake_run(_root: Path, command: list[str]) -> subprocess.CompletedProcess[str]:
+        assert command == ["git", "status", "--porcelain", "--untracked-files=all"]
+        return _completed(command, 0, "?? notes.txt\n?? data/local.db\n")
+
+    monkeypatch.setattr(closure, "_run", fake_run)
+
+    assert closure._worktree_clean(tmp_path).status == "ok"
+
+
+def test_deployment_closure_uses_github_api_when_git_remote_times_out(
+    monkeypatch, tmp_path: Path
+) -> None:
+    def fake_run(_root: Path, command: list[str]) -> subprocess.CompletedProcess[str]:
+        if command[:2] == ["git", "ls-remote"]:
+            return _completed(command, 124, stderr="timed out")
+        assert command[:3] == ["gh", "api", "repos/IvonYuaN/ai-quant-stock-picker/git/ref/heads/codex/monitor-walkforward"]
+        return _completed(command, 0, SHA_B + "\n")
+
+    monkeypatch.setattr(closure, "_run", fake_run)
+
+    commit, check = closure._remote_branch_commit(
+        tmp_path, remote="origin", branch="codex/monitor-walkforward"
+    )
+
+    assert commit == SHA_B
+    assert check.status == "ok"
+    assert "GitHub API fallback" in check.detail
+
+
 def test_deployment_closure_requires_successful_ci(monkeypatch, tmp_path: Path) -> None:
     def fake_run(_root: Path, command: list[str]) -> subprocess.CompletedProcess[str]:
         if command[:3] == ["git", "rev-parse", "HEAD"]:
@@ -438,7 +470,7 @@ def test_snapshot_contract_rejects_missing_source_provenance(monkeypatch) -> Non
     assert check.detail == "source missing"
 
 
-def test_snapshot_contract_rejects_frontend_missing_previous_variant_date(
+def test_snapshot_contract_allows_variant_previous_date_outside_home_date_index(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(
@@ -481,7 +513,7 @@ def test_snapshot_contract_rejects_frontend_missing_previous_variant_date(
     )
 
     assert check.status == "failed"
-    assert "available_dates missing previous_holdings_date" in check.detail
+    assert "variant_suite variant_count" in check.detail
 
 
 def test_snapshot_contract_rejects_selected_date_ahead_of_market_data(

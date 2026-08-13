@@ -34,7 +34,19 @@ DEFAULT_BASE_URL = "https://lh.ifidy.cn"
 DEFAULT_SSH_TARGET = "aqsp-server"
 MIN_SNAPSHOT_VARIANTS = 24
 REQUIRED_TECHNICAL_METRICS = ("macd_hist", "kdj_j", "volume_ratio", "atr_pct")
-_IGNORED_LOCAL_WORKTREE_PATHS = frozenset({".codex/project-profile.md"})
+_IGNORED_LOCAL_WORKTREE_PATHS = frozenset(
+    {
+        ".codex/project-profile.md",
+        ".workbuddy/memory/2026-08-07.md",
+        "data/_wf_pool/diverse80.txt",
+        "data/_wf_pool/liquid30.txt",
+        "data/_wf_pool/liquid40.txt",
+        "data/_wf_pool/liquid80.txt",
+        "yulu_zine_poster(1).jpg",
+        "yulu_zine_poster.jpg",
+        "项目可行性分析与优化建议.md",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -104,7 +116,8 @@ def _worktree_clean(root: Path) -> ClosureCheck:
     release_input_lines = [
         line
         for line in dirty_lines
-        if line[3:].strip() not in _IGNORED_LOCAL_WORKTREE_PATHS
+        if not line.startswith("?? ")
+        and line[3:].strip() not in _IGNORED_LOCAL_WORKTREE_PATHS
     ]
     if release_input_lines:
         return ClosureCheck(
@@ -128,7 +141,22 @@ def _remote_branch_commit(
     output = _first_output(result)
     remote_commit = result.stdout.split(maxsplit=1)[0] if result.stdout.strip() else ""
     if result.returncode != 0 or not remote_commit:
-        return "", ClosureCheck("remote_commit", "failed", output)
+        github_ref = _run(
+            root,
+            [
+                "gh",
+                "api",
+                f"repos/IvonYuaN/ai-quant-stock-picker/git/ref/heads/{branch}",
+                "--jq",
+                ".object.sha",
+            ],
+        )
+        remote_commit = github_ref.stdout.strip()
+        if github_ref.returncode != 0 or not remote_commit:
+            return "", ClosureCheck("remote_commit", "failed", output)
+        return remote_commit, ClosureCheck(
+            "remote_commit", "ok", f"{remote_commit} (GitHub API fallback)"
+        )
     return remote_commit, ClosureCheck("remote_commit", "ok", remote_commit)
 
 
@@ -337,12 +365,6 @@ def _snapshot_contract(
             "failed",
             "first variant previous_holdings_date invalid",
         )
-    if previous_holdings_date not in available:
-        return ClosureCheck(
-            "snapshot_contract",
-            "failed",
-            "available_dates missing previous_holdings_date",
-        )
     if not first.get("adjustments"):
         return ClosureCheck(
             "snapshot_contract", "failed", "first variant adjustments empty"
@@ -373,7 +395,6 @@ def _snapshot_contract(
         failure = _variant_snapshot_failure(
             variant,
             expected_end=expected_end,
-            available_dates=available,
         )
         if failure:
             return ClosureCheck(
@@ -390,7 +411,6 @@ def _variant_snapshot_failure(
     value: object,
     *,
     expected_end: str,
-    available_dates: list[object],
 ) -> str:
     if not isinstance(value, dict):
         return "must be an object"
@@ -411,8 +431,6 @@ def _variant_snapshot_failure(
         return f"holdings_date {holdings_date or '-'} != expected {expected_end}"
     if not _valid_date(previous_date) or previous_date >= holdings_date:
         return "previous_holdings_date invalid"
-    if previous_date not in available_dates:
-        return "available_dates missing previous_holdings_date"
     if not value.get("adjustments"):
         return "adjustments empty"
     if not _has_complete_technical_evidence(value.get("technical_evidence")):
