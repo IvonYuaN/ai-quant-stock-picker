@@ -81,6 +81,36 @@ def test_variant_batch_rotates_balanced_universe_only_after_commit(
     assert [item.group for item in second.symbols] == ["深市主板", "创业板", "沪市主板"]
 
 
+def test_symbols_with_complete_volume_history_excludes_missing_recent_volume(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "market.db"
+    symbols = (
+        mod.MarketSymbol("000001.SZ", "000001", "完整", "深市主板"),
+        mod.MarketSymbol("000002.SZ", "000002", "缺失", "深市主板"),
+    )
+    with sqlite3.connect(db) as conn:
+        conn.execute("CREATE TABLE daily_qfq (ts_code TEXT, trade_date TEXT, volume REAL)")
+        conn.executemany(
+            "INSERT INTO daily_qfq VALUES (?, ?, ?)",
+            [
+                (symbols[0].ts_code, f"202601{day:02d}", 100.0)
+                for day in range(2, 5)
+            ]
+            + [
+                (symbols[1].ts_code, "20260102", 100.0),
+                (symbols[1].ts_code, "20260103", None),
+                (symbols[1].ts_code, "20260104", 100.0),
+            ],
+        )
+
+    eligible = mod.symbols_with_complete_volume_history(
+        db, symbols, "2026-01-04", history_bars=3
+    )
+
+    assert eligible == (symbols[0],)
+
+
 def test_refresh_defaults_keep_production_refresh_bounded() -> None:
     assert mod.DEFAULT_MAX_SYMBOLS == 300
     assert mod.DEFAULT_LOOKBACK_CALENDAR_DAYS == 180
@@ -314,6 +344,9 @@ def test_refresh_rejects_invalid_payload_before_write_or_cursor_commit(
     monkeypatch.setattr(
         mod, "symbols_with_data_at_date", lambda _path, values, _end: values
     )
+    monkeypatch.setattr(
+        mod, "symbols_with_complete_volume_history", lambda _path, values, _end: values
+    )
     monkeypatch.setattr(mod, "MIN_LATEST_DATE_SYMBOLS", 1)
     monkeypatch.setattr(mod, "select_variant_batch", lambda *_args: batch)
     monkeypatch.setattr(
@@ -435,6 +468,9 @@ def test_refresh_failure_preserves_last_qualified_artifact_and_cursor(
     monkeypatch.setattr(
         mod, "symbols_with_data_at_date", lambda _path, values, _end: values
     )
+    monkeypatch.setattr(
+        mod, "symbols_with_complete_volume_history", lambda _path, values, _end: values
+    )
     monkeypatch.setattr(mod, "MIN_LATEST_DATE_SYMBOLS", 1)
     monkeypatch.setattr(mod, "select_variant_batch", lambda *_args: batch)
     monkeypatch.setattr(mod, "copy_market_rows", lambda **_kwargs: ("000001",))
@@ -538,6 +574,9 @@ def test_refresh_stages_profile_chunks_before_publishing_first_artifact(
     monkeypatch.setattr(mod, "load_supported_symbols", lambda _path: symbols)
     monkeypatch.setattr(
         mod, "symbols_with_data_at_date", lambda _path, values, _end: values
+    )
+    monkeypatch.setattr(
+        mod, "symbols_with_complete_volume_history", lambda _path, values, _end: values
     )
     monkeypatch.setattr(mod, "MIN_LATEST_DATE_SYMBOLS", 1)
     monkeypatch.setattr(mod, "select_variant_batch", lambda *_args: batch)

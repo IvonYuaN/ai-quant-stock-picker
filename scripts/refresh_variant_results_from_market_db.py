@@ -47,6 +47,7 @@ DEFAULT_LOCK_WAIT_SECONDS = 0.0
 DEFAULT_PROFILE_BATCH_SIZE = 6
 STAGING_SCHEMA_VERSION = "variant-suite-stage-v1"
 MIN_LATEST_DATE_SYMBOLS = 600
+MIN_VARIANT_VOLUME_HISTORY = 40
 SQL_CHUNK_SIZE = 80
 REQUIRED_MARKET_TABLES = frozenset({"stocks", "daily_qfq"})
 VARIANT_REFRESH_STATUS_SCHEMA_VERSION = "variant-refresh-status-v1"
@@ -328,6 +329,37 @@ def symbols_with_data_at_date(
             ).fetchall()
             available.update(str(row[0]) for row in rows)
     return tuple(item for item in symbols if item.ts_code in available)
+
+
+def symbols_with_complete_volume_history(
+    db_path: Path,
+    symbols: tuple[MarketSymbol, ...],
+    end: str,
+    *,
+    history_bars: int = MIN_VARIANT_VOLUME_HISTORY,
+) -> tuple[MarketSymbol, ...]:
+    """Keep symbols whose latest volume window can form the largest variant ratio."""
+    if history_bars < 1:
+        raise ValueError("history_bars must be positive")
+    end_raw = compact_trade_date(end)
+    eligible: list[MarketSymbol] = []
+    with sqlite3.connect(db_path) as conn:
+        for item in symbols:
+            rows = conn.execute(
+                """
+                SELECT volume
+                FROM daily_qfq
+                WHERE ts_code = ? AND trade_date <= ?
+                ORDER BY trade_date DESC
+                LIMIT ?
+                """,
+                (item.ts_code, end_raw, history_bars),
+            ).fetchall()
+            if len(rows) == history_bars and all(
+                value is not None and float(value) > 0.0 for (value,) in rows
+            ):
+                eligible.append(item)
+    return tuple(eligible)
 
 
 def copy_market_rows(
@@ -666,8 +698,13 @@ def main() -> int:
             supported = load_supported_symbols(args.market_db)
             end = args.end or latest_trade_date(args.market_db, supported)
             eligible_symbols = symbols_with_data_at_date(args.market_db, supported, end)
+            eligible_symbols = symbols_with_complete_volume_history(
+                args.market_db, eligible_symbols, end
+            )
             if len(eligible_symbols) < MIN_LATEST_DATE_SYMBOLS:
-                raise ValueError(f"目标日 {end} 可用标的不足: {len(eligible_symbols)}")
+                raise ValueError(
+                    f"目标日 {end} 连续有效成交量标的不足: {len(eligible_symbols)}"
+                )
             start = (
                 args.start
                 or (
