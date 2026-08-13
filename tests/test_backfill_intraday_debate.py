@@ -606,3 +606,56 @@ def test_backfill_keeps_same_candidate_isolated_by_task_id(
     assert {row["task_id"] for row in rows} == {"intraday", "closing_review"}
     assert len({row["candidate_fingerprint"] for row in rows}) == 1
     assert _read_status(status_path)["task_id"] == "closing_review"
+
+
+def test_backfill_replaces_same_task_candidate_when_fingerprint_changes(
+    tmp_path: Path, monkeypatch
+) -> None:
+    input_csv = tmp_path / "intraday_latest.csv"
+    output_path = tmp_path / "debate_results.jsonl"
+    status_path = tmp_path / "status.json"
+    lock_path = tmp_path / "backfill.lock"
+    _write_candidates(input_csv, ("000001",))
+    _patch_runtime(monkeypatch)
+
+    assert (
+        backfill_intraday_debate.run_backfill(
+            input_csv=input_csv,
+            output_path=output_path,
+            task_id="intraday",
+            max_candidates=5,
+            force=True,
+            status_path=status_path,
+            lock_path=lock_path,
+        )
+        == 1
+    )
+
+    rows = list(csv.DictReader(input_csv.open(encoding="utf-8")))
+    rows[0]["risks"] = "组合保护冷却期"
+    with input_csv.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=rows[0].keys())
+        writer.writeheader()
+        writer.writerows(rows)
+
+    assert (
+        backfill_intraday_debate.run_backfill(
+            input_csv=input_csv,
+            output_path=output_path,
+            task_id="intraday",
+            max_candidates=5,
+            force=True,
+            status_path=status_path,
+            lock_path=lock_path,
+        )
+        == 1
+    )
+
+    records = [
+        json.loads(line)
+        for line in output_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert len(records) == 1
+    assert records[0]["task_id"] == "intraday"
+    assert records[0]["candidate_signal_date"] == "2026-07-10"

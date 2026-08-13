@@ -621,16 +621,28 @@ def _persist_debate_update(
     cutoff: str,
     payload: dict[str, Any],
 ) -> None:
+    # A new intraday observation can change its fingerprint as quotes and risk
+    # context update. The published chain still has one current review per
+    # symbol, signal date, and task; the fingerprint remains audit evidence.
     key = "|".join(
         (
             str(payload.get("symbol", "")),
             str(payload.get("related_signal_date", "")),
             str(payload.get("task_id", "")),
-            str(payload.get("candidate_fingerprint", "")),
         )
     )
     with advisory_lock(output_path):
         records = _read_retained_debates(output_path, cutoff)
+        records = {
+            record_key: record
+            for record_key, record in records.items()
+            if not (
+                str(record.get("symbol", "")) == str(payload.get("symbol", ""))
+                and str(record.get("related_signal_date", ""))
+                == str(payload.get("related_signal_date", ""))
+                and str(record.get("task_id", "")) == str(payload.get("task_id", ""))
+            )
+        }
         _merge_debate_records(records, {key: payload})
         _write_debate_records(output_path, records)
 
