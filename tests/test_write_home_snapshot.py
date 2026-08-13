@@ -336,6 +336,23 @@ def test_write_home_snapshot_parser_uses_runtime_output_path(
     assert args.output == str(output)
 
 
+def test_empty_same_day_refresh_does_not_replace_valid_snapshot() -> None:
+    candidate = write_home_snapshot.HomeSnapshotCandidate(
+        symbol="600001",
+        display_name="样本",
+        score=80.0,
+        research_status="纸面复核",
+        next_step="观察",
+        context="趋势",
+        deterministic_reasons=("趋势",),
+    )
+    existing = SimpleNamespace(selected_date="2026-07-24", candidates=(candidate,))
+    refreshed = SimpleNamespace(selected_date="2026-07-24", candidates=())
+
+    with pytest.raises(DataError, match="non-empty same-day"):
+        write_home_snapshot._guard_empty_same_day_refresh(existing, refreshed)
+
+
 def test_variant_snapshot_keeps_all_standard_experiment_variants(
     monkeypatch, tmp_path: Path
 ) -> None:

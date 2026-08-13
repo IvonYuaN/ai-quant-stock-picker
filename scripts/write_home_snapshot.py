@@ -70,6 +70,7 @@ from aqsp.web.home_snapshot import (
     HomeSnapshotVariantSuite,
     MAX_HOME_SNAPSHOT_TECHNICAL_METRICS,
     is_home_recommendation,
+    load_home_dashboard_snapshot,
     load_home_snapshot_index,
     stale_after_for_task,
     write_home_dashboard_snapshot,
@@ -2491,6 +2492,22 @@ def _resolve_output_path(raw_path: str) -> Path:
     return path if path.is_absolute() else PROJECT_ROOT / path
 
 
+def _guard_empty_same_day_refresh(
+    existing: HomeDashboardSnapshot | None,
+    refreshed: HomeDashboardSnapshot,
+) -> None:
+    """Never replace a valid same-day result with a transient empty refresh."""
+    if (
+        existing is not None
+        and existing.selected_date == refreshed.selected_date
+        and existing.candidates
+        and not refreshed.candidates
+    ):
+        raise DataError(
+            "refusing to replace a non-empty same-day home snapshot with empty data"
+        )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -2533,6 +2550,9 @@ def main(argv: list[str] | None = None) -> int:
     index = merge_home_snapshot_index(existing_index, index)
     current_snapshot = next(
         day.snapshot for day in index.days if day.date == index.selected_date
+    )
+    _guard_empty_same_day_refresh(
+        load_home_dashboard_snapshot(output_path), current_snapshot
     )
     write_home_dashboard_snapshot(output_path, current_snapshot)
     write_home_snapshot_index(index_path, index)
