@@ -6,17 +6,13 @@ import {
   Moon,
   PanelLeftClose,
   PanelLeftOpen,
-  ScrollText,
   Sparkles,
   Sun,
-  UsersRound,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { RESEARCH_NAV_ITEMS, TEST_VARIANTS_SECTION_ID } from "@/lib/research-layout";
+import { TEST_VARIANTS_SECTION_ID } from "@/lib/research-layout";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import { AqspWorkspaceProvider, useAqspSnapshot } from "@/components/aqsp/useAqspSnapshot";
-
-const NAV_ICONS = [Sparkles, ScrollText, LineChart, UsersRound] as const;
 
 export function Layout() {
   return <AqspWorkspaceProvider><WorkspaceLayout /></AqspWorkspaceProvider>;
@@ -64,34 +60,18 @@ function WorkspaceLayout() {
         <div className={cn("vr-sidebar-scroll", collapsed && "px-1.5")}>
           {!collapsed && (
             <div className="vr-sidebar-section">
-              <div className="vr-sidebar-label"><span>研究内容</span><span className="text-muted-foreground/50">{RESEARCH_NAV_ITEMS.length} 模块</span></div>
+              <div className="vr-sidebar-label"><span>当天研究</span><span className="text-muted-foreground/50">复盘</span></div>
             </div>
           )}
           <nav className="space-y-1" aria-label="研究内容">
-            {RESEARCH_NAV_ITEMS.map(({ id: targetHash, label, description, countKey }, index) => {
-              const Icon = NAV_ICONS[index];
-              const count = countKey === "conclusion"
-                ? 1
-                : countKey === "messages"
-                  ? data?.messages.length ?? 0
-                  : countKey === "candidates"
-                    ? data?.candidates.length ?? 0
-                    : data?.debates.length ?? 0;
-              const to = `/daily-review#${targetHash}`;
-              const active = pathname === "/daily-review" && (hash === `#${targetHash}` || (!hash && targetHash === "overview"));
-              return (
-                <Link
-                  key={to}
-                  to={to}
-                  onClick={() => undefined}
-                  title={collapsed ? `${label} · ${description}` : undefined}
-                  className={cn("vr-nav-item", active && "vr-nav-item-active", collapsed && "justify-center px-2")}
-                >
-                  <Icon className="h-4 w-4 shrink-0" />
-                  {!collapsed && <span className="min-w-0"><span className="flex items-center gap-2 truncate font-medium"><span className="truncate">{label}</span><span className="ml-auto font-mono text-[10px] text-muted-foreground">{count}</span></span><span className="block truncate text-[10px] text-muted-foreground">{description}</span></span>}
-                </Link>
-              );
-            })}
+            <Link
+              to="/daily-review"
+              title={collapsed ? "当天复盘" : undefined}
+              className={cn("vr-nav-item", pathname === "/daily-review" && hash !== `#${TEST_VARIANTS_SECTION_ID}` && "vr-nav-item-active", collapsed && "justify-center px-2")}
+            >
+              <Sparkles className="h-4 w-4 shrink-0" />
+              {!collapsed && <span className="min-w-0"><span className="flex items-center gap-2 truncate font-medium"><span className="truncate">当天复盘</span><span className="ml-auto font-mono text-[10px] text-muted-foreground">{data?.candidates.length ?? 0}</span></span><span className="block truncate text-[10px] text-muted-foreground">结论、候选与复核</span></span>}
+            </Link>
           </nav>
 
           {!collapsed && <div className="vr-sidebar-section mt-7"><div className="vr-sidebar-label"><span>独立实验区</span><span className="text-muted-foreground/50">不入推荐</span></div></div>}
