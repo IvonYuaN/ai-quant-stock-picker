@@ -546,12 +546,17 @@ def _snapshot_debates(
             :4
         ]
         structured_rounds = tuple(
-            f"{bucket}：{points[0]}"
+            f"{bucket}：{_clean_legacy_debate_text(points[0])[:240]}"
             for bucket, points in viewpoint_buckets.items()
             if points
         )[:2]
         if disagreement_points:
-            structured_rounds += (f"分歧：{disagreement_points[0]}",)
+            structured_rounds += (
+                f"分歧：{_clean_legacy_debate_text(disagreement_points[0])[:240]}",
+            )
+        fallback_rounds = _distinct_research_lines(
+            tuple(getattr(debate, "round_summaries", ()) or ()), limit=3
+        )
         selected.append(
             HomeSnapshotDebate(
                 symbol=symbol,
@@ -583,10 +588,7 @@ def _snapshot_debates(
                     if getattr(debate, "round_count", 0)
                     else ""
                 ),
-                round_summaries=structured_rounds
-                or _distinct_research_lines(
-                    tuple(getattr(debate, "round_summaries", ()) or ()), limit=3
-                ),
+                round_summaries=structured_rounds or fallback_rounds,
                 agent_views=_snapshot_agent_views(
                     getattr(debate, "agent_views", ()) or ()
                 ),
@@ -608,6 +610,17 @@ def _research_text_key(value: object) -> str:
     return re.sub(r"\s+", "", _text(value)).lower()
 
 
+def _clean_legacy_debate_text(value: object) -> str:
+    """Remove the retired vote template before old debate artifacts reach UI."""
+    text = _text(value)
+    text = re.sub(
+        r"看多\s*\d+\s*[/／]\s*看空\s*\d+\s*[/／]\s*中性\s*\d+\s*[；;]?",
+        "",
+        text,
+    )
+    return re.sub(r"\s*[；;]\s*[；;]\s*", "；", text).strip(" ；;")
+
+
 def _distinct_research_lines(
     values: Iterable[object], *, limit: int
 ) -> tuple[str, ...]:
@@ -615,7 +628,7 @@ def _distinct_research_lines(
     result: list[str] = []
     seen: set[str] = set()
     for value in values:
-        text = _text(value)
+        text = _clean_legacy_debate_text(value)
         key = _research_text_key(text)
         if not key or key in seen:
             continue
