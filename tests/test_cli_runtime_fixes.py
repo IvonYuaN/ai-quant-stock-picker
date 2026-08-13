@@ -880,6 +880,58 @@ def test_fetch_special_strategy_frames_keeps_daily_when_intraday_overlay_is_empt
     assert result["600000"].attrs["intraday_overlay_coverage"]["status"] == "partial"
 
 
+def test_fetch_special_strategy_frames_overlays_today_on_prior_daily_history(
+    monkeypatch,
+) -> None:
+    import aqsp.cli as cli_mod
+
+    historical = {
+        "600000": _fresh_frame("2026-06-25"),
+        "000300": _fresh_frame("2026-06-25"),
+    }
+    merged = {
+        "600000": _fresh_frame("2026-06-26"),
+        "000300": _fresh_frame("2026-06-26"),
+    }
+    for frame in merged.values():
+        frame.attrs["source_name"] = "tencent"
+
+    monkeypatch.setattr(
+        cli_mod,
+        "_fetch_frames_for_cli_with_metadata",
+        lambda *_args, **_kwargs: (historical, "tencent"),
+    )
+
+    class FakeIntradayService:
+        def __init__(self, _source) -> None:
+            pass
+
+        def merge_intraday_bar_into_daily_with_coverage(self, daily, *_args, **_kwargs):
+            assert daily == historical
+            return SimpleNamespace(
+                frames=merged,
+                requested_symbols=("600000", "000300"),
+                covered_symbols=("600000", "000300"),
+                missing_symbols=(),
+                candidate_requested_symbols=("600000",),
+                candidate_covered_symbols=("600000",),
+                candidate_missing_symbols=(),
+                benchmark_missing_symbols=(),
+                candidate_complete=True,
+            )
+
+    monkeypatch.setattr(cli_mod, "IntradayService", FakeIntradayService)
+    monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 26))
+
+    result, actual_source = cli_mod._fetch_special_strategy_frames(
+        "tencent", ["600000"], benchmark_symbol="000300"
+    )
+
+    assert actual_source == "tencent"
+    assert result["600000"]["date"].iloc[-1] == "2026-06-26"
+    assert result["600000"].attrs["intraday_overlay_coverage"]["status"] == "complete"
+
+
 def test_intraday_actual_source_uses_current_overlay_provenance() -> None:
     import aqsp.cli as cli_mod
 
@@ -932,7 +984,7 @@ def test_live_short_rejects_candidate_actual_source() -> None:
     assert "仅可作为 observation 层" in reason
 
 
-def test_force_intraday_observation_keeps_score_but_blocks_review() -> None:
+def test_force_intraday_observation_keeps_candidate_actionable_when_only_benchmark_missing() -> None:
     import aqsp.cli as cli_mod
     from aqsp.core.types import PickResult
 
@@ -960,10 +1012,7 @@ def test_force_intraday_observation_keeps_score_but_blocks_review() -> None:
 
     assert observed[0].score == 88.0
     assert observed[0].rating == "buy_candidate"
-    assert observed[0].metrics["observation_only"] is True
-    assert observed[0].metrics["intraday_missing_symbols"] == ("000300",)
-    assert observed[0].metrics["candidate_review_priority"] == "low"
-    assert observed[0].metrics["portfolio_action"] == "observation_only"
+    assert observed[0].metrics.get("observation_only", False) is False
 
 
 def test_force_intraday_observation_only_downgrades_missing_candidate() -> None:

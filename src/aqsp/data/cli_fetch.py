@@ -170,7 +170,13 @@ def _minimum_live_short_frames(symbol_count: int) -> int:
 def _drop_stale_live_frames(
     frames: dict[str, pd.DataFrame], *, end_date: date | None
 ) -> dict[str, pd.DataFrame]:
-    """Remove old daily bars from a live batch instead of treating them as live."""
+    """Keep history available for indicators, but reject future bars.
+
+    ``live_short`` gets the current day's bar from the intraday overlay.  The
+    daily request is therefore allowed to end before ``end_date``; requiring
+    today's daily row here makes the overlay impossible to run during the
+    session.
+    """
     if not frames or end_date is None:
         return frames
     result: dict[str, pd.DataFrame] = {}
@@ -178,9 +184,9 @@ def _drop_stale_live_frames(
         if frame.empty or "date" not in frame.columns:
             continue
         latest = pd.to_datetime(frame["date"], errors="coerce").max()
-        # A live batch must contain the requested trade date exactly. Older
-        # rows are stale; future rows are look-ahead data and equally invalid.
-        if pd.isna(latest) or latest.date() != end_date:
+        # Older rows are historical input for indicators. Future rows are
+        # look-ahead data and must never enter a live decision.
+        if pd.isna(latest) or latest.date() > end_date:
             continue
         result[symbol] = frame
     return result

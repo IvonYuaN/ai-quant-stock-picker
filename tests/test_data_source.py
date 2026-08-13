@@ -864,7 +864,7 @@ def test_live_short_fetch_rejects_partial_daily_frames_explicitly() -> None:
     assert "000001" in failures[0][1]
 
 
-def test_live_short_drops_upstream_stale_daily_frames_before_coverage_gate(
+def test_live_short_keeps_prior_daily_frames_for_intraday_overlay(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class DummySource:
@@ -891,7 +891,7 @@ def test_live_short_drops_upstream_stale_daily_frames_before_coverage_gate(
     )
 
     assert actual_source == "eastmoney"
-    assert set(frames) == {"600000"}
+    assert set(frames) == {"600000", "000001"}
     assert failures == []
 
 

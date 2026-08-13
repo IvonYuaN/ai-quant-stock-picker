@@ -2571,8 +2571,11 @@ def _fetch_special_strategy_frames(
         for symbol, frame in frames.items()
         if not frame.empty
         and "date" in frame.columns
+        and not pd.isna(
+            pd.to_datetime(frame["date"], errors="coerce").max()
+        )
         and pd.to_datetime(frame["date"], errors="coerce").max().date()
-        >= target_day
+        <= target_day
     }
     actual_allowed, actual_reason = _runtime_actual_source_workload_allowed(
         source_name,
@@ -2582,7 +2585,7 @@ def _fetch_special_strategy_frames(
     if not actual_allowed:
         raise DataError(actual_reason)
     if not frames:
-        raise MissingDataError(symbols[0], reason="无法获取历史日线数据")
+        raise MissingDataError(symbols[0], reason="无法获取可用于指标回看的历史日线数据")
     data_source = _get_source(source_name)
     intraday_service = IntradayService(data_source)
     overlay_symbols = list(symbols)
@@ -2595,11 +2598,47 @@ def _fetch_special_strategy_frames(
         target_date=today_shanghai(),
         index_symbols=(benchmark_symbol,) if benchmark_symbol else (),
     )
+    candidate_requested = tuple(
+        getattr(
+            overlay,
+            "candidate_requested_symbols",
+            tuple(symbol for symbol in overlay.requested_symbols if symbol != benchmark_symbol),
+        )
+    )
+    candidate_covered = tuple(
+        getattr(
+            overlay,
+            "candidate_covered_symbols",
+            tuple(symbol for symbol in candidate_requested if symbol in overlay.covered_symbols),
+        )
+    )
+    candidate_missing = tuple(
+        getattr(
+            overlay,
+            "candidate_missing_symbols",
+            tuple(symbol for symbol in candidate_requested if symbol not in overlay.covered_symbols),
+        )
+    )
+    benchmark_missing = tuple(
+        getattr(
+            overlay,
+            "benchmark_missing_symbols",
+            tuple(
+                symbol
+                for symbol in overlay.missing_symbols
+                if benchmark_symbol and symbol == benchmark_symbol
+            ),
+        )
+    )
     coverage = {
-        "status": "complete" if overlay.complete else "partial",
+        "status": "complete" if not candidate_missing else "partial",
         "requested_symbols": overlay.requested_symbols,
         "covered_symbols": overlay.covered_symbols,
         "missing_symbols": overlay.missing_symbols,
+        "candidate_requested_symbols": candidate_requested,
+        "candidate_covered_symbols": candidate_covered,
+        "candidate_missing_symbols": candidate_missing,
+        "benchmark_missing_symbols": benchmark_missing,
     }
     # A failed intraday overlay must not erase a valid live daily batch. Keep
     # the daily frames, expose the overlay gap, and let the downstream quality
@@ -2648,21 +2687,23 @@ def _force_intraday_observation(
     missing_symbols: tuple[str, ...],
     benchmark_symbol: str = "000300",
 ) -> list[PickResult]:
-    """Keep deterministic scores visible while forbidding partial-live recommendations."""
+    """Block only candidates whose own live quote is missing.
+
+    A missing benchmark weakens regime confidence, but it does not invalidate a
+    candidate that has its own current-day bar. Treating it as a candidate gap
+    disconnects valid candidates from their debate and variant research chain.
+    """
     if not picks or not missing_symbols:
         return picks
-    benchmark = str(benchmark_symbol or "000300").strip()
-    benchmark_missing = benchmark in missing_symbols
     observed: list[PickResult] = []
     for pick in picks:
         pick_missing = tuple(
             symbol for symbol in missing_symbols if symbol == str(pick.symbol).strip()
         )
-        if not benchmark_missing and not pick_missing:
+        if not pick_missing:
             observed.append(pick)
             continue
-        reason_symbols = (benchmark,) if benchmark_missing else pick_missing
-        reason = "盘中覆盖不完整，缺少: " + "、".join(reason_symbols)
+        reason = "盘中覆盖不完整，缺少: " + "、".join(pick_missing)
         metrics = dict(pick.metrics)
         alerts = tuple(metrics.get("data_quality_alerts", ()) or ())
         metrics.update(

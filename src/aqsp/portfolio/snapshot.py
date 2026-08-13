@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date as date_type, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -89,13 +89,28 @@ def save_snapshot(
 
         snapshots[date] = snapshot
 
-        cutoff = (now_shanghai() - timedelta(days=30)).strftime("%Y-%m-%d")
+        snapshot_dates = [
+            date_type.fromisoformat(snapshot_date)
+            for snapshot_date in snapshots
+            if _is_iso_date(snapshot_date)
+        ]
+        reference_date = max(snapshot_dates, default=now_shanghai().date())
+        cutoff = (reference_date - timedelta(days=30)).isoformat()
         snapshots = {k: v for k, v in snapshots.items() if k >= cutoff}
         text = "".join(
             json.dumps(data, ensure_ascii=False) + "\n"
             for data in sorted(snapshots.values(), key=lambda x: x["date"])
         )
         atomic_write_text(path, text)
+
+
+def _is_iso_date(value: str) -> bool:
+    """Keep retention deterministic for imported or replayed snapshot dates."""
+    try:
+        date_type.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
 
 
 def load_snapshot(
