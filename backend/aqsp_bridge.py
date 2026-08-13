@@ -639,6 +639,8 @@ def snapshot_response(selected_date: str | None = None) -> dict[str, Any]:
     stale = snapshot.is_stale()
     _require_current_snapshot_fresh(surface, selected_date, stale=stale)
     payload = _snapshot_payload(snapshot, historical=historical)
+    if not historical:
+        _apply_latest_intraday_failure(payload)
     # Keep the date picker complete after selecting an archive day. Each
     # dated snapshot may contain only its own producer-local date list.
     payload["available_dates"] = list(surface.available_dates)
@@ -650,6 +652,32 @@ def snapshot_response(selected_date: str | None = None) -> dict[str, Any]:
             "freshness": _snapshot_component_freshness(snapshot, historical=historical),
         },
     }
+
+
+def _apply_latest_intraday_failure(payload: dict[str, Any]) -> None:
+    """Expose a failed refresh without replacing its last valid snapshot."""
+    raw_path = os.getenv("AQSP_INTRADAY_STATUS", "").strip()
+    if raw_path:
+        path = Path(raw_path).expanduser()
+    else:
+        runtime_data_root = os.getenv("AQSP_RUNTIME_DATA_ROOT", "").strip()
+        base = Path(runtime_data_root) if runtime_data_root else _PROJECT_ROOT / "data"
+        path = base / "intraday_refresh_status.json"
+    try:
+        status = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    if not isinstance(status, dict) or status.get("status") not in {
+        "failed",
+        "error",
+        "partial_failed",
+    }:
+        return
+    source = payload.get("source")
+    if not isinstance(source, dict):
+        return
+    reason = str(status.get("reason") or status.get("detail") or "").strip()
+    source["status"] = f"盘中任务失败：{reason}" if reason else "盘中任务失败"
 
 
 def _is_historical(surface: AQSPResearchSurface, selected_date: str | None) -> bool:

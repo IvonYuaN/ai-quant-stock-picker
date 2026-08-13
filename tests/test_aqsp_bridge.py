@@ -717,6 +717,32 @@ def test_aqsp_bridge_accepts_legacy_null_advisory_deterministic_score(
     assert response.json()["data"]["candidates"][0]["score"] == 72.5
 
 
+def test_aqsp_bridge_surfaces_latest_intraday_failure_without_replacing_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = _write_single(tmp_path, _snapshot("2026-07-14"))
+    status_path = tmp_path / "intraday_refresh_status.json"
+    status_path.write_text(
+        json.dumps(
+            {
+                "status": "failed",
+                "reason": "盘中任务被中断，保留上一版盘中产物",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AQSP_RESEARCH_SURFACE_SNAPSHOT", str(path))
+    monkeypatch.setenv("AQSP_INTRADAY_STATUS", str(status_path))
+
+    response = client.get("/api/aqsp/snapshot")
+
+    assert response.status_code == 200
+    assert response.json()["data"]["candidates"][0]["symbol"] == "600001"
+    assert response.json()["data"]["source"]["status"] == (
+        "盘中任务失败：盘中任务被中断，保留上一版盘中产物"
+    )
+
+
 def test_aqsp_bridge_exposes_structured_debate_process_without_changing_score(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
