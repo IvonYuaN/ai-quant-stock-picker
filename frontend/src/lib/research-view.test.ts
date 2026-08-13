@@ -1,6 +1,7 @@
 import type { AqspAgentResult, AqspSnapshot } from "./api";
 import {
   debateProcessText,
+  cleanDebateRoundText,
   dedupeResearchText,
   gatePresentation,
   isCurrentEmptyObservation,
@@ -72,6 +73,8 @@ export const researchViewContractChecks = {
     available_dates: ["2026-07-19"],
   }) === "",
   processFallback: debateProcessText(debateWithoutProcess) === "2 轮讨论 · 角色 风险视角",
+  legacyVoteTextIsRemoved: debateProcessText({ ...debateWithoutProcess, process_summary: "2 轮；看多 2 / 看空 2 / 中性 5" }) === "2 轮",
+  legacyRoundTextIsRemoved: cleanDebateRoundText("看多 2 / 看空 2 / 中性 5；跨市传导复核") === "跨市传导复核",
   selectedDateMatches: snapshotMatchesSelectedDate(emptySnapshot, "2026-07-15"),
   selectedDateRejectsPreviousSnapshot: !snapshotMatchesSelectedDate(emptySnapshot, "2026-07-14"),
   emptySelectionAcceptsCurrentSnapshot: snapshotMatchesSelectedDate(emptySnapshot, ""),

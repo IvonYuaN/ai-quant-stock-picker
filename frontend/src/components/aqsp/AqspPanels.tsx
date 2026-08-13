@@ -19,6 +19,7 @@ import { FORMAL_RESEARCH_SECTIONS, resolveResearchView, TEST_VARIANTS_SECTION_ID
 import type { AqspAgentResult, AqspCandidate, AqspMessage, AqspPhase, AqspResearchChain, AqspSnapshot, AqspVariant } from "@/lib/api";
 import {
   debateProcessText,
+  cleanDebateRoundText,
   dedupeResearchText,
   formatResearchDate,
   isCurrentEmptyObservation,
@@ -235,7 +236,7 @@ function MarketContext({ snapshot }: { snapshot: AqspSnapshot }) {
 function DebateCard({ result }: { result: AqspAgentResult }) {
   const process = debateProcessText(result);
   const conclusion = result.conclusion.trim();
-  const rounds = dedupeResearchText(result.round_summaries ?? []).filter((item) => !sameResearchText(item, conclusion) && !sameResearchText(item, process)).slice(0, 3);
+  const rounds = dedupeResearchText((result.round_summaries ?? []).map(cleanDebateRoundText)).filter((item) => !sameResearchText(item, conclusion) && !sameResearchText(item, process)).slice(0, 3);
   const bucketLabels: Record<string, string> = { bullish: "看多证据", bearish: "看空证据", event_fundamental: "事件/基本面", technical: "技术证据", risk_counterevidence: "风险/反证", uncertainty: "不确定性" };
   const buckets = Object.entries(result.viewpoint_buckets ?? {}).filter(([, points]) => points.length > 0).slice(0, 6);
   const disagreement = unique(result.disagreement_points, 3);

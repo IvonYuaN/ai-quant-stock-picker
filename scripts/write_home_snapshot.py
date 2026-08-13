@@ -561,16 +561,11 @@ def _snapshot_debates(
                 bull_count=int(getattr(debate, "bull_count", 0) or 0),
                 bear_count=int(getattr(debate, "bear_count", 0) or 0),
                 neutral_count=int(getattr(debate, "neutral_count", 0) or 0),
-                process_summary=_first_text(
-                    (
-                        f"{getattr(debate, 'round_count', 0)} 轮；"
-                        f"看多 {getattr(debate, 'bull_count', 0)} / "
-                        f"看空 {getattr(debate, 'bear_count', 0)} / "
-                        f"中性 {getattr(debate, 'neutral_count', 0)}"
-                    )
+                process_summary=(
+                    f"{getattr(debate, 'round_count', 0)} 轮讨论 · "
+                    f"参与角色 {len(getattr(debate, 'agent_views', ()) or ())}"
                     if getattr(debate, "round_count", 0)
-                    else "",
-                    *(getattr(debate, "round_summaries", ()) or ())[:1],
+                    else ""
                 ),
                 round_summaries=_distinct_research_lines(
                     tuple(
@@ -579,7 +574,7 @@ def _snapshot_debates(
                         if _first_text(getattr(round_data, "summary", ""))
                     )
                     or tuple(getattr(debate, "round_summaries", ()) or ()),
-                    limit=5,
+                    limit=3,
                 ),
                 agent_views=_snapshot_agent_views(
                     getattr(debate, "agent_views", ()) or ()

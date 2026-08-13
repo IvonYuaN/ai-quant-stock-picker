@@ -65,11 +65,17 @@ export function sameResearchText(left: string, right: string): boolean {
 }
 
 export function debateProcessText(result: AqspAgentResult): string {
-  if (result.process_summary) return result.process_summary;
+  const legacyVotePattern = /看多\s*\d+\s*[/／]\s*看空\s*\d+\s*[/／]\s*中性\s*\d+/g;
+  const clean = (value: string): string => value.replace(legacyVotePattern, "").replace(/\s*；\s*；/g, "；").replace(/^\s*[；·]\s*|\s*[；·]\s*$/g, "").trim();
+  if (result.process_summary) return clean(result.process_summary);
   const details: string[] = [];
   if (result.round_count > 0) details.push(`${result.round_count} 轮讨论`);
   if (result.active_roles.length > 0) details.push(`角色 ${result.active_roles.slice(0, 3).join("、")}`);
-  return details.join(" · ");
+  return clean(details.join(" · "));
+}
+
+export function cleanDebateRoundText(value: string): string {
+  return value.replace(/看多\s*\d+\s*[/／]\s*看空\s*\d+\s*[/／]\s*中性\s*\d+/g, "").replace(/\s*；\s*；/g, "；").trim();
 }
 
 export function formatResearchDate(date: string): { day: string; weekday: string } {
