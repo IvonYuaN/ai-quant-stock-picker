@@ -13,6 +13,7 @@ export type {
   AqspMarketContext,
   AqspMessage,
   AqspPhase,
+  AqspResearchChain,
   AqspRecommendationGate,
   AqspSnapshot,
   AqspSnapshotEnvelope,

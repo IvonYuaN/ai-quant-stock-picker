@@ -112,6 +112,19 @@ export interface AqspVariantHolding {
   unrealized_pnl: number;
 }
 
+/** Read-only links between today's candidates, advisory review, and experiments. */
+export interface AqspResearchChain {
+  status: string;
+  candidate_symbols: readonly string[];
+  debated_symbols: readonly string[];
+  pending_review_symbols: readonly string[];
+  variant_candidate_symbols: readonly string[];
+  variant_review_symbols: readonly string[];
+  variant_holding_candidate_symbols: readonly string[];
+  variant_holding_review_symbols: readonly string[];
+  blocker: string;
+}
+
 export interface AqspAgentResult {
   symbol: string;
   display_name: string;
@@ -157,6 +170,7 @@ export interface AqspSnapshot {
   phases?: readonly AqspPhase[];
   universe?: AqspUniverse;
   variants?: readonly AqspVariant[];
+  research_chain?: AqspResearchChain;
   /** Present after the HTTP envelope is normalized; absent in the raw data payload. */
   meta?: AqspSnapshotMeta;
 }

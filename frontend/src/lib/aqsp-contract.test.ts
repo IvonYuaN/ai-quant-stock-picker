@@ -21,6 +21,17 @@ export const aqspContractFixture = {
     message_status: "未产出",
     messages: [],
     market_context: null,
+    research_chain: {
+      status: "linked",
+      candidate_symbols: [],
+      debated_symbols: [],
+      pending_review_symbols: [],
+      variant_candidate_symbols: [],
+      variant_review_symbols: [],
+      variant_holding_candidate_symbols: [],
+      variant_holding_review_symbols: [],
+      blocker: "",
+    },
   },
   meta: { historical: false, stale: false },
 } satisfies AqspSnapshotEnvelope;
