@@ -2544,6 +2544,51 @@ def _special_strategy_runtime_ready(
     return True, regime, regime or "ok"
 
 
+def _fetch_intraday_historical_baseline(
+    symbols: list[str],
+    *,
+    benchmark_symbol: str | None,
+    days: int,
+    target_day: date,
+) -> dict[str, pd.DataFrame]:
+    """Load a raw historical baseline without assigning it a live source role."""
+    if not resolve_sqlite_db_path():
+        return {}
+    source = build_sqlite_db_source(cache=DataCache())
+    workload_setter = getattr(source, "set_workload", None)
+    if callable(workload_setter):
+        workload_setter("historical")
+    try:
+        frames = fetch_with_source(
+            source,
+            symbols,
+            days=days,
+            benchmark_symbol=benchmark_symbol,
+            end_date=target_day,
+        )
+    except DataError as exc:
+        LOGGER.warning("盘中历史基线不可用，回退实时源历史: %s", exc)
+        return {}
+    finally:
+        if callable(workload_setter):
+            workload_setter(None)
+
+    fetched_at = now_shanghai().isoformat()
+    for frame in frames.values():
+        if isinstance(frame, pd.DataFrame) and not frame.empty:
+            frame.attrs.update(
+                {
+                    "source_name": "sqlite_db",
+                    "source": "sqlite_db",
+                    "workload": "historical",
+                    "fetched_at": fetched_at,
+                    "timestamp_source": "database_trade_date",
+                    "freshness": "historical",
+                }
+            )
+    return frames
+
+
 def _fetch_special_strategy_frames(
     source_name: str,
     symbols: list[str],
@@ -2558,14 +2603,22 @@ def _fetch_special_strategy_frames(
     )
     if not allowed:
         raise DataError(reason)
-    frames, actual_source = _fetch_frames_for_cli_with_metadata(
-        source_name,
+    target_day = today_shanghai()
+    frames = _fetch_intraday_historical_baseline(
         symbols,
         benchmark_symbol=benchmark_symbol,
         days=days,
-        workload="live_short",
+        target_day=target_day,
     )
-    target_day = today_shanghai()
+    actual_source = source_name
+    if not frames:
+        frames, actual_source = _fetch_frames_for_cli_with_metadata(
+            source_name,
+            symbols,
+            benchmark_symbol=benchmark_symbol,
+            days=days,
+            workload="live_short",
+        )
     frames = {
         symbol: frame
         for symbol, frame in frames.items()

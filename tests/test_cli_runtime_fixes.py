@@ -932,6 +932,61 @@ def test_fetch_special_strategy_frames_overlays_today_on_prior_daily_history(
     assert result["600000"].attrs["intraday_overlay_coverage"]["status"] == "complete"
 
 
+def test_fetch_special_strategy_frames_uses_sqlite_only_for_history_baseline(
+    monkeypatch,
+) -> None:
+    import aqsp.cli as cli_mod
+
+    historical = {
+        "600000": _fresh_frame("2026-06-25"),
+        "000300": _fresh_frame("2026-06-25"),
+    }
+    merged = {
+        "600000": _fresh_frame("2026-06-26"),
+        "000300": _fresh_frame("2026-06-26"),
+    }
+    for frame in merged.values():
+        frame.attrs["source_name"] = "tencent"
+
+    monkeypatch.setattr(
+        cli_mod,
+        "_fetch_intraday_historical_baseline",
+        lambda *_args, **_kwargs: historical,
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "_fetch_frames_for_cli_with_metadata",
+        lambda *_args, **_kwargs: pytest.fail("realtime daily fetch must not run"),
+    )
+
+    class FakeIntradayService:
+        def __init__(self, _source) -> None:
+            pass
+
+        def merge_intraday_bar_into_daily_with_coverage(self, daily, *_args, **_kwargs):
+            assert daily == historical
+            return SimpleNamespace(
+                frames=merged,
+                requested_symbols=("600000", "000300"),
+                covered_symbols=("600000", "000300"),
+                missing_symbols=(),
+                candidate_requested_symbols=("600000",),
+                candidate_covered_symbols=("600000",),
+                candidate_missing_symbols=(),
+                benchmark_missing_symbols=(),
+            )
+
+    monkeypatch.setattr(cli_mod, "IntradayService", FakeIntradayService)
+    monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 26))
+
+    result, actual_source = cli_mod._fetch_special_strategy_frames(
+        "online_first", ["600000"], benchmark_symbol="000300"
+    )
+
+    assert actual_source == "tencent"
+    assert result["600000"].attrs["intraday_overlay_coverage"]["status"] == "complete"
+
+
 def test_intraday_actual_source_uses_current_overlay_provenance() -> None:
     import aqsp.cli as cli_mod
 
