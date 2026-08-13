@@ -44,7 +44,7 @@ DEFAULT_MAX_SYMBOLS = 300
 DEFAULT_MAX_FILLS_PER_VARIANT = 24
 DEFAULT_MAX_RUNTIME_SECONDS = 600
 DEFAULT_LOCK_WAIT_SECONDS = 0.0
-DEFAULT_PROFILE_BATCH_SIZE = 32
+DEFAULT_PROFILE_BATCH_SIZE = 6
 STAGING_SCHEMA_VERSION = "variant-suite-stage-v1"
 MIN_LATEST_DATE_SYMBOLS = 600
 SQL_CHUNK_SIZE = 80
@@ -731,7 +731,6 @@ def main() -> int:
                     start,
                     end,
                     profile_batch,
-                    deduplicate_holdings=False,
                 )
             compact_variant_fills(payload, args.max_fills_per_variant)
             for item in payload["variants"]:

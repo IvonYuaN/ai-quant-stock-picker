@@ -83,18 +83,18 @@ MODE_HYPOTHESES: dict[str, str] = {
 }
 
 MODE_LOOKBACKS: dict[str, tuple[int, ...]] = {
-    "trend": (10, 15, 20),
-    "pullback": (15, 20, 30),
-    "breakout": (8, 10, 15),
-    "reversion": (10, 15, 20),
-    "low_vol": (20, 30, 40),
-    "relative_strength": (10, 15, 20),
-    "volume_breakout": (10, 15, 20),
-    "atr_trend": (15, 20, 30),
-    "defensive_range": (20, 30, 40),
-    "macd_cross": (12, 20, 30),
-    "kdj_rebound": (9, 15, 21),
-    "volume_dry_pullback": (15, 20, 30),
+    "trend": (10, 20),
+    "pullback": (15, 30),
+    "breakout": (8, 15),
+    "reversion": (10, 20),
+    "low_vol": (20, 40),
+    "relative_strength": (10, 20),
+    "volume_breakout": (10, 20),
+    "atr_trend": (15, 30),
+    "defensive_range": (20, 40),
+    "macd_cross": (12, 30),
+    "kdj_rebound": (9, 21),
+    "volume_dry_pullback": (15, 30),
 }
 
 BASE_ENTRY_RETURN: dict[str, float] = {
@@ -150,126 +150,27 @@ def _training_volatility_pct(frames: dict[str, pd.DataFrame]) -> float:
 def generate_variant_profiles(
     frames: dict[str, pd.DataFrame],
 ) -> tuple[VariantProfile, ...]:
-    """Create a deterministic grid plus point-in-time volatility mutations."""
+    """Create 24 distinct, bounded research profiles for the nightly run."""
     profiles: list[VariantProfile] = []
     for mode, lookbacks in MODE_LOOKBACKS.items():
-        for lookback in lookbacks:
-            for tier in RISK_TIERS:
-                max_positions = tier.max_positions
-                entry = max(0.0, BASE_ENTRY_RETURN[mode] + tier.entry_delta)
-                bias = max(0.0, BASE_MAX_BIAS[mode] + tier.bias_delta)
-                profiles.append(
-                    VariantProfile(
-                        variant_id=f"{mode}_lb{lookback}_{tier.key}",
-                        label=f"{_mode_label(mode)}·{lookback}日·{tier.label}",
-                        lookback=lookback,
-                        entry_return_pct=entry,
-                        max_bias_pct=bias,
-                        mode=mode,
-                        max_positions=max_positions,
-                        position_weight=min(0.5, 1.0 / max_positions),
-                        hypothesis=MODE_HYPOTHESES[mode],
-                    )
+        for index, lookback in enumerate(lookbacks):
+            tier = RISK_TIERS[1 + index * 2]
+            max_positions = tier.max_positions
+            profiles.append(
+                VariantProfile(
+                    variant_id=f"{mode}_lb{lookback}_{tier.key}",
+                    label=f"{_mode_label(mode)}·{lookback}日·{tier.label}",
+                    lookback=lookback,
+                    entry_return_pct=max(
+                        0.0, BASE_ENTRY_RETURN[mode] + tier.entry_delta
+                    ),
+                    max_bias_pct=max(0.0, BASE_MAX_BIAS[mode] + tier.bias_delta),
+                    mode=mode,
+                    max_positions=max_positions,
+                    position_weight=min(0.5, 1.0 / max_positions),
+                    hypothesis=MODE_HYPOTHESES[mode],
                 )
-    volatility = _training_volatility_pct(frames)
-    if volatility >= 2.5:
-        profiles.extend(
-            (
-                VariantProfile(
-                    "auto_high_vol_defensive",
-                    "自动·高波防守",
-                    15,
-                    2.0,
-                    5.0,
-                    "low_vol",
-                    2,
-                    0.5,
-                    MODE_HYPOTHESES["low_vol"],
-                ),
-                VariantProfile(
-                    "auto_high_vol_reversal",
-                    "自动·高波反转",
-                    15,
-                    4.0,
-                    8.0,
-                    "reversion",
-                    2,
-                    0.5,
-                    MODE_HYPOTHESES["reversion"],
-                ),
-                VariantProfile(
-                    "auto_high_vol_trend",
-                    "自动·高波趋势",
-                    25,
-                    3.0,
-                    7.0,
-                    "atr_trend",
-                    3,
-                    1 / 3,
-                    MODE_HYPOTHESES["atr_trend"],
-                ),
-                VariantProfile(
-                    "auto_high_vol_breakout",
-                    "自动·高波突破",
-                    8,
-                    5.0,
-                    18.0,
-                    "breakout",
-                    2,
-                    0.5,
-                    MODE_HYPOTHESES["breakout"],
-                ),
             )
-        )
-    else:
-        profiles.extend(
-            (
-                VariantProfile(
-                    "auto_low_vol_breakout",
-                    "自动·低波突破",
-                    15,
-                    3.0,
-                    10.0,
-                    "breakout",
-                    3,
-                    1 / 3,
-                    MODE_HYPOTHESES["breakout"],
-                ),
-                VariantProfile(
-                    "auto_low_vol_pullback",
-                    "自动·低波回踩",
-                    25,
-                    0.0,
-                    3.0,
-                    "pullback",
-                    4,
-                    0.25,
-                    MODE_HYPOTHESES["pullback"],
-                ),
-                VariantProfile(
-                    "auto_low_vol_defensive",
-                    "自动·低波防守",
-                    35,
-                    0.5,
-                    4.0,
-                    "defensive_range",
-                    4,
-                    0.25,
-                    MODE_HYPOTHESES["defensive_range"],
-                ),
-                VariantProfile(
-                    "auto_low_vol_macd",
-                    "自动·低波MACD",
-                    20,
-                    0.5,
-                    6.0,
-                    "macd_cross",
-                    3,
-                    1 / 3,
-                    MODE_HYPOTHESES["macd_cross"],
-                ),
-            )
-        )
     if len({profile.variant_id for profile in profiles}) != len(profiles):
         raise ValueError("variant_id 不得重复")
     return tuple(profiles)
@@ -828,8 +729,6 @@ def run_suite(
     start: str,
     end: str,
     profiles: tuple[VariantProfile, ...] | None = None,
-    *,
-    deduplicate_holdings: bool = True,
 ) -> dict[str, object]:
     frames = load_frames(db_path, symbols, start, end)
     rules = VariantExecutionRules(initial_cash=BASE_CASH)
@@ -894,8 +793,9 @@ def run_suite(
             payload["orders_signature"] = _orders_signature(orders)
             payload["filled_orders_signature"] = _filled_orders_signature(result)
             results.append(payload)
-    if deduplicate_holdings:
-        results = diversity_ranked_variants(results)
+    # Preserve all audited profiles, but keep duplicate holdings out of the
+    # leading comparison window shown to users.
+    results = diversity_ranked_variants(results)
     training_volatility_pct = _training_volatility_pct(frames)
     return {
         "schema_version": "variant-suite-v2",
@@ -1234,24 +1134,21 @@ def _holdings_signature(holdings: list[dict[str, Any]]) -> str:
 
 
 def diversity_ranked_variants(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Keep one best strategy per current holding combination.
-
-    A strategy parameter grid is useful for research, but variants with the
-    same current holdings are not distinct paper-account choices.  Dropping
-    the lower-ranked duplicates here keeps the published artifact honest and
-    lets the production validator reject a day with too little real variety.
-    """
+    """Rank distinct holdings first while retaining every audited profile."""
     sorted_results = sorted(
         results, key=lambda item: float(item["final_equity"]), reverse=True
     )
     seen_signatures: set[str] = set()
-    ranked: list[dict[str, Any]] = []
+    primary: list[dict[str, Any]] = []
+    repeated: list[dict[str, Any]] = []
     for item in sorted_results:
         signature = str(item.get("holdings_signature", "empty"))
         if signature in seen_signatures:
-            continue
-        seen_signatures.add(signature)
-        ranked.append(item)
+            repeated.append(item)
+        else:
+            seen_signatures.add(signature)
+            primary.append(item)
+    ranked = [*primary, *repeated]
     for rank, item in enumerate(ranked, start=1):
         item["rank"] = rank
     return ranked

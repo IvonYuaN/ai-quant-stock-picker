@@ -38,7 +38,7 @@ def test_generate_variant_profiles_stays_diverse_and_explained() -> None:
         for profile in profiles
     }
 
-    assert len(profiles) >= 140
+    assert len(profiles) == 24
     assert len({profile.variant_id for profile in profiles}) == len(profiles)
     assert len(signatures) == len(profiles)
     assert len({profile.mode for profile in profiles}) >= 12
@@ -102,10 +102,10 @@ def test_run_suite_creates_many_explained_nonduplicate_accounts(tmp_path):
 
     assert result["initial_cash"] == 100_000.0
     assert result["schema_version"] == "variant-suite-v2"
-    assert len(variants) >= 100
+    assert len(variants) >= 20
     assert {item["initial_cash"] for item in variants} == {100_000.0}
     assert len({item["variant_id"] for item in variants}) == len(variants)
-    assert len({item["strategy_signature"] for item in variants}) >= 100
+    assert len({item["strategy_signature"] for item in variants}) == len(variants)
     assert len({item["holdings_signature"] for item in variants}) > 1
     assert (
         Counter(item["holdings_signature"] for item in variants[:12]).most_common(1)[0][
