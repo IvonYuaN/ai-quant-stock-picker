@@ -1355,6 +1355,7 @@ def _parse_debate(payload: object) -> AQSPDebate:
             "process_recorded",
             "conclusion_recorded",
             "review_kind",
+            "quality_issues",
             "debate_quality_issues",
             "evidence",
             "viewpoint_buckets",
