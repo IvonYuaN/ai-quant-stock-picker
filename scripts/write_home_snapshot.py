@@ -1734,13 +1734,22 @@ def _phase_snapshot(
             for row in rows
             if str(row.get("symbol", "") or "").strip()
         }
-        overlap = len(symbols & seen_symbols)
+        prior_symbols = set(seen_symbols)
+        overlap = len(symbols & prior_symbols)
         seen_symbols.update(symbols)
         phases.append(
             HomeSnapshotPhase(
                 task_id=task_id,
                 label=label,
-                status="已产出" if rows else "未产出",
+                status=(
+                    "未产出"
+                    if not rows
+                    else "复用盘中结果"
+                    if task_id == "closing_review"
+                    and symbols
+                    and symbols <= prior_symbols
+                    else "已产出"
+                ),
                 candidate_count=len(rows),
                 unique_symbols=len(symbols),
                 overlap_symbols=overlap,
@@ -2033,6 +2042,22 @@ def _phase_conclusion_summaries(
                 f"约束：{review}。"
             )
         else:
+            closing_symbols = {
+                str(row.get("symbol", "") or "").strip()
+                for row in rows
+                if str(row.get("symbol", "") or "").strip()
+            }
+            intraday_rows = provider._signal_task_rows_for_date("intraday", signal_date)
+            intraday_symbols = {
+                str(row.get("symbol", "") or "").strip()
+                for row in intraday_rows
+                if str(row.get("symbol", "") or "").strip()
+            }
+            if closing_symbols and closing_symbols == intraday_symbols:
+                lines.append(
+                    "盘后：未形成独立收盘复盘；本轮仅复用盘中结果，不重复计入当天结论。"
+                )
+                continue
             detail = (
                 f"复盘：{len(rows)} 个对象写入收盘记录；{name} 的{rule}"
                 "仅保留为次日观察依据，不把盘中信号外推为结论。"
@@ -2060,9 +2085,13 @@ def _variant_snapshot() -> tuple[HomeSnapshotVariant, ...]:
     for item in raw_variants[:MAX_HOME_VARIANTS]:
         if not isinstance(item, dict) or item.get("initial_cash") != 100_000.0:
             continue
-        holdings = _variant_holdings(item.get("holdings", ()), "holding")
+        holdings = _variant_holdings(
+            item.get("holdings", ()), "holding", _text(payload.get("end_date"))
+        )
         previous_holdings = _variant_holdings(
-            item.get("previous_holdings", ()), "previous_holding"
+            item.get("previous_holdings", ()),
+            "previous_holding",
+            _text(payload.get("end_date")),
         )
         recent_actions = _variant_recent_actions(item)
         variants.append(
@@ -2177,8 +2206,32 @@ def _variant_strategy_text(item: dict) -> str:
 
 
 def _variant_holdings(
-    payload: object, field_name: str
+    payload: object, field_name: str, end_date: str = ""
 ) -> tuple[HomeSnapshotHolding, ...]:
+    def entry_date_for(holding: dict[str, object]) -> str:
+        evidence = holding.get("entry_evidence")
+        if isinstance(evidence, dict):
+            return (
+                _text(evidence.get("execution_date"))
+                or _text(evidence.get("signal_date"))
+                or _text(evidence.get("date"))
+            )
+        return _text(holding.get("entry_date"))
+
+    def holding_days_for(entry_date: str) -> int:
+        if not entry_date or not end_date:
+            return 0
+        try:
+            return max(
+                0,
+                (
+                    date.fromisoformat(end_date[:10])
+                    - date.fromisoformat(entry_date[:10])
+                ).days,
+            )
+        except ValueError:
+            return 0
+
     return tuple(
         HomeSnapshotHolding(
             symbol=_text(holding.get("symbol")),
@@ -2188,6 +2241,8 @@ def _variant_holdings(
             market_value=float(holding.get("market_value") or 0.0),
             unrealized_pnl=float(holding.get("unrealized_pnl") or 0.0),
             name=_text(holding.get("name")),
+            entry_date=entry_date_for(holding),
+            holding_days=holding_days_for(entry_date_for(holding)),
         )
         for holding in payload
         if isinstance(holding, dict) and _text(holding.get("symbol"))

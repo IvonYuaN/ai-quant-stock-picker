@@ -110,6 +110,9 @@ export interface AqspVariantHolding {
   last_price: number;
   market_value: number;
   unrealized_pnl: number;
+  name?: string;
+  entry_date?: string;
+  holding_days?: number;
 }
 
 /** Read-only links between today's candidates, advisory review, and experiments. */

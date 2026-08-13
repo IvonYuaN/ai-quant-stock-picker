@@ -1149,6 +1149,43 @@ def test_phase_conclusion_summaries_keep_each_market_phase_separate() -> None:
     )
 
 
+def test_phase_conclusion_summaries_mark_closing_reuse_without_duplicate_conclusion() -> (
+    None
+):
+    class ReusedClosingProvider(_Provider):
+        def _signal_task_rows_for_date(self, task_id: str, _signal_date: str):
+            row = {
+                "symbol": "600001",
+                "name": "同一对象",
+                "score": 80,
+                "reasons": "量价确认",
+            }
+            return [row] if task_id in {"intraday", "closing_review"} else []
+
+    summaries = write_home_snapshot._phase_conclusion_summaries(
+        ReusedClosingProvider(), "2026-07-10", ()
+    )
+
+    assert (
+        summaries[-1]
+        == "盘后：未形成独立收盘复盘；本轮仅复用盘中结果，不重复计入当天结论。"
+    )
+
+
+def test_variant_snapshot_derives_holding_entry_date_and_duration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "variant_results.json"
+    payload = _variant_result_payload(100)
+    monkeypatch.setenv("AQSP_VARIANT_RESULTS", str(path))
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    holding = write_home_snapshot._variant_snapshot()[0].holdings[0]
+
+    assert holding.entry_date == "2026-07-24"
+    assert holding.holding_days == 0
+
+
 def test_snapshot_candidate_maps_freshness_label_when_status_is_missing() -> None:
     candidate = _candidate("600006", 70.0)
     candidate.freshness = ""

@@ -198,6 +198,8 @@ class HomeSnapshotHolding:
     market_value: float
     unrealized_pnl: float
     name: str = ""
+    entry_date: str = ""
+    holding_days: int = 0
 
 
 @dataclass(frozen=True)
@@ -851,6 +853,10 @@ def _variant_from_dict(payload: object) -> HomeSnapshotVariant:
                 market_value=float(item.get("market_value", 0.0) or 0.0),
                 unrealized_pnl=float(item.get("unrealized_pnl", 0.0) or 0.0),
                 name=_optional_text(item.get("name"), "holding.name"),
+                entry_date=_optional_text(item.get("entry_date"), "holding.entry_date"),
+                holding_days=_integer(
+                    item.get("holding_days", 0), "holding.holding_days"
+                ),
             )
             for item in mapping.get("holdings", ())
             if isinstance(item, dict)
@@ -867,6 +873,12 @@ def _variant_from_dict(payload: object) -> HomeSnapshotVariant:
                 market_value=float(item.get("market_value", 0.0) or 0.0),
                 unrealized_pnl=float(item.get("unrealized_pnl", 0.0) or 0.0),
                 name=_optional_text(item.get("name"), "previous_holding.name"),
+                entry_date=_optional_text(
+                    item.get("entry_date"), "previous_holding.entry_date"
+                ),
+                holding_days=_integer(
+                    item.get("holding_days", 0), "previous_holding.holding_days"
+                ),
             )
             for item in mapping.get("previous_holdings", ())
             if isinstance(item, dict)

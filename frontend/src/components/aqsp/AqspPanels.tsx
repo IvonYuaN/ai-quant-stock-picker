@@ -129,13 +129,14 @@ function ResearchChain({ chain, candidates }: { chain?: AqspResearchChain; candi
   return <section className="aqsp-research-chain" aria-label="研究链关联">
     <div className="aqsp-subhead"><h3>研究链关联</h3><span className={cn("aqsp-badge", linked ? "aqsp-badge-ok" : "aqsp-badge-warn")}>{linked ? "已联动" : "待验证"}</span></div>
     <div className="aqsp-chain-lane">
-      <div><span>当天候选</span><b>{symbolNames(chain.candidate_symbols, candidates)}</b></div>
+      <div><span>当天候选 · {chain.candidate_symbols.length}</span><b>{symbolNames(chain.candidate_symbols, candidates)}</b></div>
       <ArrowRight className="aqsp-chain-arrow h-4 w-4" aria-hidden="true" />
-      <div><span>讨论复核</span><b>{reviewed}</b></div>
+      <div><span>讨论复核 · {chain.debated_symbols.length}</span><b>{reviewed}</b></div>
       <ArrowRight className="aqsp-chain-arrow h-4 w-4" aria-hidden="true" />
-      <div><span>变体实验覆盖</span><b>{experiment}</b></div>
+      <div><span>历史实验池关联 · {chain.variant_candidate_symbols.length}</span><b>{experiment}</b></div>
     </div>
     {pending && <p className="aqsp-chain-pending">待复核：{pending}</p>}
+    <p className="aqsp-chain-note">变体为历史 raw 实验结果，只用于验证，不代表当天实时复核。</p>
     {chain.blocker && <p className="aqsp-warning-text">链路阻塞：{chain.blocker}</p>}
   </section>;
 }
@@ -161,7 +162,7 @@ function PhaseLane({ snapshot }: { snapshot: AqspSnapshot }) {
         return (
           <div className="aqsp-phase" key={phase.id}>
             <div><b>{phase.label}</b><span>{status}</span></div>
-            {record ? <small>候选 {record.candidate_count} · 批次重叠 {record.overlap_symbols}</small> : <small>独立数据段，未与当天结果合并</small>}
+            {record ? <small>候选 {record.candidate_count} · 重叠 {record.overlap_symbols}{record.status === "复用盘中结果" ? " · 未形成独立复盘" : " · 独立产出"}</small> : <small>未产出独立数据段</small>}
           </div>
         );
       })}
@@ -218,7 +219,7 @@ function MessageCard({ message }: { message: AqspMessage }) {
       {(path.length > 0 || message.transmission_hypothesis) && <div className="aqsp-transmission"><b>产业链传导</b>{path.length > 0 && <p>{path.join(" → ")}</p>}{message.transmission_hypothesis && <span>{message.transmission_hypothesis}</span>}</div>}
       {message.validation_signals?.length ? <p className="aqsp-signal"><b>确认</b>{unique(message.validation_signals, 2).join("；")}</p> : null}
       {message.invalidation_signals?.length ? <p className="aqsp-signal aqsp-signal-warn"><b>失效</b>{unique(message.invalidation_signals, 2).join("；")}</p> : null}
-      {sourceUrl && <a className="aqsp-source" href={sourceUrl} target="_blank" rel="noreferrer"><ExternalLink className="h-3.5 w-3.5" />查看来源{message.source ? ` · ${message.source}` : ""}</a>}
+      {sourceUrl ? <a className="aqsp-source" href={sourceUrl} target="_blank" rel="noreferrer"><ExternalLink className="h-3.5 w-3.5" />查看来源{message.source ? ` · ${message.source}` : ""}</a> : <p className="aqsp-source aqsp-source-missing"><CircleAlert className="h-3.5 w-3.5" />来源未记录，未纳入证据链</p>}
     </article>
   );
 }
@@ -237,7 +238,10 @@ function DebateCard({ result }: { result: AqspAgentResult }) {
   const rounds = dedupeResearchText(result.round_summaries ?? []).filter((item) => !sameResearchText(item, conclusion) && !sameResearchText(item, process)).slice(0, 3);
   const bucketLabels: Record<string, string> = { bullish: "看多证据", bearish: "看空证据", event_fundamental: "事件/基本面", technical: "技术证据", risk_counterevidence: "风险/反证", uncertainty: "不确定性" };
   const buckets = Object.entries(result.viewpoint_buckets ?? {}).filter(([, points]) => points.length > 0).slice(0, 6);
-  return <article className="aqsp-card aqsp-debate-card"><div className="aqsp-card-head"><div className="aqsp-agent-title"><span className="aqsp-agent-mark"><Bot className="h-4 w-4" /></span><div><h3>{result.display_name || result.symbol || "对象未记录"}</h3><span className="aqsp-code">{result.symbol || "代码未记录"}</span></div></div><span className={cn("aqsp-badge", conclusion ? "aqsp-badge-ok" : "aqsp-badge-warn")}>{conclusion ? "已汇总" : "不完整"}</span></div><div className="aqsp-discussion"><p className="aqsp-label"><UsersRound className="h-3.5 w-3.5" />讨论过程</p><p>{process || "过程未记录"}</p>{result.active_roles.length > 0 && <div className="aqsp-tags">{result.active_roles.map((role) => <span className="aqsp-tag" key={role}>{role}</span>)}</div>}{rounds.length > 0 && <ol>{rounds.map((round, index) => <li key={`${index}-${round}`}>第 {index + 1} 轮：{round}</li>)}</ol>}</div>{buckets.length > 0 && <div className="aqsp-viewpoint-buckets"><p className="aqsp-label">独立证据</p>{buckets.map(([bucket, points]) => <div key={bucket}><b>{bucketLabels[bucket] || bucket}</b><span>{points.slice(0, 2).join("；")}</span></div>)}</div>}<div className="aqsp-votes"><span>支持 <b>{result.bull_count}</b></span><span>保留 <b>{result.neutral_count}</b></span><span>风险 <b>{result.bear_count}</b></span></div>{(result.disagreement_points?.length || result.uncertainty_points?.length) ? <div className="aqsp-debate-foot">{result.disagreement_points?.slice(0, 2).map((item) => <span key={item}><CircleAlert className="h-3.5 w-3.5" />分歧：{item}</span>)}{result.uncertainty_points?.slice(0, 2).map((item) => <span key={item}><CircleAlert className="h-3.5 w-3.5" />不确定：{item}</span>)}</div> : null}<div className="aqsp-debate-conclusion"><p className="aqsp-label">汇总结论</p><strong>{conclusion || "暂无结论"}</strong></div>{(result.primary_risk_gate || result.next_trigger) && <div className="aqsp-debate-foot">{result.primary_risk_gate && <span><ShieldAlert className="h-3.5 w-3.5" />风险：{result.primary_risk_gate}</span>}{result.next_trigger && <span><Sparkles className="h-3.5 w-3.5" />下一验证：{result.next_trigger}</span>}</div>}</article>;
+  const disagreement = unique(result.disagreement_points, 3);
+  const uncertainty = unique(result.uncertainty_points, 2);
+  const quality = disagreement.length || uncertainty.length || buckets.length > 1 ? "有分歧" : "证据不足";
+  return <article className="aqsp-card aqsp-debate-card"><div className="aqsp-card-head"><div className="aqsp-agent-title"><span className="aqsp-agent-mark"><Bot className="h-4 w-4" /></span><div><h3>{result.display_name || result.symbol || "对象未记录"}</h3><span className="aqsp-code">{result.symbol || "代码未记录"}</span></div></div><span className={cn("aqsp-badge", quality === "有分歧" ? "aqsp-badge-ok" : "aqsp-badge-warn")}>{quality}</span></div><div className="aqsp-discussion"><p className="aqsp-label"><UsersRound className="h-3.5 w-3.5" />讨论过程</p><p>{process || "过程未记录"}</p>{result.active_roles.length > 0 && <div className="aqsp-tags">{result.active_roles.map((role) => <span className="aqsp-tag" key={role}>{role}</span>)}</div>}{rounds.length > 0 && <ol>{rounds.map((round, index) => <li key={`${index}-${round}`}>第 {index + 1} 轮：{round}</li>)}</ol>}</div><div className="aqsp-debate-stats"><span>参与角色 <b>{result.active_roles.length}</b></span><span>复核轮次 <b>{result.round_count}</b></span><span>真实分歧 <b>{disagreement.length}</b></span></div>{buckets.length > 0 && <div className="aqsp-viewpoint-buckets"><p className="aqsp-label">独立证据</p>{buckets.map(([bucket, points]) => <div key={bucket}><b>{bucketLabels[bucket] || bucket}</b><span>{points.slice(0, 2).join("；")}</span></div>)}</div>}{(disagreement.length || uncertainty.length) ? <div className="aqsp-debate-foot">{disagreement.map((item) => <span key={item}><CircleAlert className="h-3.5 w-3.5" />分歧：{item}</span>)}{uncertainty.map((item) => <span key={item}><CircleAlert className="h-3.5 w-3.5" />不确定：{item}</span>)}</div> : <p className="aqsp-warning-text">未记录有效反驳点，不能据此宣称形成多方结论。</p>}<div className="aqsp-debate-conclusion"><p className="aqsp-label">汇总结论</p><strong>{conclusion || "暂无结论"}</strong></div>{(result.primary_risk_gate || result.next_trigger) && <div className="aqsp-debate-foot">{result.primary_risk_gate && <span><ShieldAlert className="h-3.5 w-3.5" />风险：{result.primary_risk_gate}</span>}{result.next_trigger && <span><Sparkles className="h-3.5 w-3.5" />下一验证：{result.next_trigger}</span>}</div>}</article>;
 }
 
 function TestVariantsPanel({ snapshot }: { snapshot?: AqspSnapshot }) {
@@ -260,7 +264,7 @@ function TestVariantsPanel({ snapshot }: { snapshot?: AqspSnapshot }) {
           <div><span>总盈亏</span><b className={pnl != null && pnl < 0 ? "aqsp-variant-negative" : "aqsp-variant-positive"}>{variantMoney(pnl)}</b></div>
           <div><span>收益率</span><b>{variantPercent(variant.return_pct)}</b></div>
         </div>
-        <div className="aqsp-variant-holdings"><b>持仓 · {variantHoldingsLabel(holdings)}</b>{holdings?.map((holding) => <span key={holding.symbol}>{holding.symbol} {holding.quantity} 股 · 市值 {variantMoney(holding.market_value)} · 浮盈 {variantMoney(holding.unrealized_pnl)}</span>)}</div>
+        <div className="aqsp-variant-holdings"><b>持仓 · {variantHoldingsLabel(holdings)} · 截至 {variant.end_date || "—"}</b>{holdings?.map((holding) => <div className="aqsp-holding-row" key={holding.symbol}><strong>{holding.name || "名称未记录"}<small>{holding.symbol}</small></strong><span>数量 {holding.quantity} 股<br />建仓 {holding.entry_date || "未记录"} · 持有 {holding.holding_days ?? 0} 天</span><span>成本 {variantMoney(holding.average_price)}<br />最新 {variantMoney(holding.last_price)}</span><span className={holding.unrealized_pnl < 0 ? "aqsp-variant-negative" : "aqsp-variant-positive"}>市值 {variantMoney(holding.market_value)}<br />浮盈 {variantMoney(holding.unrealized_pnl)}</span></div>)}</div>
         <p className="aqsp-variant-rules">成交 {variant.filled_orders} · 拒绝 {variant.rejected_orders} · {(variant.hard_rules ?? []).join(" · ") || "硬成交规则未记录"}</p>
       </article>;
     })}</div>}
@@ -285,7 +289,7 @@ export function AqspResearchWorkspace() {
   const conclusion = snapshotConclusion(data);
   const formalSections = {
     overview: <section id="overview" className="aqsp-module aqsp-module-overview"><SectionHead number={FORMAL_RESEARCH_SECTIONS[0].number} title={FORMAL_RESEARCH_SECTIONS[0].label} count="独立结论" /><div className="aqsp-summary-conclusion"><Sparkles className="h-5 w-5 shrink-0 text-primary" /><div><strong>{conclusion || "当天结论未记录"}</strong>{data.summaries.slice(1, 3).map((line) => <p key={line}>{line}</p>)}</div></div><ResearchChain chain={data.research_chain} candidates={data.candidates} /><StatusLine snapshot={data} /><PhaseLane snapshot={data} /><GateState snapshot={data} /><EmptyToday snapshot={data} /></section>,
-    messages: <section id="messages" className="aqsp-module aqsp-module-messages"><SectionHead number={FORMAL_RESEARCH_SECTIONS[1].number} title={FORMAL_RESEARCH_SECTIONS[1].label} count={`${data.messages.length} 条`} />{data.messages.length === 0 ? <EmptyState title="当天没有有效消息" detail="没有可核验来源时，系统不补写消息或产业链推断。" /> : <div className="aqsp-list">{data.messages.map((message, index) => <MessageCard key={`${message.title}-${message.published_at}-${index}`} message={message} />)}</div>}<MarketContext snapshot={data} /></section>,
+    messages: <section id="messages" className="aqsp-module aqsp-module-messages"><SectionHead number={FORMAL_RESEARCH_SECTIONS[1].number} title={FORMAL_RESEARCH_SECTIONS[1].label} count={`${data.messages.length} 条`} />{data.messages.length === 0 ? <EmptyState title="当天没有可核验来源的消息证据" detail="跨市场背景只作为上下文，不计入个股消息证据；没有原文链接不会补写。" /> : <div className="aqsp-list">{data.messages.map((message, index) => <MessageCard key={`${message.title}-${message.published_at}-${index}`} message={message} />)}</div>}<MarketContext snapshot={data} /></section>,
     candidates: <section id="candidates" className="aqsp-module aqsp-module-candidates"><SectionHead number={FORMAL_RESEARCH_SECTIONS[2].number} title={FORMAL_RESEARCH_SECTIONS[2].label} count={`${data.candidates.length} 个`} />{data.candidates.length === 0 ? <EmptyState title="当天没有候选" detail="当前没有通过数据质量与短线筛选的对象，不用历史候选填充。" /> : <div className="aqsp-list">{data.candidates.map((candidate) => <CandidateCard key={candidate.symbol} candidate={candidate} />)}</div>}</section>,
     discussion: <section id="discussion" className="aqsp-module aqsp-module-discussion"><SectionHead number={FORMAL_RESEARCH_SECTIONS[3].number} title={FORMAL_RESEARCH_SECTIONS[3].label} count={`${data.debates.length} 条`} />{data.debates.length === 0 ? <EmptyState title="当天没有有效讨论" detail="没有可核验的分歧和风险条件时，不显示推断内容。" /> : <div className="aqsp-list">{data.debates.map((result) => <DebateCard key={result.symbol} result={result} />)}</div>}</section>,
   } as const;
