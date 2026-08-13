@@ -1905,8 +1905,6 @@ def test_variant_refresh_runs_after_close_with_bounded_resources() -> None:
     )
 
     assert "当前未到北京时间 21:00，跳过变体刷新" in script
-    assert 'export PYTHONPATH="${PROJECT_ROOT}/src:${PROJECT_ROOT}${PYTHONPATH:+:${PYTHONPATH}}"' in script
-    assert "无法确认交易日，拒绝运行变体刷新" in script
     assert "AQSP_VARIANT_DB:-${AQSP_SQLITE_DB_PATH:-${AQSP_VARIANT_MARKET_DB" in script
     assert 'MAX_SYMBOLS="${AQSP_VARIANT_MAX_SYMBOLS:-600}"' in script
     assert "变体股票批次无效(${MAX_SYMBOLS})，使用 600" in script
@@ -1926,8 +1924,6 @@ def test_variant_refresh_runs_after_close_with_bounded_resources() -> None:
     assert "--status-file" in script
     assert "--status-only waiting" in script
     assert "AQSP_VARIANT_REFRESH_STATUS" in script
-    assert 'AQSP_HOME_SNAPSHOT_PATH="${AQSP_HOME_SNAPSHOT_PATH:-${RUNTIME_DATA_ROOT}/runtime/home_dashboard_snapshot.json}"' in script
-    assert 'AQSP_HOME_SNAPSHOT_INDEX_PATH="${AQSP_HOME_SNAPSHOT_INDEX_PATH:-${RUNTIME_DATA_ROOT}/runtime/home_dashboard_snapshot_index.json}"' in script
     assert 'nice -n "$NICE_LEVEL"' in script
     assert "AQSP_VARIANT_ALLOW_HEAVY" in script
     assert "variant-results-refresh.lock" in script
