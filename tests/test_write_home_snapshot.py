@@ -784,7 +784,7 @@ def test_write_home_snapshot_builds_bounded_advisory_only_payload(monkeypatch) -
     assert "raise" not in snapshot.to_json()
     assert snapshot.summaries == (
         "盘前：未产出，等待盘前任务完成。",
-        "盘中：未产出，等待盘中任务完成。",
+        "盘中：判断：5 个对象通过盘中筛选；600005 示例 的MA20 斜率向上仍有效。约束：未形成独立复核结论。",
         "盘后：未产出，等待盘后任务完成。",
     )
     assert "讨论复核 1/5 只；4 只未通过质量门，已隐藏" not in snapshot.summaries
@@ -1184,6 +1184,20 @@ def test_variant_snapshot_derives_holding_entry_date_and_duration(
 
     assert holding.entry_date == "2026-07-24"
     assert holding.holding_days == 0
+
+
+def test_phase_conclusion_summaries_use_current_candidates_when_intraday_source_is_stale() -> (
+    None
+):
+    class StaleProvider(_Provider):
+        def _signal_task_rows_for_date(self, _task_id: str, _signal_date: str):
+            return []
+
+    summaries = write_home_snapshot._phase_conclusion_summaries(
+        StaleProvider(), "2026-07-10", (), (_candidate("600001", 80.0),)
+    )
+
+    assert summaries[1].startswith("盘中：判断：1 个对象通过盘中筛选")
 
 
 def test_snapshot_candidate_maps_freshness_label_when_status_is_missing() -> None:
@@ -1904,7 +1918,7 @@ def test_write_home_snapshot_hides_debate_for_non_current_candidate(
     assert snapshot.debate is None
     assert snapshot.summaries == (
         "盘前：未产出，等待盘前任务完成。",
-        "盘中：未产出，等待盘中任务完成。",
+        "盘中：判断：5 个对象通过盘中筛选；600005 示例 的MA20 斜率向上仍有效。约束：未形成独立复核结论。",
         "盘后：未产出，等待盘后任务完成。",
     )
     assert "600999" not in snapshot.to_json()

@@ -1714,7 +1714,9 @@ def _recommendation_gate(
 
 
 def _phase_snapshot(
-    provider: DashboardDataProvider, signal_date: str
+    provider: DashboardDataProvider,
+    signal_date: str,
+    current_candidates: tuple[HomeSnapshotCandidate, ...] = (),
 ) -> tuple[HomeSnapshotPhase, ...]:
     """Read phase artifacts without network calls and calculate symbol overlap."""
     phase_specs = (
@@ -1729,6 +1731,11 @@ def _phase_snapshot(
             rows = provider._signal_task_rows_for_date(task_id, signal_date)
         except Exception:
             rows = []
+        if task_id == "intraday" and not rows and current_candidates:
+            rows = [
+                {"symbol": candidate.symbol, "created_at": candidate.data_fetched_at}
+                for candidate in current_candidates
+            ]
         symbols = {
             str(row.get("symbol", "") or "").strip()
             for row in rows
@@ -2002,6 +2009,7 @@ def _phase_conclusion_summaries(
     provider: DashboardDataProvider,
     signal_date: str,
     debates: tuple[HomeSnapshotDebate, ...],
+    current_candidates: tuple[HomeSnapshotCandidate, ...] = (),
 ) -> tuple[str, ...]:
     """Produce one decision statement per phase from that phase's own artifact."""
     phase_specs = (
@@ -2016,6 +2024,19 @@ def _phase_conclusion_summaries(
             rows = provider._signal_task_rows_for_date(task_id, signal_date)
         except Exception:
             rows = []
+        if task_id == "intraday" and not rows and current_candidates:
+            rows = [
+                {
+                    "symbol": candidate.symbol,
+                    "name": candidate.display_name,
+                    "score": candidate.score,
+                    "reasons": "；".join(
+                        getattr(candidate, "deterministic_reasons", ())
+                        or getattr(candidate, "reasons", ())
+                    ),
+                }
+                for candidate in current_candidates
+            ]
         if not rows:
             lines.append(f"{label}：未产出，等待{label}任务完成。")
             continue
@@ -2409,11 +2430,13 @@ def build_home_snapshot(
         universe=universe,
     )
     candidates = _apply_recommendation_gate(candidates, recommendation_gate)
-    phases = _phase_snapshot(provider, selected_date)
+    phases = _phase_snapshot(provider, selected_date, candidates)
     # Home conclusions are a fixed three-part timeline. Empty-data and
     # quality blockers have dedicated status surfaces and must not displace a
     # market phase from this bounded timeline.
-    summaries = _phase_conclusion_summaries(provider, selected_date, debates)
+    summaries = _phase_conclusion_summaries(
+        provider, selected_date, debates, candidates
+    )
 
     variant_suite = _variant_suite_snapshot()
     variants = _variant_snapshot()
