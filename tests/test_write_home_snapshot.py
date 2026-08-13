@@ -853,8 +853,8 @@ def test_snapshot_debates_preserves_role_specific_views_and_deduplicates_rounds(
     )
 
     assert snapshots[0].round_summaries == (
-        "technical：量价共振",
-        "risk_counterevidence：承接待确认",
+        "technical：MA20 斜率向上",
+        "risk_counterevidence：量能确认",
         "分歧：风控要求先确认成交承接",
     )
     assert [(view.role, view.stance) for view in snapshots[0].agent_views] == [

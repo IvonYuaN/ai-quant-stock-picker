@@ -527,6 +527,7 @@ def _snapshot_debates(
     runtime_debates: tuple[Any, ...] = (),
 ) -> tuple[HomeSnapshotDebate, ...]:
     candidate_symbols = {candidate.symbol for candidate in candidates}
+    candidates_by_symbol = {candidate.symbol: candidate for candidate in candidates}
     debates = tuple(getattr(payload, "debates", ()) or ()) + runtime_debates
     selected: list[HomeSnapshotDebate] = []
     selected_symbols: set[str] = set()
@@ -536,15 +537,18 @@ def _snapshot_debates(
         symbol = _text(getattr(debate, "symbol", ""))
         if symbol not in candidate_symbols or symbol in selected_symbols:
             continue
-        viewpoint_buckets = {
-            str(bucket): tuple(points)[:4]
-            for bucket, points in (
-                getattr(debate, "viewpoint_buckets", {}) or {}
-            ).items()
-        }
-        disagreement_points = tuple(getattr(debate, "disagreement_points", ()) or ())[
-            :4
-        ]
+        candidate = candidates_by_symbol[symbol]
+        raw_viewpoints = getattr(debate, "viewpoint_buckets", {}) or {}
+        viewpoint_buckets = _presentation_viewpoint_buckets(
+            raw_viewpoints,
+            candidate,
+            _text(getattr(debate, "primary_risk_gate", "")),
+        )
+        disagreement_points = tuple(
+            _clean_legacy_debate_text(point)[:240]
+            for point in (getattr(debate, "disagreement_points", ()) or ())
+            if not _is_raw_debate_template(point)
+        )[:4]
         structured_rounds = tuple(
             f"{bucket}：{_clean_legacy_debate_text(points[0])[:240]}"
             for bucket, points in viewpoint_buckets.items()
@@ -619,6 +623,34 @@ def _clean_legacy_debate_text(value: object) -> str:
         text,
     )
     return re.sub(r"\s*[；;]\s*[；;]\s*", "；", text).strip(" ；;")
+
+
+def _is_raw_debate_template(value: object) -> bool:
+    text = _text(value)
+    return "候选专属证据" in text or ("ret5=" in text and "技术=" in text)
+
+
+def _presentation_viewpoint_buckets(
+    raw_viewpoints: object,
+    candidate: HomeSnapshotCandidate,
+    primary_risk_gate: str,
+) -> dict[str, tuple[str, ...]]:
+    """Build bounded display evidence instead of leaking raw debate templates."""
+    result: dict[str, tuple[str, ...]] = {}
+    if isinstance(raw_viewpoints, dict):
+        for raw_bucket, raw_points in raw_viewpoints.items():
+            points = tuple(
+                _clean_legacy_debate_text(point)[:240]
+                for point in (raw_points or ())
+                if not _is_raw_debate_template(point)
+            )[:2]
+            if points:
+                result[str(raw_bucket)] = points
+    if candidate.deterministic_reasons:
+        result["technical"] = tuple(candidate.deterministic_reasons[:2])
+    if primary_risk_gate:
+        result["risk_counterevidence"] = (primary_risk_gate,)
+    return result
 
 
 def _distinct_research_lines(
