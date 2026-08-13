@@ -128,12 +128,12 @@ def build_data_source(
             validate_consistency=False,
         )
     if source_name == "online_first":
-        # Tencent batches daily requests concurrently. It is the only online
-        # adapter suitable as the first choice for a large live universe;
-        # source-health history must not promote Eastmoney's serial retries
-        # ahead of it and turn a ten-minute intraday task into a timeout.
+        # Tencent batches daily requests concurrently. Eastmoney's daily API
+        # retries one symbol at a time and can keep worker threads alive past
+        # the shared live deadline, so it must not participate in this path.
+        # Sina remains the bounded secondary source for partial live batches.
         online_sources = _build_source_refs(
-            ("tencent", "eastmoney", "sina", "akshare"),
+            ("tencent", "sina", "akshare"),
             builders,
             source_cache,
         )

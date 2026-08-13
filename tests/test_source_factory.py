@@ -143,6 +143,11 @@ def test_build_data_source_online_first_prioritizes_concurrent_tencent_daily_sou
     )
 
     assert source.primary.name == "tencent"
+    assert [fallback.name for fallback in source.fallbacks] == [
+        "sina",
+        "akshare",
+        "tdx_vipdoc",
+    ]
 
 
 def test_build_data_source_online_first_does_not_reorder_live_sources_by_history(
@@ -169,7 +174,4 @@ def test_build_data_source_online_first_does_not_reorder_live_sources_by_history
     )
 
     assert source.primary.name == "tencent"
-    assert [fallback.name for fallback in source.fallbacks[:2]] == [
-        "eastmoney",
-        "sina",
-    ]
+    assert [fallback.name for fallback in source.fallbacks[:2]] == ["sina", "akshare"]

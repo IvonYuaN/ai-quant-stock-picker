@@ -1429,6 +1429,16 @@ def _intraday_failure_summary() -> str:
     return f"盘中任务失败：{reason}" if reason else "盘中任务失败：未记录原因"
 
 
+def _intraday_running_summary() -> str:
+    state = _read_json_object(
+        _runtime_json_path("AQSP_INTRADAY_STATUS", "data/intraday_refresh_status.json")
+    )
+    if _text(state.get("status")) != "running":
+        return ""
+    reason = _text(state.get("reason") or state.get("detail"))
+    return f"盘中刷新中：{reason}" if reason else "盘中刷新中"
+
+
 def _snapshot_source(
     runtime: Any, task_view: Any, *, selected_date: str
 ) -> HomeSnapshotSource:
@@ -1473,6 +1483,7 @@ def _snapshot_source(
                 if intraday_status in {"failed", "error", "partial_failed"}
                 else ""
             ),
+            _intraday_running_summary() if intraday_status == "running" else "",
             getattr(runtime, "run_status", ""),
             source_status.get("status"),
             provenance.get("status"),
