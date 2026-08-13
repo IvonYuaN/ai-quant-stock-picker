@@ -548,6 +548,7 @@ def _snapshot_debates(
             _clean_legacy_debate_text(point)[:240]
             for point in (getattr(debate, "disagreement_points", ()) or ())
             if not _is_raw_debate_template(point)
+            and not _is_shared_debate_context(point)
         )[:4]
         structured_rounds = tuple(
             f"{bucket}：{_clean_legacy_debate_text(points[0])[:240]}"
@@ -630,26 +631,33 @@ def _is_raw_debate_template(value: object) -> bool:
     return "候选专属证据" in text or ("ret5=" in text and "技术=" in text)
 
 
+def _is_shared_debate_context(value: object) -> bool:
+    text = _text(value)
+    return any(
+        marker in text
+        for marker in ("跨市传导质询", "组合保护", "全局雷达", "来源质量")
+    )
+
+
 def _presentation_viewpoint_buckets(
     raw_viewpoints: object,
     candidate: HomeSnapshotCandidate,
     primary_risk_gate: str,
 ) -> dict[str, tuple[str, ...]]:
     """Build bounded display evidence instead of leaking raw debate templates."""
+    del raw_viewpoints, primary_risk_gate
     result: dict[str, tuple[str, ...]] = {}
-    if isinstance(raw_viewpoints, dict):
-        for raw_bucket, raw_points in raw_viewpoints.items():
-            points = tuple(
-                _clean_legacy_debate_text(point)[:240]
-                for point in (raw_points or ())
-                if not _is_raw_debate_template(point)
-            )[:2]
-            if points:
-                result[str(raw_bucket)] = points
-    if candidate.deterministic_reasons:
+    metric_evidence = tuple(
+        f"{metric.label}：{metric.value}"
+        for metric in candidate.technical_metrics
+        if metric.value and metric.value != "未提供"
+    )[:3]
+    if metric_evidence:
+        result["technical"] = metric_evidence
+    if candidate.strategies:
+        result["strategy"] = (f"命中策略：{'、'.join(candidate.strategies)}",)
+    elif candidate.deterministic_reasons:
         result["technical"] = tuple(candidate.deterministic_reasons[:2])
-    if primary_risk_gate:
-        result["risk_counterevidence"] = (primary_risk_gate,)
     return result
 
 
