@@ -422,7 +422,9 @@ def test_research_chain_links_experiment_coverage_without_current_holding() -> N
     assert chain.variant_holding_review_symbols == ()
 
 
-def test_research_chain_exposes_missing_variant_as_blocker(monkeypatch, tmp_path: Path) -> None:
+def test_research_chain_exposes_missing_variant_as_blocker(
+    monkeypatch, tmp_path: Path
+) -> None:
     monkeypatch.setenv("AQSP_VARIANT_RESULTS", str(tmp_path / "missing.json"))
     candidate = write_home_snapshot._snapshot_candidate(_candidate("600001", 88.0))
     assert candidate is not None
@@ -770,6 +772,77 @@ def test_write_home_snapshot_builds_bounded_advisory_only_payload(monkeypatch) -
     )
     assert "讨论复核 1/5 只；4 只未通过质量门，已隐藏" not in snapshot.summaries
     assert snapshot.stale_after == "2026-07-10T15:31:00+08:00"
+
+
+def test_snapshot_debates_preserves_role_specific_views_and_deduplicates_rounds() -> (
+    None
+):
+    debate = SimpleNamespace(
+        symbol="600001",
+        display_name="示例",
+        research_verdict="保留纸面复核",
+        consensus="",
+        primary_risk_gate="量能确认",
+        next_trigger="等待承接",
+        process_recorded=True,
+        conclusion_recorded=True,
+        evidence_sufficient=True,
+        round_count=2,
+        bull_count=1,
+        bear_count=1,
+        neutral_count=1,
+        rounds=(
+            SimpleNamespace(summary="第 1 轮：技术与风险初筛"),
+            SimpleNamespace(summary="第1轮：技术与风险初筛"),
+        ),
+        agent_views=(
+            SimpleNamespace(
+                role_id="bull",
+                stance="bullish",
+                confidence=0.82,
+                key_argument="量价共振仍在",
+                key_opportunity="趋势延续",
+                key_risk="无",
+            ),
+            SimpleNamespace(
+                role_id="risk_control",
+                stance="bearish",
+                confidence=0.71,
+                key_argument="不可把高分当成交确认",
+                key_opportunity="",
+                key_risk="冲高回落将失效",
+            ),
+            SimpleNamespace(
+                role_id="sector_leader",
+                stance="neutral",
+                confidence=0.63,
+                key_argument="等待板块扩散",
+                key_opportunity="",
+                key_risk="",
+            ),
+        ),
+        viewpoint_buckets={
+            "technical": ("量价共振",),
+            "risk_counterevidence": ("承接待确认",),
+        },
+        disagreement_points=("风控要求先确认成交承接",),
+        uncertainty_points=(),
+    )
+    payload = SimpleNamespace(debates=(debate,))
+
+    snapshots = write_home_snapshot._snapshot_debates(
+        payload,
+        (write_home_snapshot._snapshot_candidate(_candidate("600001", 80.0)),),
+    )
+
+    assert snapshots[0].round_summaries == ("第 1 轮：技术与风险初筛",)
+    assert [(view.role, view.stance) for view in snapshots[0].agent_views] == [
+        ("bull", "bullish"),
+        ("risk_control", "bearish"),
+        ("sector_leader", "neutral"),
+    ]
+    assert snapshots[0].agent_views[0].arguments == ("量价共振仍在",)
+    assert snapshots[0].agent_views[1].risks == ("冲高回落将失效",)
 
 
 def test_recommendation_gate_keeps_quote_candidates_when_news_refresh_fails() -> None:

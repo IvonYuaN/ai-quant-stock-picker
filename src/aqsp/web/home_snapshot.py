@@ -167,10 +167,24 @@ class HomeSnapshotDebate:
     neutral_count: int = 0
     process_summary: str = ""
     round_summaries: tuple[str, ...] = ()
+    agent_views: tuple["HomeSnapshotAgentView", ...] = ()
     viewpoint_buckets: dict[str, tuple[str, ...]] = field(default_factory=dict)
     disagreement_points: tuple[str, ...] = ()
     uncertainty_points: tuple[str, ...] = ()
     review_kind: str = "unverified"
+
+
+@dataclass(frozen=True)
+class HomeSnapshotAgentView:
+    """One role's final, independently attributable research view."""
+
+    role: str
+    stance: str
+    confidence: float
+    arguments: tuple[str, ...] = ()
+    opportunities: tuple[str, ...] = ()
+    risks: tuple[str, ...] = ()
+    counterarguments: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -1203,6 +1217,7 @@ def _debate_from_dict(payload: object) -> HomeSnapshotDebate:
             "neutral_count",
             "process_summary",
             "round_summaries",
+            "agent_views",
             "viewpoint_buckets",
             "disagreement_points",
             "uncertainty_points",
@@ -1228,6 +1243,10 @@ def _debate_from_dict(payload: object) -> HomeSnapshotDebate:
         round_summaries=_text_tuple(
             mapping.get("round_summaries", []), "debate.round_summaries"
         ),
+        agent_views=tuple(
+            _agent_view_from_dict(item)
+            for item in _list(mapping.get("agent_views", []), "debate.agent_views")
+        ),
         viewpoint_buckets={
             str(bucket): _text_tuple(points, f"debate.viewpoint_buckets.{bucket}")
             for bucket, points in _mapping(
@@ -1244,6 +1263,26 @@ def _debate_from_dict(payload: object) -> HomeSnapshotDebate:
             mapping.get("review_kind", "unverified"), "debate.review_kind"
         )
         or "unverified",
+    )
+
+
+def _agent_view_from_dict(payload: object) -> HomeSnapshotAgentView:
+    mapping = _mapping(payload, "debate.agent_views")
+    _require_keys(mapping, {"role", "stance", "confidence"}, "debate.agent_views")
+    return HomeSnapshotAgentView(
+        role=_text(mapping["role"], "debate.agent_views.role"),
+        stance=_text(mapping["stance"], "debate.agent_views.stance"),
+        confidence=_number(mapping["confidence"], "debate.agent_views.confidence"),
+        arguments=_text_tuple(
+            mapping.get("arguments", []), "debate.agent_views.arguments"
+        ),
+        opportunities=_text_tuple(
+            mapping.get("opportunities", []), "debate.agent_views.opportunities"
+        ),
+        risks=_text_tuple(mapping.get("risks", []), "debate.agent_views.risks"),
+        counterarguments=_text_tuple(
+            mapping.get("counterarguments", []), "debate.agent_views.counterarguments"
+        ),
     )
 
 
@@ -1406,6 +1445,9 @@ def _validate_snapshot(snapshot: HomeDashboardSnapshot) -> None:
                 raise ValueError(
                     "multi-agent debates require independent evidence and disagreement"
                 )
+            view_roles = tuple(view.role for view in debate.agent_views)
+            if len(view_roles) != len(set(view_roles)):
+                raise ValueError("multi-agent debate agent views must not repeat roles")
     debate_symbols = tuple(value.symbol for value in snapshot.debates)
     if len(set(debate_symbols)) != len(debate_symbols):
         raise ValueError("debates must not contain duplicate symbols")

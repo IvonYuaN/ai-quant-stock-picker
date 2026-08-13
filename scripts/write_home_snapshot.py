@@ -57,6 +57,7 @@ from aqsp.web.home_snapshot import (
     HomeSnapshotResearchChain,
     HomeSnapshotCrossMarket,
     HomeSnapshotDebate,
+    HomeSnapshotAgentView,
     HomeSnapshotIndex,
     HomeSnapshotMarketContext,
     HomeSnapshotMessage,
@@ -570,12 +571,18 @@ def _snapshot_debates(
                     else "",
                     *(getattr(debate, "round_summaries", ()) or ())[:1],
                 ),
-                round_summaries=tuple(
-                    _first_text(getattr(round_data, "summary", ""))
-                    for round_data in (getattr(debate, "rounds", ()) or ())
-                    if _first_text(getattr(round_data, "summary", ""))
-                )[:5]
-                or tuple(getattr(debate, "round_summaries", ()) or ())[:5],
+                round_summaries=_distinct_research_lines(
+                    tuple(
+                        _first_text(getattr(round_data, "summary", ""))
+                        for round_data in (getattr(debate, "rounds", ()) or ())
+                        if _first_text(getattr(round_data, "summary", ""))
+                    )
+                    or tuple(getattr(debate, "round_summaries", ()) or ()),
+                    limit=5,
+                ),
+                agent_views=_snapshot_agent_views(
+                    getattr(debate, "agent_views", ()) or ()
+                ),
                 viewpoint_buckets={
                     str(bucket): tuple(points)[:4]
                     for bucket, points in (
@@ -594,6 +601,54 @@ def _snapshot_debates(
         selected_symbols.add(symbol)
         if len(selected) == MAX_HOME_SNAPSHOT_DEBATES:
             break
+    return tuple(selected)
+
+
+def _research_text_key(value: object) -> str:
+    return re.sub(r"\s+", "", _text(value)).lower()
+
+
+def _distinct_research_lines(
+    values: Iterable[object], *, limit: int
+) -> tuple[str, ...]:
+    """Keep only semantically non-identical discussion lines in the UI payload."""
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = _text(value)
+        key = _research_text_key(text)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        result.append(text)
+        if len(result) == limit:
+            break
+    return tuple(result)
+
+
+def _snapshot_agent_views(views: Iterable[object]) -> tuple[HomeSnapshotAgentView, ...]:
+    """Serialize the final role views instead of flattening them into one summary."""
+    selected: list[HomeSnapshotAgentView] = []
+    seen: set[str] = set()
+    for view in views:
+        role = _first_text(getattr(view, "role_id", ""), getattr(view, "role", ""))
+        if not role or role in seen:
+            continue
+        seen.add(role)
+        argument = _text(getattr(view, "key_argument", ""))
+        opportunity = _text(getattr(view, "key_opportunity", ""))
+        risk = _text(getattr(view, "key_risk", ""))
+        selected.append(
+            HomeSnapshotAgentView(
+                role=role,
+                stance=_text(getattr(view, "stance", "")) or "neutral",
+                confidence=float(getattr(view, "confidence", 0.0) or 0.0),
+                arguments=(argument,) if argument else (),
+                opportunities=(opportunity,) if opportunity else (),
+                risks=(risk,) if risk else (),
+                counterarguments=(),
+            )
+        )
     return tuple(selected)
 
 
@@ -671,8 +726,37 @@ def _runtime_debates_for_snapshot(
         roles = tuple(dict.fromkeys(_text(role) for role in vote_map if _text(role)))
         if len(roles) < 3:
             continue
+        opinions_by_role = {
+            _text(item.get("role")): item
+            for item in opinions
+            if _text(item.get("role"))
+        }
         agent_views = tuple(
-            SimpleNamespace(role_id=role, role_label=role) for role in roles
+            SimpleNamespace(
+                role_id=role,
+                role_label=role,
+                stance=_first_text(
+                    vote_map.get(role),
+                    opinions_by_role.get(role, {}).get("final_position"),
+                    opinions_by_role.get(role, {}).get("stance"),
+                    "neutral",
+                ),
+                confidence=float(
+                    opinions_by_role.get(role, {}).get("confidence") or 0.0
+                ),
+                key_argument=_first_text(
+                    *(opinions_by_role.get(role, {}).get("arguments") or ())[:1]
+                ),
+                key_opportunity=_first_text(
+                    *(opinions_by_role.get(role, {}).get("opportunity_factors") or ())[
+                        :1
+                    ]
+                ),
+                key_risk=_first_text(
+                    *(opinions_by_role.get(role, {}).get("risk_factors") or ())[:1]
+                ),
+            )
+            for role in roles
         )
         counts = {
             "bull_count": sum(
