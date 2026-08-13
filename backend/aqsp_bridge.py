@@ -451,10 +451,16 @@ def _read_runtime_debate_records() -> dict[str, tuple[dict[str, Any], ...]]:
     """Read optional local debate output; malformed lines are ignored."""
     path = _debate_results_path()
     try:
-        raw = path.read_bytes()
+        size = path.stat().st_size
     except OSError:
         return {}
-    if len(raw) > MAX_DEBATE_RESULTS_BYTES:
+    try:
+        with path.open("rb") as handle:
+            if size > MAX_DEBATE_RESULTS_BYTES:
+                handle.seek(-MAX_DEBATE_RESULTS_BYTES, os.SEEK_END)
+                handle.readline()  # Drop the partial JSONL record at the boundary.
+            raw = handle.read(MAX_DEBATE_RESULTS_BYTES)
+    except OSError:
         return {}
     by_date: dict[str, list[dict[str, Any]]] = {}
     for line in raw.splitlines():
