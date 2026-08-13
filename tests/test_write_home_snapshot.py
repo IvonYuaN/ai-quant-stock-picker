@@ -1077,17 +1077,59 @@ def test_variant_suite_rejects_expired_waiting_status(
 
 
 def test_phase_conclusion_summaries_keep_each_market_phase_separate() -> None:
-    provider = _Provider()
+    class PhaseProvider(_Provider):
+        def _signal_task_rows_for_date(self, task_id: str, _signal_date: str):
+            rows = {
+                "main_chain": [
+                    {
+                        "symbol": "600001",
+                        "name": "盘前样本",
+                        "score": 80,
+                        "reasons": "开盘强度确认；不取第二条",
+                    }
+                ],
+                "intraday": [
+                    {
+                        "symbol": "600002",
+                        "name": "盘中样本",
+                        "score": 81,
+                        "reasons": "量价承接确认；不取第二条",
+                    }
+                ],
+                "closing_review": [
+                    {
+                        "symbol": "600003",
+                        "name": "盘后样本",
+                        "score": 82,
+                        "reasons": "收盘结构确认；不取第二条",
+                    }
+                ],
+            }
+            return rows[task_id]
+
+    provider = PhaseProvider()
+    debates = (
+        write_home_snapshot.HomeSnapshotDebate(
+            symbol="600002",
+            display_name="盘中样本",
+            conclusion="待复核",
+            primary_risk_gate="量能回落即失效",
+            next_trigger="等待收盘确认",
+            active_roles=(),
+        ),
+    )
 
     summaries = write_home_snapshot._phase_conclusion_summaries(
         provider,
         "2026-07-10",
-        (),
+        debates,
     )
 
-    assert summaries[0].startswith("盘前：")
-    assert summaries[1].startswith("盘中：")
-    assert summaries[2] == "盘后：未产出，等待盘后任务完成。"
+    assert summaries == (
+        "盘前：计划：1 个对象进入开盘观察；优先核对 盘前样本 的开盘强度确认，开盘后只确认量价承接与数据新鲜度。",
+        "盘中：判断：1 个对象通过盘中筛选；盘中样本 的量价承接确认仍有效。约束：量能回落即失效。",
+        "盘后：复盘：1 个对象写入收盘记录；盘后样本 的收盘结构确认仅保留为次日观察依据，不把盘中信号外推为结论。",
+    )
 
 
 def test_snapshot_candidate_maps_freshness_label_when_status_is_missing() -> None:
