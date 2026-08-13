@@ -1,9 +1,10 @@
 import {
   AlertCircle,
-  ArrowRight,
   Bot,
   CalendarDays,
   Check,
+  ChevronLeft,
+  ChevronRight,
   CircleAlert,
   Clock3,
   ExternalLink,
@@ -14,10 +15,12 @@ import {
   Sparkles,
   UsersRound,
 } from "lucide-react";
+import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { FORMAL_RESEARCH_SECTIONS, resolveResearchView, TEST_VARIANTS_SECTION_ID, type ResearchViewId } from "@/lib/research-layout";
 import type { AqspAgentResult, AqspCandidate, AqspMessage, AqspPhase, AqspSnapshot, AqspVariant } from "@/lib/api";
 import {
+  compactDebateRounds,
   debateProcessText,
   dedupeResearchText,
   formatResearchDate,
@@ -26,11 +29,19 @@ import {
   gatePresentation,
   messageSourceUrl,
   sameResearchText,
-  snapshotConclusion,
+  uniqueAgentViews,
 } from "@/lib/research-view";
-import { formatAqspTime, isAqspSnapshotStale, useWorkspaceSnapshot } from "./useAqspSnapshot";
+import { areAqspCandidatesStale, formatAqspTime, isAqspSnapshotStale, useWorkspaceSnapshot } from "./useAqspSnapshot";
 import { useLocation } from "react-router-dom";
-import { variantHoldingsLabel, variantMoney, variantPercent, variantStrategyText } from "@/lib/variant-view";
+import {
+  variantActionText,
+  variantHoldingChangeText,
+  variantHoldingName,
+  variantMoney,
+  variantPercent,
+  variantStrategyText,
+  variantTechnicalEvidenceText,
+} from "@/lib/variant-view";
 
 function unique(values: readonly string[] | undefined, limit = 4): string[] {
   return Array.from(new Set((values ?? []).map((value) => value.trim()).filter(Boolean))).slice(0, limit);
@@ -46,17 +57,20 @@ function EmptyState({ title, detail }: { title: string; detail: string }) {
 }
 
 function SnapshotMeta({ snapshot }: { snapshot: AqspSnapshot }) {
-  const stale = isAqspSnapshotStale(snapshot);
+  const summaryStale = isAqspSnapshotStale(snapshot);
+  const candidatesStale = areAqspCandidatesStale(snapshot);
   const historical = snapshot.meta?.historical ?? false;
   const freshness = snapshot.meta?.freshness;
+  const unavailable = freshness?.candidates === "unavailable";
   return (
     <div className="aqsp-meta">
       <span>{snapshot.selected_date || "日期未记录"}</span>
       <span>更新 {formatAqspTime(snapshot.generated_at)}</span>
-      <span className={cn("aqsp-badge", historical || stale ? "aqsp-badge-warn" : "aqsp-badge-ok")}>
-        {historical ? "历史日期" : stale ? "当前快照已过期" : "当前数据"}
+      <span className={cn("aqsp-badge", historical || candidatesStale || unavailable ? "aqsp-badge-warn" : "aqsp-badge-ok")}>
+        {historical ? "历史日期" : candidatesStale ? "等待数据刷新" : "当前数据"}
       </span>
       {freshness?.candidates === "fresh" && <span className="aqsp-badge aqsp-badge-ok">行情新鲜</span>}
+      {summaryStale && !candidatesStale && <span className="aqsp-badge aqsp-badge-warn">研究摘要待刷新</span>}
       {freshness?.messages === "stale" && <span className="aqsp-badge aqsp-badge-warn">消息滞后</span>}
     </div>
   );
@@ -100,17 +114,20 @@ function EmptyToday({ snapshot }: { snapshot: AqspSnapshot }) {
   );
 }
 
-function StatusLine({ snapshot }: { snapshot: AqspSnapshot }) {
+function RawCoverageGate({ snapshot }: { snapshot: AqspSnapshot }) {
   const universe = snapshot.universe;
-  const phases = snapshot.phases ?? [];
-  const coverage = universe?.coverage_pct == null ? "—" : `${(universe.coverage_pct * 100).toFixed(1)}%`;
+  if (!universe?.total || !universe.batch_active) return null;
+  const covered = universe.resolved || universe.screened;
+  const percent = `${((universe.coverage_pct ?? 0) * 100).toFixed(1)}%`;
+  const detail = universe.last_error || "全市场原始日线刷新尚未完成";
   return (
-    <div className="aqsp-status-line" aria-label="数据概况">
-      <span><b>{snapshot.candidates.length}</b>候选</span>
-      <span><b>{snapshot.messages.length}</b>消息</span>
-      <span><b>{snapshot.debates.length}</b>复核</span>
-      <span><b>{coverage}</b>全池周期覆盖</span>
-      {phases.length > 0 && <span className="aqsp-status-muted">阶段 {phases.filter((phase) => phase.status !== "未产出").length}/{phases.length}</span>}
+    <div className="aqsp-coverage-gate aqsp-gate-warn" role="status">
+      <AlertCircle className="h-4 w-4 shrink-0" />
+      <div className="aqsp-coverage-grid">
+        <span><b>原始日线</b>{covered}/{universe.total} · {percent}</span>
+        <span><b>当前批次</b>{universe.batch_size || "未记录"}</span>
+        <p>{detail}</p>
+      </div>
     </div>
   );
 }
@@ -126,32 +143,71 @@ function phaseForLabel(phase: AqspPhase, keywords: readonly string[]) {
   return keywords.some((keyword) => text.includes(keyword.toLowerCase())) ? phase : undefined;
 }
 
-function PhaseLane({ snapshot }: { snapshot: AqspSnapshot }) {
+function PhaseConclusions({ snapshot }: { snapshot: AqspSnapshot }) {
   const phases = snapshot.phases ?? [];
-  return (
-    <div className="aqsp-phase-lane" aria-label="盘前盘中盘后数据状态">
-      {MARKET_PHASES.map((phase) => {
-        const record = phases.find((item) => phaseForLabel(item, phase.keywords));
-        const status = record?.status || "未产出";
-        return (
-          <div className="aqsp-phase" key={phase.id}>
-            <div><b>{phase.label}</b><span>{status}</span></div>
-            {record ? <small>候选 {record.candidate_count} · 批次重叠 {record.overlap_symbols}</small> : <small>独立数据段，未与当天结果合并</small>}
-          </div>
-        );
-      })}
+  return <div className="aqsp-phase-conclusions" aria-label="当天分阶段结论">{MARKET_PHASES.map((phase) => {
+    const record = phases.find((item) => phaseForLabel(item, phase.keywords));
+    const summary = snapshot.summaries.find((line) => line.startsWith(`${phase.label}：`)) || `${phase.label}：未记录`;
+    return <article key={phase.id}><header><b>{phase.label}</b><span>{record?.status || "未产出"}</span></header><p>{summary.replace(`${phase.label}：`, "")}</p></article>;
+  })}</div>;
+}
+
+function ReviewSummary({ result }: { result: AqspAgentResult }) {
+  const conclusion = result.conclusion.trim();
+  return <article className="aqsp-review-summary">
+    <div><b>{result.display_name || result.symbol || "对象未记录"}</b><span>{result.symbol}</span></div>
+    <p>{conclusion || "复核未形成可发布结论。"}</p>
+    <footer>
+      {result.primary_risk_gate && <span>风险：{result.primary_risk_gate}</span>}
+      {result.next_trigger && <span>验证：{result.next_trigger}</span>}
+    </footer>
+  </article>;
+}
+
+function DailyReport({
+  snapshot,
+  candidates,
+  debates,
+  candidatesStale,
+}: {
+  snapshot: AqspSnapshot;
+  candidates: readonly AqspCandidate[];
+  debates: readonly AqspAgentResult[];
+  candidatesStale: boolean;
+}) {
+  return <section id="overview" className="aqsp-daily-report">
+    <SectionHead number="01" title="当天复盘" count={candidatesStale ? "数据待刷新" : "实时研究"} />
+    <PhaseConclusions snapshot={snapshot} />
+    <div className="aqsp-report-section">
+      <div className="aqsp-report-heading"><h3>候选与规则依据</h3><span>{candidates.length} 个</span></div>
+      {candidatesStale ? <EmptyState title="当前候选不可用" detail="数据未通过新鲜度校验，已隐藏候选与复核。" /> : candidates.length === 0 ? <EmptyState title="当天没有候选" detail="当前没有通过数据质量与筛选条件的对象，不使用历史结果填充。" /> : <div className="aqsp-list">{candidates.slice(0, 3).map((candidate) => <CandidateCard key={candidate.symbol} candidate={candidate} />)}</div>}
     </div>
-  );
+    <div className="aqsp-report-section">
+      <div className="aqsp-report-heading"><h3>复核结论</h3><span>{debates.length} 条</span></div>
+      {candidatesStale ? null : debates.length === 0 ? <EmptyState title="当天没有有效复核" detail="未形成独立分歧和风险条件的讨论不会作为结论展示。" /> : <div className="aqsp-review-list">{debates.slice(0, 3).map((result) => <ReviewSummary key={result.symbol} result={result} />)}</div>}
+    </div>
+    <div className="aqsp-report-section">
+      <div className="aqsp-report-heading"><h3>当日消息证据</h3><span>{snapshot.messages.length} 条</span></div>
+      {snapshot.messages.length === 0 ? <EmptyState title="当天没有有效消息" detail="没有可核验来源时，系统不补写消息推断。" /> : <div className="aqsp-list">{snapshot.messages.slice(0, 2).map((message, index) => <MessageCard key={`${message.title}-${message.published_at}-${index}`} message={message} />)}</div>}
+    </div>
+    <RawCoverageGate snapshot={snapshot} />
+    <GateState snapshot={snapshot} />
+    <EmptyToday snapshot={snapshot} />
+  </section>;
 }
 
 function GateState({ snapshot }: { snapshot: AqspSnapshot }) {
   const gate = snapshot.recommendation_gate;
+  const candidatesStale = areAqspCandidatesStale(snapshot);
   if (snapshot.candidates.length === 0) {
-    return <div className="aqsp-gate aqsp-gate-warn"><Clock3 className="h-4 w-4 shrink-0" /><span>当天暂无候选，等待盘前或盘中任务产出；不使用历史结果替代。</span></div>;
+    return null;
   }
   const presentation = gatePresentation(gate);
-  if (presentation === "ready") {
+  if (presentation === "ready" && !candidatesStale) {
     return <div className="aqsp-gate aqsp-gate-ok"><Check className="h-4 w-4 shrink-0" /><span>当前结果可进入纸面复核，不自动下单。</span></div>;
+  }
+  if (presentation === "ready") {
+    return <div className="aqsp-gate aqsp-gate-warn"><ShieldAlert className="h-4 w-4 shrink-0" /><span>当前候选数据未通过新鲜度校验，仅保留研究展示；不进入正式推荐或纸面复核。</span></div>;
   }
   if (presentation === "unavailable") {
     return <div className="aqsp-gate aqsp-gate-warn"><ShieldAlert className="h-4 w-4 shrink-0" /><span>推荐状态未记录，当前只显示可核验数据。</span></div>;
@@ -162,19 +218,20 @@ function GateState({ snapshot }: { snapshot: AqspSnapshot }) {
 }
 
 function CandidateCard({ candidate }: { candidate: AqspCandidate }) {
+  const metricOrder = ["close", "volume_ratio", "macd_hist", "kdj_j", "bias20_pct", "rsi12"];
+  const metrics = metricOrder.flatMap((key) =>
+    (candidate.technical_metrics ?? []).filter((metric) => metric.key === key),
+  );
   return (
     <article className="aqsp-card">
       <div className="aqsp-card-head">
         <div><h3>{candidate.display_name || "名称未记录"}</h3><span className="aqsp-code">{candidate.symbol || "代码未记录"}</span></div>
         <div className="aqsp-score"><b>{Number.isFinite(candidate.score) ? candidate.score.toFixed(1) : "—"}</b><span>评分</span></div>
       </div>
-      <div className="aqsp-tags"><span className="aqsp-tag aqsp-tag-primary">{candidate.research_status || "状态未记录"}</span><span className="aqsp-tag">{candidate.evidence_status || "证据未记录"}</span></div>
-      {candidate.context && <p className="aqsp-card-summary">{candidate.context}</p>}
-      {(candidate.technical_metrics ?? []).length > 0 && <div className="aqsp-metrics">{candidate.technical_metrics?.map((metric) => <div key={metric.key}><span>{metric.label}</span><b>{metric.value}</b></div>)}</div>}
+      {candidate.strategies.length > 0 && <p className="aqsp-strategies">{candidate.strategies.join(" · ")}</p>}
       {(candidate.score_breakdown ?? []).length > 0 && <p className="aqsp-score-breakdown"><b>评分依据</b>{candidate.score_breakdown?.slice(0, 4).join(" · ")}</p>}
-      {candidate.deterministic_reasons.length > 0 && <ul className="aqsp-reasons">{candidate.deterministic_reasons.slice(0, 3).map((reason) => <li key={reason}><Check className="h-3.5 w-3.5 shrink-0 text-success" />{reason}</li>)}</ul>}
-      {candidate.next_step && <p className="aqsp-next"><ArrowRight className="h-3.5 w-3.5 shrink-0" />下一观察：{candidate.next_step}</p>}
-      {(candidate.data_source || candidate.freshness) && <p className="aqsp-provenance">数据源：{candidate.data_source || "未记录"} · {candidate.freshness || "新鲜度未记录"}</p>}
+      {metrics.length > 0 && <div className="aqsp-metrics">{metrics.map((metric) => <div key={metric.key}><span>{metric.label}</span><b>{metric.value}</b></div>)}</div>}
+      {candidate.deterministic_reasons.length > 0 && <div className="aqsp-evidence"><b>触发依据</b><ul className="aqsp-reasons">{candidate.deterministic_reasons.slice(0, 3).map((reason) => <li key={reason}><Check className="h-3.5 w-3.5 shrink-0 text-success" />{reason}</li>)}</ul></div>}
     </article>
   );
 }
@@ -207,22 +264,56 @@ function MarketContext({ snapshot }: { snapshot: AqspSnapshot }) {
 }
 
 function DebateCard({ result }: { result: AqspAgentResult }) {
+  const agentViews = uniqueAgentViews(result);
+  const isMultiAgent = result.review_kind === "multi_agent" || agentViews.length > 1;
   const process = debateProcessText(result);
   const conclusion = result.conclusion.trim();
-  const rounds = dedupeResearchText(result.round_summaries ?? []).filter((item) => !sameResearchText(item, conclusion) && !sameResearchText(item, process)).slice(0, 3);
+  const rounds = compactDebateRounds(result.round_summaries ?? [], conclusion).filter((item) => !sameResearchText(item, process));
   const bucketLabels: Record<string, string> = { bullish: "看多证据", bearish: "看空证据", event_fundamental: "事件/基本面", technical: "技术证据", risk_counterevidence: "风险/反证", uncertainty: "不确定性" };
   const buckets = Object.entries(result.viewpoint_buckets ?? {}).filter(([, points]) => points.length > 0).slice(0, 6);
-  return <article className="aqsp-card aqsp-debate-card"><div className="aqsp-card-head"><div className="aqsp-agent-title"><span className="aqsp-agent-mark"><Bot className="h-4 w-4" /></span><div><h3>{result.display_name || result.symbol || "对象未记录"}</h3><span className="aqsp-code">{result.symbol || "代码未记录"}</span></div></div><span className={cn("aqsp-badge", conclusion ? "aqsp-badge-ok" : "aqsp-badge-warn")}>{conclusion ? "已汇总" : "不完整"}</span></div><div className="aqsp-discussion"><p className="aqsp-label"><UsersRound className="h-3.5 w-3.5" />讨论过程</p><p>{process || "过程未记录"}</p>{result.active_roles.length > 0 && <div className="aqsp-tags">{result.active_roles.map((role) => <span className="aqsp-tag" key={role}>{role}</span>)}</div>}{rounds.length > 0 && <ol>{rounds.map((round, index) => <li key={`${index}-${round}`}>第 {index + 1} 轮：{round}</li>)}</ol>}</div>{buckets.length > 0 && <div className="aqsp-viewpoint-buckets"><p className="aqsp-label">独立证据</p>{buckets.map(([bucket, points]) => <div key={bucket}><b>{bucketLabels[bucket] || bucket}</b><span>{points.slice(0, 2).join("；")}</span></div>)}</div>}<div className="aqsp-votes"><span>支持 <b>{result.bull_count}</b></span><span>保留 <b>{result.neutral_count}</b></span><span>风险 <b>{result.bear_count}</b></span></div>{(result.disagreement_points?.length || result.uncertainty_points?.length) ? <div className="aqsp-debate-foot">{result.disagreement_points?.slice(0, 2).map((item) => <span key={item}><CircleAlert className="h-3.5 w-3.5" />分歧：{item}</span>)}{result.uncertainty_points?.slice(0, 2).map((item) => <span key={item}><CircleAlert className="h-3.5 w-3.5" />不确定：{item}</span>)}</div> : null}<div className="aqsp-debate-conclusion"><p className="aqsp-label">汇总结论</p><strong>{conclusion || "暂无结论"}</strong></div>{(result.primary_risk_gate || result.next_trigger) && <div className="aqsp-debate-foot">{result.primary_risk_gate && <span><ShieldAlert className="h-3.5 w-3.5" />风险：{result.primary_risk_gate}</span>}{result.next_trigger && <span><Sparkles className="h-3.5 w-3.5" />下一验证：{result.next_trigger}</span>}</div>}</article>;
+  const roleLabels: Record<string, string> = { bull: "技术多头", bear: "反方检验", risk_control: "风险控制", sector_leader: "板块轮动", cross_market: "跨市传导", policy_sensitive: "政策敏感", margin_trading: "融资融券", northbound: "外资流向", retail_mood: "市场情绪" };
+  return <article className="aqsp-card aqsp-debate-card"><div className="aqsp-card-head"><div className="aqsp-agent-title">{isMultiAgent && <span className="aqsp-agent-mark"><Bot className="h-4 w-4" /></span>}<div><h3>{result.display_name || result.symbol || "对象未记录"}</h3><span className="aqsp-code">{result.symbol || "代码未记录"}</span></div></div><span className={cn("aqsp-badge", isMultiAgent && conclusion ? "aqsp-badge-ok" : "aqsp-badge-warn")}>{isMultiAgent ? (conclusion ? "多 Agent 已汇总" : "多 Agent 不完整") : "复核来源未记录"}</span></div>{isMultiAgent && <><div className="aqsp-discussion"><p className="aqsp-label"><UsersRound className="h-3.5 w-3.5" />讨论要点</p>{process && <p>{process}</p>}{rounds.map((round) => <p key={round}>{round}</p>)}</div>{agentViews.length > 0 && <div className="aqsp-agent-views"><p className="aqsp-label">各 Agent 独立观点</p>{agentViews.map((view) => <div className="aqsp-agent-view" key={view.role}><div className="aqsp-agent-view-head"><b>{roleLabels[view.role] || view.role}</b><span className={cn("aqsp-stance", `aqsp-stance-${view.stance}`)}>{view.stance === "bullish" ? "支持" : view.stance === "bearish" ? "风险" : "保留"}</span></div>{view.arguments.length > 0 && <p><b>论点</b>{dedupeResearchText(view.arguments).slice(0, 1).join("；")}</p>}{view.opportunities.length > 0 && <p><b>机会</b>{dedupeResearchText(view.opportunities).slice(0, 1).join("；")}</p>}{view.risks.length > 0 && <p><b>风险</b>{dedupeResearchText(view.risks).slice(0, 1).join("；")}</p>}{view.counterarguments.length > 0 && <p><b>反驳</b>{dedupeResearchText(view.counterarguments).slice(0, 1).join("；")}</p>}</div>)}</div>}{buckets.length > 0 && agentViews.length === 0 && <div className="aqsp-viewpoint-buckets"><p className="aqsp-label">独立证据</p>{buckets.map(([bucket, points]) => <div key={bucket}><b>{bucketLabels[bucket] || bucket}</b><span>{dedupeResearchText(points).slice(0, 1).join("；")}</span></div>)}</div>}{(result.disagreement_points?.length || result.uncertainty_points?.length) ? <div className="aqsp-debate-foot">{result.disagreement_points?.slice(0, 2).map((item) => <span key={item}><CircleAlert className="h-3.5 w-3.5" />分歧：{item}</span>)}{result.uncertainty_points?.slice(0, 2).map((item) => <span key={item}><CircleAlert className="h-3.5 w-3.5" />不确定：{item}</span>)}</div> : null}</>}<div className="aqsp-debate-conclusion"><p className="aqsp-label">{isMultiAgent ? "汇总结论" : "复核状态"}</p><strong>{isMultiAgent ? (conclusion || "暂无结论") : "该记录缺少可验证的多 Agent 来源，不能作为多角色复核展示。"}</strong></div>{(result.primary_risk_gate || result.next_trigger) && <div className="aqsp-debate-foot">{result.primary_risk_gate && <span><ShieldAlert className="h-3.5 w-3.5" />风险：{result.primary_risk_gate}</span>}{result.next_trigger && <span><Sparkles className="h-3.5 w-3.5" />下一验证：{result.next_trigger}</span>}</div>}</article>;
+}
+
+const VARIANT_PAGE_SIZE = 24;
+
+function VariantHoldingColumn({
+  label,
+  date,
+  holdings,
+}: {
+  label: string;
+  date?: string;
+  holdings?: NonNullable<AqspVariant["holdings"]>;
+}) {
+  return (
+    <div className="aqsp-variant-holding-column">
+      <b className="aqsp-variant-column-title">{label}<small>{date || "日期未记录"}</small></b>
+      {holdings === undefined ? <span>持仓字段未提供</span> : holdings.length === 0 ? <span>当前无持仓</span> : holdings.map((holding) => (
+        <div className="aqsp-variant-holding" key={holding.symbol}>
+          <strong>{variantHoldingName(holding)} <small>({holding.symbol})</small></strong>
+          <span>{holding.quantity} 股 · 成本 {variantMoney(holding.average_price)} · 现价 {variantMoney(holding.last_price)}</span>
+          <em className={holding.unrealized_pnl >= 0 ? "aqsp-variant-positive" : "aqsp-variant-negative"}>浮盈 {variantMoney(holding.unrealized_pnl)}</em>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function TestVariantsPanel({ snapshot }: { snapshot?: AqspSnapshot }) {
   const historical = snapshot?.meta?.historical ?? false;
   const variants = snapshot?.variants ?? [];
+  const suite = snapshot?.variant_suite;
   const variantHistory = variants.some((variant) => variant.data_mode.includes("historical"));
+  const variantPending = variants.length === 0 && (!suite?.generated_at || Boolean(suite.last_error) || suite.batch_active);
+  const [variantPage, setVariantPage] = useState(0);
+  const variantPageCount = Math.max(1, Math.ceil(variants.length / VARIANT_PAGE_SIZE));
+  const activeVariantPage = Math.min(variantPage, variantPageCount - 1);
+  const visibleVariants = variants.slice(activeVariantPage * VARIANT_PAGE_SIZE, (activeVariantPage + 1) * VARIANT_PAGE_SIZE);
   return <section id={TEST_VARIANTS_SECTION_ID} className="aqsp-lab" aria-label="测试与变体">
     <div className="aqsp-section-head"><div><p className="aqsp-eyebrow"><FlaskConical className="h-3.5 w-3.5" />独立区域</p><h2>测试与变体</h2></div><span>不进入正式结论</span></div>
-    <div className="aqsp-lab-snapshot">{snapshot ? <><span>数据区间：{variants[0]?.start_date || "—"} 至 {variants[0]?.end_date || "—"}</span><span>每套账户：100,000 元</span><span className={cn("aqsp-badge", historical || variantHistory ? "aqsp-badge-warn" : "aqsp-badge-ok")}>{historical || variantHistory ? "历史回测 · 仅验证" : "当前实验结果"}</span></> : <span>等待正式快照</span>}</div>
-    {variants.length === 0 ? <EmptyState title="变体结果尚未产出" detail="实验结果独立于正式候选，产出后会显示在这里。" /> : <div className="aqsp-variant-grid">{variants.map((variant: AqspVariant) => {
+    <div className="aqsp-lab-snapshot">{snapshot ? <><span>数据区间：{variants[0]?.start_date || "—"} 至 {suite?.end_date || variants[0]?.end_date || "—"}</span><span>已载入：{variants.length} / {suite?.variant_count ?? variants.length} 个</span><span>当前页：{activeVariantPage + 1} / {variantPageCount}</span><span>股票池：{suite?.selected_symbols ?? "—"} / {suite?.supported_symbols ?? "—"}</span>{suite?.batch_active ? <><span>轮转批次：{suite.batch_id || `第 ${suite.cycle_id ?? 0} 轮`}</span><span>本批：{suite.batch_size ?? suite.selected_symbols ?? "—"}，覆盖：{((suite.coverage_pct ?? 0) * 100).toFixed(1)}%</span></> : null}<span>{suite?.schema_version || "schema 未记录"}</span><span className={cn("aqsp-badge", historical || variantHistory || variantPending ? "aqsp-badge-warn" : "aqsp-badge-ok")}>{historical || variantHistory ? "历史回测 · 仅验证" : variantPending ? "等待产出 · 任务阻塞" : "当前实验结果"}</span>{suite?.filters ? <span>{suite.filters}</span> : null}</> : <span>等待正式快照</span>}</div>
+    {variants.length === 0 ? <EmptyState title="变体结果尚未产出" detail={suite?.last_error || "实验结果独立于正式候选，产出后会显示在这里。"} /> : <><div className="aqsp-variant-grid">{visibleVariants.map((variant: AqspVariant) => {
       const pnl = variant.total_pnl;
       const holdings = variant.holdings;
       return <article className="aqsp-variant-card" key={variant.variant_id}>
@@ -235,10 +326,16 @@ function TestVariantsPanel({ snapshot }: { snapshot?: AqspSnapshot }) {
           <div><span>总盈亏</span><b className={pnl != null && pnl < 0 ? "aqsp-variant-negative" : "aqsp-variant-positive"}>{variantMoney(pnl)}</b></div>
           <div><span>收益率</span><b>{variantPercent(variant.return_pct)}</b></div>
         </div>
-        <div className="aqsp-variant-holdings"><b>持仓 · {variantHoldingsLabel(holdings)}</b>{holdings?.map((holding) => <span key={holding.symbol}>{holding.symbol} {holding.quantity} 股 · 市值 {variantMoney(holding.market_value)} · 浮盈 {variantMoney(holding.unrealized_pnl)}</span>)}</div>
+        <div className="aqsp-variant-ledger">
+          <VariantHoldingColumn label="今日持仓" date={variant.holdings_date} holdings={holdings} />
+          <VariantHoldingColumn label="昨日持仓" date={variant.previous_holdings_date} holdings={variant.previous_holdings} />
+        </div>
+        <div className="aqsp-variant-actions"><b>持仓变化</b>{variantHoldingChangeText(variant.holdings, variant.previous_holdings).map((line) => <span key={line}>{line}</span>)}</div>
+        <div className="aqsp-variant-actions"><b>为什么换票 / 保留</b>{(variant.recent_actions ?? []).slice(0, 3).map((action, index) => <span key={`${action.date}-${action.symbol}-${index}`}>{variantActionText(action)}</span>)}{(variant.adjustments ?? []).slice(0, 3).map((line) => <span key={line}>{line}</span>)}{(variant.recent_actions?.length ?? 0) === 0 && (variant.adjustments?.length ?? 0) === 0 ? <span>决策依据未记录；不根据持仓差异补写原因。</span> : null}</div>
+        <div className="aqsp-variant-actions"><b>技术面证据</b>{(variant.technical_evidence ?? []).slice(0, 3).map((evidence, index) => <span key={`${evidence.symbol ?? "symbol"}-${evidence.execution_date ?? evidence.date ?? index}`}>{variantTechnicalEvidenceText(evidence)}</span>)}{(variant.technical_evidence?.length ?? 0) === 0 ? <span>结构化 MACD/KDJ/量比/ATR 未记录；不把空口描述当证据。</span> : null}</div>
         <p className="aqsp-variant-rules">成交 {variant.filled_orders} · 拒绝 {variant.rejected_orders} · {(variant.hard_rules ?? []).join(" · ") || "硬成交规则未记录"}</p>
       </article>;
-    })}</div>}
+    })}</div>{variantPageCount > 1 && <nav className="aqsp-variant-pagination" aria-label="变体分页"><button type="button" onClick={() => setVariantPage(activeVariantPage - 1)} disabled={activeVariantPage === 0} title="上一页" aria-label="上一页"><ChevronLeft className="h-4 w-4" /></button><span>第 {activeVariantPage + 1} / {variantPageCount} 页</span><button type="button" onClick={() => setVariantPage(activeVariantPage + 1)} disabled={activeVariantPage >= variantPageCount - 1} title="下一页" aria-label="下一页"><ChevronRight className="h-4 w-4" /></button></nav>}</>}
   </section>;
 }
 
@@ -257,12 +354,14 @@ export function AqspResearchWorkspace() {
   if (error && !data) return <div className="aqsp-page">{activeView === TEST_VARIANTS_SECTION_ID ? <TestVariantsPanel /> : <ErrorState error={error} onRefresh={refresh} />}</div>;
   if (!data) return <div className="aqsp-page">{activeView === TEST_VARIANTS_SECTION_ID ? <TestVariantsPanel /> : <EmptyState title="当前没有研究快照" detail="等待正式 AQSP 任务产出，当前不显示历史内容。" />}</div>;
 
-  const conclusion = snapshotConclusion(data);
+  const currentSnapshotStale = areAqspCandidatesStale(data);
+  const visibleCandidates = currentSnapshotStale ? [] : data.candidates;
+  const visibleDebates = currentSnapshotStale ? [] : data.debates;
   const formalSections = {
-    overview: <section id="overview" className="aqsp-module aqsp-module-overview"><SectionHead number={FORMAL_RESEARCH_SECTIONS[0].number} title={FORMAL_RESEARCH_SECTIONS[0].label} count="独立结论" /><div className="aqsp-summary-conclusion"><Sparkles className="h-5 w-5 shrink-0 text-primary" /><div><strong>{conclusion || "当天结论未记录"}</strong>{data.summaries.slice(1, 3).map((line) => <p key={line}>{line}</p>)}</div></div><StatusLine snapshot={data} /><PhaseLane snapshot={data} /><GateState snapshot={data} /><EmptyToday snapshot={data} /></section>,
+    overview: <DailyReport snapshot={data} candidates={visibleCandidates} debates={visibleDebates} candidatesStale={currentSnapshotStale} />,
     messages: <section id="messages" className="aqsp-module aqsp-module-messages"><SectionHead number={FORMAL_RESEARCH_SECTIONS[1].number} title={FORMAL_RESEARCH_SECTIONS[1].label} count={`${data.messages.length} 条`} />{data.messages.length === 0 ? <EmptyState title="当天没有有效消息" detail="没有可核验来源时，系统不补写消息或产业链推断。" /> : <div className="aqsp-list">{data.messages.map((message, index) => <MessageCard key={`${message.title}-${message.published_at}-${index}`} message={message} />)}</div>}<MarketContext snapshot={data} /></section>,
-    candidates: <section id="candidates" className="aqsp-module aqsp-module-candidates"><SectionHead number={FORMAL_RESEARCH_SECTIONS[2].number} title={FORMAL_RESEARCH_SECTIONS[2].label} count={`${data.candidates.length} 个`} />{data.candidates.length === 0 ? <EmptyState title="当天没有候选" detail="当前没有通过数据质量与短线筛选的对象，不用历史候选填充。" /> : <div className="aqsp-list">{data.candidates.map((candidate) => <CandidateCard key={candidate.symbol} candidate={candidate} />)}</div>}</section>,
-    discussion: <section id="discussion" className="aqsp-module aqsp-module-discussion"><SectionHead number={FORMAL_RESEARCH_SECTIONS[3].number} title={FORMAL_RESEARCH_SECTIONS[3].label} count={`${data.debates.length} 条`} />{data.debates.length === 0 ? <EmptyState title="当天没有有效讨论" detail="没有可核验的分歧和风险条件时，不显示推断内容。" /> : <div className="aqsp-list">{data.debates.map((result) => <DebateCard key={result.symbol} result={result} />)}</div>}</section>,
+    candidates: <section id="candidates" className="aqsp-module aqsp-module-candidates"><SectionHead number={FORMAL_RESEARCH_SECTIONS[2].number} title={FORMAL_RESEARCH_SECTIONS[2].label} count={`${visibleCandidates.length} 个`} />{currentSnapshotStale ? <EmptyState title="当前候选不可用" detail="收盘数据未通过新鲜度或覆盖率验证，已隐藏过期候选。" /> : visibleCandidates.length === 0 ? <EmptyState title="当天没有候选" detail="当前没有通过数据质量与短线筛选的对象，不用历史候选填充。" /> : <div className="aqsp-list">{visibleCandidates.map((candidate) => <CandidateCard key={candidate.symbol} candidate={candidate} />)}</div>}</section>,
+    discussion: <section id="discussion" className="aqsp-module aqsp-module-discussion"><SectionHead number={FORMAL_RESEARCH_SECTIONS[3].number} title={FORMAL_RESEARCH_SECTIONS[3].label} count={`${visibleDebates.length} 条`} />{currentSnapshotStale ? <EmptyState title="当前讨论不可用" detail="依赖过期候选的研判已隐藏，等待数据通过验证后重新生成。" /> : visibleDebates.length === 0 ? <EmptyState title="当天没有有效讨论" detail="没有可核验的分歧和风险条件时，不显示推断内容。" /> : <div className="aqsp-list">{visibleDebates.map((result) => <DebateCard key={result.symbol} result={result} />)}</div>}</section>,
   } as const;
   return <div className="aqsp-page">
     <header className="aqsp-header"><div><p className="aqsp-eyebrow">AQSP · 短线研究</p><div className="aqsp-title-row"><h1>当天研究</h1><strong>{data.selected_date || "日期未记录"}</strong></div><SnapshotMeta snapshot={data} /></div><button type="button" className="aqsp-refresh" onClick={refresh} disabled={loading} title="刷新研究数据"><RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />刷新</button></header>
