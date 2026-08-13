@@ -680,9 +680,15 @@ def _snapshot_agent_views(views: Iterable[object]) -> tuple[HomeSnapshotAgentVie
         if not role or role in seen:
             continue
         seen.add(role)
-        argument = _text(getattr(view, "key_argument", ""))
-        opportunity = _text(getattr(view, "key_opportunity", ""))
-        risk = _text(getattr(view, "key_risk", ""))
+        argument = _clean_legacy_debate_text(getattr(view, "key_argument", ""))
+        opportunity = _clean_legacy_debate_text(getattr(view, "key_opportunity", ""))
+        risk = _clean_legacy_debate_text(getattr(view, "key_risk", ""))
+        if _is_raw_debate_template(argument):
+            argument = ""
+        if _is_raw_debate_template(opportunity):
+            opportunity = ""
+        if _is_raw_debate_template(risk):
+            risk = ""
         selected.append(
             HomeSnapshotAgentView(
                 role=role,
