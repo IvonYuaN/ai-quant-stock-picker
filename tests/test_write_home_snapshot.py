@@ -1622,13 +1622,13 @@ def test_write_home_snapshot_keeps_only_observation_cards_when_no_recommendation
     )
 
 
-def test_write_home_snapshot_maps_midday_to_latest_intraday_artifact() -> None:
+def test_write_home_snapshot_maps_midday_to_today_intraday_artifact() -> None:
     provider = _DateAwareProvider()
 
     write_home_snapshot.build_home_snapshot(provider, task_id="midday")
 
     assert provider.digest_calls == [
-        ("intraday", write_home_snapshot.latest_completed_trading_day().isoformat())
+        ("intraday", write_home_snapshot.today_shanghai().isoformat())
     ]
 
 
@@ -1925,21 +1925,31 @@ class _DateAwareProvider(_Provider):
         return payload
 
 
-def test_write_home_snapshot_uses_latest_completed_day_during_market_hours(
+def test_write_home_snapshot_uses_today_for_intraday_during_market_hours(
     monkeypatch,
 ) -> None:
     provider = _DateAwareProvider()
     monkeypatch.setattr(
         write_home_snapshot,
+        "today_shanghai",
+        lambda: date(2026, 7, 10),
+    )
+    monkeypatch.setattr(
+        write_home_snapshot,
         "latest_completed_trading_day",
         lambda: date(2026, 7, 9),
+    )
+    monkeypatch.setattr(
+        write_home_snapshot,
+        "today_shanghai",
+        lambda: date(2026, 7, 10),
     )
 
     snapshot = write_home_snapshot.build_home_snapshot(provider, task_id="intraday")
 
-    assert snapshot.selected_date == "2026-07-09"
-    assert provider.digest_calls == [("intraday", "2026-07-09")]
-    assert provider.runtime_dates == ["2026-07-09"]
+    assert snapshot.selected_date == "2026-07-10"
+    assert provider.digest_calls == [("intraday", "2026-07-10")]
+    assert provider.runtime_dates == ["2026-07-10"]
 
 
 def test_snapshot_source_uses_intraday_provenance_for_completed_day(
@@ -2029,10 +2039,15 @@ def test_home_snapshot_excludes_uncompleted_date_from_final_output(monkeypatch) 
         "latest_completed_trading_day",
         lambda: date(2026, 7, 9),
     )
+    monkeypatch.setattr(
+        write_home_snapshot,
+        "today_shanghai",
+        lambda: date(2026, 7, 10),
+    )
 
     snapshot = write_home_snapshot.build_home_snapshot(provider, task_id="intraday")
 
-    assert snapshot.available_dates == ("2026-07-09",)
+    assert snapshot.available_dates == ("2026-07-10", "2026-07-09")
 
 
 def test_merge_home_snapshot_index_drops_uncompleted_date(monkeypatch) -> None:

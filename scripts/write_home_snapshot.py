@@ -247,7 +247,9 @@ def _snapshot_dates(task_view: Any, selected_date: str) -> tuple[str, ...]:
         (selected_date, *(getattr(task_view, "available_dates", ()) or ())),
         MAX_HOME_DATES,
     )
-    return tuple(value for value in dates if value <= completed_date)
+    return tuple(
+        value for value in dates if value == selected_date or value <= completed_date
+    )
 
 
 def _snapshot_task_id(task_id: str) -> str:
@@ -2093,10 +2095,14 @@ def build_home_snapshot(
 ) -> HomeDashboardSnapshot:
     """Build a bounded, file-ready home snapshot from local runtime artifacts only."""
     selected_task_id = _snapshot_task_id(task_id) or provider.default_task_id()
-    # During market hours today's bar is incomplete.  The default homepage
-    # snapshot must therefore use the last completed close; callers can still
-    # request an explicit historical date for a dated review.
-    requested_date = _text(signal_date) or latest_completed_trading_day().isoformat()
+    # Intraday is a realtime surface. Historical daily views remain pinned to
+    # the latest completed close, but the live homepage must use today's
+    # intraday artifact while the market is open.
+    requested_date = _text(signal_date) or (
+        today_shanghai().isoformat()
+        if selected_task_id == "intraday"
+        else latest_completed_trading_day().isoformat()
+    )
     payload = provider.home_digest_payload(
         selected_task_id,
         signal_date=requested_date,
@@ -2272,11 +2278,16 @@ def merge_home_snapshot_index(
         return refreshed
 
     completed_date = latest_completed_trading_day().isoformat()
+    selected_date = refreshed.selected_date
     existing_by_date = {
-        day.date: day for day in existing.days if day.date <= completed_date
+        day.date: day
+        for day in existing.days
+        if day.date == selected_date or day.date <= completed_date
     }
     refreshed_by_date = {
-        day.date: day for day in refreshed.days if day.date <= completed_date
+        day.date: day
+        for day in refreshed.days
+        if day.date == selected_date or day.date <= completed_date
     }
     dates = set(existing_by_date) | set(refreshed_by_date)
     ordered_dates = [refreshed.selected_date]
