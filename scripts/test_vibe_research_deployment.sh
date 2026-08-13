@@ -4,6 +4,7 @@ set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SYSTEMD_DIR="${PROJECT_ROOT}/deploy/systemd"
+VENV_DIR="${AQSP_VIBE_VENV_DIR:-/opt/aqsp/.venv-vibe-research}"
 
 assert_file() {
     [[ -f "$1" ]] || { echo "FAIL missing: $1" >&2; exit 1; }
@@ -55,7 +56,7 @@ for unit in aqsp-vibe-research-api.service aqsp-vibe-research-preview.service; d
         -e 's|@AQSP_PROJECT_ROOT@|/opt/aqsp|g' \
         -e 's|@AQSP_VIBE_USER@|aqsp-vibe|g' \
         -e 's|@AQSP_VIBE_GROUP@|aqsp-vibe|g' \
-        -e 's|@AQSP_VENV_DIR@|/opt/aqsp/.venv-vibe-research|g' \
+        -e "s|@AQSP_VENV_DIR@|${VENV_DIR}|g" \
         -e 's|@AQSP_ENV_FILE@|/etc/aqsp/vibe-research.env|g' \
         -e 's|@AQSP_LOG_DIR@|/opt/aqsp/logs/vibe-research|g' \
         -e 's|@AQSP_NPM_BIN@|/usr/bin/npm|g' \
@@ -65,7 +66,7 @@ done
 rg -q '^User=aqsp-vibe$' "${rendered_dir}/aqsp-vibe-research-api.service"
 rg -q 'PYTHONPATH=/opt/aqsp/src:/opt/aqsp/backend' \
     "${rendered_dir}/aqsp-vibe-research-api.service"
-rg -q '/opt/aqsp/.venv-vibe-research/bin/python' \
+rg -q "${VENV_DIR}/bin/python" \
     "${rendered_dir}/aqsp-vibe-research-api.service"
 echo "PASS template rendering: isolated user, venv and PYTHONPATH"
 
