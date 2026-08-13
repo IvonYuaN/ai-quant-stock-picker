@@ -20,7 +20,7 @@ DEFAULT_SNAPSHOT_PATH = "data/runtime/home_dashboard_snapshot.json"
 DEFAULT_DEBATE_RESULTS_PATH = "data/debate_results.jsonl"
 SNAPSHOT_SCHEMA_VERSION = "v1"
 INDEX_SCHEMA_VERSION = "v1-index"
-MAX_SNAPSHOT_BYTES = 512 * 1024
+MAX_SNAPSHOT_BYTES = 1024 * 1024
 MAX_DATES = 4
 MAX_CANDIDATES = 5
 MAX_DEBATES = 3
@@ -809,7 +809,7 @@ def _read_json(path: Path) -> dict[str, Any]:
     except OSError as exc:
         raise AQSPSnapshotUnavailable(f"无法读取快照文件：{path}") from exc
     if len(raw) > MAX_SNAPSHOT_BYTES:
-        raise AQSPSnapshotUnavailable("快照超过 64 KiB 大小上限")
+        raise AQSPSnapshotUnavailable("快照超过 1 MiB 大小上限")
     try:
         payload = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -1552,6 +1552,11 @@ def _validate_advisory_boundary(
         if "advisory_boundary_ok" in item and item["advisory_boundary_ok"] is not True:
             raise AQSPSnapshotUnavailable("debate advisory 边界校验未通过")
         if "deterministic_score" not in item:
+            continue
+        # Legacy advisory snapshots may explicitly serialize this optional
+        # field as null. It carries no score assertion and must not make the
+        # entire otherwise-valid research snapshot unavailable.
+        if item["deterministic_score"] is None:
             continue
         symbol = _validate_symbol(_text(item["symbol"], "debate.symbol"))
         candidate = candidates_by_symbol.get(symbol)

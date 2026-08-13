@@ -658,7 +658,7 @@ def test_home_snapshot_write_rejects_payload_that_exceeds_byte_budget(tmp_path) 
     source = tmp_path / "home.json"
     snapshot = _snapshot(summaries=("x" * MAX_HOME_SNAPSHOT_BYTES,))
 
-    with pytest.raises(ValueError, match="64 KiB"):
+    with pytest.raises(ValueError, match="1 MiB"):
         write_home_dashboard_snapshot(source, snapshot)
 
     assert not source.exists()

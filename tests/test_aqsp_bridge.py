@@ -696,6 +696,27 @@ def test_aqsp_bridge_keeps_matching_deterministic_score_when_advisory_metadata_i
     assert response.json()["data"]["candidates"][0]["score"] == 72.5
 
 
+def test_aqsp_bridge_accepts_legacy_null_advisory_deterministic_score(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = _snapshot("2026-07-14")
+    payload["debates"][0].update(
+        {
+            "advisory_only": True,
+            "deterministic_score": None,
+            "deterministic_score_unchanged": True,
+            "advisory_boundary_ok": True,
+        }
+    )
+    path = _write_single(tmp_path, payload)
+    monkeypatch.setenv("AQSP_RESEARCH_SURFACE_SNAPSHOT", str(path))
+
+    response = client.get("/api/aqsp/snapshot")
+
+    assert response.status_code == 200
+    assert response.json()["data"]["candidates"][0]["score"] == 72.5
+
+
 def test_aqsp_bridge_exposes_structured_debate_process_without_changing_score(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
