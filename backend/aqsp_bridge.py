@@ -123,6 +123,7 @@ class AQSPDebate:
     advisory_boundary_ok: bool = True
     process_recorded: bool = False
     conclusion_recorded: bool = False
+    review_kind: str = "unverified"
     quality_issues: tuple[str, ...] = ()
     viewpoint_buckets: dict[str, tuple[str, ...]] = field(default_factory=dict)
     disagreement_points: tuple[str, ...] = ()
@@ -1110,6 +1111,7 @@ def _parse_debate(payload: object) -> AQSPDebate:
             "pending_confirmations",
             "process_recorded",
             "conclusion_recorded",
+            "review_kind",
             "debate_quality_issues",
             "evidence",
             "viewpoint_buckets",
@@ -1221,6 +1223,10 @@ def _parse_debate(payload: object) -> AQSPDebate:
         ),
         conclusion_recorded=_boolean(
             item.get("conclusion_recorded", False), "debate.conclusion_recorded"
+        ),
+        review_kind=(
+            _optional_text(item.get("review_kind"), "debate.review_kind")
+            or "unverified"
         ),
         quality_issues=tuple(
             _text_list(
