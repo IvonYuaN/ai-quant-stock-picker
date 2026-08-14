@@ -213,6 +213,40 @@ def test_debate_quality_gate_rejects_failure_and_any_quality_issue() -> None:
     assert not backfill_intraday_debate._is_non_retryable_debate_failure("TimeoutError")
 
 
+def test_persist_debate_update_removes_same_day_template_records(
+    tmp_path: Path,
+) -> None:
+    output_path = tmp_path / "debate_results.jsonl"
+    output_path.write_text(
+        json.dumps(
+            {
+                "symbol": "000001",
+                "related_signal_date": "2026-08-14",
+                "debate_date": "2026-08-14",
+                "task_id": "intraday",
+                "rounds": [{"arguments": ["候选专属证据: stale"]}],
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    payload = {
+        "symbol": "000002",
+        "related_signal_date": "2026-08-14",
+        "debate_date": "2026-08-14",
+        "task_id": "intraday",
+        "failure": "讨论未启动: no_substantive_evidence",
+    }
+
+    backfill_intraday_debate._persist_debate_update(
+        output_path, cutoff="2026-07-15", payload=payload
+    )
+
+    rows = [json.loads(line) for line in output_path.read_text().splitlines()]
+    assert rows == [payload]
+
+
 def test_debate_quality_gate_rejects_neutral_only_opposition_payload(
     tmp_path: Path, monkeypatch
 ) -> None:

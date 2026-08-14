@@ -44,6 +44,13 @@ CANDIDATE_SUCCEEDED = "succeeded"
 CANDIDATE_FAILED = "failed"
 DEFAULT_MAX_ATTEMPTS = 2
 
+_TEMPLATE_DISCUSSION_MARKERS = (
+    "候选专属证据",
+    "当前bullish立场",
+    "当前bearish立场",
+    "看多 2 / 看空 2",
+)
+
 
 def _float_value(row: dict[str, str], key: str, default: float = 0.0) -> float:
     try:
@@ -636,15 +643,31 @@ def _persist_debate_update(
         records = {
             record_key: record
             for record_key, record in records.items()
-            if not (
-                str(record.get("symbol", "")) == str(payload.get("symbol", ""))
-                and str(record.get("related_signal_date", ""))
-                == str(payload.get("related_signal_date", ""))
-                and str(record.get("task_id", "")) == str(payload.get("task_id", ""))
-            )
+            if not _is_replaced_or_legacy_template_record(record, payload)
         }
         _merge_debate_records(records, {key: payload})
         _write_debate_records(output_path, records)
+
+
+def _is_replaced_or_legacy_template_record(
+    record: dict[str, Any],
+    payload: dict[str, Any],
+) -> bool:
+    """Remove replaced records and stale same-day template discussions."""
+    same_candidate = (
+        str(record.get("symbol", "")) == str(payload.get("symbol", ""))
+        and str(record.get("related_signal_date", ""))
+        == str(payload.get("related_signal_date", ""))
+        and str(record.get("task_id", "")) == str(payload.get("task_id", ""))
+    )
+    same_run_scope = str(record.get("task_id", "")) == str(
+        payload.get("task_id", "")
+    ) and str(record.get("debate_date", "")) == str(payload.get("debate_date", ""))
+    rendered = json.dumps(record, ensure_ascii=False)
+    return same_candidate or (
+        same_run_scope
+        and any(marker in rendered for marker in _TEMPLATE_DISCUSSION_MARKERS)
+    )
 
 
 def _responsibility_snapshot(coordinator: Any) -> list[dict[str, str]]:
