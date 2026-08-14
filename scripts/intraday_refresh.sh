@@ -356,7 +356,7 @@ replace_intraday_artifact() {
 
 validate_intraday_batch_output() {
     local expected_count="${INTRADAY_BATCH_EXPECTED_COUNT:-$INTRADAY_BATCH_SIZE}"
-    local min_valid_ratio="${AQSP_INTRADAY_MIN_VALID_RATIO:-0.8}"
+    local min_valid_ratio="${AQSP_INTRADAY_MIN_VALID_RATIO:-0.5}"
     local scanned_count
     # The public CSV may still be the previous run. Validate this run's file only.
     local batch_output_path="$TMP_INTRADAY_OUTPUT_CSV"
@@ -388,7 +388,7 @@ if resolved != expected:
 try:
     ratio = min(max(float(sys.argv[3]), 0.0), 1.0)
 except (IndexError, ValueError):
-    ratio = 0.8
+    ratio = 0.5
 minimum = max(1, math.ceil(resolved * ratio))
 if fetched < minimum:
     raise SystemExit(

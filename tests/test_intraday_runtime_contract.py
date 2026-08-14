@@ -1030,7 +1030,7 @@ def test_intraday_batch_cursor_uses_minimum_live_coverage_and_precedes_sidecars(
 ):
     script = SCRIPT_PATH.read_text(encoding="utf-8")
 
-    assert "AQSP_INTRADAY_MIN_VALID_RATIO:-0.8" in script
+    assert "AQSP_INTRADAY_MIN_VALID_RATIO:-0.5" in script
     assert "math.ceil(resolved * ratio)" in script
     publish = script.index("# Publish fresh candidates")
     sidecar = script.index(

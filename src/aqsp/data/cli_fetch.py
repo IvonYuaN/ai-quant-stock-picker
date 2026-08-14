@@ -158,11 +158,14 @@ def _allow_partial_intraday_batch() -> bool:
 
 
 def _minimum_live_short_frames(symbol_count: int) -> int:
-    raw = os.getenv("AQSP_INTRADAY_MIN_VALID_RATIO", "0.8").strip()
+    # A rotating batch may contain symbols unsupported by the live provider
+    # (notably newly listed BSE codes). Publish the fresh subset when it still
+    # clears a meaningful half-batch floor; never substitute stale frames.
+    raw = os.getenv("AQSP_INTRADAY_MIN_VALID_RATIO", "0.5").strip()
     try:
         ratio = float(raw)
     except ValueError:
-        ratio = 0.8
+        ratio = 0.5
     ratio = min(max(ratio, 0.0), 1.0)
     return max(1, math.ceil(symbol_count * ratio))
 
