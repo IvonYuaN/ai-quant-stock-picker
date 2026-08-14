@@ -15,6 +15,7 @@ fi
 # shellcheck disable=SC1090
 source "$RUNTIME_PYTHON_HELPER"
 PYTHON_BIN="$(aqsp_runtime_python "$PROJECT_ROOT")"
+export PYTHONPATH="${PROJECT_ROOT}/src:${PROJECT_ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
 LOG_DIR="${AQSP_VARIANT_LOG_DIR:-${RUNTIME_DATA_ROOT}/logs/variants}"
 LOG_FILE="${LOG_DIR}/variant-refresh-$(date +%Y-%m-%d).log"
 
@@ -71,12 +72,16 @@ if [ "$DOW" -ge 6 ]; then
     refresh_home_snapshot
     exit 0
 fi
-if ! "$PYTHON_BIN" - <<'PY'
+if ! TRADING_DAY="$("$PYTHON_BIN" - <<'PY'
 from aqsp.core.time import is_trading_day, today_shanghai
 
-raise SystemExit(0 if is_trading_day(today_shanghai()) else 1)
+print("true" if is_trading_day(today_shanghai()) else "false")
 PY
-then
+)"; then
+    log "[ERROR] 交易日检查失败，拒绝把运行错误当成非交易日"
+    exit 1
+fi
+if [ "$TRADING_DAY" != "true" ]; then
     log "今日非交易日，跳过变体刷新"
     write_waiting_status "今日非交易日，等待下一个交易日错峰窗口。"
     refresh_home_snapshot

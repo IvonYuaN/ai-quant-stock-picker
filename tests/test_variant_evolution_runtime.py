@@ -98,6 +98,17 @@ def test_target_snapshot_persists_prices_with_decimal_precision(tmp_path: Path) 
     assert row == (12.31, 12.66, 12.22, 12.58, 12580.5)
 
 
+def test_variant_refresh_exports_release_pythonpath_and_rejects_import_failure() -> (
+    None
+):
+    script = (Path(__file__).parents[1] / "scripts" / "variant_refresh.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'export PYTHONPATH="${PROJECT_ROOT}/src:${PROJECT_ROOT}' in script
+    assert "交易日检查失败，拒绝把运行错误当成非交易日" in script
+
+
 def test_variant_lifecycle_eliminates_negative_result_when_samples_sufficient() -> None:
     results = [
         {
