@@ -8,7 +8,7 @@ import sys
 import threading
 from html import unescape
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from datetime import date, datetime, timedelta
 from pathlib import Path
 import re
@@ -143,6 +143,8 @@ class CatalystReport:
     future_news_count: int = 0
     # Added as a derived field so callers constructing legacy reports remain valid.
     region_statuses: tuple[NewsRegionStatus, ...] = ()
+    # Display-only, auditable headlines that did not pass the high-impact gate.
+    market_clues: tuple[CatalystEvent, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.region_statuses:
@@ -327,6 +329,7 @@ def _serialize_catalyst_report(report: CatalystReport) -> dict[str, Any]:
         "stale_news_count": report.stale_news_count,
         "undated_news_count": report.undated_news_count,
         "future_news_count": report.future_news_count,
+        "market_clues": [asdict(event) for event in report.market_clues],
         "region_statuses": [
             {
                 "region": item.region,
@@ -390,53 +393,56 @@ def _serialize_catalyst_report(report: CatalystReport) -> dict[str, Any]:
     }
 
 
+def _deserialize_catalyst_events(value: object) -> tuple[CatalystEvent, ...]:
+    if not isinstance(value, (list, tuple)):
+        return ()
+    return tuple(
+        CatalystEvent(
+            title=str(item.get("title", "")).strip(),
+            summary=str(item.get("summary", "")).strip(),
+            source=str(item.get("source", "")).strip(),
+            published_at=str(item.get("published_at", "")).strip(),
+            source_fetched_at=str(item.get("source_fetched_at", "")).strip(),
+            symbol=str(item.get("symbol", "")).strip(),
+            name=str(item.get("name", "")).strip(),
+            impact=str(item.get("impact", "neutral")).strip() or "neutral",
+            category=str(item.get("category", "消息")).strip() or "消息",
+            weight=int(item.get("weight", 1) if item.get("weight") is not None else 1),
+            confidence=float(item.get("confidence", 0.0) or 0.0),
+            source_count=int(item.get("source_count", 1) or 1),
+            verification=str(item.get("verification", "待证实")).strip() or "待证实",
+            source_quality_label=str(
+                item.get("source_quality_label", "普通来源")
+            ).strip()
+            or "普通来源",
+            source_quality_score=int(item.get("source_quality_score", 1) or 1),
+            inference=str(item.get("inference", "")).strip(),
+            llm_review=str(item.get("llm_review", "")).strip(),
+            url=str(item.get("url", "")).strip(),
+            source_region=str(item.get("source_region", "mixed")).strip() or "mixed",
+            affected_sectors=_text_tuple(item.get("affected_sectors", ())),
+            affected_symbols=_text_tuple(item.get("affected_symbols", ())),
+            transmission_hypothesis=str(
+                item.get("transmission_hypothesis", "")
+            ).strip(),
+            time_horizon=str(item.get("time_horizon", "")).strip(),
+            supporting_evidence=_text_tuple(item.get("supporting_evidence", ())),
+            contradicting_evidence=_text_tuple(item.get("contradicting_evidence", ())),
+            transmission_path=_text_tuple(item.get("transmission_path", ())),
+            validation_signals=_text_tuple(item.get("validation_signals", ())),
+            invalidation_signals=_text_tuple(item.get("invalidation_signals", ())),
+        )
+        for item in value
+        if isinstance(item, dict)
+    )
+
+
 def _deserialize_catalyst_report(payload: Any) -> CatalystReport | None:
     if not isinstance(payload, dict):
         return None
     try:
-        events = tuple(
-            CatalystEvent(
-                title=str(item.get("title", "")).strip(),
-                summary=str(item.get("summary", "")).strip(),
-                source=str(item.get("source", "")).strip(),
-                published_at=str(item.get("published_at", "")).strip(),
-                source_fetched_at=str(item.get("source_fetched_at", "")).strip(),
-                symbol=str(item.get("symbol", "")).strip(),
-                name=str(item.get("name", "")).strip(),
-                impact=str(item.get("impact", "neutral")).strip() or "neutral",
-                category=str(item.get("category", "消息")).strip() or "消息",
-                weight=int(item.get("weight", 1) or 1),
-                confidence=float(item.get("confidence", 0.0) or 0.0),
-                source_count=int(item.get("source_count", 1) or 1),
-                verification=str(item.get("verification", "待证实")).strip()
-                or "待证实",
-                source_quality_label=str(
-                    item.get("source_quality_label", "普通来源")
-                ).strip()
-                or "普通来源",
-                source_quality_score=int(item.get("source_quality_score", 1) or 1),
-                inference=str(item.get("inference", "")).strip(),
-                llm_review=str(item.get("llm_review", "")).strip(),
-                url=str(item.get("url", "")).strip(),
-                source_region=str(item.get("source_region", "mixed")).strip()
-                or "mixed",
-                affected_sectors=_text_tuple(item.get("affected_sectors", ())),
-                affected_symbols=_text_tuple(item.get("affected_symbols", ())),
-                transmission_hypothesis=str(
-                    item.get("transmission_hypothesis", "")
-                ).strip(),
-                time_horizon=str(item.get("time_horizon", "")).strip(),
-                supporting_evidence=_text_tuple(item.get("supporting_evidence", ())),
-                contradicting_evidence=_text_tuple(
-                    item.get("contradicting_evidence", ())
-                ),
-                transmission_path=_text_tuple(item.get("transmission_path", ())),
-                validation_signals=_text_tuple(item.get("validation_signals", ())),
-                invalidation_signals=_text_tuple(item.get("invalidation_signals", ())),
-            )
-            for item in tuple(payload.get("events", ()) or ())
-            if isinstance(item, dict)
-        )
+        events = _deserialize_catalyst_events(payload.get("events", ()))
+        market_clues = _deserialize_catalyst_events(payload.get("market_clues", ()))
         source_statuses = tuple(
             NewsSourceHealth(
                 name=str(item.get("name", "")).strip(),
@@ -462,8 +468,7 @@ def _deserialize_catalyst_report(payload: Any) -> CatalystReport | None:
                 source_count=int(item.get("source_count", 0) or 0),
                 successful_sources=int(item.get("successful_sources", 0) or 0),
                 row_count=int(item.get("row_count", 0) or 0),
-                freshness=str(item.get("freshness", "unknown")).strip()
-                or "unknown",
+                freshness=str(item.get("freshness", "unknown")).strip() or "unknown",
                 quality_score=int(item.get("quality_score", 0) or 0),
                 fallback=str(item.get("fallback", "failed")).strip() or "failed",
             )
@@ -489,6 +494,7 @@ def _deserialize_catalyst_report(payload: Any) -> CatalystReport | None:
             stale_news_count=int(payload.get("stale_news_count", 0) or 0),
             undated_news_count=int(payload.get("undated_news_count", 0) or 0),
             future_news_count=int(payload.get("future_news_count", 0) or 0),
+            market_clues=market_clues,
             region_statuses=region_statuses,
         )
     except (TypeError, ValueError):
@@ -553,9 +559,14 @@ def _payload_contains_retired_source(payload: Mapping[str, object]) -> bool:
     """Reject runtime artifacts carrying a source removed from production."""
 
     events = payload.get("events", ())
+    market_clues = payload.get("market_clues", ())
     statuses = payload.get("source_statuses", ())
     values: list[str] = []
-    for item in (*tuple(events or ()), *tuple(statuses or ())):
+    for item in (
+        *tuple(events or ()),
+        *tuple(market_clues or ()),
+        *tuple(statuses or ()),
+    ):
         if isinstance(item, Mapping):
             values.extend(
                 str(item.get(key, "") or "") for key in ("source", "name", "url")
@@ -728,6 +739,7 @@ def _report_from_stale_cache(
         stale_news_count=cached.report.stale_news_count,
         undated_news_count=cached.report.undated_news_count,
         future_news_count=cached.report.future_news_count,
+        market_clues=cached.report.market_clues,
     )
 
 
@@ -1432,6 +1444,7 @@ def build_catalyst_report(
     names = symbol_names or {}
     warnings: list[str] = []
     rows: list[CatalystEvent] = []
+    clue_rows: list[dict[str, str]] = []
     source_stats = _SourceStats()
     stale_news_count = 0
     undated_news_count = 0
@@ -1504,6 +1517,7 @@ def build_catalyst_report(
             )
             future_news_count += future_count
         recent_news_count += len(symbol_rows)
+        clue_rows.extend(symbol_rows)
         rows.extend(
             _events_from_rows(
                 symbol_rows,
@@ -1555,6 +1569,7 @@ def build_catalyst_report(
         warnings.append(f"全市场快讯: 已过滤 {global_future_count} 条未来时间戳消息")
         future_news_count += global_future_count
     recent_news_count += len(global_rows)
+    clue_rows.extend(global_rows)
     rows.extend(_events_from_rows(global_rows))
 
     deduped = _merge_events(rows)
@@ -1598,6 +1613,7 @@ def build_catalyst_report(
         stale_news_count=stale_news_count,
         undated_news_count=undated_news_count,
         future_news_count=future_news_count,
+        market_clues=_market_clues_from_rows(clue_rows, limit=cfg.max_events),
     )
     if report.source_status == "ok":
         _store_cached_catalyst_report(cfg, report)
@@ -1631,6 +1647,7 @@ def build_catalyst_report(
             stale_news_count=report.stale_news_count,
             undated_news_count=report.undated_news_count,
             future_news_count=report.future_news_count,
+            market_clues=report.market_clues,
         )
     return report
 
@@ -1772,11 +1789,7 @@ def _region_statuses_from_sources(
 
     result: list[NewsRegionStatus] = []
     for region in ("domestic", "international"):
-        items = tuple(
-            item
-            for item in source_statuses
-            if item.region == region
-        )
+        items = tuple(item for item in source_statuses if item.region == region)
         statuses = tuple(item.status for item in items)
         if not statuses:
             status: NewsRegionStatusValue = "unavailable"
@@ -1801,14 +1814,17 @@ def _region_statuses_from_sources(
                 (reference - fetched).total_seconds()
                 for item in items
                 if reference is not None
-                and (fetched := _parse_published_datetime(item.fetched_at))
-                is not None
+                and (fetched := _parse_published_datetime(item.fetched_at)) is not None
             ]
             if not ages:
                 freshness = "unknown"
-            elif all(0 <= age <= _REGION_SOURCE_FRESHNESS_MAX_AGE_SECONDS for age in ages):
+            elif all(
+                0 <= age <= _REGION_SOURCE_FRESHNESS_MAX_AGE_SECONDS for age in ages
+            ):
                 freshness = "fresh"
-            elif any(0 <= age <= _REGION_SOURCE_FRESHNESS_MAX_AGE_SECONDS for age in ages):
+            elif any(
+                0 <= age <= _REGION_SOURCE_FRESHNESS_MAX_AGE_SECONDS for age in ages
+            ):
                 freshness = "stale"
             else:
                 freshness = "stale"
@@ -2004,6 +2020,60 @@ def _events_from_rows(
             )
         )
     return events
+
+
+def _market_clues_from_rows(
+    rows: Iterable[dict[str, str]], *, limit: int
+) -> tuple[CatalystEvent, ...]:
+    """Keep traceable headlines without promoting them to catalyst evidence."""
+    clues: list[CatalystEvent] = []
+    seen: set[tuple[str, str]] = set()
+    for row in rows:
+        title = str(row.get("title", "") or "").strip()
+        source = str(row.get("source", "") or "").strip()
+        published_at = str(row.get("published_at", "") or "").strip()
+        url = str(row.get("url", "") or "").strip()
+        parsed_url = urlsplit(url)
+        if (
+            not title
+            or not source
+            or _parse_published_datetime(published_at) is None
+            or parsed_url.scheme not in {"http", "https"}
+            or not parsed_url.netloc
+        ):
+            continue
+        key = (re.sub(r"\s+", "", title).casefold(), url)
+        if key in seen:
+            continue
+        seen.add(key)
+        quality_label, quality_score = _source_quality_from_source(source)
+        context = _news_context_snippet(
+            str(row.get("summary", "") or ""),
+            str(row.get("content", "") or ""),
+        )
+        clues.append(
+            CatalystEvent(
+                title=title,
+                summary=context,
+                source=source,
+                published_at=published_at,
+                source_fetched_at=str(row.get("source_fetched_at", "") or ""),
+                impact="neutral",
+                category="可核验市场线索",
+                weight=0,
+                confidence=0.0,
+                verification="原文可追踪",
+                source_quality_label=quality_label,
+                source_quality_score=quality_score,
+                inference="可核验市场线索，非个股直接证据；需结合量价与后续公告复核。",
+                url=url,
+                source_region=_normalize_region(row.get("source_region", "mixed")),
+                transmission_hypothesis="非个股直接证据；不参与高影响事件判断。",
+                supporting_evidence=(f"{source}: {title}",),
+            )
+        )
+    ranked = sorted(clues, key=_event_rank_key, reverse=True)
+    return tuple(ranked[: max(0, int(limit))])
 
 
 def _event_symbols(

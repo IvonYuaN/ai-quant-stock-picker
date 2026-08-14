@@ -1744,6 +1744,125 @@ def test_messages_exclude_events_without_traceable_source() -> None:
     assert write_home_snapshot._messages_from_catalyst_report(report) == ()
 
 
+def test_messages_use_market_clues_only_when_high_impact_events_are_empty() -> None:
+    clue = CatalystEvent(
+        title="EIA 发布周度能源数据",
+        source="EIA",
+        published_at="2026-07-10T09:00:00+08:00",
+        category="可核验市场线索",
+        inference="可核验市场线索，非个股直接证据；需结合量价复核。",
+        url="https://www.eia.gov/example",
+        verification="原文可追踪",
+        transmission_hypothesis="非个股直接证据；不参与高影响事件判断。",
+    )
+    report = CatalystReport(
+        date="2026-07-10",
+        generated_at="2026-07-10T09:05:00+08:00",
+        source_status="ok",
+        event_status="no_high_impact",
+        events=(),
+        market_clues=(clue,),
+    )
+
+    messages = write_home_snapshot._messages_from_catalyst_report(report)
+
+    assert len(messages) == 1
+    assert messages[0].category == "可核验市场线索"
+    assert messages[0].source_url == "https://www.eia.gov/example"
+    assert messages[0].affected_symbols == ()
+    assert "非个股直接证据" in messages[0].summary
+
+
+def test_messages_reject_market_clue_without_traceable_url() -> None:
+    report = CatalystReport(
+        date="2026-07-10",
+        generated_at="2026-07-10T09:05:00+08:00",
+        source_status="ok",
+        event_status="no_high_impact",
+        events=(),
+        market_clues=(
+            CatalystEvent(
+                title="无原文市场线索",
+                source="某媒体",
+                published_at="2026-07-10T09:00:00+08:00",
+                category="可核验市场线索",
+            ),
+        ),
+    )
+
+    assert write_home_snapshot._messages_from_catalyst_report(report) == ()
+
+
+def test_messages_do_not_mix_market_clues_into_high_impact_events() -> None:
+    high_impact = CatalystEvent(
+        title="产业政策正式发布",
+        source="政府网站",
+        published_at="2026-07-10T09:00:00+08:00",
+        category="政策催化",
+        url="https://www.gov.cn/example",
+    )
+    clue = replace(
+        high_impact,
+        title="普通市场线索",
+        category="可核验市场线索",
+        url="https://example.com/clue",
+    )
+    report = CatalystReport(
+        date="2026-07-10",
+        generated_at="2026-07-10T09:05:00+08:00",
+        source_status="ok",
+        event_status="high_impact",
+        events=(high_impact,),
+        market_clues=(clue,),
+    )
+
+    messages = write_home_snapshot._messages_from_catalyst_report(report)
+
+    assert [message.title for message in messages] == ["产业政策正式发布"]
+
+
+def test_home_snapshot_exposes_current_traceable_clue_from_json(
+    monkeypatch, tmp_path
+) -> None:
+    current_time = datetime(2026, 7, 10, 10, 1, tzinfo=ZoneInfo("Asia/Shanghai"))
+    report_path = tmp_path / "news.json"
+    report = CatalystReport(
+        date="2026-07-10",
+        generated_at="2026-07-10T10:00:00+08:00",
+        source_status="ok",
+        event_status="no_high_impact",
+        raw_news_count=3,
+        events=(),
+        market_clues=(
+            CatalystEvent(
+                title="SEC 发布市场结构例行更新",
+                source="SEC",
+                published_at="2026-07-10T09:30:00+08:00",
+                category="可核验市场线索",
+                inference="可核验市场线索，非个股直接证据；需结合量价复核。",
+                url="https://www.sec.gov/news/example",
+                verification="原文可追踪",
+            ),
+        ),
+    )
+    report_path.write_text(
+        json.dumps(serialize_catalyst_report(report), ensure_ascii=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AQSP_NEWS_JSON_OUTPUT", str(report_path))
+    monkeypatch.setattr(write_home_snapshot, "now_shanghai", lambda: current_time)
+    monkeypatch.setattr("aqsp.news.catalysts.now_shanghai", lambda: current_time)
+
+    snapshot = write_home_snapshot.build_home_snapshot(
+        _Provider(), signal_date="2026-07-10", task_id="intraday"
+    )
+
+    assert snapshot.message_status == "可用"
+    assert len(snapshot.messages) == 1
+    assert snapshot.messages[0].source_url == "https://www.sec.gov/news/example"
+    assert "非个股直接证据" in snapshot.messages[0].summary
+
+
 def test_write_home_snapshot_excludes_future_dated_news(monkeypatch, tmp_path) -> None:
     report_path = tmp_path / "news.json"
     current_time = datetime(2026, 7, 10, 15, 1, tzinfo=ZoneInfo("Asia/Shanghai"))

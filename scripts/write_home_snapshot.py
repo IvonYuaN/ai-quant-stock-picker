@@ -15,6 +15,7 @@ from datetime import date, datetime, timedelta, time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Iterable
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -165,41 +166,56 @@ def _normalize_catalyst_report_for_snapshot(
     signal_date: str,
 ) -> tuple[CatalystReport, int, int]:
     """Keep only dated current-day events without inventing missing timestamps."""
-    current_events: list[CatalystEvent] = []
     historical_count = 0
     invalid_count = 0
     current_day = today_shanghai().isoformat()
     current_time = now_shanghai()
     live_window_start = _current_message_window_start(signal_date, current_time)
-    for event in report.events:
-        published_at = _normalize_timestamp(event.published_at)
-        if not published_at:
-            invalid_count += 1
-            continue
-        published_dt = datetime.fromisoformat(published_at)
-        if published_dt > current_time:
-            invalid_count += 1
-            continue
-        is_recent_live_event = (
-            signal_date == current_day
-            and live_window_start <= published_dt <= current_time
-        )
-        if published_at[:10] != signal_date and not is_recent_live_event:
-            historical_count += 1
-            continue
-        current_events.append(
-            replace(
-                event,
-                published_at=published_at,
-                source_fetched_at=_normalize_timestamp(event.source_fetched_at),
+
+    def normalize_events(
+        events: tuple[CatalystEvent, ...], *, count_exclusions: bool
+    ) -> tuple[CatalystEvent, ...]:
+        nonlocal historical_count, invalid_count
+        normalized: list[CatalystEvent] = []
+        for event in events:
+            published_at = _normalize_timestamp(event.published_at)
+            if not published_at:
+                if count_exclusions:
+                    invalid_count += 1
+                continue
+            published_dt = datetime.fromisoformat(published_at)
+            if published_dt > current_time:
+                if count_exclusions:
+                    invalid_count += 1
+                continue
+            is_recent_live_event = (
+                signal_date == current_day
+                and live_window_start <= published_dt <= current_time
             )
-        )
+            if published_at[:10] != signal_date and not is_recent_live_event:
+                if count_exclusions:
+                    historical_count += 1
+                continue
+            normalized.append(
+                replace(
+                    event,
+                    published_at=published_at,
+                    source_fetched_at=_normalize_timestamp(event.source_fetched_at),
+                )
+            )
+        return tuple(normalized)
+
+    current_events = normalize_events(report.events, count_exclusions=True)
+    current_clues = normalize_events(report.market_clues, count_exclusions=False)
     normalized_report = replace(
         report,
         generated_at=_normalize_timestamp(report.generated_at),
-        events=tuple(current_events),
+        events=current_events,
+        market_clues=current_clues,
         event_status=(
-            "stale_only"
+            "no_high_impact"
+            if current_clues and not current_events
+            else "stale_only"
             if historical_count and not current_events
             else report.event_status
         ),
@@ -1019,10 +1035,27 @@ def _messages_from_catalyst_report(
         "neutral": "中性",
     }
     messages: list[HomeSnapshotMessage] = []
-    for event in report.events:
+    display_events = report.events
+    using_market_clues = not display_events and report.news_status in {
+        "no_high_impact",
+        "no_valid_news",
+    }
+    if using_market_clues:
+        display_events = report.market_clues
+    for event in display_events:
         published_at = _normalize_timestamp(event.published_at)
         source = _text(event.source)
-        if not published_at or not source:
+        parsed_url = urlsplit(_text(event.url))
+        if (
+            not published_at
+            or not source
+            or (
+                using_market_clues
+                and (
+                    parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc
+                )
+            )
+        ):
             continue
         messages.append(
             HomeSnapshotMessage(

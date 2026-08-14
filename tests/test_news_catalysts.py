@@ -1148,7 +1148,9 @@ def test_catalyst_report_exposes_regional_freshness_quality_and_fallback() -> No
         ),
     )
 
-    domestic = next(item for item in report.region_statuses if item.region == "domestic")
+    domestic = next(
+        item for item in report.region_statuses if item.region == "domestic"
+    )
 
     assert domestic.status == "partial"
     assert domestic.freshness == "fresh"
@@ -1210,6 +1212,52 @@ def test_catalyst_report_round_trip_preserves_news_evidence_fields() -> None:
 
     assert restored is not None
     assert restored.events[0] == event
+
+
+def test_news_catalyst_keeps_traceable_market_clue_without_weakening_gate() -> None:
+    report = build_catalyst_report(
+        fetch_global_news=lambda _limit: pd.DataFrame(
+            [
+                {
+                    "标题": "欧洲央行发布例行市场统计",
+                    "摘要": "本期统计数据已更新。",
+                    "来源": "ECB",
+                    "时间": _RECENT_NEWS_TIME,
+                    "链接": "https://www.ecb.europa.eu/press/example.html",
+                }
+            ]
+        )
+    )
+
+    assert report.news_status == "no_high_impact"
+    assert report.events == ()
+    assert len(report.market_clues) == 1
+    clue = report.market_clues[0]
+    assert clue.source == "ECB"
+    assert clue.url.startswith("https://")
+    assert clue.category == "可核验市场线索"
+    assert clue.affected_symbols == ()
+    assert "非个股直接证据" in clue.inference
+    restored = deserialize_catalyst_report(serialize_catalyst_report(report))
+    assert restored is not None
+    assert restored.market_clues == report.market_clues
+
+
+def test_news_catalyst_discards_untraceable_market_clues() -> None:
+    report = build_catalyst_report(
+        fetch_global_news=lambda _limit: pd.DataFrame(
+            [
+                {
+                    "标题": "普通市场动态",
+                    "来源": "某媒体",
+                    "时间": _RECENT_NEWS_TIME,
+                }
+            ]
+        )
+    )
+
+    assert report.events == ()
+    assert report.market_clues == ()
 
 
 def test_news_catalyst_notification_renders_structured_chain_evidence() -> None:
