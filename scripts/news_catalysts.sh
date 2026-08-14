@@ -128,13 +128,13 @@ has_usable_current_news() {
     # A transient source failure must not erase a valid same-day report that
     # was fetched minutes earlier. Historical or empty artifacts are not kept.
     [ -s "$JSON_OUTPUT" ] || return 1
-    "$PYTHON_BIN" - "$JSON_OUTPUT" <<'AQSP_CURRENT_NEWS_CHECK'
+    "$PYTHON_BIN" - "$JSON_OUTPUT" "$MAX_NEWS_AGE_DAYS" <<'AQSP_CURRENT_NEWS_CHECK'
 import json
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
-from aqsp.core.time import today_shanghai, to_shanghai
+from aqsp.core.time import now_shanghai, today_shanghai, to_shanghai
 
 try:
     payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
@@ -150,17 +150,20 @@ events = payload.get("events")
 if not isinstance(events, list):
     raise SystemExit(1)
 current_count = 0
+reference = now_shanghai()
+max_age_days = max(0, int(sys.argv[2]))
+fresh_cutoff = reference - timedelta(days=max_age_days)
 for event in events:
     if not isinstance(event, dict) or not str(event.get("title", "")).strip():
         raise SystemExit(1)
     published_at = str(event.get("published_at", "")).strip()
     try:
-        published_date = to_shanghai(
+        published = to_shanghai(
             datetime.fromisoformat(published_at.replace("Z", "+00:00"))
-        ).date().isoformat()
+        )
     except ValueError:
         raise SystemExit(1)
-    if published_date == today_shanghai().isoformat():
+    if fresh_cutoff <= published <= reference:
         current_count += 1
 raw_count = int(payload.get("raw_news_count", 0) or 0)
 event_status = str(payload.get("event_status", "")).strip()

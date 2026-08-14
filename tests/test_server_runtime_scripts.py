@@ -731,6 +731,7 @@ def test_news_script_preserves_valid_same_day_report_on_source_failure() -> None
     assert "不覆盖有效证据" in script
     assert "current_count += 1" in script
     assert "if current_count == 0" in script
+    assert "fresh_cutoff <= published <= reference" in script
     assert 'source_status not in {"ok", "partial"}' in script
     assert 'raw_count = int(payload.get("raw_news_count", 0) or 0)' in script
     assert 'event_status != "no_high_impact"' in script
