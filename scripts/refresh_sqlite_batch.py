@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
 import sys
 import time
 from dataclasses import asdict
@@ -24,6 +25,18 @@ from scripts.update_sqlite_daily import UpdateSummary, update_sqlite_daily
 
 _MAIN_BOARD_PREFIXES = ("600", "601", "603", "605", "000", "001", "002", "003")
 _CHINEXT_PREFIXES = ("300", "301")
+
+
+def _latest_available_day(source: SqliteDbSource, *, not_after: date) -> date | None:
+    with sqlite3.connect(source.db_path) as conn:
+        row = conn.execute(
+            "SELECT MAX(trade_date) FROM daily_qfq WHERE trade_date <= ?",
+            (not_after.strftime("%Y%m%d"),),
+        ).fetchone()
+    raw = str((row or [""])[0] or "")
+    if len(raw) != 8 or not raw.isdigit():
+        return None
+    return date.fromisoformat(f"{raw[:4]}-{raw[4:6]}-{raw[6:]}")
 
 
 def _refresh_universe(
@@ -59,11 +72,16 @@ def _refresh_universe(
             if index < len(board):
                 result.append(board[index])
     if reference_day is not None:
+        coverage_day = _latest_available_day(source, not_after=reference_day)
+        if coverage_day is None:
+            raise RuntimeError(
+                "sqlite daily source has no historical coverage baseline"
+            )
         covered = set(
             source.get_symbols_with_daily_coverage(
                 result,
-                reference_day,
-                reference_day,
+                coverage_day,
+                coverage_day,
                 min_rows=1,
                 min_coverage_ratio=1.0,
             )
@@ -331,4 +349,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

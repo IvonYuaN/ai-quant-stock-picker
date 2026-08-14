@@ -1,3 +1,9 @@
+import sqlite3
+from datetime import date
+from pathlib import Path
+
+from aqsp.data.sqlite_db_source import SqliteDbSource
+from scripts.refresh_sqlite_batch import _refresh_universe
 from scripts.refresh_variant_results_from_market_db import (
     MarketSymbol,
     attach_discussion_links,
@@ -21,7 +27,34 @@ def _profile() -> VariantProfile:
     )
 
 
-def test_variant_lifecycle_eliminates_negative_result_after_minimum_signal_days() -> None:
+def test_refresh_universe_uses_latest_available_day_when_database_is_stale(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "stale.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE stocks (ts_code TEXT PRIMARY KEY, name TEXT)")
+        conn.execute(
+            "CREATE TABLE daily_qfq (ts_code TEXT, trade_date TEXT, amount REAL)"
+        )
+        conn.executemany(
+            "INSERT INTO stocks VALUES (?, ?)",
+            [("000001.SZ", "平安银行"), ("600000.SH", "浦发银行")],
+        )
+        conn.executemany(
+            "INSERT INTO daily_qfq VALUES (?, ?, ?)",
+            [("000001.SZ", "20260812", 1.0), ("600000.SH", "20260812", 1.0)],
+        )
+
+    result = _refresh_universe(
+        SqliteDbSource(db_path=db_path, cache=None),
+        universe_limit=0,
+        reference_day=date(2026, 8, 13),
+    )
+
+    assert result == ["600000", "000001"]
+
+
+def test_variant_lifecycle_eliminates_negative_result_when_samples_sufficient() -> None:
     results = [
         {
             "variant_id": "loser",
