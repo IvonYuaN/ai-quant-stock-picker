@@ -46,6 +46,7 @@ def test_refresh_universe_uses_latest_available_day_when_database_is_stale(
             "INSERT INTO daily_qfq VALUES (?, ?, ?)",
             [("000001.SZ", "20260812", 1.0), ("600000.SH", "20260812", 1.0)],
         )
+        conn.execute("INSERT INTO daily_qfq VALUES ('000001.SZ', '20260813', 1.0)")
 
     result = _refresh_universe(
         SqliteDbSource(db_path=db_path, cache=None),

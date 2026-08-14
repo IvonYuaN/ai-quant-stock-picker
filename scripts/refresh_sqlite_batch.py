@@ -30,13 +30,29 @@ _MAIN_BOARD_PREFIXES = ("600", "601", "603", "605", "000", "001", "002", "003")
 _CHINEXT_PREFIXES = ("300", "301")
 _EOD_SNAPSHOT_READY_HOUR = 15
 _EOD_SNAPSHOT_READY_MINUTE = 5
+_ACTIVE_BASELINE_MIN_COVERAGE_RATIO = 0.8
 
 
 def _latest_available_day(source: SqliteDbSource, *, not_after: date) -> date | None:
     with sqlite3.connect(source.db_path) as conn:
         row = conn.execute(
-            "SELECT MAX(trade_date) FROM daily_qfq WHERE trade_date <= ?",
-            (not_after.strftime("%Y%m%d"),),
+            """
+            WITH coverage AS (
+                SELECT trade_date, COUNT(DISTINCT ts_code) AS symbol_count
+                FROM daily_qfq
+                WHERE trade_date <= ?
+                GROUP BY trade_date
+            )
+            SELECT MAX(trade_date)
+            FROM coverage
+            WHERE symbol_count >= (
+                SELECT MAX(symbol_count) * ? FROM coverage
+            )
+            """,
+            (
+                not_after.strftime("%Y%m%d"),
+                _ACTIVE_BASELINE_MIN_COVERAGE_RATIO,
+            ),
         ).fetchone()
     raw = str((row or [""])[0] or "")
     if len(raw) != 8 or not raw.isdigit():
@@ -231,13 +247,14 @@ def _supplement_current_target(
         summary,
         updated_rows=summary.updated_rows + len(inserted_symbols),
         target_day_symbol_count=len(inserted_symbols),
+        total_symbols=len(eligible),
         raw_max_trade_date=target_day,
     )
     _write_cursor(
         state_path,
         target_day=target_day,
         next_offset=_read_cursor(state_path, target_day=target_day),
-        universe_size=summary.total_symbols,
+        universe_size=len(eligible),
         summary=updated,
         batch_symbols=inserted_symbols,
     )
