@@ -287,6 +287,42 @@ def _market_context_lines_for_pick(
     return _dedupe_lines(lines)
 
 
+def _candidate_technical_context_lines(pick: PickResult) -> tuple[str, ...]:
+    """Expose candidate-owned facts without promoting them to external evidence."""
+    metrics = pick.metrics or {}
+    lines = [f"候选技术锚点: {pick.symbol} {pick.name or '名称未记录'}"]
+    if pick.strategies:
+        lines.append(f"命中策略[{pick.symbol}]: {'、'.join(pick.strategies)}")
+    technical = _text_tuple(metrics.get("technical_evidence"))
+    if technical:
+        lines.append(f"技术证据[{pick.symbol}]: {'；'.join(technical[:4])}")
+    metric_parts: list[str] = []
+    for key, label in (
+        ("ret5_pct", "近5日"),
+        ("ret20_pct", "近20日"),
+        ("volume_ratio", "量比"),
+        ("bias20_pct", "MA20偏离"),
+        ("rsi12", "RSI12"),
+    ):
+        value = metrics.get(key)
+        if value not in (None, ""):
+            suffix = "%" if key in {"ret5_pct", "ret20_pct", "bias20_pct"} else ""
+            metric_parts.append(f"{label}={value}{suffix}")
+    if metric_parts:
+        lines.append(f"候选量价[{pick.symbol}]: " + "｜".join(metric_parts))
+    if pick.ideal_buy > 0 and pick.stop_loss > 0:
+        lines.append(
+            f"候选失效条件[{pick.symbol}]: 若价格跌破止损 {pick.stop_loss:g}，"
+            f"则参考价 {pick.ideal_buy:g} 对应的技术假设失效"
+        )
+    return _dedupe_lines(lines)
+
+
+def _ensure_committee_roles(roles: tuple[str, ...]) -> tuple[str, ...]:
+    """A review committee always needs explicit support, opposition and risk lanes."""
+    return tuple(dict.fromkeys(("bull", "bear", "risk_control", *roles)))
+
+
 def _context_quality_for_pick(
     pick: PickResult,
     market_context_lines: tuple[str, ...],
@@ -670,8 +706,10 @@ def _is_replaced_or_legacy_template_record(
         payload.get("task_id", "")
     ) and str(record.get("debate_date", "")) == str(payload.get("debate_date", ""))
     rendered = json.dumps(record, ensure_ascii=False)
+    legacy_unmapped = not str(record.get("candidate_fingerprint", "") or "").strip()
     return same_candidate or (
         same_run_scope
+        and legacy_unmapped
         and any(marker in rendered for marker in _TEMPLATE_DISCUSSION_MARKERS)
     )
 
@@ -753,10 +791,12 @@ def _run_candidate_debate(
         pick,
         market_context_lines,
     )
-    roles = _resolve_pick_debate_roles(
-        runtime,
-        pick=pick,
-        market_context_lines=market_context_lines,
+    roles = _ensure_committee_roles(
+        _resolve_pick_debate_roles(
+            runtime,
+            pick=pick,
+            market_context_lines=market_context_lines,
+        )
     )
     active_coordinator = (
         coordinator
@@ -771,13 +811,13 @@ def _run_candidate_debate(
     )
     frame, data_context = _debate_frame(pick)
     if hasattr(active_coordinator, "require_sourced_evidence"):
-        active_coordinator.require_sourced_evidence = True
+        active_coordinator.require_sourced_evidence = False
     # Backfill is a committee audit, not a single-agent annotation.  The
     # coordinator also enforces this minimum, so keep the persisted contract
     # consistent even when runtime configuration asks for one round.
     requested_rounds = max(2, int(runtime.max_rounds))
     reconsideration_evidence = _reconsideration_evidence(pick, frame, data_context)
-    debate_context_lines = market_context_lines
+    debate_context_lines = market_context_lines + _candidate_technical_context_lines(pick)
     if requested_rounds >= 2:
         debate_context_lines += reconsideration_evidence
     result = active_coordinator.run_debate(

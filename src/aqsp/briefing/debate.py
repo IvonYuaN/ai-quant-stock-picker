@@ -390,7 +390,13 @@ def _pick_risk_items(pick: PickResult) -> tuple[str, ...]:
 
 def _pick_actionable_risk_items(pick: PickResult) -> tuple[str, ...]:
     """Exclude run-wide data blockers from candidate-specific vote evidence."""
-    shared_blockers = ("盘中覆盖不完整", "数据质量", "质量门阻塞", "新鲜度")
+    shared_blockers = (
+        "盘中覆盖不完整",
+        "数据质量",
+        "质量门阻塞",
+        "新鲜度",
+        "组合保护",
+    )
     return tuple(
         item
         for item in _pick_risk_items(pick)
@@ -956,10 +962,8 @@ class AShareDebateAgent:
             if stance == "bearish":
                 if pick.score < 40:
                     args.append("确定性评分偏低，短线强度不足")
-                elif pick.risks:
-                    args.append(f"已记录风险: {pick.risks[0]}")
                 else:
-                    args.append("输入未提供估值或业绩反向证据，不能据此扩大看空结论")
+                    args.append(self._candidate_bear_case(pick))
                 if invalidation_signals:
                     args.append(f"失效条件已明确: {invalidation_signals[0]}")
                 if pressure_targets:
@@ -1119,7 +1123,9 @@ class AShareDebateAgent:
         """分析风险因素"""
         risks = []
 
-        risks.extend(f"候选明确风险: {risk}" for risk in _pick_risk_items(pick))
+        risks.extend(
+            f"候选明确风险: {risk}" for risk in _pick_actionable_risk_items(pick)
+        )
 
         if _is_st_risk_pick(pick):
             risks.append("ST股风险")
@@ -1128,9 +1134,43 @@ class AShareDebateAgent:
         if pick.score > 80:
             risks.append("高分股回调风险")
 
+        if pick.ideal_buy > 0 and pick.stop_loss > 0:
+            risks.append(
+                f"{pick.symbol} 若跌破止损 {pick.stop_loss:g}，"
+                f"则参考价 {pick.ideal_buy:g} 对应的技术假设失效"
+            )
         if risks:
             return f"风险提示: {', '.join(risks)}"
         return "风险检验: 高分延续需盘中承接，若冲高回落或量价背离则降级"
+
+    @staticmethod
+    def _candidate_bear_case(pick: PickResult) -> str:
+        """Build a falsifiable counter-thesis from this candidate's own metrics."""
+        metrics = pick.metrics or {}
+        volume_ratio = _metric_float(metrics.get("volume_ratio"))
+        ret20 = _metric_float(metrics.get("ret20_pct"))
+        bias20 = _metric_float(metrics.get("bias20_pct"))
+        if volume_ratio is not None:
+            return (
+                f"{pick.symbol} 当前量比 {volume_ratio:.2f}；若后续量价承接不延续，"
+                "则多头结构缺少成交确认"
+            )
+        if bias20 is not None:
+            return (
+                f"{pick.symbol} 当前 MA20 偏离 {bias20:.2f}%；若偏离继续扩大后回落，"
+                "则追价风险上升"
+            )
+        if ret20 is not None:
+            return (
+                f"{pick.symbol} 近20日涨跌幅 {ret20:.2f}%；若短线动量转负，"
+                "则趋势延续假设失效"
+            )
+        if pick.ideal_buy > 0 and pick.stop_loss > 0:
+            return (
+                f"{pick.symbol} 若从参考价 {pick.ideal_buy:g} 回落并跌破止损 "
+                f"{pick.stop_loss:g}，则技术假设失效"
+            )
+        return f"{pick.symbol} 若出现冲高回落或量价背离，则当前技术理由失效"
 
     def _identify_risk_factors(
         self,
@@ -1140,7 +1180,9 @@ class AShareDebateAgent:
     ) -> list[str]:
         """识别风险因素"""
         risks: list[str] = []
-        generic_risks = [f"策略提示: {risk}" for risk in _pick_risk_items(pick)]
+        generic_risks = [
+            f"策略提示: {risk}" for risk in _pick_actionable_risk_items(pick)
+        ]
         invalidation_signals = self._cross_market_metric_texts(
             pick,
             "cross_market_invalidation_signals",
@@ -1151,6 +1193,11 @@ class AShareDebateAgent:
         )
 
         if self.role == AgentRole.RISK_CONTROL:
+            if pick.ideal_buy > 0 and pick.stop_loss > 0:
+                risks.append(
+                    f"⚠️ 失效检验: {pick.symbol} 若跌破止损 {pick.stop_loss:g}，"
+                    f"则参考价 {pick.ideal_buy:g} 对应的技术假设失效"
+                )
             if _is_st_risk_pick(pick):
                 risks.append("⚠️ ST股：存在退市风险")
             if pick.score > 80:
@@ -1266,6 +1313,17 @@ class AShareDebateAgent:
         )
 
         if self.role == AgentRole.BULL:
+            ret5 = _metric_float((pick.metrics or {}).get("ret5_pct"))
+            ret20 = _metric_float((pick.metrics or {}).get("ret20_pct"))
+            volume_ratio = _metric_float((pick.metrics or {}).get("volume_ratio"))
+            measured = [
+                f"近5日 {ret5:.2f}%" if ret5 is not None else "",
+                f"近20日 {ret20:.2f}%" if ret20 is not None else "",
+                f"量比 {volume_ratio:.2f}" if volume_ratio is not None else "",
+            ]
+            measured_text = "、".join(item for item in measured if item)
+            if measured_text:
+                opportunities.append(f"{pick.symbol} 量价结构: {measured_text}")
             if pick.score > 60:
                 opportunities.append(f"确定性评分为 {pick.score:.1f}")
                 if "突破" in str(pick.reasons):
@@ -1682,10 +1740,20 @@ class AShareDebateAgent:
             raise ValueError(
                 "cannot generate rebuttal without a substantive peer claim"
             )
+        own_point = self._first_meaningful_point(
+            my_opinion.arguments
+            or my_opinion.risk_factors
+            or my_opinion.opportunity_factors
+        )
         if my_opinion.stance == "neutral":
             reason = (
                 "当前维持中性；该主张仍缺少风险条件的确认，"
                 "若失效条件出现则不支持继续提高优先级"
+            )
+        elif my_opinion.role == AgentRole.BEAR:
+            reason = (
+                f"本角色依据“{own_point or my_opinion.stance}”提出反向检验；"
+                f"若“{peer_point}”无法通过下一轮量价或失效条件验证，则不采纳该主张"
             )
         else:
             reason = (
@@ -1820,6 +1888,11 @@ class AShareDebateCoordinator:
             result.rule_transmission_evidence,
             result.pending_confirmations,
         ) = self._extract_evidence_provenance(pick, result.market_context_lines)
+        if not result.real_message_evidence:
+            result.pending_confirmations = (
+                *result.pending_confirmations,
+                f"消息未确认: {pick.symbol} 暂无带来源的个股消息，不把市场线索当作个股证据",
+            )
         result.cross_market_evidence = self._extract_cross_market_evidence(
             pick,
             result.market_context_lines,

@@ -66,7 +66,7 @@ def _patch_runtime(
             max_rounds=max_rounds,
             max_candidates=5,
             language="zh-CN",
-            roles=("bull", "risk_control"),
+            roles=("bull", "bear", "risk_control"),
             role_runtime=(),
         ),
     )
@@ -116,7 +116,11 @@ def _patch_runtime(
             "disagreement_score": result.disagreement_score,
             "data_status": "available",
             "final_consensus": "bullish",
-            "final_vote": {"bull": "bullish", "risk_control": "bearish"},
+            "final_vote": {
+                "bull": "bullish",
+                "bear": "bearish",
+                "risk_control": "bearish",
+            },
             "support_points": ["放量突破"],
             "opposition_points": ["风险条件需要确认"],
             "risk_warnings": ["若冲高回落则降级"],
@@ -136,6 +140,14 @@ def _patch_runtime(
                             "arguments": ["放量突破"],
                             "risk_factors": [],
                             "opportunity_factors": ["量价延续"],
+                        },
+                        {
+                            "agent_id": "bear-agent",
+                            "role": "bear",
+                            "stance": "bearish",
+                            "arguments": ["量价承接不足则趋势失效"],
+                            "risk_factors": ["若量价背离则降级"],
+                            "opportunity_factors": [],
                         },
                         {
                             "agent_id": "risk-agent",
@@ -160,6 +172,26 @@ def _patch_runtime(
                             "counterarguments": [],
                             "peer_reviewed_roles": ["risk_control"],
                             "rebuttal_records": [],
+                        },
+                        {
+                            "agent_id": "bear-agent",
+                            "role": "bear",
+                            "stance": "bearish",
+                            "arguments": ["量价承接不足则趋势失效"],
+                            "risk_factors": ["若量价背离则降级"],
+                            "opportunity_factors": [],
+                            "counterarguments": ["已质询多头量价延续"],
+                            "counterargument_roles": ["bull"],
+                            "peer_reviewed_roles": ["bull"],
+                            "rebuttal_records": [
+                                {
+                                    "challenged_role": "bull",
+                                    "challenged_claim": "放量突破",
+                                    "rebuttal_reason": "若量价背离则趋势失效",
+                                    "challenged_stance": "bullish",
+                                    "opposing_stance": "bearish",
+                                }
+                            ],
                         },
                         {
                             "agent_id": "risk-agent",
@@ -214,6 +246,53 @@ def test_debate_quality_gate_rejects_failure_and_any_quality_issue() -> None:
     assert not backfill_intraday_debate._is_non_retryable_debate_failure("TimeoutError")
 
 
+def test_candidate_technical_context_is_distinct_and_falsifiable() -> None:
+    first = backfill_intraday_debate._pick_from_row(
+        {
+            "symbol": "600562",
+            "name": "国睿科技",
+            "date": "2026-08-14",
+            "score": "109.22",
+            "close": "25.96",
+            "ideal_buy": "25.96",
+            "stop_loss": "25.04",
+            "strategies": "ma_pullback;low_vol_trend",
+            "technical_evidence": "('趋势：均线多头', '结构：趋势回踩')",
+            "volume_ratio": "0.65",
+        }
+    )
+    second = backfill_intraday_debate._pick_from_row(
+        {
+            "symbol": "600760",
+            "name": "中航沈飞",
+            "date": "2026-08-14",
+            "score": "99.28",
+            "close": "44.87",
+            "ideal_buy": "44.87",
+            "stop_loss": "42.86",
+            "strategies": "rps_momentum;low_vol_trend",
+            "technical_evidence": "('动量：20日强势', '量能：放量确认')",
+            "volume_ratio": "1.46",
+        }
+    )
+
+    first_lines = backfill_intraday_debate._candidate_technical_context_lines(first)
+    second_lines = backfill_intraday_debate._candidate_technical_context_lines(second)
+
+    assert first_lines != second_lines
+    assert any("600562" in line and "25.04" in line for line in first_lines)
+    assert any("600760" in line and "42.86" in line for line in second_lines)
+
+
+def test_committee_roles_always_include_support_opposition_and_risk() -> None:
+    assert backfill_intraday_debate._ensure_committee_roles(("cross_market",)) == (
+        "bull",
+        "bear",
+        "risk_control",
+        "cross_market",
+    )
+
+
 def test_persist_debate_update_removes_same_day_template_records(
     tmp_path: Path,
 ) -> None:
@@ -246,6 +325,38 @@ def test_persist_debate_update_removes_same_day_template_records(
 
     rows = [json.loads(line) for line in output_path.read_text().splitlines()]
     assert rows == [payload]
+
+
+def test_persist_debate_update_keeps_mapped_candidates_from_same_run(
+    tmp_path: Path,
+) -> None:
+    output_path = tmp_path / "debate_results.jsonl"
+    first = {
+        "symbol": "000001",
+        "related_signal_date": "2026-08-14",
+        "debate_date": "2026-08-14",
+        "task_id": "intraday",
+        "candidate_fingerprint": "fingerprint-1",
+        "rounds": [{"arguments": ["当前bullish立场与该主张方向相反"]}],
+    }
+    second = {
+        "symbol": "000002",
+        "related_signal_date": "2026-08-14",
+        "debate_date": "2026-08-14",
+        "task_id": "intraday",
+        "candidate_fingerprint": "fingerprint-2",
+        "rounds": [{"arguments": ["候选二独立讨论"]}],
+    }
+
+    backfill_intraday_debate._persist_debate_update(
+        output_path, cutoff="2026-07-15", payload=first
+    )
+    backfill_intraday_debate._persist_debate_update(
+        output_path, cutoff="2026-07-15", payload=second
+    )
+
+    rows = [json.loads(line) for line in output_path.read_text().splitlines()]
+    assert {row["symbol"] for row in rows} == {"000001", "000002"}
 
 
 def test_debate_quality_gate_rejects_neutral_only_opposition_payload(
