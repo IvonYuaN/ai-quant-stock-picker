@@ -569,6 +569,24 @@ def _snapshot_debates(
             candidate,
             _text(getattr(debate, "primary_risk_gate", "")),
         )
+        agent_views = _snapshot_agent_views(
+            getattr(debate, "agent_views", ()) or ()
+        )
+        published_roles = tuple(view.role for view in agent_views)
+        if len(published_roles) < 2:
+            published_roles = tuple(
+                dict.fromkeys(
+                    _first_text(
+                        getattr(view, "role_label", ""),
+                        getattr(view, "role_id", ""),
+                    )
+                    for view in (getattr(debate, "agent_views", ()) or ())
+                    if _first_text(
+                        getattr(view, "role_label", ""),
+                        getattr(view, "role_id", ""),
+                    )
+                )
+            )
         disagreement_points = tuple(
             _clean_legacy_debate_text(point)[:240]
             for point in (getattr(debate, "disagreement_points", ()) or ())
@@ -600,29 +618,19 @@ def _snapshot_debates(
             ),
             primary_risk_gate=_text(getattr(debate, "primary_risk_gate", "")),
             next_trigger=_text(getattr(debate, "next_trigger", "")),
-            active_roles=tuple(
-                _first_text(
-                    getattr(view, "role_label", ""),
-                    getattr(view, "role_id", ""),
-                )
-                for view in (getattr(debate, "agent_views", ()) or ())
-                if _first_text(
-                    getattr(view, "role_label", ""),
-                    getattr(view, "role_id", ""),
-                )
-            ),
+            active_roles=published_roles,
             round_count=int(getattr(debate, "round_count", 0) or 0),
             bull_count=int(getattr(debate, "bull_count", 0) or 0),
             bear_count=int(getattr(debate, "bear_count", 0) or 0),
             neutral_count=int(getattr(debate, "neutral_count", 0) or 0),
             process_summary=(
                 f"{getattr(debate, 'round_count', 0)} 轮讨论 · "
-                f"参与角色 {len(getattr(debate, 'agent_views', ()) or ())}"
+                f"参与角色 {len(published_roles)}"
                 if getattr(debate, "round_count", 0)
                 else ""
             ),
             round_summaries=structured_rounds or fallback_rounds,
-            agent_views=_snapshot_agent_views(getattr(debate, "agent_views", ()) or ()),
+            agent_views=agent_views,
             viewpoint_buckets=viewpoint_buckets,
             disagreement_points=disagreement_points,
             uncertainty_points=tuple(getattr(debate, "uncertainty_points", ()) or ())[
@@ -697,6 +705,13 @@ def _is_shared_debate_context(value: object) -> bool:
             "当前bearish立场与该主张方向相反",
             "若该主张成立，当前方向假设将失效",
             "未形成方向性判断",
+            "当前维持中性",
+            "输入未提供",
+            "未提供可核验",
+            "未提供板块",
+            "未提供融资",
+            "未提供北向",
+            "未提供散户",
         )
     )
 
@@ -784,6 +799,14 @@ def _snapshot_agent_views(views: Iterable[object]) -> tuple[HomeSnapshotAgentVie
             opportunity = ""
         if _is_raw_debate_template(risk):
             risk = ""
+        if _is_shared_debate_context(argument):
+            argument = ""
+        if _is_shared_debate_context(opportunity):
+            opportunity = ""
+        if _is_shared_debate_context(risk):
+            risk = ""
+        if not any((argument, opportunity, risk)):
+            continue
         selected.append(
             HomeSnapshotAgentView(
                 role=role,
