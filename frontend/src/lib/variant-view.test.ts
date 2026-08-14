@@ -1,5 +1,5 @@
 import type { AqspVariant } from "@/types/aqsp";
-import { variantDisplayName, variantHoldingsLabel, variantHoldingsSummary, variantMoney, variantPercent, variantStrategyLogic, variantStrategyParameters, variantStrategyText } from "./variant-view";
+import { variantDisplayName, variantHoldingsLabel, variantMoney, variantPercent, variantStrategyLogic, variantStrategyParameters, variantStrategyText } from "./variant-view";
 
 const variantFixture = {
   variant_id: "trend_follow",
@@ -29,5 +29,4 @@ export const variantViewContractChecks = {
   nameExplainsVariant: variantDisplayName(variantFixture) === "动量跟随 · 20 日 · 3 股组合",
   logicIsReadable: variantStrategyLogic(variantFixture) === "温和动量延续。",
   parametersAreReadable: variantStrategyParameters(variantFixture).includes("最大乖离 10.0%"),
-  holdingsSummaryIsCompact: variantHoldingsSummary(variantFixture) === "当前无持仓",
 };

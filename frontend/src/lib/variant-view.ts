@@ -102,17 +102,6 @@ export function variantStrategyParameters(variant: Pick<AqspVariant, "strategy">
   return parts.join(" · ") || "关键参数未记录";
 }
 
-export function variantHoldingsSummary(variant: Pick<AqspVariant, "holdings">): string {
-  const holdings = variant.holdings;
-  if (holdings === undefined) return "持仓字段未提供";
-  if (holdings.length === 0) return "当前无持仓";
-  const visible = holdings.slice(0, 2).map((holding) =>
-    `${holding.name || holding.symbol} · ${holding.entry_date || "建仓日未记录"} · ${holding.holding_days ?? 0} 天`,
-  );
-  const remaining = holdings.length - visible.length;
-  return `${holdings.length} 只｜${visible.join("；")}${remaining > 0 ? `；另 ${remaining} 只` : ""}`;
-}
-
 export function variantHoldingsLabel(holdings: AqspVariant["holdings"]): string {
   if (holdings === undefined) return "持仓字段未提供";
   return holdings.length === 0 ? "当前无持仓" : `${holdings.length} 个持仓`;

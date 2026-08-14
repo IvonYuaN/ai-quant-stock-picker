@@ -463,45 +463,38 @@
   .aqsp-lab-grid div { display: grid; gap: 0.25rem; border: 1px solid hsl(var(--border) / 0.65); border-radius: 0.4rem; padding: 0.65rem; font-size: 0.68rem; }
   .aqsp-lab-grid span { color: hsl(var(--muted-foreground)); }
   .aqsp-lab-snapshot { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.8rem; margin-bottom: 0.65rem; color: hsl(var(--muted-foreground)); font-size: 0.66rem; }
-  .aqsp-variant-table { overflow: hidden; border: 1px solid hsl(var(--border) / 0.75); }
-  .aqsp-variant-table-head, .aqsp-variant-row { display: grid; grid-template-columns: 2.8rem minmax(8.5rem, 1.1fr) minmax(12rem, 1.8fr) minmax(5.4rem, 0.65fr) minmax(6.5rem, 0.8fr) minmax(10rem, 1.35fr) minmax(6.5rem, 0.8fr); }
-  .aqsp-variant-table-head { color: hsl(var(--muted-foreground)); background: hsl(var(--muted) / 0.45); font-size: 0.58rem; font-weight: 700; }
-  .aqsp-variant-table-head span { padding: 0.45rem 0.5rem; }
-  .aqsp-variant-row { min-width: 0; border-top: 1px solid hsl(var(--border) / 0.55); background: hsl(var(--card) / 0.42); }
-  .aqsp-variant-row:nth-child(odd) { background: hsl(var(--muted) / 0.12); }
-  .aqsp-variant-row > div { min-width: 0; padding: 0.55rem 0.5rem; border-right: 1px solid hsl(var(--border) / 0.38); font-size: 0.63rem; line-height: 1.4; overflow-wrap: anywhere; }
-  .aqsp-variant-row > div:last-child { border-right: 0; }
-  .aqsp-variant-row > div > span { display: none; color: hsl(var(--muted-foreground)); font-size: 0.55rem; font-weight: 650; }
-  .aqsp-variant-row strong, .aqsp-variant-row b { display: block; color: hsl(var(--foreground) / 0.9); font-weight: 700; }
-  .aqsp-variant-row small { display: block; margin-top: 0.18rem; color: hsl(var(--muted-foreground)); font-size: 0.56rem; line-height: 1.35; }
-  .aqsp-variant-rank { display: grid; place-items: start center; }
-  .aqsp-variant-rank b { color: hsl(var(--primary)); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.82rem; }
-  .aqsp-variant-name small { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-  .aqsp-variant-logic strong { font-weight: 550; }
-  .aqsp-variant-return b { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.76rem; }
-  .aqsp-variant-funds b, .aqsp-variant-period b { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-  .aqsp-variant-position strong { font-weight: 550; }
+  .aqsp-variant-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0.65rem; }
+  .aqsp-variant-card { min-width: 0; border: 1px solid hsl(var(--border) / 0.75); border-radius: 0.5rem; padding: 0.75rem; background: hsl(var(--card) / 0.62); }
+  .aqsp-variant-head { display: flex; justify-content: space-between; gap: 0.5rem; }
+  .aqsp-variant-head h3 { font-size: 0.82rem; font-weight: 700; }
+  .aqsp-variant-head span { display: block; margin-top: 0.2rem; color: hsl(var(--muted-foreground)); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.6rem; }
+  .aqsp-variant-head strong { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 1rem; }
+  .aqsp-variant-strategy { display: grid; gap: 0.28rem; margin-top: 0.45rem; color: hsl(var(--foreground) / 0.82); font-size: 0.64rem; line-height: 1.4; overflow-wrap: anywhere; }
+  .aqsp-variant-strategy p { display: grid; grid-template-columns: 4.2rem minmax(0, 1fr); gap: 0.4rem; }
+  .aqsp-variant-strategy b, .aqsp-variant-holdings > b { color: hsl(var(--primary)); font-size: 0.58rem; font-weight: 650; }
+  .aqsp-variant-account { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0.35rem; margin-top: 0.7rem; border-top: 1px solid hsl(var(--border) / 0.45); padding-top: 0.55rem; }
+  .aqsp-variant-account div { min-width: 0; }
+  .aqsp-variant-account span { display: block; color: hsl(var(--muted-foreground)); font-size: 0.58rem; }
+  .aqsp-variant-account b { display: block; margin-top: 0.12rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.68rem; overflow-wrap: anywhere; }
+  .aqsp-variant-holdings { display: grid; gap: 0.2rem; margin-top: 0.55rem; color: hsl(var(--foreground) / 0.78); font-size: 0.62rem; line-height: 1.4; overflow-wrap: anywhere; }
+  .aqsp-holding-row { display: grid; grid-template-columns: minmax(6rem, 1.2fr) repeat(3, minmax(6rem, 1fr)); gap: 0.45rem; border-top: 1px solid hsl(var(--border) / 0.45); padding: 0.45rem 0; }
+  .aqsp-holding-row strong { color: hsl(var(--foreground) / 0.9); }
+  .aqsp-holding-row small { display: block; margin-top: 0.12rem; color: hsl(var(--muted-foreground)); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.58rem; font-weight: 400; }
+  .aqsp-holding-row span { color: hsl(var(--muted-foreground)); }
   .aqsp-source-missing { color: hsl(var(--warning)); }
   .aqsp-variant-positive { color: hsl(var(--success)); }
   .aqsp-variant-negative { color: hsl(var(--danger)); }
+  .aqsp-variant-rules { margin-top: 0.6rem; color: hsl(var(--muted-foreground)); font-size: 0.6rem; line-height: 1.45; }
 }
 
 @media (max-width: 767px) {
   .aqsp-header { align-items: stretch; flex-direction: column; }
   .aqsp-refresh { width: fit-content; }
-  .aqsp-list, .aqsp-lab-grid { grid-template-columns: minmax(0, 1fr); }
+  .aqsp-list, .aqsp-lab-grid, .aqsp-variant-grid { grid-template-columns: minmax(0, 1fr); }
   .aqsp-module, .aqsp-lab { padding: 0.8rem; }
   .aqsp-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .aqsp-variant-table { overflow: visible; border: 0; }
-  .aqsp-variant-table-head { display: none; }
-  .aqsp-variant-row { grid-template-columns: 2.5rem repeat(2, minmax(0, 1fr)); margin-top: 0.5rem; border: 1px solid hsl(var(--border) / 0.72); }
-  .aqsp-variant-row > div { border-right: 0; border-bottom: 1px solid hsl(var(--border) / 0.38); }
-  .aqsp-variant-row > div > span { display: block; margin-bottom: 0.16rem; }
-  .aqsp-variant-rank { grid-row: span 2; }
-  .aqsp-variant-name { grid-column: 2 / -1; }
-  .aqsp-variant-logic, .aqsp-variant-position { grid-column: 1 / -1; }
-  .aqsp-variant-period { grid-column: 2 / -1; }
-  .aqsp-variant-row > div:last-child { border-bottom: 0; }
+  .aqsp-variant-account { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .aqsp-holding-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .aqsp-phase-lane { grid-template-columns: minmax(0, 1fr); }
   .aqsp-chain-lane { grid-template-columns: minmax(0, 1fr); }
   .aqsp-chain-arrow { display: none; }
