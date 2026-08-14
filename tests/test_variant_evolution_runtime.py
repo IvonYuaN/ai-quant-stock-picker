@@ -12,7 +12,11 @@ from scripts.refresh_variant_results_from_market_db import (
     evolution_profiles,
     prioritize_focus_symbols,
 )
-from scripts.run_variant_suite import VariantProfile, assign_variant_lifecycle
+from scripts.run_variant_suite import (
+    VariantProfile,
+    _current_holding_technical_evidence,
+    assign_variant_lifecycle,
+)
 
 
 def _profile() -> VariantProfile:
@@ -98,9 +102,7 @@ def test_target_snapshot_persists_prices_with_decimal_precision(tmp_path: Path) 
     assert row == (12.31, 12.66, 12.22, 12.58, 12580.5)
 
 
-def test_variant_refresh_exports_release_pythonpath_and_rejects_import_failure() -> (
-    None
-):
+def test_variant_refresh_rejects_runtime_import_failure() -> None:
     script = (Path(__file__).parents[1] / "scripts" / "variant_refresh.sh").read_text(
         encoding="utf-8"
     )
@@ -108,6 +110,33 @@ def test_variant_refresh_exports_release_pythonpath_and_rejects_import_failure()
     assert 'export PYTHONPATH="${PROJECT_ROOT}/src:${PROJECT_ROOT}' in script
     assert "交易日检查失败，拒绝把运行错误当成非交易日" in script
     assert '"$OUTPUT_PATH" --expected-end "$(date +%F)"' in script
+
+
+def test_current_holding_evidence_tolerates_sparse_historical_volume() -> None:
+    dates = pd.date_range("2026-06-15", periods=41, freq="B").strftime("%Y-%m-%d")
+    frame = pd.DataFrame(
+        {
+            "date": dates,
+            "volume": [None, *([1000.0] * 39), 1200.0],
+            "volume_ratio": [None] * 41,
+            "ret": [5.0] * 41,
+            "bias": [2.0] * 41,
+            "macd_hist": [0.1] * 41,
+            "kdj_j": [55.0] * 41,
+            "atr_pct": [3.0] * 41,
+            "close": [10.5] * 41,
+        }
+    )
+
+    evidence = _current_holding_technical_evidence(
+        [{"symbol": "600228", "quantity": 100}],
+        {"600228": frame},
+        _profile(),
+        dates[-1],
+        {"600228": "返利科技"},
+    )
+
+    assert evidence[0]["volume_ratio"] == 1.2
 
 
 def test_variant_lifecycle_eliminates_negative_result_when_samples_sufficient() -> None:

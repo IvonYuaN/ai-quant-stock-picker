@@ -34,6 +34,7 @@ BASE_CASH = 100_000.0
 TRAINING_BARS = 60
 RECENT_ACTION_LIMIT = 8
 MIN_EVOLUTION_SIGNAL_DAYS = 30
+MIN_CURRENT_VOLUME_OBSERVATION_RATIO = 0.8
 
 
 @dataclass(frozen=True)
@@ -872,7 +873,9 @@ def assign_variant_lifecycle(results: list[dict[str, Any]]) -> None:
         return_pct = float(item.get("return_pct") or 0.0)
         if signal_days < MIN_EVOLUTION_SIGNAL_DAYS:
             status = "样本积累"
-            reason = f"独立入场日 {signal_days}/{MIN_EVOLUTION_SIGNAL_DAYS}，未达到进化门槛"
+            reason = (
+                f"独立入场日 {signal_days}/{MIN_EVOLUTION_SIGNAL_DAYS}，未达到进化门槛"
+            )
         elif return_pct <= 0.0 or rank > elimination_cutoff:
             status = "淘汰"
             reason = f"验证收益 {return_pct:+.2f}%，排名 {rank}/{len(results)}，退出下一代基线"
@@ -881,10 +884,14 @@ def assign_variant_lifecycle(results: list[dict[str, Any]]) -> None:
             reason = f"验证收益 {return_pct:+.2f}%，排名 {rank}/{len(results)}，进入下一代复核"
         else:
             status = "继续观察"
-            reason = f"验证收益 {return_pct:+.2f}%，排名 {rank}/{len(results)}，保留对照"
+            reason = (
+                f"验证收益 {return_pct:+.2f}%，排名 {rank}/{len(results)}，保留对照"
+            )
         item["lifecycle_status"] = status
         item["lifecycle_reason"] = reason
-        item["next_generation"] = _next_generation_proposal(item) if status == "淘汰" else {}
+        item["next_generation"] = (
+            _next_generation_proposal(item) if status == "淘汰" else {}
+        )
 
 
 def _next_generation_proposal(item: dict[str, Any]) -> dict[str, object]:
@@ -893,8 +900,12 @@ def _next_generation_proposal(item: dict[str, Any]) -> dict[str, object]:
     return {
         "parent_variant_id": str(item.get("variant_id") or ""),
         "generation": generation,
-        "entry_return_pct": round(float(strategy.get("entry_return_pct") or 0.0) + 0.5, 2),
-        "max_bias_pct": round(max(0.0, float(strategy.get("max_bias_pct") or 0.0) * 0.9), 2),
+        "entry_return_pct": round(
+            float(strategy.get("entry_return_pct") or 0.0) + 0.5, 2
+        ),
+        "max_bias_pct": round(
+            max(0.0, float(strategy.get("max_bias_pct") or 0.0) * 0.9), 2
+        ),
         "max_positions": max(2, int(strategy.get("max_positions") or 3) - 1),
         "reason": "提高入场确认、收紧乖离和持仓数量后重新验证",
     }
@@ -1133,6 +1144,24 @@ def _current_holding_technical_evidence(
         if snapshot.empty:
             continue
         row = snapshot.iloc[-1]
+        volume_ratio = _optional_metric(row.get("volume_ratio"))
+        if volume_ratio is None:
+            prior_volume = (
+                pd.to_numeric(
+                    frame.loc[frame["date"] < end_date, "volume"], errors="coerce"
+                )
+                .dropna()
+                .tail(profile.lookback)
+            )
+            minimum = max(
+                5, int(profile.lookback * MIN_CURRENT_VOLUME_OBSERVATION_RATIO)
+            )
+            volume_mean = (
+                float(prior_volume.mean()) if len(prior_volume) >= minimum else 0.0
+            )
+            current_volume = _optional_metric(row.get("volume"))
+            if current_volume is not None and volume_mean > 0:
+                volume_ratio = current_volume / volume_mean
         evidence = _technical_evidence_values(
             profile=profile,
             symbol=symbol,
@@ -1143,7 +1172,7 @@ def _current_holding_technical_evidence(
             bias=_optional_metric(row.get("bias")),
             macd_hist=_optional_metric(row.get("macd_hist")),
             kdj_j=_optional_metric(row.get("kdj_j")),
-            volume_ratio=_optional_metric(row.get("volume_ratio")),
+            volume_ratio=volume_ratio,
             atr_pct=_optional_metric(row.get("atr_pct")),
             score=None,
         )
