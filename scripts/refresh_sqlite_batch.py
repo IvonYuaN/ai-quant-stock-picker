@@ -8,9 +8,11 @@ import json
 import sqlite3
 import sys
 import time
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import date
 from pathlib import Path
+
+import pandas as pd
 
 if __package__ in {None, ""}:
     project_root = Path(__file__).resolve().parents[1]
@@ -19,12 +21,15 @@ if __package__ in {None, ""}:
 
 from aqsp.core.time import get_previous_trading_day, now_shanghai, today_shanghai
 from aqsp.data.sqlite_db_source import SqliteDbSource
+from aqsp.data.sina_source import SinaSource
 from aqsp.utils.jsonl_io import atomic_write_text
 from scripts.update_sqlite_daily import UpdateSummary, update_sqlite_daily
 
 
 _MAIN_BOARD_PREFIXES = ("600", "601", "603", "605", "000", "001", "002", "003")
 _CHINEXT_PREFIXES = ("300", "301")
+_EOD_SNAPSHOT_READY_HOUR = 15
+_EOD_SNAPSHOT_READY_MINUTE = 5
 
 
 def _latest_available_day(source: SqliteDbSource, *, not_after: date) -> date | None:
@@ -155,6 +160,88 @@ def _has_no_target_day_coverage(summary: UpdateSummary) -> bool:
         and summary.target_day_symbol_count == 0
         and (summary.empty_response_symbols > 0 or summary.failed_symbols > 0)
     )
+
+
+def _persist_target_snapshot(
+    *,
+    db_path: Path,
+    target_day: date,
+    snapshot: pd.DataFrame,
+    eligible_symbols: set[str],
+) -> list[str]:
+    rows: list[tuple[object, ...]] = []
+    names: list[tuple[str, str]] = []
+    for item in snapshot.to_dict(orient="records"):
+        symbol = str(item.get("symbol") or "").strip()
+        if symbol not in eligible_symbols:
+            continue
+        market = "SH" if symbol.startswith("6") else "SZ"
+        ts_code = f"{symbol}.{market}"
+        name = str(item.get("name") or symbol).strip()
+        rows.append(
+            (
+                ts_code,
+                target_day.strftime("%Y%m%d"),
+                float(item["open"]),
+                float(item["high"]),
+                float(item["low"]),
+                float(item["close"]),
+                int(float(item["volume"])),
+                float(item["amount"]),
+                float(item["close"]),
+            )
+        )
+        names.append((name, ts_code))
+    if not rows:
+        return []
+    with sqlite3.connect(db_path) as conn:
+        conn.executemany("UPDATE stocks SET name = ? WHERE ts_code = ?", names)
+        conn.executemany(
+            """
+            INSERT OR REPLACE INTO daily_qfq(
+                ts_code, trade_date, open, high, low, close_qfq, volume, amount, close
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
+        conn.commit()
+    return [str(row[0]).split(".", maxsplit=1)[0] for row in rows]
+
+
+def _supplement_current_target(
+    *, db_path: Path, state_path: Path, target_day: date, summary: UpdateSummary
+) -> UpdateSummary:
+    current = now_shanghai()
+    if target_day != current.date() or (current.hour, current.minute) < (
+        _EOD_SNAPSHOT_READY_HOUR,
+        _EOD_SNAPSHOT_READY_MINUTE,
+    ):
+        return summary
+    source = SqliteDbSource(db_path=db_path, cache=None)
+    eligible = set(_refresh_universe(source, universe_limit=0))
+    inserted_symbols = _persist_target_snapshot(
+        db_path=db_path,
+        target_day=target_day,
+        snapshot=SinaSource().fetch_daily_snapshot(),
+        eligible_symbols=eligible,
+    )
+    if not inserted_symbols:
+        return summary
+    updated = replace(
+        summary,
+        updated_rows=summary.updated_rows + len(inserted_symbols),
+        target_day_symbol_count=len(inserted_symbols),
+        raw_max_trade_date=target_day,
+    )
+    _write_cursor(
+        state_path,
+        target_day=target_day,
+        next_offset=_read_cursor(state_path, target_day=target_day),
+        universe_size=summary.total_symbols,
+        summary=updated,
+        batch_symbols=inserted_symbols,
+    )
+    return updated
 
 
 def refresh_batch(
@@ -333,6 +420,12 @@ def main() -> int:
         query_timeout_seconds=args.query_timeout_seconds,
         max_runtime_seconds=args.max_runtime_seconds,
         batches=args.batches,
+    )
+    summary = _supplement_current_target(
+        db_path=args.db,
+        state_path=args.state,
+        target_day=target_day,
+        summary=summary,
     )
     print(json.dumps(asdict(summary), default=str, ensure_ascii=False, sort_keys=True))
     if _has_no_target_day_coverage(summary):

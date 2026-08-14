@@ -2,8 +2,10 @@ import sqlite3
 from datetime import date
 from pathlib import Path
 
+import pandas as pd
+
 from aqsp.data.sqlite_db_source import SqliteDbSource
-from scripts.refresh_sqlite_batch import _refresh_universe
+from scripts.refresh_sqlite_batch import _persist_target_snapshot, _refresh_universe
 from scripts.refresh_variant_results_from_market_db import (
     MarketSymbol,
     attach_discussion_links,
@@ -52,6 +54,47 @@ def test_refresh_universe_uses_latest_available_day_when_database_is_stale(
     )
 
     assert result == ["600000", "000001"]
+
+
+def test_target_snapshot_persists_prices_with_decimal_precision(tmp_path: Path) -> None:
+    db_path = tmp_path / "market.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE stocks (ts_code TEXT PRIMARY KEY, name TEXT)")
+        conn.execute(
+            """CREATE TABLE daily_qfq (
+                ts_code TEXT, trade_date TEXT, open REAL, high REAL, low REAL,
+                close_qfq REAL, volume INTEGER, amount REAL, close REAL,
+                UNIQUE(ts_code, trade_date)
+            )"""
+        )
+        conn.execute("INSERT INTO stocks VALUES ('600000.SH', '浦发银行')")
+
+    inserted_symbols = _persist_target_snapshot(
+        db_path=db_path,
+        target_day=date(2026, 8, 14),
+        snapshot=pd.DataFrame(
+            [
+                {
+                    "symbol": "600000",
+                    "name": "浦发银行",
+                    "open": 12.31,
+                    "high": 12.66,
+                    "low": 12.22,
+                    "close": 12.58,
+                    "volume": 1000,
+                    "amount": 12580.5,
+                }
+            ]
+        ),
+        eligible_symbols={"600000"},
+    )
+
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT open, high, low, close, amount FROM daily_qfq"
+        ).fetchone()
+    assert inserted_symbols == ["600000"]
+    assert row == (12.31, 12.66, 12.22, 12.58, 12580.5)
 
 
 def test_variant_lifecycle_eliminates_negative_result_when_samples_sufficient() -> None:

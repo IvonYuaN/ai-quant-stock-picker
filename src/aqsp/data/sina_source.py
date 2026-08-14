@@ -188,13 +188,38 @@ class SinaSource(DataSource):
         snapshot = self._fetch_sina_spot_snapshot(sort="amount")
         if snapshot.empty:
             raise DataError("sina 全市场实时快照为空，无法筛选高流动性标的")
-        liquid = snapshot[
-            snapshot["amount"] >= max(float(min_amount or 0.0), 0.0)
-        ]
+        liquid = snapshot[snapshot["amount"] >= max(float(min_amount or 0.0), 0.0)]
         row_limit = max(int(limit or 0), 0)
         if row_limit > 0:
             liquid = liquid.head(row_limit)
         return liquid["symbol"].astype(str).tolist()
+
+    def fetch_daily_snapshot(self) -> pd.DataFrame:
+        """Return the completed session's unadjusted full-market OHLCV snapshot."""
+        snapshot = self._fetch_sina_spot_snapshot()
+        required = {
+            "symbol",
+            "name",
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+            "amount",
+        }
+        missing = required - set(snapshot.columns)
+        if missing:
+            raise DataError(f"sina 收盘快照缺少字段: {sorted(missing)}")
+        numeric = ["open", "high", "low", "close", "volume", "amount"]
+        snapshot[numeric] = snapshot[numeric].apply(pd.to_numeric, errors="coerce")
+        snapshot = snapshot.dropna(subset=["open", "high", "low", "close"])
+        snapshot = snapshot[
+            (snapshot[["open", "high", "low", "close"]] > 0).all(axis=1)
+        ]
+        if snapshot.empty:
+            raise DataError("sina 收盘快照无有效 OHLCV")
+        snapshot["date"] = now_shanghai().date().isoformat()
+        return self._annotate_frame(snapshot.reset_index(drop=True))
 
     def _fetch_sina_spot_snapshot(self, *, sort: str = "symbol") -> pd.DataFrame:
         rows: list[dict[str, object]] = []
@@ -215,6 +240,10 @@ class SinaSource(DataSource):
                     {
                         "symbol": symbol,
                         "name": name or symbol,
+                        "open": _safe_float(item.get("open")),
+                        "high": _safe_float(item.get("high")),
+                        "low": _safe_float(item.get("low")),
+                        "close": _safe_float(item.get("trade")),
                         "price": _safe_float(item.get("trade")),
                         "volume": _safe_float(item.get("volume")),
                         "amount": _safe_float(item.get("amount")),
@@ -253,9 +282,7 @@ class SinaSource(DataSource):
                 if attempt < _MAX_RETRIES - 1:
                     time.sleep(_BACKOFF_BASE ** (attempt + 1))
                 else:
-                    raise DataError(
-                        f"sina 全市场实时快照获取失败 page={page}"
-                    ) from exc
+                    raise DataError(f"sina 全市场实时快照获取失败 page={page}") from exc
         return []
 
     def fetch_index(

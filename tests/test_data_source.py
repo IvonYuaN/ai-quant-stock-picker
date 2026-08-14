@@ -207,6 +207,40 @@ def test_sina_get_available_symbols_and_liquid_symbols_use_paginated_live_snapsh
     assert source.get_liquid_symbols(limit=1, min_amount=50_000_000) == ["000001"]
 
 
+def test_sina_daily_snapshot_exposes_unadjusted_ohlcv(monkeypatch) -> None:
+    source = SinaSource.__new__(SinaSource)
+    source.name = "sina"
+    source._active_workload = None
+    monkeypatch.setattr(
+        source,
+        "_fetch_sina_spot_snapshot",
+        lambda: pd.DataFrame(
+            [
+                {
+                    "symbol": "600000",
+                    "name": "浦发银行",
+                    "open": 10.1,
+                    "high": 10.5,
+                    "low": 10.0,
+                    "close": 10.4,
+                    "price": 10.4,
+                    "volume": 1000,
+                    "amount": 10400,
+                }
+            ]
+        ),
+    )
+
+    snapshot = source.fetch_daily_snapshot()
+
+    assert snapshot.loc[0, ["open", "high", "low", "close"]].tolist() == [
+        10.1,
+        10.5,
+        10.0,
+        10.4,
+    ]
+
+
 def test_sina_spot_snapshot_rejects_page_fetch_failure(monkeypatch) -> None:
     source = SinaSource.__new__(SinaSource)
     source.name = "sina"
@@ -249,7 +283,9 @@ def test_eastmoney_spot_snapshot_rejects_incomplete_pagination(monkeypatch) -> N
         source.get_available_symbols()
 
 
-def test_eastmoney_spot_page_uses_delay_host_after_connection_reset(monkeypatch) -> None:
+def test_eastmoney_spot_page_uses_delay_host_after_connection_reset(
+    monkeypatch,
+) -> None:
     source = EastmoneySource.__new__(EastmoneySource)
     source.name = "eastmoney"
     source._last_request_ts = 0.0
@@ -937,7 +973,8 @@ def test_live_short_drops_future_daily_frames_before_coverage_gate(
 
 
 def test_intraday_live_short_records_resolved_fetched_and_skipped_symbols(
-    tmp_path: Path, monkeypatch,
+    tmp_path: Path,
+    monkeypatch,
 ) -> None:
     monkeypatch.setenv("AQSP_RUN_TASK_ID", "intraday")
     monkeypatch.setenv("AQSP_INTRADAY_MIN_VALID_RATIO", "0.5")
