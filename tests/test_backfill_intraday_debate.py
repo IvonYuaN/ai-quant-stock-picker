@@ -95,6 +95,7 @@ def _patch_runtime(
                 rating=pick.rating,
                 recommended_adjustment="keep",
                 disagreement_score=0.1,
+                failure="",
             )
 
     monkeypatch.setattr(
@@ -322,6 +323,43 @@ def test_backfill_continues_after_candidate_failure_and_persists_success(
     assert failed_state["attempts"] == 2
     assert failed_state["retryable"] is True
     assert not lock_path.exists()
+
+
+def test_backfill_marks_missing_evidence_as_blocked_without_failing_run(
+    tmp_path: Path, monkeypatch
+) -> None:
+    input_csv = tmp_path / "intraday_latest.csv"
+    output_path = tmp_path / "debate_results.jsonl"
+    status_path = tmp_path / "status.json"
+    lock_path = tmp_path / "backfill.lock"
+    _write_candidates(input_csv, ("000001",))
+    _patch_runtime(monkeypatch)
+    monkeypatch.setattr(
+        backfill_intraday_debate,
+        "serialize_debate_result",
+        lambda result: {
+            "failure": "讨论未启动: no_substantive_evidence",
+            "rounds": [{}, {}],
+        },
+    )
+
+    count = backfill_intraday_debate.run_backfill(
+        input_csv=input_csv,
+        output_path=output_path,
+        task_id="intraday",
+        max_candidates=5,
+        force=True,
+        status_path=status_path,
+        lock_path=lock_path,
+    )
+
+    status = _read_status(status_path)
+    assert count == 0
+    assert status["status"] == "succeeded"
+    assert status["failed_count"] == 0
+    assert status["blocked_count"] == 1
+    assert status["candidate_states"][0]["status"] == "blocked"
+    assert status["candidate_states"][0]["retryable"] is False
 
 
 def test_load_intraday_picks_includes_observation_only_only_when_explicit(

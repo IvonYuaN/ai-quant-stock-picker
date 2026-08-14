@@ -41,6 +41,7 @@ STATUS_STALE = "stale"
 CANDIDATE_PENDING = "pending"
 CANDIDATE_RUNNING = "running"
 CANDIDATE_SUCCEEDED = "succeeded"
+CANDIDATE_BLOCKED = "blocked"
 CANDIDATE_FAILED = "failed"
 DEFAULT_MAX_ATTEMPTS = 2
 
@@ -474,6 +475,11 @@ def _write_status(
             if str(item.get("status", "")) == CANDIDATE_FAILED
         )
         or len(failed_candidates),
+        "blocked_count": sum(
+            1
+            for item in (candidate_states or ())
+            if str(item.get("status", "")) == CANDIDATE_BLOCKED
+        ),
         "failed_candidates": failed_candidates,
         "candidate_states": candidate_states or [],
         "started_at": started_at,
@@ -1167,9 +1173,8 @@ def run_backfill(
                     break
                 except Exception as exc:
                     error = f"{type(exc).__name__}: {exc}"[:500]
-                    if attempt < max_attempts and not _is_non_retryable_debate_failure(
-                        error
-                    ):
+                    evidence_blocked = _is_non_retryable_debate_failure(error)
+                    if attempt < max_attempts and not evidence_blocked:
                         _update_candidate_state(
                             state,
                             status=CANDIDATE_PENDING,
@@ -1195,22 +1200,23 @@ def run_backfill(
 
                     _update_candidate_state(
                         state,
-                        status=CANDIDATE_FAILED,
+                        status=(
+                            CANDIDATE_BLOCKED if evidence_blocked else CANDIDATE_FAILED
+                        ),
                         error=error,
-                        retryable=not _is_non_retryable_debate_failure(error),
+                        retryable=not evidence_blocked,
                     )
-                    failed_candidates.append(
-                        {
-                            "symbol": pick.symbol,
-                            "name": pick.name,
-                            "candidate_fingerprint": state["candidate_fingerprint"],
-                            "attempts": str(attempt),
-                            "retryable": str(
-                                not _is_non_retryable_debate_failure(error)
-                            ).lower(),
-                            "error": error,
-                        }
-                    )
+                    if not evidence_blocked:
+                        failed_candidates.append(
+                            {
+                                "symbol": pick.symbol,
+                                "name": pick.name,
+                                "candidate_fingerprint": state["candidate_fingerprint"],
+                                "attempts": str(attempt),
+                                "retryable": "true",
+                                "error": error,
+                            }
+                        )
                     _write_status(
                         status_path,
                         status=STATUS_RUNNING,
@@ -1222,18 +1228,34 @@ def run_backfill(
                         succeeded_count=succeeded_count,
                         failed_candidates=failed_candidates,
                         started_at=started_at,
-                        detail="one or more candidates failed; continuing",
+                        detail=(
+                            "one or more candidates blocked by missing evidence; continuing"
+                            if evidence_blocked
+                            else "one or more candidates failed; continuing"
+                        ),
                         stale_recovered=stale_recovered,
                         candidate_states=candidate_states,
                     )
-                    print(f"debate backfill failed: {pick.symbol} {pick.name}: {exc}")
+                    outcome = "blocked" if evidence_blocked else "failed"
+                    print(
+                        f"debate backfill {outcome}: {pick.symbol} {pick.name}: {exc}"
+                    )
                     break
 
         final_status = STATUS_FAILED if failed_candidates else STATUS_SUCCEEDED
+        blocked_count = sum(
+            1
+            for state in candidate_states
+            if str(state.get("status", "")) == CANDIDATE_BLOCKED
+        )
         detail = (
             f"completed with {len(failed_candidates)} candidate failures"
             if failed_candidates
-            else "backfill completed"
+            else (
+                f"backfill completed; {blocked_count} candidates blocked by missing evidence"
+                if blocked_count
+                else "backfill completed"
+            )
         )
         _write_status(
             status_path,
