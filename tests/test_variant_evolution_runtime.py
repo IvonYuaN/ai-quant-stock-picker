@@ -9,8 +9,10 @@ from scripts.refresh_sqlite_batch import _persist_target_snapshot, _refresh_univ
 from scripts.refresh_variant_results_from_market_db import (
     MarketSymbol,
     attach_discussion_links,
+    commit_variant_batch,
     evolution_profiles,
     prioritize_focus_symbols,
+    select_variant_batch,
 )
 from scripts.run_variant_suite import (
     VariantProfile,
@@ -201,6 +203,50 @@ def test_variant_evolution_replaces_eliminated_parent_in_next_generation() -> No
     assert evolved[0].variant_id == "trend_base__g2"
     assert evolved[0].parent_variant_id == "trend_base"
     assert evolved[0].max_bias_pct == 9.0
+
+
+def test_variant_evolution_replaces_existing_generation_suffix() -> None:
+    previous = {
+        "variants": [
+            {
+                "variant_id": "trend_base",
+                "label": "趋势基线·第1代·第2代",
+                "generation": 2,
+                "lifecycle_status": "晋级验证",
+                "strategy": {
+                    "id": "trend_base",
+                    "lookback_days": 20,
+                    "entry_return_pct": 1.5,
+                    "max_bias_pct": 10.0,
+                    "mode": "trend",
+                    "max_positions": 3,
+                    "hypothesis": "趋势延续",
+                },
+            }
+        ]
+    }
+
+    evolved = evolution_profiles((_profile(),), previous)
+
+    assert evolved[0].label == "趋势基线·第2代"
+
+
+def test_variant_batch_keeps_same_experiment_cohort_after_publish(
+    tmp_path: Path,
+) -> None:
+    symbols = tuple(
+        MarketSymbol(f"{index:06d}.SZ", f"{index:06d}", str(index), "深市主板")
+        for index in range(9)
+    )
+    cursor = tmp_path / "cursor.json"
+
+    first = select_variant_batch(symbols, 3, cursor)
+    commit_variant_batch(cursor, first)
+    second = select_variant_batch(symbols, 3, cursor)
+
+    assert second.offset == first.offset == 0
+    assert second.symbols == first.symbols
+    assert second.coverage_pct == 0.333333
 
 
 def test_variant_batch_forces_discussed_candidates_into_bounded_pool() -> None:

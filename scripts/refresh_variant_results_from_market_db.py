@@ -4,7 +4,7 @@
 This bridges the production ``daily_qfq`` market DB into the raw OHLCV schema
 used by ``run_variant_suite.py``.  It is deliberately a runtime script: no
 private market rows are written back to GitHub. Bounded refreshes rotate a
-balanced main-board/ChiNext batch and advance only after an artifact is written.
+balanced main-board/ChiNext cohort while current research candidates are forced in.
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import signal
 import sqlite3
 import tempfile
@@ -144,9 +145,7 @@ class VariantUniverseBatch:
     def coverage_pct(self) -> float:
         if self.universe_count <= 0:
             return 0.0
-        return round(
-            min(1.0, (self.offset + len(self.symbols)) / self.universe_count), 6
-        )
+        return round(min(1.0, len(self.symbols) / self.universe_count), 6)
 
 
 def normalize_trade_date(value: str) -> str:
@@ -240,7 +239,10 @@ def select_variant_batch(
         offset = 0
         cycle_id = 1
     else:
-        offset = int(state.get("next_offset") or 0) % len(ordered)
+        # Keep the experiment cohort stable across refreshes so generations are
+        # comparable. Current candidates are injected separately below.
+        offset = int(state.get("last_offset", state.get("next_offset", 0)) or 0)
+        offset %= len(ordered)
         cycle_id = int(state.get("cycle_id") or 1)
     batch_size = (
         len(ordered) if max_symbols <= 0 else min(max_symbols, len(ordered) - offset)
@@ -565,10 +567,13 @@ def evolution_profiles(
             )
             max_bias_pct = float(proposal.get("max_bias_pct") or max_bias_pct)
             max_positions = int(proposal.get("max_positions") or max_positions)
+        base_label = re.sub(
+            r"(?:·第\d+代)+$", "", str(item.get("label") or variant_id)
+        )
         evolved.append(
             VariantProfile(
                 variant_id=variant_id,
-                label=f"{str(item.get('label') or variant_id)}·第{generation}代",
+                label=f"{base_label}·第{generation}代",
                 lookback=int(strategy.get("lookback_days") or 20),
                 entry_return_pct=entry_return_pct,
                 max_bias_pct=max_bias_pct,
