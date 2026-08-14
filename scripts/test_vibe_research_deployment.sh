@@ -37,6 +37,12 @@ for script in \
 done
 echo "PASS release identity and publish checks"
 
+grep -Fq 'vite preview --configLoader runner' "${PROJECT_ROOT}/frontend/package.json" || {
+    echo "FAIL frontend preview must not write Vite config bundles into immutable releases"
+    exit 1
+}
+echo "PASS immutable frontend preview config loader"
+
 rg -q 'releases|current|rollback|--apply' \
     "${PROJECT_ROOT}/scripts/check_runtime_storage.py"
 echo "PASS runtime storage cleanup guard"
