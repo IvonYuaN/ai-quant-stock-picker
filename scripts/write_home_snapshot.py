@@ -1397,6 +1397,31 @@ def _snapshot_market_context(
     )
 
 
+def _with_news_source_coverage(
+    context: HomeSnapshotMarketContext,
+    report: CatalystReport,
+) -> HomeSnapshotMarketContext:
+    """Expose source coverage when strict same-day filtering yields no event."""
+    coverage = tuple(
+        f"来源覆盖: {'国内' if item.region == 'domestic' else '国际'} "
+        f"{item.successful_sources}/{item.source_count} 路 · {item.row_count} 条原始消息 · {item.freshness}"
+        for item in report.region_statuses
+        if item.source_count
+    )
+    filtering = (
+        f"时效筛选: 原始 {report.raw_news_count} 条"
+        f" · 已排除过期 {report.stale_news_count} 条"
+        if report.raw_news_count or report.stale_news_count
+        else ""
+    )
+    return replace(
+        context,
+        summary_lines=tuple(
+            dict.fromkeys((*coverage, filtering, *context.summary_lines))
+        )[:5],
+    )
+
+
 def _empty_snapshot_market_context(status: str) -> HomeSnapshotMarketContext:
     clean_status = status.strip() or "未产出"
     return HomeSnapshotMarketContext(
@@ -2508,6 +2533,7 @@ def build_home_snapshot(
         artifact,
         status_override=(message_status if not artifact.catalyst_events else ""),
     )
+    market_context = _with_news_source_coverage(market_context, catalyst_report)
     messages = _append_cross_market_messages(messages, artifact)
     recommendation_gate = _recommendation_gate(
         provider,
