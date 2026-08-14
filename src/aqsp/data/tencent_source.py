@@ -265,6 +265,7 @@ class TencentSource(DataSource):
                 continue
             received_at = now_shanghai().isoformat()
             quotes[symbol] = {
+                "name": str(parts[1] or "").strip(),
                 "price": price,
                 "bid1": bid1,
                 "ask1": ask1,

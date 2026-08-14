@@ -45,6 +45,22 @@ def _fresh_frame(day: str) -> pd.DataFrame:
     )
 
 
+def test_load_realtime_symbol_name_map_keeps_vendor_names(monkeypatch) -> None:
+    import aqsp.cli as cli_mod
+
+    source = SimpleNamespace(
+        fetch_realtime_quote=lambda symbols: {
+            symbols[0]: {"name": "威迈斯"},
+            symbols[1]: {"name": symbols[1]},
+        }
+    )
+    monkeypatch.setattr(cli_mod, "_get_source", lambda _name: source)
+
+    assert cli_mod._load_realtime_symbol_name_map(
+        ["688612", "688618"], "tencent"
+    ) == {"688612": "威迈斯"}
+
+
 def test_intraday_debate_coordinator_requires_second_round() -> None:
     import aqsp.cli as cli_mod
 
