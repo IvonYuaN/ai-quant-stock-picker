@@ -487,6 +487,7 @@ def test_debate_coordinator_records_real_second_round_when_no_opposing_stance() 
     result = coordinator.run_debate(
         pick,
         pd.DataFrame({"close": [100.0, 101.0]}),
+        market_context_lines=("消息: 测试来源确认宁德时代供应链订单",),
     )
 
     assert len(result.rounds) == 2
@@ -510,7 +511,74 @@ def test_debate_coordinator_records_real_second_round_when_no_opposing_stance() 
         candidate=pick,
         expected_roles=roles,
     )
-    assert audit.passed
+    assert not audit.passed
+    assert audit.real_opposition_count == 0
+    assert "missing_real_opposition" in audit.issues
+
+
+def test_debate_quality_rejects_fixed_stance_template_as_real_opposition() -> None:
+    roles = (AgentRole.BULL, AgentRole.BEAR)
+    result = DebateResult(
+        debate_id="template-opposition",
+        symbol="300750",
+        name="宁德时代",
+        original_score=72.0,
+        deterministic_score=72.0,
+        related_signal_date="2026-06-30",
+        task_id="intraday",
+        rating="watch",
+        rounds=[
+            DebateRound(
+                round_num=1,
+                opinions=[
+                    AgentOpinion(
+                        "bull-1", AgentRole.BULL, "bullish", 0.6, ["放量突破"]
+                    ),
+                    AgentOpinion(
+                        "bear-1", AgentRole.BEAR, "bearish", 0.6, ["回落风险"]
+                    ),
+                ],
+            ),
+            DebateRound(
+                round_num=2,
+                opinions=[
+                    AgentOpinion(
+                        "bull-1",
+                        AgentRole.BULL,
+                        "bullish",
+                        0.6,
+                        ["放量突破"],
+                        peer_reviewed_roles=["bear"],
+                        rebuttal_records=[
+                            RebuttalRecord(
+                                challenged_role="bear",
+                                challenged_claim="回落风险",
+                                rebuttal_reason="当前bullish立场与该主张方向相反；若该主张成立，当前方向假设将失效",
+                                challenged_stance="bearish",
+                                opposing_stance="bullish",
+                            )
+                        ],
+                    ),
+                    AgentOpinion(
+                        "bear-1", AgentRole.BEAR, "bearish", 0.6, ["回落风险"]
+                    ),
+                ],
+            ),
+        ],
+        final_consensus="split",
+        final_vote={AgentRole.BULL: "bullish", AgentRole.BEAR: "bearish"},
+        support_points=("放量突破",),
+        opposition_points=("回落风险",),
+        risk_warnings=["失效条件: 跌破关键支撑"],
+        next_trigger="确认量价承接",
+        falsifiable_conditions=("失效条件: 跌破关键支撑",),
+    )
+
+    audit = audit_debate_quality(result, expected_roles=roles)
+
+    assert not audit.passed
+    assert audit.real_opposition_count == 0
+    assert "missing_real_opposition" in audit.issues
 
 
 def test_debate_agents_do_not_claim_unprovided_flow_or_policy_evidence() -> None:
@@ -538,19 +606,60 @@ def test_debate_result_to_dict_persists_process_and_advisory_boundary() -> None:
         enable_llm=False,
         max_rounds=2,
         roles=(AgentRole.BULL, AgentRole.RISK_CONTROL, AgentRole.CROSS_MARKET),
-    ).run_debate(pick, pd.DataFrame({"close": [100.0, 101.0]}))
+    ).run_debate(
+        pick,
+        pd.DataFrame({"close": [100.0, 101.0]}),
+        market_context_lines=("消息: 测试来源确认宁德时代供应链订单",),
+    )
 
     payload = result.to_dict()
 
-    assert payload["process_recorded"] is True
+    assert payload["process_recorded"] is False
     assert payload["debate_rounds_completed"] == 2
     assert payload["conclusion_recorded"] is True
     assert payload["adjusted_score_is_advisory"] is True
     assert payload["deterministic_score"] == pick.score
     assert payload["viewpoint_coverage"]["cross_market"] is True
     assert payload["discussion_agent_count"] == 3
-    assert payload["rebuttal_count"] >= 1
-    assert payload["real_opposition_count"] >= 1
+    assert payload["rebuttal_count"] == 0
+    assert payload["real_opposition_count"] == 0
+
+
+def test_debate_coordinator_blocks_discussion_without_sourced_candidate_evidence() -> (
+    None
+):
+    pick = _make_pick()
+
+    coordinator = AShareDebateCoordinator(
+        enable_llm=False,
+        roles=(AgentRole.BULL, AgentRole.BEAR),
+    )
+    coordinator.require_sourced_evidence = True
+    result = coordinator.run_debate(pick, pd.DataFrame({"close": [100.0, 101.0]}))
+
+    assert result.rounds == []
+    assert result.runtime_status == "blocked"
+    assert "未启动" in result.failure
+
+
+def test_debate_coordinator_starts_strict_discussion_with_sourced_context() -> None:
+    pick = _make_pick(
+        metrics={
+            "news_catalyst_title": "宁德时代披露供应链合作进展",
+            "news_catalyst_source": "交易所公告",
+            "news_catalyst_published_at": "2026-06-30T09:30:00+08:00",
+        }
+    )
+    coordinator = AShareDebateCoordinator(
+        enable_llm=False,
+        roles=(AgentRole.BULL, AgentRole.BEAR),
+    )
+    coordinator.require_sourced_evidence = True
+
+    result = coordinator.run_debate(pick, pd.DataFrame({"close": [100.0, 101.0]}))
+
+    assert len(result.rounds) == 2
+    assert result.real_message_evidence
 
 
 def test_debate_round_summary_changes_to_peer_review_when_second_round() -> None:
@@ -574,7 +683,9 @@ def test_debate_round_summary_changes_to_peer_review_when_second_round() -> None
 
 def test_debate_tracker_reloads_history_when_task_scope_changes(tmp_path) -> None:
     storage_path = tmp_path / "performance.jsonl"
-    intraday = DebatePerformanceTracker(storage_path=str(storage_path), task_id="intraday")
+    intraday = DebatePerformanceTracker(
+        storage_path=str(storage_path), task_id="intraday"
+    )
     intraday.record_prediction(
         AgentRole.BULL,
         "bull-a",
@@ -683,7 +794,7 @@ def test_debate_audit_keeps_neutral_bear_role_out_of_real_opposition_count() -> 
     )
 
     assert not audit.passed
-    assert audit.rebuttal_count >= 1
+    assert audit.rebuttal_count == 0
     assert audit.real_opposition_recorded is False
     assert audit.real_opposition_count == 0
     assert "missing_real_opposition" in audit.issues

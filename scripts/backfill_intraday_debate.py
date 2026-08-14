@@ -741,6 +741,8 @@ def _run_candidate_debate(
         )
     )
     frame, data_context = _debate_frame(pick)
+    if hasattr(active_coordinator, "require_sourced_evidence"):
+        active_coordinator.require_sourced_evidence = True
     # Backfill is a committee audit, not a single-agent annotation.  The
     # coordinator also enforces this minimum, so keep the persisted contract
     # consistent even when runtime configuration asks for one round.
@@ -760,7 +762,11 @@ def _run_candidate_debate(
     rounds = payload.get("rounds")
     if not isinstance(rounds, list):
         rounds = []
-    if requested_rounds >= 2 and len(rounds) < 2:
+    if (
+        requested_rounds >= 2
+        and len(rounds) < 2
+        and not str(result.failure or "").startswith("讨论未启动:")
+    ):
         raise ValueError(
             "debate runtime requires a second round, but coordinator returned fewer than 2 rounds"
         )
@@ -843,6 +849,12 @@ def _debate_payload_quality_failure(
         if audit.issues:
             return f"debate quality issues: {'、'.join(audit.issues)}"[:500]
     return ""
+
+
+def _is_non_retryable_debate_failure(error: str) -> bool:
+    """Quality failures need new evidence, so retrying the same input is wasteful."""
+    normalized = str(error).lower()
+    return "debate quality issues:" in normalized or "讨论未启动:" in normalized
 
 
 def run_backfill(
@@ -1132,7 +1144,9 @@ def run_backfill(
                     break
                 except Exception as exc:
                     error = f"{type(exc).__name__}: {exc}"[:500]
-                    if attempt < max_attempts:
+                    if attempt < max_attempts and not _is_non_retryable_debate_failure(
+                        error
+                    ):
                         _update_candidate_state(
                             state,
                             status=CANDIDATE_PENDING,
@@ -1160,7 +1174,7 @@ def run_backfill(
                         state,
                         status=CANDIDATE_FAILED,
                         error=error,
-                        retryable=True,
+                        retryable=not _is_non_retryable_debate_failure(error),
                     )
                     failed_candidates.append(
                         {
@@ -1168,7 +1182,9 @@ def run_backfill(
                             "name": pick.name,
                             "candidate_fingerprint": state["candidate_fingerprint"],
                             "attempts": str(attempt),
-                            "retryable": "true",
+                            "retryable": str(
+                                not _is_non_retryable_debate_failure(error)
+                            ).lower(),
                             "error": error,
                         }
                     )

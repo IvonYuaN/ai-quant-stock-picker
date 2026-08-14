@@ -207,6 +207,10 @@ def test_debate_quality_gate_rejects_failure_and_any_quality_issue() -> None:
         == "debate advisory boundary is not valid"
     )
     assert backfill_intraday_debate._debate_payload_quality_failure({}) == ""
+    assert backfill_intraday_debate._is_non_retryable_debate_failure(
+        "debate quality issues: missing_real_opposition"
+    )
+    assert not backfill_intraday_debate._is_non_retryable_debate_failure("TimeoutError")
 
 
 def test_debate_quality_gate_rejects_neutral_only_opposition_payload(

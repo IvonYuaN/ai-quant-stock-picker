@@ -238,11 +238,7 @@ def audit_debate_quality(
     real_opposition_count = _real_opposition_count(rounds)
     # Count final positions only. Counting every round made a two-round
     # debate look like two independent votes per role.
-    final_opinions = tuple(
-        _field(rounds[-1], "opinions", ()) or ()
-        if rounds
-        else ()
-    )
+    final_opinions = tuple(_field(rounds[-1], "opinions", ()) or () if rounds else ())
     stance_counts = tuple(
         (
             stance,
@@ -259,7 +255,9 @@ def audit_debate_quality(
             bucket,
             bool(
                 _substantive_values(
-                    raw_buckets.get(bucket, ()) if isinstance(raw_buckets, Mapping) else ()
+                    raw_buckets.get(bucket, ())
+                    if isinstance(raw_buckets, Mapping)
+                    else ()
                 )
             ),
         )
@@ -436,6 +434,14 @@ _NON_EVIDENCE_MARKERS = (
     "未触发直接反向立场",
 )
 
+_TEMPLATE_REBUTTAL_MARKERS = (
+    "当前bullish立场与该主张方向相反",
+    "当前bearish立场与该主张方向相反",
+    "若该主张成立，当前方向假设将失效",
+    "当前维持中性；该主张仍缺少风险条件的确认",
+    "候选专属证据",
+)
+
 
 def _is_placeholder_text(value: Any) -> bool:
     text = _clean_text(value)
@@ -592,11 +598,15 @@ def _round_has_valid_opinions(round_data: Any) -> bool:
 
 
 def _rebuttal_record_is_substantive(record: Any) -> bool:
-    """Require both sides of the relation; a placeholder is not evidence."""
+    """Require a candidate-specific challenge instead of a stance template."""
+    challenged_claim = _clean_text(_field(record, "challenged_claim", ""))
+    rebuttal_reason = _clean_text(_field(record, "rebuttal_reason", ""))
+    combined = f"{challenged_claim} {rebuttal_reason}"
     return bool(
-        _has_substantive_text(_field(record, "challenged_claim", ""))
-        and _has_substantive_text(_field(record, "rebuttal_reason", ""))
+        _has_substantive_text(challenged_claim)
+        and _has_substantive_text(rebuttal_reason)
         and _role_value(_field(record, "challenged_role", ""))
+        and not any(marker in combined for marker in _TEMPLATE_REBUTTAL_MARKERS)
     )
 
 

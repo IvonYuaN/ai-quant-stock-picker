@@ -712,19 +712,22 @@ class AShareDebateAgent:
             # A populated short-term evidence set gives the bear role a real
             # falsifiable counter-thesis. Missing metrics remain neutral rather
             # than manufacturing an opposition vote.
-            return "bearish" if pick.score < 50 or any(
-                value is not None for value in (ret5, ret20, bias20, rsi12)
-            ) else "neutral"
+            return (
+                "bearish"
+                if pick.score < 50
+                or any(value is not None for value in (ret5, ret20, bias20, rsi12))
+                else "neutral"
+            )
         elif self.role == AgentRole.RISK_CONTROL:
             # 风控更保守
             if _is_st_risk_pick(pick) or _pick_actionable_risk_items(pick):
                 return "bearish"
             if invalidation_signals or pressure_targets or conflict_count > 0:
                 return "bearish"
-            if (rsi12 is not None and rsi12 >= 80.0) or (
-                bias20 is not None and bias20 >= 8.0
-            ) or (
-                ret20 is not None and ret20 <= -2.0
+            if (
+                (rsi12 is not None and rsi12 >= 80.0)
+                or (bias20 is not None and bias20 >= 8.0)
+                or (ret20 is not None and ret20 <= -2.0)
             ):
                 return "bearish"
             return "bearish" if pick.score < 60 else "neutral"
@@ -903,7 +906,10 @@ class AShareDebateAgent:
         market_context_lines: tuple[str, ...] = (),
     ) -> list[str]:
         """构建论据"""
-        args = [self._candidate_signature(pick)]
+        # Candidate facts belong in the model context, not in every role's
+        # rendered argument. Repeating one shared signature made unrelated
+        # roles appear to have reached the same conclusion.
+        args: list[str] = []
         validation_signals = self._cross_market_metric_texts(
             pick,
             "cross_market_validation_signals",
@@ -1095,11 +1101,15 @@ class AShareDebateAgent:
     def _candidate_signature(pick: PickResult) -> str:
         """Keep each role anchored to the candidate's own evidence."""
         metrics = pick.metrics or {}
-        sector = str(metrics.get("sector") or metrics.get("industry") or "行业未记录").strip()
+        sector = str(
+            metrics.get("sector") or metrics.get("industry") or "行业未记录"
+        ).strip()
         technical = metrics.get("technical_evidence") or ()
-        technical_text = "、".join(str(item).strip() for item in technical if str(item).strip())
+        technical_text = "、".join(
+            str(item).strip() for item in technical if str(item).strip()
+        )
         return (
-            f"候选专属证据: {pick.symbol} {pick.name or '名称未记录'}；"
+            f"标的: {pick.symbol} {pick.name or '名称未记录'}；"
             f"行业={sector}；ret5={metrics.get('ret5_pct', '—')}%；"
             f"ret20={metrics.get('ret20_pct', '—')}%；量比={metrics.get('volume_ratio', '—')}；"
             f"技术={technical_text[:100] or '未记录'}"
@@ -1720,6 +1730,7 @@ class AShareDebateCoordinator:
         self.heartbeat_interval_seconds = max(0.05, float(heartbeat_interval_seconds))
         self._deadline_monotonic: float | None = None
         self._result: DebateResult | None = None
+        self.require_sourced_evidence = False
         self.roles = DEFAULT_AGENT_ROLE_ORDER if roles is None else tuple(roles)
         self.role_runtime = {item.role: item for item in (role_runtime or ())}
         # One round cannot contain a peer response, so it is not a debate.
@@ -1813,6 +1824,24 @@ class AShareDebateCoordinator:
             pick,
             result.market_context_lines,
         )
+        if (
+            self.require_sourced_evidence
+            and not self._has_startable_discussion_evidence(result, pick, df)
+        ):
+            result.runtime_status = "blocked"
+            result.runtime_blocker = "缺少带来源的个股级外部证据，未启动复合讨论"
+            result.recommended_adjustment = "keep"
+            result.adjustment_weight = 0.0
+            result.adjusted_score = result.original_score
+            result.deterministic_score_unchanged = True
+            result.primary_risk_gate = result.runtime_blocker
+            result.research_verdict = (
+                "结论待验证：当前仅有行情/策略输入，未发布复合讨论。"
+            )
+            result.next_trigger = "补齐带来源的个股事件、公告或传导证据后重新复核。"
+            quality = _audit_result_quality(result)
+            result.failure = "讨论未启动: " + "、".join(quality.issues)
+            return result
         result.role_selection_summary = summarize_context_agent_roles(
             pick,
             selected_roles=tuple(agent.role for agent in self.agents),
@@ -1931,6 +1960,24 @@ class AShareDebateCoordinator:
         return result
 
     @staticmethod
+    def _has_startable_discussion_evidence(
+        result: DebateResult,
+        pick: PickResult,
+        df: pd.DataFrame,
+    ) -> bool:
+        """Require sourced context plus a distinct candidate technical domain."""
+        metrics = pick.metrics or {}
+        has_sourced_context = bool(
+            result.real_message_evidence or result.cross_market_evidence
+        )
+        has_technical_context = bool(
+            pick.reasons
+            or metrics.get("technical_evidence")
+            or (not df.empty and "close" in df.columns and len(df.index) >= 2)
+        )
+        return has_sourced_context and has_technical_context
+
+    @staticmethod
     def _extract_evidence_provenance(
         pick: PickResult,
         market_context_lines: tuple[str, ...],
@@ -1942,7 +1989,7 @@ class AShareDebateCoordinator:
         title = str(metrics.get("news_catalyst_title", "") or "").strip()
         source = str(metrics.get("news_catalyst_source", "") or "").strip()
         published_at = str(metrics.get("news_catalyst_published_at", "") or "").strip()
-        if lead or title:
+        if (lead or title) and source:
             message = lead or title
             if not _is_non_evidence_text(message):
                 metadata = " / ".join(
@@ -2427,7 +2474,11 @@ class AShareDebateCoordinator:
         def add(bucket: str, values: list[str]) -> None:
             for raw in values:
                 text = str(raw).strip()
-                if text and not _is_non_evidence_text(text) and text not in buckets[bucket]:
+                if (
+                    text
+                    and not _is_non_evidence_text(text)
+                    and text not in buckets[bucket]
+                ):
                     buckets[bucket] = (*buckets[bucket], text)
 
         for opinion in final_opinions:
@@ -2477,9 +2528,9 @@ class AShareDebateCoordinator:
             bucket: tuple(points[:4]) for bucket, points in buckets.items()
         }
         result.disagreement_points = tuple(dict.fromkeys(disagreement))[:4]
-        result.uncertainty_points = tuple(dict.fromkeys(
-            item for item in uncertainty if str(item).strip()
-        ))[:4]
+        result.uncertainty_points = tuple(
+            dict.fromkeys(item for item in uncertainty if str(item).strip())
+        )[:4]
 
     def _build_support_points(
         self,
