@@ -334,7 +334,11 @@ class TencentSource(DataSource):
                     else f"{_get_market_prefix(symbol)}{symbol}"
                 )
                 params = {
-                    "param": f"{market_symbol},day,{start.strftime('%Y-%m-%d')},{end.strftime('%Y-%m-%d')},640",
+                    "param": (
+                        f"{market_symbol},day,{start.strftime('%Y-%m-%d')},"
+                        f"{end.strftime('%Y-%m-%d')},640"
+                        f"{',' if market_symbol.startswith('bj') else ''}"
+                    ),
                 }
                 response = self._session.get(
                     TENCENT_KLINE_URL, params=params, timeout=10
