@@ -531,6 +531,7 @@ def _snapshot_debates(
     debates = tuple(getattr(payload, "debates", ()) or ()) + runtime_debates
     selected: list[HomeSnapshotDebate] = []
     selected_symbols: set[str] = set()
+    selected_content_keys: set[str] = set()
     for debate in debates:
         if not _debate_is_complete(debate):
             continue
@@ -566,49 +567,51 @@ def _snapshot_debates(
         fallback_rounds = _distinct_research_lines(
             tuple(getattr(debate, "round_summaries", ()) or ()), limit=3
         )
-        selected.append(
-            HomeSnapshotDebate(
-                symbol=symbol,
-                display_name=_text(getattr(debate, "display_name", "")),
-                conclusion=_first_text(
-                    getattr(debate, "research_verdict", ""),
-                    getattr(debate, "consensus", ""),
-                ),
-                primary_risk_gate=_text(getattr(debate, "primary_risk_gate", "")),
-                next_trigger=_text(getattr(debate, "next_trigger", "")),
-                active_roles=tuple(
-                    _first_text(
-                        getattr(view, "role_label", ""),
-                        getattr(view, "role_id", ""),
-                    )
-                    for view in (getattr(debate, "agent_views", ()) or ())
-                    if _first_text(
-                        getattr(view, "role_label", ""),
-                        getattr(view, "role_id", ""),
-                    )
-                ),
-                round_count=int(getattr(debate, "round_count", 0) or 0),
-                bull_count=int(getattr(debate, "bull_count", 0) or 0),
-                bear_count=int(getattr(debate, "bear_count", 0) or 0),
-                neutral_count=int(getattr(debate, "neutral_count", 0) or 0),
-                process_summary=(
-                    f"{getattr(debate, 'round_count', 0)} 轮讨论 · "
-                    f"参与角色 {len(getattr(debate, 'agent_views', ()) or ())}"
-                    if getattr(debate, "round_count", 0)
-                    else ""
-                ),
-                round_summaries=structured_rounds or fallback_rounds,
-                agent_views=_snapshot_agent_views(
-                    getattr(debate, "agent_views", ()) or ()
-                ),
-                viewpoint_buckets=viewpoint_buckets,
-                disagreement_points=disagreement_points,
-                uncertainty_points=tuple(
-                    getattr(debate, "uncertainty_points", ()) or ()
-                )[:4],
-                review_kind="multi_agent",
-            )
+        snapshot_debate = HomeSnapshotDebate(
+            symbol=symbol,
+            display_name=_text(getattr(debate, "display_name", "")),
+            conclusion=_first_text(
+                getattr(debate, "research_verdict", ""),
+                getattr(debate, "consensus", ""),
+            ),
+            primary_risk_gate=_text(getattr(debate, "primary_risk_gate", "")),
+            next_trigger=_text(getattr(debate, "next_trigger", "")),
+            active_roles=tuple(
+                _first_text(
+                    getattr(view, "role_label", ""),
+                    getattr(view, "role_id", ""),
+                )
+                for view in (getattr(debate, "agent_views", ()) or ())
+                if _first_text(
+                    getattr(view, "role_label", ""),
+                    getattr(view, "role_id", ""),
+                )
+            ),
+            round_count=int(getattr(debate, "round_count", 0) or 0),
+            bull_count=int(getattr(debate, "bull_count", 0) or 0),
+            bear_count=int(getattr(debate, "bear_count", 0) or 0),
+            neutral_count=int(getattr(debate, "neutral_count", 0) or 0),
+            process_summary=(
+                f"{getattr(debate, 'round_count', 0)} 轮讨论 · "
+                f"参与角色 {len(getattr(debate, 'agent_views', ()) or ())}"
+                if getattr(debate, "round_count", 0)
+                else ""
+            ),
+            round_summaries=structured_rounds or fallback_rounds,
+            agent_views=_snapshot_agent_views(getattr(debate, "agent_views", ()) or ()),
+            viewpoint_buckets=viewpoint_buckets,
+            disagreement_points=disagreement_points,
+            uncertainty_points=tuple(getattr(debate, "uncertainty_points", ()) or ())[
+                :4
+            ],
+            review_kind="multi_agent",
         )
+        content_key = _debate_content_key(snapshot_debate)
+        if content_key and content_key in selected_content_keys:
+            continue
+        selected.append(snapshot_debate)
+        if content_key:
+            selected_content_keys.add(content_key)
         selected_symbols.add(symbol)
         if len(selected) == MAX_HOME_SNAPSHOT_DEBATES:
             break
@@ -617,6 +620,28 @@ def _snapshot_debates(
 
 def _research_text_key(value: object) -> str:
     return re.sub(r"\s+", "", _text(value)).lower()
+
+
+def _debate_content_key(debate: HomeSnapshotDebate) -> str:
+    """Identify copied cross-symbol conclusions while ignoring workflow counters."""
+    values = (
+        debate.conclusion,
+        debate.primary_risk_gate,
+        debate.next_trigger,
+        *debate.disagreement_points,
+        *debate.uncertainty_points,
+        *(point for points in debate.viewpoint_buckets.values() for point in points),
+        *(
+            point
+            for view in debate.agent_views
+            for point in (*view.arguments, *view.opportunities, *view.risks)
+        ),
+    )
+    text = "|".join(_text(value) for value in values if _text(value))
+    for marker in (debate.symbol, debate.display_name):
+        if marker:
+            text = text.replace(marker, "")
+    return _research_text_key(text)
 
 
 def _clean_legacy_debate_text(value: object) -> str:

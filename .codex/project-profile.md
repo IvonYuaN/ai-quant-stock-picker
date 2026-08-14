@@ -10,9 +10,9 @@ Python 3.10+，pandas/numpy/scipy，DataSource 抽象，多源行情，jsonl led
 
 ## Default Squad
 
-Primary: Short-Term Quant Decision Systems Engineer.
+Primary: Frontend Developer.
 
-Support: Real-Time Data Reliability Engineer, Market Intelligence/News Fusion Engineer, Multi-Agent Decision Systems Engineer, Paper-Trading/Execution Engineer, Code Reviewer.
+Support: UX Architect, Reality Checker, Real-Time Data Reliability Engineer.
 
 ## Current Goal
 
@@ -42,6 +42,8 @@ Support: Real-Time Data Reliability Engineer, Market Intelligence/News Fusion En
 如果再次出现“修了很多细节但上线阻塞还在”的情况，优先检查：1) 全市场 walkforward formal/diagnostic 报告链是否完整；2) gate sidecar 是否含有效 `grid_diagnostics`；3) 服务器定时入口是否仍有高频通知或样本口径漂移；不要回到文案层空转。
 生产全市场 walk-forward 不得在低内存小服务器上白天直接启动；2026-07-09 实测会拖死 SSH/公网看板。默认依赖 `scripts/run_production_walkforward_gate.py` 的低内存 guard，需更大机器或显式 `AQSP_ALLOW_LOW_MEMORY_WALKFORWARD=1` 才能运行正式子进程。
 
+生产前端验收禁止用 health、raw API 或 bundle 字符串代替可视结果。总览第一屏必须逐候选联动确定性评分、消息证据、Agent 讨论、历史变体和复核状态；缺失证据按候选阻断，不得用全局空态或模板结论掩盖。每次前端交付必须运行构建、相关测试、secret 扫描，并用 AQSP 独立无头浏览器实际检查桌面和移动截图。
+
 ## Squad History
 
 - 2026-05-29: Rerouted from prototype stock picker to local-first paper-trading system after user clarified the real objective and requested multi-agent execution.
@@ -51,3 +53,4 @@ Support: Real-Time Data Reliability Engineer, Market Intelligence/News Fusion En
 - 2026-06-30: Rerouted to short-term realtime decision support. Active priorities are realtime freshness, historical-vs-runtime boundary enforcement, domestic/global market intelligence fusion, and multi-agent discussion as an advisory layer.
 - 2026-07-09: Production walk-forward follow-up made visible on homepage; low-memory server launch was found unsafe and should be blocked by guardrail rather than repeated manually.
 - 2026-07-10: Intraday route hardened after stale/slow homepage incident. Realtime candidate artifacts must be written as soon as candidates are screened; full diagnostics, portfolio discussion, and multi-agent research may enrich later but must not block the live dashboard.
+- 2026-08-14: Repeated frontend regressions triggered a high-agency reroute. Frontend Developer leads, with UX Architect and Reality Checker enforcing candidate-level research-chain rendering and screenshot-based production acceptance.

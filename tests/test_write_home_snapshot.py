@@ -924,6 +924,63 @@ def test_snapshot_debates_hides_shared_context_without_candidate_disagreement() 
     assert snapshots == ()
 
 
+def test_snapshot_debates_blocks_copied_content_across_symbols() -> None:
+    base = SimpleNamespace(
+        symbol="600001",
+        display_name="甲公司",
+        research_verdict="保持观察，等待量价确认",
+        consensus="",
+        primary_risk_gate="承接不足",
+        next_trigger="放量突破",
+        process_recorded=True,
+        conclusion_recorded=True,
+        evidence_sufficient=True,
+        round_count=2,
+        bull_count=1,
+        bear_count=1,
+        neutral_count=1,
+        agent_views=(
+            SimpleNamespace(
+                role_id="bull",
+                key_argument="趋势仍在",
+                key_opportunity="放量",
+                key_risk="",
+            ),
+            SimpleNamespace(
+                role_id="bear",
+                key_argument="承接不足",
+                key_opportunity="",
+                key_risk="冲高回落",
+            ),
+            SimpleNamespace(
+                role_id="risk",
+                key_argument="等待确认",
+                key_opportunity="",
+                key_risk="失效风险",
+            ),
+        ),
+        viewpoint_buckets={
+            "technical": ("趋势仍在",),
+            "risk_counterevidence": ("承接不足",),
+        },
+        disagreement_points=("是否已有有效承接",),
+        uncertainty_points=("量能待确认",),
+    )
+    copied = SimpleNamespace(
+        **{**vars(base), "symbol": "600002", "display_name": "乙公司"}
+    )
+
+    snapshots = write_home_snapshot._snapshot_debates(
+        SimpleNamespace(debates=(base, copied)),
+        tuple(
+            write_home_snapshot._snapshot_candidate(_candidate(symbol, score))
+            for symbol, score in (("600001", 80.0), ("600002", 79.0))
+        ),
+    )
+
+    assert [item.symbol for item in snapshots] == ["600001"]
+
+
 def test_recommendation_gate_keeps_quote_candidates_when_news_refresh_fails() -> None:
     provider = _Provider()
     runtime = provider.runtime_overview("2026-07-10")

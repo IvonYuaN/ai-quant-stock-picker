@@ -83,4 +83,5 @@ export const researchViewContractChecks = {
   differentResearchTextDoesNotMatch: !sameResearchText("标题", "摘要"),
   dateIndexCompletesSnapshotDates: mergeAvailableResearchDates(["2026-07-14"], ["2026-07-14", "2026-07-11"]).join("|") === "2026-07-14|2026-07-11",
   legacyMessageUrlRemainsVisible: messageSourceUrl({ url: "https://example.test/news" }) === "https://example.test/news",
+  activePhaseBecomesConclusion: snapshotConclusion({ ...emptySnapshot, summaries: ["盘前：未产出。", "盘中：判断：3 个对象通过筛选。", "盘后：复用盘中结果。"] }) === "盘中：判断：3 个对象通过筛选。",
 };

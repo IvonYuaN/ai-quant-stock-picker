@@ -14,19 +14,12 @@ export interface AqspSnapshotState {
 
 const AqspWorkspaceContext = createContext<AqspSnapshotState | null>(null);
 
-function readSelectedDate(): string {
-  try {
-    return localStorage.getItem("aqsp-selected-date") || "";
-  } catch {
-    return "";
-  }
-}
-
 export function AqspWorkspaceProvider({ children }: { children: ReactNode }) {
   const [data, setData] = useState<AqspSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [selectedDate, setSelectedDate] = useState(readSelectedDate);
+  // Every new page session starts from the live endpoint. Historical dates are explicit in-session choices.
+  const [selectedDate, setSelectedDate] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
   const activeRequest = useRef<AbortController | null>(null);
   const requestSequence = useRef(0);
@@ -49,11 +42,6 @@ export function AqspWorkspaceProvider({ children }: { children: ReactNode }) {
         setData(snapshot);
         if (!selectedDate && snapshot.selected_date) {
           setSelectedDate(snapshot.selected_date);
-          try {
-            localStorage.setItem("aqsp-selected-date", snapshot.selected_date);
-          } catch {
-            // Storage is optional; the in-memory selection remains usable.
-          }
         }
       })
       .catch((reason: unknown) => {
@@ -62,11 +50,6 @@ export function AqspWorkspaceProvider({ children }: { children: ReactNode }) {
         // Recover to the live snapshot instead of leaving the whole workspace in a 404 state.
         if (reason instanceof ApiError && reason.status === 404 && selectedDate) {
           setSelectedDate("");
-          try {
-            localStorage.removeItem("aqsp-selected-date");
-          } catch {
-            // Storage is optional; the next request still uses the live snapshot.
-          }
           return;
         }
         setError(reason instanceof ApiError ? reason.message : "研究快照加载失败");
@@ -97,11 +80,6 @@ export function AqspWorkspaceProvider({ children }: { children: ReactNode }) {
     selectDate: (date: string) => {
       if (date !== selectedDate) setData(null);
       setSelectedDate(date);
-      try {
-        localStorage.setItem("aqsp-selected-date", date);
-      } catch {
-        // Storage is optional; the in-memory selection remains usable.
-      }
     },
   }), [data, error, loading, selectedDate]);
 

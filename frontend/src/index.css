@@ -277,15 +277,18 @@
 @media (max-width: 767px) {
   .vr-shell { display: block; padding: 0.5rem; }
   .vr-sidebar, .vr-sidebar-collapsed { position: static; width: 100%; height: auto; max-height: none; }
+  .vr-brand { padding: 0.65rem 0.75rem; }
+  .vr-brand p, .vr-brand button { display: none; }
   .vr-sidebar-collapsed .vr-brand > div { flex-direction: row; justify-content: space-between; }
   .vr-sidebar-collapsed .vr-brand > div > button { margin-top: 0; }
-  .vr-sidebar-scroll { overflow: visible; padding: 0.65rem; }
-  .vr-sidebar-scroll nav { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.35rem; }
-  .vr-nav-item { min-width: 0; }
-  .vr-nav-item > span:last-child span:last-child { display: none; }
+  .vr-sidebar-scroll { display: flex; overflow-x: auto; padding: 0.4rem; }
+  .vr-sidebar-scroll nav { display: flex; flex: 1 0 auto; gap: 0.15rem; }
+  .vr-nav-item { min-width: 3.8rem; flex: 1; flex-direction: column; justify-content: center; gap: 0.2rem; min-height: 3.25rem; padding: 0.35rem; text-align: center; font-size: 0.66rem; }
+  .vr-nav-item > span:last-child span:first-child { justify-content: center; }
+  .vr-nav-item > span:last-child span:last-child, .vr-nav-item .font-mono { display: none; }
   .vr-sidebar-section { display: none; }
-  .vr-sidebar-footer { padding: 0.6rem 0.75rem; }
-  .vr-content { padding: 1.25rem 0.5rem 2rem; }
+  .vr-sidebar-footer { display: none; }
+  .vr-content { padding: 0.85rem 0.5rem 2rem; }
   .vr-content h1 { font-size: 1.55rem; }
   .vr-top-summary { position: static; margin: -1.25rem -0.5rem 0; padding: 1.25rem 0.5rem 0.65rem; }
   .vr-page-topline, .vr-conclusion-panel { display: block; }
@@ -300,9 +303,7 @@
   .vr-technical-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .vr-phase-grid { grid-template-columns: minmax(0, 1fr); }
   .vr-research-columns { grid-template-columns: minmax(0, 1fr); }
-  .vr-sidebar-scroll .vr-sidebar-section.mt-7 { display: block; margin-top: 0.85rem; padding: 0; }
-  .vr-sidebar-scroll .vr-sidebar-section.mt-7 > .mt-2 { display: flex; overflow-x: auto; gap: 0.4rem; padding-bottom: 0.15rem; }
-  .vr-sidebar-scroll .vr-sidebar-section.mt-7 .vr-date-item { min-width: 7.5rem; }
+  .vr-sidebar-scroll .vr-sidebar-section.mt-7 { display: none; }
 }
 
 /* AQSP 正式研究页：一个左侧入口只对应一个右侧模块。 */
@@ -358,6 +359,24 @@
   .aqsp-phase b { color: hsl(var(--foreground) / 0.88); font-size: 0.68rem; }
   .aqsp-phase span { overflow: hidden; color: hsl(var(--muted-foreground)); font-size: 0.6rem; text-overflow: ellipsis; white-space: nowrap; }
   .aqsp-phase small { display: block; overflow: hidden; margin-top: 0.25rem; color: hsl(var(--muted-foreground) / 0.75); font-size: 0.58rem; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+  .aqsp-source-coverage { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.65rem; margin-top: 0.65rem; border: 1px solid hsl(var(--border) / 0.62); border-radius: 0.4rem; padding: 0.5rem 0.6rem; color: hsl(var(--muted-foreground)); font-size: 0.62rem; }
+  .aqsp-source-coverage strong { color: hsl(var(--foreground) / 0.86); font-size: 0.65rem; }
+  .aqsp-source-coverage span { border-left: 1px solid hsl(var(--border) / 0.7); padding-left: 0.65rem; }
+  .aqsp-chain-table { margin-top: 0.7rem; overflow: hidden; border: 1px solid hsl(var(--border) / 0.72); border-radius: 0.45rem; }
+  .aqsp-chain-table-head, .aqsp-chain-row { display: grid; grid-template-columns: minmax(12rem, 1.35fr) repeat(4, minmax(9rem, 1fr)); }
+  .aqsp-chain-table-head { color: hsl(var(--muted-foreground)); background: hsl(var(--muted) / 0.45); font-size: 0.6rem; font-weight: 700; }
+  .aqsp-chain-table-head span, .aqsp-chain-row > div { min-width: 0; border-right: 1px solid hsl(var(--border) / 0.55); padding: 0.5rem 0.58rem; }
+  .aqsp-chain-table-head span:last-child, .aqsp-chain-row > div:last-child { border-right: 0; }
+  .aqsp-chain-row { border-top: 1px solid hsl(var(--border) / 0.55); background: hsl(var(--card) / 0.4); }
+  .aqsp-chain-row:hover { background: hsl(var(--muted) / 0.24); }
+  .aqsp-chain-row b { display: block; color: hsl(var(--foreground) / 0.88); font-size: 0.67rem; line-height: 1.35; }
+  .aqsp-chain-row p { margin-top: 0.22rem; color: hsl(var(--muted-foreground)); font-size: 0.6rem; line-height: 1.42; text-wrap: pretty; }
+  .aqsp-chain-candidate > div { display: flex; align-items: baseline; gap: 0.45rem; }
+  .aqsp-chain-candidate strong { min-width: 0; overflow: hidden; color: hsl(var(--foreground)); font-size: 0.76rem; text-overflow: ellipsis; white-space: nowrap; }
+  .aqsp-chain-candidate span { color: hsl(var(--muted-foreground)); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.6rem; }
+  .aqsp-chain-candidate > b { margin-top: 0.18rem; color: hsl(var(--primary)); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9rem; font-variant-numeric: tabular-nums; }
+  .aqsp-chain-row .aqsp-cell-ok { color: hsl(var(--success)); }
+  .aqsp-chain-row .aqsp-cell-blocked { color: hsl(var(--warning)); }
   .aqsp-gate, .aqsp-observation { display: flex; align-items: flex-start; gap: 0.5rem; margin-top: 0.75rem; border: 1px solid hsl(var(--border) / 0.65); border-radius: 0.45rem; padding: 0.6rem 0.7rem; font-size: 0.7rem; line-height: 1.45; }
   .aqsp-gate-ok { color: hsl(var(--success)); background: hsl(var(--success) / 0.055); }
   .aqsp-gate-warn, .aqsp-observation { color: hsl(var(--warning)); border-color: hsl(var(--warning) / 0.3); background: hsl(var(--warning) / 0.055); }
@@ -478,6 +497,14 @@
   .aqsp-phase-lane { grid-template-columns: minmax(0, 1fr); }
   .aqsp-chain-lane { grid-template-columns: minmax(0, 1fr); }
   .aqsp-chain-arrow { display: none; }
+  .aqsp-source-coverage { align-items: flex-start; flex-direction: column; }
+  .aqsp-source-coverage span { border-left: 0; padding-left: 0; }
+  .aqsp-chain-table { overflow: visible; border: 0; }
+  .aqsp-chain-table-head { display: none; }
+  .aqsp-chain-row { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 0.55rem; border: 1px solid hsl(var(--border) / 0.72); border-radius: 0.4rem; }
+  .aqsp-chain-row > div { border-right: 0; border-bottom: 1px solid hsl(var(--border) / 0.45); }
+  .aqsp-chain-row > div:first-child { grid-column: 1 / -1; }
+  .aqsp-chain-row > div:last-child { border-bottom: 0; }
 }
 
 @media (min-width: 768px) and (max-width: 1180px) {
