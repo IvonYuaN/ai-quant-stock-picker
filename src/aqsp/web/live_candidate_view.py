@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from typing import Any, Mapping, Sequence
 
 
-LIVE_CANDIDATE_LIMIT = 3
+LIVE_CANDIDATE_LIMIT = 5
 
 
 @dataclass(frozen=True)

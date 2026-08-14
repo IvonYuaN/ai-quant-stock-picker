@@ -33,6 +33,7 @@ from aqsp.strategy import rating_for_score
 from aqsp.data.source_readiness import source_supports_workload, workload_fit_for_source
 from aqsp.web.archive_safety import sanitize_research_lines
 from aqsp.web.live_candidate_view import (
+    LIVE_CANDIDATE_LIMIT,
     LiveArtifactMetadata,
     LiveCandidateView,
     build_live_candidate_view,
@@ -3671,7 +3672,7 @@ class DashboardDataProvider:
             # useful for explaining why the stale candidate is blocked.
             debates = self.prioritized_debate_summaries(
                 review_date,
-                limit=3,
+                limit=LIVE_CANDIDATE_LIMIT,
                 salient_only=False,
                 task_id=normalized_task,
                 symbols=candidate_symbols,
@@ -3679,7 +3680,7 @@ class DashboardDataProvider:
             debates = self._prioritize_debates_for_candidate_symbols(
                 debates,
                 candidate_symbols=candidate_symbols,
-                limit=3,
+                limit=LIVE_CANDIDATE_LIMIT,
             )
             if rows:
                 overview = self.date_overview(

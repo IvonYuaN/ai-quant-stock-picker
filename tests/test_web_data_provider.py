@@ -3596,7 +3596,7 @@ def test_dashboard_data_provider_home_digest_payload_uses_fast_home_context(
     assert payload.debates == ()
     assert payload.overview.task_count >= 1
     assert payload.paper_summary.signal_date == "2026-06-05"
-    assert seen == {"spotlight_limit": 3, "debate_limit": 3}
+    assert seen == {"spotlight_limit": 3, "debate_limit": 5}
 
 
 def test_dashboard_data_provider_same_day_rows_fast_home_accepts_latest_closing_review(
@@ -5988,11 +5988,12 @@ def test_live_candidate_view_dedupes_and_orders_actionable_watch_blocked() -> No
     )
 
     assert view.status == "fresh"
-    assert len(view.candidates) == 3
+    assert len(view.candidates) == 4
     assert [item.symbol for item in view.candidates] == [
         "000001",
         "000003",
         "000004",
+        "000002",
     ]
     assert view.candidates[0].score == 82.0
     assert view.candidates[0].rating == "buy_candidate"
