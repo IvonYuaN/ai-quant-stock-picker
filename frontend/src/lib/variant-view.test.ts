@@ -1,5 +1,5 @@
 import type { AqspVariant } from "@/types/aqsp";
-import { variantHoldingsLabel, variantMoney, variantPercent, variantStrategyText } from "./variant-view";
+import { variantDisplayName, variantHoldingsLabel, variantHoldingsSummary, variantMoney, variantPercent, variantStrategyLogic, variantStrategyParameters, variantStrategyText } from "./variant-view";
 
 const variantFixture = {
   variant_id: "trend_follow",
@@ -14,7 +14,7 @@ const variantFixture = {
   start_date: "2026-06-01",
   end_date: "2026-07-01",
   data_mode: "historical_raw_unadjusted",
-  strategy: '{"id":"trend_follow","mode":"momentum","lookback_days":20}',
+  strategy: '{"id":"trend_follow","mode":"momentum","hypothesis":"温和动量延续。","lookback_days":20,"entry_return_pct":1.5,"max_bias_pct":10,"max_positions":3,"position_weight":0.333333}',
   holdings: [],
   hard_rules: ["T+1"],
 } satisfies AqspVariant;
@@ -26,4 +26,8 @@ export const variantViewContractChecks = {
   missingHoldingsAreExplicit: variantHoldingsLabel(undefined) === "持仓字段未提供",
   missingCashDoesNotBecomeZero: variantMoney(undefined) === "未提供",
   positivePnlIsSigned: variantPercent(variantFixture.return_pct) === "+1.25%",
+  nameExplainsVariant: variantDisplayName(variantFixture) === "动量跟随 · 20 日 · 3 股组合",
+  logicIsReadable: variantStrategyLogic(variantFixture) === "温和动量延续。",
+  parametersAreReadable: variantStrategyParameters(variantFixture).includes("最大乖离 10.0%"),
+  holdingsSummaryIsCompact: variantHoldingsSummary(variantFixture) === "当前无持仓",
 };
