@@ -465,5 +465,5 @@ def test_run_with_timeout_raises_for_stalled_query() -> None:
 
 
 def test_adjustflag_for_price_mode_keeps_raw_unadjusted() -> None:
-    assert update_sqlite_daily._adjustflag_for_price_mode("raw") == "1"
+    assert update_sqlite_daily._adjustflag_for_price_mode("raw") == "3"
     assert update_sqlite_daily._adjustflag_for_price_mode("qfq") == "2"

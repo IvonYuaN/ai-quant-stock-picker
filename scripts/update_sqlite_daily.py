@@ -26,6 +26,7 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from aqsp.core.time import get_previous_trading_day, is_trading_day, today_shanghai
+from aqsp.data.sqlite_db_source import SqliteDbSource
 
 _QUERY_RETRY_LIMIT = 2
 _QUERY_RETRY_BASE_SLEEP_SECONDS = 0.2
@@ -42,6 +43,10 @@ class UpdateSummary:
     total_symbols: int
     raw_max_trade_date: date | None = None
     coverage_error: str | None = None
+    processed_symbols: int = 0
+    budget_exhausted: bool = False
+    already_current_symbols: int = 0
+    empty_response_symbols: int = 0
 
 
 def _parse_trade_date(raw: object) -> date | None:
@@ -86,6 +91,22 @@ def _normalize_requested_symbol(raw: str) -> str:
         if code in {"SH", "SZ"}:
             return f"{market}.{code}"
     return text
+
+
+def _requested_ts_codes(symbols: tuple[str, ...]) -> list[str]:
+    """Return explicit batch symbols in the database's canonical format."""
+    normalized: set[str] = set()
+    for item in symbols:
+        requested = _normalize_requested_symbol(item)
+        if not requested:
+            continue
+        if "." in requested:
+            normalized.add(requested)
+        elif requested.startswith("6"):
+            normalized.add(f"{requested}.SH")
+        elif requested.startswith(("0", "3")):
+            normalized.add(f"{requested}.SZ")
+    return sorted(normalized)
 
 
 def _bs_code(ts_code: str) -> str:
@@ -138,9 +159,13 @@ def _query_history_rows_with_retry(
     timeout_seconds: float,
     retry_limit: int = _QUERY_RETRY_LIMIT,
     retry_sleep_seconds: float = _QUERY_RETRY_BASE_SLEEP_SECONDS,
+    deadline: float | None = None,
 ) -> tuple[str, list[list[str]]]:
     attempts = max(1, retry_limit + 1)
     for attempt in range(1, attempts + 1):
+        remaining = None if deadline is None else deadline - time.monotonic()
+        if remaining is not None and remaining <= 0:
+            return "timeout", []
         try:
             error_code, rows = _query_history_rows(
                 bs=bs,
@@ -148,7 +173,11 @@ def _query_history_rows_with_retry(
                 fetch_start_day=fetch_start_day,
                 target_day=target_day,
                 price_mode=price_mode,
-                timeout_seconds=timeout_seconds,
+                timeout_seconds=(
+                    timeout_seconds
+                    if remaining is None
+                    else min(timeout_seconds, remaining)
+                ),
             )
         except Exception as exc:
             if not _exception_supports_retry(exc) or attempt >= attempts:
@@ -158,7 +187,11 @@ def _query_history_rows_with_retry(
             _logout_baostock_session(bs)
             _login_baostock_session(bs)
             if retry_sleep_seconds > 0:
-                time.sleep(retry_sleep_seconds * attempt)
+                delay = retry_sleep_seconds * attempt
+                if deadline is not None:
+                    delay = min(delay, max(0.0, deadline - time.monotonic()))
+                if delay > 0:
+                    time.sleep(delay)
             continue
         if error_code == "0":
             return error_code, rows
@@ -167,7 +200,11 @@ def _query_history_rows_with_retry(
         _logout_baostock_session(bs)
         _login_baostock_session(bs)
         if retry_sleep_seconds > 0:
-            time.sleep(retry_sleep_seconds * attempt)
+            delay = retry_sleep_seconds * attempt
+            if deadline is not None:
+                delay = min(delay, max(0.0, deadline - time.monotonic()))
+            if delay > 0:
+                time.sleep(delay)
     return "exception", []
 
 
@@ -312,7 +349,8 @@ def _latest_symbol_date(conn: sqlite3.Connection, ts_code: str) -> date | None:
 
 def _adjustflag_for_price_mode(price_mode: str) -> str:
     if price_mode == "raw":
-        return "1"
+        # BaoStock: 1=back-adjusted, 2=forward-adjusted, 3=unadjusted.
+        return "3"
     if price_mode == "qfq":
         return "2"
     raise ValueError(f"unsupported price_mode: {price_mode}")
@@ -384,21 +422,30 @@ def _insert_bar(conn: sqlite3.Connection, ts_code: str, row: list[str]) -> bool:
     return True
 
 
-def _count_target_day_symbols(conn: sqlite3.Connection, target_day: date) -> int:
+def _count_target_day_symbols(
+    conn: sqlite3.Connection,
+    target_day: date,
+    symbols: list[str],
+) -> int:
+    if not symbols:
+        return 0
+    placeholders = ",".join("?" for _ in symbols)
     row = conn.execute(
-        "SELECT COUNT(DISTINCT ts_code) FROM daily_qfq WHERE trade_date = ?",
-        (_to_compact(target_day),),
+        "SELECT COUNT(DISTINCT ts_code) FROM daily_qfq "
+        f"WHERE trade_date = ? AND ts_code IN ({placeholders})",
+        (_to_compact(target_day), *symbols),
     ).fetchone()
     return int(row[0] or 0) if row else 0
 
 
-def _raw_max_trade_date(conn: sqlite3.Connection) -> date | None:
+def _raw_max_trade_date(conn: sqlite3.Connection, symbols: list[str]) -> date | None:
+    if not symbols:
+        return None
+    placeholders = ",".join("?" for _ in symbols)
     row = conn.execute(
-        """
-        SELECT MAX(CAST(trade_date AS TEXT))
-        FROM daily_qfq
-        WHERE trade_date != 'SKIP'
-        """
+        "SELECT MAX(CAST(trade_date AS TEXT)) FROM daily_qfq "
+        f"WHERE trade_date != 'SKIP' AND ts_code IN ({placeholders})",
+        tuple(symbols),
     ).fetchone()
     return _parse_trade_date(row[0]) if row and row[0] else None
 
@@ -445,35 +492,60 @@ def update_sqlite_daily(
     fill_history_gaps: bool = False,
     price_mode: str = "qfq",
     query_timeout_seconds: float = 15.0,
+    offset: int = 0,
+    max_runtime_seconds: float = 0.0,
+    require_target_coverage: bool = True,
 ) -> UpdateSummary:
+    if (
+        db_path.exists()
+        and SqliteDbSource(db_path=db_path, cache=None).price_mode() == "invalid"
+    ):
+        raise RuntimeError(
+            "existing sqlite price basis is invalid; build a new raw database in "
+            "bounded batches and switch only after coverage validation"
+        )
     bs = _load_baostock()
     _login_baostock_session(bs)
 
     updated_rows = 0
     skipped = 0
     failed = 0
+    already_current = 0
+    empty_response = 0
     total_symbols = 0
     try:
         with sqlite3.connect(db_path) as conn:
             configure_sqlite_connection(conn)
             ensure_schema(conn)
-            all_symbols = _sync_stock_list_compat(
-                conn,
-                bs,
-                preserve_existing=True,
-            )
-            requested = {_normalize_requested_symbol(item) for item in symbols if item}
-            selected_symbols = [
-                ts_code
-                for ts_code in all_symbols
-                if not requested
-                or ts_code in requested
-                or ts_code.split(".")[0] in requested
-            ]
+            selected_symbols = _requested_ts_codes(symbols)
+            if not selected_symbols:
+                selected_symbols = _sync_stock_list_compat(
+                    conn,
+                    bs,
+                    preserve_existing=True,
+                )
+            safe_offset = max(0, int(offset))
+            if safe_offset:
+                selected_symbols = selected_symbols[safe_offset:]
             if limit > 0:
                 selected_symbols = selected_symbols[:limit]
             total_symbols = len(selected_symbols)
+            deadline = (
+                time.monotonic() + max_runtime_seconds
+                if max_runtime_seconds > 0
+                else None
+            )
+            processed_symbols = 0
+            budget_exhausted = False
             for index, ts_code in enumerate(selected_symbols, start=1):
+                if deadline is not None and time.monotonic() >= deadline:
+                    budget_exhausted = True
+                    print(
+                        f"运行预算耗尽: processed={processed_symbols}/{len(selected_symbols)}",
+                        flush=True,
+                    )
+                    break
+                processed_symbols = index
                 first, latest = _symbol_date_bounds(conn, ts_code)
                 fetch_start_day = _resolve_fetch_start_day(
                     first=first,
@@ -485,6 +557,7 @@ def update_sqlite_daily(
                 )
                 if fetch_start_day > target_day:
                     skipped += 1
+                    already_current += 1
                     continue
                 error_code, rows = _query_history_rows_with_retry(
                     bs=bs,
@@ -493,6 +566,7 @@ def update_sqlite_daily(
                     target_day=target_day,
                     price_mode=price_mode,
                     timeout_seconds=query_timeout_seconds,
+                    deadline=deadline,
                 )
                 if error_code != "0":
                     failed += 1
@@ -505,6 +579,7 @@ def update_sqlite_daily(
                     updated_rows += inserted
                 else:
                     skipped += 1
+                    empty_response += 1
                 if index % 200 == 0:
                     conn.commit()
                     print(
@@ -514,13 +589,19 @@ def update_sqlite_daily(
                 if sleep_seconds > 0:
                     time.sleep(sleep_seconds)
             conn.commit()
-            target_day_symbol_count = _count_target_day_symbols(conn, target_day)
-            raw_max_trade_date = _raw_max_trade_date(conn)
-            coverage_error = _target_coverage_error(
-                target_day=target_day,
-                target_day_symbol_count=target_day_symbol_count,
-                total_symbols=total_symbols,
-                raw_max_trade_date=raw_max_trade_date,
+            target_day_symbol_count = _count_target_day_symbols(
+                conn, target_day, selected_symbols
+            )
+            raw_max_trade_date = _raw_max_trade_date(conn, selected_symbols)
+            coverage_error = (
+                _target_coverage_error(
+                    target_day=target_day,
+                    target_day_symbol_count=target_day_symbol_count,
+                    total_symbols=total_symbols,
+                    raw_max_trade_date=raw_max_trade_date,
+                )
+                if require_target_coverage
+                else None
             )
             if coverage_error:
                 print(f"[ERROR] {coverage_error}", flush=True)
@@ -536,6 +617,10 @@ def update_sqlite_daily(
         total_symbols=total_symbols,
         raw_max_trade_date=raw_max_trade_date,
         coverage_error=coverage_error,
+        processed_symbols=processed_symbols,
+        budget_exhausted=budget_exhausted,
+        already_current_symbols=already_current,
+        empty_response_symbols=empty_response,
     )
 
 
@@ -549,7 +634,13 @@ def main() -> int:
     )
     parser.add_argument("--sleep-seconds", type=float, default=0.05)
     parser.add_argument(
-        "--limit", type=int, default=0, help="test hook: update first N symbols"
+        "--limit", type=int, default=0, help="update at most N selected symbols"
+    )
+    parser.add_argument(
+        "--offset",
+        type=int,
+        default=0,
+        help="skip this many selected symbols before --limit",
     )
     parser.add_argument(
         "--symbols",
@@ -583,6 +674,17 @@ def main() -> int:
         default=15.0,
         help="per-symbol upstream query timeout; 0 disables the timeout guard",
     )
+    parser.add_argument(
+        "--max-runtime-seconds",
+        type=float,
+        default=0.0,
+        help="stop between symbols after this runtime; 0 disables the batch budget",
+    )
+    parser.add_argument(
+        "--allow-partial-target-coverage",
+        action="store_true",
+        help="for a scheduled chunk, defer target-day coverage validation to its coordinator",
+    )
     args = parser.parse_args()
 
     if not args.db.exists():
@@ -595,6 +697,10 @@ def main() -> int:
         raise SystemExit("--force-from-start requires --start-date")
     if args.fill_history_gaps and start_day is None:
         raise SystemExit("--fill-history-gaps requires --start-date")
+    if args.offset < 0:
+        raise SystemExit("--offset must be non-negative")
+    if args.max_runtime_seconds < 0:
+        raise SystemExit("--max-runtime-seconds must be non-negative")
     print(
         f"sqlite daily backfill target={target.isoformat()} "
         f"start={start_day.isoformat() if start_day else 'incremental'} "
@@ -612,6 +718,9 @@ def main() -> int:
         fill_history_gaps=args.fill_history_gaps,
         price_mode=args.price_mode,
         query_timeout_seconds=args.query_timeout_seconds,
+        offset=args.offset,
+        max_runtime_seconds=args.max_runtime_seconds,
+        require_target_coverage=not args.allow_partial_target_coverage,
     )
     print(
         "sqlite daily backfill done: "
@@ -621,7 +730,9 @@ def main() -> int:
         f"target={summary.target_day.isoformat()} "
         f"price_mode={summary.price_mode} "
         f"target_day_symbols={summary.target_day_symbol_count}/{summary.total_symbols} "
-        f"raw_max={summary.raw_max_trade_date.isoformat() if summary.raw_max_trade_date else '-'}"
+        f"raw_max={summary.raw_max_trade_date.isoformat() if summary.raw_max_trade_date else '-'} "
+        f"processed={summary.processed_symbols}/{summary.total_symbols} "
+        f"budget_exhausted={summary.budget_exhausted}"
     )
     if summary.coverage_error:
         print(f"sqlite daily backfill blocked: {summary.coverage_error}")
