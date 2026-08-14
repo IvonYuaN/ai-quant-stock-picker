@@ -109,6 +109,15 @@ def test_variant_refresh_rejects_runtime_import_failure() -> None:
 
     assert 'export PYTHONPATH="${PROJECT_ROOT}/src:${PROJECT_ROOT}' in script
     assert "交易日检查失败，拒绝把运行错误当成非交易日" in script
+
+
+def test_variant_refresh_does_not_accept_stale_same_day_artifact() -> None:
+    script = (Path(__file__).parents[1] / "scripts" / "variant_refresh.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'status.get("status") == "completed"' in script
+    assert "if refresh_published &&" in script
     assert '"$OUTPUT_PATH" --expected-end "$(date +%F)"' in script
 
 

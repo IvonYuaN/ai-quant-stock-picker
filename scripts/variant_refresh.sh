@@ -65,6 +65,20 @@ refresh_home_snapshot() {
     fi
 }
 
+refresh_published() {
+    "$PYTHON_BIN" - "$STATUS_PATH" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+try:
+    status = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+except (OSError, ValueError, json.JSONDecodeError):
+    raise SystemExit(1)
+raise SystemExit(0 if status.get("status") == "completed" else 1)
+PY
+}
+
 DOW="$(date +%u)"
 if [ "$DOW" -ge 6 ]; then
     log "周末跳过变体刷新"
@@ -173,7 +187,9 @@ for batch_index in $(seq 1 "$MAX_STAGE_BATCHES"); do
         refresh_home_snapshot
         exit "$status"
     fi
-    if "$PYTHON_BIN" "$PROJECT_ROOT/scripts/check_variant_results.py" \
+    # A valid same-day artifact may belong to the previous generation. Only a
+    # completed status proves that this invocation published all staged profiles.
+    if refresh_published && "$PYTHON_BIN" "$PROJECT_ROOT/scripts/check_variant_results.py" \
         "$OUTPUT_PATH" --expected-end "$(date +%F)" >>"$LOG_FILE" 2>&1; then
         "$PYTHON_BIN" "$PROJECT_ROOT/scripts/write_home_snapshot.py" \
             --task-id variant-refresh >>"$LOG_FILE" 2>&1
