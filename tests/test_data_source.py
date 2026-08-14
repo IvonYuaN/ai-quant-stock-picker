@@ -31,6 +31,16 @@ def test_datasource_is_abstract():
         DataSource()
 
 
+def test_data_cache_default_honors_runtime_path(monkeypatch, tmp_path) -> None:
+    cache_path = tmp_path / "runtime" / "cache.db"
+    monkeypatch.setenv("AQSP_CACHE_DB", str(cache_path))
+
+    cache = DataCache()
+
+    assert cache.db_path == cache_path
+    assert cache_path.exists()
+
+
 def test_akshare_source_has_name():
     try:
         source = AkshareSource()

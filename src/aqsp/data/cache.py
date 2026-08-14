@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sqlite3
 from collections.abc import Collection
 from datetime import date, datetime
@@ -108,8 +109,8 @@ def _requires_freshness_window(end: date) -> bool:
 
 
 class DataCache:
-    def __init__(self, db_path: str | Path = "data/cache.db"):
-        self.db_path = Path(db_path)
+    def __init__(self, db_path: str | Path | None = None):
+        self.db_path = Path(db_path or os.getenv("AQSP_CACHE_DB", "data/cache.db"))
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
 

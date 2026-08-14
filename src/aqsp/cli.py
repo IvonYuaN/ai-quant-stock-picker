@@ -561,7 +561,10 @@ def _runtime_max_universe(arg_value: int | None) -> int:
 
 
 def _build_circuit_breaker(thresholds: Any) -> CircuitBreaker:
-    config = CircuitBreakerConfig.from_thresholds(thresholds)
+    config = CircuitBreakerConfig.from_thresholds(
+        thresholds,
+        state_file=os.getenv("AQSP_RISK_STATE", "data/risk_state.json"),
+    )
     try:
         return CircuitBreaker(config=config)
     except TypeError as exc:
@@ -5406,13 +5409,14 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
             format_snapshot_diff,
         )
 
+        snapshot_path = os.getenv("AQSP_PICK_SNAPSHOT_PATH", "data/snapshots")
         save_snapshot(
-            picks, snapshot_path="data/snapshots", date=today_shanghai().isoformat()
+            picks, snapshot_path=snapshot_path, date=today_shanghai().isoformat()
         )
         diff = compare_snapshots(
             current_date=today_shanghai().isoformat(),
             previous_date=(today_shanghai() - timedelta(days=1)).isoformat(),
-            snapshot_path="data/snapshots",
+            snapshot_path=snapshot_path,
         )
         if diff is not None and diff.has_changes:
             print(format_snapshot_diff(diff))

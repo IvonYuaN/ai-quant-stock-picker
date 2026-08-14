@@ -31,8 +31,17 @@ from aqsp.utils.jsonl_io import advisory_lock, atomic_write_text
 
 DEFAULT_MAX_CANDIDATES = 5
 DEBATE_RETENTION_DAYS = 30
-DEFAULT_STATUS_PATH = Path("data/backfill_intraday_debate_status.json")
-DEFAULT_LOCK_PATH = Path("data/backfill_intraday_debate.lock")
+DEFAULT_STATUS_PATH = Path(
+    os.getenv(
+        "AQSP_DEBATE_BACKFILL_STATUS_PATH",
+        "data/backfill_intraday_debate_status.json",
+    )
+)
+DEFAULT_LOCK_PATH = Path(
+    os.getenv(
+        "AQSP_DEBATE_BACKFILL_LOCK_PATH", "data/backfill_intraday_debate.lock"
+    )
+)
 DEFAULT_STALE_LOCK_SECONDS = 30 * 60
 STATUS_RUNNING = "running"
 STATUS_SUCCEEDED = "succeeded"
