@@ -1049,6 +1049,25 @@ def test_recommendation_gate_keeps_quote_candidates_when_news_refresh_fails() ->
     assert gate.reasons == ()
 
 
+def test_recommendation_gate_blocks_stale_home_candidates() -> None:
+    candidate = write_home_snapshot._snapshot_candidate(_candidate("600010", 88.0))
+    assert candidate is not None
+    candidate = replace(candidate, freshness="stale")
+
+    gate = write_home_snapshot._recommendation_gate(
+        provider=SimpleNamespace(paper_ledger_path=None),
+        runtime=SimpleNamespace(),
+        source=SimpleNamespace(status="完成", lag_days=0),
+        message_status="可用",
+        evaluated_at=datetime(2026, 7, 10, 13, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+        candidates=(candidate,),
+    )
+
+    assert gate.recommendation_allowed is False
+    assert gate.status == "freshness_not_ready"
+    assert gate.reasons == ("候选行情已过期：600010",)
+
+
 def test_snapshot_candidates_keeps_live_recommendation_with_technical_evidence() -> (
     None
 ):

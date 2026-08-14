@@ -171,6 +171,15 @@ def test_aqsp_bridge_accepts_one_debate_for_each_home_candidate() -> None:
     assert [item.symbol for item in snapshot.debates] == list(symbols)
 
 
+def test_aqsp_bridge_reports_available_messages_as_fresh() -> None:
+    payload = _snapshot("2026-07-14")
+    payload["message_status"] = "可用"
+
+    snapshot = aqsp_bridge._parse_snapshot(payload)
+
+    assert aqsp_bridge._snapshot_component_freshness(snapshot)["messages"] == "fresh"
+
+
 def _runtime_debate(*, date: str, symbol: str = "600002", score: float = 72.5) -> dict:
     return {
         "symbol": symbol,

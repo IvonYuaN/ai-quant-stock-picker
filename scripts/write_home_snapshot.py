@@ -1809,6 +1809,7 @@ def _recommendation_gate(
     *,
     evaluated_at: datetime,
     universe: HomeSnapshotUniverse | None = None,
+    candidates: tuple[HomeSnapshotCandidate, ...] = (),
 ) -> HomeSnapshotRecommendationGate:
     if (
         universe is not None
@@ -1865,6 +1866,17 @@ def _recommendation_gate(
         status=result.status,
         reasons=result.reasons,
     )
+    stale_symbols = tuple(
+        candidate.symbol
+        for candidate in candidates
+        if candidate.freshness.strip().lower() not in {"", "fresh"}
+    )
+    if stale_symbols:
+        return HomeSnapshotRecommendationGate(
+            recommendation_allowed=False,
+            status="freshness_not_ready",
+            reasons=(f"候选行情已过期：{'、'.join(stale_symbols)}",),
+        )
     override = os.getenv("AQSP_RESEARCH_DISPLAY_OVERRIDE", "").strip().lower()
     if override in {"1", "true", "yes", "on"}:
         return HomeSnapshotRecommendationGate(
@@ -2608,6 +2620,7 @@ def build_home_snapshot(
         message_status,
         evaluated_at=now_shanghai(),
         universe=universe,
+        candidates=candidates,
     )
     candidates = _apply_recommendation_gate(candidates, recommendation_gate)
     phases = _phase_snapshot(provider, selected_date, candidates)

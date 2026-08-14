@@ -751,7 +751,7 @@ def _snapshot_component_freshness(
         }
     ):
         messages = "historical"
-    elif snapshot.messages and snapshot.message_status in {"ok", "部分可用"}:
+    elif snapshot.messages and snapshot.message_status in {"ok", "可用", "部分可用"}:
         messages = "partial" if snapshot.message_status == "部分可用" else "fresh"
     elif snapshot.message_status in {"来源失败", "timeout", "failed"}:
         messages = "unavailable"
