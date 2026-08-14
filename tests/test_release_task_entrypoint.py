@@ -20,6 +20,14 @@ def test_release_task_entrypoint_keeps_code_and_runtime_roots_separate() -> None
     assert "AQSP_NEWS_JSON_OUTPUT" in script
     assert "AQSP_INTRADAY_CURSOR_PATH" in script
     assert "AQSP_HOME_SNAPSHOT_PATH" in script
+    assert "export_runtime_path AQSP_CACHE_DB data/cache.db" in script
+    assert "export_runtime_path AQSP_TRADE_LOG_DIR logs/trades" in script
+    assert (
+        "export_runtime_path AQSP_DECISION_AUDIT_PATH data/audit/decision-chain.jsonl"
+        in script
+    )
+    assert "export_runtime_path AQSP_PICK_SNAPSHOT_PATH data/snapshots" in script
+    assert "AQSP_DEBATE_BACKFILL_STATUS_PATH" in script
     assert "export_runtime_path AQSP_REPORT reports/latest.md" in script
     assert (
         "export_runtime_path AQSP_DASHBOARD_HTML data/runtime/archive/dashboard/index.html"

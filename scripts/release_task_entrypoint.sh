@@ -148,6 +148,12 @@ export_runtime_path AQSP_GATE_NOTIFY_STATE_PATH data/gate_notify_state.json
 export_runtime_path AQSP_REALTIME_CROSS_MARKET_PATH data/runtime/realtime_cross_market_context.json
 export_runtime_path AQSP_RUNTIME_SYMBOL_CACHE data/walkforward_production_symbols.json
 export_runtime_path AQSP_INTRADAY_FAST_SYMBOL_CACHE data/walkforward_production_symbols.json
+export_runtime_path AQSP_CACHE_DB data/cache.db
+export_runtime_path AQSP_TRADE_LOG_DIR logs/trades
+export_runtime_path AQSP_DECISION_AUDIT_PATH data/audit/decision-chain.jsonl
+export_runtime_path AQSP_PICK_SNAPSHOT_PATH data/snapshots
+export_runtime_path AQSP_DEBATE_BACKFILL_STATUS_PATH data/backfill_intraday_debate_status.json
+export_runtime_path AQSP_DEBATE_BACKFILL_LOCK_PATH data/backfill_intraday_debate.lock
 if [[ -z "${AQSP_INTRADAY_FAST_SYMBOL_CSVS:-}" ]]; then
     export AQSP_INTRADAY_FAST_SYMBOL_CSVS="$(runtime_path reports/intraday_latest.csv),$(runtime_path reports/latest.csv)"
 fi
