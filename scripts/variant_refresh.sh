@@ -173,7 +173,8 @@ for batch_index in $(seq 1 "$MAX_STAGE_BATCHES"); do
         refresh_home_snapshot
         exit "$status"
     fi
-    if "$PYTHON_BIN" "$PROJECT_ROOT/scripts/check_variant_results.py" "$OUTPUT_PATH" >>"$LOG_FILE" 2>&1; then
+    if "$PYTHON_BIN" "$PROJECT_ROOT/scripts/check_variant_results.py" \
+        "$OUTPUT_PATH" --expected-end "$(date +%F)" >>"$LOG_FILE" 2>&1; then
         "$PYTHON_BIN" "$PROJECT_ROOT/scripts/write_home_snapshot.py" \
             --task-id variant-refresh >>"$LOG_FILE" 2>&1
         log "变体刷新和首页快照更新完成"

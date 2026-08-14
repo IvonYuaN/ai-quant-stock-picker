@@ -107,6 +107,7 @@ def test_variant_refresh_exports_release_pythonpath_and_rejects_import_failure()
 
     assert 'export PYTHONPATH="${PROJECT_ROOT}/src:${PROJECT_ROOT}' in script
     assert "交易日检查失败，拒绝把运行错误当成非交易日" in script
+    assert '"$OUTPUT_PATH" --expected-end "$(date +%F)"' in script
 
 
 def test_variant_lifecycle_eliminates_negative_result_when_samples_sufficient() -> None:
