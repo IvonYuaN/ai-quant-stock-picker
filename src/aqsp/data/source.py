@@ -47,7 +47,7 @@ def get_limit_pct(symbol: str, name: str = "") -> float:
         return 0.20
     if clean_symbol.startswith(("300", "301")):
         return 0.20
-    if clean_symbol.startswith(("43", "83", "87", "88")):
+    if clean_symbol.startswith(("43", "83", "87", "88", "920")):
         return 0.30
     return 0.10
 

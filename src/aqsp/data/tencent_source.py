@@ -42,6 +42,8 @@ _DEFAULT_DAILY_FETCH_WORKERS = 8
 
 
 def _get_market_prefix(symbol: str, *, is_index: bool = False) -> str:
+    if not is_index and symbol.startswith("920"):
+        return "bj"
     if is_index or symbol.startswith("6"):
         return "sh"
     return "sz"
@@ -248,7 +250,7 @@ class TencentSource(DataSource):
     @staticmethod
     def _parse_tencent_quote_response(content: str) -> dict[str, dict]:
         quotes: dict[str, dict] = {}
-        for match in re.finditer(r'v_(?:sh|sz)(\d{6})="([^"]*)"', content or ""):
+        for match in re.finditer(r'v_(?:sh|sz|bj)(\d{6})="([^"]*)"', content or ""):
             symbol = match.group(1)
             parts = match.group(2).split("~")
             if len(parts) < 50:

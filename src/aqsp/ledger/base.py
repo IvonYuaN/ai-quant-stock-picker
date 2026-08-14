@@ -616,7 +616,7 @@ def _fallback_limit_pct(row: dict) -> float:
         return float(execution.fallback_limit_st_pct)
     if symbol.startswith(("300", "301", "688", "689")):
         return float(execution.fallback_limit_growth_pct)
-    if symbol.startswith(("8", "4")):
+    if symbol.startswith(("8", "4", "920")):
         return float(execution.fallback_limit_bse_pct)
     return float(execution.fallback_limit_main_pct)
 
