@@ -19,6 +19,23 @@ from aqsp.universe.intraday_cursor import IntradayUniverseCursor  # noqa: E402
 from aqsp.universe.runtime import resolve_run_symbols  # noqa: E402
 
 
+_INCOMPLETE_HISTORY_PREFIXES = {
+    "online_first": ("920",),
+    "sina": ("920",),
+    "tencent": ("920",),
+}
+
+
+def filter_intraday_history_symbols(
+    symbols: list[str], source_name: str
+) -> list[str]:
+    """Keep only symbols with strategy-length history on the selected source."""
+    unsupported = _INCOMPLETE_HISTORY_PREFIXES.get(source_name.strip().lower(), ())
+    if not unsupported:
+        return list(symbols)
+    return [symbol for symbol in symbols if not symbol.startswith(unsupported)]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -64,6 +81,7 @@ def main() -> int:
         max_universe=0,
         min_avg_amount=args.min_avg_amount,
     )
+    symbols = filter_intraday_history_symbols(symbols, args.source)
     batch = cursor.select(
         symbols, trade_date=today_shanghai(), batch_size=args.batch_size
     )

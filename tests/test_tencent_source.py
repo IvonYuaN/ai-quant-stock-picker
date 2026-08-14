@@ -249,6 +249,31 @@ def test_tencent_daily_request_uses_market_prefixed_payload_key(
     assert frame["close"].iloc[0] == pytest.approx(10.2)
 
 
+def test_tencent_daily_request_keeps_beijing_board_raw_suffix(
+    monkeypatch, tencent_source
+):
+    captured = {}
+
+    class FakeResponse:
+        def json(self):
+            return {"data": {"bj920186": {"day": []}}}
+
+    def fake_get(url, params=None, **kwargs):
+        captured["params"] = params
+        return FakeResponse()
+
+    monkeypatch.setattr(tencent_source._session, "get", fake_get)
+
+    tencent_source._fetch_tencent_daily(
+        "920186", start=date(2026, 7, 20), end=date(2026, 7, 20)
+    )
+
+    assert captured["params"]["param"] == (
+        "bj920186,day,2026-07-20,2026-07-20,640,"
+    )
+    assert "qfq" not in captured["params"]["param"]
+
+
 def test_tencent_intraday_reads_market_prefixed_payload_key(monkeypatch):
     class FakeResponse:
         def json(self):
