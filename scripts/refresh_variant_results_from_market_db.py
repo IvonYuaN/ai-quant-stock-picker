@@ -35,6 +35,7 @@ except ModuleNotFoundError:
     from scripts.check_variant_results import validate_variant_payload
 try:
     from run_variant_suite import (
+        EVOLUTION_COOLDOWN_CALENDAR_DAYS,
         VariantProfile,
         assign_variant_lifecycle,
         diversity_ranked_variants,
@@ -44,6 +45,7 @@ try:
     )
 except ModuleNotFoundError:
     from scripts.run_variant_suite import (
+        EVOLUTION_COOLDOWN_CALENDAR_DAYS,
         VariantProfile,
         assign_variant_lifecycle,
         diversity_ranked_variants,
@@ -543,6 +545,7 @@ def evolution_profiles(
     if not isinstance(raw_variants, list) or len(raw_variants) != len(base_profiles):
         return base_profiles
     evolved: list[VariantProfile] = []
+    previous_end = str(previous.get("end_date") or "") if previous else ""
     for item in raw_variants:
         if not isinstance(item, dict) or not isinstance(item.get("strategy"), dict):
             return base_profiles
@@ -552,10 +555,14 @@ def evolution_profiles(
             return base_profiles
         generation = int(item.get("generation") or strategy.get("generation") or 1)
         parent_variant_id = str(item.get("parent_variant_id") or "").strip()
+        evolved_on = str(strategy.get("evolved_on") or "").strip()
+        if not evolved_on and parent_variant_id:
+            evolved_on = previous_end
         entry_return_pct = float(strategy.get("entry_return_pct") or 0.0)
         max_bias_pct = float(strategy.get("max_bias_pct") or 0.0)
         max_positions = int(strategy.get("max_positions") or 3)
-        if item.get("lifecycle_status") == "淘汰" and isinstance(
+        cooldown_complete = _evolution_cooldown_complete(evolved_on, previous_end)
+        if item.get("lifecycle_status") == "淘汰" and cooldown_complete and isinstance(
             item.get("next_generation"), dict
         ):
             proposal = item["next_generation"]
@@ -567,6 +574,7 @@ def evolution_profiles(
             )
             max_bias_pct = float(proposal.get("max_bias_pct") or max_bias_pct)
             max_positions = int(proposal.get("max_positions") or max_positions)
+            evolved_on = str(proposal.get("evolved_on") or previous_end)
         base_label = re.sub(
             r"(?:·第\d+代)+$", "", str(item.get("label") or variant_id)
         )
@@ -583,11 +591,22 @@ def evolution_profiles(
                 hypothesis=str(strategy.get("hypothesis") or "待验证策略假设"),
                 generation=generation,
                 parent_variant_id=parent_variant_id,
+                evolved_on=evolved_on,
             )
         )
     if len({profile.variant_id for profile in evolved}) != len(evolved):
         return base_profiles
     return tuple(evolved)
+
+
+def _evolution_cooldown_complete(evolved_on: str, evidence_end: str) -> bool:
+    if not evolved_on:
+        return True
+    try:
+        elapsed = (date.fromisoformat(evidence_end) - date.fromisoformat(evolved_on)).days
+    except ValueError:
+        return False
+    return elapsed >= EVOLUTION_COOLDOWN_CALENDAR_DAYS
 
 
 def _stage_is_compatible(

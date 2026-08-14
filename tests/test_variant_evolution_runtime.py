@@ -171,6 +171,31 @@ def test_variant_lifecycle_eliminates_negative_result_when_samples_sufficient() 
     assert results[0]["next_generation"]["max_positions"] == 3
 
 
+def test_variant_lifecycle_enforces_cooldown_after_evolution() -> None:
+    results = [
+        {
+            "variant_id": "loser__g2",
+            "generation": 2,
+            "parent_variant_id": "loser",
+            "rank": 5,
+            "return_pct": -3.0,
+            "independent_signal_days": 35,
+            "end_date": "2026-08-14",
+            "strategy": {
+                "entry_return_pct": 1.0,
+                "max_bias_pct": 10.0,
+                "max_positions": 4,
+                "evolved_on": "2026-08-14",
+            },
+        }
+    ]
+
+    assign_variant_lifecycle(results)
+
+    assert results[0]["lifecycle_status"] == "冷却观察"
+    assert results[0]["next_generation"] == {}
+
+
 def test_variant_evolution_replaces_eliminated_parent_in_next_generation() -> None:
     previous = {
         "variants": [
@@ -203,6 +228,37 @@ def test_variant_evolution_replaces_eliminated_parent_in_next_generation() -> No
     assert evolved[0].variant_id == "trend_base__g2"
     assert evolved[0].parent_variant_id == "trend_base"
     assert evolved[0].max_bias_pct == 9.0
+
+
+def test_variant_evolution_does_not_mutate_again_on_same_evidence_date() -> None:
+    previous = {
+        "end_date": "2026-08-14",
+        "variants": [
+            {
+                "variant_id": "trend_base__g2",
+                "label": "趋势基线·第2代",
+                "generation": 2,
+                "parent_variant_id": "trend_base",
+                "lifecycle_status": "淘汰",
+                "strategy": {
+                    "id": "trend_base__g2",
+                    "lookback_days": 20,
+                    "entry_return_pct": 2.0,
+                    "max_bias_pct": 9.0,
+                    "mode": "trend",
+                    "max_positions": 2,
+                    "hypothesis": "趋势延续",
+                },
+                "next_generation": {"generation": 3, "max_positions": 2},
+            }
+        ],
+    }
+
+    evolved = evolution_profiles((_profile(),), previous)
+
+    assert evolved[0].variant_id == "trend_base__g2"
+    assert evolved[0].generation == 2
+    assert evolved[0].evolved_on == "2026-08-14"
 
 
 def test_variant_evolution_replaces_existing_generation_suffix() -> None:

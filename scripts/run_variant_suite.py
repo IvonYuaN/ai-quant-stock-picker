@@ -12,6 +12,7 @@ import json
 import sqlite3
 from collections import defaultdict
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +35,7 @@ BASE_CASH = 100_000.0
 TRAINING_BARS = 60
 RECENT_ACTION_LIMIT = 8
 MIN_EVOLUTION_SIGNAL_DAYS = 30
+EVOLUTION_COOLDOWN_CALENDAR_DAYS = 30
 MIN_CURRENT_VOLUME_OBSERVATION_RATIO = 0.8
 
 
@@ -50,6 +52,7 @@ class VariantProfile:
     hypothesis: str
     generation: int = 1
     parent_variant_id: str = ""
+    evolved_on: str = ""
 
 
 @dataclass(frozen=True)
@@ -858,6 +861,7 @@ def _strategy_payload(profile: VariantProfile) -> dict[str, object]:
         "hypothesis": profile.hypothesis,
         "generation": profile.generation,
         "parent_variant_id": profile.parent_variant_id,
+        "evolved_on": profile.evolved_on,
     }
 
 
@@ -877,8 +881,19 @@ def assign_variant_lifecycle(results: list[dict[str, Any]]) -> None:
                 f"独立入场日 {signal_days}/{MIN_EVOLUTION_SIGNAL_DAYS}，未达到进化门槛"
             )
         elif return_pct <= 0.0 or rank > elimination_cutoff:
-            status = "淘汰"
-            reason = f"验证收益 {return_pct:+.2f}%，排名 {rank}/{len(results)}，退出下一代基线"
+            strategy = item.get("strategy") if isinstance(item.get("strategy"), dict) else {}
+            evolved_on = str(strategy.get("evolved_on") or "")
+            parent_id = str(item.get("parent_variant_id") or strategy.get("parent_variant_id") or "")
+            if not evolved_on and parent_id:
+                evolved_on = str(item.get("end_date") or "")
+            elapsed = _elapsed_calendar_days(evolved_on, str(item.get("end_date") or ""))
+            if elapsed is not None and elapsed < EVOLUTION_COOLDOWN_CALENDAR_DAYS:
+                status = "冷却观察"
+                remaining = EVOLUTION_COOLDOWN_CALENDAR_DAYS - elapsed
+                reason = f"第{int(item.get('generation') or 1)}代已更新，冷却剩余 {remaining} 天，禁止重复调参"
+            else:
+                status = "淘汰"
+                reason = f"验证收益 {return_pct:+.2f}%，排名 {rank}/{len(results)}，退出下一代基线"
         elif rank <= promotion_cutoff:
             status = "晋级验证"
             reason = f"验证收益 {return_pct:+.2f}%，排名 {rank}/{len(results)}，进入下一代复核"
@@ -900,6 +915,7 @@ def _next_generation_proposal(item: dict[str, Any]) -> dict[str, object]:
     return {
         "parent_variant_id": str(item.get("variant_id") or ""),
         "generation": generation,
+        "evolved_on": str(item.get("end_date") or ""),
         "entry_return_pct": round(
             float(strategy.get("entry_return_pct") or 0.0) + 0.5, 2
         ),
@@ -909,6 +925,13 @@ def _next_generation_proposal(item: dict[str, Any]) -> dict[str, object]:
         "max_positions": max(2, int(strategy.get("max_positions") or 3) - 1),
         "reason": "提高入场确认、收紧乖离和持仓数量后重新验证",
     }
+
+
+def _elapsed_calendar_days(start: str, end: str) -> int | None:
+    try:
+        return (date.fromisoformat(end) - date.fromisoformat(start)).days
+    except ValueError:
+        return None
 
 
 def _strategy_signature(profile: VariantProfile) -> str:
