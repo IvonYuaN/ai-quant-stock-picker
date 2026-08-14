@@ -228,6 +228,12 @@ class HomeSnapshotVariant:
     adjustments: tuple[str, ...] = ()
     technical_evidence: tuple[dict[str, object], ...] = ()
     hard_rules: tuple[str, ...] = ()
+    generation: int = 1
+    parent_variant_id: str = ""
+    independent_signal_days: int = 0
+    lifecycle_status: str = "样本积累"
+    lifecycle_reason: str = ""
+    discussion_links: tuple[dict[str, object], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -1058,6 +1064,25 @@ def _variant_from_dict(payload: object) -> HomeSnapshotVariant:
             if isinstance(item, dict)
         ),
         hard_rules=_text_tuple(mapping.get("hard_rules", ()), "variant.hard_rules"),
+        generation=_integer(mapping.get("generation", 1), "variant.generation"),
+        parent_variant_id=_optional_text(
+            mapping.get("parent_variant_id"), "variant.parent_variant_id"
+        ),
+        independent_signal_days=_integer(
+            mapping.get("independent_signal_days", 0),
+            "variant.independent_signal_days",
+        ),
+        lifecycle_status=_optional_text(
+            mapping.get("lifecycle_status"), "variant.lifecycle_status"
+        ) or "样本积累",
+        lifecycle_reason=_optional_text(
+            mapping.get("lifecycle_reason"), "variant.lifecycle_reason"
+        ),
+        discussion_links=tuple(
+            item
+            for item in mapping.get("discussion_links", ())
+            if isinstance(item, dict)
+        ),
     )
 
 

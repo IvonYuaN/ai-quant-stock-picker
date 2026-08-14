@@ -2430,6 +2430,19 @@ def _variant_snapshot() -> tuple[HomeSnapshotVariant, ...]:
                 ),
                 technical_evidence=_variant_technical_evidence(item, recent_actions),
                 hard_rules=rule_labels if isinstance(rules, dict) else (),
+                generation=int(item.get("generation") or 1),
+                parent_variant_id=_text(item.get("parent_variant_id")),
+                independent_signal_days=int(
+                    item.get("independent_signal_days") or 0
+                ),
+                lifecycle_status=_text(item.get("lifecycle_status"))
+                or "样本积累",
+                lifecycle_reason=_text(item.get("lifecycle_reason")),
+                discussion_links=tuple(
+                    link
+                    for link in item.get("discussion_links", ())
+                    if isinstance(link, dict)
+                ),
             )
         )
     return tuple(variants)

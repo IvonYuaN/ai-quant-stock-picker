@@ -306,16 +306,20 @@ function DebateCard({ result }: { result: AqspAgentResult }) {
 function TestVariantsPanel({ snapshot }: { snapshot?: AqspSnapshot }) {
   const historical = snapshot?.meta?.historical ?? false;
   const variants = snapshot?.variants ?? [];
+  const suite = snapshot?.variant_suite;
   const variantHistory = variants.some((variant) => variant.data_mode.includes("historical"));
+  const promoted = variants.filter((variant) => variant.lifecycle_status === "晋级验证").length;
+  const eliminated = variants.filter((variant) => variant.lifecycle_status === "淘汰").length;
   return <section id={TEST_VARIANTS_SECTION_ID} className="aqsp-lab" aria-label="测试与变体">
     <div className="aqsp-section-head"><div><p className="aqsp-eyebrow"><FlaskConical className="h-3.5 w-3.5" />独立区域</p><h2>测试与变体</h2></div><span>不进入正式结论</span></div>
-    <div className="aqsp-lab-snapshot">{snapshot ? <><span>数据区间：{variants[0]?.start_date || "—"} 至 {variants[0]?.end_date || "—"}</span><span>每套账户：100,000 元</span><span className={cn("aqsp-badge", historical || variantHistory ? "aqsp-badge-warn" : "aqsp-badge-ok")}>{historical || variantHistory ? "历史回测 · 仅验证" : "当前实验结果"}</span></> : <span>等待正式快照</span>}</div>
+    <div className="aqsp-lab-snapshot">{snapshot ? <><span>数据区间：{variants[0]?.start_date || "—"} 至 {variants[0]?.end_date || "—"}</span><span>股票覆盖：{suite?.selected_symbols ?? 0}/{suite?.supported_symbols ?? 0} · {((suite?.coverage_pct ?? 0) * 100).toFixed(1)}%</span><span>生命周期：晋级 {promoted} · 淘汰 {eliminated} · 共 {variants.length}</span><span>每套账户：100,000.00 元</span><span className={cn("aqsp-badge", historical || variantHistory ? "aqsp-badge-warn" : "aqsp-badge-ok")}>{historical || variantHistory ? "历史回测 · 仅验证" : "当前实验结果"}</span></> : <span>等待正式快照</span>}</div>
     {variants.length === 0 ? <EmptyState title="变体结果尚未产出" detail="实验结果独立于正式候选，产出后会显示在这里。" /> : <div className="aqsp-variant-grid">{variants.map((variant: AqspVariant) => {
       const pnl = variant.total_pnl;
       const holdings = variant.holdings;
       return <article className="aqsp-variant-card" key={variant.variant_id}>
         <div className="aqsp-variant-head"><div><h3>{variantDisplayName(variant)}</h3><span>{variant.variant_id}{variant.rank ? ` · 回测第 ${variant.rank} 名` : ""}</span></div><strong className={pnl == null || pnl >= 0 ? "aqsp-variant-positive" : "aqsp-variant-negative"}>{variantMoney(pnl)}</strong></div>
         <div className="aqsp-variant-strategy"><p><b>策略逻辑</b>{variantStrategyLogic(variant)}</p><p><b>关键参数</b>{variantStrategyParameters(variant)}</p></div>
+        <div className="aqsp-variant-lifecycle"><b>{variant.lifecycle_status || "样本积累"} · 第 {variant.generation ?? 1} 代 · 独立入场日 {variant.independent_signal_days ?? 0}</b><span>{variant.lifecycle_reason || "等待形成可比较样本"}</span>{(variant.discussion_links ?? []).slice(0, 3).map((link) => <span key={link.symbol}>讨论联动：{link.display_name || link.symbol} · {link.risk_gate || link.next_trigger || link.discussion_conclusion || "等待复核约束"}</span>)}</div>
         <div className="aqsp-variant-account">
           <div><span>初始资金</span><b>{variantMoney(variant.initial_cash)}</b></div>
           <div><span>现金</span><b>{variantMoney(variant.cash)}</b></div>

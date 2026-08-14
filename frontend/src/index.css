@@ -472,6 +472,9 @@
   .aqsp-variant-strategy { display: grid; gap: 0.28rem; margin-top: 0.45rem; color: hsl(var(--foreground) / 0.82); font-size: 0.64rem; line-height: 1.4; overflow-wrap: anywhere; }
   .aqsp-variant-strategy p { display: grid; grid-template-columns: 4.2rem minmax(0, 1fr); gap: 0.4rem; }
   .aqsp-variant-strategy b, .aqsp-variant-holdings > b { color: hsl(var(--primary)); font-size: 0.58rem; font-weight: 650; }
+  .aqsp-variant-lifecycle { display: grid; gap: 0.2rem; margin-top: 0.5rem; border-left: 2px solid hsl(var(--primary) / 0.65); padding: 0.35rem 0.5rem; background: hsl(var(--muted) / 0.22); font-size: 0.62rem; line-height: 1.4; }
+  .aqsp-variant-lifecycle b { color: hsl(var(--foreground) / 0.92); }
+  .aqsp-variant-lifecycle span { color: hsl(var(--muted-foreground)); }
   .aqsp-variant-account { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0.35rem; margin-top: 0.7rem; border-top: 1px solid hsl(var(--border) / 0.45); padding-top: 0.55rem; }
   .aqsp-variant-account div { min-width: 0; }
   .aqsp-variant-account span { display: block; color: hsl(var(--muted-foreground)); font-size: 0.58rem; }

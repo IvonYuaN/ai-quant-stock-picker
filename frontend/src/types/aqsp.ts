@@ -101,6 +101,37 @@ export interface AqspVariant {
   strategy?: string;
   holdings?: readonly AqspVariantHolding[];
   hard_rules?: readonly string[];
+  generation?: number;
+  parent_variant_id?: string;
+  independent_signal_days?: number;
+  lifecycle_status?: string;
+  lifecycle_reason?: string;
+  discussion_links?: readonly AqspVariantDiscussionLink[];
+}
+
+export interface AqspVariantDiscussionLink {
+  symbol: string;
+  display_name?: string;
+  discussion_conclusion?: string;
+  risk_gate?: string;
+  next_trigger?: string;
+}
+
+export interface AqspVariantSuite {
+  schema_version: string;
+  generated_at: string;
+  data_mode: string;
+  end_date: string;
+  variant_count: number;
+  selected_symbols: number;
+  supported_symbols: number;
+  batch_active: boolean;
+  batch_id: string;
+  batch_size: number;
+  cycle_id: number;
+  coverage_pct: number;
+  filters: string;
+  last_error: string;
 }
 
 export interface AqspVariantHolding {
@@ -172,6 +203,7 @@ export interface AqspSnapshot {
   recommendation_gate?: AqspRecommendationGate;
   phases?: readonly AqspPhase[];
   universe?: AqspUniverse;
+  variant_suite?: AqspVariantSuite;
   variants?: readonly AqspVariant[];
   research_chain?: AqspResearchChain;
   /** Present after the HTTP envelope is normalized; absent in the raw data payload. */
