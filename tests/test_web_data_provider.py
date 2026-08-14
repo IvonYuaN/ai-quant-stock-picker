@@ -2187,7 +2187,7 @@ def test_dashboard_data_provider_home_digest_expands_partial_debate_coverage(
 
     payload = provider.home_digest_payload("intraday", signal_date="2026-07-14")
 
-    assert calls == [(3, ("002084", "300604", "688981"))]
+    assert calls == [(5, ("002084", "300604", "688981"))]
     assert payload.debates == current
 
 
@@ -6158,13 +6158,15 @@ def test_dashboard_data_provider_live_view_caps_intraday_csv_and_exposes_card_ev
     spotlights = provider.live_candidate_spotlights(now=now)
     cards = provider._build_detail_cards(rows[:1], task_id="intraday")
 
-    assert len(view.candidates) == 3
+    assert len(view.candidates) == 5
     assert [item.status for item in view.candidates] == [
         "actionable",
         "actionable",
         "actionable",
+        "actionable",
+        "actionable",
     ]
-    assert len(spotlights) == 3
+    assert len(spotlights) == 5
     assert all("新鲜度: 新鲜" in item.review_meta for item in spotlights)
     assert all("证据质量:" in item.review_meta for item in spotlights)
     assert spotlights[0].data_source == "eastmoney"

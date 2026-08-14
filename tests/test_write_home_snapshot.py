@@ -981,6 +981,57 @@ def test_snapshot_debates_blocks_copied_content_across_symbols() -> None:
     assert [item.symbol for item in snapshots] == ["600001"]
 
 
+def test_snapshot_debates_keeps_one_distinct_review_for_each_home_candidate() -> None:
+    candidates = tuple(
+        write_home_snapshot._snapshot_candidate(_candidate(symbol, 90.0 - index))
+        for index, symbol in enumerate(
+            ("600001", "600002", "600003", "600004", "600005")
+        )
+    )
+    debates = tuple(
+        SimpleNamespace(
+            symbol=candidate.symbol,
+            display_name=f"示例{index}",
+            research_verdict=f"候选 {candidate.symbol} 保持观察，独立场景 {index}",
+            consensus="",
+            primary_risk_gate=f"候选 {candidate.symbol} 跌破止损则失效，风险级别 {index}",
+            next_trigger=f"候选 {candidate.symbol} 放量确认",
+            process_recorded=True,
+            conclusion_recorded=True,
+            evidence_sufficient=True,
+            round_count=2,
+            bull_count=1,
+            bear_count=1,
+            neutral_count=1,
+            agent_views=(
+                SimpleNamespace(role_id="bull", key_argument=f"{candidate.symbol} 趋势仍在"),
+                SimpleNamespace(role_id="bear", key_argument=f"{candidate.symbol} 承接不足"),
+                SimpleNamespace(role_id="risk_control", key_argument=f"{candidate.symbol} 等待确认"),
+            ),
+            viewpoint_buckets={
+                "technical": (f"{candidate.symbol} 趋势仍在",),
+                "risk_counterevidence": (f"{candidate.symbol} 承接不足",),
+            },
+            disagreement_points=(f"{candidate.symbol} 是否已有有效承接",),
+            uncertainty_points=(f"{candidate.symbol} 量能待确认",),
+        )
+        for index, candidate in enumerate(candidates)
+    )
+
+    snapshots = write_home_snapshot._snapshot_debates(
+        SimpleNamespace(debates=debates),
+        candidates,
+    )
+
+    assert [item.symbol for item in snapshots] == [
+        "600001",
+        "600002",
+        "600003",
+        "600004",
+        "600005",
+    ]
+
+
 def test_recommendation_gate_keeps_quote_candidates_when_news_refresh_fails() -> None:
     provider = _Provider()
     runtime = provider.runtime_overview("2026-07-10")
