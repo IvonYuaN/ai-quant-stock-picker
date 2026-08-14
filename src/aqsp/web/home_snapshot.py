@@ -550,9 +550,8 @@ def write_home_snapshot_index(path: str | Path, index: HomeSnapshotIndex) -> Non
         )
     ):
         raise ValueError("refusing to replace a newer home snapshot index")
+    index = _fit_index_to_byte_budget(index)
     payload = f"{index.to_json()}\n"
-    if len(payload.encode("utf-8")) > MAX_HOME_SNAPSHOT_BYTES:
-        raise ValueError("home snapshot index exceeds the 1 MiB byte budget")
     atomic_write_text(path, payload)
     _set_runtime_snapshot_mode(path)
 
@@ -712,6 +711,169 @@ def _normalize_index_for_write(index: HomeSnapshotIndex) -> HomeSnapshotIndex:
             )
             for day in index.days
         ),
+    )
+
+
+def _index_payload_size(index: HomeSnapshotIndex) -> int:
+    return len(f"{index.to_json()}\n".encode("utf-8"))
+
+
+def _bounded_index_text(value: str, limit: int = 256) -> str:
+    return str(value or "").strip()[:limit]
+
+
+def _rebuild_index_days(
+    index: HomeSnapshotIndex,
+    days: tuple[HomeSnapshotDay, ...],
+) -> HomeSnapshotIndex:
+    ordered = tuple(sorted(days, key=lambda day: day.date, reverse=True))
+    available_dates = tuple(day.date for day in ordered)
+    rebuilt = tuple(
+        HomeSnapshotDay(
+            date=day.date,
+            snapshot=replace(day.snapshot, available_dates=available_dates),
+        )
+        for day in ordered
+    )
+    return replace(
+        index,
+        days=rebuilt,
+        selected_date=available_dates[0] if available_dates else "",
+    )
+
+
+def _compact_snapshot_for_index(
+    snapshot: HomeDashboardSnapshot,
+) -> HomeDashboardSnapshot:
+    """Discard reproducible drill-down details while retaining review evidence."""
+    variants = tuple(
+        replace(
+            variant,
+            previous_holdings=(),
+            previous_holdings_date="",
+            recent_actions=(),
+            adjustments=(),
+            technical_evidence=(),
+            hard_rules=(),
+        )
+        for variant in snapshot.variants
+    )
+    debates = tuple(
+        replace(
+            debate,
+            round_summaries=(),
+            agent_views=(),
+            viewpoint_buckets={},
+            disagreement_points=(),
+            uncertainty_points=(),
+        )
+        for debate in snapshot.debates
+    )
+    messages = tuple(
+        replace(
+            message,
+            supporting_evidence=(),
+            transmission_path=(),
+            validation_signals=(),
+            invalidation_signals=(),
+        )
+        for message in snapshot.messages
+    )
+    market_context = snapshot.market_context
+    if market_context is not None:
+        market_context = replace(
+            market_context,
+            summary_lines=market_context.summary_lines[:1],
+            cross_market=(),
+            warnings=market_context.warnings[:1],
+        )
+    return replace(
+        snapshot,
+        debates=debates,
+        messages=messages,
+        market_context=market_context,
+        variants=variants,
+    )
+
+
+def _fit_index_to_byte_budget(index: HomeSnapshotIndex) -> HomeSnapshotIndex:
+    """Fit an index by dropping oldest dates before compacting latest drill-downs."""
+    if _index_payload_size(index) <= MAX_HOME_SNAPSHOT_BYTES:
+        return index
+    fitted = _rebuild_index_days(index, index.days)
+    while (
+        _index_payload_size(fitted) > MAX_HOME_SNAPSHOT_BYTES and len(fitted.days) > 1
+    ):
+        fitted = _rebuild_index_days(fitted, fitted.days[:-1])
+    if _index_payload_size(fitted) <= MAX_HOME_SNAPSHOT_BYTES or not fitted.days:
+        return fitted
+
+    latest = fitted.days[0]
+    compacted = _compact_snapshot_for_index(latest.snapshot)
+    fitted = _rebuild_index_days(
+        fitted,
+        (HomeSnapshotDay(date=latest.date, snapshot=compacted),),
+    )
+    if _index_payload_size(fitted) <= MAX_HOME_SNAPSHOT_BYTES:
+        return fitted
+
+    # Account rows are recoverable from the dedicated variant artifact. Keep suite
+    # metadata so the UI can still report that the experiment exists.
+    minimal = replace(compacted, variants=(), market_context=None)
+    fitted = _rebuild_index_days(
+        fitted,
+        (HomeSnapshotDay(date=latest.date, snapshot=minimal),),
+    )
+    if _index_payload_size(fitted) <= MAX_HOME_SNAPSHOT_BYTES:
+        return fitted
+
+    metadata_only = replace(
+        minimal,
+        candidates=(),
+        debates=(),
+        summaries=(),
+        messages=(),
+        market_context=None,
+        phases=(),
+        source=replace(
+            minimal.source,
+            effective=_bounded_index_text(minimal.source.effective),
+            latest_trade_date=_bounded_index_text(minimal.source.latest_trade_date),
+            status=_bounded_index_text(minimal.source.status),
+        ),
+        coldstart=replace(
+            minimal.coldstart,
+            status=_bounded_index_text(minimal.coldstart.status),
+            detail=_bounded_index_text(minimal.coldstart.detail),
+        ),
+        recommendation_gate=HomeSnapshotRecommendationGate(
+            recommendation_allowed=False,
+            status="blocked",
+            reasons=("index_byte_budget",),
+        ),
+        universe=replace(
+            minimal.universe,
+            source=_bounded_index_text(minimal.universe.source),
+            batch_id=_bounded_index_text(minimal.universe.batch_id),
+            last_error=_bounded_index_text(minimal.universe.last_error),
+        ),
+        variant_suite=replace(
+            minimal.variant_suite,
+            generated_at=_bounded_index_text(minimal.variant_suite.generated_at),
+            data_mode=_bounded_index_text(minimal.variant_suite.data_mode),
+            end_date=_bounded_index_text(minimal.variant_suite.end_date),
+            batch_id=_bounded_index_text(minimal.variant_suite.batch_id),
+            filters="",
+            last_error="",
+        ),
+        research_chain=HomeSnapshotResearchChain(
+            status="blocked",
+            blocker="index_byte_budget",
+        ),
+    )
+    return _rebuild_index_days(
+        fitted,
+        (HomeSnapshotDay(date=latest.date, snapshot=metadata_only),),
     )
 
 

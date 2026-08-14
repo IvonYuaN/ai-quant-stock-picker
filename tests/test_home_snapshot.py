@@ -28,6 +28,8 @@ from aqsp.web.home_snapshot import (
     HomeSnapshotMarketContext,
     HomeSnapshotMessage,
     HomeSnapshotSource,
+    HomeSnapshotVariant,
+    HomeSnapshotVariantSuite,
     HOME_SNAPSHOT_CLOSE_TTL,
     HOME_SNAPSHOT_INTRADAY_TTL,
     load_home_dashboard_snapshot,
@@ -517,6 +519,113 @@ def test_home_snapshot_index_rejects_more_than_four_days() -> None:
             stale_after="2026-07-12T09:30:00+08:00",
             days=snapshots,
         )
+
+
+def test_home_snapshot_index_drops_oldest_dates_to_fit_byte_budget(tmp_path) -> None:
+    large_summary = "历史复盘" * 22_000
+    days = tuple(
+        HomeSnapshotDay(
+            date=f"2026-07-{day:02d}",
+            snapshot=_snapshot(
+                selected_date=f"2026-07-{day:02d}",
+                dates=tuple(f"2026-07-{value:02d}" for value in range(11, 7, -1)),
+                summaries=(large_summary,),
+                stale_after="2026-07-12T09:30:00+08:00",
+            ),
+        )
+        for day in range(11, 7, -1)
+    )
+    index = HomeSnapshotIndex(
+        schema_version=HOME_SNAPSHOT_INDEX_SCHEMA_VERSION,
+        generated_at="2026-07-11T09:30:00+08:00",
+        stale_after="2026-07-12T09:30:00+08:00",
+        selected_date="2026-07-11",
+        days=days,
+    )
+    path = tmp_path / "home-index.json"
+
+    write_home_snapshot_index(path, index)
+
+    loaded = load_home_snapshot_index(path)
+    assert loaded is not None
+    assert loaded.available_dates == ("2026-07-11", "2026-07-10", "2026-07-09")
+    assert all(
+        day.snapshot.available_dates == loaded.available_dates for day in loaded.days
+    )
+    assert path.stat().st_size <= MAX_HOME_SNAPSHOT_BYTES
+
+
+def test_home_snapshot_index_compacts_latest_redundant_variant_details(
+    tmp_path,
+) -> None:
+    repeated_detail = "可再生成的变体明细" * 70_000
+    variant = HomeSnapshotVariant(
+        variant_id="variant-001",
+        label="量价确认",
+        initial_cash=100_000,
+        cash=90_000,
+        final_equity=101_000,
+        total_pnl=1_000,
+        return_pct=1.0,
+        filled_orders=1,
+        rejected_orders=0,
+        start_date="2026-07-01",
+        end_date="2026-07-11",
+        data_mode="paper",
+        technical_evidence=({"detail": repeated_detail},),
+    )
+    snapshot = replace(
+        _snapshot(stale_after="2026-07-12T09:30:00+08:00"),
+        variant_suite=HomeSnapshotVariantSuite(variant_count=1),
+        variants=(variant,),
+    )
+    index = HomeSnapshotIndex(
+        schema_version=HOME_SNAPSHOT_INDEX_SCHEMA_VERSION,
+        generated_at="2026-07-11T09:30:00+08:00",
+        stale_after="2026-07-12T09:30:00+08:00",
+        selected_date="2026-07-11",
+        days=(HomeSnapshotDay(date="2026-07-11", snapshot=snapshot),),
+    )
+    path = tmp_path / "home-index.json"
+
+    write_home_snapshot_index(path, index)
+
+    loaded = load_home_snapshot_index(path)
+    assert loaded is not None
+    latest = loaded.snapshot_for_date("2026-07-11")
+    assert latest is not None
+    assert latest.variant_suite.variant_count == 1
+    assert latest.variants[0].variant_id == "variant-001"
+    assert latest.variants[0].technical_evidence == ()
+    assert path.stat().st_size <= MAX_HOME_SNAPSHOT_BYTES
+
+
+def test_home_snapshot_index_keeps_latest_metadata_when_core_text_exceeds_budget(
+    tmp_path,
+) -> None:
+    snapshot = _snapshot(
+        summaries=("异常超长内容" * 100_000,),
+        stale_after="2026-07-12T09:30:00+08:00",
+    )
+    index = HomeSnapshotIndex(
+        schema_version=HOME_SNAPSHOT_INDEX_SCHEMA_VERSION,
+        generated_at="2026-07-11T09:30:00+08:00",
+        stale_after="2026-07-12T09:30:00+08:00",
+        selected_date="2026-07-11",
+        days=(HomeSnapshotDay(date="2026-07-11", snapshot=snapshot),),
+    )
+    path = tmp_path / "home-index.json"
+
+    write_home_snapshot_index(path, index)
+
+    loaded = load_home_snapshot_index(path)
+    assert loaded is not None
+    latest = loaded.snapshot_for_date("2026-07-11")
+    assert latest is not None
+    assert latest.source == snapshot.source
+    assert latest.summaries == ()
+    assert latest.recommendation_gate.reasons == ("index_byte_budget",)
+    assert path.stat().st_size <= MAX_HOME_SNAPSHOT_BYTES
 
 
 def test_home_snapshot_write_uses_shared_atomic_writer(monkeypatch, tmp_path) -> None:
