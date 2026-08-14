@@ -25,6 +25,7 @@ export const variantViewContractChecks = {
   emptyHoldingsAreExplicit: variantHoldingsLabel(variantFixture.holdings) === "当前无持仓",
   missingHoldingsAreExplicit: variantHoldingsLabel(undefined) === "持仓字段未提供",
   missingCashDoesNotBecomeZero: variantMoney(undefined) === "未提供",
+  moneyKeepsTwoDecimals: variantMoney(12.5) === "12.50 元",
   positivePnlIsSigned: variantPercent(variantFixture.return_pct) === "+1.25%",
   nameExplainsVariant: variantDisplayName(variantFixture) === "动量跟随 · 20 日 · 3 股组合",
   logicIsReadable: variantStrategyLogic(variantFixture) === "温和动量延续。",

@@ -257,6 +257,12 @@ class AQSPVariant:
     adjustments: tuple[str, ...] = ()
     hard_rules: tuple[str, ...] = ()
     technical_evidence: tuple[dict[str, Any], ...] = ()
+    generation: int = 1
+    parent_variant_id: str = ""
+    independent_signal_days: int = 0
+    lifecycle_status: str = "样本积累"
+    lifecycle_reason: str = ""
+    discussion_links: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -1017,6 +1023,12 @@ def _parse_variant(payload: object) -> AQSPVariant:
             "recent_actions",
             "adjustments",
             "technical_evidence",
+            "generation",
+            "parent_variant_id",
+            "independent_signal_days",
+            "lifecycle_status",
+            "lifecycle_reason",
+            "discussion_links",
         },
     )
     variant = AQSPVariant(
@@ -1073,6 +1085,27 @@ def _parse_variant(payload: object) -> AQSPVariant:
             if isinstance(value, dict)
         ),
         hard_rules=tuple(_text_list(item.get("hard_rules", []), "variant.hard_rules")),
+        generation=_integer(item.get("generation", 1), "variant.generation"),
+        parent_variant_id=_optional_text(
+            item.get("parent_variant_id"), "variant.parent_variant_id"
+        ),
+        independent_signal_days=_integer(
+            item.get("independent_signal_days", 0),
+            "variant.independent_signal_days",
+        ),
+        lifecycle_status=_optional_text(
+            item.get("lifecycle_status"), "variant.lifecycle_status"
+        ) or "样本积累",
+        lifecycle_reason=_optional_text(
+            item.get("lifecycle_reason"), "variant.lifecycle_reason"
+        ),
+        discussion_links=tuple(
+            value
+            for value in _list(
+                item.get("discussion_links", []), "variant.discussion_links"
+            )
+            if isinstance(value, dict)
+        ),
     )
     if variant.initial_cash != 100_000.0:
         raise AQSPSnapshotUnavailable("variant.initial_cash 必须为 100000")

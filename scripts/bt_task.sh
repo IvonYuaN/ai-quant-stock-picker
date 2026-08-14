@@ -55,13 +55,15 @@ log() {
 
 usage() {
     cat <<'EOF'
-Usage: bt_task.sh <daily|intraday|midday|coldstart|walkforward-gate|monitor|news|status>
+Usage: bt_task.sh <daily|intraday|midday|coldstart|walkforward-gate|monitor|news|status|data-refresh|variant-refresh>
 
 BT panel examples:
   /bin/bash /opt/aqsp/scripts/bt_task.sh intraday
   /bin/bash /opt/aqsp/scripts/bt_task.sh daily
   /bin/bash /opt/aqsp/scripts/bt_task.sh midday
   /bin/bash /opt/aqsp/scripts/bt_task.sh coldstart
+  /bin/bash /opt/aqsp/scripts/bt_task.sh data-refresh
+  /bin/bash /opt/aqsp/scripts/bt_task.sh variant-refresh
   /bin/bash /opt/aqsp/scripts/bt_task.sh walkforward-gate
   /bin/bash /opt/aqsp/scripts/bt_task.sh monitor
   /bin/bash /opt/aqsp/scripts/bt_task.sh news
@@ -72,6 +74,8 @@ Recommended BT schedule (Asia/Shanghai):
   midday    12:05 Mon-Fri
   daily     18:00 Mon-Fri
   coldstart 19:40 Mon-Fri
+  data-refresh 15:35 Mon-Fri; bounded raw daily data refresh
+  variant-refresh 22:30 Mon-Fri; bounded isolated experiment refresh
   walkforward-gate 22:00 Sat; controlled production evidence only, no threshold apply
   monitor   every 15 min
   status    manual only
@@ -513,6 +517,31 @@ case "$ACTION" in
         export AQSP_GATE_NOTIFY="false"
         sync_code_only
         run_script "${PROJECT_ROOT}/scripts/coldstart_daily.sh"
+        ;;
+    data-refresh)
+        skip_non_trading_day
+        export AQSP_RUN_TASK_ID="data_refresh"
+        export AQSP_NOTIFY="false"
+        export AQSP_GATE_NOTIFY="false"
+        sync_code_only
+        run_python_script "${PROJECT_ROOT}/scripts/refresh_sqlite_batch.py" \
+            --db "${AQSP_SQLITE_DB_PATH:-${AQSP_VARIANT_DB:-/opt/market-data/astocks_raw.db}}" \
+            --state "${STATE_DIR}/sqlite-refresh-cursor.json" \
+            --batch-size "${AQSP_DATA_REFRESH_BATCH_SIZE:-120}" \
+            --universe-limit "${AQSP_DATA_REFRESH_UNIVERSE_LIMIT:-0}" \
+            --min-amount "${AQSP_MIN_AVG_AMOUNT:-50000000}" \
+            --query-timeout-seconds "${AQSP_DATA_QUERY_TIMEOUT_SECONDS:-4}" \
+            --max-runtime-seconds "${AQSP_DATA_REFRESH_MAX_RUNTIME_SECONDS:-480}" \
+            --batches "${AQSP_DATA_REFRESH_BATCHES:-0}"
+        ;;
+    variant-refresh)
+        skip_non_trading_day
+        export AQSP_RUN_TASK_ID="variant_refresh"
+        export AQSP_NOTIFY="false"
+        export AQSP_GATE_NOTIFY="false"
+        export AQSP_RUNNER_SCRIPT=scripts/variant_refresh.sh
+        export AQSP_RUNNER_TIMEOUT_SECONDS="${AQSP_VARIANT_RUNNER_TIMEOUT_SECONDS:-540}"
+        run_synced_task_with_result
         ;;
     walkforward-gate)
         export AQSP_RUN_TASK_ID="walkforward_gate"

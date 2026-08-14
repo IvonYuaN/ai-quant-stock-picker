@@ -49,7 +49,7 @@ function parseVariantStrategy(strategy: string | undefined): VariantStrategy | n
 
 export function variantMoney(value: number | undefined): string {
   if (value == null || !Number.isFinite(value)) return "未提供";
-  return `${value.toLocaleString("zh-CN", { maximumFractionDigits: 0 })} 元`;
+  return `${value.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} 元`;
 }
 
 export function variantPercent(value: number | undefined): string {
