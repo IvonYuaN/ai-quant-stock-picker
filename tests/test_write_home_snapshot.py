@@ -882,7 +882,9 @@ def test_snapshot_debates_hides_shared_context_without_candidate_disagreement() 
             SimpleNamespace(role_id="risk_control"),
         ),
         viewpoint_buckets={"technical": ("候选专属证据: 模板",)},
-        disagreement_points=("跨市传导质询retail_mood: 当前维持中性",),
+        disagreement_points=(
+            "技术多头质询bear: 当前bullish立场与该主张方向相反；若该主张成立，当前方向假设将失效",
+        ),
     )
 
     snapshots = write_home_snapshot._snapshot_debates(

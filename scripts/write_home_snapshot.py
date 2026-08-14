@@ -639,7 +639,16 @@ def _is_shared_debate_context(value: object) -> bool:
     text = _text(value)
     return any(
         marker in text
-        for marker in ("跨市传导质询", "组合保护", "全局雷达", "来源质量")
+        for marker in (
+            "跨市传导质询",
+            "组合保护",
+            "全局雷达",
+            "来源质量",
+            "当前bullish立场与该主张方向相反",
+            "当前bearish立场与该主张方向相反",
+            "若该主张成立，当前方向假设将失效",
+            "未形成方向性判断",
+        )
     )
 
 
