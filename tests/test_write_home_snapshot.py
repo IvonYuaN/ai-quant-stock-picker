@@ -920,7 +920,6 @@ def test_snapshot_debates_preserves_role_specific_views_and_deduplicates_rounds(
     assert [(view.role, view.stance) for view in snapshots[0].agent_views] == [
         ("bull", "bullish"),
         ("risk_control", "bearish"),
-        ("sector_leader", "neutral"),
     ]
     assert snapshots[0].agent_views[0].arguments == ("量价共振仍在",)
     assert snapshots[0].agent_views[1].risks == ("冲高回落将失效",)

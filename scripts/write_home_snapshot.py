@@ -744,10 +744,22 @@ def _presentation_viewpoint_buckets(
 ) -> dict[str, tuple[str, ...]]:
     """Keep candidate-specific agent evidence, with deterministic fallback only when absent."""
     result: dict[str, tuple[str, ...]] = {}
+    allowed_buckets = {
+        "bullish",
+        "bearish",
+        "technical",
+        "strategy",
+        "uncertainty",
+        "risk_counterevidence",
+    }
     if isinstance(raw_viewpoints, dict):
         for raw_bucket, raw_points in raw_viewpoints.items():
             bucket = _text(raw_bucket)
-            if not bucket or not isinstance(raw_points, (list, tuple)):
+            if (
+                not bucket
+                or bucket not in allowed_buckets
+                or not isinstance(raw_points, (list, tuple))
+            ):
                 continue
             points: list[str] = []
             for raw_point in raw_points:
@@ -806,9 +818,12 @@ def _snapshot_agent_views(views: Iterable[object]) -> tuple[HomeSnapshotAgentVie
     """Serialize the final role views instead of flattening them into one summary."""
     selected: list[HomeSnapshotAgentView] = []
     seen: set[str] = set()
+    substantive_roles = {"bull", "bear", "risk_control"}
     for view in views:
         role = _first_text(getattr(view, "role_id", ""), getattr(view, "role", ""))
         if not role or role in seen:
+            continue
+        if role not in substantive_roles:
             continue
         seen.add(role)
         argument = _clean_legacy_debate_text(getattr(view, "key_argument", ""))
