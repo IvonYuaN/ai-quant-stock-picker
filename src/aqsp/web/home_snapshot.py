@@ -797,10 +797,18 @@ def _compact_snapshot_for_index(
 
 
 def _fit_index_to_byte_budget(index: HomeSnapshotIndex) -> HomeSnapshotIndex:
-    """Fit an index by dropping oldest dates before compacting latest drill-downs."""
+    """Fit an index while preserving recent dates ahead of reproducible details."""
     if _index_payload_size(index) <= MAX_HOME_SNAPSHOT_BYTES:
         return index
     fitted = _rebuild_index_days(index, index.days)
+    compacted_days = tuple(
+        HomeSnapshotDay(
+            date=day.date,
+            snapshot=_compact_snapshot_for_index(day.snapshot),
+        )
+        for day in fitted.days
+    )
+    fitted = _rebuild_index_days(fitted, compacted_days)
     while (
         _index_payload_size(fitted) > MAX_HOME_SNAPSHOT_BYTES and len(fitted.days) > 1
     ):
@@ -808,18 +816,10 @@ def _fit_index_to_byte_budget(index: HomeSnapshotIndex) -> HomeSnapshotIndex:
     if _index_payload_size(fitted) <= MAX_HOME_SNAPSHOT_BYTES or not fitted.days:
         return fitted
 
-    latest = fitted.days[0]
-    compacted = _compact_snapshot_for_index(latest.snapshot)
-    fitted = _rebuild_index_days(
-        fitted,
-        (HomeSnapshotDay(date=latest.date, snapshot=compacted),),
-    )
-    if _index_payload_size(fitted) <= MAX_HOME_SNAPSHOT_BYTES:
-        return fitted
-
     # Account rows are recoverable from the dedicated variant artifact. Keep suite
     # metadata so the UI can still report that the experiment exists.
-    minimal = replace(compacted, variants=(), market_context=None)
+    latest = fitted.days[0]
+    minimal = replace(latest.snapshot, variants=(), market_context=None)
     fitted = _rebuild_index_days(
         fitted,
         (HomeSnapshotDay(date=latest.date, snapshot=minimal),),

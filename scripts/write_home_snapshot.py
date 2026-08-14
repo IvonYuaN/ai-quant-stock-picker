@@ -266,8 +266,16 @@ def _snapshot_dates(task_view: Any, selected_date: str) -> tuple[str, ...]:
         (selected_date, *(getattr(task_view, "available_dates", ()) or ())),
         MAX_HOME_DATES,
     )
+    anchor = date.fromisoformat(max(dates, default=selected_date))
+    recent_dates = {anchor.isoformat()}
+    for _ in range(MAX_HOME_DATES - 1):
+        anchor = get_previous_trading_day(anchor)
+        recent_dates.add(anchor.isoformat())
     return tuple(
-        value for value in dates if value == selected_date or value <= completed_date
+        value
+        for value in dates
+        if value in recent_dates
+        and (value == selected_date or value <= completed_date)
     )
 
 
@@ -2710,15 +2718,26 @@ def merge_home_snapshot_index(
 
     completed_date = latest_completed_trading_day().isoformat()
     selected_date = refreshed.selected_date
+    newest_date = max(
+        (day.date for day in (*existing.days, *refreshed.days)),
+        default=selected_date,
+    )
+    recent_dates = {newest_date}
+    anchor = date.fromisoformat(newest_date)
+    for _ in range(MAX_HOME_SNAPSHOT_INDEX_DAYS - 1):
+        anchor = get_previous_trading_day(anchor)
+        recent_dates.add(anchor.isoformat())
     existing_by_date = {
         day.date: day
         for day in existing.days
-        if day.date == selected_date or day.date <= completed_date
+        if day.date in recent_dates
+        and (day.date == selected_date or day.date <= completed_date)
     }
     refreshed_by_date = {
         day.date: day
         for day in refreshed.days
-        if day.date == selected_date or day.date <= completed_date
+        if day.date in recent_dates
+        and (day.date == selected_date or day.date <= completed_date)
     }
     dates = set(existing_by_date) | set(refreshed_by_date)
     ordered_dates = [refreshed.selected_date]

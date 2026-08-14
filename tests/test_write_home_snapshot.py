@@ -2649,6 +2649,21 @@ def test_snapshot_dates_excludes_uncompleted_trading_day(monkeypatch) -> None:
     assert dates == ("2026-07-09", "2026-07-08")
 
 
+def test_snapshot_dates_excludes_old_gap_from_live_history(monkeypatch) -> None:
+    monkeypatch.setattr(
+        write_home_snapshot,
+        "latest_completed_trading_day",
+        lambda: date(2026, 8, 13),
+    )
+
+    dates = write_home_snapshot._snapshot_dates(
+        SimpleNamespace(available_dates=("2026-08-14", "2026-07-20")),
+        "2026-08-14",
+    )
+
+    assert dates == ("2026-08-14",)
+
+
 def test_home_snapshot_excludes_uncompleted_date_from_final_output(monkeypatch) -> None:
     provider = _DateAwareProvider()
     original_payload = provider.home_digest_payload
