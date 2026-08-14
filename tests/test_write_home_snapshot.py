@@ -439,6 +439,37 @@ def test_research_chain_links_experiment_coverage_without_current_holding() -> N
     assert chain.variant_holding_review_symbols == ()
 
 
+def test_research_chain_waits_until_all_candidates_have_variant_coverage() -> None:
+    candidates = tuple(
+        write_home_snapshot._snapshot_candidate(_candidate(symbol, 88.0))
+        for symbol in ("600001", "600002")
+    )
+    assert all(candidate is not None for candidate in candidates)
+    debates = tuple(
+        write_home_snapshot.HomeSnapshotDebate(
+            symbol=symbol,
+            display_name=f"{symbol} 示例",
+            conclusion="已完成讨论。",
+            primary_risk_gate="跌破止损则失效。",
+            next_trigger="等待下一次确认。",
+            active_roles=("量化研究员", "风险审查员"),
+        )
+        for symbol in ("600001", "600002")
+    )
+
+    chain = write_home_snapshot._research_chain_snapshot(
+        candidates,
+        debates,
+        write_home_snapshot.HomeSnapshotVariantSuite(variant_count=24),
+        (),
+        ("600001",),
+    )
+
+    assert chain.status == "waiting_validation"
+    assert chain.variant_candidate_symbols == ("600001",)
+    assert chain.blocker == "当天候选尚未全部进入本轮 raw 变体实验池，等待下轮覆盖。"
+
+
 def test_research_chain_rejects_stale_variant_results_for_selected_date() -> None:
     candidate = write_home_snapshot._snapshot_candidate(_candidate("600001", 88.0))
     assert candidate is not None
@@ -1032,10 +1063,12 @@ def test_snapshot_debates_keeps_one_distinct_review_for_each_home_candidate() ->
     ]
 
 
-def test_recommendation_gate_keeps_quote_candidates_when_news_refresh_fails() -> None:
+def test_recommendation_gate_blocks_candidates_without_linked_news_evidence() -> None:
     provider = _Provider()
     runtime = provider.runtime_overview("2026-07-10")
     source = SimpleNamespace(status="完成", lag_days=0)
+    candidate = write_home_snapshot._snapshot_candidate(_candidate("600010", 88.0))
+    assert candidate is not None
 
     gate = write_home_snapshot._recommendation_gate(
         provider,
@@ -1043,10 +1076,47 @@ def test_recommendation_gate_keeps_quote_candidates_when_news_refresh_fails() ->
         source,
         "来源失败",
         evaluated_at=datetime(2026, 7, 10, 15, 1, tzinfo=ZoneInfo("Asia/Shanghai")),
+        candidates=(candidate,),
     )
 
-    assert gate.recommendation_allowed is True
-    assert gate.reasons == ()
+    assert gate.recommendation_allowed is False
+    assert gate.status == "research_evidence_not_ready"
+    assert gate.reasons == ("候选缺少可引用消息证据：600010",)
+
+
+def test_recommendation_gate_blocks_unlinked_variant_validation() -> None:
+    candidate = write_home_snapshot._snapshot_candidate(_candidate("600010", 88.0))
+    assert candidate is not None
+    message = write_home_snapshot.HomeSnapshotMessage(
+        title="有来源的个股消息",
+        summary="摘要",
+        impact="中性",
+        category="公司",
+        source="交易所",
+        published_at="2026-07-10T14:30:00+08:00",
+        source_url="https://example.com/news",
+        affected_symbols=("600010",),
+    )
+
+    gate = write_home_snapshot._recommendation_gate(
+        provider=SimpleNamespace(paper_ledger_path=None),
+        runtime=SimpleNamespace(),
+        source=SimpleNamespace(status="完成", lag_days=0),
+        message_status="可用",
+        evaluated_at=datetime(2026, 7, 10, 15, 1, tzinfo=ZoneInfo("Asia/Shanghai")),
+        candidates=(candidate,),
+        messages=(message,),
+        research_chain=write_home_snapshot.HomeSnapshotResearchChain(
+            status="waiting_validation",
+            candidate_symbols=("600010",),
+            debated_symbols=("600010",),
+            blocker="当天变体尚未覆盖候选",
+        ),
+    )
+
+    assert gate.recommendation_allowed is False
+    assert gate.status == "research_validation_not_ready"
+    assert gate.reasons == ("当天变体尚未覆盖候选",)
 
 
 def test_recommendation_gate_blocks_stale_home_candidates() -> None:

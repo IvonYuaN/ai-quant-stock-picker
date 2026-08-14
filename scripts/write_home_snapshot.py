@@ -1810,6 +1810,8 @@ def _recommendation_gate(
     evaluated_at: datetime,
     universe: HomeSnapshotUniverse | None = None,
     candidates: tuple[HomeSnapshotCandidate, ...] = (),
+    messages: tuple[HomeSnapshotMessage, ...] = (),
+    research_chain: HomeSnapshotResearchChain | None = None,
 ) -> HomeSnapshotRecommendationGate:
     if (
         universe is not None
@@ -1877,6 +1879,35 @@ def _recommendation_gate(
             status="freshness_not_ready",
             reasons=(f"候选行情已过期：{'、'.join(stale_symbols)}",),
         )
+    if candidates:
+        linked_message_symbols = {
+            symbol
+            for message in messages
+            if (message.source_url.strip() or message.url.strip())
+            for symbol in message.affected_symbols
+        }
+        missing_message_symbols = tuple(
+            candidate.symbol
+            for candidate in candidates
+            if candidate.symbol not in linked_message_symbols
+        )
+        if missing_message_symbols:
+            return HomeSnapshotRecommendationGate(
+                recommendation_allowed=False,
+                status="research_evidence_not_ready",
+                reasons=(
+                    f"候选缺少可引用消息证据：{'、'.join(missing_message_symbols)}",
+                ),
+            )
+        if research_chain is None or research_chain.status != "linked":
+            return HomeSnapshotRecommendationGate(
+                recommendation_allowed=False,
+                status="research_validation_not_ready",
+                reasons=(
+                    (research_chain.blocker if research_chain else "研究验证链未生成")
+                    or "讨论与变体验证尚未完整联动",
+                ),
+            )
     override = os.getenv("AQSP_RESEARCH_DISPLAY_OVERRIDE", "").strip().lower()
     if override in {"1", "true", "yes", "on"}:
         return HomeSnapshotRecommendationGate(
@@ -2368,14 +2399,15 @@ def _research_chain_snapshot(
     variant_holding_review_symbols = tuple(
         symbol for symbol in debated_symbols if symbol in holding_set
     )
+    pending_review_symbols = tuple(
+        symbol for symbol in candidate_symbols if symbol not in debated_set
+    )
     if not variants and not experiment_symbols:
         return HomeSnapshotResearchChain(
             status="blocked",
             candidate_symbols=candidate_symbols,
             debated_symbols=debated_symbols,
-            pending_review_symbols=tuple(
-                symbol for symbol in candidate_symbols if symbol not in debated_set
-            ),
+            pending_review_symbols=pending_review_symbols,
             blocker=variant_suite.last_error or "变体产物不存在。",
         )
     if not variant_current_for_selected_date:
@@ -2383,28 +2415,31 @@ def _research_chain_snapshot(
             status="waiting_validation",
             candidate_symbols=candidate_symbols,
             debated_symbols=debated_symbols,
-            pending_review_symbols=tuple(
-                symbol for symbol in candidate_symbols if symbol not in debated_set
-            ),
+            pending_review_symbols=pending_review_symbols,
             blocker=(
                 f"变体结果截至 {variant_suite.end_date or '未知日期'}，"
                 "不作为当天结论的验证证据。"
             ),
         )
     return HomeSnapshotResearchChain(
-        status="linked" if variant_review_symbols else "waiting_validation",
+        status=(
+            "linked"
+            if not pending_review_symbols
+            and set(candidate_symbols).issubset(experiment_set)
+            else "waiting_validation"
+        ),
         candidate_symbols=candidate_symbols,
         debated_symbols=debated_symbols,
-        pending_review_symbols=tuple(
-            symbol for symbol in candidate_symbols if symbol not in debated_set
-        ),
+        pending_review_symbols=pending_review_symbols,
         variant_candidate_symbols=variant_candidate_symbols,
         variant_review_symbols=variant_review_symbols,
         variant_holding_candidate_symbols=variant_holding_candidate_symbols,
         variant_holding_review_symbols=variant_holding_review_symbols,
         blocker=(
-            "当天有效复核标的未进入本轮 raw 变体实验池，等待下轮覆盖。"
-            if not variant_review_symbols
+            "当天候选尚未全部进入本轮 raw 变体实验池，等待下轮覆盖。"
+            if not set(candidate_symbols).issubset(experiment_set)
+            else "当天候选讨论尚未全部完成。"
+            if pending_review_symbols
             else ""
         ),
     )
@@ -2613,6 +2648,16 @@ def build_home_snapshot(
     )
     market_context = _with_news_source_coverage(market_context, catalyst_report)
     messages = _append_cross_market_messages(messages, artifact)
+    variant_suite = _variant_suite_snapshot()
+    variants = _variant_snapshot()
+    research_chain = _research_chain_snapshot(
+        candidates,
+        debates,
+        variant_suite,
+        variants,
+        _variant_experiment_symbols(),
+        selected_date,
+    )
     recommendation_gate = _recommendation_gate(
         provider,
         runtime,
@@ -2621,6 +2666,8 @@ def build_home_snapshot(
         evaluated_at=now_shanghai(),
         universe=universe,
         candidates=candidates,
+        messages=messages,
+        research_chain=research_chain,
     )
     candidates = _apply_recommendation_gate(candidates, recommendation_gate)
     phases = _phase_snapshot(provider, selected_date, candidates)
@@ -2631,8 +2678,6 @@ def build_home_snapshot(
         provider, selected_date, debates, candidates
     )
 
-    variant_suite = _variant_suite_snapshot()
-    variants = _variant_snapshot()
     return HomeDashboardSnapshot(
         schema_version=HOME_SNAPSHOT_SCHEMA_VERSION,
         generated_at=generated_at,
@@ -2653,14 +2698,7 @@ def build_home_snapshot(
         universe=universe,
         variant_suite=variant_suite,
         variants=variants,
-        research_chain=_research_chain_snapshot(
-            candidates,
-            debates,
-            variant_suite,
-            variants,
-            _variant_experiment_symbols(),
-            selected_date,
-        ),
+        research_chain=research_chain,
     )
 
 
