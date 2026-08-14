@@ -885,8 +885,9 @@ def assign_variant_lifecycle(results: list[dict[str, Any]]) -> None:
             evolved_on = str(strategy.get("evolved_on") or "")
             parent_id = str(item.get("parent_variant_id") or strategy.get("parent_variant_id") or "")
             if not evolved_on and parent_id:
-                evolved_on = str(item.get("end_date") or "")
-            elapsed = _elapsed_calendar_days(evolved_on, str(item.get("end_date") or ""))
+                evolved_on = str(item.get("end_date") or item.get("holdings_date") or "")
+            evidence_end = str(item.get("end_date") or item.get("holdings_date") or "")
+            elapsed = _elapsed_calendar_days(evolved_on, evidence_end)
             if elapsed is not None and elapsed < EVOLUTION_COOLDOWN_CALENDAR_DAYS:
                 status = "冷却观察"
                 remaining = EVOLUTION_COOLDOWN_CALENDAR_DAYS - elapsed

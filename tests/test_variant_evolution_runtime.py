@@ -180,7 +180,7 @@ def test_variant_lifecycle_enforces_cooldown_after_evolution() -> None:
             "rank": 5,
             "return_pct": -3.0,
             "independent_signal_days": 35,
-            "end_date": "2026-08-14",
+            "holdings_date": "2026-08-14",
             "strategy": {
                 "entry_return_pct": 1.0,
                 "max_bias_pct": 10.0,
