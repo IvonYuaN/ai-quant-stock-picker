@@ -143,6 +143,34 @@ def _write_debates(tmp_path: Path, *records: dict) -> Path:
     return path
 
 
+def test_aqsp_bridge_accepts_one_debate_for_each_home_candidate() -> None:
+    payload = _snapshot("2026-07-14")
+    candidate = payload["candidates"][0]
+    debate = payload["debates"][0]
+    symbols = ("600001", "600002", "600003", "600004", "600005")
+    payload["candidates"] = [
+        {
+            **candidate,
+            "symbol": symbol,
+            "display_name": f"{symbol} 示例",
+        }
+        for symbol in symbols
+    ]
+    payload["debates"] = [
+        {
+            **debate,
+            "symbol": symbol,
+            "display_name": f"{symbol} 示例",
+            "conclusion": f"{symbol} 独立复核结论",
+        }
+        for symbol in symbols
+    ]
+
+    snapshot = aqsp_bridge._parse_snapshot(payload)
+
+    assert [item.symbol for item in snapshot.debates] == list(symbols)
+
+
 def _runtime_debate(*, date: str, symbol: str = "600002", score: float = 72.5) -> dict:
     return {
         "symbol": symbol,
