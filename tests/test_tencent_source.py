@@ -54,6 +54,7 @@ def test_tencent_source_fetches_quote_batch_and_keeps_partial_symbols(
 ):
     def payload(symbol: str, price: str) -> str:
         parts = [""] * 50
+        parts[1] = "测试名称"
         parts[3] = price
         parts[6] = "1000"
         parts[9] = price
@@ -83,6 +84,7 @@ def test_tencent_source_fetches_quote_batch_and_keeps_partial_symbols(
 
     assert set(result) == {"600000", "000001"}
     assert result["600000"]["price"] == 10.5
+    assert result["600000"]["name"] == "测试名称"
     assert "q=sh600000,sz000001,sz000002" in requested_urls[0]
 
 

@@ -623,9 +623,31 @@ def _load_optional_symbol_name_map(symbols: list[str]) -> dict[str, str]:
     }
 
 
+def _load_realtime_symbol_name_map(
+    symbols: list[str], source_name: str
+) -> dict[str, str]:
+    if not symbols or not source_name.strip():
+        return {}
+    try:
+        quotes = _get_source(source_name).fetch_realtime_quote(symbols)
+    except Exception as exc:
+        LOGGER.warning("实时股票名称补齐失败，保留代码显示: %s", exc)
+        return {}
+    return {
+        symbol: name
+        for symbol, quote in quotes.items()
+        if isinstance(quote, dict)
+        and has_meaningful_name(
+            symbol, name := str(quote.get("name", "") or "").strip()
+        )
+    }
+
+
 def _enrich_pick_names(
     picks: list[PickResult],
     frames: dict[str, pd.DataFrame] | None = None,
+    *,
+    realtime_source_name: str = "",
 ) -> list[PickResult]:
     if not picks:
         return picks
@@ -645,6 +667,15 @@ def _enrich_pick_names(
     ]
     if missing_symbols:
         name_map.update(_load_optional_symbol_name_map(missing_symbols))
+    missing_symbols = [
+        symbol
+        for symbol in missing_symbols
+        if not has_meaningful_name(symbol, name_map.get(symbol, ""))
+    ]
+    if missing_symbols:
+        name_map.update(
+            _load_realtime_symbol_name_map(missing_symbols, realtime_source_name)
+        )
 
     enriched: list[PickResult] = []
     for pick in picks:
@@ -4488,6 +4519,7 @@ def run_screen(args: argparse.Namespace) -> int:
     picks = _enrich_pick_names(
         _screen_universe_with_thresholds(screen_frames, config, thresholds),
         screen_frames,
+        realtime_source_name=actual_source,
     )[: args.limit]
     table = to_dataframe(picks)
     if table.empty:
@@ -4778,6 +4810,7 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
     screened_picks = _enrich_pick_names(
         _screen_universe_with_thresholds(screen_frames, config, thresholds),
         screen_frames,
+        realtime_source_name=actual_source,
     )
     screened_picks = _attach_runtime_weight_snapshot(
         screened_picks,
