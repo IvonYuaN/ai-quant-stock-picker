@@ -2234,6 +2234,7 @@ def _research_chain_snapshot(
     variant_suite: HomeSnapshotVariantSuite,
     variants: tuple[HomeSnapshotVariant, ...],
     experiment_symbols: tuple[str, ...] = (),
+    selected_date: str = "",
 ) -> HomeSnapshotResearchChain:
     """Join current-day evidence without allowing variants to affect scoring."""
     candidate_symbols = tuple(candidate.symbol for candidate in candidates)
@@ -2249,6 +2250,9 @@ def _research_chain_snapshot(
     )
     experiment_set = set(experiment_symbols)
     holding_set = set(holding_symbols)
+    variant_current_for_selected_date = not selected_date or (
+        variant_suite.end_date == selected_date
+    )
     variant_candidate_symbols = tuple(
         symbol for symbol in candidate_symbols if symbol in experiment_set
     )
@@ -2270,6 +2274,19 @@ def _research_chain_snapshot(
                 symbol for symbol in candidate_symbols if symbol not in debated_set
             ),
             blocker=variant_suite.last_error or "变体产物不存在。",
+        )
+    if not variant_current_for_selected_date:
+        return HomeSnapshotResearchChain(
+            status="waiting_validation",
+            candidate_symbols=candidate_symbols,
+            debated_symbols=debated_symbols,
+            pending_review_symbols=tuple(
+                symbol for symbol in candidate_symbols if symbol not in debated_set
+            ),
+            blocker=(
+                f"变体结果截至 {variant_suite.end_date or '未知日期'}，"
+                "不作为当天结论的验证证据。"
+            ),
         )
     return HomeSnapshotResearchChain(
         status="linked" if variant_review_symbols else "waiting_validation",
@@ -2537,6 +2554,7 @@ def build_home_snapshot(
             variant_suite,
             variants,
             _variant_experiment_symbols(),
+            selected_date,
         ),
     )
 

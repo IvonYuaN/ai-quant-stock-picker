@@ -439,6 +439,35 @@ def test_research_chain_links_experiment_coverage_without_current_holding() -> N
     assert chain.variant_holding_review_symbols == ()
 
 
+def test_research_chain_rejects_stale_variant_results_for_selected_date() -> None:
+    candidate = write_home_snapshot._snapshot_candidate(_candidate("600001", 88.0))
+    assert candidate is not None
+    debate = write_home_snapshot.HomeSnapshotDebate(
+        symbol="600001",
+        display_name="600001 示例",
+        conclusion="规则证据与独立风险条件齐全。",
+        primary_risk_gate="跌破纸面止损则复核失效。",
+        next_trigger="下一交易日确认量能。",
+        active_roles=("量化研究员", "风险审查员", "反方审查员"),
+    )
+
+    chain = write_home_snapshot._research_chain_snapshot(
+        (candidate,),
+        (debate,),
+        write_home_snapshot.HomeSnapshotVariantSuite(
+            variant_count=24,
+            end_date="2026-08-12",
+        ),
+        (),
+        ("600001",),
+        selected_date="2026-08-14",
+    )
+
+    assert chain.status == "waiting_validation"
+    assert chain.variant_candidate_symbols == ()
+    assert "2026-08-12" in chain.blocker
+
+
 def test_research_chain_exposes_missing_variant_as_blocker(
     monkeypatch, tmp_path: Path
 ) -> None:
