@@ -706,9 +706,34 @@ def _presentation_viewpoint_buckets(
     candidate: HomeSnapshotCandidate,
     primary_risk_gate: str,
 ) -> dict[str, tuple[str, ...]]:
-    """Build bounded display evidence instead of leaking raw debate templates."""
-    del raw_viewpoints, primary_risk_gate
+    """Keep candidate-specific agent evidence, with deterministic fallback only when absent."""
     result: dict[str, tuple[str, ...]] = {}
+    if isinstance(raw_viewpoints, dict):
+        for raw_bucket, raw_points in raw_viewpoints.items():
+            bucket = _text(raw_bucket)
+            if not bucket or not isinstance(raw_points, (list, tuple)):
+                continue
+            points: list[str] = []
+            for raw_point in raw_points:
+                point = _clean_legacy_debate_text(raw_point)[:240]
+                if (
+                    not point
+                    or _is_raw_debate_template(point)
+                    or _is_shared_debate_context(point)
+                    or point == _text(primary_risk_gate)
+                ):
+                    continue
+                if _research_text_key(point) not in {
+                    _research_text_key(item) for item in points
+                }:
+                    points.append(point)
+                if len(points) == 3:
+                    break
+            if points:
+                result[bucket] = tuple(points)
+    if result:
+        return result
+
     metric_evidence = tuple(
         f"{metric.label}：{metric.value}"
         for metric in candidate.technical_metrics
