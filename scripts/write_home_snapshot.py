@@ -587,6 +587,27 @@ def _snapshot_debates(
                     )
                 )
             )
+        if len(agent_views) >= 2:
+            published_votes = {
+                "bull_count": sum(
+                    view.stance.strip().lower() in {"bull", "bullish"}
+                    for view in agent_views
+                ),
+                "bear_count": sum(
+                    view.stance.strip().lower() in {"bear", "bearish"}
+                    for view in agent_views
+                ),
+                "neutral_count": sum(
+                    view.stance.strip().lower() not in {"bull", "bullish", "bear", "bearish"}
+                    for view in agent_views
+                ),
+            }
+        else:
+            published_votes = {
+                "bull_count": int(getattr(debate, "bull_count", 0) or 0),
+                "bear_count": int(getattr(debate, "bear_count", 0) or 0),
+                "neutral_count": int(getattr(debate, "neutral_count", 0) or 0),
+            }
         disagreement_points = tuple(
             _clean_legacy_debate_text(point)[:240]
             for point in (getattr(debate, "disagreement_points", ()) or ())
@@ -620,9 +641,9 @@ def _snapshot_debates(
             next_trigger=_text(getattr(debate, "next_trigger", "")),
             active_roles=published_roles,
             round_count=int(getattr(debate, "round_count", 0) or 0),
-            bull_count=int(getattr(debate, "bull_count", 0) or 0),
-            bear_count=int(getattr(debate, "bear_count", 0) or 0),
-            neutral_count=int(getattr(debate, "neutral_count", 0) or 0),
+            bull_count=published_votes["bull_count"],
+            bear_count=published_votes["bear_count"],
+            neutral_count=published_votes["neutral_count"],
             process_summary=(
                 f"{getattr(debate, 'round_count', 0)} 轮讨论 · "
                 f"参与角色 {len(published_roles)}"
