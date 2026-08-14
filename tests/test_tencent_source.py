@@ -100,6 +100,29 @@ def test_get_market_prefix_sz():
     assert _get_market_prefix("300750") == "sz"
 
 
+def test_get_market_prefix_bj_for_current_beijing_board_code():
+    assert _get_market_prefix("920186") == "bj"
+
+
+def test_tencent_quote_parser_accepts_beijing_board_prefix(tencent_source):
+    parts = [""] * 50
+    parts[1] = "中科仪"
+    parts[3] = "74.43"
+    parts[6] = "32847"
+    parts[9] = "74.43"
+    parts[19] = "74.44"
+    parts[30] = "2026-08-14"
+    parts[31] = "15:00:33"
+    parts[37] = "24302.12"
+
+    parsed = tencent_source._parse_tencent_quote_response(
+        f'v_bj920186="{"~".join(parts)}";'
+    )
+
+    assert parsed["920186"]["name"] == "中科仪"
+    assert parsed["920186"]["price"] == pytest.approx(74.43)
+
+
 def test_normalize_tencent_df(tencent_source, mock_tencent_daily_data):
     df = mock_tencent_daily_data.copy()
     normalized = tencent_source._normalize_tencent_df(df, "600000")

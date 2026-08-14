@@ -363,4 +363,4 @@ class DataValidator:
     def _is_beijing_board_symbol(symbol: str) -> bool:
         """检查是否为北交所股票，涨跌幅通常按 30% 校验。"""
         clean = symbol.strip()
-        return clean.startswith(("43", "83", "87", "88"))
+        return clean.startswith(("43", "83", "87", "88", "920"))

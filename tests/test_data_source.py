@@ -377,6 +377,7 @@ def test_validate_ohlcv_missing_columns():
 def test_get_limit_pct_uses_precise_beijing_board_prefixes() -> None:
     assert get_limit_pct("430001") == pytest.approx(0.30)
     assert get_limit_pct("830001") == pytest.approx(0.30)
+    assert get_limit_pct("920186") == pytest.approx(0.30)
     assert get_limit_pct("400001") == pytest.approx(0.10)
     assert get_limit_pct("800001") == pytest.approx(0.10)
 
