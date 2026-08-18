@@ -1485,6 +1485,31 @@ def test_phase_conclusion_summaries_use_current_candidates_when_intraday_source_
     assert summaries[1].startswith("盘中：判断：1 个对象通过盘中筛选")
 
 
+def test_phase_conclusion_summaries_match_final_intraday_candidate_set() -> None:
+    class ExpandedProvider(_Provider):
+        def _signal_task_rows_for_date(self, task_id: str, _signal_date: str):
+            if task_id != "intraday":
+                return []
+            return [
+                {
+                    "symbol": f"60000{index}",
+                    "name": f"原始候选 {index}",
+                    "score": float(index),
+                    "reasons": f"规则 {index}",
+                }
+                for index in range(10)
+            ]
+
+    candidates = tuple(_candidate(f"60000{index}", 100.0 - index) for index in range(5))
+
+    summaries = write_home_snapshot._phase_conclusion_summaries(
+        ExpandedProvider(), "2026-07-10", (), candidates
+    )
+
+    assert summaries[1].startswith("盘中：判断：5 个对象通过盘中筛选")
+    assert "原始候选 9" not in summaries[1]
+
+
 def test_snapshot_candidate_maps_freshness_label_when_status_is_missing() -> None:
     candidate = _candidate("600006", 70.0)
     candidate.freshness = ""
