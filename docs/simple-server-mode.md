@@ -185,7 +185,7 @@ bash /opt/aqsp/scripts/server_sync_and_run.sh
 /bin/bash /opt/aqsp/scripts/bt_task.sh <morning|intraday|midday|daily|coldstart|monitor|news|status>
 ```
 
-建议在宝塔里配置 **6 条自动任务 + 1 条手动自检命令**：
+建议在宝塔里配置 **7 条自动任务 + 1 条手动自检命令**：
 
 | 任务名 | 推荐时间 | 宝塔脚本内容 | 作用 |
 |---|---:|---|---|
