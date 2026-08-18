@@ -2336,9 +2336,15 @@ def _phase_conclusion_summaries(
             rows = provider._signal_task_rows_for_date(task_id, signal_date)
         except Exception:
             rows = []
-        if task_id == "intraday" and not rows and current_candidates:
+        if task_id == "intraday" and current_candidates:
+            rows_by_symbol = {
+                _text(row.get("symbol")): row
+                for row in rows
+                if _text(row.get("symbol"))
+            }
             rows = [
-                {
+                rows_by_symbol.get(candidate.symbol)
+                or {
                     "symbol": candidate.symbol,
                     "name": candidate.display_name,
                     "score": candidate.score,
