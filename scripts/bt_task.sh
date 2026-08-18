@@ -460,6 +460,7 @@ case "$ACTION" in
         export AQSP_NOTIFY="false"
         export AQSP_GATE_NOTIFY="false"
         export AQSP_RUNNER_SCRIPT=scripts/morning_breakout.sh
+        export AQSP_RUNNER_TIMEOUT_SECONDS="${AQSP_MORNING_RUNNER_TIMEOUT_SECONDS:-600}"
         run_synced_task_with_result
         ;;
     daily)
