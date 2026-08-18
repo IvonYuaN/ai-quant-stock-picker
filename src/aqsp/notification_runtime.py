@@ -330,12 +330,14 @@ def dispatch_gate_notification(
     prefix: str = "gate notify",
     state_path: str | Path | None = None,
     reserve_before_send: bool = False,
+    content_markdown: str = "",
 ) -> list[NotifyResult]:
-    markdown = build_gate_notification_markdown(
+    gate_markdown = build_gate_notification_markdown(
         run_date=run_date,
         gate_reasons=gate_reasons,
         next_actions=next_actions,
     )
+    markdown = gate_markdown + content_markdown
     if state_path is not None and reserve_before_send:
         if not reserve_gate_notification(
             gate_ok=False,
@@ -486,7 +488,7 @@ def finalize_scheduled_notification(
                         gate_reasons=gate_reasons,
                         next_actions=next_actions,
                     )
-                    results = legacy_notify_fn(gate_markdown)
+                    results = legacy_notify_fn(gate_markdown + markdown)
                 else:
                     results = dispatch_gate_notification_fn(
                         run_date=latest_iso,
@@ -495,6 +497,7 @@ def finalize_scheduled_notification(
                         mode=notify_mode,
                         state_path=gate_state_path,
                         reserve_before_send=True,
+                        content_markdown=markdown,
                     )
                 if not _has_successful_notify_result(results):
                     if mark_gate_notification_failed_fn is not None:

@@ -22,7 +22,7 @@ def test_finalize_scheduled_notification_disables_notify_and_prefixes_markdown(
     monkeypatch,
 ) -> None:
     seen: list[str] = []
-    gate_calls: list[tuple[str, list[str], list[str], str]] = []
+    gate_calls: list[tuple[object, ...]] = []
     state_calls: list[dict[str, object]] = []
     monkeypatch.setenv("AQSP_RUN_TASK_ID", "daily")
     monkeypatch.setenv("AQSP_NOTIFY", "true")
@@ -44,6 +44,7 @@ def test_finalize_scheduled_notification_disables_notify_and_prefixes_markdown(
                     kwargs["next_actions"],
                     kwargs["mode"],
                     kwargs["reserve_before_send"],
+                    kwargs["content_markdown"],
                 )
             )
             or []
@@ -69,6 +70,7 @@ def test_finalize_scheduled_notification_disables_notify_and_prefixes_markdown(
             ["继续按日运行主链。"],
             "summary",
             True,
+            "# 原始报告",
         )
     ]
     assert state_calls == [
@@ -108,6 +110,7 @@ def test_finalize_scheduled_notification_uses_prebuilt_gate_block_markdown(
 
     assert artifacts.markdown.startswith("PREBUILT\n# 原始报告")
     assert legacy_seen[0].startswith("# 通知未放行-2026-06-15")
+    assert "# 原始报告" in legacy_seen[0]
 
 
 def test_finalize_scheduled_notification_prefers_legacy_notify_when_patched(
