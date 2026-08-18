@@ -1083,6 +1083,33 @@ def test_recommendation_gate_blocks_candidates_without_linked_news_evidence() ->
     assert gate.reasons == ("候选缺少可引用消息证据：600010",)
 
 
+def test_recommendation_gate_allows_technical_candidate_without_news_dependency() -> None:
+    provider = _Provider()
+    runtime = provider.runtime_overview("2026-07-10")
+    candidate = write_home_snapshot._snapshot_candidate(_candidate("600010", 88.0))
+    assert candidate is not None
+    candidate = replace(candidate, news_catalyst_summary="")
+    chain = write_home_snapshot.HomeSnapshotResearchChain(
+        status="linked",
+        candidate_symbols=("600010",),
+        debated_symbols=("600010",),
+        variant_candidate_symbols=("600010",),
+        variant_review_symbols=("600010",),
+    )
+
+    gate = write_home_snapshot._recommendation_gate(
+        provider,
+        runtime,
+        SimpleNamespace(status="完成", lag_days=0),
+        "来源失败",
+        evaluated_at=datetime(2026, 7, 10, 15, 1, tzinfo=ZoneInfo("Asia/Shanghai")),
+        candidates=(candidate,),
+        research_chain=chain,
+    )
+
+    assert gate.recommendation_allowed is True
+
+
 def test_recommendation_gate_blocks_unlinked_variant_validation() -> None:
     candidate = write_home_snapshot._snapshot_candidate(_candidate("600010", 88.0))
     assert candidate is not None

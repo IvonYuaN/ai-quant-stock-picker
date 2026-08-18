@@ -61,6 +61,10 @@ class HomeSnapshotCandidate:
     data_fetched_at: str = ""
     data_timestamp_source: str = ""
     freshness: str = ""
+    news_catalyst_summary: str = ""
+    news_catalyst_source: str = ""
+    news_catalyst_url: str = ""
+    news_catalyst_published_at: str = ""
 
     @property
     def has_deterministic_evidence(self) -> bool:
@@ -1210,6 +1214,10 @@ def _candidate_from_dict(payload: object) -> HomeSnapshotCandidate:
             "data_fetched_at",
             "data_timestamp_source",
             "freshness",
+            "news_catalyst_summary",
+            "news_catalyst_source",
+            "news_catalyst_url",
+            "news_catalyst_published_at",
         },
     )
     return HomeSnapshotCandidate(
@@ -1249,6 +1257,19 @@ def _candidate_from_dict(payload: object) -> HomeSnapshotCandidate:
             mapping.get("data_timestamp_source"), "candidate.data_timestamp_source"
         ),
         freshness=_optional_text(mapping.get("freshness"), "candidate.freshness"),
+        news_catalyst_summary=_optional_text(
+            mapping.get("news_catalyst_summary"), "candidate.news_catalyst_summary"
+        ),
+        news_catalyst_source=_optional_text(
+            mapping.get("news_catalyst_source"), "candidate.news_catalyst_source"
+        ),
+        news_catalyst_url=_optional_text(
+            mapping.get("news_catalyst_url"), "candidate.news_catalyst_url"
+        ),
+        news_catalyst_published_at=_optional_text(
+            mapping.get("news_catalyst_published_at"),
+            "candidate.news_catalyst_published_at",
+        ),
     )
 
 
