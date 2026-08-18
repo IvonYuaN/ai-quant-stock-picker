@@ -796,18 +796,10 @@ def _compact_snapshot_for_index(
         )
         for variant in snapshot.variants
     )
-    debates = tuple(
-        replace(
-            debate,
-            round_summaries=(),
-            agent_views=(),
-            viewpoint_buckets={},
-            disagreement_points=(),
-            uncertainty_points=(),
-            review_kind="unverified",
-        )
-        for debate in snapshot.debates
-    )
+    # Debate records are the user's primary audit trail. They are already
+    # bounded by the five-candidate snapshot limit, so dropping their rounds
+    # here makes the API look like the agents never discussed anything.
+    debates = snapshot.debates
     messages = tuple(
         replace(
             message,
@@ -1109,7 +1101,8 @@ def _variant_from_dict(payload: object) -> HomeSnapshotVariant:
         ),
         lifecycle_status=_optional_text(
             mapping.get("lifecycle_status"), "variant.lifecycle_status"
-        ) or "样本积累",
+        )
+        or "样本积累",
         lifecycle_reason=_optional_text(
             mapping.get("lifecycle_reason"), "variant.lifecycle_reason"
         ),
@@ -1228,7 +1221,9 @@ def _research_chain_from_dict(payload: object) -> HomeSnapshotResearchChain:
         ),
         carried_reviews=tuple(
             HomeSnapshotCarriedReview(
-                signal_date=_text(item.get("signal_date"), "carried_review.signal_date"),
+                signal_date=_text(
+                    item.get("signal_date"), "carried_review.signal_date"
+                ),
                 symbol=_text(item.get("symbol"), "carried_review.symbol"),
                 display_name=_optional_text(
                     item.get("display_name"), "carried_review.display_name"

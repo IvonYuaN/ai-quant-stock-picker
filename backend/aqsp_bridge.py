@@ -1111,7 +1111,8 @@ def _parse_variant(payload: object) -> AQSPVariant:
         ),
         lifecycle_status=_optional_text(
             item.get("lifecycle_status"), "variant.lifecycle_status"
-        ) or "样本积累",
+        )
+        or "样本积累",
         lifecycle_reason=_optional_text(
             item.get("lifecycle_reason"), "variant.lifecycle_reason"
         ),
@@ -1331,9 +1332,7 @@ def _parse_research_chain(payload: object) -> AQSPResearchChain:
                 next_trigger=_optional_text(
                     value.get("next_trigger"), "carried_review.next_trigger"
                 ),
-                status=_optional_text(
-                    value.get("status"), "carried_review.status"
-                ),
+                status=_optional_text(value.get("status"), "carried_review.status"),
             )
             for value in _list(
                 item.get("carried_reviews", []), "research_chain.carried_reviews"
@@ -1571,23 +1570,46 @@ def _parse_debate(payload: object) -> AQSPDebate:
         for view in _list(item.get("agent_views", []), "debate.agent_views")
         if isinstance(view, dict)
     )
+    round_count = _integer(item.get("round_count", 0), "debate.round_count")
+    active_roles = tuple(_text_list(item["active_roles"], "debate.active_roles"))
+    round_summaries = tuple(
+        _text_list(item.get("round_summaries", []), "debate.round_summaries")
+    )
+    disagreement_points = tuple(
+        _text_list(item.get("disagreement_points", []), "debate.disagreement_points")
+    )
+    # The bounded home snapshot stores published round summaries and role
+    # views, not the full debate engine objects. Treat that explicit structure
+    # as a recorded advisory review while keeping the deterministic score
+    # untouched. Runtime JSONL records still provide stricter audit flags.
+    published_process = bool(
+        round_count in {2, 3}
+        and len(round_summaries) >= 2
+        and len(agent_views) >= 3
+        and len(active_roles) >= 3
+        and len([points for points in viewpoint_buckets.values() if points]) >= 2
+        and disagreement_points
+    )
+    published_conclusion = bool(
+        str(item.get("conclusion", "") or "").strip()
+        and str(item.get("primary_risk_gate", "") or "").strip()
+        and str(item.get("next_trigger", "") or "").strip()
+    )
     return AQSPDebate(
         symbol=_validate_symbol(_text(item["symbol"], "debate.symbol")),
         display_name=_text(item["display_name"], "debate.display_name"),
         conclusion=_text(item["conclusion"], "debate.conclusion"),
         primary_risk_gate=_text(item["primary_risk_gate"], "debate.primary_risk_gate"),
         next_trigger=_text(item["next_trigger"], "debate.next_trigger"),
-        active_roles=tuple(_text_list(item["active_roles"], "debate.active_roles")),
-        round_count=_integer(item.get("round_count", 0), "debate.round_count"),
+        active_roles=active_roles,
+        round_count=round_count,
         bull_count=_integer(item.get("bull_count", 0), "debate.bull_count"),
         bear_count=_integer(item.get("bear_count", 0), "debate.bear_count"),
         neutral_count=_integer(item.get("neutral_count", 0), "debate.neutral_count"),
         process_summary=_optional_text(
             item.get("process_summary"), "debate.process_summary"
         ),
-        round_summaries=tuple(
-            _text_list(item.get("round_summaries", []), "debate.round_summaries")
-        ),
+        round_summaries=round_summaries,
         support_points=tuple(
             _text_list(item.get("support_points", []), "debate.support_points")
         ),
@@ -1623,15 +1645,19 @@ def _parse_debate(payload: object) -> AQSPDebate:
             item.get("advisory_boundary_ok", True),
             "debate.advisory_boundary_ok",
         ),
-        process_recorded=_boolean(
-            item.get("process_recorded", False), "debate.process_recorded"
+        process_recorded=(
+            _boolean(item["process_recorded"], "debate.process_recorded")
+            if "process_recorded" in item
+            else published_process
         ),
-        conclusion_recorded=_boolean(
-            item.get("conclusion_recorded", False), "debate.conclusion_recorded"
+        conclusion_recorded=(
+            _boolean(item["conclusion_recorded"], "debate.conclusion_recorded")
+            if "conclusion_recorded" in item
+            else published_conclusion
         ),
         review_kind=(
             _optional_text(item.get("review_kind"), "debate.review_kind")
-            or "unverified"
+            or ("multi_agent" if published_process else "unverified")
         ),
         quality_issues=tuple(
             _text_list(
@@ -1640,12 +1666,7 @@ def _parse_debate(payload: object) -> AQSPDebate:
             )
         ),
         viewpoint_buckets=viewpoint_buckets,
-        disagreement_points=tuple(
-            _text_list(
-                item.get("disagreement_points", []),
-                "debate.disagreement_points",
-            )
-        ),
+        disagreement_points=disagreement_points,
         uncertainty_points=tuple(
             _text_list(
                 item.get("uncertainty_points", []),

@@ -155,9 +155,7 @@ def test_aqsp_api_returns_current_snapshot_with_messages_and_agents(
     assert body["data"]["selected_date"] == "2026-07-14"
     assert body["data"]["messages"]
     assert body["data"]["debates"]
-    assert body["data"]["debates"][0]["round_summaries"] == [
-        "第1轮完成技术与风险初筛"
-    ]
+    assert body["data"]["debates"][0]["round_summaries"] == ["第1轮完成技术与风险初筛"]
     assert body["data"]["stale_after"]
     assert body["meta"] == {
         "historical": False,
@@ -361,6 +359,61 @@ def test_aqsp_api_preserves_explicit_empty_messages_and_agents(
     assert body["messages"] == []
     assert body["debates"] == []
     assert body["message_status"] == "未产出"
+
+
+def test_aqsp_api_restores_published_debate_details_from_index(
+    aqsp_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    published = _snapshot(
+        "2026-07-14",
+        stale_after="2099-01-01T09:30:00+08:00",
+        debates=[
+            {
+                "symbol": "600519",
+                "display_name": "贵州茅台",
+                "conclusion": "继续观察，等待量价确认",
+                "primary_risk_gate": "跌破失效位",
+                "next_trigger": "放量站稳前高",
+                "active_roles": ["bull", "bear", "risk_control"],
+                "round_count": 3,
+                "round_summaries": [
+                    "多头提出量价假设",
+                    "空头检验承接",
+                    "风控确认失效条件",
+                ],
+                "agent_views": [
+                    {"role": "bull", "stance": "bullish", "confidence": 0.8},
+                    {"role": "bear", "stance": "bearish", "confidence": 0.6},
+                    {"role": "risk_control", "stance": "neutral", "confidence": 0.7},
+                ],
+                "viewpoint_buckets": {
+                    "bullish": ["量价结构改善"],
+                    "bearish": ["量能仍未确认"],
+                },
+                "disagreement_points": ["空头质询量能是否足以支撑延续"],
+            }
+        ],
+    )
+    _write_snapshot_files(tmp_path, current=published)
+    monkeypatch.setenv(
+        "AQSP_RESEARCH_SURFACE_SNAPSHOT",
+        str(tmp_path / "home_dashboard_snapshot.json"),
+    )
+
+    debate = aqsp_client.get(SNAPSHOT_ROUTE).json()["data"]["debates"][0]
+
+    assert debate["process_recorded"] is True
+    assert debate["conclusion_recorded"] is True
+    assert debate["review_kind"] == "multi_agent"
+    assert debate["round_summaries"] == [
+        "多头提出量价假设",
+        "空头检验承接",
+        "风控确认失效条件",
+    ]
+    assert len(debate["agent_views"]) == 3
+    assert debate["disagreement_points"] == ["空头质询量能是否足以支撑延续"]
 
 
 def test_aqsp_api_does_not_expose_portfolio_writes_or_trade_copy(
