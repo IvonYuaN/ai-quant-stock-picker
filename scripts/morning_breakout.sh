@@ -39,8 +39,14 @@ OUTPUT="${AQSP_MORNING_OUTPUT:-${RUNTIME_DATA_ROOT}/runtime/morning_breakout_lat
 LEDGER="${AQSP_LEDGER:-${RUNTIME_DATA_ROOT}/predictions.jsonl}"
 SOURCE="${AQSP_MORNING_SOURCE:-online_first}"
 POOL="${AQSP_MORNING_POOL:-all}"
-MAX_UNIVERSE="${AQSP_MORNING_MAX_UNIVERSE:-300}"
 TOP="${AQSP_MORNING_TOP:-5}"
+
+# Keep a bad environment value from turning the pre-market run into a
+# full-market online scan.
+MAX_UNIVERSE="${AQSP_MORNING_MAX_UNIVERSE:-300}"
+if ! [[ "$MAX_UNIVERSE" =~ ^[0-9]+$ ]] || [ "$MAX_UNIVERSE" -le 0 ] || [ "$MAX_UNIVERSE" -gt 300 ]; then
+    MAX_UNIVERSE=300
+fi
 
 mkdir -p "$(dirname "$OUTPUT")"
 "$PYTHON_BIN" -m aqsp morning-breakout \
