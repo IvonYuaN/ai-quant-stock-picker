@@ -2397,6 +2397,81 @@ def test_dashboard_data_provider_does_not_fallback_to_main_chain_for_current_int
     assert payload.debates == ()
 
 
+def test_dashboard_data_provider_promotes_same_day_morning_when_main_chain_missing(
+    tmp_path: Path,
+) -> None:
+    ledger_path = tmp_path / "predictions.jsonl"
+    ledger_path.write_text(
+        "\n".join(
+            json.dumps(row, ensure_ascii=False)
+            for row in [
+                {
+                    "signal_date": "2026-07-14",
+                    "symbol": "600519",
+                    "name": "贵州茅台",
+                    "task_id": "main_chain",
+                    "score": 88,
+                },
+                {
+                    "signal_date": "2026-07-15",
+                    "symbol": "300750",
+                    "name": "宁德时代",
+                    "task_id": "morning_breakout",
+                    "score": 91,
+                },
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    provider = DashboardDataProvider(
+        ledger_path=str(ledger_path),
+        paper_ledger_path=str(tmp_path / "paper.jsonl"),
+    )
+
+    rows = provider._task_signal_rows("main_chain")
+
+    assert {(row["signal_date"], row["task_id"]) for row in rows} == {
+        ("2026-07-14", "main_chain"),
+        ("2026-07-15", "morning_breakout"),
+    }
+
+
+def test_dashboard_data_provider_prefers_main_chain_over_same_day_morning(
+    tmp_path: Path,
+) -> None:
+    ledger_path = tmp_path / "predictions.jsonl"
+    ledger_path.write_text(
+        "\n".join(
+            json.dumps(row, ensure_ascii=False)
+            for row in [
+                {
+                    "signal_date": "2026-07-15",
+                    "symbol": "600519",
+                    "task_id": "main_chain",
+                    "score": 80,
+                },
+                {
+                    "signal_date": "2026-07-15",
+                    "symbol": "300750",
+                    "task_id": "morning_breakout",
+                    "score": 91,
+                },
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    provider = DashboardDataProvider(
+        ledger_path=str(ledger_path),
+        paper_ledger_path=str(tmp_path / "paper.jsonl"),
+    )
+
+    rows = provider._task_signal_rows("main_chain")
+
+    assert [row["task_id"] for row in rows] == ["main_chain"]
+
+
 def test_dashboard_data_provider_keeps_same_day_intraday_debate_when_artifact_is_stale(
     tmp_path: Path,
 ) -> None:

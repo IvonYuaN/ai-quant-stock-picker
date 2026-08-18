@@ -4760,7 +4760,22 @@ class DashboardDataProvider:
                     row for row in rows if self._row_task_id(row) == "closing_premium"
                 ]
             if task_id == "main_chain":
-                return [row for row in rows if self._row_task_id(row) == "main_chain"]
+                main_rows = [
+                    row for row in rows if self._row_task_id(row) == "main_chain"
+                ]
+                main_dates = {
+                    str(row.get("signal_date", "") or "").strip()
+                    for row in main_rows
+                }
+                # 同日有真实主链时保持主链；只有缺少主链时才提升早盘产物。
+                morning_rows = [
+                    row
+                    for row in rows
+                    if self._row_task_id(row) == "morning_breakout"
+                    and str(row.get("signal_date", "") or "").strip()
+                    not in main_dates
+                ]
+                return [*main_rows, *morning_rows]
             return rows
 
         return self._cache_value("task_signal_rows", task_id, _build)

@@ -8,6 +8,7 @@
 #   /bin/bash /opt/aqsp/scripts/bt_task.sh walkforward-gate
 #   /bin/bash /opt/aqsp/scripts/bt_task.sh monitor
 #   /bin/bash /opt/aqsp/scripts/bt_task.sh news
+#   /bin/bash /opt/aqsp/scripts/bt_task.sh morning
 #   /bin/bash /opt/aqsp/scripts/bt_task.sh status
 
 set -euo pipefail
@@ -55,10 +56,11 @@ log() {
 
 usage() {
     cat <<'EOF'
-Usage: bt_task.sh <daily|intraday|midday|coldstart|walkforward-gate|monitor|news|status|data-refresh|variant-refresh>
+Usage: bt_task.sh <daily|morning|intraday|midday|coldstart|walkforward-gate|monitor|news|status|data-refresh|variant-refresh>
 
 BT panel examples:
   /bin/bash /opt/aqsp/scripts/bt_task.sh intraday
+  /bin/bash /opt/aqsp/scripts/bt_task.sh morning
   /bin/bash /opt/aqsp/scripts/bt_task.sh daily
   /bin/bash /opt/aqsp/scripts/bt_task.sh midday
   /bin/bash /opt/aqsp/scripts/bt_task.sh coldstart
@@ -70,6 +72,7 @@ BT panel examples:
 
 Recommended BT schedule (Asia/Shanghai):
   news      08:35 Mon-Fri trading days only; 09:05 Sat/Sun
+  morning   09:25 Mon-Fri; pre-market main-chain candidates and snapshot
   intraday  every 10 min; script gates 09:35-11:30 / 13:05-14:57, Mon-Fri
   midday    12:05 Mon-Fri
   daily     18:00 Mon-Fri
@@ -451,6 +454,14 @@ export AQSP_PROJECT_ROOT="$PROJECT_ROOT"
 export TZ="${TZ:-Asia/Shanghai}"
 
 case "$ACTION" in
+    morning)
+        skip_non_trading_day
+        export AQSP_RUN_TASK_ID="main_chain"
+        export AQSP_NOTIFY="false"
+        export AQSP_GATE_NOTIFY="false"
+        export AQSP_RUNNER_SCRIPT=scripts/morning_breakout.sh
+        run_synced_task_with_result
+        ;;
     daily)
         skip_non_trading_day
         export AQSP_RUN_TASK_ID="daily"

@@ -182,13 +182,14 @@ bash /opt/aqsp/scripts/server_sync_and_run.sh
 统一命令入口：
 
 ```bash
-/bin/bash /opt/aqsp/scripts/bt_task.sh <intraday|midday|daily|coldstart|monitor|news|status>
+/bin/bash /opt/aqsp/scripts/bt_task.sh <morning|intraday|midday|daily|coldstart|monitor|news|status>
 ```
 
 建议在宝塔里配置 **6 条自动任务 + 1 条手动自检命令**：
 
 | 任务名 | 推荐时间 | 宝塔脚本内容 | 作用 |
 |---|---:|---|---|
+| `AQSP-盘前主链` | 工作日 `09:25` | `/bin/bash /opt/aqsp/scripts/bt_task.sh morning` | 生成当天盘前候选并刷新首页，不使用上一交易日代填 |
 | `AQSP-盘中刷新` | 工作日 `09:35-11:30`、`13:05-14:57` 每 10 分钟 | `/bin/bash /opt/aqsp/scripts/bt_task.sh intraday` | 刷新盘中候选和看板，写独立盘中产物，不污染正式 ledger |
 | `AQSP-午盘分析` | 工作日 `12:05` | `/bin/bash /opt/aqsp/scripts/bt_task.sh midday` | 中午固定复核上午走势、候选和大盘状态 |
 | `AQSP-消息面雷达` | 工作日 `08:35`，周末 `09:05` | `/bin/bash /opt/aqsp/scripts/bt_task.sh news` | 盘前/周末复核高影响消息、涨价链、政策、风险事件 |

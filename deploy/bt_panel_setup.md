@@ -8,7 +8,7 @@ AQSP 在服务器上的生产定时统一放在 **宝塔面板 -> 计划任务**
 /bin/bash /opt/aqsp/scripts/bt_task.sh <动作>
 ```
 
-可用动作：`intraday`、`midday`、`news`、`daily`、`coldstart`、`monitor`、`status`。
+可用动作：`morning`、`intraday`、`midday`、`news`、`daily`、`coldstart`、`monitor`、`status`。
 
 ## 前置条件
 
@@ -25,6 +25,7 @@ AQSP 在服务器上的生产定时统一放在 **宝塔面板 -> 计划任务**
 
 | 任务名 | 周期/时间 | 脚本内容 |
 |---|---|---|
+| `AQSP-盘前主链` | 工作日 `09:25` | `/bin/bash /opt/aqsp/scripts/bt_task.sh morning` |
 | `AQSP-盘中刷新` | 工作日每 10 分钟触发；由 `bt_task.sh` 精确门控 `09:35-11:30`、`13:05-14:57` | `/bin/bash /opt/aqsp/scripts/bt_task.sh intraday` |
 | `AQSP-午盘分析` | 工作日 `12:05` | `/bin/bash /opt/aqsp/scripts/bt_task.sh midday` |
 | `AQSP-消息面雷达` | 工作日 `08:45` | `/bin/bash /opt/aqsp/scripts/bt_task.sh news` |
@@ -43,6 +44,7 @@ AQSP 在服务器上的生产定时统一放在 **宝塔面板 -> 计划任务**
 ## 时间逻辑
 
 - `intraday`：盘中刷新，写盘中独立产物，不污染正式 ledger。
+- `morning`：盘前主链，生成早盘候选并刷新当天首页；不回退到上一交易日。
 - `midday`：午盘分析，标题为 `午盘分析-YYYY-MM-DD`。
 - `news`：消息面雷达，标题为 `消息面雷达-YYYY-MM-DD`，盘前和周末最有价值。
 - `daily`：收盘完整主链路，生成正式复盘、通知和看板。

@@ -2,13 +2,14 @@
 # 备用/迁移用 system cron 安装脚本：
 # 生产定时默认统一由宝塔计划任务管理；直接运行本脚本不会写 crontab。
 # 如确需迁移到 system cron，必须显式设置 AQSP_INSTALL_SYSTEM_CRON=true。
-# 1. 北京时间 09:00-11:59 每 10 分钟触发盘中刷新（精确时间由脚本门控）
-# 2. 北京时间 12:05 运行一次午盘回看
-# 3. 北京时间 13:00-14:59 每 10 分钟触发盘中刷新（精确时间由脚本门控）
-# 4. 北京时间 08:35 和周末 09:05 运行消息面雷达
-# 5. 北京时间 18:00 运行收盘同步 + 全量跑批
-# 6. 北京时间 19:40 运行冷启动补样本，避开收盘主链路
-# 7. 北京时间每 15 分钟运行一次监控
+# 1. 北京时间 09:25 运行盘前主链
+# 2. 北京时间 09:00-11:59 每 10 分钟触发盘中刷新（精确时间由脚本门控）
+# 3. 北京时间 12:05 运行一次午盘回看
+# 4. 北京时间 13:00-14:59 每 10 分钟触发盘中刷新（精确时间由脚本门控）
+# 5. 北京时间 08:35 和周末 09:05 运行消息面雷达
+# 6. 北京时间 18:00 运行收盘同步 + 全量跑批
+# 7. 北京时间 19:40 运行冷启动补样本，避开收盘主链路
+# 8. 北京时间每 15 分钟运行一次监控
 
 set -euo pipefail
 
@@ -35,6 +36,8 @@ EOF
 fi
 
 emit_jobs() {
+    echo '25 9 * * 1-5 /bin/bash '\"${PROJECT_ROOT}\"'/scripts/bt_task.sh morning >> '\"${CRON_LOG}\"' 2>&1'
+
     if [[ "${ENABLE_INTRADAY,,}" =~ ^(1|true|yes|on)$ ]]; then
         echo '*/10 9-11 * * 1-5 /bin/bash '"${PROJECT_ROOT}"'/scripts/bt_task.sh intraday >> '"${CRON_LOG}"' 2>&1'
         echo '*/10 13-14 * * 1-5 /bin/bash '"${PROJECT_ROOT}"'/scripts/bt_task.sh intraday >> '"${CRON_LOG}"' 2>&1'
@@ -69,7 +72,7 @@ emit_jobs() {
 CURRENT_CRONTAB="$(crontab -l 2>/dev/null || true)"
 FILTERED_CRONTAB="$(
     printf '%s\n' "$CURRENT_CRONTAB" | grep -vE \
-        'AQSP_RUNNER_SCRIPT=scripts/intraday_refresh\.sh|AQSP_RUNNER_SCRIPT=scripts/midday_refresh\.sh|/scripts/server_sync_and_run\.sh|/scripts/server_monitor\.sh|/scripts/bt_task\.sh (daily|intraday|midday|coldstart|walkforward-gate|monitor|news)' || true
+        'AQSP_RUNNER_SCRIPT=scripts/intraday_refresh\.sh|AQSP_RUNNER_SCRIPT=scripts/midday_refresh\.sh|/scripts/server_sync_and_run\.sh|/scripts/server_monitor\.sh|/scripts/bt_task\.sh (daily|morning|intraday|midday|coldstart|walkforward-gate|monitor|news)' || true
 )"
 
 {

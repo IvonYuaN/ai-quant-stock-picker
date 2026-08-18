@@ -128,6 +128,7 @@ export_runtime_path AQSP_VARIANT_LOG_DIR data/logs/variants
 export_runtime_path AQSP_NEWS_OUTPUT reports/news_catalysts.md
 export_runtime_path AQSP_NEWS_JSON_OUTPUT data/runtime/news_catalysts_latest.json
 export_runtime_path AQSP_NEWS_ARCHIVE_DIR data/runtime/news_archive
+export_runtime_path AQSP_MORNING_OUTPUT data/runtime/morning_breakout_latest.json
 export AQSP_NEWS_SOURCE_CONFIG="${AQSP_NEWS_SOURCE_CONFIG:-${RELEASE_ROOT}/config/news_sources.yaml}"
 export_runtime_path AQSP_BT_LOGS_DIR logs/bt
 export_runtime_path AQSP_DAILY_LOG_DIR logs/daily
