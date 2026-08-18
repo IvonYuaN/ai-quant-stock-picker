@@ -455,6 +455,16 @@ def _snapshot_candidate(candidate: Any) -> HomeSnapshotCandidate | None:
         data_fetched_at=_text(getattr(candidate, "data_fetched_at", "")),
         data_timestamp_source=_text(getattr(candidate, "data_timestamp_source", "")),
         freshness=_candidate_freshness(candidate),
+        news_catalyst_summary=_text(
+            getattr(candidate, "news_catalyst_summary", "")
+        ),
+        news_catalyst_source=_text(getattr(candidate, "news_catalyst_source", "")),
+        news_catalyst_url=_text(
+            getattr(candidate, "news_catalyst_url", "")
+        ),
+        news_catalyst_published_at=_text(
+            getattr(candidate, "news_catalyst_published_at", "")
+        ),
     )
 
 
@@ -1964,6 +1974,18 @@ def _recommendation_gate(
             reasons=(f"候选行情已过期：{'、'.join(stale_symbols)}",),
         )
     if candidates:
+        message_dependent_symbols = tuple(
+            candidate.symbol
+            for candidate in candidates
+            if any(
+                (
+                    candidate.news_catalyst_summary,
+                    candidate.news_catalyst_source,
+                    candidate.news_catalyst_url,
+                    candidate.news_catalyst_published_at,
+                )
+            )
+        )
         linked_message_symbols = {
             symbol
             for message in messages
@@ -1973,7 +1995,8 @@ def _recommendation_gate(
         missing_message_symbols = tuple(
             candidate.symbol
             for candidate in candidates
-            if candidate.symbol not in linked_message_symbols
+            if candidate.symbol in message_dependent_symbols
+            and candidate.symbol not in linked_message_symbols
         )
         if missing_message_symbols:
             return HomeSnapshotRecommendationGate(
