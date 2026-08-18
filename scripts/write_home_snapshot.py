@@ -2836,7 +2836,7 @@ def build_home_snapshot_index(
     initial_snapshot: HomeDashboardSnapshot | None = None,
     existing_index: HomeSnapshotIndex | None = None,
 ) -> HomeSnapshotIndex:
-    """Build at most four exact-date snapshots without making history block today."""
+    """Build seven exact-date trading snapshots without making history block today."""
     first = initial_snapshot or build_home_snapshot(
         provider,
         signal_date=signal_date,
@@ -2848,7 +2848,19 @@ def build_home_snapshot_index(
         day.date: day
         for day in (existing_index.days if existing_index is not None else ())
     }
-    for available_date in first.available_dates:
+    if existing_index is not None:
+        # A refresh must not rebuild archived days from mutable runtime inputs.
+        requested_dates = [first.selected_date, *first.available_dates]
+    else:
+        anchor = date.fromisoformat(first.selected_date)
+        requested_dates = [first.selected_date]
+        for _ in range(MAX_HOME_SNAPSHOT_INDEX_DAYS - 1):
+            anchor = get_previous_trading_day(anchor)
+            requested_dates.append(anchor.isoformat())
+        requested_dates.extend(
+            value for value in first.available_dates if value not in requested_dates
+        )
+    for available_date in requested_dates:
         if available_date == first.selected_date:
             continue
         if len(day_snapshots) >= MAX_HOME_SNAPSHOT_INDEX_DAYS:

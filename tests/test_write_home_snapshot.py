@@ -2951,7 +2951,15 @@ def test_write_home_snapshot_cli_honors_output_date_and_task_id(
     assert snapshot.selected_date == "2026-07-10"
     assert provider.digest_calls == [
         ("intraday", date)
-        for date in ("2026-07-10", "2026-07-09", "2026-07-08", "2026-07-07")
+        for date in (
+            "2026-07-10",
+            "2026-07-09",
+            "2026-07-08",
+            "2026-07-07",
+            "2026-07-06",
+            "2026-07-03",
+            "2026-07-02",
+        )
     ]
     assert "task=intraday" in capsys.readouterr().out
     assert load_home_snapshot_index(index_output) is not None
