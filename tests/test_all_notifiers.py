@@ -452,10 +452,12 @@ def test_dispatch_gate_notification_builds_and_routes_summary(monkeypatch):
         gate_reasons=["冷启动未满: 0/30 个独立信号日", "DSR 未过门: 0.0（需 >1.0）"],
         next_actions=["继续按日运行主链，先把冷启动样本积累到 30 个独立信号日。"],
         mode="summary",
+        content_markdown="\n# 当天研究\n\n- 600519 贵州茅台 | 仅观察",
     )
 
     assert len(results) == 1
     assert seen["markdown"].startswith("# 通知未放行-2026-06-15")
+    assert "600519 贵州茅台 | 仅观察" in seen["markdown"]
 
 
 def test_send_discord_returns_none_when_no_url(monkeypatch):
