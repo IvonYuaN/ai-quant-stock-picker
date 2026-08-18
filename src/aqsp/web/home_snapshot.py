@@ -768,14 +768,28 @@ def _rebuild_index_days(
 
 def _compact_snapshot_for_index(
     snapshot: HomeDashboardSnapshot,
+    *,
+    preserve_actions: bool = False,
 ) -> HomeDashboardSnapshot:
     """Discard reproducible drill-down details while retaining review evidence."""
+    action_date = snapshot.variant_suite.end_date if preserve_actions else ""
     variants = tuple(
         replace(
             variant,
             previous_holdings=(),
             previous_holdings_date="",
-            recent_actions=(),
+            # The latest indexed day is the API's current variant surface. Keep
+            # only actions from that experiment date so the UI can show today's
+            # paper operations without retaining the full historical fills log.
+            recent_actions=(
+                tuple(
+                    action
+                    for action in variant.recent_actions
+                    if str(action.get("date", "")) == action_date
+                )
+                if preserve_actions
+                else ()
+            ),
             adjustments=(),
             technical_evidence=(),
             hard_rules=(),
@@ -829,7 +843,9 @@ def _fit_index_to_byte_budget(index: HomeSnapshotIndex) -> HomeSnapshotIndex:
     compacted_days = tuple(
         HomeSnapshotDay(
             date=day.date,
-            snapshot=_compact_snapshot_for_index(day.snapshot),
+            snapshot=_compact_snapshot_for_index(
+                day.snapshot, preserve_actions=day.date == fitted.selected_date
+            ),
         )
         for day in fitted.days
     )
