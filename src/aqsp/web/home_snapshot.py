@@ -790,6 +790,7 @@ def _compact_snapshot_for_index(
             viewpoint_buckets={},
             disagreement_points=(),
             uncertainty_points=(),
+            review_kind="unverified",
         )
         for debate in snapshot.debates
     )
