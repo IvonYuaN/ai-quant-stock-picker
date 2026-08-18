@@ -2659,6 +2659,9 @@ def test_default_news_source_config_loads_domestic_themes_and_official_urls() ->
         "new_energy_storage",
         "rare_earth_magnet",
         "shipping_defense",
+        "agriculture_food_security",
+        "vitamins_nutrition",
+        "industrial_metals_supply",
     )
     assert "半导体" in domestic["中国新闻网-财经"].keywords
     assert all(feed.url.startswith("https://") for feed in domestic.values())

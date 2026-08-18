@@ -1,4 +1,4 @@
-version: "2026.07.20"
+version: "2026.08.18"
 
 rss:
   enabled: true
@@ -107,7 +107,7 @@ rss:
       category: "domestic_industry_news"
       region: domestic
       enabled: true
-      themes: [policy_regulation, semiconductor_ai, new_energy_storage, rare_earth_magnet, shipping_defense]
+      themes: [policy_regulation, semiconductor_ai, new_energy_storage, rare_earth_magnet, shipping_defense, agriculture_food_security, vitamins_nutrition, industrial_metals_supply]
       keywords: ["产业链", "供应链", "订单", "中标", "扩产", "需求", "供给", "涨价", "缺货", "新品", "发布", "政策", "半导体", "芯片", "算力", "储能", "稀土", "军工", "黄金", "原油", "航运"]
       max_items: 12
 
@@ -142,3 +142,12 @@ domestic:
     - id: shipping_defense
       query: "航运 军工 黄金 原油"
       keywords: ["航运", "军工", "黄金", "原油"]
+    - id: agriculture_food_security
+      query: "农业 粮食 短缺 供给 收储 种业"
+      keywords: ["农业", "粮食", "短缺", "供给", "收储", "种业", "化肥", "农产品"]
+    - id: vitamins_nutrition
+      query: "维生素 营养品 原料 缺货 涨价"
+      keywords: ["维生素", "营养品", "原料", "缺货", "涨价", "饲料添加剂"]
+    - id: industrial_metals_supply
+      query: "工业金属 关键矿产 铜 铝 锌 镍 供给短缺"
+      keywords: ["工业金属", "关键矿产", "铜", "铝", "锌", "镍", "供给短缺", "库存"]
