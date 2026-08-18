@@ -100,6 +100,7 @@ export interface AqspVariant {
   /** Serialized strategy description in the current producer contract. */
   strategy?: string;
   holdings?: readonly AqspVariantHolding[];
+  recent_actions?: readonly AqspVariantAction[];
   hard_rules?: readonly string[];
   generation?: number;
   parent_variant_id?: string;
@@ -107,6 +108,18 @@ export interface AqspVariant {
   lifecycle_status?: string;
   lifecycle_reason?: string;
   discussion_links?: readonly AqspVariantDiscussionLink[];
+}
+
+export interface AqspVariantAction {
+  date: string;
+  symbol: string;
+  name?: string;
+  display_name?: string;
+  side?: string;
+  action?: string;
+  quantity: number;
+  price: number;
+  reason?: string;
 }
 
 export interface AqspVariantDiscussionLink {
@@ -156,7 +169,18 @@ export interface AqspResearchChain {
   variant_review_symbols: readonly string[];
   variant_holding_candidate_symbols: readonly string[];
   variant_holding_review_symbols: readonly string[];
+  carried_reviews?: readonly AqspCarriedReview[];
   blocker: string;
+}
+
+export interface AqspCarriedReview {
+  signal_date: string;
+  symbol: string;
+  display_name: string;
+  conclusion: string;
+  primary_risk_gate: string;
+  next_trigger: string;
+  status: string;
 }
 
 export interface AqspAgentResult {

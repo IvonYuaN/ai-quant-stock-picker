@@ -2727,7 +2727,7 @@ def test_snapshot_source_surfaces_running_intraday_over_old_run_status(
     assert source.status == "盘中刷新中：正在解析实时股票池"
 
 
-def test_write_home_snapshot_builds_optional_four_day_index(monkeypatch) -> None:
+def test_write_home_snapshot_builds_seven_day_index(monkeypatch) -> None:
     provider = _DateAwareProvider()
     monkeypatch.setattr(
         write_home_snapshot,
@@ -2744,6 +2744,9 @@ def test_write_home_snapshot_builds_optional_four_day_index(monkeypatch) -> None
         "2026-07-09",
         "2026-07-08",
         "2026-07-07",
+        "2026-07-06",
+        "2026-07-03",
+        "2026-07-02",
     )
     assert index.snapshot_for_date("2026-07-09") is not None
     assert index.snapshot_for_date("2026-07-04") is None
@@ -2821,7 +2824,14 @@ def test_merge_home_snapshot_index_drops_uncompleted_date(monkeypatch) -> None:
 
     merged = write_home_snapshot.merge_home_snapshot_index(existing, refreshed)
 
-    assert merged.available_dates == ("2026-07-09", "2026-07-08", "2026-07-07")
+    assert merged.available_dates == (
+        "2026-07-09",
+        "2026-07-08",
+        "2026-07-07",
+        "2026-07-06",
+        "2026-07-03",
+        "2026-07-02",
+    )
 
 
 def test_merge_home_snapshot_index_preserves_unrequested_history() -> None:
@@ -2836,9 +2846,10 @@ def test_merge_home_snapshot_index_preserves_unrequested_history() -> None:
     merged = write_home_snapshot.merge_home_snapshot_index(existing, refreshed)
 
     assert merged.selected_date == "2026-07-09"
-    assert merged.snapshot_for_date("2026-07-09") == refreshed.snapshot_for_date(
-        "2026-07-09"
-    )
+    refreshed_selected = refreshed.snapshot_for_date("2026-07-09")
+    merged_selected = merged.snapshot_for_date("2026-07-09")
+    assert merged_selected.candidates == refreshed_selected.candidates
+    assert merged_selected.debates == refreshed_selected.debates
     historical = merged.snapshot_for_date("2026-07-10")
     original = existing.snapshot_for_date("2026-07-10")
     assert historical.candidates == original.candidates
@@ -2895,8 +2906,23 @@ def test_home_snapshot_index_keeps_current_snapshot_when_new_history_is_missing(
         initial_snapshot=current,
     )
 
-    assert index.available_dates == ("2026-07-11",)
+    assert index.available_dates == (
+        "2026-07-11",
+        "2026-07-10",
+        "2026-07-09",
+        "2026-07-08",
+        "2026-07-07",
+        "2026-07-06",
+        "2026-07-03",
+    )
     assert index.snapshot_for_date("2026-07-11") == current
+    missing = index.snapshot_for_date("2026-07-10")
+    assert missing is not None
+    assert missing.candidates == ()
+    assert missing.debates == ()
+    assert missing.variants == ()
+    assert missing.message_status == "历史归档缺失"
+    assert missing.research_chain.blocker.endswith("不使用其他日期数据代填。")
 
 
 def test_write_home_snapshot_cli_honors_output_date_and_task_id(
@@ -2926,7 +2952,15 @@ def test_write_home_snapshot_cli_honors_output_date_and_task_id(
     assert snapshot.selected_date == "2026-07-10"
     assert provider.digest_calls == [
         ("intraday", date)
-        for date in ("2026-07-10", "2026-07-09", "2026-07-08", "2026-07-07")
+        for date in (
+            "2026-07-10",
+            "2026-07-09",
+            "2026-07-08",
+            "2026-07-07",
+            "2026-07-06",
+            "2026-07-03",
+            "2026-07-02",
+        )
     ]
     assert "task=intraday" in capsys.readouterr().out
     assert load_home_snapshot_index(index_output) is not None
@@ -2960,7 +2994,7 @@ def test_write_home_snapshot_cli_writes_default_index_and_env_overrides_path(
     index = load_home_snapshot_index(index_output)
     assert result == 0
     assert index is not None
-    assert len(index.days) == 4
+    assert len(index.days) == 7
 
 
 def test_write_home_snapshot_cli_rejects_shared_snapshot_and_index_path(

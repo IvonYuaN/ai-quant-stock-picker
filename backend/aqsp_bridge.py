@@ -21,7 +21,7 @@ DEFAULT_DEBATE_RESULTS_PATH = "data/debate_results.jsonl"
 SNAPSHOT_SCHEMA_VERSION = "v1"
 INDEX_SCHEMA_VERSION = "v1-index"
 MAX_SNAPSHOT_BYTES = 1024 * 1024
-MAX_DATES = 4
+MAX_DATES = 7
 MAX_CANDIDATES = 5
 MAX_DEBATES = MAX_CANDIDATES
 MAX_SUMMARIES = 3
@@ -284,6 +284,17 @@ class AQSPVariantSuite:
 
 
 @dataclass(frozen=True)
+class AQSPCarriedReview:
+    signal_date: str
+    symbol: str
+    display_name: str
+    conclusion: str
+    primary_risk_gate: str
+    next_trigger: str
+    status: str
+
+
+@dataclass(frozen=True)
 class AQSPResearchChain:
     status: str = "blocked"
     candidate_symbols: tuple[str, ...] = ()
@@ -293,6 +304,7 @@ class AQSPResearchChain:
     variant_review_symbols: tuple[str, ...] = ()
     variant_holding_candidate_symbols: tuple[str, ...] = ()
     variant_holding_review_symbols: tuple[str, ...] = ()
+    carried_reviews: tuple[AQSPCarriedReview, ...] = ()
     blocker: str = ""
 
 
@@ -1247,6 +1259,7 @@ def _parse_research_chain(payload: object) -> AQSPResearchChain:
             "variant_review_symbols",
             "variant_holding_candidate_symbols",
             "variant_holding_review_symbols",
+            "carried_reviews",
             "blocker",
         },
     )
@@ -1291,6 +1304,37 @@ def _parse_research_chain(payload: object) -> AQSPResearchChain:
                 item.get("variant_holding_review_symbols", []),
                 "research_chain.variant_holding_review_symbols",
             )
+        ),
+        carried_reviews=tuple(
+            AQSPCarriedReview(
+                signal_date=_validate_date(
+                    _text(value.get("signal_date"), "carried_review.signal_date"),
+                    "carried_review.signal_date",
+                ),
+                symbol=_validate_symbol(
+                    _text(value.get("symbol"), "carried_review.symbol")
+                ),
+                display_name=_optional_text(
+                    value.get("display_name"), "carried_review.display_name"
+                ),
+                conclusion=_optional_text(
+                    value.get("conclusion"), "carried_review.conclusion"
+                ),
+                primary_risk_gate=_optional_text(
+                    value.get("primary_risk_gate"),
+                    "carried_review.primary_risk_gate",
+                ),
+                next_trigger=_optional_text(
+                    value.get("next_trigger"), "carried_review.next_trigger"
+                ),
+                status=_optional_text(
+                    value.get("status"), "carried_review.status"
+                ),
+            )
+            for value in _list(
+                item.get("carried_reviews", []), "research_chain.carried_reviews"
+            )
+            if isinstance(value, dict)
         ),
         blocker=_optional_text(item.get("blocker"), "research_chain.blocker"),
     )

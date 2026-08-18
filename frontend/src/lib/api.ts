@@ -7,6 +7,7 @@ export type {
   AqspAgentResult,
   AqspCandidate,
   AqspVariant,
+  AqspVariantAction,
   AqspVariantHolding,
   AqspCrossMarket,
   AqspDateIndex,

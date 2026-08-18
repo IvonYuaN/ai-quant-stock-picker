@@ -123,7 +123,7 @@ function symbolNames(symbols: readonly string[], candidates: readonly AqspCandid
 }
 
 function ResearchChain({ chain, candidates }: { chain?: AqspResearchChain; candidates: readonly AqspCandidate[] }) {
-  if (!chain || chain.candidate_symbols.length === 0) return null;
+  if (!chain || (chain.candidate_symbols.length === 0 && !(chain.carried_reviews ?? []).length)) return null;
   const linked = chain.status === "linked";
   const reviewed = symbolNames(chain.debated_symbols, candidates) || "尚未进入复核";
   const pending = symbolNames(chain.pending_review_symbols, candidates);
@@ -138,6 +138,7 @@ function ResearchChain({ chain, candidates }: { chain?: AqspResearchChain; candi
       <div><span>历史实验池关联 · {chain.variant_candidate_symbols.length}</span><b>{experiment}</b></div>
     </div>
     {pending && <p className="aqsp-chain-pending">待复核：{pending}</p>}
+    {(chain.carried_reviews ?? []).length > 0 && <div className="aqsp-carried-reviews"><div className="aqsp-subhead"><h4>已移出今日候选，保留复核</h4><span>{chain.carried_reviews?.length} 条</span></div>{chain.carried_reviews?.map((review) => <article key={`${review.signal_date}-${review.symbol}`}><strong>{review.display_name || "名称未记录"} <small>{review.symbol}</small></strong><span>原始信号日 {review.signal_date} · {review.status || "持续跟踪"}</span><p>{review.conclusion || "未形成最终结论"}</p>{review.primary_risk_gate && <p>失效条件：{review.primary_risk_gate}</p>}{review.next_trigger && <p>再次触发：{review.next_trigger}</p>}</article>)}</div>}
     <p className="aqsp-chain-note">变体为历史 raw 实验结果，只用于验证，不代表当天实时复核。</p>
     {chain.blocker && <p className="aqsp-warning-text">链路阻塞：{chain.blocker}</p>}
   </section>;
@@ -313,11 +314,12 @@ function TestVariantsPanel({ snapshot }: { snapshot?: AqspSnapshot }) {
   return <section id={TEST_VARIANTS_SECTION_ID} className="aqsp-lab" aria-label="测试与变体">
     <div className="aqsp-section-head"><div><p className="aqsp-eyebrow"><FlaskConical className="h-3.5 w-3.5" />独立区域</p><h2>测试与变体</h2></div><span>不进入正式结论</span></div>
     <div className="aqsp-lab-snapshot">{snapshot ? <><span>数据区间：{variants[0]?.start_date || "—"} 至 {variants[0]?.end_date || "—"}</span><span>股票覆盖：{suite?.selected_symbols ?? 0}/{suite?.supported_symbols ?? 0} · {((suite?.coverage_pct ?? 0) * 100).toFixed(1)}%</span><span>生命周期：晋级 {promoted} · 淘汰 {eliminated} · 共 {variants.length}</span><span>每套账户：100,000.00 元</span><span className={cn("aqsp-badge", historical || variantHistory ? "aqsp-badge-warn" : "aqsp-badge-ok")}>{historical || variantHistory ? "历史回测 · 仅验证" : "当前实验结果"}</span></> : <span>等待正式快照</span>}</div>
-    {variants.length === 0 ? <EmptyState title="变体结果尚未产出" detail="实验结果独立于正式候选，产出后会显示在这里。" /> : <div className="aqsp-variant-grid">{variants.map((variant: AqspVariant) => {
+    {variants.length === 0 ? <EmptyState title="变体结果尚未产出" detail="实验结果独立于正式候选，产出后会显示在这里。" /> : <div className="aqsp-variant-grid">{variants.map((variant: AqspVariant, index) => {
       const pnl = variant.total_pnl;
       const holdings = variant.holdings;
+      const actions = (variant.recent_actions ?? []).filter((action) => !variant.end_date || action.date === variant.end_date).slice(0, 8);
       return <article className="aqsp-variant-card" key={variant.variant_id}>
-        <div className="aqsp-variant-head"><div><h3>{variantDisplayName(variant)}</h3><span>{variant.variant_id}{variant.rank ? ` · 回测第 ${variant.rank} 名` : ""}</span></div><strong className={pnl == null || pnl >= 0 ? "aqsp-variant-positive" : "aqsp-variant-negative"}>{variantMoney(pnl)}</strong></div>
+        <div className="aqsp-variant-head"><div><p>组合 {index + 1} / {variants.length}</p><h3>{variantDisplayName(variant)}</h3><span>{variant.variant_id}{variant.rank ? ` · 回测第 ${variant.rank} 名` : ""}</span></div><strong className={pnl == null || pnl >= 0 ? "aqsp-variant-positive" : "aqsp-variant-negative"}>{variantMoney(pnl)}</strong></div>
         <div className="aqsp-variant-strategy"><p><b>策略逻辑</b>{variantStrategyLogic(variant)}</p><p><b>关键参数</b>{variantStrategyParameters(variant)}</p></div>
         <div className="aqsp-variant-lifecycle"><b>{variant.lifecycle_status || "样本积累"} · 第 {variant.generation ?? 1} 代 · 独立入场日 {variant.independent_signal_days ?? 0}</b><span>{variant.lifecycle_reason || "等待形成可比较样本"}</span>{(variant.discussion_links ?? []).slice(0, 3).map((link) => <span key={link.symbol}>讨论联动：{link.display_name || link.symbol} · {link.risk_gate || link.next_trigger || link.discussion_conclusion || "等待复核约束"}</span>)}</div>
         <div className="aqsp-variant-account">
@@ -328,6 +330,7 @@ function TestVariantsPanel({ snapshot }: { snapshot?: AqspSnapshot }) {
           <div><span>收益率</span><b>{variantPercent(variant.return_pct)}</b></div>
         </div>
         <div className="aqsp-variant-holdings"><b>持仓 · {variantHoldingsLabel(holdings)} · 截至 {variant.end_date || "—"}</b>{holdings?.map((holding) => <div className="aqsp-holding-row" key={holding.symbol}><strong>{holding.name || "名称未记录"}<small>{holding.symbol}</small></strong><span>数量 {holding.quantity} 股<br />建仓 {holding.entry_date || "未记录"} · 持有 {holding.holding_days ?? 0} 天</span><span>成本 {variantMoney(holding.average_price)}<br />最新 {variantMoney(holding.last_price)}</span><span className={holding.unrealized_pnl < 0 ? "aqsp-variant-negative" : "aqsp-variant-positive"}>市值 {variantMoney(holding.market_value)}<br />浮盈 {variantMoney(holding.unrealized_pnl)}</span></div>)}</div>
+        <div className="aqsp-variant-actions"><b>当日操作 · {variant.end_date || "日期未记录"}</b>{actions.length === 0 ? <p>本交易日没有买卖操作。</p> : actions.map((action, actionIndex) => { const side = action.side || action.action || "记录"; const isBuy = side.toLowerCase() === "buy" || side.includes("买"); return <div className="aqsp-action-row" key={`${action.date}-${action.symbol}-${actionIndex}`}><span className={cn("aqsp-action-side", isBuy ? "aqsp-action-buy" : "aqsp-action-sell")}>{isBuy ? "买入" : side.toLowerCase() === "sell" || side.includes("卖") ? "卖出" : side}</span><strong>{action.name || action.display_name || "名称未记录"}<small>{action.symbol}</small></strong><span>{action.quantity} 股 · {variantMoney(action.price)}</span><p>{action.reason || "触发原因未记录"}</p></div>; })}</div>
         <p className="aqsp-variant-rules">成交 {variant.filled_orders} · 拒绝 {variant.rejected_orders} · {(variant.hard_rules ?? []).join(" · ") || "硬成交规则未记录"}</p>
       </article>;
     })}</div>}

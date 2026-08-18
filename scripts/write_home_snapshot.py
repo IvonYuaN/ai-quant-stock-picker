@@ -56,6 +56,7 @@ from aqsp.web.home_snapshot import (
     HomeSnapshotColdstart,
     HomeSnapshotRecommendationGate,
     HomeSnapshotResearchChain,
+    HomeSnapshotCarriedReview,
     HomeSnapshotCrossMarket,
     HomeSnapshotDebate,
     HomeSnapshotAgentView,
@@ -86,7 +87,7 @@ except ModuleNotFoundError:  # pragma: no cover - package import used by tests.
 
 DEFAULT_OUTPUT_PATH = "data/runtime/home_dashboard_snapshot.json"
 DEFAULT_INDEX_OUTPUT_PATH = "data/runtime/home_dashboard_snapshot_index.json"
-MAX_HOME_DATES = 4
+MAX_HOME_DATES = 7
 MAX_HOME_CANDIDATES = MAX_HOME_SNAPSHOT_CANDIDATES
 MAX_HOME_SUMMARIES = 3
 MAX_HOME_MESSAGES = 5
@@ -2489,6 +2490,7 @@ def _research_chain_snapshot(
     variants: tuple[HomeSnapshotVariant, ...],
     experiment_symbols: tuple[str, ...] = (),
     selected_date: str = "",
+    carried_reviews: tuple[HomeSnapshotCarriedReview, ...] = (),
 ) -> HomeSnapshotResearchChain:
     """Join current-day evidence without allowing variants to affect scoring."""
     candidate_symbols = tuple(candidate.symbol for candidate in candidates)
@@ -2528,6 +2530,7 @@ def _research_chain_snapshot(
             candidate_symbols=candidate_symbols,
             debated_symbols=debated_symbols,
             pending_review_symbols=pending_review_symbols,
+            carried_reviews=carried_reviews,
             blocker=variant_suite.last_error or "变体产物不存在。",
         )
     if not variant_current_for_selected_date:
@@ -2536,6 +2539,7 @@ def _research_chain_snapshot(
             candidate_symbols=candidate_symbols,
             debated_symbols=debated_symbols,
             pending_review_symbols=pending_review_symbols,
+            carried_reviews=carried_reviews,
             blocker=(
                 f"变体结果截至 {variant_suite.end_date or '未知日期'}，"
                 "不作为当天结论的验证证据。"
@@ -2555,6 +2559,7 @@ def _research_chain_snapshot(
         variant_review_symbols=variant_review_symbols,
         variant_holding_candidate_symbols=variant_holding_candidate_symbols,
         variant_holding_review_symbols=variant_holding_review_symbols,
+        carried_reviews=carried_reviews,
         blocker=(
             "当天候选尚未全部进入本轮 raw 变体实验池，等待下轮覆盖。"
             if not set(candidate_symbols).issubset(experiment_set)
@@ -2563,6 +2568,52 @@ def _research_chain_snapshot(
             else ""
         ),
     )
+
+
+def _carried_reviews_snapshot(
+    provider: DashboardDataProvider,
+    selected_date: str,
+    current_symbols: set[str],
+) -> tuple[HomeSnapshotCarriedReview, ...]:
+    """Retain prior review conclusions without promoting them to today's list."""
+    anchor = date.fromisoformat(selected_date)
+    carried: list[HomeSnapshotCarriedReview] = []
+    seen = set(current_symbols)
+    if not hasattr(provider, "debate_summaries"):
+        return ()
+    for _ in range(MAX_HOME_DATES - 1):
+        anchor = get_previous_trading_day(anchor)
+        try:
+            summaries = provider.debate_summaries(anchor.isoformat(), limit=8)
+        except (OSError, ValueError):
+            continue
+        for summary in summaries:
+            symbol = _text(getattr(summary, "symbol", ""))
+            if not symbol or symbol in seen:
+                continue
+            conclusion = _first_text(
+                getattr(summary, "research_verdict", ""),
+                getattr(summary, "consensus", ""),
+                getattr(summary, "adjustment_reason", ""),
+            )
+            next_trigger = _text(getattr(summary, "next_trigger", ""))
+            carried.append(
+                HomeSnapshotCarriedReview(
+                    signal_date=anchor.isoformat(),
+                    symbol=symbol,
+                    display_name=_text(getattr(summary, "display_name", "")),
+                    conclusion=conclusion or "原复核未形成最终结论。",
+                    primary_risk_gate=_text(
+                        getattr(summary, "primary_risk_gate", "")
+                    ),
+                    next_trigger=next_trigger,
+                    status="等待复现条件" if next_trigger else "待补最终结论",
+                )
+            )
+            seen.add(symbol)
+            if len(carried) >= 12:
+                return tuple(carried)
+    return tuple(carried)
 
 
 def _variant_strategy_text(item: dict) -> str:
@@ -2770,6 +2821,9 @@ def build_home_snapshot(
     messages = _append_cross_market_messages(messages, artifact)
     variant_suite = _variant_suite_snapshot()
     variants = _variant_snapshot()
+    carried_reviews = _carried_reviews_snapshot(
+        provider, selected_date, {candidate.symbol for candidate in candidates}
+    )
     research_chain = _research_chain_snapshot(
         candidates,
         debates,
@@ -2777,6 +2831,7 @@ def build_home_snapshot(
         variants,
         _variant_experiment_symbols(),
         selected_date,
+        carried_reviews,
     )
     recommendation_gate = _recommendation_gate(
         provider,
@@ -2822,6 +2877,43 @@ def build_home_snapshot(
     )
 
 
+def _historical_gap_snapshot(
+    template: HomeDashboardSnapshot, selected_date: str
+) -> HomeDashboardSnapshot:
+    """Represent a missing archive day without fabricating candidates or evidence."""
+    generated = datetime.fromisoformat(f"{selected_date}T23:59:59+08:00")
+    return replace(
+        template,
+        generated_at=generated.isoformat(timespec="seconds"),
+        selected_date=selected_date,
+        available_dates=(selected_date,),
+        candidates=(),
+        debates=(),
+        summaries=("该交易日没有可恢复的独立候选、讨论或复核产物。",),
+        message_status="历史归档缺失",
+        messages=(),
+        market_context=None,
+        recommendation_gate=HomeSnapshotRecommendationGate(
+            recommendation_allowed=False,
+            status="blocked",
+            reasons=("historical_artifact_missing",),
+        ),
+        phases=(),
+        universe=HomeSnapshotUniverse(source="historical_archive_missing"),
+        variant_suite=HomeSnapshotVariantSuite(
+            data_mode="historical_archive_missing",
+            end_date=selected_date,
+            last_error="该日没有独立变体产物",
+        ),
+        variants=(),
+        research_chain=HomeSnapshotResearchChain(
+            status="blocked",
+            blocker="该日没有独立研究产物；此页面不使用其他日期数据代填。",
+        ),
+        stale_after=(generated + timedelta(days=1)).isoformat(timespec="seconds"),
+    )
+
+
 def build_home_snapshot_index(
     provider: DashboardDataProvider,
     *,
@@ -2830,7 +2922,7 @@ def build_home_snapshot_index(
     initial_snapshot: HomeDashboardSnapshot | None = None,
     existing_index: HomeSnapshotIndex | None = None,
 ) -> HomeSnapshotIndex:
-    """Build at most four exact-date snapshots without making history block today."""
+    """Build seven exact-date snapshots without making history block today."""
     first = initial_snapshot or build_home_snapshot(
         provider,
         signal_date=signal_date,
@@ -2842,7 +2934,19 @@ def build_home_snapshot_index(
         day.date: day
         for day in (existing_index.days if existing_index is not None else ())
     }
-    for available_date in first.available_dates:
+    if existing_index is not None:
+        # Refreshes must not rebuild archived days from mutable runtime inputs.
+        requested_dates = [first.selected_date, *first.available_dates]
+    else:
+        anchor = date.fromisoformat(first.selected_date)
+        requested_dates = [first.selected_date]
+        for _ in range(MAX_HOME_SNAPSHOT_INDEX_DAYS - 1):
+            anchor = get_previous_trading_day(anchor)
+            requested_dates.append(anchor.isoformat())
+        requested_dates.extend(
+            value for value in first.available_dates if value not in requested_dates
+        )
+    for available_date in requested_dates:
         if available_date == first.selected_date:
             continue
         if len(day_snapshots) >= MAX_HOME_SNAPSHOT_INDEX_DAYS:
@@ -2858,8 +2962,8 @@ def build_home_snapshot_index(
                 task_id=selected_task_id,
             )
         except (DataError, OSError, ValueError):
-            # A missing historical artifact must never suppress today's snapshot.
-            continue
+            # Keep the date selectable, but never reuse today's candidate data.
+            snapshot = _historical_gap_snapshot(first, available_date)
         if snapshot.selected_date != available_date:
             continue
         day_snapshots.append(HomeSnapshotDay(date=available_date, snapshot=snapshot))

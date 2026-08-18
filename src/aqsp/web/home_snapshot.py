@@ -16,7 +16,7 @@ from aqsp.utils.jsonl_io import atomic_write_text
 
 HOME_SNAPSHOT_SCHEMA_VERSION = "v1"
 MAX_HOME_SNAPSHOT_BYTES = 1024 * 1024
-MAX_HOME_SNAPSHOT_DATES = 4
+MAX_HOME_SNAPSHOT_DATES = 7
 MAX_HOME_SNAPSHOT_CANDIDATES = 5
 MAX_HOME_SNAPSHOT_TECHNICAL_METRICS = 10
 MAX_HOME_SNAPSHOT_DEBATES = MAX_HOME_SNAPSHOT_CANDIDATES
@@ -26,7 +26,7 @@ MAX_HOME_SNAPSHOT_MARKET_LINES = 5
 MAX_HOME_SNAPSHOT_CROSS_MARKET = 3
 MAX_HOME_SNAPSHOT_VARIANTS = 160
 HOME_SNAPSHOT_INDEX_SCHEMA_VERSION = "v1-index"
-MAX_HOME_SNAPSHOT_INDEX_DAYS = 4
+MAX_HOME_SNAPSHOT_INDEX_DAYS = 7
 HOME_SNAPSHOT_DEFAULT_TTL = timedelta(hours=24)
 HOME_SNAPSHOT_INTRADAY_TTL = timedelta(minutes=30)
 HOME_SNAPSHOT_CLOSE_TTL = timedelta(hours=18)
@@ -261,6 +261,19 @@ class HomeSnapshotVariantSuite:
 
 
 @dataclass(frozen=True)
+class HomeSnapshotCarriedReview:
+    """A prior candidate review retained after the symbol leaves today's list."""
+
+    signal_date: str
+    symbol: str
+    display_name: str
+    conclusion: str
+    primary_risk_gate: str
+    next_trigger: str
+    status: str
+
+
+@dataclass(frozen=True)
 class HomeSnapshotResearchChain:
     """Trace the current-day conclusion through review and isolated variants."""
 
@@ -272,6 +285,7 @@ class HomeSnapshotResearchChain:
     variant_review_symbols: tuple[str, ...] = ()
     variant_holding_candidate_symbols: tuple[str, ...] = ()
     variant_holding_review_symbols: tuple[str, ...] = ()
+    carried_reviews: tuple[HomeSnapshotCarriedReview, ...] = ()
     blocker: str = ""
 
 
@@ -1162,6 +1176,7 @@ def _research_chain_from_dict(payload: object) -> HomeSnapshotResearchChain:
             "variant_review_symbols",
             "variant_holding_candidate_symbols",
             "variant_holding_review_symbols",
+            "carried_reviews",
             "blocker",
         },
     )
@@ -1193,6 +1208,30 @@ def _research_chain_from_dict(payload: object) -> HomeSnapshotResearchChain:
         variant_holding_review_symbols=_text_tuple(
             mapping.get("variant_holding_review_symbols", ()),
             "research_chain.variant_holding_review_symbols",
+        ),
+        carried_reviews=tuple(
+            HomeSnapshotCarriedReview(
+                signal_date=_text(item.get("signal_date"), "carried_review.signal_date"),
+                symbol=_text(item.get("symbol"), "carried_review.symbol"),
+                display_name=_optional_text(
+                    item.get("display_name"), "carried_review.display_name"
+                ),
+                conclusion=_optional_text(
+                    item.get("conclusion"), "carried_review.conclusion"
+                ),
+                primary_risk_gate=_optional_text(
+                    item.get("primary_risk_gate"),
+                    "carried_review.primary_risk_gate",
+                ),
+                next_trigger=_optional_text(
+                    item.get("next_trigger"), "carried_review.next_trigger"
+                ),
+                status=_optional_text(item.get("status"), "carried_review.status"),
+            )
+            for item in _list(
+                mapping.get("carried_reviews", ()), "research_chain.carried_reviews"
+            )
+            if isinstance(item, dict)
         ),
         blocker=_optional_text(mapping.get("blocker"), "research_chain.blocker"),
     )

@@ -353,6 +353,10 @@
   .aqsp-chain-arrow { color: hsl(var(--muted-foreground)); }
   .aqsp-chain-pending { margin-top: 0.5rem; color: hsl(var(--muted-foreground)); font-size: 0.64rem; line-height: 1.4; }
   .aqsp-chain-note { margin-top: 0.45rem; color: hsl(var(--muted-foreground)); font-size: 0.62rem; line-height: 1.4; }
+  .aqsp-carried-reviews { display: grid; gap: 0.35rem; margin-top: 0.7rem; border-top: 1px solid hsl(var(--border) / 0.55); padding-top: 0.6rem; }
+  .aqsp-carried-reviews article { display: grid; gap: 0.15rem; border-left: 3px solid hsl(var(--warning) / 0.8); padding: 0.4rem 0.55rem; background: hsl(var(--warning) / 0.06); font-size: 0.64rem; }
+  .aqsp-carried-reviews small { color: hsl(var(--muted-foreground)); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 400; }
+  .aqsp-carried-reviews span, .aqsp-carried-reviews p { color: hsl(var(--muted-foreground)); }
   .aqsp-phase-lane { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.45rem; margin-top: 0.7rem; }
   .aqsp-phase { min-width: 0; border: 1px solid hsl(var(--border) / 0.6); border-radius: 0.4rem; padding: 0.5rem; background: hsl(var(--background) / 0.18); }
   .aqsp-phase > div { display: flex; align-items: baseline; justify-content: space-between; gap: 0.35rem; }
@@ -464,9 +468,10 @@
   .aqsp-lab-grid span { color: hsl(var(--muted-foreground)); }
   .aqsp-lab-snapshot { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.8rem; margin-bottom: 0.65rem; color: hsl(var(--muted-foreground)); font-size: 0.66rem; }
   .aqsp-variant-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0.65rem; }
-  .aqsp-variant-card { min-width: 0; border: 1px solid hsl(var(--border) / 0.75); border-radius: 0.5rem; padding: 0.75rem; background: hsl(var(--card) / 0.62); }
+  .aqsp-variant-card { min-width: 0; border: 1px solid hsl(var(--border) / 0.82); border-left: 4px solid hsl(var(--primary) / 0.78); border-radius: 0.4rem; padding: 0.85rem; background: hsl(var(--card) / 0.72); box-shadow: 0 1px 0 hsl(var(--border) / 0.28); }
   .aqsp-variant-head { display: flex; justify-content: space-between; gap: 0.5rem; }
   .aqsp-variant-head h3 { font-size: 0.82rem; font-weight: 700; }
+  .aqsp-variant-head p { margin-bottom: 0.18rem; color: hsl(var(--primary)); font-size: 0.58rem; font-weight: 700; }
   .aqsp-variant-head span { display: block; margin-top: 0.2rem; color: hsl(var(--muted-foreground)); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.6rem; }
   .aqsp-variant-head strong { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 1rem; }
   .aqsp-variant-strategy { display: grid; gap: 0.28rem; margin-top: 0.45rem; color: hsl(var(--foreground) / 0.82); font-size: 0.64rem; line-height: 1.4; overflow-wrap: anywhere; }
@@ -484,6 +489,15 @@
   .aqsp-holding-row strong { color: hsl(var(--foreground) / 0.9); }
   .aqsp-holding-row small { display: block; margin-top: 0.12rem; color: hsl(var(--muted-foreground)); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.58rem; font-weight: 400; }
   .aqsp-holding-row span { color: hsl(var(--muted-foreground)); }
+  .aqsp-variant-actions { display: grid; gap: 0.25rem; margin-top: 0.65rem; border-top: 1px solid hsl(var(--border) / 0.55); padding-top: 0.55rem; font-size: 0.62rem; }
+  .aqsp-variant-actions > b { color: hsl(var(--primary)); font-size: 0.58rem; }
+  .aqsp-variant-actions > p { color: hsl(var(--muted-foreground)); }
+  .aqsp-action-row { display: grid; grid-template-columns: 3rem minmax(6rem, 0.8fr) minmax(8rem, 0.8fr) minmax(12rem, 2fr); align-items: start; gap: 0.45rem; border-top: 1px solid hsl(var(--border) / 0.38); padding: 0.45rem 0; }
+  .aqsp-action-row strong small { display: block; color: hsl(var(--muted-foreground)); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.56rem; font-weight: 400; }
+  .aqsp-action-row p { color: hsl(var(--muted-foreground)); line-height: 1.45; }
+  .aqsp-action-side { width: fit-content; border-radius: 0.25rem; padding: 0.12rem 0.28rem; font-weight: 700; }
+  .aqsp-action-buy { background: hsl(var(--danger) / 0.1); color: hsl(var(--danger)); }
+  .aqsp-action-sell { background: hsl(var(--success) / 0.1); color: hsl(var(--success)); }
   .aqsp-source-missing { color: hsl(var(--warning)); }
   .aqsp-variant-positive { color: hsl(var(--success)); }
   .aqsp-variant-negative { color: hsl(var(--danger)); }
@@ -498,6 +512,8 @@
   .aqsp-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .aqsp-variant-account { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .aqsp-holding-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .aqsp-action-row { grid-template-columns: 3rem minmax(0, 1fr); }
+  .aqsp-action-row p { grid-column: 1 / -1; }
   .aqsp-phase-lane { grid-template-columns: minmax(0, 1fr); }
   .aqsp-chain-lane { grid-template-columns: minmax(0, 1fr); }
   .aqsp-chain-arrow { display: none; }
