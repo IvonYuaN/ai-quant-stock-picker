@@ -180,6 +180,26 @@ def test_aqsp_bridge_reports_available_messages_as_fresh() -> None:
     assert aqsp_bridge._snapshot_component_freshness(snapshot)["messages"] == "fresh"
 
 
+def test_aqsp_bridge_accepts_optional_candidate_news_catalyst_fields() -> None:
+    payload = _snapshot("2026-07-14")
+    payload["candidates"][0].update(
+        {
+            "news_catalyst_summary": "",
+            "news_catalyst_source": "",
+            "news_catalyst_url": "",
+            "news_catalyst_published_at": "",
+        }
+    )
+
+    snapshot = aqsp_bridge._parse_snapshot(payload)
+
+    candidate = snapshot.candidates[0]
+    assert candidate.news_catalyst_summary == ""
+    assert candidate.news_catalyst_source == ""
+    assert candidate.news_catalyst_url == ""
+    assert candidate.news_catalyst_published_at == ""
+
+
 def _runtime_debate(*, date: str, symbol: str = "600002", score: float = 72.5) -> dict:
     return {
         "symbol": symbol,

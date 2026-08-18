@@ -82,6 +82,10 @@ class AQSPCandidate:
     data_fetched_at: str = ""
     data_timestamp_source: str = ""
     freshness: str = ""
+    news_catalyst_summary: str = ""
+    news_catalyst_source: str = ""
+    news_catalyst_url: str = ""
+    news_catalyst_published_at: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -1337,6 +1341,10 @@ def _parse_candidate(payload: object) -> AQSPCandidate:
             "data_fetched_at",
             "data_timestamp_source",
             "freshness",
+            "news_catalyst_summary",
+            "news_catalyst_source",
+            "news_catalyst_url",
+            "news_catalyst_published_at",
         },
     )
     return AQSPCandidate(
@@ -1375,6 +1383,19 @@ def _parse_candidate(payload: object) -> AQSPCandidate:
             item.get("data_timestamp_source"), "candidate.data_timestamp_source"
         ),
         freshness=_optional_text(item.get("freshness"), "candidate.freshness"),
+        news_catalyst_summary=_optional_text(
+            item.get("news_catalyst_summary"), "candidate.news_catalyst_summary"
+        ),
+        news_catalyst_source=_optional_text(
+            item.get("news_catalyst_source"), "candidate.news_catalyst_source"
+        ),
+        news_catalyst_url=_optional_text(
+            item.get("news_catalyst_url"), "candidate.news_catalyst_url"
+        ),
+        news_catalyst_published_at=_optional_text(
+            item.get("news_catalyst_published_at"),
+            "candidate.news_catalyst_published_at",
+        ),
     )
 
 
