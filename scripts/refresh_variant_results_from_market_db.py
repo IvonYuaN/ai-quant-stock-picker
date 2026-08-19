@@ -420,7 +420,14 @@ def symbols_with_data_at_date(
         for chunk in _chunks(tuple(item.ts_code for item in symbols), SQL_CHUNK_SIZE):
             placeholders = ",".join("?" for _ in chunk)
             rows = conn.execute(
-                f"SELECT DISTINCT ts_code FROM daily_qfq WHERE trade_date = ? AND ts_code IN ({placeholders})",
+                f"""
+                SELECT DISTINCT ts_code
+                FROM daily_qfq
+                WHERE trade_date = ? AND ts_code IN ({placeholders})
+                  AND open IS NOT NULL AND high IS NOT NULL
+                  AND low IS NOT NULL AND close IS NOT NULL
+                  AND volume IS NOT NULL AND amount IS NOT NULL
+                """,
                 (end_raw, *chunk),
             ).fetchall()
             available.update(str(row[0]) for row in rows)

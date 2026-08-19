@@ -3,8 +3,36 @@ from scripts.refresh_variant_results_from_market_db import (
     attach_discussion_links,
     evolution_profiles,
     prioritize_focus_symbols,
+    symbols_with_data_at_date,
 )
 from scripts.run_variant_suite import VariantProfile, assign_variant_lifecycle
+
+
+def test_variant_universe_excludes_rows_with_missing_required_close_data(tmp_path) -> None:
+    import sqlite3
+
+    path = tmp_path / "market.db"
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "CREATE TABLE daily_qfq "
+            "(ts_code TEXT, trade_date TEXT, open REAL, high REAL, low REAL, "
+            "close REAL, volume REAL, amount REAL)"
+        )
+        conn.executemany(
+            "INSERT INTO daily_qfq VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                ("000001.SZ", "20260817", 1, 1, 1, 1, 100, 1000),
+                ("000002.SZ", "20260817", 1, 1, 1, 1, None, 1000),
+            ),
+        )
+    symbols = (
+        MarketSymbol("000001.SZ", "000001", "A", "深市主板"),
+        MarketSymbol("000002.SZ", "000002", "B", "深市主板"),
+    )
+
+    selected = symbols_with_data_at_date(path, symbols, "2026-08-17")
+
+    assert tuple(item.symbol for item in selected) == ("000001",)
 
 
 def _profile() -> VariantProfile:

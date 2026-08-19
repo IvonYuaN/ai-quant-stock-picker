@@ -59,6 +59,7 @@ write_waiting_status() {
 
 refresh_home_snapshot() {
     if ! "$PYTHON_BIN" "$PROJECT_ROOT/scripts/write_home_snapshot.py" \
+        --date "$(date +%Y-%m-%d)" \
         --task-id variant-refresh >>"$LOG_FILE" 2>&1; then
         log "[WARN] 变体状态已写入，但首页快照刷新失败"
     fi
