@@ -451,6 +451,73 @@ def test_variant_refresh_keeps_existing_candidates_when_refresh_is_empty() -> No
     assert merged.candidates == existing.candidates
 
 
+def test_variant_refresh_never_replaces_main_chain_with_its_candidate_slice() -> None:
+    candidate = write_home_snapshot.HomeSnapshotCandidate(
+        symbol="600001",
+        display_name="主链候选",
+        score=80.0,
+        research_status="仅观察",
+        next_step="复核",
+        context="趋势",
+        deterministic_reasons=("趋势",),
+    )
+    debate = write_home_snapshot.HomeSnapshotDebate(
+        symbol="600001",
+        display_name="主链候选",
+        conclusion="继续观察",
+        primary_risk_gate="等待承接",
+        next_trigger="量能确认",
+        active_roles=("bull", "bear", "risk_control"),
+        round_count=3,
+        bull_count=1,
+        bear_count=1,
+        neutral_count=1,
+    )
+    existing = write_home_snapshot.HomeDashboardSnapshot(
+        schema_version="v1",
+        generated_at="2026-07-24T09:00:00+08:00",
+        selected_date="2026-07-24",
+        available_dates=("2026-07-24",),
+        candidates=(candidate,),
+        debates=(debate,),
+        summaries=("盘中：主链结论",),
+        source=write_home_snapshot.HomeSnapshotSource(
+            effective="tencent", latest_trade_date="2026-07-24", lag_days=0, status="ok"
+        ),
+        coldstart=write_home_snapshot.HomeSnapshotColdstart(
+            status="ready", detail="测试"
+        ),
+        messages=(
+            write_home_snapshot.HomeSnapshotMessage(
+                title="当天消息",
+                summary="可追溯来源",
+                impact="中性",
+                category="行业",
+                source="来源",
+                published_at="2026-07-24T08:00:00+08:00",
+                source_url="https://example.test/news",
+            ),
+        ),
+    )
+    refreshed = replace(
+        existing,
+        candidates=(replace(candidate, symbol="600002"),),
+        debates=(),
+        messages=(),
+        summaries=("变体任务摘要",),
+        variants=(),
+    )
+
+    merged = write_home_snapshot._merge_same_day_task_refresh(
+        existing, refreshed, "variant-refresh"
+    )
+
+    assert merged.candidates == existing.candidates
+    assert merged.debates == existing.debates
+    assert merged.messages == existing.messages
+    assert merged.summaries == existing.summaries
+
+
 def test_main_chain_empty_refresh_keeps_existing_candidates() -> None:
     candidate = write_home_snapshot.HomeSnapshotCandidate(
         symbol="600001",

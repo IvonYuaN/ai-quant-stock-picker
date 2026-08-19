@@ -3082,20 +3082,38 @@ def _merge_same_day_task_refresh(
         # News runs independently during the session. It owns only the news
         # projection; candidates, debates, variants and their links belong to
         # the research/refresh tasks and remain authoritative here.
+        messages = refreshed.messages or existing.messages
+        market_context = refreshed.market_context or existing.market_context
         return replace(
             existing,
             generated_at=refreshed.generated_at,
             stale_after=refreshed.stale_after,
             message_status=refreshed.message_status,
-            messages=refreshed.messages,
-            market_context=refreshed.market_context,
+            messages=messages,
+            market_context=market_context,
         )
 
     if task in {"variant-refresh", "variant_refresh"}:
-        # Variant refresh may run while the candidate task is still producing
-        # its next artifact. Preserve the last complete candidate/review view
-        # and publish only the new variant evidence and chain projection.
-        if not refreshed.candidates and existing.candidates:
+        # Variant refresh owns only the isolated experiment projection. Its
+        # provider can expose a smaller/different candidate slice, so never
+        # let it replace the day's main-chain candidates or discussion.
+        if existing.candidates:
+            research_chain = _research_chain_snapshot(
+                existing.candidates,
+                existing.debates,
+                refreshed.variant_suite,
+                refreshed.variants,
+                _variant_experiment_symbols(),
+                refreshed.selected_date,
+                existing.research_chain.carried_reviews,
+            )
+            recommendation_gate = refreshed.recommendation_gate
+            if research_chain.status != "linked":
+                recommendation_gate = HomeSnapshotRecommendationGate(
+                    recommendation_allowed=False,
+                    status="research_validation_not_ready",
+                    reasons=(research_chain.blocker or "讨论与变体验证尚未完整联动",),
+                )
             return replace(
                 refreshed,
                 candidates=existing.candidates,
@@ -3104,6 +3122,8 @@ def _merge_same_day_task_refresh(
                 market_context=existing.market_context,
                 phases=existing.phases,
                 summaries=existing.summaries,
+                recommendation_gate=recommendation_gate,
+                research_chain=research_chain,
             )
     if task != "news" and not refreshed.candidates and existing.candidates:
         # A premarket/regime skip is not a new empty conclusion. Keep the last
@@ -3162,6 +3182,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     _guard_empty_same_day_refresh(
         load_home_dashboard_snapshot(output_path), current_snapshot
+    )
+    index = replace(
+        index,
+        days=tuple(
+            replace(day, snapshot=current_snapshot)
+            if day.date == index.selected_date
+            else day
+            for day in index.days
+        ),
     )
     write_home_dashboard_snapshot(output_path, current_snapshot)
     write_home_snapshot_index(index_path, index)
