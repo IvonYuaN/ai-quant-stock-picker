@@ -1,6 +1,46 @@
 import sqlite3
 
-from scripts.run_variant_suite import run_suite
+from scripts.run_variant_suite import _with_indicators, run_suite
+
+
+def test_variant_indicators_keep_volume_ratio_with_small_history_gaps() -> None:
+    import pandas as pd
+
+    frame = pd.DataFrame(
+        {
+            "date": pd.date_range("2026-01-01", periods=45, freq="D"),
+            "open": 10.0,
+            "high": 10.5,
+            "low": 9.5,
+            "close": 10.0,
+            "volume": 100.0,
+        }
+    )
+    frame.loc[[5, 12, 19, 26], "volume"] = None
+
+    enriched = _with_indicators(frame, lookback=40)
+
+    assert pd.notna(enriched.iloc[-1]["volume_ratio"])
+
+
+def test_variant_indicators_reject_volume_ratio_with_too_many_history_gaps() -> None:
+    import pandas as pd
+
+    frame = pd.DataFrame(
+        {
+            "date": pd.date_range("2026-01-01", periods=45, freq="D"),
+            "open": 10.0,
+            "high": 10.5,
+            "low": 9.5,
+            "close": 10.0,
+            "volume": 100.0,
+        }
+    )
+    frame.loc[range(5, 15), "volume"] = None
+
+    enriched = _with_indicators(frame, lookback=40)
+
+    assert pd.isna(enriched.iloc[-1]["volume_ratio"])
 
 
 def test_run_suite_creates_twenty_four_independent_ten_wan_accounts(tmp_path):
