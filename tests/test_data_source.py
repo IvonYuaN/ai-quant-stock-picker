@@ -249,7 +249,9 @@ def test_eastmoney_spot_snapshot_rejects_incomplete_pagination(monkeypatch) -> N
         source.get_available_symbols()
 
 
-def test_eastmoney_spot_page_uses_delay_host_after_connection_reset(monkeypatch) -> None:
+def test_eastmoney_spot_page_uses_delay_host_after_connection_reset(
+    monkeypatch,
+) -> None:
     source = EastmoneySource.__new__(EastmoneySource)
     source.name = "eastmoney"
     source._last_request_ts = 0.0
@@ -846,6 +848,40 @@ def test_fetch_with_source_keeps_partial_daily_frames_when_some_symbols_missing(
     assert "日线获取不完整" in caplog.text
 
 
+def test_fetch_with_source_chunks_large_live_daily_requests_when_provider_batch_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AQSP_LIVE_DAILY_BATCH_SIZE", "20")
+
+    class DummySource:
+        name = "dummy"
+        _active_workload = "live_short"
+
+        def __init__(self) -> None:
+            self.calls: list[list[str]] = []
+
+        def fetch_daily(self, symbols, start, end, adjust=""):
+            del start, end, adjust
+            self.calls.append(list(symbols))
+            if len(self.calls) == 2:
+                raise DataError("provider batch timeout")
+            return {
+                symbol: pd.DataFrame([{"date": "2026-06-13", "close": 10.1}])
+                for symbol in symbols
+            }
+
+        def fetch_index(self, index_codes, start, end):
+            del index_codes, start, end
+            return {}
+
+    source = DummySource()
+    symbols = [f"{index:06d}" for index in range(45)]
+    frames = fetch_with_source(source, symbols, days=30)
+
+    assert [len(call) for call in source.calls] == [20, 20, 5]
+    assert len(frames) == 25
+
+
 def test_live_short_fetch_rejects_partial_daily_frames_explicitly() -> None:
     class DummySource:
         name = "eastmoney"
@@ -937,7 +973,8 @@ def test_live_short_drops_future_daily_frames_before_coverage_gate(
 
 
 def test_intraday_live_short_records_resolved_fetched_and_skipped_symbols(
-    tmp_path: Path, monkeypatch,
+    tmp_path: Path,
+    monkeypatch,
 ) -> None:
     monkeypatch.setenv("AQSP_RUN_TASK_ID", "intraday")
     monkeypatch.setenv("AQSP_INTRADAY_MIN_VALID_RATIO", "0.5")

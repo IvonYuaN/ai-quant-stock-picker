@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -161,6 +162,12 @@ def _fetch_daily_with_symbol_isolation(
     end: date,
     adjust: str,
 ) -> dict[str, pd.DataFrame]:
+    if getattr(source, "_active_workload", None) == "live_short":
+        batch_size = _live_daily_batch_size()
+        if len(symbols) > batch_size:
+            return _fetch_live_daily_in_batches(
+                source, symbols, start, end, adjust, batch_size
+            )
     try:
         out = source.fetch_daily(symbols, start, end, adjust)
     except Exception as exc:
@@ -195,6 +202,44 @@ def _fetch_daily_with_symbol_isolation(
         if isinstance(frame, pd.DataFrame) and not frame.empty:
             out[symbol] = frame
     return out
+
+
+def _live_daily_batch_size() -> int:
+    """Bound live daily requests so one provider batch cannot rate-limit all symbols."""
+    raw = os.getenv("AQSP_LIVE_DAILY_BATCH_SIZE", "20").strip()
+    try:
+        configured = int(raw)
+    except ValueError:
+        configured = 20
+    return max(1, min(configured, 50))
+
+
+def _fetch_live_daily_in_batches(
+    source: DataSource,
+    symbols: list[str],
+    start: date,
+    end: date,
+    adjust: str,
+    batch_size: int,
+) -> dict[str, pd.DataFrame]:
+    """Fetch bounded live batches and retain successful batches after one failure."""
+    merged: dict[str, pd.DataFrame] = {}
+    for offset in range(0, len(symbols), batch_size):
+        batch = symbols[offset : offset + batch_size]
+        try:
+            result = source.fetch_daily(batch, start, end, adjust)
+        except Exception as exc:  # noqa: BLE001
+            _logger.warning(
+                "实时日线批次失败，保留其余批次: offset=%d size=%d error=%s",
+                offset,
+                len(batch),
+                exc,
+            )
+            continue
+        for symbol, frame in result.items():
+            if isinstance(frame, pd.DataFrame) and not frame.empty:
+                merged[str(symbol)] = frame
+    return merged
 
 
 def _missing_valid_daily_symbols(
