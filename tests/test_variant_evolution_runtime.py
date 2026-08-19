@@ -8,7 +8,9 @@ from scripts.refresh_variant_results_from_market_db import (
 from scripts.run_variant_suite import VariantProfile, assign_variant_lifecycle
 
 
-def test_variant_universe_excludes_rows_with_missing_required_close_data(tmp_path) -> None:
+def test_variant_universe_excludes_rows_with_missing_required_close_data(
+    tmp_path,
+) -> None:
     import sqlite3
 
     path = tmp_path / "market.db"
@@ -35,6 +37,34 @@ def test_variant_universe_excludes_rows_with_missing_required_close_data(tmp_pat
     assert tuple(item.symbol for item in selected) == ("000001",)
 
 
+def test_variant_universe_excludes_zero_activity_rows(tmp_path) -> None:
+    import sqlite3
+
+    path = tmp_path / "market.db"
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "CREATE TABLE daily_qfq "
+            "(ts_code TEXT, trade_date TEXT, open REAL, high REAL, low REAL, "
+            "close REAL, volume REAL, amount REAL)"
+        )
+        conn.executemany(
+            "INSERT INTO daily_qfq VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                ("000001.SZ", "20260817", 1, 1, 1, 1, 100, 1000),
+                ("000002.SZ", "20260817", 1, 1, 1, 1, 0, 1000),
+                ("000003.SZ", "20260817", 1, 1, 1, 1, 100, 0),
+            ),
+        )
+    symbols = tuple(
+        MarketSymbol(code, code[:6], code, "深市主板")
+        for code in ("000001.SZ", "000002.SZ", "000003.SZ")
+    )
+
+    selected = symbols_with_data_at_date(path, symbols, "2026-08-17")
+
+    assert tuple(item.symbol for item in selected) == ("000001",)
+
+
 def _profile() -> VariantProfile:
     return VariantProfile(
         variant_id="trend_base",
@@ -49,7 +79,9 @@ def _profile() -> VariantProfile:
     )
 
 
-def test_variant_lifecycle_eliminates_negative_result_after_minimum_signal_days() -> None:
+def test_variant_lifecycle_eliminates_negative_result_after_minimum_signal_days() -> (
+    None
+):
     results = [
         {
             "variant_id": "loser",

@@ -28,6 +28,7 @@ import pandas as pd
 
 from aqsp.core.time import now_shanghai
 from aqsp.utils.jsonl_io import atomic_write_text
+
 try:
     from check_variant_results import validate_variant_payload
 except ModuleNotFoundError:
@@ -326,7 +327,9 @@ def attach_discussion_links(
     if not isinstance(variants, list):
         return
     for variant in variants:
-        if not isinstance(variant, dict) or not isinstance(variant.get("strategy"), dict):
+        if not isinstance(variant, dict) or not isinstance(
+            variant.get("strategy"), dict
+        ):
             continue
         mode = str(variant["strategy"].get("mode") or "")
         variant["discussion_links"] = [
@@ -337,6 +340,8 @@ def attach_discussion_links(
                 for strategy in item.get("strategies", ())
             )
         ]
+
+
 def commit_variant_batch(cursor_path: Path, batch: VariantUniverseBatch) -> None:
     next_offset = batch.offset + len(batch.symbols)
     cycle_id = batch.cycle_id
@@ -427,6 +432,7 @@ def symbols_with_data_at_date(
                   AND open IS NOT NULL AND high IS NOT NULL
                   AND low IS NOT NULL AND close IS NOT NULL
                   AND volume IS NOT NULL AND amount IS NOT NULL
+                  AND volume > 0 AND amount > 0
                 """,
                 (end_raw, *chunk),
             ).fetchall()
@@ -837,9 +843,7 @@ def main() -> int:
             batch = select_variant_batch(
                 eligible_symbols, args.max_symbols, cursor_path
             )
-            focus_cohort = load_focus_cohort(
-                getattr(args, "focus_snapshot", None)
-            )
+            focus_cohort = load_focus_cohort(getattr(args, "focus_snapshot", None))
             selected = prioritize_focus_symbols(
                 batch.symbols, eligible_symbols, focus_cohort
             )
