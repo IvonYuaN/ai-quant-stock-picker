@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
 import sys
 import time
 from dataclasses import asdict
@@ -26,6 +27,22 @@ _MAIN_BOARD_PREFIXES = ("600", "601", "603", "605", "000", "001", "002", "003")
 _CHINEXT_PREFIXES = ("300", "301")
 
 
+def _latest_available_reference_day(
+    source: SqliteDbSource, desired_day: date
+) -> date | None:
+    """Find the latest stored day usable only as the active-listing baseline."""
+    desired = desired_day.strftime("%Y%m%d")
+    with sqlite3.connect(source.db_path) as conn:
+        row = conn.execute(
+            "SELECT MAX(trade_date) FROM daily_qfq WHERE trade_date <= ?",
+            (desired,),
+        ).fetchone()
+    raw = str((row or ("",))[0] or "")
+    if len(raw) != 8 or not raw.isdigit():
+        return None
+    return date.fromisoformat(f"{raw[:4]}-{raw[4:6]}-{raw[6:]}")
+
+
 def _refresh_universe(
     source: SqliteDbSource,
     *,
@@ -42,7 +59,7 @@ def _refresh_universe(
     for symbol in source.get_available_symbols():
         code = str(symbol).strip()
         name = source.get_symbol_name(code).upper().replace(" ", "")
-        if "ST" in name or "退" in name:
+        if "ST" in name or "PT" in name or "退" in name:
             continue
         if code.startswith(_MAIN_BOARD_PREFIXES[:4]):
             boards[0].append(code)
@@ -68,6 +85,18 @@ def _refresh_universe(
                 min_coverage_ratio=1.0,
             )
         )
+        if not covered:
+            fallback_day = _latest_available_reference_day(source, reference_day)
+            if fallback_day is not None and fallback_day != reference_day:
+                covered = set(
+                    source.get_symbols_with_daily_coverage(
+                        result,
+                        fallback_day,
+                        fallback_day,
+                        min_rows=1,
+                        min_coverage_ratio=1.0,
+                    )
+                )
         result = [symbol for symbol in result if symbol in covered]
     if not result:
         raise RuntimeError(
@@ -331,4 +360,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

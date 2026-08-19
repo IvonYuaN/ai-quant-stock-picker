@@ -57,6 +57,7 @@ log() {
 usage() {
     cat <<'EOF'
 Usage: bt_task.sh <daily|morning|intraday|midday|coldstart|walkforward-gate|monitor|news|status|data-refresh|data-refresh-retry|variant-refresh>
+# Legacy panel action contract: daily|intraday|midday|coldstart|walkforward-gate|monitor|news|status
 
 BT panel examples:
   /bin/bash /opt/aqsp/scripts/bt_task.sh intraday
