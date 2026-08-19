@@ -103,6 +103,9 @@ esac
 # This entrypoint is only for releases; a legacy .env must not re-enable Git
 # sync against the mutable staging checkout.
 export AQSP_IMMUTABLE_RELEASE=true
+# Cron-launched tasks do not inherit the API service's module path. Keep every
+# release entrypoint on the same source tree, including variant preflight.
+export PYTHONPATH="${RELEASE_ROOT}/src:${RELEASE_ROOT}/backend:${PYTHONPATH:-}"
 export_runtime_path AQSP_LEDGER data/predictions.jsonl
 export_runtime_path AQSP_PAPER_LEDGER data/paper_trades.jsonl
 export_runtime_path AQSP_DEBATE_RESULTS data/debate_results.jsonl
