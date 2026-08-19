@@ -56,7 +56,7 @@ log() {
 
 usage() {
     cat <<'EOF'
-Usage: bt_task.sh <daily|morning|intraday|midday|coldstart|walkforward-gate|monitor|news|status|data-refresh|variant-refresh>
+Usage: bt_task.sh <daily|morning|intraday|midday|coldstart|walkforward-gate|monitor|news|status|data-refresh|data-refresh-retry|variant-refresh>
 
 BT panel examples:
   /bin/bash /opt/aqsp/scripts/bt_task.sh intraday
@@ -65,6 +65,7 @@ BT panel examples:
   /bin/bash /opt/aqsp/scripts/bt_task.sh midday
   /bin/bash /opt/aqsp/scripts/bt_task.sh coldstart
   /bin/bash /opt/aqsp/scripts/bt_task.sh data-refresh
+  /bin/bash /opt/aqsp/scripts/bt_task.sh data-refresh-retry
   /bin/bash /opt/aqsp/scripts/bt_task.sh variant-refresh
   /bin/bash /opt/aqsp/scripts/bt_task.sh walkforward-gate
   /bin/bash /opt/aqsp/scripts/bt_task.sh monitor
@@ -78,6 +79,7 @@ Recommended BT schedule (Asia/Shanghai):
   daily     18:00 Mon-Fri
   coldstart 19:40 Mon-Fri
   data-refresh 15:35 Mon-Fri; bounded raw daily data refresh
+  data-refresh-retry every 10 min from 17:00-19:30 Mon-Fri; bounded delayed source retry
   variant-refresh 22:30 Mon-Fri; bounded isolated experiment refresh
   walkforward-gate 22:00 Sat; controlled production evidence only, no threshold apply
   monitor   every 15 min
@@ -323,6 +325,21 @@ skip_non_trading_day() {
     fi
 }
 
+ensure_data_refresh_retry_window() {
+    local start_hm="${AQSP_DATA_REFRESH_RETRY_WINDOW_START_HM:-1700}"
+    local end_hm="${AQSP_DATA_REFRESH_RETRY_WINDOW_END_HM:-1930}"
+    local now_hm
+    if ! [[ "$start_hm" =~ ^[0-9]{3,4}$ && "$end_hm" =~ ^[0-9]{3,4}$ ]]; then
+        log "延迟数据刷新窗口配置无效，拒绝运行 start=${start_hm} end=${end_hm}"
+        exit 2
+    fi
+    now_hm=$((10#$(date +%H%M)))
+    if [ "$now_hm" -lt "$start_hm" ] || [ "$now_hm" -gt "$end_hm" ]; then
+        log "当前时间 ${now_hm} 不在 data-refresh-retry 允许窗口 ${start_hm}-${end_hm}，跳过延迟原始日线刷新"
+        exit 0
+    fi
+}
+
 is_calendar_weekend() {
     local python_bin="${AQSP_RUNTIME_PYTHON}"
     local target_date="${AQSP_TRADING_DAY_OVERRIDE_DATE:-}"
@@ -549,6 +566,23 @@ case "$ACTION" in
             --query-timeout-seconds "${AQSP_DATA_QUERY_TIMEOUT_SECONDS:-4}" \
             --max-runtime-seconds "${AQSP_DATA_REFRESH_MAX_RUNTIME_SECONDS:-480}" \
             --batches "${AQSP_DATA_REFRESH_BATCHES:-0}"
+        ;;
+    data-refresh-retry)
+        skip_non_trading_day
+        ensure_data_refresh_retry_window
+        export AQSP_RUN_TASK_ID="data_refresh_retry"
+        export AQSP_NOTIFY="false"
+        export AQSP_GATE_NOTIFY="false"
+        sync_code_only
+        run_python_script "${PROJECT_ROOT}/scripts/refresh_sqlite_batch.py" \
+            --db "${AQSP_SQLITE_DB_PATH:-${AQSP_VARIANT_DB:-/opt/market-data/astocks_raw.db}}" \
+            --state "${STATE_DIR}/sqlite-refresh-cursor.json" \
+            --batch-size "${AQSP_DATA_REFRESH_BATCH_SIZE:-120}" \
+            --universe-limit "${AQSP_DATA_REFRESH_UNIVERSE_LIMIT:-0}" \
+            --min-amount "${AQSP_MIN_AVG_AMOUNT:-50000000}" \
+            --query-timeout-seconds "${AQSP_DATA_QUERY_TIMEOUT_SECONDS:-4}" \
+            --max-runtime-seconds "${AQSP_DATA_REFRESH_MAX_RUNTIME_SECONDS:-480}" \
+            --batches "${AQSP_DATA_REFRESH_RETRY_BATCHES:-0}"
         ;;
     variant-refresh)
         skip_non_trading_day

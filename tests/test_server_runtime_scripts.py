@@ -1609,3 +1609,13 @@ def test_parallel_entry_scripts_pass_bash_syntax_check() -> None:
             check=False,
         )
         assert result.returncode == 0, f"{path}: {result.stderr}"
+
+
+def test_bt_task_keeps_delayed_raw_refresh_compatible_with_server_cron() -> None:
+    script = (PROJECT_ROOT / "scripts" / "bt_task.sh").read_text(encoding="utf-8")
+
+    assert "data-refresh-retry)" in script
+    assert "ensure_data_refresh_retry_window" in script
+    assert "AQSP_DATA_REFRESH_RETRY_WINDOW_START_HM:-1700" in script
+    assert "AQSP_DATA_REFRESH_RETRY_WINDOW_END_HM:-1930" in script
+    assert "AQSP_DATA_REFRESH_RETRY_BATCHES:-0" in script
