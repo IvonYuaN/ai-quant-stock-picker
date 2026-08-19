@@ -97,6 +97,42 @@ PROFILE_BATCH_SIZE="${AQSP_VARIANT_PROFILE_BATCH_SIZE:-6}"
 MAX_STAGE_BATCHES="${AQSP_VARIANT_MAX_STAGE_BATCHES:-4}"
 MIN_PUBLISHED_VARIANTS=24
 
+refresh_completed_for_this_run() {
+    "$PYTHON_BIN" - "$STATUS_PATH" "$OUTPUT_PATH" "$started_at" <<'PY'
+import json
+import sys
+from datetime import datetime
+from pathlib import Path
+
+status_path = Path(sys.argv[1])
+output_path = Path(sys.argv[2])
+started_epoch = int(sys.argv[3])
+try:
+    status = json.loads(status_path.read_text(encoding="utf-8"))
+    output = json.loads(Path(output_path).read_text(encoding="utf-8"))
+except (OSError, ValueError, IndexError):
+    raise SystemExit(1)
+
+if status.get("status") != "completed":
+    raise SystemExit(1)
+try:
+    staged = int(status.get("profiles_staged", 0) or 0)
+    total = int(status.get("profiles_total", 0) or 0)
+except (TypeError, ValueError):
+    raise SystemExit(1)
+if total <= 0 or staged < total:
+    raise SystemExit(1)
+
+def generated_epoch(payload: dict[str, object]) -> int:
+    value = str(payload.get("generated_at", "")).strip()
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return int(parsed.timestamp())
+
+if generated_epoch(status) < started_epoch or generated_epoch(output) < started_epoch:
+    raise SystemExit(1)
+PY
+}
+
 if ! [[ "$MAX_SYMBOLS" =~ ^[0-9]+$ ]] || [ "$MAX_SYMBOLS" -lt 600 ]; then
     log "变体股票批次无效(${MAX_SYMBOLS})，使用 600"
     MAX_SYMBOLS="600"
@@ -168,7 +204,8 @@ for batch_index in $(seq 1 "$MAX_STAGE_BATCHES"); do
         refresh_home_snapshot
         exit "$status"
     fi
-    if "$PYTHON_BIN" "$PROJECT_ROOT/scripts/check_variant_results.py" "$OUTPUT_PATH" >>"$LOG_FILE" 2>&1; then
+    if refresh_completed_for_this_run \
+        && "$PYTHON_BIN" "$PROJECT_ROOT/scripts/check_variant_results.py" "$OUTPUT_PATH" >>"$LOG_FILE" 2>&1; then
         "$PYTHON_BIN" "$PROJECT_ROOT/scripts/write_home_snapshot.py" \
             --task-id variant-refresh >>"$LOG_FILE" 2>&1
         log "变体刷新和首页快照更新完成"
