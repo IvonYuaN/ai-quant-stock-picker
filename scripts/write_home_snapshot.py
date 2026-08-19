@@ -275,8 +275,7 @@ def _snapshot_dates(task_view: Any, selected_date: str) -> tuple[str, ...]:
     return tuple(
         value
         for value in dates
-        if value in recent_dates
-        and (value == selected_date or value <= completed_date)
+        if value in recent_dates and (value == selected_date or value <= completed_date)
     )
 
 
@@ -456,13 +455,9 @@ def _snapshot_candidate(candidate: Any) -> HomeSnapshotCandidate | None:
         data_fetched_at=_text(getattr(candidate, "data_fetched_at", "")),
         data_timestamp_source=_text(getattr(candidate, "data_timestamp_source", "")),
         freshness=_candidate_freshness(candidate),
-        news_catalyst_summary=_text(
-            getattr(candidate, "news_catalyst_summary", "")
-        ),
+        news_catalyst_summary=_text(getattr(candidate, "news_catalyst_summary", "")),
         news_catalyst_source=_text(getattr(candidate, "news_catalyst_source", "")),
-        news_catalyst_url=_text(
-            getattr(candidate, "news_catalyst_url", "")
-        ),
+        news_catalyst_url=_text(getattr(candidate, "news_catalyst_url", "")),
         news_catalyst_published_at=_text(
             getattr(candidate, "news_catalyst_published_at", "")
         ),
@@ -580,9 +575,7 @@ def _snapshot_debates(
             candidate,
             _text(getattr(debate, "primary_risk_gate", "")),
         )
-        agent_views = _snapshot_agent_views(
-            getattr(debate, "agent_views", ()) or ()
-        )
+        agent_views = _snapshot_agent_views(getattr(debate, "agent_views", ()) or ())
         published_roles = tuple(view.role for view in agent_views)
         if len(published_roles) < 2:
             published_roles = tuple(
@@ -609,7 +602,8 @@ def _snapshot_debates(
                     for view in agent_views
                 ),
                 "neutral_count": sum(
-                    view.stance.strip().lower() not in {"bull", "bullish", "bear", "bearish"}
+                    view.stance.strip().lower()
+                    not in {"bull", "bullish", "bear", "bearish"}
                     for view in agent_views
                 ),
             }
@@ -2462,11 +2456,8 @@ def _variant_snapshot() -> tuple[HomeSnapshotVariant, ...]:
                 hard_rules=rule_labels if isinstance(rules, dict) else (),
                 generation=int(item.get("generation") or 1),
                 parent_variant_id=_text(item.get("parent_variant_id")),
-                independent_signal_days=int(
-                    item.get("independent_signal_days") or 0
-                ),
-                lifecycle_status=_text(item.get("lifecycle_status"))
-                or "样本积累",
+                independent_signal_days=int(item.get("independent_signal_days") or 0),
+                lifecycle_status=_text(item.get("lifecycle_status")) or "样本积累",
                 lifecycle_reason=_text(item.get("lifecycle_reason")),
                 discussion_links=tuple(
                     link
@@ -2609,9 +2600,7 @@ def _carried_reviews_snapshot(
                     symbol=symbol,
                     display_name=_text(getattr(summary, "display_name", "")),
                     conclusion=conclusion or "原复核未形成最终结论。",
-                    primary_risk_gate=_text(
-                        getattr(summary, "primary_risk_gate", "")
-                    ),
+                    primary_risk_gate=_text(getattr(summary, "primary_risk_gate", "")),
                     next_trigger=next_trigger,
                     status="等待复现条件" if next_trigger else "待补最终结论",
                 )
@@ -3079,6 +3068,50 @@ def _guard_empty_same_day_refresh(
         )
 
 
+def _merge_same_day_task_refresh(
+    existing: HomeDashboardSnapshot | None,
+    refreshed: HomeDashboardSnapshot,
+    task_id: str,
+) -> HomeDashboardSnapshot:
+    """Merge task-owned fields so sidecar jobs cannot erase the research chain."""
+    if existing is None or existing.selected_date != refreshed.selected_date:
+        return refreshed
+
+    task = task_id.strip().lower()
+    if task == "news":
+        # News runs independently during the session. It owns only the news
+        # projection; candidates, debates, variants and their links belong to
+        # the research/refresh tasks and remain authoritative here.
+        return replace(
+            existing,
+            generated_at=refreshed.generated_at,
+            stale_after=refreshed.stale_after,
+            message_status=refreshed.message_status,
+            messages=refreshed.messages,
+            market_context=refreshed.market_context,
+        )
+
+    if task in {"variant-refresh", "variant_refresh"}:
+        # Variant refresh may run while the candidate task is still producing
+        # its next artifact. Preserve the last complete candidate/review view
+        # and publish only the new variant evidence and chain projection.
+        if not refreshed.candidates and existing.candidates:
+            return replace(
+                refreshed,
+                candidates=existing.candidates,
+                debates=existing.debates,
+                messages=existing.messages,
+                market_context=existing.market_context,
+                phases=existing.phases,
+                summaries=existing.summaries,
+            )
+    if task != "news" and not refreshed.candidates and existing.candidates:
+        # A premarket/regime skip is not a new empty conclusion. Keep the last
+        # valid same-day view until a later intraday task publishes evidence.
+        return existing
+    return refreshed
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -3121,6 +3154,11 @@ def main(argv: list[str] | None = None) -> int:
     index = merge_home_snapshot_index(existing_index, index)
     current_snapshot = next(
         day.snapshot for day in index.days if day.date == index.selected_date
+    )
+    current_snapshot = _merge_same_day_task_refresh(
+        load_home_dashboard_snapshot(output_path),
+        current_snapshot,
+        args.task_id,
     )
     _guard_empty_same_day_refresh(
         load_home_dashboard_snapshot(output_path), current_snapshot

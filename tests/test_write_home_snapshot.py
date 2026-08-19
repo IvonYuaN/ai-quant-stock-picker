@@ -353,6 +353,137 @@ def test_empty_same_day_refresh_does_not_replace_valid_snapshot() -> None:
         write_home_snapshot._guard_empty_same_day_refresh(existing, refreshed)
 
 
+def test_news_refresh_keeps_existing_research_chain() -> None:
+    candidate = write_home_snapshot.HomeSnapshotCandidate(
+        symbol="600001",
+        display_name="样本",
+        score=80.0,
+        research_status="仅观察",
+        next_step="复核",
+        context="趋势",
+        deterministic_reasons=("趋势",),
+    )
+    debate = write_home_snapshot.HomeSnapshotDebate(
+        symbol="600001",
+        display_name="样本",
+        conclusion="继续观察",
+        primary_risk_gate="跌破止损",
+        next_trigger="量能确认",
+        active_roles=("多头", "反方"),
+        round_count=2,
+        bull_count=1,
+        bear_count=1,
+    )
+    existing = write_home_snapshot.HomeDashboardSnapshot(
+        schema_version="v1",
+        generated_at="2026-07-24T09:00:00+08:00",
+        selected_date="2026-07-24",
+        available_dates=("2026-07-24",),
+        candidates=(candidate,),
+        debates=(debate,),
+        summaries=(),
+        source=write_home_snapshot.HomeSnapshotSource(
+            effective="tencent", latest_trade_date="2026-07-24", lag_days=0, status="ok"
+        ),
+        coldstart=write_home_snapshot.HomeSnapshotColdstart(
+            status="ready", detail="测试"
+        ),
+        messages=(),
+    )
+    refreshed = replace(
+        existing,
+        generated_at="2026-07-24T09:05:00+08:00",
+        candidates=(),
+        debates=(),
+        message_status="可用",
+        messages=(
+            write_home_snapshot.HomeSnapshotMessage(
+                title="消息",
+                summary="摘要",
+                impact="中性",
+                category="行业",
+                source="来源",
+                published_at="2026-07-24T08:00:00+08:00",
+                source_url="https://example.test/news",
+            ),
+        ),
+    )
+
+    merged = write_home_snapshot._merge_same_day_task_refresh(
+        existing, refreshed, "news"
+    )
+
+    assert merged.candidates == existing.candidates
+    assert merged.debates == existing.debates
+    assert len(merged.messages) == 1
+
+
+def test_variant_refresh_keeps_existing_candidates_when_refresh_is_empty() -> None:
+    candidate = write_home_snapshot.HomeSnapshotCandidate(
+        symbol="600001",
+        display_name="样本",
+        score=80.0,
+        research_status="仅观察",
+        next_step="复核",
+        context="趋势",
+        deterministic_reasons=("趋势",),
+    )
+    existing = write_home_snapshot.HomeDashboardSnapshot(
+        schema_version="v1",
+        generated_at="2026-07-24T09:00:00+08:00",
+        selected_date="2026-07-24",
+        available_dates=("2026-07-24",),
+        candidates=(candidate,),
+        summaries=(),
+        source=write_home_snapshot.HomeSnapshotSource(
+            effective="tencent", latest_trade_date="2026-07-24", lag_days=0, status="ok"
+        ),
+        coldstart=write_home_snapshot.HomeSnapshotColdstart(
+            status="ready", detail="测试"
+        ),
+    )
+    refreshed = replace(existing, candidates=(), debates=(), variants=())
+
+    merged = write_home_snapshot._merge_same_day_task_refresh(
+        existing, refreshed, "variant-refresh"
+    )
+
+    assert merged.candidates == existing.candidates
+
+
+def test_main_chain_empty_refresh_keeps_existing_candidates() -> None:
+    candidate = write_home_snapshot.HomeSnapshotCandidate(
+        symbol="600001",
+        display_name="样本",
+        score=80.0,
+        research_status="仅观察",
+        next_step="复核",
+        context="趋势",
+        deterministic_reasons=("趋势",),
+    )
+    existing = write_home_snapshot.HomeDashboardSnapshot(
+        schema_version="v1",
+        generated_at="2026-07-24T09:00:00+08:00",
+        selected_date="2026-07-24",
+        available_dates=("2026-07-24",),
+        candidates=(candidate,),
+        summaries=(),
+        source=write_home_snapshot.HomeSnapshotSource(
+            effective="tencent", latest_trade_date="2026-07-24", lag_days=0, status="ok"
+        ),
+        coldstart=write_home_snapshot.HomeSnapshotColdstart(
+            status="ready", detail="测试"
+        ),
+    )
+    refreshed = replace(existing, candidates=(), debates=())
+
+    merged = write_home_snapshot._merge_same_day_task_refresh(
+        existing, refreshed, "main_chain"
+    )
+
+    assert merged == existing
+
+
 def test_variant_snapshot_keeps_all_standard_experiment_variants(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -1034,9 +1165,15 @@ def test_snapshot_debates_keeps_one_distinct_review_for_each_home_candidate() ->
             bear_count=1,
             neutral_count=1,
             agent_views=(
-                SimpleNamespace(role_id="bull", key_argument=f"{candidate.symbol} 趋势仍在"),
-                SimpleNamespace(role_id="bear", key_argument=f"{candidate.symbol} 承接不足"),
-                SimpleNamespace(role_id="risk_control", key_argument=f"{candidate.symbol} 等待确认"),
+                SimpleNamespace(
+                    role_id="bull", key_argument=f"{candidate.symbol} 趋势仍在"
+                ),
+                SimpleNamespace(
+                    role_id="bear", key_argument=f"{candidate.symbol} 承接不足"
+                ),
+                SimpleNamespace(
+                    role_id="risk_control", key_argument=f"{candidate.symbol} 等待确认"
+                ),
             ),
             viewpoint_buckets={
                 "technical": (f"{candidate.symbol} 趋势仍在",),
@@ -1083,7 +1220,9 @@ def test_recommendation_gate_blocks_candidates_without_linked_news_evidence() ->
     assert gate.reasons == ("候选缺少可引用消息证据：600010",)
 
 
-def test_recommendation_gate_allows_technical_candidate_without_news_dependency() -> None:
+def test_recommendation_gate_allows_technical_candidate_without_news_dependency() -> (
+    None
+):
     provider = _Provider()
     runtime = provider.runtime_overview("2026-07-10")
     candidate = write_home_snapshot._snapshot_candidate(_candidate("600010", 88.0))
