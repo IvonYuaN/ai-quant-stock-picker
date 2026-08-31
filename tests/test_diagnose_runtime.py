@@ -752,6 +752,11 @@ def test_diagnose_runtime_does_not_treat_circuit_breaker_as_gate_drift(
     monkeypatch.setenv("AQSP_GATE_NOTIFY_STATE_PATH", str(gate_state))
     monkeypatch.setenv("AQSP_WALKFORWARD_GATE_PATH", str(walkforward_gate))
     monkeypatch.setattr("scripts.diagnose_runtime.PROJECT_ROOT", tmp_path)
+    # 冻结“今天”到 fixture 的 run_date 附近，避免双门 sidecar 因真实日期推移被判过期(>MAX_GATE_AGE_DAYS)，
+    # 否则 _current_gate_expectation 返回 fingerprint=None，gate_expected_fingerprint 行退化为 “-”。
+    monkeypatch.setattr(
+        "scripts.diagnose_runtime.today_shanghai", lambda: date(2026, 7, 7)
+    )
     monkeypatch.setattr(
         "scripts.diagnose_runtime.load_research_summary",
         lambda: None,

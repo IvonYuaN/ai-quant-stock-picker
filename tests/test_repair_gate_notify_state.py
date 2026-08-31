@@ -1,9 +1,18 @@
 from __future__ import annotations
 
 import json
+from datetime import timedelta
 from pathlib import Path
 
+from aqsp.core.time import today_shanghai
+
 from scripts.repair_gate_notify_state import repair_gate_notify_state
+
+# 双门 sidecar 的新鲜度上限为 MAX_GATE_AGE_DAYS=35 天；fixture 必须使用相对“今天”的日期，
+# 否则 gate 会被判为过期(stale)而 fail-closed，测试随时间推移必然失败。
+def _fresh_gate_dates():
+    today = today_shanghai()
+    return (today - timedelta(days=1)).isoformat(), (today - timedelta(days=4)).isoformat()
 
 
 def _write_jsonl(path: Path, rows: list[dict[str, object]]) -> None:
@@ -23,10 +32,11 @@ def test_repair_gate_notify_state_overwrites_stale_cold_start_entry(tmp_path: Pa
         ],
     )
     (tmp_path / "data").mkdir(parents=True, exist_ok=True)
+    _run_date, _data_end = _fresh_gate_dates()
     (tmp_path / "data" / "walkforward_gate.json").write_text(
         json.dumps(
             {
-                "run_date": "2026-06-29",
+                "run_date": _run_date,
                 "deflated_sharpe": -0.5708,
                 "pbo": 0.6,
                 "pbo_valid": True,
@@ -36,7 +46,7 @@ def test_repair_gate_notify_state_overwrites_stale_cold_start_entry(tmp_path: Pa
                 "n_periods": 19,
                 "effective_symbols": 5157,
                 "window_mode": "rolling_recent",
-                "data_end": "2026-06-26",
+                "data_end": _data_end,
             },
             ensure_ascii=False,
         )
@@ -47,7 +57,7 @@ def test_repair_gate_notify_state_overwrites_stale_cold_start_entry(tmp_path: Pa
         json.dumps(
             {
                 "sent_by_date": {
-                    "2026-06-29": {
+                    _run_date: {
                         "fingerprint": "cold_start|n_periods_invalid",
                         "status": "suppressed",
                     }
@@ -65,9 +75,9 @@ def test_repair_gate_notify_state_overwrites_stale_cold_start_entry(tmp_path: Pa
     )
 
     assert result["status"] == "suppressed"
-    assert result["run_date"] == "2026-06-29"
+    assert result["run_date"] == _run_date
     assert result["signal_days"] == 30
-    assert payload["sent_by_date"]["2026-06-29"]["fingerprint"] == "dsr|pbo"
+    assert payload["sent_by_date"][_run_date]["fingerprint"] == "dsr|pbo"
 
 
 def test_repair_gate_notify_state_clears_file_when_gate_passes(tmp_path: Path) -> None:
@@ -79,10 +89,11 @@ def test_repair_gate_notify_state_clears_file_when_gate_passes(tmp_path: Path) -
         ],
     )
     (tmp_path / "data").mkdir(parents=True, exist_ok=True)
+    _run_date, _data_end = _fresh_gate_dates()
     (tmp_path / "data" / "walkforward_gate.json").write_text(
         json.dumps(
             {
-                "run_date": "2026-06-29",
+                "run_date": _run_date,
                 "deflated_sharpe": 1.2,
                 "pbo": 0.2,
                 "pbo_valid": True,
@@ -92,7 +103,7 @@ def test_repair_gate_notify_state_clears_file_when_gate_passes(tmp_path: Path) -
                 "n_periods": 19,
                 "effective_symbols": 5157,
                 "window_mode": "rolling_recent",
-                "data_end": "2026-06-26",
+                "data_end": _data_end,
             },
             ensure_ascii=False,
         )

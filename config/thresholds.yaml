@@ -9,7 +9,7 @@ composite:
   volume_weight: 0.0
   mean_reversion_weight: 0.0
   triple_rise_weight: 0.3
-description: "策略阈值配置 — v1.1.16：上调跨市场中等强度主线的截断前重排权重"
+description: "策略阈值配置 — v1.1.17：上调跨市场中等强度主线的截断前重排权重"
 effective_from: '2026-06-17'
 execution:
   commission_rate: 0.0003

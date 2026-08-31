@@ -912,7 +912,12 @@ def test_news_catalyst_filters_stale_history_news_when_only_url_contains_date() 
     assert any("已过滤 1 条过期消息" in warning for warning in report.warnings)
 
 
-def test_news_catalyst_uses_title_or_url_date_as_visible_timestamp() -> None:
+def test_news_catalyst_uses_title_or_url_date_as_visible_timestamp(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "aqsp.news.catalysts.today_shanghai", lambda: date(2026, 6, 27)
+    )
     report = build_catalyst_report(
         fetch_global_news=lambda _limit: pd.DataFrame(
             [
@@ -931,7 +936,10 @@ def test_news_catalyst_uses_title_or_url_date_as_visible_timestamp() -> None:
     assert "时间: 2026-06-27" in markdown
 
 
-def test_news_catalyst_reads_extended_published_at_fields() -> None:
+def test_news_catalyst_reads_extended_published_at_fields(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "aqsp.news.catalysts.today_shanghai", lambda: date(2026, 6, 28)
+    )
     report = build_catalyst_report(
         fetch_global_news=lambda _limit: pd.DataFrame(
             [
@@ -1374,7 +1382,12 @@ def test_news_catalyst_merges_same_company_event_across_sources() -> None:
     assert "来源: 同花顺、富途" in markdown
 
 
-def test_news_catalyst_merges_english_cross_source_duplicates() -> None:
+def test_news_catalyst_merges_english_cross_source_duplicates(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "aqsp.news.catalysts.today_shanghai", lambda: date(2026, 7, 13)
+    )
     report = build_catalyst_report(
         fetch_global_news=lambda _limit: pd.DataFrame(
             [
@@ -1460,9 +1473,12 @@ def test_news_catalyst_does_not_treat_wire_prefix_as_target_name() -> None:
     assert "来源: 富途" in markdown
 
 
-def test_news_catalyst_prioritizes_higher_quality_source_when_weight_and_time_match() -> (
-    None
-):
+def test_news_catalyst_prioritizes_higher_quality_source_when_weight_and_time_match(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "aqsp.news.catalysts.today_shanghai", lambda: date(2026, 7, 3)
+    )
     report = build_catalyst_report(
         fetch_global_news=lambda _limit: pd.DataFrame(
             [
@@ -1901,6 +1917,10 @@ def test_news_catalyst_report_rejects_too_old_stale_cache_when_fetch_fails(
     monkeypatch.setattr(
         "aqsp.news.catalysts.now_shanghai",
         lambda: datetime.fromisoformat("2026-07-03T10:00:00+08:00"),
+    )
+    monkeypatch.setattr(
+        "aqsp.news.catalysts.today_shanghai",
+        lambda: date(2026, 7, 3),
     )
     cached = build_catalyst_report(
         fetch_global_news=lambda _limit: pd.DataFrame(
@@ -2520,6 +2540,9 @@ def test_build_default_news_source_uses_configured_domestic_theme_queries(
         "锂电 储能 电网 充电桩",
         "稀土 磁材 氧化镨钕",
         "航运 军工 黄金 原油",
+        "农业 粮食 短缺 供给 收储 种业",
+        "维生素 营养品 原料 缺货 涨价",
+        "工业金属 关键矿产 铜 铝 锌 镍 供给短缺",
     )
 
 
@@ -2583,6 +2606,10 @@ def test_build_catalyst_report_uses_rss_when_akshare_is_not_installed(
     monkeypatch.setattr(
         "aqsp.news.catalysts.now_shanghai",
         lambda: datetime.fromisoformat("2026-07-11T10:00:00+08:00"),
+    )
+    monkeypatch.setattr(
+        "aqsp.news.catalysts.today_shanghai",
+        lambda: date(2026, 7, 11),
     )
 
     report = build_catalyst_report(
@@ -2776,6 +2803,10 @@ def test_rss_cross_market_events_reach_catalyst_and_market_context(
         "aqsp.news.catalysts.now_shanghai",
         lambda: datetime.fromisoformat("2026-07-08T19:00:00+08:00"),
     )
+    monkeypatch.setattr(
+        "aqsp.news.catalysts.today_shanghai",
+        lambda: date(2026, 7, 8),
+    )
     source = RssNewsSource(
         (
             RssFeedConfig(
@@ -2892,7 +2923,12 @@ def test_news_catalyst_marks_successful_no_event_run_as_ok_not_waiting() -> None
     assert "等待" not in markdown
 
 
-def test_news_catalyst_keeps_source_health_quality_and_publish_time_traceable() -> None:
+def test_news_catalyst_keeps_source_health_quality_and_publish_time_traceable(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "aqsp.news.catalysts.today_shanghai", lambda: date(2026, 7, 13)
+    )
     frame = pd.DataFrame(
         [
             {
@@ -2925,9 +2961,12 @@ def test_news_catalyst_keeps_source_health_quality_and_publish_time_traceable() 
     assert "时间: 2026-07-13 09:15:00+08:00" in markdown
 
 
-def test_news_catalyst_cross_source_merge_keeps_newest_publication_and_fetch_time() -> (
-    None
-):
+def test_news_catalyst_cross_source_merge_keeps_newest_publication_and_fetch_time(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "aqsp.news.catalysts.today_shanghai", lambda: date(2026, 7, 13)
+    )
     old_frame = pd.DataFrame(
         [
             {

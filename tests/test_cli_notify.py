@@ -1612,6 +1612,7 @@ def test_run_scheduled_debate_writes_back_adjustment_keeps_runtime_score(
             *,
             signal_date: str,
             market_context_lines=(),
+            task_id: str | None = None,
         ):
             adjusted_score = 95.0 if pick.symbol == "300750" else 10.0
             disagreement_score = 0.1 if pick.symbol == "300750" else 0.8

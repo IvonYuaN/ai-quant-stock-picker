@@ -30,10 +30,13 @@ def _evolution(tmp_path) -> AutoEvolution:
 
 
 def _passing_gate_payload() -> dict[str, object]:
+    # run_date 必须落在 MAX_GATE_AGE_DAYS(35) 窗口内，否则双门 sidecar 被判过期而 fail-closed。
+    # 用相对“今天”的日期，避免测试随时间推移必然失败。
+    run_date = (now_shanghai().date() - timedelta(days=1)).isoformat()
     return build_walkforward_gate_payload(
         dsr=1.9,
         pbo=0.24,
-        run_date="2026-07-10",
+        run_date=run_date,
         start="2023-01-01",
         end="2024-12-31",
         n_periods=12,

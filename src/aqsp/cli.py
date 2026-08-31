@@ -53,6 +53,7 @@ from aqsp.data.cache import DataCache
 from aqsp.data.source_factory import (
     build_data_source,
     build_sqlite_db_source,
+    build_sqlite_db_source_with,
     load_sqlite_symbol_name_map,
     resolve_sqlite_db_path,
     sqlite_price_mode,
@@ -2596,9 +2597,9 @@ def _fetch_intraday_historical_baseline(
     for raw_path in dict.fromkeys(path for path in candidates if path):
         if not Path(raw_path).exists():
             continue
-        from aqsp.data.sqlite_db_source import SqliteDbSource
-
-        source = SqliteDbSource(db_path=raw_path, cache=DataCache())
+        source = build_sqlite_db_source_with(
+            cache=DataCache(), db_path_resolver=lambda: raw_path
+        )
         source.set_workload("historical")
         try:
             frames = fetch_with_source(
@@ -5409,7 +5410,7 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
             format_snapshot_diff,
         )
 
-        snapshot_path = os.getenv("AQSP_PICK_SNAPSHOT_PATH", "data/snapshots")
+        snapshot_path = os.getenv("AQSP_PICK_SNAPSHOT_PATH", "data/pick_snapshots.jsonl")
         save_snapshot(
             picks, snapshot_path=snapshot_path, date=today_shanghai().isoformat()
         )

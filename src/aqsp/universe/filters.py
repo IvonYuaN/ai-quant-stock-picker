@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import List, Dict, Optional
 import pandas as pd
 
-from aqsp.core.time import now_shanghai
+from aqsp.core.time import today_shanghai
 
 
 class STFilter:
@@ -55,24 +55,34 @@ class NewStockFilter:
     def __init__(self, min_days_listed: int = 90):
         self.min_days_listed = min_days_listed
 
-    def is_new_stock(self, listing_date: Optional[str]) -> bool:
+    def is_new_stock(
+        self, listing_date: Optional[str], as_of: Optional[date] = None
+    ) -> bool:
         if listing_date is None:
             return True
 
         try:
-            listed = datetime.strptime(listing_date, "%Y-%m-%d")
-            days_since_listing = (now_shanghai().date() - listed.date()).days
-            return days_since_listing < self.min_days_listed
+            listed = datetime.strptime(listing_date, "%Y-%m-%d").date()
         except ValueError:
             return True
 
+        # 上市天数必须相对评估基准日计算，沿用 pool.get_symbols/runtime 的 as_of
+        # 约定；否则回测与复算会用当前挂钟时间判定历史新股，等于把"未来已知
+        # 该股已上市满 N 天"的信息带进过去（PIT 泄漏），且结果随运行日漂移。
+        reference_day = as_of or today_shanghai()
+        return (reference_day - listed).days < self.min_days_listed
+
     def filter(
-        self, universe: List[str], listing_dates: Dict[str, str] = None, **kwargs
+        self,
+        universe: List[str],
+        listing_dates: Dict[str, str] = None,
+        as_of: Optional[date] = None,
+        **kwargs,
     ) -> List[str]:
         result = []
         for symbol in universe:
             listing_date = listing_dates.get(symbol) if listing_dates else None
-            if not self.is_new_stock(listing_date):
+            if not self.is_new_stock(listing_date, as_of=as_of):
                 result.append(symbol)
         return result
 

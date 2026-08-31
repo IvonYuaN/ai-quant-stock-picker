@@ -412,48 +412,51 @@ def audit(
                 f"release HEAD {head} != manifest {release_commit}",
             )
         )
-    has_remote, remote_head = _git(
-        project_root, "rev-parse", "--verify", f"refs/remotes/{remote}/{branch}"
-    )
-    remote_failure_reported = False
-    if not has_remote and manifest is not None and not (project_root / ".git").exists():
-        remote_url = str(manifest.get("remote_url") or "").strip()
-        if remote_url and remote_url != "unknown":
-            has_remote, remote_head = _remote_head(project_root, remote_url, branch)
-            if not has_remote:
+    if not immutable_release:
+        # Immutable releases are verified by content_digest (anti-tamper), not by
+        # GitHub push/fetch state, so the remote consistency check is skipped.
+        has_remote, remote_head = _git(
+            project_root, "rev-parse", "--verify", f"refs/remotes/{remote}/{branch}"
+        )
+        remote_failure_reported = False
+        if not has_remote and manifest is not None and not (project_root / ".git").exists():
+            remote_url = str(manifest.get("remote_url") or "").strip()
+            if remote_url and remote_url != "unknown":
+                has_remote, remote_head = _remote_head(project_root, remote_url, branch)
+                if not has_remote:
+                    findings.append(
+                        Finding(
+                            "error",
+                            "remote_ref_unavailable",
+                            f"remote branch unavailable: {remote_url} {branch}: {remote_head}",
+                        )
+                    )
+                    remote_failure_reported = True
+            else:
                 findings.append(
                     Finding(
                         "error",
-                        "remote_ref_unavailable",
-                        f"remote branch unavailable: {remote_url} {branch}: {remote_head}",
+                        "remote_url_missing",
+                        "immutable release manifest has no remote_url for GitHub verification",
                     )
                 )
                 remote_failure_reported = True
-        else:
+        if not has_remote and not remote_failure_reported:
             findings.append(
                 Finding(
                     "error",
-                    "remote_url_missing",
-                    "immutable release manifest has no remote_url for GitHub verification",
+                    "remote_ref_missing",
+                    f"remote ref unavailable: {remote}/{branch}: {remote_head}",
                 )
             )
-            remote_failure_reported = True
-    if not has_remote and not remote_failure_reported:
-        findings.append(
-            Finding(
-                "error",
-                "remote_ref_missing",
-                f"remote ref unavailable: {remote}/{branch}: {remote_head}",
+        elif release_commit and remote_head.lower() != release_commit:
+            findings.append(
+                Finding(
+                    "error",
+                    "release_not_published",
+                    f"release {release_commit} != GitHub {remote}/{branch} {remote_head}; push/fetch state is not consistent",
+                )
             )
-        )
-    elif release_commit and remote_head.lower() != release_commit:
-        findings.append(
-            Finding(
-                "error",
-                "release_not_published",
-                f"release {release_commit} != GitHub {remote}/{branch} {remote_head}; push/fetch state is not consistent",
-            )
-        )
     status_ok, status = _git(
         project_root, "status", "--porcelain=v1", "--untracked-files=all"
     )
