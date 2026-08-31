@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 from concurrent.futures import ThreadPoolExecutor
+from datetime import timedelta
 
 import pandas as pd
 import pytest
@@ -25,6 +26,12 @@ from aqsp.ledger import (
 )
 from aqsp.ledger.learner import format_decay_alerts
 from aqsp.models import PickResult
+
+# 衰减检测按 lookback_days 回看，写死 signal_date 会随时间腐化：
+# 2026-06-01/02 如今已远超 30 天窗口，导致检测不出 alert（格式化结果为空）。
+_RECENT_SIGNAL_DATES = tuple(
+    (now_shanghai() - timedelta(days=offset)).date().isoformat() for offset in (2, 1)
+)
 
 
 def test_execution_config_defaults_load_from_thresholds() -> None:
@@ -618,13 +625,13 @@ def test_decay_detector_formats_lookback_days_when_alert_triggered() -> None:
         [
             {
                 "status": "validated",
-                "signal_date": "2026-06-01",
+                "signal_date": _RECENT_SIGNAL_DATES[0],
                 "return_pct": -3.0,
                 "strategies": ["volume_breakout"],
             },
             {
                 "status": "validated",
-                "signal_date": "2026-06-02",
+                "signal_date": _RECENT_SIGNAL_DATES[1],
                 "return_pct": -2.0,
                 "strategies": ["volume_breakout"],
             },

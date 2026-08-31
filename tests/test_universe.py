@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import pandas as pd
 import pytest
@@ -15,6 +15,12 @@ from aqsp.universe.filters import (
     PriceFilter,
     FilterPipeline,
 )
+from aqsp.core.time import today_shanghai
+
+# 次新股按"上市天数"判定，写死上市日会随时间腐化：
+# 2026-05-01 在用例编写时距上市 <90 天，如今已超 90 天不再算次新股。
+# 让该样本始终贴近当天，锁定用例意图（次新股应被过滤）。
+_NEW_STOCK_LISTING_DATE = (today_shanghai() - timedelta(days=30)).isoformat()
 
 
 def test_universe_pool_from_default():
@@ -112,7 +118,7 @@ def test_new_stock_filter():
     filter = NewStockFilter(min_days_listed=90)
     listing_dates = {
         "600000": "2000-01-01",
-        "600001": "2026-05-01",
+        "600001": _NEW_STOCK_LISTING_DATE,
         "600002": None,
     }
     universe = ["600000", "600001", "600002"]

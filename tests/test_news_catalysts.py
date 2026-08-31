@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from datetime import date
 from types import SimpleNamespace
 
 import pandas as pd
@@ -8,12 +9,25 @@ import pytest
 
 from aqsp.core.errors import DataError
 from aqsp.data.news_source import AkshareNewsSource
+from aqsp.news import catalysts as catalysts_module
 from aqsp.news.catalysts import (
     NewsCatalystConfig,
     build_catalyst_report,
     format_catalyst_notification,
     _akshare_global_news,
 )
+
+_NEWS_ANCHOR_DAY = date(2026, 6, 28)
+
+
+@pytest.fixture(autouse=True)
+def _freeze_news_anchor_day(monkeypatch) -> None:
+    """钉住新闻新鲜度锚点，避免测试中的固化日期随时间腐化。
+
+    用例数据里 2026-06-xx 代表"新鲜"、2016-06-10 代表"过期"；
+    锚点取 2026-06-28 时两者同时成立（新鲜 0~17 天 < 30 天阈值，过期约 10 年）。
+    """
+    monkeypatch.setattr(catalysts_module, "today_shanghai", lambda: _NEWS_ANCHOR_DAY)
 
 
 def test_news_catalyst_report_prioritizes_verified_price_hike_events() -> None:
@@ -128,7 +142,9 @@ def test_news_catalyst_filters_undated_event_by_default() -> None:
     assert any("已过滤 1 条无日期消息" in warning for warning in report.warnings)
 
 
-def test_news_catalyst_prefers_dated_recent_event_over_undated_event_when_enabled() -> None:
+def test_news_catalyst_prefers_dated_recent_event_over_undated_event_when_enabled() -> (
+    None
+):
     report = build_catalyst_report(
         fetch_global_news=lambda _limit: pd.DataFrame(
             [
@@ -154,8 +170,16 @@ def test_news_catalyst_filters_stale_history_news() -> None:
     report = build_catalyst_report(
         fetch_global_news=lambda _limit: pd.DataFrame(
             [
-                {"标题": "政策支持半导体材料国产替代", "来源": "新华社", "时间": "2016-06-10 08:00"},
-                {"标题": "MLCC 行业报价上调，龙头排产紧张", "来源": "证券报", "时间": "2026-06-11 08:30"},
+                {
+                    "标题": "政策支持半导体材料国产替代",
+                    "来源": "新华社",
+                    "时间": "2016-06-10 08:00",
+                },
+                {
+                    "标题": "MLCC 行业报价上调，龙头排产紧张",
+                    "来源": "证券报",
+                    "时间": "2026-06-11 08:30",
+                },
             ]
         ),
     )
@@ -166,7 +190,9 @@ def test_news_catalyst_filters_stale_history_news() -> None:
     assert any("已过滤 1 条过期消息" in warning for warning in report.warnings)
 
 
-def test_news_catalyst_filters_stale_history_news_when_only_title_contains_date() -> None:
+def test_news_catalyst_filters_stale_history_news_when_only_title_contains_date() -> (
+    None
+):
     report = build_catalyst_report(
         fetch_global_news=lambda _limit: pd.DataFrame(
             [

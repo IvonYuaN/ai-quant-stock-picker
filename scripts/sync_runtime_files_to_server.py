@@ -17,8 +17,9 @@ import subprocess
 import tarfile
 import tempfile
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
+
+from aqsp.core.time import now_shanghai
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -56,12 +57,14 @@ def _normalize_files(project_root: Path, raw_files: list[str]) -> tuple[str, ...
 
 
 def _backup_name(files: tuple[str, ...]) -> str:
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    stamp = now_shanghai().strftime("%Y%m%d-%H%M%S")
     digest = hashlib.sha256("\n".join(files).encode("utf-8")).hexdigest()[:12]
     return f"runtime-sync-{stamp}-{digest}.tar.gz"
 
 
-def _run(command: list[str], *, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+def _run(
+    command: list[str], *, cwd: Path | None = None
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         command,
         cwd=str(cwd) if cwd else None,
@@ -76,7 +79,9 @@ def _ssh(ssh_target: str, remote_command: str) -> subprocess.CompletedProcess[st
 
 
 def _create_local_archive(project_root: Path, files: tuple[str, ...]) -> Path:
-    handle = tempfile.NamedTemporaryFile(prefix="aqsp-runtime-sync-", suffix=".tar.gz", delete=False)
+    handle = tempfile.NamedTemporaryFile(
+        prefix="aqsp-runtime-sync-", suffix=".tar.gz", delete=False
+    )
     archive_path = Path(handle.name)
     handle.close()
     with tarfile.open(archive_path, "w:gz") as tar:
@@ -132,7 +137,9 @@ def _upload_and_extract(plan: SyncPlan, archive_path: Path) -> None:
 def _local_hashes(project_root: Path, files: tuple[str, ...]) -> dict[str, str]:
     hashes: dict[str, str] = {}
     for relative in files:
-        hashes[relative] = hashlib.sha256((project_root / relative).read_bytes()).hexdigest()
+        hashes[relative] = hashlib.sha256(
+            (project_root / relative).read_bytes()
+        ).hexdigest()
     return hashes
 
 

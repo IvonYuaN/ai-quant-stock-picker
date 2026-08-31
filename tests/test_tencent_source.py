@@ -195,6 +195,11 @@ def test_tencent_public_fetch_methods_raise_data_error_when_empty(
         "_fetch_tencent_daily",
         lambda *_args, **_kwargs: None,
     )
+    # fetch_index 走缓存优先：命中即 continue，取数失败分支根本不会被执行。
+    # 不隔离真实缓存的话，本用例会随本地是否已有该指数数据而漂移。
+    monkeypatch.setattr(
+        tencent_source.cache, "get_index", lambda *_args, **_kwargs: None
+    )
 
     with pytest.raises(DataError, match="tencent 分时获取失败"):
         tencent_source.fetch_intraday(["600000"])

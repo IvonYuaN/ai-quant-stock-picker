@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 import struct
-from datetime import date
+from datetime import date, timedelta
 
 from aqsp.research.summary import (
     ResearchActionItem,
@@ -24,6 +24,13 @@ from scripts.diagnose_runtime import (
     _tdx_vipdoc_summary,
     _wrapper_drift_summary,
 )
+
+# 双门 sidecar 超过 MAX_GATE_AGE_DAYS(35 天) 会被判"过期"并额外触发 gate_stale，
+# 使期望指纹偏离用例意图。这里让 run_date 贴近当天，避免固化日期随时间腐化。
+# 仅用于"指纹漂移"用例；同文件里 walkforward_production_status 的 2026-06-21 是另一场景，勿动。
+_GATE_RUN_DATE = (now_shanghai() - timedelta(days=1)).date().isoformat()
+_GATE_UPDATED_AT = (now_shanghai() - timedelta(days=1)).isoformat(timespec="seconds")
+_GATE_DATA_END = (now_shanghai() - timedelta(days=2)).date().isoformat()
 
 
 def test_large_return_rows_flags_contaminated_samples() -> None:
@@ -80,7 +87,10 @@ def test_runtime_paths_follow_daily_run_environment(tmp_path, monkeypatch) -> No
 def test_default_runtime_path_is_project_relative() -> None:
     from scripts.diagnose_runtime import _default_runtime_path
 
-    assert _default_runtime_path("data/predictions.jsonl") == PROJECT_ROOT / "data/predictions.jsonl"
+    assert (
+        _default_runtime_path("data/predictions.jsonl")
+        == PROJECT_ROOT / "data/predictions.jsonl"
+    )
 
 
 def test_load_dotenv_defaults_does_not_override_explicit_env(
@@ -344,10 +354,10 @@ def test_diagnose_runtime_main_reports_signal_and_notify_state(
     monkeypatch.setenv("AQSP_LEDGER", str(ledger))
     monkeypatch.setenv("AQSP_PAPER_LEDGER", str(paper))
     monkeypatch.setenv("SERVERCHAN_SENDKEY", "test_key")
+    monkeypatch.setenv("AQSP_WALKFORWARD_PRODUCTION_STATUS", str(walkforward_status))
     monkeypatch.setenv(
-        "AQSP_WALKFORWARD_PRODUCTION_STATUS", str(walkforward_status)
+        "AQSP_WALKFORWARD_GATE_PATH", str(tmp_path / "missing_gate.json")
     )
-    monkeypatch.setenv("AQSP_WALKFORWARD_GATE_PATH", str(tmp_path / "missing_gate.json"))
     monkeypatch.setenv("AQSP_GATE_NOTIFY_STATE_PATH", str(gate_state))
     monkeypatch.setenv("AQSP_NOTIFY_STATE_PATH", str(notify_state))
     monkeypatch.setenv("AQSP_MONITOR_NOTIFY_STATE_PATH", str(monitor_state))
@@ -363,7 +373,10 @@ def test_diagnose_runtime_main_reports_signal_and_notify_state(
     assert "- signal_days: 2/30" in output
     assert "- simulated_signal_days: 0" in output
     assert "- paper_days: 1/30" in output
-    assert "- walkforward_production_status: timeout updated=2026-06-21T18:10:00+08:00" in output
+    assert (
+        "- walkforward_production_status: timeout updated=2026-06-21T18:10:00+08:00"
+        in output
+    )
     assert "- walkforward_production_child_exit: 124" in output
     assert "- configured_notify_channels: serverchan" in output
     assert "- gate_days: 1 latest=2026-06-21" in output
@@ -487,9 +500,7 @@ def test_diagnose_runtime_marks_timeout_when_child_pid_is_dead_but_parent_pid_al
 
     monkeypatch.setenv("AQSP_LEDGER", str(ledger))
     monkeypatch.setenv("AQSP_PAPER_LEDGER", str(paper))
-    monkeypatch.setenv(
-        "AQSP_WALKFORWARD_PRODUCTION_STATUS", str(walkforward_status)
-    )
+    monkeypatch.setenv("AQSP_WALKFORWARD_PRODUCTION_STATUS", str(walkforward_status))
     monkeypatch.setattr("scripts.diagnose_runtime.os.kill", fake_kill)
     monkeypatch.setattr("scripts.diagnose_runtime.PROJECT_ROOT", tmp_path)
     monkeypatch.setattr(
@@ -501,7 +512,10 @@ def test_diagnose_runtime_marks_timeout_when_child_pid_is_dead_but_parent_pid_al
     output = capsys.readouterr().out
 
     assert exit_code == 0
-    assert "- walkforward_production_status: timeout updated=2026-06-21T18:10:00+08:00" in output
+    assert (
+        "- walkforward_production_status: timeout updated=2026-06-21T18:10:00+08:00"
+        in output
+    )
     assert "- walkforward_production_child_exit: 124" in output
 
 
@@ -521,11 +535,36 @@ def test_diagnose_runtime_warns_when_gate_state_fingerprint_drifted(
     ledger.write_text("\n".join(rows) + "\n", encoding="utf-8")
     paper.write_text("", encoding="utf-8")
     gate_state.write_text(
-        '{"sent_by_date":{"2026-06-21":{"fingerprint":"dsr|pbo|market_coverage_insufficient","status":"suppressed","updated_at":"2026-06-21T18:00:00+08:00"}}}\n',
+        json.dumps(
+            {
+                "sent_by_date": {
+                    _GATE_RUN_DATE: {
+                        "fingerprint": "dsr|pbo|market_coverage_insufficient",
+                        "status": "suppressed",
+                        "updated_at": _GATE_UPDATED_AT,
+                    }
+                }
+            }
+        )
+        + "\n",
         encoding="utf-8",
     )
     walkforward_gate.write_text(
-        '{"run_date":"2026-06-21","deflated_sharpe":0.82,"pbo":0.7778,"pbo_valid":true,"dsr_pass":false,"pbo_pass":false,"both_pass":false,"n_periods":19,"effective_symbols":5209,"data_end":"2026-06-20"}\n',
+        json.dumps(
+            {
+                "run_date": _GATE_RUN_DATE,
+                "deflated_sharpe": 0.82,
+                "pbo": 0.7778,
+                "pbo_valid": True,
+                "dsr_pass": False,
+                "pbo_pass": False,
+                "both_pass": False,
+                "n_periods": 19,
+                "effective_symbols": 5209,
+                "data_end": _GATE_DATA_END,
+            }
+        )
+        + "\n",
         encoding="utf-8",
     )
 
@@ -545,7 +584,10 @@ def test_diagnose_runtime_warns_when_gate_state_fingerprint_drifted(
     assert exit_code == 0
     assert "- gate_expected_ok: False" in output
     assert "- gate_expected_fingerprint: dsr|pbo" in output
-    assert "- warning_gate_state_drift: state=dsr|pbo|market_coverage_insufficient expected=dsr|pbo" in output
+    assert (
+        "- warning_gate_state_drift: state=dsr|pbo|market_coverage_insufficient expected=dsr|pbo"
+        in output
+    )
 
 
 def test_diagnose_runtime_warns_when_runtime_ledger_paths_drift(
@@ -591,9 +633,7 @@ def test_diagnose_runtime_treats_stale_running_walkforward_status_as_timeout(
 
     monkeypatch.setenv("AQSP_LEDGER", str(ledger))
     monkeypatch.setenv("AQSP_PAPER_LEDGER", str(paper))
-    monkeypatch.setenv(
-        "AQSP_WALKFORWARD_PRODUCTION_STATUS", str(walkforward_status)
-    )
+    monkeypatch.setenv("AQSP_WALKFORWARD_PRODUCTION_STATUS", str(walkforward_status))
     monkeypatch.setattr(
         "scripts.diagnose_runtime.os.kill",
         lambda *_args: (_ for _ in ()).throw(OSError("missing pid")),
@@ -607,7 +647,10 @@ def test_diagnose_runtime_treats_stale_running_walkforward_status_as_timeout(
     output = capsys.readouterr().out
 
     assert exit_code == 0
-    assert "- walkforward_production_status: timeout updated=2026-06-21T18:10:00+08:00" in output
+    assert (
+        "- walkforward_production_status: timeout updated=2026-06-21T18:10:00+08:00"
+        in output
+    )
     assert "- walkforward_production_child_exit: 124" in output
 
 
@@ -720,7 +763,9 @@ def test_diagnose_runtime_counts_ledger_run_events_as_successful_run_days(
     assert exit_code == 0
     assert "- latest_real_signal_day: 2026-06-21" in output
     assert "- blocked_runtime_days: 1" in output
-    assert "- successful_run_days: 2 latest=2026-06-21 source=ledger_run_events" in output
+    assert (
+        "- successful_run_days: 2 latest=2026-06-21 source=ledger_run_events" in output
+    )
 
 
 def test_diagnose_runtime_ignores_failed_legacy_daily_log_segments(

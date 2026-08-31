@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from scripts.check_before_live import (
@@ -16,6 +16,13 @@ from aqsp.strategies.thresholds import (
     Thresholds,
     VolumeThresholds,
 )
+from aqsp.core.time import today_shanghai
+
+# 双门 sidecar 超过 MAX_GATE_AGE_DAYS(35 天) 会被判"过期"，门禁随之关闭。
+# _check_notification_gate 只接收 gate_path（内部用真实时钟），不受 check_before_live
+# 的 today 参数影响；因此写死的 2026-06-10 早已过期，令 gate_cold_start_alignment 失败。
+# 让共享 helper 的 sidecar 始终贴近当天。本文件其余 2026-06-10 属各自用例场景，勿动。
+_READY_GATE_RUN_DATE = (today_shanghai() - timedelta(days=1)).isoformat()
 
 
 def _write_json(path: Path, payload: dict) -> None:
@@ -117,7 +124,7 @@ def _prepare_ready_runtime(root: Path) -> None:
     _write_json(
         root / "data/walkforward_gate.json",
         {
-            "run_date": "2026-06-10",
+            "run_date": _READY_GATE_RUN_DATE,
             "deflated_sharpe": 1.2,
             "pbo": 0.24,
             "pbo_valid": True,
@@ -203,7 +210,9 @@ def test_check_before_live_blocks_missing_critical_trading_holiday(
         today=date(2026, 6, 14),
     )
 
-    finding = next(item for item in findings if item.gate == "trading_calendar_coverage")
+    finding = next(
+        item for item in findings if item.gate == "trading_calendar_coverage"
+    )
     assert finding.ok is False
     assert "2026-02-16" in finding.detail
     assert "2026-06-19" in finding.detail
@@ -1097,7 +1106,10 @@ def test_check_before_live_counts_runtime_signal_date_aliases(tmp_path: Path) ->
 
     finding = next(item for item in findings if item.gate == "signal_sample_size")
     assert finding.ok is True
-    assert finding.detail == "30/30 real independent signal days; latest real signal day=2026-05-30"
+    assert (
+        finding.detail
+        == "30/30 real independent signal days; latest real signal day=2026-05-30"
+    )
 
 
 def test_check_before_live_excludes_not_executable_from_signal_sample_size(
@@ -1125,7 +1137,10 @@ def test_check_before_live_excludes_not_executable_from_signal_sample_size(
 
     finding = next(item for item in findings if item.gate == "signal_sample_size")
     assert finding.ok is False
-    assert finding.detail == "29/30 real independent signal days; latest real signal day=2026-05-29"
+    assert (
+        finding.detail
+        == "29/30 real independent signal days; latest real signal day=2026-05-29"
+    )
 
 
 def test_check_before_live_blocks_when_gate_notify_state_missing_after_cold_start_ready(
@@ -1299,7 +1314,10 @@ def test_check_before_live_blocks_when_paper_tracking_samples_are_too_small(
         item for item in findings if item.gate == "paper_tracking_sample_size"
     )
     assert finding.ok is False
-    assert finding.detail == "9/30 real paper tracking days; no additional tradable signal days available yet"
+    assert (
+        finding.detail
+        == "9/30 real paper tracking days; no additional tradable signal days available yet"
+    )
 
 
 def test_check_before_live_counts_real_paper_tracking_statuses(
@@ -1732,7 +1750,9 @@ def test_check_before_live_dedupes_ledger_run_events_against_daily_logs(
 
     finding = next(item for item in findings if item.gate == "successful_daily_runs")
     assert finding.ok is False
-    assert finding.detail == "3/5 successful daily run days (daily_logs+ledger_run_events)"
+    assert (
+        finding.detail == "3/5 successful daily run days (daily_logs+ledger_run_events)"
+    )
 
 
 def test_check_before_live_blocks_when_dashboard_output_is_missing(
@@ -2559,7 +2579,9 @@ def test_check_before_live_blocks_bt_wrapper_with_unexpected_live_cron_cadence(
     )
     monkeypatch.setattr(
         "scripts.check_before_live._load_live_crontab_text",
-        lambda: "*/5 * * * * flock -xn /www/server/cron/aqsp-news.lock -c /www/server/cron/aqsp-news\n",
+        lambda: (
+            "*/5 * * * * flock -xn /www/server/cron/aqsp-news.lock -c /www/server/cron/aqsp-news\n"
+        ),
     )
 
     findings = check_before_live(
@@ -2588,7 +2610,9 @@ def test_check_before_live_blocks_legacy_all_day_news_polling(
     )
     monkeypatch.setattr(
         "scripts.check_before_live._load_live_crontab_text",
-        lambda: "*/5 * * * * flock -xn /www/server/cron/aqsp-news.lock -c /www/server/cron/aqsp-news\n",
+        lambda: (
+            "*/5 * * * * flock -xn /www/server/cron/aqsp-news.lock -c /www/server/cron/aqsp-news\n"
+        ),
     )
 
     findings = check_before_live(
@@ -2620,7 +2644,9 @@ def test_check_before_live_allows_news_wrapper_with_time_gate_even_if_cron_polls
     )
     monkeypatch.setattr(
         "scripts.check_before_live._load_live_crontab_text",
-        lambda: "*/5 * * * * flock -xn /www/server/cron/aqsp-news.lock -c /www/server/cron/aqsp-news\n",
+        lambda: (
+            "*/5 * * * * flock -xn /www/server/cron/aqsp-news.lock -c /www/server/cron/aqsp-news\n"
+        ),
     )
 
     findings = check_before_live(
