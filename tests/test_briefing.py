@@ -1141,7 +1141,8 @@ class TestDebateAgent:
         assert result.final_vote[AgentRole.BULL] == "bullish"
         assert result.final_vote[AgentRole.BEAR] == "bearish"
         assert any(
-            record for opinion in result.rounds[-1].opinions
+            record
+            for opinion in result.rounds[-1].opinions
             for record in opinion.rebuttal_records
         )
         assert "missing_real_opposition" not in result.failure

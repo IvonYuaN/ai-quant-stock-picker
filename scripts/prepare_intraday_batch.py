@@ -26,9 +26,7 @@ _INCOMPLETE_HISTORY_PREFIXES = {
 }
 
 
-def filter_intraday_history_symbols(
-    symbols: list[str], source_name: str
-) -> list[str]:
+def filter_intraday_history_symbols(symbols: list[str], source_name: str) -> list[str]:
     """Keep only symbols with strategy-length history on the selected source."""
     unsupported = _INCOMPLETE_HISTORY_PREFIXES.get(source_name.strip().lower(), ())
     if not unsupported:

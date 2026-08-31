@@ -14,7 +14,9 @@ COMMAND_TIMEOUT_SECONDS = 30
 
 
 def _run(root: Path, command: list[str]) -> subprocess.CompletedProcess[str]:
-    timeout = float(os.environ.get("AQSP_GIT_COMMAND_TIMEOUT_SECONDS", COMMAND_TIMEOUT_SECONDS))
+    timeout = float(
+        os.environ.get("AQSP_GIT_COMMAND_TIMEOUT_SECONDS", COMMAND_TIMEOUT_SECONDS)
+    )
     try:
         return subprocess.run(
             command,
@@ -30,7 +32,9 @@ def _run(root: Path, command: list[str]) -> subprocess.CompletedProcess[str]:
             for part in (exc.stdout, exc.stderr)
             if part
         )
-        return subprocess.CompletedProcess(command, 124, "", f"command timed out after {timeout:g}s: {output}".strip())
+        return subprocess.CompletedProcess(
+            command, 124, "", f"command timed out after {timeout:g}s: {output}".strip()
+        )
 
 
 def push(
@@ -55,14 +59,18 @@ def push(
             "branch": branch,
             "commit": commit,
             "exit_code": status.returncode or 1,
-            "reason": "worktree_dirty" if status.stdout.strip() else "git_status_failed",
+            "reason": "worktree_dirty"
+            if status.stdout.strip()
+            else "git_status_failed",
             "output": (status.stdout + status.stderr).strip(),
         }
     command = ["git", "push", "--porcelain", remote, f"HEAD:refs/heads/{branch}"]
     if dry_run:
         command.insert(2, "--dry-run")
     result = _run(root, command)
-    output = "\n".join(part.strip() for part in (result.stdout, result.stderr) if part.strip())
+    output = "\n".join(
+        part.strip() for part in (result.stdout, result.stderr) if part.strip()
+    )
     payload = {
         "status": ("dry_run_passed" if dry_run else "pushed")
         if result.returncode == 0
@@ -78,7 +86,11 @@ def push(
             root,
             ["git", "ls-remote", remote, f"refs/heads/{branch}"],
         )
-        remote_commit = remote_result.stdout.split(maxsplit=1)[0] if remote_result.stdout.strip() else ""
+        remote_commit = (
+            remote_result.stdout.split(maxsplit=1)[0]
+            if remote_result.stdout.strip()
+            else ""
+        )
         payload["remote_commit"] = remote_commit
         if remote_result.returncode != 0 or remote_commit != commit:
             payload["status"] = "failed"
@@ -130,7 +142,9 @@ def main(argv: list[str] | None = None) -> int:
             )
         if preflight.returncode != 0:
             output = "\n".join(
-                part.strip() for part in (preflight.stdout, preflight.stderr) if part.strip()
+                part.strip()
+                for part in (preflight.stdout, preflight.stderr)
+                if part.strip()
             )
             payload = {
                 "status": "preflight_failed",
@@ -142,20 +156,29 @@ def main(argv: list[str] | None = None) -> int:
             if args.json:
                 print(json.dumps(payload, ensure_ascii=False))
             else:
-                print(f"github_push_status=preflight_failed remote={args.remote} branch={args.branch} exit_code={preflight.returncode}")
+                print(
+                    f"github_push_status=preflight_failed remote={args.remote} branch={args.branch} exit_code={preflight.returncode}"
+                )
                 if output:
                     print(output)
                 print("GitHub push was not attempted because upload preflight failed.")
             return 1
-    code, payload = push(root, remote=args.remote, branch=args.branch, dry_run=args.dry_run)
+    code, payload = push(
+        root, remote=args.remote, branch=args.branch, dry_run=args.dry_run
+    )
     if args.json:
         print(json.dumps(payload, ensure_ascii=False))
     else:
-        print(f"github_push_status={payload['status']} remote={args.remote} branch={args.branch} exit_code={code}")
+        print(
+            f"github_push_status={payload['status']} remote={args.remote} branch={args.branch} exit_code={code}"
+        )
         if payload["output"]:
             print(payload["output"])
     if code:
-        print("GitHub push failed; canonical release must not be claimed as published.", flush=True)
+        print(
+            "GitHub push failed; canonical release must not be claimed as published.",
+            flush=True,
+        )
     return 0 if code == 0 else 1
 
 

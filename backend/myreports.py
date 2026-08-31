@@ -22,7 +22,9 @@ import time
 import uuid
 from pathlib import Path
 
-_OLD_DEFAULT_DIR = Path(__file__).resolve().parent / ".cache" / "myreports"  # ≤v0.1.1 旧位置
+_OLD_DEFAULT_DIR = (
+    Path(__file__).resolve().parent / ".cache" / "myreports"
+)  # ≤v0.1.1 旧位置
 _DATA_DIR = Path(os.environ.get("VR_DATA_DIR") or Path.home() / ".vibe-research")
 _DEFAULT_DIR = _DATA_DIR / "myreports"
 # 空串视同未设置（与 VR_DATA_DIR 语义一致，避免 Path("") 落到进程工作目录）
@@ -33,7 +35,11 @@ _INDEX = REPORTS_DIR / "index.json"
 def _migrate_legacy() -> None:
     """旧版研报在仓库内 .cache/ 里，重下载项目会丢；迁到用户目录（显式设了 VR_REPORTS_DIR 或新位置已有则不动）。"""
     try:
-        if os.environ.get("VR_REPORTS_DIR") or REPORTS_DIR.exists() or not _OLD_DEFAULT_DIR.exists():
+        if (
+            os.environ.get("VR_REPORTS_DIR")
+            or REPORTS_DIR.exists()
+            or not _OLD_DEFAULT_DIR.exists()
+        ):
             return
         tmp = REPORTS_DIR.with_name(REPORTS_DIR.name + ".migrate.tmp")
         if tmp.exists():
@@ -42,27 +48,105 @@ def _migrate_legacy() -> None:
         os.replace(tmp, REPORTS_DIR)  # 同盘原子改名：复制中断不会留半套研报挡住下次重试
     except OSError as e:
         # 迁移失败不阻塞启动，但要出声——旧数据原样保留在 _OLD_DEFAULT_DIR，可手工复制
-        print(f"[vibe-research] 研报数据迁移失败（旧数据仍在 {_OLD_DEFAULT_DIR}）: {e}", file=sys.stderr)
+        print(
+            f"[vibe-research] 研报数据迁移失败（旧数据仍在 {_OLD_DEFAULT_DIR}）: {e}",
+            file=sys.stderr,
+        )
 
 
 _migrate_legacy()
-_LOCK = threading.Lock()  # 索引读-改-写串行化（与 portfolio.py 同款），防并发上传/删除互相覆盖
+_LOCK = (
+    threading.Lock()
+)  # 索引读-改-写串行化（与 portfolio.py 同款），防并发上传/删除互相覆盖
 
 MAX_BYTES = 25 * 1024 * 1024  # 单文件上限 25MB
 # 允许的文档类型（白名单——不存可执行 / 网页等，避免下载回放风险）
 ALLOWED_EXT = {
-    ".pdf", ".doc", ".docx", ".txt", ".md", ".markdown",
-    ".csv", ".xls", ".xlsx", ".ppt", ".pptx",
-    ".png", ".jpg", ".jpeg", ".webp",
+    ".pdf",
+    ".doc",
+    ".docx",
+    ".txt",
+    ".md",
+    ".markdown",
+    ".csv",
+    ".xls",
+    ".xlsx",
+    ".ppt",
+    ".pptx",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".webp",
 }
 
 # 文件名关键词 → 行业标签（顺序即优先级，先命中先用）。纯文件名匹配、零依赖、离线可用。
 _INDUSTRY_KEYWORDS: list[tuple[str, list[str]]] = [
-    ("人形机器人", ["人形", "机器人", "humanoid", "谐波", "丝杠", "滚柱", "灵巧手", "减速器", "optimus", "宇树", "特斯拉"]),
-    ("光互联", ["光互联", "硅光", "cpo", "光模块", "磷化铟", "inp", "光芯片", "源杰", "中际旭创", "天孚"]),
-    ("HBM存储", ["hbm", "存储", "内存", "dram", "长鑫", "美光", "海力士", "颗粒", "闪存", "nand"]),
-    ("AI算力", ["算力", "gpu", "英伟达", "nvidia", "服务器", "液冷", "pcb", "交换机", "cowos", "沪电", "工业富联"]),
-    ("半导体", ["半导体", "芯片", "晶圆", "光刻", "封测", "台积电", "刻蚀", "存储芯片"]),
+    (
+        "人形机器人",
+        [
+            "人形",
+            "机器人",
+            "humanoid",
+            "谐波",
+            "丝杠",
+            "滚柱",
+            "灵巧手",
+            "减速器",
+            "optimus",
+            "宇树",
+            "特斯拉",
+        ],
+    ),
+    (
+        "光互联",
+        [
+            "光互联",
+            "硅光",
+            "cpo",
+            "光模块",
+            "磷化铟",
+            "inp",
+            "光芯片",
+            "源杰",
+            "中际旭创",
+            "天孚",
+        ],
+    ),
+    (
+        "HBM存储",
+        [
+            "hbm",
+            "存储",
+            "内存",
+            "dram",
+            "长鑫",
+            "美光",
+            "海力士",
+            "颗粒",
+            "闪存",
+            "nand",
+        ],
+    ),
+    (
+        "AI算力",
+        [
+            "算力",
+            "gpu",
+            "英伟达",
+            "nvidia",
+            "服务器",
+            "液冷",
+            "pcb",
+            "交换机",
+            "cowos",
+            "沪电",
+            "工业富联",
+        ],
+    ),
+    (
+        "半导体",
+        ["半导体", "芯片", "晶圆", "光刻", "封测", "台积电", "刻蚀", "存储芯片"],
+    ),
     ("新能源", ["锂电", "电池", "光伏", "储能", "固态", "钠电", "宁德", "比亚迪"]),
     ("创新药", ["创新药", "医药", "生物", "cxo", "临床", "adc", "glp", "药明"]),
     ("商业航天", ["航天", "卫星", "火箭", "星链", "starlink", "spacex", "蓝箭"]),
@@ -120,7 +204,9 @@ def save_report(name: str, content_b64: str) -> dict:
     fname = _sanitize_name(name)
     ext = os.path.splitext(fname)[1].lower()
     if ext not in ALLOWED_EXT:
-        raise ReportError(f"不支持的文件类型 {ext or '（无扩展名）'}；支持：PDF / Word / txt / md / 表格 / 图片")
+        raise ReportError(
+            f"不支持的文件类型 {ext or '（无扩展名）'}；支持：PDF / Word / txt / md / 表格 / 图片"
+        )
     # base64 可能带 data:URI 前缀（前端 FileReader.readAsDataURL），剥掉逗号前半段
     if content_b64.startswith("data:"):
         parts = content_b64.split(",", 1)
@@ -136,7 +222,9 @@ def save_report(name: str, content_b64: str) -> dict:
     if not blob:
         raise ReportError("文件为空")
     if len(blob) > MAX_BYTES:
-        raise ReportError(f"文件过大（{len(blob) // 1024 // 1024}MB），上限 {MAX_BYTES // 1024 // 1024}MB")
+        raise ReportError(
+            f"文件过大（{len(blob) // 1024 // 1024}MB），上限 {MAX_BYTES // 1024 // 1024}MB"
+        )
 
     _ensure_dir()
     rid = uuid.uuid4().hex

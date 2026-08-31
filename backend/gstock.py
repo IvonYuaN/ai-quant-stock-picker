@@ -31,8 +31,13 @@ _INDICES = (
 )
 
 # 搜索返回的 MktNum → (secucode 后缀, 市场名)
-_MKT = {105: (".O", "NASDAQ"), 106: (".N", "NYSE"), 107: (".O", "US"), 116: (".HK", "HK"),
-        177: (".KS", "KR")}  # 177=韩股（Kospi/Kosdaq，含三星/SK海力士等半导体龙头）；东财仅行情、无 F10 财务
+_MKT = {
+    105: (".O", "NASDAQ"),
+    106: (".N", "NYSE"),
+    107: (".O", "US"),
+    116: (".HK", "HK"),
+    177: (".KS", "KR"),
+}  # 177=韩股（Kospi/Kosdaq，含三星/SK海力士等半导体龙头）；东财仅行情、无 F10 财务
 
 _QUOTE_FIELDS = "f43,f44,f45,f46,f48,f57,f58,f59,f60,f116,f170"
 
@@ -42,8 +47,12 @@ def _push2_stock_get(secid: str, fields: str) -> dict | None:
     params = {"secid": secid, "fields": fields}
     for i in range(_gs_host[0], len(_GS_HOSTS)):
         try:
-            r = astock.em_get(f"https://{_GS_HOSTS[i]}/api/qt/stock/get",
-                              params=params, headers=_UA_H, timeout=10)
+            r = astock.em_get(
+                f"https://{_GS_HOSTS[i]}/api/qt/stock/get",
+                params=params,
+                headers=_UA_H,
+                timeout=10,
+            )
             d = r.json().get("data")
         except Exception:
             continue
@@ -59,20 +68,27 @@ def _price(d: dict, key: str):
     if not isinstance(v, (int, float)):
         return None
     dec = d.get("f59")
-    if not isinstance(dec, int):  # 注意：不能用 `or 2`——韩元等 f59=0 会被误判成 2，价格被多除 100 倍
+    if not isinstance(
+        dec, int
+    ):  # 注意：不能用 `or 2`——韩元等 f59=0 会被误判成 2，价格被多除 100 倍
         dec = 2
-    return round(v / (10 ** dec), dec)
+    return round(v / (10**dec), dec)
 
 
 def _quote_from(d: dict) -> dict:
     chg = d.get("f170")
     return {
-        "code": d.get("f57"), "name": d.get("f58"),
-        "price": _price(d, "f43"), "open": _price(d, "f46"),
-        "high": _price(d, "f44"), "low": _price(d, "f45"),
+        "code": d.get("f57"),
+        "name": d.get("f58"),
+        "price": _price(d, "f43"),
+        "open": _price(d, "f46"),
+        "high": _price(d, "f44"),
+        "low": _price(d, "f45"),
         "prev_close": _price(d, "f60"),
         "amount": d.get("f48") if isinstance(d.get("f48"), (int, float)) else None,
-        "mcap": d.get("f116") if isinstance(d.get("f116"), (int, float)) and d.get("f116") else None,
+        "mcap": d.get("f116")
+        if isinstance(d.get("f116"), (int, float)) and d.get("f116")
+        else None,
         "change_pct": round(chg / 100, 2) if isinstance(chg, (int, float)) else None,
     }
 
@@ -85,11 +101,17 @@ def global_indices() -> list[dict]:
         if not d:
             continue
         chg = d.get("f170")
-        out.append({
-            "key": idx["key"], "name": idx["name"], "region": idx["region"],
-            "price": _price(d, "f43"),
-            "change_pct": round(chg / 100, 2) if isinstance(chg, (int, float)) else None,
-        })
+        out.append(
+            {
+                "key": idx["key"],
+                "name": idx["name"],
+                "region": idx["region"],
+                "price": _price(d, "f43"),
+                "change_pct": round(chg / 100, 2)
+                if isinstance(chg, (int, float))
+                else None,
+            }
+        )
     return out
 
 
@@ -101,8 +123,12 @@ def _search(q: str) -> dict | None:
     正股的 Code 恰好等于查询词，故精确匹配 Code==q 最稳；无精确匹配(名称查询)才退回第一条。
     """
     url = "https://searchapi.eastmoney.com/api/suggest/get"
-    params = {"input": q, "type": 14,
-              "token": "D43BF722C8E33BDC906FB84D85E326E8", "count": 10}
+    params = {
+        "input": q,
+        "type": 14,
+        "token": "D43BF722C8E33BDC906FB84D85E326E8",
+        "count": 10,
+    }
     try:
         r = astock.em_get(url, params=params, headers=_UA_H, timeout=10)
         rows = (r.json().get("QuotationCodeTable") or {}).get("Data") or []
@@ -118,11 +144,18 @@ def _search(q: str) -> dict | None:
             matches.append((mkt, s))
     if not matches:
         return None
-    mkt, s = next(((m, x) for m, x in matches if str(x.get("Code", "")).upper() == q), matches[0])
+    mkt, s = next(
+        ((m, x) for m, x in matches if str(x.get("Code", "")).upper() == q), matches[0]
+    )
     suffix, market = _MKT[mkt]
     code = s.get("Code", "")
-    return {"code": code, "name": s.get("Name", ""), "secid_prefix": mkt,
-            "secucode": f"{code}{suffix}", "market": market}
+    return {
+        "code": code,
+        "name": s.get("Name", ""),
+        "secid_prefix": mkt,
+        "secucode": f"{code}{suffix}",
+        "market": market,
+    }
 
 
 def resolve_symbol(query: str) -> dict | None:
@@ -149,7 +182,10 @@ def _key_metrics(secucode: str) -> dict | None:
     rows = astock.eastmoney_datacenter(
         f"RPT_{market}F10_FN_GMAININDICATOR",
         filter_str=f'(SECUCODE="{secucode}")',
-        page_size=1, sort_columns="REPORT_DATE", sort_types="-1")
+        page_size=1,
+        sort_columns="REPORT_DATE",
+        sort_types="-1",
+    )
     if not rows:
         return None
     m = rows[0]
@@ -172,11 +208,15 @@ def us_hk_stock(query: str) -> dict:
     if not info:
         return {}
     d = _push2_stock_get(f"{info['secid_prefix']}.{info['code']}", _QUOTE_FIELDS)
-    quote = _quote_from(d or {})  # 行情临时取不到也返回完整 null 形状，契合 GlobalQuote 类型
+    quote = _quote_from(
+        d or {}
+    )  # 行情临时取不到也返回完整 null 形状，契合 GlobalQuote 类型
     return {
         "code": info["code"],
         "name": info["name"] or quote.get("name") or info["code"],
         "market": info["market"],
         "quote": quote,
-        "metrics": _key_metrics(info["secucode"]) if info["market"] != "KR" else None,  # 韩股东财无 F10 财务
+        "metrics": _key_metrics(info["secucode"])
+        if info["market"] != "KR"
+        else None,  # 韩股东财无 F10 财务
     }

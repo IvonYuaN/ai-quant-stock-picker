@@ -120,9 +120,7 @@ def test_check_logs_accepts_missing_sync_log_for_immutable_release(
     assert sync_result.detail == "not required for an immutable release"
 
 
-def test_check_python_import_prefers_shared_runtime_venv(
-    monkeypatch, tmp_path
-) -> None:
+def test_check_python_import_prefers_shared_runtime_venv(monkeypatch, tmp_path) -> None:
     shared_python = tmp_path / "aqsp-vibe-venv" / "bin" / "python3"
     shared_python.parent.mkdir(parents=True)
     shared_python.touch()

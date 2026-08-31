@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from scripts.remote_runtime_probe import ProbeCheck, _ssh_banner_probe, _summarize_checks
+from scripts.remote_runtime_probe import (
+    ProbeCheck,
+    _ssh_banner_probe,
+    _summarize_checks,
+)
 
 
 def test_remote_runtime_probe_does_not_accept_non_ssh_banner(monkeypatch) -> None:
@@ -37,12 +41,17 @@ def test_remote_runtime_probe_summary_reports_missing_https_listener() -> None:
         ),
         ProbeCheck("tcp", "failed", "lh.ifidy.cn:443 [Errno 61] Connection refused"),
         ProbeCheck("tls", "failed", "lh.ifidy.cn:443 [Errno 61] Connection refused"),
-        ProbeCheck("http", "failed", "https://lh.ifidy.cn/api/health connection refused"),
+        ProbeCheck(
+            "http", "failed", "https://lh.ifidy.cn/api/health connection refused"
+        ),
     ]
 
     summary = _summarize_checks(checks)
 
-    assert summary[0] == "HTTPS 入口异常：443 端口未正常监听，优先检查 Nginx/安全组/防火墙。"
+    assert (
+        summary[0]
+        == "HTTPS 入口异常：443 端口未正常监听，优先检查 Nginx/安全组/防火墙。"
+    )
 
 
 def test_remote_runtime_probe_summary_reports_tls_handshake_only_when_tcp_ok() -> None:
@@ -62,4 +71,7 @@ def test_remote_runtime_probe_summary_reports_tls_handshake_only_when_tcp_ok() -
 
     summary = _summarize_checks(checks)
 
-    assert summary[0] == "HTTPS 入口异常：443 可达但 TLS 握手失败，优先检查 Nginx/证书/反向代理链路。"
+    assert (
+        summary[0]
+        == "HTTPS 入口异常：443 可达但 TLS 握手失败，优先检查 Nginx/证书/反向代理链路。"
+    )

@@ -57,7 +57,10 @@ def test_factor_expression_backtest_uses_symbol_history_when_multiindex() -> Non
     )
     frame = pd.DataFrame(
         {
-            "close": [10.0 + int(symbol) + date_idx for date_idx, (_date, symbol) in enumerate(index)],
+            "close": [
+                10.0 + int(symbol) + date_idx
+                for date_idx, (_date, symbol) in enumerate(index)
+            ],
             "volume": [1000.0 + int(symbol) * 10 for _date, symbol in index],
         },
         index=index,

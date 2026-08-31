@@ -915,9 +915,7 @@ def test_news_catalyst_filters_stale_history_news_when_only_url_contains_date() 
 def test_news_catalyst_uses_title_or_url_date_as_visible_timestamp(
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr(
-        "aqsp.news.catalysts.today_shanghai", lambda: date(2026, 6, 27)
-    )
+    monkeypatch.setattr("aqsp.news.catalysts.today_shanghai", lambda: date(2026, 6, 27))
     report = build_catalyst_report(
         fetch_global_news=lambda _limit: pd.DataFrame(
             [
@@ -937,9 +935,7 @@ def test_news_catalyst_uses_title_or_url_date_as_visible_timestamp(
 
 
 def test_news_catalyst_reads_extended_published_at_fields(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "aqsp.news.catalysts.today_shanghai", lambda: date(2026, 6, 28)
-    )
+    monkeypatch.setattr("aqsp.news.catalysts.today_shanghai", lambda: date(2026, 6, 28))
     report = build_catalyst_report(
         fetch_global_news=lambda _limit: pd.DataFrame(
             [
@@ -1385,9 +1381,7 @@ def test_news_catalyst_merges_same_company_event_across_sources() -> None:
 def test_news_catalyst_merges_english_cross_source_duplicates(
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr(
-        "aqsp.news.catalysts.today_shanghai", lambda: date(2026, 7, 13)
-    )
+    monkeypatch.setattr("aqsp.news.catalysts.today_shanghai", lambda: date(2026, 7, 13))
     report = build_catalyst_report(
         fetch_global_news=lambda _limit: pd.DataFrame(
             [
@@ -1476,9 +1470,7 @@ def test_news_catalyst_does_not_treat_wire_prefix_as_target_name() -> None:
 def test_news_catalyst_prioritizes_higher_quality_source_when_weight_and_time_match(
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr(
-        "aqsp.news.catalysts.today_shanghai", lambda: date(2026, 7, 3)
-    )
+    monkeypatch.setattr("aqsp.news.catalysts.today_shanghai", lambda: date(2026, 7, 3))
     report = build_catalyst_report(
         fetch_global_news=lambda _limit: pd.DataFrame(
             [
@@ -2926,9 +2918,7 @@ def test_news_catalyst_marks_successful_no_event_run_as_ok_not_waiting() -> None
 def test_news_catalyst_keeps_source_health_quality_and_publish_time_traceable(
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr(
-        "aqsp.news.catalysts.today_shanghai", lambda: date(2026, 7, 13)
-    )
+    monkeypatch.setattr("aqsp.news.catalysts.today_shanghai", lambda: date(2026, 7, 13))
     frame = pd.DataFrame(
         [
             {
@@ -2964,9 +2954,7 @@ def test_news_catalyst_keeps_source_health_quality_and_publish_time_traceable(
 def test_news_catalyst_cross_source_merge_keeps_newest_publication_and_fetch_time(
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr(
-        "aqsp.news.catalysts.today_shanghai", lambda: date(2026, 7, 13)
-    )
+    monkeypatch.setattr("aqsp.news.catalysts.today_shanghai", lambda: date(2026, 7, 13))
     old_frame = pd.DataFrame(
         [
             {

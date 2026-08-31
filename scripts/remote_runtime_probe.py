@@ -204,13 +204,21 @@ def _summarize_checks(checks: list[ProbeCheck]) -> list[str]:
         and ssh_banner is not None
         and ssh_banner.status in {"timeout", "failed"}
     ):
-        summary.append("SSH 入口异常：TCP 可达但 SSH banner 未正常返回，优先检查 sshd/防火墙/负载层。")
+        summary.append(
+            "SSH 入口异常：TCP 可达但 SSH banner 未正常返回，优先检查 sshd/防火墙/负载层。"
+        )
     if http_tcp is not None and http_tcp.status in {"timeout", "failed"}:
-        summary.append("HTTPS 入口异常：443 端口未正常监听，优先检查 Nginx/安全组/防火墙。")
+        summary.append(
+            "HTTPS 入口异常：443 端口未正常监听，优先检查 Nginx/安全组/防火墙。"
+        )
     elif tls is not None and tls.status in {"timeout", "failed"}:
-        summary.append("HTTPS 入口异常：443 可达但 TLS 握手失败，优先检查 Nginx/证书/反向代理链路。")
+        summary.append(
+            "HTTPS 入口异常：443 可达但 TLS 握手失败，优先检查 Nginx/证书/反向代理链路。"
+        )
     if http is not None and http.status in {"timeout", "failed"}:
-        summary.append("应用健康检查失败：health 接口未正常响应，继续检查 dashboard 进程和上游代理。")
+        summary.append(
+            "应用健康检查失败：health 接口未正常响应，继续检查 dashboard 进程和上游代理。"
+        )
     if not summary and not _has_failures(checks):
         summary.append("SSH、TLS 和 HTTP health 均正常。")
     return summary

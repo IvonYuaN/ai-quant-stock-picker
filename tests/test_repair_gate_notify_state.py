@@ -8,11 +8,14 @@ from aqsp.core.time import today_shanghai
 
 from scripts.repair_gate_notify_state import repair_gate_notify_state
 
+
 # 双门 sidecar 的新鲜度上限为 MAX_GATE_AGE_DAYS=35 天；fixture 必须使用相对“今天”的日期，
 # 否则 gate 会被判为过期(stale)而 fail-closed，测试随时间推移必然失败。
 def _fresh_gate_dates():
     today = today_shanghai()
-    return (today - timedelta(days=1)).isoformat(), (today - timedelta(days=4)).isoformat()
+    return (today - timedelta(days=1)).isoformat(), (
+        today - timedelta(days=4)
+    ).isoformat()
 
 
 def _write_jsonl(path: Path, rows: list[dict[str, object]]) -> None:
@@ -23,11 +26,17 @@ def _write_jsonl(path: Path, rows: list[dict[str, object]]) -> None:
     )
 
 
-def test_repair_gate_notify_state_overwrites_stale_cold_start_entry(tmp_path: Path) -> None:
+def test_repair_gate_notify_state_overwrites_stale_cold_start_entry(
+    tmp_path: Path,
+) -> None:
     _write_jsonl(
         tmp_path / "data" / "predictions.jsonl",
         [
-            {"signal_date": f"2026-05-{day:02d}", "symbol": "600519", "status": "watch_only"}
+            {
+                "signal_date": f"2026-05-{day:02d}",
+                "symbol": "600519",
+                "status": "watch_only",
+            }
             for day in range(1, 31)
         ],
     )
@@ -84,7 +93,11 @@ def test_repair_gate_notify_state_clears_file_when_gate_passes(tmp_path: Path) -
     _write_jsonl(
         tmp_path / "data" / "predictions.jsonl",
         [
-            {"signal_date": f"2026-05-{day:02d}", "symbol": "600519", "status": "watch_only"}
+            {
+                "signal_date": f"2026-05-{day:02d}",
+                "symbol": "600519",
+                "status": "watch_only",
+            }
             for day in range(1, 31)
         ],
     )

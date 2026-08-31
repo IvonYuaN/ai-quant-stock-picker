@@ -1034,9 +1034,15 @@ def test_snapshot_debates_keeps_one_distinct_review_for_each_home_candidate() ->
             bear_count=1,
             neutral_count=1,
             agent_views=(
-                SimpleNamespace(role_id="bull", key_argument=f"{candidate.symbol} 趋势仍在"),
-                SimpleNamespace(role_id="bear", key_argument=f"{candidate.symbol} 承接不足"),
-                SimpleNamespace(role_id="risk_control", key_argument=f"{candidate.symbol} 等待确认"),
+                SimpleNamespace(
+                    role_id="bull", key_argument=f"{candidate.symbol} 趋势仍在"
+                ),
+                SimpleNamespace(
+                    role_id="bear", key_argument=f"{candidate.symbol} 承接不足"
+                ),
+                SimpleNamespace(
+                    role_id="risk_control", key_argument=f"{candidate.symbol} 等待确认"
+                ),
             ),
             viewpoint_buckets={
                 "technical": (f"{candidate.symbol} 趋势仍在",),
@@ -1083,7 +1089,9 @@ def test_recommendation_gate_blocks_candidates_without_linked_news_evidence() ->
     assert gate.reasons == ("候选缺少可引用消息证据：600010",)
 
 
-def test_recommendation_gate_allows_technical_candidate_without_news_dependency() -> None:
+def test_recommendation_gate_allows_technical_candidate_without_news_dependency() -> (
+    None
+):
     provider = _Provider()
     runtime = provider.runtime_overview("2026-07-10")
     candidate = write_home_snapshot._snapshot_candidate(_candidate("600010", 88.0))

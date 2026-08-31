@@ -282,9 +282,7 @@ def test_aqsp_bridge_resolves_runtime_debates_from_runtime_root(
     response = client.get("/api/aqsp/snapshot")
 
     assert response.status_code == 200
-    assert [item["symbol"] for item in response.json()["data"]["debates"]] == [
-        "600001"
-    ]
+    assert [item["symbol"] for item in response.json()["data"]["debates"]] == ["600001"]
 
 
 def test_aqsp_bridge_does_not_attach_unmatched_runtime_debate_to_current_date(

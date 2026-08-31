@@ -55,9 +55,7 @@ def test_recommendation_gate_does_not_hide_candidates_for_walkforward_status() -
     result = evaluate(
         _inputs(
             walkforward_ok=False,
-            walkforward_updated_at=datetime(
-                2026, 5, 1, 12, tzinfo=timezone.utc
-            ),
+            walkforward_updated_at=datetime(2026, 5, 1, 12, tzinfo=timezone.utc),
         )
     )
 
@@ -67,11 +65,7 @@ def test_recommendation_gate_does_not_hide_candidates_for_walkforward_status() -
 
 def test_recommendation_gate_accepts_walkforward_at_age_boundary() -> None:
     result = evaluate(
-        _inputs(
-            walkforward_updated_at=datetime(
-                2026, 6, 13, 12, tzinfo=timezone.utc
-            )
-        )
+        _inputs(walkforward_updated_at=datetime(2026, 6, 13, 12, tzinfo=timezone.utc))
     )
 
     assert result.recommendation_allowed is True

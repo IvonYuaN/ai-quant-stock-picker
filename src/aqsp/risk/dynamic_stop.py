@@ -134,7 +134,9 @@ def compute_dynamic_stop(
     latest_close = float(pd.to_numeric(df["close"], errors="coerce").dropna().iloc[-1])
     stop_ceiling = round(min(float(entry_price), latest_close) * 0.999, 2)
     if recommended >= min(float(entry_price), latest_close):
-        fallback_stop = round(min(float(entry_price), latest_close) * (1 - fallback_pct), 2)
+        fallback_stop = round(
+            min(float(entry_price), latest_close) * (1 - fallback_pct), 2
+        )
         valid_stops = [
             value
             for value in (atr_stop, trailing_stop, support_level, fallback_stop)

@@ -110,12 +110,16 @@ def test_build_briefing_notification_includes_debate_summary_when_summary_mode()
     assert "# AI 量化选股日报" not in markdown
 
 
-def test_build_briefing_notification_does_not_append_normalized_candidate_evidence() -> None:
+def test_build_briefing_notification_does_not_append_normalized_candidate_evidence() -> (
+    None
+):
     briefing = Briefing(
         date="2026-06-04",
         sections=[
             BriefingSection(title="主链总览", content="今日结论: 维持观察"),
-            BriefingSection(title="候选来龙去脉", content="候选正文不应在 summary 重复"),
+            BriefingSection(
+                title="候选来龙去脉", content="候选正文不应在 summary 重复"
+            ),
         ],
     )
 
@@ -171,7 +175,9 @@ def test_build_briefing_notification_returns_full_markdown_when_full_mode() -> N
     assert "# 每日研究复盘-2026-06-04" in markdown
 
 
-def test_build_briefing_notification_full_mode_dedupes_alias_sections_in_order() -> None:
+def test_build_briefing_notification_full_mode_dedupes_alias_sections_in_order() -> (
+    None
+):
     briefing = Briefing(
         date="2026-06-04",
         sections=[
@@ -187,7 +193,11 @@ def test_build_briefing_notification_full_mode_dedupes_alias_sections_in_order()
     assert markdown.count("## 候选来龙去脉") == 1
     assert "候选第一段" in markdown
     assert "候选重复段" not in markdown
-    assert markdown.index("第一段") < markdown.index("候选第一段") < markdown.index("最后一段")
+    assert (
+        markdown.index("第一段")
+        < markdown.index("候选第一段")
+        < markdown.index("最后一段")
+    )
 
 
 def test_build_briefing_notification_summary_dedupes_unknown_sections() -> None:
@@ -435,7 +445,9 @@ def test_daily_snapshot_debate_helpers_fall_back_to_support_and_watch_when_cross
     assert (
         _daily_snapshot_debate_state((result,)) == "600036 招商银行 暂维持 / 分歧 48%"
     )
-    assert _daily_snapshot_debate_focus((result,)) == "结论已阻断：越过 advisory-only 边界"
+    assert (
+        _daily_snapshot_debate_focus((result,)) == "结论已阻断：越过 advisory-only 边界"
+    )
 
 
 def test_notification_live_source_status_line_marks_fallback_and_history_only() -> None:

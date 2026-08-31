@@ -116,7 +116,10 @@ def _collect_independent_dates(
             continue
         if status and status not in allowed_statuses:
             continue
-        if not str(row.get("symbol") or "").strip() and status != "run_completed_no_picks":
+        if (
+            not str(row.get("symbol") or "").strip()
+            and status != "run_completed_no_picks"
+        ):
             continue
         has_signal_payload = any(
             row.get(key) not in (None, "")

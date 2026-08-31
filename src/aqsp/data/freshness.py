@@ -64,8 +64,10 @@ def check_freshness(frames: dict[str, pd.DataFrame]) -> list[FreshnessReport]:
                 )
             )
             continue
-        delay = -1 if last > today else trading_day_lag(
-            last, today, calendar_df=calendar_df
+        delay = (
+            -1
+            if last > today
+            else trading_day_lag(last, today, calendar_df=calendar_df)
         )
         reports.append(
             FreshnessReport(

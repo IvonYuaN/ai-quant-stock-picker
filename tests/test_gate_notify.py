@@ -233,7 +233,9 @@ def test_failed_gate_notification_blocks_same_day_retry_after_pending_ttl(
 
             return datetime.fromisoformat(self._iso) - other
 
-    monkeypatch.setattr(mod, "now_shanghai", lambda: _FakeNow("2026-06-17T23:30:00+08:00"))
+    monkeypatch.setattr(
+        mod, "now_shanghai", lambda: _FakeNow("2026-06-17T23:30:00+08:00")
+    )
 
     assert (
         should_send_gate_notification(

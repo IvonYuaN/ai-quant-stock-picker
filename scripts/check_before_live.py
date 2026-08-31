@@ -1193,9 +1193,7 @@ def _check_gate_cold_start_alignment(
     )
     gate_path = _normalize_runtime_path(
         root,
-        (
-            _read_env_assignment(env_path, "AQSP_WALKFORWARD_GATE_PATH")
-        )
+        (_read_env_assignment(env_path, "AQSP_WALKFORWARD_GATE_PATH"))
         or WALKFORWARD_GATE_PATH,
     )
     gate_ok, gate_reasons = _check_notification_gate(

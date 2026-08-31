@@ -29,6 +29,7 @@ import pandas as pd
 
 from aqsp.core.time import now_shanghai
 from aqsp.utils.jsonl_io import atomic_write_text
+
 try:
     from check_variant_results import validate_variant_payload
 except ModuleNotFoundError:
@@ -330,7 +331,9 @@ def attach_discussion_links(
     if not isinstance(variants, list):
         return
     for variant in variants:
-        if not isinstance(variant, dict) or not isinstance(variant.get("strategy"), dict):
+        if not isinstance(variant, dict) or not isinstance(
+            variant.get("strategy"), dict
+        ):
             continue
         mode = str(variant["strategy"].get("mode") or "")
         variant["discussion_links"] = [
@@ -341,6 +344,8 @@ def attach_discussion_links(
                 for strategy in item.get("strategies", ())
             )
         ]
+
+
 def commit_variant_batch(cursor_path: Path, batch: VariantUniverseBatch) -> None:
     next_offset = batch.offset + len(batch.symbols)
     cycle_id = batch.cycle_id
@@ -562,8 +567,10 @@ def evolution_profiles(
         max_bias_pct = float(strategy.get("max_bias_pct") or 0.0)
         max_positions = int(strategy.get("max_positions") or 3)
         cooldown_complete = _evolution_cooldown_complete(evolved_on, previous_end)
-        if item.get("lifecycle_status") == "淘汰" and cooldown_complete and isinstance(
-            item.get("next_generation"), dict
+        if (
+            item.get("lifecycle_status") == "淘汰"
+            and cooldown_complete
+            and isinstance(item.get("next_generation"), dict)
         ):
             proposal = item["next_generation"]
             parent_variant_id = variant_id
@@ -575,9 +582,7 @@ def evolution_profiles(
             max_bias_pct = float(proposal.get("max_bias_pct") or max_bias_pct)
             max_positions = int(proposal.get("max_positions") or max_positions)
             evolved_on = str(proposal.get("evolved_on") or previous_end)
-        base_label = re.sub(
-            r"(?:·第\d+代)+$", "", str(item.get("label") or variant_id)
-        )
+        base_label = re.sub(r"(?:·第\d+代)+$", "", str(item.get("label") or variant_id))
         evolved.append(
             VariantProfile(
                 variant_id=variant_id,
@@ -603,7 +608,9 @@ def _evolution_cooldown_complete(evolved_on: str, evidence_end: str) -> bool:
     if not evolved_on:
         return True
     try:
-        elapsed = (date.fromisoformat(evidence_end) - date.fromisoformat(evolved_on)).days
+        elapsed = (
+            date.fromisoformat(evidence_end) - date.fromisoformat(evolved_on)
+        ).days
     except ValueError:
         return False
     return elapsed >= EVOLUTION_COOLDOWN_CALENDAR_DAYS
@@ -854,9 +861,7 @@ def main() -> int:
             batch = select_variant_batch(
                 eligible_symbols, args.max_symbols, cursor_path
             )
-            focus_cohort = load_focus_cohort(
-                getattr(args, "focus_snapshot", None)
-            )
+            focus_cohort = load_focus_cohort(getattr(args, "focus_snapshot", None))
             selected = prioritize_focus_symbols(
                 batch.symbols, eligible_symbols, focus_cohort
             )

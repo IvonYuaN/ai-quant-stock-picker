@@ -61,8 +61,11 @@ def _validated_rows(df: pd.DataFrame) -> pd.DataFrame:
     if "is_simulated" in df.columns:
         simulated = df["is_simulated"].fillna(False)
         if simulated.dtype == object:
-            simulated = simulated.astype(str).str.strip().str.lower().isin(
-                {"true", "1", "yes", "y"}
+            simulated = (
+                simulated.astype(str)
+                .str.strip()
+                .str.lower()
+                .isin({"true", "1", "yes", "y"})
             )
         validated &= ~simulated.astype(bool)
     return df.loc[validated].copy()

@@ -233,9 +233,9 @@ def test_auto_evolution_uses_current_thresholds_as_proposal_baseline(tmp_path) -
         },
     )
 
-    assert evolution._get_base_params("scoring")["near_high_threshold"] == pytest.approx(
-        ScoringThresholds().near_high_threshold
-    )
+    assert evolution._get_base_params("scoring")[
+        "near_high_threshold"
+    ] == pytest.approx(ScoringThresholds().near_high_threshold)
     candidates = evolution._generate_candidates(
         "scoring", evolution._get_base_params("scoring")
     )

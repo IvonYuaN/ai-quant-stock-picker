@@ -40,11 +40,15 @@ def validate_backtest_frame(
     if workload == "live_short":
         blockers.append(f"{symbol}: live_short data cannot enter backtest")
 
-    price_mode = str(
-        frame.attrs.get("price_mode", frame.attrs.get("adjust", "")) or ""
-    ).strip().lower()
+    price_mode = (
+        str(frame.attrs.get("price_mode", frame.attrs.get("adjust", "")) or "")
+        .strip()
+        .lower()
+    )
     if price_mode in _ADJUSTED_PRICE_MODES:
-        blockers.append(f"{symbol}: adjusted price mode {price_mode} cannot enter backtest")
+        blockers.append(
+            f"{symbol}: adjusted price mode {price_mode} cannot enter backtest"
+        )
 
     dates = pd.to_datetime(frame["date"], errors="coerce") if "date" in frame else None
     if dates is not None:

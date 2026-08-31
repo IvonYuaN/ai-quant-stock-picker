@@ -52,9 +52,9 @@ def test_production_dashboard_ingress_has_no_legacy_streamlit_health_route() -> 
 
 
 def test_mainline_ingress_keeps_legacy_streamlit_out_of_production_upstream() -> None:
-    config = (PROJECT_ROOT / "deploy" / "nginx" / "vibe-research-mainline.conf").read_text(
-        encoding="utf-8"
-    )
+    config = (
+        PROJECT_ROOT / "deploy" / "nginx" / "vibe-research-mainline.conf"
+    ).read_text(encoding="utf-8")
 
     assert "proxy_pass http://127.0.0.1:5899;" in config
     assert "proxy_pass http://127.0.0.1:8900;" in config

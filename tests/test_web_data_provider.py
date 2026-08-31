@@ -107,7 +107,9 @@ def test_dashboard_data_provider_home_status_distinguishes_live_watch_and_blocke
     assert blocked.tone == "blocked"
 
 
-def test_dashboard_data_provider_ignores_cooldown_on_release_date(tmp_path: Path) -> None:
+def test_dashboard_data_provider_ignores_cooldown_on_release_date(
+    tmp_path: Path,
+) -> None:
     provider = DashboardDataProvider(
         ledger_path=str(tmp_path / "ledger.jsonl"),
         paper_ledger_path=str(tmp_path / "paper.jsonl"),
@@ -115,12 +117,18 @@ def test_dashboard_data_provider_ignores_cooldown_on_release_date(tmp_path: Path
         reports_dir=str(tmp_path / "reports"),
     )
 
-    assert provider._active_cooldown_until(
-        {"cooldown_until": "2026-07-19"}, evaluated_date="2026-07-18"
-    ) == "2026-07-19"
-    assert provider._active_cooldown_until(
-        {"cooldown_until": "2026-07-19"}, evaluated_date="2026-07-19"
-    ) == ""
+    assert (
+        provider._active_cooldown_until(
+            {"cooldown_until": "2026-07-19"}, evaluated_date="2026-07-18"
+        )
+        == "2026-07-19"
+    )
+    assert (
+        provider._active_cooldown_until(
+            {"cooldown_until": "2026-07-19"}, evaluated_date="2026-07-19"
+        )
+        == ""
+    )
 
 
 def test_dashboard_data_provider_does_not_reuse_prior_runtime_event_for_selected_day(
@@ -697,7 +705,9 @@ def test_dashboard_data_provider_intraday_runtime_line_marks_protection_observat
     )
 
 
-def test_dashboard_data_provider_intraday_runtime_line_exposes_fetch_telemetry() -> None:
+def test_dashboard_data_provider_intraday_runtime_line_exposes_fetch_telemetry() -> (
+    None
+):
     from aqsp.web.data_provider import DashboardDataProvider
 
     line = DashboardDataProvider._intraday_runtime_line_from_state(
@@ -1358,10 +1368,10 @@ def test_dashboard_data_provider_debate_summaries_use_latest_rerun_per_symbol(
         "original_score": 72.0,
         "adjusted_score": 72.0,
         "recommended_adjustment": "keep",
-            "final_consensus": "等待确认",
-            "final_vote": {"bull": "neutral", "risk_control": "neutral"},
-            "opposition_points": ["冲高回落且成交量衰减则失效"],
-            "rounds": [{"round_num": 1, "summary": "讨论完成"}],
+        "final_consensus": "等待确认",
+        "final_vote": {"bull": "neutral", "risk_control": "neutral"},
+        "opposition_points": ["冲高回落且成交量衰减则失效"],
+        "rounds": [{"round_num": 1, "summary": "讨论完成"}],
     }
     debate_path.write_text(
         "\n".join(
@@ -1692,17 +1702,17 @@ def test_dashboard_data_provider_backfills_only_matching_candidate_fingerprint(
         ("candidate-a", "正确批次，应回填"),
     ):
         rows.append(
-                {
-                    "debate_id": fingerprint,
+            {
+                "debate_id": fingerprint,
                 "symbol": "300750",
                 "related_signal_date": "2026-07-14",
                 "candidate_fingerprint": fingerprint,
                 "task_id": "intraday",
                 "final_vote": {"bull": "bullish"},
-                    "final_consensus": verdict,
-                    "research_verdict": verdict,
-                    "opposition_points": ["高开低走或量价背离则失效"],
-                    "rounds": [{"round_num": 1, "opinions": [{"role": "bull"}]}],
+                "final_consensus": verdict,
+                "research_verdict": verdict,
+                "opposition_points": ["高开低走或量价背离则失效"],
+                "rounds": [{"round_num": 1, "opinions": [{"role": "bull"}]}],
             }
         )
     debate_path.write_text(
@@ -2073,8 +2083,8 @@ def test_dashboard_data_provider_dedupes_same_symbol_across_runtime_tasks_and_sa
                 "倾向继续观察，机会在 技术多头: 技术面强势，"
                 "但卡点是 跨市传导: ⚠️ 海外叙事未必立刻传到A股，需确认板块共振"
             ),
-                "primary_risk_gate": "跨市传导: ⚠️ 海外叙事未必立刻传到A股，需确认板块共振",
-                "opposition_points": ["海外叙事未形成板块共振则失效"],
+            "primary_risk_gate": "跨市传导: ⚠️ 海外叙事未必立刻传到A股，需确认板块共振",
+            "opposition_points": ["海外叙事未形成板块共振则失效"],
             "next_trigger": "等待量价确认",
             "market_context_lines": [
                 "消息状态: 部分可用",
@@ -2432,9 +2442,9 @@ def test_dashboard_data_provider_keeps_same_day_intraday_debate_when_artifact_is
                 "final_consensus": "观察",
                 "final_vote": {"risk_control": "neutral"},
                 "research_verdict": "等待承接确认",
-                    "primary_risk_gate": "盘中产物已过期",
-                    "next_trigger": "重新刷新盘中数据",
-                    "opposition_points": ["盘中数据过期，任何追涨判断均失效"],
+                "primary_risk_gate": "盘中产物已过期",
+                "next_trigger": "重新刷新盘中数据",
+                "opposition_points": ["盘中数据过期，任何追涨判断均失效"],
                 "process_recorded": True,
                 "conclusion_recorded": True,
                 "advisory_boundary_ok": True,
@@ -2498,8 +2508,8 @@ def test_dashboard_data_provider_merges_debate_by_date_task_and_symbol_when_cand
                 "created_at": "2026-07-14T10:00:00+08:00",
                 "original_score": 70,
                 "adjusted_score": 70,
-                    "research_verdict": "同日同任务回退映射",
-                    "opposition_points": ["高开低走则失效"],
+                "research_verdict": "同日同任务回退映射",
+                "opposition_points": ["高开低走则失效"],
                 "final_vote": {"risk_control": "neutral"},
                 "process_recorded": True,
                 "conclusion_recorded": True,
@@ -6028,7 +6038,9 @@ def test_live_candidate_view_marks_old_artifact_stale_without_relabeling_score()
     assert view.candidates[0].freshness_label == "数据已过期"
 
 
-def test_live_candidate_view_filters_rows_to_requested_date_when_csv_contains_multiple_days() -> None:
+def test_live_candidate_view_filters_rows_to_requested_date_when_csv_contains_multiple_days() -> (
+    None
+):
     view = build_live_candidate_view(
         (
             {
@@ -6055,7 +6067,9 @@ def test_live_candidate_view_filters_rows_to_requested_date_when_csv_contains_mu
     assert [candidate.symbol for candidate in view.candidates] == ["600001"]
 
 
-def test_live_candidate_view_ignores_old_run_failure_when_current_rows_are_fresh() -> None:
+def test_live_candidate_view_ignores_old_run_failure_when_current_rows_are_fresh() -> (
+    None
+):
     view = build_live_candidate_view(
         (
             {

@@ -614,9 +614,7 @@ class Thresholds:
 
         allowed = {item.name for item in fields(target)}
         supported = {
-            str(key): value
-            for key, value in overrides.items()
-            if str(key) in allowed
+            str(key): value for key, value in overrides.items() if str(key) in allowed
         }
         if not supported:
             return self

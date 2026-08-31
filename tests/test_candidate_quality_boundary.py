@@ -22,7 +22,9 @@ def _pick() -> PickResult:
     )
 
 
-def test_circuit_breaker_keeps_research_recommendation_but_blocks_paper_action() -> None:
+def test_circuit_breaker_keeps_research_recommendation_but_blocks_paper_action() -> (
+    None
+):
     observed = _apply_protection_observation_boundary(
         [_pick()], reason="单日组合亏损触发"
     )[0]
@@ -36,14 +38,10 @@ def test_circuit_breaker_keeps_research_recommendation_but_blocks_paper_action()
 
 
 def test_observation_candidate_is_excluded_from_allocations() -> None:
-    pick = _apply_protection_observation_boundary(
-        [_pick()], reason="冷却期"
-    )[0]
+    pick = _apply_protection_observation_boundary([_pick()], reason="冷却期")[0]
     decision = type("Decision", (), {"action": "observation_only"})()
 
-    result = optimize_portfolio_allocations(
-        [pick], {pick.symbol: decision}
-    )
+    result = optimize_portfolio_allocations([pick], {pick.symbol: decision})
 
     assert result.allocations == ()
     assert result.cash_reserve == 1.0

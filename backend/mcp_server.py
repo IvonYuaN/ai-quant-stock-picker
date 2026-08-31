@@ -55,11 +55,14 @@ def _handle(msg: dict) -> None:
     if method == "initialize":
         params = msg.get("params") or {}
         proto = params.get("protocolVersion", DEFAULT_PROTOCOL)
-        _result(rid, {
-            "protocolVersion": proto,
-            "capabilities": {"tools": {}},
-            "serverInfo": SERVER_INFO,
-        })
+        _result(
+            rid,
+            {
+                "protocolVersion": proto,
+                "capabilities": {"tools": {}},
+                "serverInfo": SERVER_INFO,
+            },
+        )
         return
 
     if method == "ping":
@@ -76,10 +79,15 @@ def _handle(msg: dict) -> None:
         args = params.get("arguments") or {}
         data = chat._exec_tool(name, args)
         is_error = isinstance(data, dict) and "error" in data
-        _result(rid, {
-            "content": [{"type": "text", "text": json.dumps(data, ensure_ascii=False)}],
-            "isError": is_error,
-        })
+        _result(
+            rid,
+            {
+                "content": [
+                    {"type": "text", "text": json.dumps(data, ensure_ascii=False)}
+                ],
+                "isError": is_error,
+            },
+        )
         return
 
     if rid is not None:

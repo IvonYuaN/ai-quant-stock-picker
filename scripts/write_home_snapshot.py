@@ -274,8 +274,7 @@ def _snapshot_dates(task_view: Any, selected_date: str) -> tuple[str, ...]:
     return tuple(
         value
         for value in dates
-        if value in recent_dates
-        and (value == selected_date or value <= completed_date)
+        if value in recent_dates and (value == selected_date or value <= completed_date)
     )
 
 
@@ -455,13 +454,9 @@ def _snapshot_candidate(candidate: Any) -> HomeSnapshotCandidate | None:
         data_fetched_at=_text(getattr(candidate, "data_fetched_at", "")),
         data_timestamp_source=_text(getattr(candidate, "data_timestamp_source", "")),
         freshness=_candidate_freshness(candidate),
-        news_catalyst_summary=_text(
-            getattr(candidate, "news_catalyst_summary", "")
-        ),
+        news_catalyst_summary=_text(getattr(candidate, "news_catalyst_summary", "")),
         news_catalyst_source=_text(getattr(candidate, "news_catalyst_source", "")),
-        news_catalyst_url=_text(
-            getattr(candidate, "news_catalyst_url", "")
-        ),
+        news_catalyst_url=_text(getattr(candidate, "news_catalyst_url", "")),
         news_catalyst_published_at=_text(
             getattr(candidate, "news_catalyst_published_at", "")
         ),
@@ -579,9 +574,7 @@ def _snapshot_debates(
             candidate,
             _text(getattr(debate, "primary_risk_gate", "")),
         )
-        agent_views = _snapshot_agent_views(
-            getattr(debate, "agent_views", ()) or ()
-        )
+        agent_views = _snapshot_agent_views(getattr(debate, "agent_views", ()) or ())
         published_roles = tuple(view.role for view in agent_views)
         if len(published_roles) < 2:
             published_roles = tuple(
@@ -608,7 +601,8 @@ def _snapshot_debates(
                     for view in agent_views
                 ),
                 "neutral_count": sum(
-                    view.stance.strip().lower() not in {"bull", "bullish", "bear", "bearish"}
+                    view.stance.strip().lower()
+                    not in {"bull", "bullish", "bear", "bearish"}
                     for view in agent_views
                 ),
             }
@@ -2461,11 +2455,8 @@ def _variant_snapshot() -> tuple[HomeSnapshotVariant, ...]:
                 hard_rules=rule_labels if isinstance(rules, dict) else (),
                 generation=int(item.get("generation") or 1),
                 parent_variant_id=_text(item.get("parent_variant_id")),
-                independent_signal_days=int(
-                    item.get("independent_signal_days") or 0
-                ),
-                lifecycle_status=_text(item.get("lifecycle_status"))
-                or "样本积累",
+                independent_signal_days=int(item.get("independent_signal_days") or 0),
+                lifecycle_status=_text(item.get("lifecycle_status")) or "样本积累",
                 lifecycle_reason=_text(item.get("lifecycle_reason")),
                 discussion_links=tuple(
                     link

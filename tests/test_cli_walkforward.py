@@ -26,7 +26,9 @@ def _isolate_walkforward_gate(monkeypatch, tmp_path):
     monkeypatch.setattr("aqsp.universe.runtime.today_shanghai", lambda: TEST_TRADE_DAY)
     monkeypatch.setattr(
         "aqsp.data.intraday.now_shanghai",
-        lambda: datetime.combine(TEST_TRADE_DAY, datetime.min.time(), tzinfo=timezone.utc),
+        lambda: datetime.combine(
+            TEST_TRADE_DAY, datetime.min.time(), tzinfo=timezone.utc
+        ),
     )
 
 

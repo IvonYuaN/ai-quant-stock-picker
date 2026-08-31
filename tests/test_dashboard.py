@@ -16549,7 +16549,9 @@ def test_dashboard_snapshot_home_board_renders_bounded_card_layout(monkeypatch) 
     assert "实时讨论过程: 第 2 轮完成" in "\n".join(cockpit_cards[2]["lines"])
 
 
-def test_dashboard_snapshot_candidate_grid_hides_observation_and_blocked_cards() -> None:
+def test_dashboard_snapshot_candidate_grid_hides_observation_and_blocked_cards() -> (
+    None
+):
     import aqsp.web.dashboard as dashboard
     from aqsp.web.home_snapshot import HomeSnapshotCandidate
 
@@ -16594,7 +16596,9 @@ def test_dashboard_snapshot_candidate_grid_hides_observation_and_blocked_cards()
     assert "600003 阻塞" not in html
 
 
-def test_dashboard_snapshot_market_context_lines_surface_transmission_before_news() -> None:
+def test_dashboard_snapshot_market_context_lines_surface_transmission_before_news() -> (
+    None
+):
     import aqsp.web.dashboard as dashboard
     from aqsp.web.home_snapshot import (
         HomeDashboardSnapshot,
@@ -16660,7 +16664,9 @@ def test_dashboard_snapshot_market_context_lines_surface_transmission_before_new
     assert "来源: international" in lines[1]
 
 
-def test_dashboard_snapshot_observation_grid_shows_non_recommendations_separately() -> None:
+def test_dashboard_snapshot_observation_grid_shows_non_recommendations_separately() -> (
+    None
+):
     import aqsp.web.dashboard as dashboard
     from aqsp.web.home_snapshot import HomeSnapshotCandidate
 
@@ -16734,12 +16740,16 @@ def test_dashboard_snapshot_date_buttons_update_selected_date(monkeypatch) -> No
 
     dashboard._render_snapshot_home_rail(snapshot)
 
-    assert dashboard.st.session_state["dashboard_snapshot_selected_date"] == "2026-07-10"
+    assert (
+        dashboard.st.session_state["dashboard_snapshot_selected_date"] == "2026-07-10"
+    )
     assert dashboard.st.session_state["dashboard_selected_date"] == "2026-07-10"
     assert reruns == [True]
 
 
-def test_dashboard_expired_snapshot_stops_without_historical_fallback(monkeypatch) -> None:
+def test_dashboard_expired_snapshot_stops_without_historical_fallback(
+    monkeypatch,
+) -> None:
     import aqsp.web.dashboard as dashboard
     from aqsp.web.home_snapshot import (
         HOME_SNAPSHOT_SCHEMA_VERSION,
@@ -16879,9 +16889,7 @@ def test_dashboard_main_uses_exact_snapshot_from_index_for_selected_date(
     monkeypatch.setattr(
         dashboard,
         "_render_snapshot_home_board",
-        lambda value, **kwargs: rendered.append(
-            (value, kwargs.get("available_dates"))
-        ),
+        lambda value, **kwargs: rendered.append((value, kwargs.get("available_dates"))),
     )
     monkeypatch.setattr(
         dashboard,
@@ -16952,8 +16960,7 @@ def test_dashboard_main_resets_unknown_snapshot_date_to_index_selection(
 
     assert rendered == [(str(first_snapshot), ("2026-07-11",))]
     assert (
-        dashboard.st.session_state["dashboard_snapshot_selected_date"]
-        == "2026-07-11"
+        dashboard.st.session_state["dashboard_snapshot_selected_date"] == "2026-07-11"
     )
 
 

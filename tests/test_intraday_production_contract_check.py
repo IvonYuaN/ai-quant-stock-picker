@@ -103,7 +103,9 @@ def test_contract_check_rejects_inconsistent_batch_coverage() -> None:
     )
 
     assert result.classification == "failed"
-    assert any(check.name == "coverage_detail" and not check.ok for check in result.checks)
+    assert any(
+        check.name == "coverage_detail" and not check.ok for check in result.checks
+    )
 
 
 def test_contract_check_rejects_missing_status_on_trading_day() -> None:

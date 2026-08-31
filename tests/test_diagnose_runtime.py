@@ -704,7 +704,9 @@ def test_diagnose_runtime_warns_when_gate_state_fingerprint_drifted(
     monkeypatch.setenv("AQSP_PAPER_LEDGER", str(paper))
     monkeypatch.setenv("AQSP_GATE_NOTIFY_STATE_PATH", str(gate_state))
     monkeypatch.setenv("AQSP_WALKFORWARD_GATE_PATH", str(walkforward_gate))
-    monkeypatch.setattr("scripts.diagnose_runtime.today_shanghai", lambda: date(2026, 6, 21))
+    monkeypatch.setattr(
+        "scripts.diagnose_runtime.today_shanghai", lambda: date(2026, 6, 21)
+    )
     monkeypatch.setattr("scripts.diagnose_runtime.PROJECT_ROOT", tmp_path)
     monkeypatch.setattr(
         "scripts.diagnose_runtime.load_research_summary",

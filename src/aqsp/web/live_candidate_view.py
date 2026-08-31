@@ -175,7 +175,9 @@ def _candidate_from_row(
     if freshness_status == "watch":
         if status == "actionable":
             status = "watch"
-        blocker = _join_blockers(blocker, freshness_reason or "实时数据延迟，降级为观察")
+        blocker = _join_blockers(
+            blocker, freshness_reason or "实时数据延迟，降级为观察"
+        )
     elif freshness_status != "fresh":
         status = "blocked"
         blocker = _join_blockers(blocker, freshness_reason or "实时数据不可验证")
@@ -221,8 +223,10 @@ def _candidate_status(row: Mapping[str, Any]) -> tuple[str, str]:
     action = str(row.get("portfolio_action") or "").strip()
     quality_gate_action = str(row.get("quality_gate_action") or "").strip()
     rating = str(row.get("rating") or "").strip()
-    if blocker or "阻塞" in candidate_status or (
-        action == "downgrade" and quality_gate_action != "observe"
+    if (
+        blocker
+        or "阻塞" in candidate_status
+        or (action == "downgrade" and quality_gate_action != "observe")
     ):
         return "blocked", blocker or candidate_status or "候选存在阻塞条件"
     quality_status = _normalized_quality_status(row.get("data_quality_status"))
@@ -475,9 +479,7 @@ def _classify_freshness(status: str, reason: str) -> tuple[str, str]:
 
 def _run_rows(rows: Sequence[Mapping[str, Any]]) -> tuple[Mapping[str, Any], ...]:
     return tuple(
-        row
-        for row in rows
-        if _canonical_symbol(row.get("symbol")) == "__RUN__"
+        row for row in rows if _canonical_symbol(row.get("symbol")) == "__RUN__"
     )
 
 
@@ -490,7 +492,9 @@ def _source_reason(row: Mapping[str, Any]) -> str:
 
 
 def _first_text(*values: Any) -> str:
-    return next((str(value).strip() for value in values if str(value or "").strip()), "")
+    return next(
+        (str(value).strip() for value in values if str(value or "").strip()), ""
+    )
 
 
 def _normalized_status(value: Any) -> str:

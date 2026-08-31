@@ -645,9 +645,9 @@ def test_intraday_service_normalizes_mixed_timestamp_timezones_before_freshness(
         }
     )
 
-    bars = IntradayService(MockSource(intraday_data={"600000": frame})).get_intraday_bars(
-        ["600000"], period="5"
-    )
+    bars = IntradayService(
+        MockSource(intraday_data={"600000": frame})
+    ).get_intraday_bars(["600000"], period="5")
 
     assert list(bars) == ["600000"]
 

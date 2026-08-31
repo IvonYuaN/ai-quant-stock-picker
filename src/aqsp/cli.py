@@ -2672,11 +2672,8 @@ def _fetch_special_strategy_frames(
         for symbol, frame in frames.items()
         if not frame.empty
         and "date" in frame.columns
-        and not pd.isna(
-            pd.to_datetime(frame["date"], errors="coerce").max()
-        )
-        and pd.to_datetime(frame["date"], errors="coerce").max().date()
-        <= target_day
+        and not pd.isna(pd.to_datetime(frame["date"], errors="coerce").max())
+        and pd.to_datetime(frame["date"], errors="coerce").max().date() <= target_day
     }
     actual_allowed, actual_reason = _runtime_actual_source_workload_allowed(
         source_name,
@@ -2686,7 +2683,9 @@ def _fetch_special_strategy_frames(
     if not actual_allowed:
         raise DataError(actual_reason)
     if not frames:
-        raise MissingDataError(symbols[0], reason="无法获取可用于指标回看的历史日线数据")
+        raise MissingDataError(
+            symbols[0], reason="无法获取可用于指标回看的历史日线数据"
+        )
     data_source = _get_source(source_name)
     intraday_service = IntradayService(data_source)
     overlay_symbols = list(symbols)
@@ -2703,21 +2702,33 @@ def _fetch_special_strategy_frames(
         getattr(
             overlay,
             "candidate_requested_symbols",
-            tuple(symbol for symbol in overlay.requested_symbols if symbol != benchmark_symbol),
+            tuple(
+                symbol
+                for symbol in overlay.requested_symbols
+                if symbol != benchmark_symbol
+            ),
         )
     )
     candidate_covered = tuple(
         getattr(
             overlay,
             "candidate_covered_symbols",
-            tuple(symbol for symbol in candidate_requested if symbol in overlay.covered_symbols),
+            tuple(
+                symbol
+                for symbol in candidate_requested
+                if symbol in overlay.covered_symbols
+            ),
         )
     )
     candidate_missing = tuple(
         getattr(
             overlay,
             "candidate_missing_symbols",
-            tuple(symbol for symbol in candidate_requested if symbol not in overlay.covered_symbols),
+            tuple(
+                symbol
+                for symbol in candidate_requested
+                if symbol not in overlay.covered_symbols
+            ),
         )
     )
     benchmark_missing = tuple(
@@ -2859,21 +2870,15 @@ def _apply_protection_observation_boundary(
                 # Circuit-breaker state is a portfolio-action constraint. It
                 # must not downgrade a fresh, deterministic research signal.
                 "research_recommendation": is_recommendation,
-                "candidate_status": (
-                    "实时推荐" if is_recommendation else "实时观察"
-                ),
-                "candidate_next_step": (
-                    "按实时信号继续复核；组合保护仅限制纸面动作"
-                ),
+                "candidate_status": ("实时推荐" if is_recommendation else "实时观察"),
+                "candidate_next_step": ("按实时信号继续复核；组合保护仅限制纸面动作"),
                 "candidate_review_window": "当前盘中窗口",
                 "quality_gate_reasons": alerts,
                 "portfolio_action": "observation_only",
             }
         )
         risks = tuple(
-            dict.fromkeys(
-                (*pick.risks, f"组合保护仅限制纸面动作: {clean_reason}")
-            )
+            dict.fromkeys((*pick.risks, f"组合保护仅限制纸面动作: {clean_reason}"))
         )
         observed.append(replace(pick, metrics=metrics, risks=risks))
     return observed
@@ -5410,7 +5415,9 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
             format_snapshot_diff,
         )
 
-        snapshot_path = os.getenv("AQSP_PICK_SNAPSHOT_PATH", "data/pick_snapshots.jsonl")
+        snapshot_path = os.getenv(
+            "AQSP_PICK_SNAPSHOT_PATH", "data/pick_snapshots.jsonl"
+        )
         save_snapshot(
             picks, snapshot_path=snapshot_path, date=today_shanghai().isoformat()
         )

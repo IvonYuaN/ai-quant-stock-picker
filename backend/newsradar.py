@@ -23,8 +23,10 @@ SOURCES_FILE = os.path.join(HERE, "news_sources.json")
 CACHE_DIR = os.path.join(HERE, ".cache")
 CACHE_FILE = os.path.join(CACHE_DIR, "radar.json")
 
-UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-      "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
+UA = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+)
 BEIJING = timezone(timedelta(hours=8))
 
 
@@ -56,10 +58,13 @@ def _parse_dt(s: str):
 def _fetch_source(src: dict, per: int, cutoff, redline: list[str]):
     """抓单个 RSS 源；返回 items 列表，出错返回 None。"""
     try:
-        req = urllib.request.Request(src["url"], headers={
-            "User-Agent": UA,
-            "Accept": "application/rss+xml,application/atom+xml,application/xml,text/xml,*/*",
-        })
+        req = urllib.request.Request(
+            src["url"],
+            headers={
+                "User-Agent": UA,
+                "Accept": "application/rss+xml,application/atom+xml,application/xml,text/xml,*/*",
+            },
+        )
         with urllib.request.urlopen(req, timeout=14) as r:
             raw = r.read()
         root = ET.fromstring(raw)
@@ -67,7 +72,14 @@ def _fetch_source(src: dict, per: int, cutoff, redline: list[str]):
         for n in [e for e in root.iter() if _local(e.tag) in ("item", "entry")]:
             if len(out) >= per:
                 break
-            d = {"title": "", "url": "", "time": "", "ts": 0, "summary": "", "source": src["name"]}
+            d = {
+                "title": "",
+                "url": "",
+                "time": "",
+                "ts": 0,
+                "summary": "",
+                "source": src["name"],
+            }
             rawtime = ""
             for c in n:
                 t = _local(c.tag)
@@ -113,12 +125,22 @@ def fetch_radar() -> dict:
     industries, tasks = [], []
     for i, ind in enumerate(cfg["industries"]):
         pool = byhint.get(ind["key"], [])
-        industries.append({"key": ind["key"], "name": ind["name"], "accent": ind["accent"], "total": len(pool), "items": []})
+        industries.append(
+            {
+                "key": ind["key"],
+                "name": ind["name"],
+                "accent": ind["accent"],
+                "total": len(pool),
+                "items": [],
+            }
+        )
         for s in pool:
             tasks.append((i, s))
 
     with ThreadPoolExecutor(max_workers=40) as ex:
-        results = list(ex.map(lambda t: (t[0], _fetch_source(t[1], per, cutoff, redline)), tasks))
+        results = list(
+            ex.map(lambda t: (t[0], _fetch_source(t[1], per, cutoff, redline)), tasks)
+        )
 
     failed = 0
     for idx, items in results:
@@ -133,7 +155,11 @@ def fetch_radar() -> dict:
         "generated_at": datetime.now(BEIJING).strftime("%Y-%m-%d %H:%M"),
         "recent_days": days,
         "industries": industries,
-        "stats": {"industries": len(cfg["industries"]), "total_sources": len(cfg["sources"]), "failed_sources": failed},
+        "stats": {
+            "industries": len(cfg["industries"]),
+            "total_sources": len(cfg["sources"]),
+            "failed_sources": failed,
+        },
     }
     os.makedirs(CACHE_DIR, exist_ok=True)
     tmp = CACHE_FILE + ".tmp"
@@ -160,8 +186,20 @@ def skeleton() -> dict:
     return {
         "generated_at": None,
         "recent_days": cfg.get("fetch", {}).get("recent_days", 7),
-        "industries": [{"key": i["key"], "name": i["name"], "accent": i["accent"], "total": byhint.get(i["key"], 0), "items": []} for i in cfg["industries"]],
-        "stats": {"industries": len(cfg["industries"]), "total_sources": len(cfg["sources"])},
+        "industries": [
+            {
+                "key": i["key"],
+                "name": i["name"],
+                "accent": i["accent"],
+                "total": byhint.get(i["key"], 0),
+                "items": [],
+            }
+            for i in cfg["industries"]
+        ],
+        "stats": {
+            "industries": len(cfg["industries"]),
+            "total_sources": len(cfg["sources"]),
+        },
     }
 
 
