@@ -11,7 +11,12 @@ import yaml
 
 from aqsp.core.time import today_shanghai
 from aqsp.data.trading_calendar import trading_day_lag
-from aqsp.ledger.base import read_ledger
+from aqsp.ledger.base import (
+    is_ledger_row_paper_review_eligible,
+    read_ledger,
+)
+from aqsp.paper import read_paper_trades
+from aqsp.ratings import is_tradable_rating
 from aqsp.walkforward_gate import MAX_GATE_AGE_DAYS, validate_walkforward_gate_payload
 
 
@@ -77,12 +82,17 @@ class MonitorChecker:
                     result = self._check_source_health(monitor.params)
                 elif monitor.check == "walkforward_runtime":
                     result = self._check_walkforward_runtime(monitor.params)
+                elif monitor.check == "screening_liveness":
+                    result = self._check_screening_liveness(monitor.params)
+                elif monitor.check == "empty_picks":
+                    result = self._check_empty_picks(monitor.params)
                 else:
                     result = MonitorResult(
                         name=monitor.name,
-                        triggered=False,
+                        triggered=True,
                         severity=monitor.severity,
                         message=f"Unknown check: {monitor.check}",
+                        details={"check": monitor.check},
                     )
             except Exception as e:
                 result = MonitorResult(
@@ -457,4 +467,156 @@ class MonitorChecker:
             severity="critical",
             message=message,
             details=details,
+        )
+
+    def _check_screening_liveness(self, params: dict[str, Any]) -> MonitorResult:
+        """心跳检查：最近一次筛选是否停更（cron/流水线是否还在跑）。
+
+        仅看业务正确性层面的"是否还在产出"，不重复数据新鲜度检查。
+        """
+        ledger_path = Path(str(params.get("ledger_path", "data/predictions.jsonl")))
+        max_staleness = int(params.get("max_staleness_trading_days", 2))
+        if max_staleness < 0:
+            raise ValueError("max_staleness_trading_days must be non-negative")
+
+        if not ledger_path.exists():
+            return MonitorResult(
+                name="screening_liveness",
+                triggered=False,
+                severity="warning",
+                message="账本文件不存在，无法判断筛选心跳（CI 环境可能无持久数据）",
+                details={"ledger_path": str(ledger_path)},
+            )
+
+        try:
+            rows = read_ledger(str(ledger_path))
+        except Exception as e:
+            return MonitorResult(
+                name="screening_liveness",
+                triggered=True,
+                severity="critical",
+                message=f"读取账本失败: {e}",
+                details={"error": str(e)},
+            )
+
+        signal_dates = [
+            str(r.get("signal_date", "")).strip()
+            for r in rows
+            if str(r.get("signal_date", "")).strip()
+        ]
+        if not signal_dates:
+            return MonitorResult(
+                name="screening_liveness",
+                triggered=True,
+                severity="critical",
+                message="账本无任何 signal_date 记录，筛选可能从未成功运行",
+                details={"ledger_path": str(ledger_path)},
+            )
+
+        latest = max(signal_dates)
+        latest_date = date.fromisoformat(latest)
+        today = today_shanghai()
+        lag = trading_day_lag(latest_date, today)
+        if lag > max_staleness:
+            return MonitorResult(
+                name="screening_liveness",
+                triggered=True,
+                severity="critical",
+                message=(
+                    f"筛选疑似停更：最近信号日 {latest}，滞后 {lag} 个交易日"
+                    f"（阈值 {max_staleness}）"
+                ),
+                details={
+                    "latest_signal_date": latest,
+                    "trading_lag_days": lag,
+                    "max_staleness_trading_days": max_staleness,
+                },
+            )
+        return MonitorResult(
+            name="screening_liveness",
+            triggered=False,
+            severity="critical",
+            message=f"筛选心跳正常，最近信号日 {latest}（滞后 {lag} 个交易日）",
+            details={"latest_signal_date": latest, "trading_lag_days": lag},
+        )
+
+    def _check_empty_picks(self, params: dict[str, Any]) -> MonitorResult:
+        """空结果检查：最近一次筛选是否产出 0 只可交易标的却不报警。
+
+        注意：这是业务正确性盲区的关键修复——跑成功但 0 标的，
+        walk-forward 与新鲜度检查都不会触发，此处显式补上。
+        """
+        ledger_path = Path(str(params.get("ledger_path", "data/predictions.jsonl")))
+        paper_path = Path(
+            str(params.get("paper_ledger_path", "data/paper_trades.jsonl"))
+        )
+        if not ledger_path.exists():
+            return MonitorResult(
+                name="empty_picks",
+                triggered=False,
+                severity="warning",
+                message="账本不存在，跳过空结果检查",
+                details={"ledger_path": str(ledger_path)},
+            )
+
+        try:
+            rows = read_ledger(str(ledger_path))
+        except Exception as e:
+            return MonitorResult(
+                name="empty_picks",
+                triggered=True,
+                severity="warning",
+                message=f"读取账本失败: {e}",
+                details={"error": str(e)},
+            )
+
+        signal_dates = [
+            str(r.get("signal_date", "")).strip()
+            for r in rows
+            if str(r.get("signal_date", "")).strip()
+        ]
+        if not signal_dates:
+            return MonitorResult(
+                name="empty_picks",
+                triggered=False,
+                severity="warning",
+                message="账本无信号日期，跳过空结果检查",
+            )
+
+        latest = max(signal_dates)
+        latest_rows = [
+            r for r in rows if str(r.get("signal_date", "")).strip() == latest
+        ]
+        tradable = [
+            r
+            for r in latest_rows
+            if is_tradable_rating(str(r.get("rating", "")).strip())
+            and is_ledger_row_paper_review_eligible(r)
+        ]
+
+        paper_rows: list[dict] = []
+        if paper_path.exists():
+            try:
+                paper_rows = [
+                    r
+                    for r in read_paper_trades(str(paper_path))
+                    if str(r.get("signal_date", "")).strip() == latest
+                ]
+            except Exception:
+                paper_rows = []
+
+        if not tradable and not paper_rows:
+            return MonitorResult(
+                name="empty_picks",
+                triggered=True,
+                severity="warning",
+                message=f"最近一次筛选（{latest}）未产出任何可交易标的",
+                details={"signal_date": latest},
+            )
+        return MonitorResult(
+            name="empty_picks",
+            triggered=False,
+            severity="warning",
+            message=f"最近一次筛选（{latest}）产出 {len(tradable)} 只可交易标的",
+            details={"signal_date": latest, "tradable": len(tradable)},
         )

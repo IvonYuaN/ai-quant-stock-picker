@@ -43,3 +43,21 @@ monitors:
       status_path: data/walkforward_production_status.json
       max_age_days: 35
     severity: "critical"
+
+  - name: "screening_liveness"
+    description: "筛选心跳：最近一次筛选是否停更（cron/流水线存活）"
+    enabled: true
+    check: "screening_liveness"
+    params:
+      ledger_path: data/predictions.jsonl
+      max_staleness_trading_days: 2
+    severity: "critical"
+
+  - name: "empty_picks"
+    description: "最近一次筛选未产出可交易标的却未报警"
+    enabled: true
+    check: "empty_picks"
+    params:
+      ledger_path: data/predictions.jsonl
+      paper_ledger_path: data/paper_trades.jsonl
+    severity: "warning"
