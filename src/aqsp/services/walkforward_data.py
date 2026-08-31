@@ -131,9 +131,9 @@ def fetch_walkforward_frames(
         if source == "sqlite_db":
             available = src.get_available_symbols()
             symbols = [symbol for symbol in symbols if symbol in available]
-            prefiltered = str(
-                os.environ.get(_SQLITE_PREFILTERED_SYMBOLS_ENV, "")
-            ).strip().lower()
+            prefiltered = (
+                str(os.environ.get(_SQLITE_PREFILTERED_SYMBOLS_ENV, "")).strip().lower()
+            )
             if hasattr(src, "get_symbols_with_daily_coverage") and prefiltered not in {
                 "1",
                 "true",

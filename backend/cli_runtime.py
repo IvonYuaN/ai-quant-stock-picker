@@ -28,27 +28,58 @@ _CLI_DEFS: dict[str, dict] = {
         "delivery": "system-file",
         # -p 非交互、纯文本输出、系统提示词走文件；禁掉所有工具（只让它把问题答成文字，不读文件/联网/执行）
         "build_args": lambda sys_file: [
-            "-p", "--output-format", "text", "--system-prompt-file", sys_file,
-            "--disallowedTools", "Read", "Write", "Edit", "Glob", "Grep", "Bash",
-            "NotebookEdit", "WebFetch", "WebSearch", "TodoWrite", "Task",
+            "-p",
+            "--output-format",
+            "text",
+            "--system-prompt-file",
+            sys_file,
+            "--disallowedTools",
+            "Read",
+            "Write",
+            "Edit",
+            "Glob",
+            "Grep",
+            "Bash",
+            "NotebookEdit",
+            "WebFetch",
+            "WebSearch",
+            "TodoWrite",
+            "Task",
         ],
         "env": {},
     },
-    "qwen": {"bins": ["qwen"], "delivery": "stdin", "build_args": lambda _: ["--yolo"], "env": {}},
+    "qwen": {
+        "bins": ["qwen"],
+        "delivery": "stdin",
+        "build_args": lambda _: ["--yolo"],
+        "env": {},
+    },
     # 注：Gemini CLI 已停止对个人版 Gemini Code Assist 的支持（登录报 "This client is no
     # longer supported for Gemini Code Assist for individuals"），故已从订阅接入中移除。
-    "deepseek": {"bins": ["deepseek", "codewhale"], "delivery": "arg",
-                 "build_args": lambda _: ["exec", "--auto"], "env": {}},
+    "deepseek": {
+        "bins": ["deepseek", "codewhale"],
+        "delivery": "arg",
+        "build_args": lambda _: ["exec", "--auto"],
+        "env": {},
+    },
     # Codex：codex exec 默认纯文本（进度走 stderr、最终答案走 stdout）；`-` 从 stdin 读提示词，
     # --skip-git-repo-check 跳过 git 检查（我们在临时目录跑）。复用本机 `codex login` 的订阅登录态。
-    "codex": {"bins": ["codex"], "delivery": "stdin",
-              "build_args": lambda _: ["exec", "--skip-git-repo-check", "-"], "env": {}},
+    "codex": {
+        "bins": ["codex"],
+        "delivery": "stdin",
+        "build_args": lambda _: ["exec", "--skip-git-repo-check", "-"],
+        "env": {},
+    },
 }
 
 _EXTRA_PATH_DIRS = [
-    "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin",
-    str(Path.home() / ".local/bin"), str(Path.home() / ".npm-global/bin"),
-    str(Path.home() / ".bun/bin"), str(Path.home() / ".deno/bin"),
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    "/usr/bin",
+    str(Path.home() / ".local/bin"),
+    str(Path.home() / ".npm-global/bin"),
+    str(Path.home() / ".bun/bin"),
+    str(Path.home() / ".deno/bin"),
     str(Path.home() / ".yarn/bin"),
 ]
 
@@ -111,7 +142,9 @@ def run_cli(kind: str, system_prompt: str, user_prompt: str) -> str:
             stdin_payload = combined
         else:  # arg
             if len(combined.encode("utf-8")) > _MAX_ARG_BYTES:
-                raise RuntimeError(f"提示词过长，超过 {kind} 的命令行参数上限，请改用 Claude / Qwen 或 API 接入。")
+                raise RuntimeError(
+                    f"提示词过长，超过 {kind} 的命令行参数上限，请改用 Claude / Qwen 或 API 接入。"
+                )
             args = [*d["build_args"](None), combined]
             stdin_payload = None
 
@@ -131,7 +164,9 @@ def run_cli(kind: str, system_prompt: str, user_prompt: str) -> str:
         out = (proc.stdout or "").strip()
         if proc.returncode != 0 and not out:
             err = (proc.stderr or "").strip()[:300]
-            raise RuntimeError(f"{kind} 退出码 {proc.returncode}{'：' + err if err else ''}")
+            raise RuntimeError(
+                f"{kind} 退出码 {proc.returncode}{'：' + err if err else ''}"
+            )
         return out
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
@@ -161,13 +196,21 @@ def run_cli_stream(kind: str, system_prompt: str, user_prompt: str):
             stdin_payload = combined
         else:  # arg
             if len(combined.encode("utf-8")) > _MAX_ARG_BYTES:
-                raise RuntimeError(f"提示词过长，超过 {kind} 的命令行参数上限，请改用 Claude / Qwen 或 API 接入。")
+                raise RuntimeError(
+                    f"提示词过长，超过 {kind} 的命令行参数上限，请改用 Claude / Qwen 或 API 接入。"
+                )
             args = [*d["build_args"](None), combined]
             stdin_payload = None
 
         proc = subprocess.Popen(
-            [bin_path, *args], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL, cwd=tmpdir, env=env, text=True, bufsize=1,
+            [bin_path, *args],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            cwd=tmpdir,
+            env=env,
+            text=True,
+            bufsize=1,
         )
         if stdin_payload is not None:
             try:

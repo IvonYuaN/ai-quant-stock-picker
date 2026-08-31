@@ -60,5 +60,9 @@ def test_simulate_variant_rejects_suspended_and_price_limit_orders():
             VariantOrder("2026-07-03", "AAA", "sell"),
         ],
     )
-    assert [fill.reason for fill in result.fills] == ["limit_up", "suspended", "t_plus_one"]
+    assert [fill.reason for fill in result.fills] == [
+        "limit_up",
+        "suspended",
+        "t_plus_one",
+    ]
     assert result.rejected_orders == 3

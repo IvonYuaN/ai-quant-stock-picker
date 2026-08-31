@@ -291,6 +291,8 @@ def agent_role_viewpoint_buckets(role: AgentRole | str) -> tuple[str, ...]:
 def empty_viewpoint_buckets() -> dict[str, tuple[str, ...]]:
     """Create a stable shape so empty evidence is visible, not silently lost."""
     return {bucket: () for bucket in VIEWPOINT_BUCKET_ORDER}
+
+
 _CROSS_MARKET_SIGNAL_KEYWORDS = (
     "海外",
     "外盘",

@@ -384,7 +384,9 @@ def _ssh(ssh_target: str, remote_command: str) -> subprocess.CompletedProcess[st
     return _run(["ssh", *options, ssh_target, remote_command], timeout_seconds=timeout)
 
 
-def _scp(ssh_target: str, source: str, destination: str) -> subprocess.CompletedProcess[str]:
+def _scp(
+    ssh_target: str, source: str, destination: str
+) -> subprocess.CompletedProcess[str]:
     timeout = float(
         os.getenv(
             "AQSP_REMOTE_COMMAND_TIMEOUT_SECONDS",
@@ -595,9 +597,10 @@ def _remote_import_smoke(plan: SyncPlan) -> tuple[str, ...]:
         "    runpy.run_path(script, run_name='__aqsp_runtime_sync_smoke__')\n"
         "    print(f'script:{script}')\n"
     )
-    remote_python = os.environ.get(
-        "AQSP_REMOTE_PYTHON", ".venv/bin/python"
-    ).strip() or ".venv/bin/python"
+    remote_python = (
+        os.environ.get("AQSP_REMOTE_PYTHON", ".venv/bin/python").strip()
+        or ".venv/bin/python"
+    )
     command = (
         f"cd {shlex.quote(plan.remote_root)} && "
         f"PYTHONPATH=src:. {shlex.quote(remote_python)} - <<'PY'\n"

@@ -2178,9 +2178,7 @@ def test_check_before_live_blocks_non_http_webhook_url(tmp_path: Path) -> None:
 def test_check_before_live_blocks_invalid_notify_mode(tmp_path: Path) -> None:
     _prepare_ready_runtime(tmp_path)
     (tmp_path / ".env").write_text(
-        "AQSP_NOTIFY=true\n"
-        "AQSP_NOTIFY_MODE=serverchan\n"
-        "SERVERCHAN_SENDKEY=test\n",
+        "AQSP_NOTIFY=true\nAQSP_NOTIFY_MODE=serverchan\nSERVERCHAN_SENDKEY=test\n",
         encoding="utf-8",
     )
 

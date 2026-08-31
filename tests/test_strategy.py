@@ -88,7 +88,9 @@ def test_apply_candidate_quality_gate_removes_blocked_and_marks_observation() ->
             metrics={"quality_gate_status": action, "quality_gate_reasons": ("test",)},
         )
 
-    kept = apply_candidate_quality_gate([pick("OBS", "observe"), pick("BAD", "blocked")])
+    kept = apply_candidate_quality_gate(
+        [pick("OBS", "observe"), pick("BAD", "blocked")]
+    )
 
     assert [item.symbol for item in kept] == ["OBS"]
     assert kept[0].metrics["paper_review_eligible"] is False
@@ -549,9 +551,16 @@ def test_score_symbol_applies_screening_strategy_weights() -> None:
     assert boosted is not None
     assert "rps_momentum" in base.strategies
     assert boosted.score > base.score
-    assert base.metrics["score_breakdown"]["rps_momentum"]["weight"] == pytest.approx(1.0)
-    assert boosted.metrics["score_breakdown"]["rps_momentum"]["weight"] == pytest.approx(2.0)
-    assert boosted.metrics["score_breakdown"]["rps_momentum"]["weighted_score"] > base.metrics["score_breakdown"]["rps_momentum"]["weighted_score"]
+    assert base.metrics["score_breakdown"]["rps_momentum"]["weight"] == pytest.approx(
+        1.0
+    )
+    assert boosted.metrics["score_breakdown"]["rps_momentum"][
+        "weight"
+    ] == pytest.approx(2.0)
+    assert (
+        boosted.metrics["score_breakdown"]["rps_momentum"]["weighted_score"]
+        > base.metrics["score_breakdown"]["rps_momentum"]["weighted_score"]
+    )
 
 
 def test_score_symbol_exposes_complete_deterministic_score_breakdown() -> None:
@@ -567,7 +576,9 @@ def test_score_symbol_exposes_complete_deterministic_score_breakdown() -> None:
     assert pick is not None
     breakdown = pick.metrics["score_breakdown"]
     assert any(key.startswith("technical.") for key in breakdown)
-    assert "technical.ma_full_bull" in breakdown or "technical.ma_short_bull" in breakdown
+    assert (
+        "technical.ma_full_bull" in breakdown or "technical.ma_short_bull" in breakdown
+    )
     assert pick.metrics["score_breakdown_total"] == pytest.approx(pick.score, abs=0.01)
     assert pick.metrics["score_breakdown_total"] == pytest.approx(
         pick.metrics["score_breakdown_strategy_total"]

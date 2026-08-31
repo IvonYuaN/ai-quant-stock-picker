@@ -38,6 +38,7 @@ class DependencyMissing(RuntimeError):
 # Layer 1 · 行情（腾讯财经，仅标准库，不封 IP）
 # ---------------------------------------------------------------------------
 
+
 def _fetch_gtimg(prefixed_codes: list[str]) -> str:
     url = "https://qt.gtimg.cn/q=" + ",".join(prefixed_codes)
     req = urllib.request.Request(url, headers={"User-Agent": UA})
@@ -103,7 +104,14 @@ def index_quote() -> list[dict]:
     for full in A_INDICES:
         q = parsed.get(full[2:])
         if q:
-            out.append({"name": q["name"], "price": q["price"], "change_pct": q["change_pct"], "change_amt": q["change_amt"]})
+            out.append(
+                {
+                    "name": q["name"],
+                    "price": q["price"],
+                    "change_pct": q["change_pct"],
+                    "change_amt": q["change_amt"],
+                }
+            )
     return out
 
 
@@ -129,12 +137,22 @@ def eastmoney_reports(code: str, max_pages: int = 3) -> list[dict]:
     out: list[dict] = []
     for page in range(1, max_pages + 1):
         params = {
-            "industryCode": "*", "pageSize": "100", "industry": "*",
-            "rating": "*", "ratingChange": "*",
-            "beginTime": "2000-01-01", "endTime": "2030-01-01",
-            "pageNo": str(page), "fields": "", "qType": "0",
-            "orgCode": "", "code": code, "rcode": "",
-            "p": str(page), "pageNum": str(page), "pageNumber": str(page),
+            "industryCode": "*",
+            "pageSize": "100",
+            "industry": "*",
+            "rating": "*",
+            "ratingChange": "*",
+            "beginTime": "2000-01-01",
+            "endTime": "2030-01-01",
+            "pageNo": str(page),
+            "fields": "",
+            "qType": "0",
+            "orgCode": "",
+            "code": code,
+            "rcode": "",
+            "p": str(page),
+            "pageNum": str(page),
+            "pageNumber": str(page),
         }
         r = session.get(_REPORT_API, params=params, timeout=30)
         d = r.json()
@@ -148,7 +166,9 @@ def eastmoney_reports(code: str, max_pages: int = 3) -> list[dict]:
     return out
 
 
-def eastmoney_industry_reports(keywords: list[str] | None = None, days: int = 90, max_pages: int = 3) -> list[dict]:
+def eastmoney_industry_reports(
+    keywords: list[str] | None = None, days: int = 90, max_pages: int = 3
+) -> list[dict]:
     """按行业拉研报（qType=1）——适合产业链 / 主题级检索。keywords 在标题上过滤。"""
     from datetime import date, timedelta
 
@@ -158,11 +178,19 @@ def eastmoney_industry_reports(keywords: list[str] | None = None, days: int = 90
     out: list[dict] = []
     for page in range(1, max_pages + 1):
         params = {
-            "industryCode": "*", "pageSize": "100", "industry": "*",
-            "rating": "*", "ratingChange": "*",
-            "beginTime": begin.isoformat(), "endTime": end.isoformat(),
-            "pageNo": str(page), "fields": "", "qType": "1",
-            "orgCode": "", "code": "", "rcode": "",
+            "industryCode": "*",
+            "pageSize": "100",
+            "industry": "*",
+            "rating": "*",
+            "ratingChange": "*",
+            "beginTime": begin.isoformat(),
+            "endTime": end.isoformat(),
+            "pageNo": str(page),
+            "fields": "",
+            "qType": "1",
+            "orgCode": "",
+            "code": "",
+            "rcode": "",
         }
         r = session.get(_REPORT_API, params=params, timeout=30)
         rows = r.json().get("data") or []
@@ -183,9 +211,11 @@ def pdf_url(info_code: str) -> str:
 # Layer 3/4/5 · akshare 惰性封装（一致预期 / 新闻 / 公告 / 基本面）
 # ---------------------------------------------------------------------------
 
+
 def _akshare():
     try:
         import akshare as ak
+
         return ak
     except ImportError as e:
         raise DependencyMissing("akshare 未安装：pip install akshare") from e
@@ -217,7 +247,11 @@ def individual_info(code: str) -> dict:
 def disclosure(code: str) -> list[dict]:
     """巨潮公告全文列表（akshare cninfo，本环境不稳，保留作备用）。"""
     ak = _akshare()
-    market = "沪市" if code.startswith("6") else ("北交所" if code.startswith("8") else "深市")
+    market = (
+        "沪市"
+        if code.startswith("6")
+        else ("北交所" if code.startswith("8") else "深市")
+    )
     df = ak.stock_zh_a_disclosure_report_cninfo(symbol=code, market=market)
     return df.head(30).to_dict("records") if df is not None and not df.empty else []
 
@@ -228,21 +262,38 @@ def announcements(code: str, limit: int = 15) -> list[dict]:
 
     r = requests.get(
         "https://np-anotice-stock.eastmoney.com/api/security/ann",
-        params={"sr": -1, "page_size": limit, "page_index": 1, "ann_type": "A",
-                "client_source": "web", "stock_list": code, "f_node": 0, "s_node": 0},
-        headers={"User-Agent": UA}, timeout=20,
+        params={
+            "sr": -1,
+            "page_size": limit,
+            "page_index": 1,
+            "ann_type": "A",
+            "client_source": "web",
+            "stock_list": code,
+            "f_node": 0,
+            "s_node": 0,
+        },
+        headers={"User-Agent": UA},
+        timeout=20,
     )
     lst = (r.json().get("data") or {}).get("list") or []
     out = []
     for a in lst:
-        cols = [c.get("column_name") for c in (a.get("columns") or []) if c.get("column_name")]
+        cols = [
+            c.get("column_name")
+            for c in (a.get("columns") or [])
+            if c.get("column_name")
+        ]
         art = a.get("art_code", "")
-        out.append({
-            "date": (a.get("notice_date", "") or "")[:10],
-            "title": a.get("title", ""),
-            "type": cols[0] if cols else "",
-            "url": f"https://data.eastmoney.com/notices/detail/{code}/{art}.html" if art else "",
-        })
+        out.append(
+            {
+                "date": (a.get("notice_date", "") or "")[:10],
+                "title": a.get("title", ""),
+                "type": cols[0] if cols else "",
+                "url": f"https://data.eastmoney.com/notices/detail/{code}/{art}.html"
+                if art
+                else "",
+            }
+        )
     return out
 
 
@@ -250,9 +301,11 @@ def announcements(code: str, limit: int = 15) -> list[dict]:
 # mootdx 惰性封装（K线 / 财务 / F10）
 # ---------------------------------------------------------------------------
 
+
 def _mootdx_client():
     try:
         from mootdx.quotes import Quotes
+
         return Quotes.factory(market="std")
     except ImportError as e:
         raise DependencyMissing("mootdx 未安装：pip install mootdx") from e
@@ -277,6 +330,7 @@ def finance(code: str) -> dict:
 # ---------------------------------------------------------------------------
 # 估值计算
 # ---------------------------------------------------------------------------
+
 
 def calc_peg(pe: float, cagr: float) -> float:
     if cagr <= 0:
@@ -309,10 +363,15 @@ def financials(code: str) -> dict:
 
     return {
         "period": g("报告期"),
-        "revenue": g("营业总收入"), "revenue_yoy": g("营业总收入同比增长率"),
-        "net_profit": g("净利润"), "net_profit_yoy": g("净利润同比增长率"),
-        "eps": g("基本每股收益"), "bvps": g("每股净资产"),
-        "roe": g("净资产收益率"), "gross_margin": g("销售毛利率"), "net_margin": g("销售净利率"),
+        "revenue": g("营业总收入"),
+        "revenue_yoy": g("营业总收入同比增长率"),
+        "net_profit": g("净利润"),
+        "net_profit_yoy": g("净利润同比增长率"),
+        "eps": g("基本每股收益"),
+        "bvps": g("每股净资产"),
+        "roe": g("净资产收益率"),
+        "gross_margin": g("销售毛利率"),
+        "net_margin": g("销售净利率"),
         "op_cf_ps": g("每股经营现金流"),
     }
 
@@ -347,8 +406,11 @@ def valuation_percentile(code: str, period: str = "近五年") -> dict:
             metrics[key] = {
                 "current": round(cur, 2),
                 "percentile": round(below / max(len(s) - 1, 1) * 100, 1),
-                "min": round(s[0], 2), "max": round(s[-1], 2),
-                "p20": round(_q(s, 0.2), 2), "p50": round(_q(s, 0.5), 2), "p80": round(_q(s, 0.8), 2),
+                "min": round(s[0], 2),
+                "max": round(s[-1], 2),
+                "p20": round(_q(s, 0.2), 2),
+                "p50": round(_q(s, 0.5), 2),
+                "p80": round(_q(s, 0.8), 2),
                 "n": len(s),
             }
         except Exception:
@@ -365,10 +427,19 @@ def full_valuation(code: str) -> dict:
 
     price = q["price"]
     out = {
-        "name": q["name"], "code": code, "price": price,
-        "mcap_yi": q["mcap_yi"], "pe_ttm": q["pe_ttm"], "pb": q["pb"],
-        "eps_26e": None, "eps_27e": None, "pe_26e": None,
-        "cagr_pct": None, "peg": None, "digest_years": None, "analyst_count": 0,
+        "name": q["name"],
+        "code": code,
+        "price": price,
+        "mcap_yi": q["mcap_yi"],
+        "pe_ttm": q["pe_ttm"],
+        "pb": q["pb"],
+        "eps_26e": None,
+        "eps_27e": None,
+        "pe_26e": None,
+        "cagr_pct": None,
+        "peg": None,
+        "digest_years": None,
+        "analyst_count": 0,
     }
 
     try:
@@ -422,16 +493,20 @@ def full_valuation(code: str) -> dict:
 # ===========================================================================
 
 _DATACENTER_URL = "https://datacenter-web.eastmoney.com/api/data/v1/get"
-_EM_MIN_INTERVAL = 1.0          # 两次东财请求最小间隔（秒），内置防封节流
+_EM_MIN_INTERVAL = 1.0  # 两次东财请求最小间隔（秒），内置防封节流
 _em_last_call = [0.0]
-_EM_SESSIONS: dict = {}         # {direct(bool): requests.Session}
+_EM_SESSIONS: dict = {}  # {direct(bool): requests.Session}
 
 # 数据层连接模式：国内财经站（东财/腾讯/新浪）本应「直连」——很多用户开着 Clash/V2Ray
 # 科学上网，系统代理会把东财这类国内站路由挂掉（典型：push2.eastmoney.com 的 CONNECT 被掐）。
 # 默认 auto：先试直连、失败再降级走系统代理；探测一次后固定，避免每次都重试。
 # 只有少数「必须靠代理才能出网」的环境需要 VR_DATA_PROXY=1 强制走代理。
 # 注意：这只影响数据层；AI 层（可能要调国外模型）仍走各自的系统代理，不受影响。
-_em_mode = ["proxy" if os.environ.get("VR_DATA_PROXY", "").strip().lower() in ("1", "true", "yes") else "auto"]
+_em_mode = [
+    "proxy"
+    if os.environ.get("VR_DATA_PROXY", "").strip().lower() in ("1", "true", "yes")
+    else "auto"
+]
 
 
 def _em_session(direct: bool):
@@ -445,14 +520,22 @@ def _em_session(direct: bool):
 
     s = requests.Session()
     s.headers.update({"User-Agent": UA})
-    s.trust_env = not direct     # 直连会话不读环境里的代理配置
+    s.trust_env = not direct  # 直连会话不读环境里的代理配置
     try:
         from requests.adapters import HTTPAdapter
         from urllib3.util.retry import Retry
 
-        retry = Retry(total=0) if direct else Retry(
-            total=3, connect=3, backoff_factor=0.6,
-            status_forcelist=[429, 500, 502, 503, 504], allowed_methods=["GET"])
+        retry = (
+            Retry(total=0)
+            if direct
+            else Retry(
+                total=3,
+                connect=3,
+                backoff_factor=0.6,
+                status_forcelist=[429, 500, 502, 503, 504],
+                allowed_methods=["GET"],
+            )
+        )
         adapter = HTTPAdapter(max_retries=retry)
         s.mount("https://", adapter)
         s.mount("http://", adapter)
@@ -462,7 +545,9 @@ def _em_session(direct: bool):
     return s
 
 
-def em_get(url: str, params: dict | None = None, headers: dict | None = None, timeout: int = 15):
+def em_get(
+    url: str, params: dict | None = None, headers: dict | None = None, timeout: int = 15
+):
     """东财统一请求入口：串行限流 + **直连优先、失败降级系统代理**（避免科学上网代理挂掉国内站）。
 
     第一次请求探测：先直连（短超时、不重试），成功即固定走直连；失败则降级走系统代理并固定。
@@ -474,14 +559,20 @@ def em_get(url: str, params: dict | None = None, headers: dict | None = None, ti
     try:
         mode = _em_mode[0]
         if mode != "auto":
-            return _em_session(mode == "direct").get(url, params=params, headers=headers, timeout=timeout)
+            return _em_session(mode == "direct").get(
+                url, params=params, headers=headers, timeout=timeout
+            )
         # auto：先直连，成功固定 direct；直连失败再走系统代理、成功固定 proxy。
         try:
-            r = _em_session(True).get(url, params=params, headers=headers, timeout=min(timeout, 8))
+            r = _em_session(True).get(
+                url, params=params, headers=headers, timeout=min(timeout, 8)
+            )
             _em_mode[0] = "direct"
             return r
         except Exception:
-            r = _em_session(False).get(url, params=params, headers=headers, timeout=timeout)
+            r = _em_session(False).get(
+                url, params=params, headers=headers, timeout=timeout
+            )
             _em_mode[0] = "proxy"
             return r
     finally:
@@ -502,8 +593,14 @@ def em_zt_topic_pool(endpoint: str, date: str, sort: str = "fbt:asc") -> list[di
     date: YYYYMMDD 交易日。非交易日 / 参数错 → []。
     池内每项字段含 lbc(连板数) / zbc(炸板次数) / hybk(行业) 等。"""
     url = f"https://push2ex.eastmoney.com/{endpoint}"
-    params = {"ut": _ZTB_UT, "dpt": "wz.ztzt", "Pageindex": 0,
-              "pagesize": 10000, "sort": sort, "date": date}
+    params = {
+        "ut": _ZTB_UT,
+        "dpt": "wz.ztzt",
+        "Pageindex": 0,
+        "pagesize": 10000,
+        "sort": sort,
+        "date": date,
+    }
     headers = {"User-Agent": UA, "Referer": "https://quote.eastmoney.com/"}
     try:
         r = em_get(url, params=params, headers=headers, timeout=10)
@@ -525,34 +622,65 @@ def market_turnover_rank(n: int = 20) -> list[dict]:
     float_cap(流通市值,元) / industry。
     ⚠️ 这是客观公开榜单数据（东财/同花顺同款），产品侧只做客观展示——非推荐、非预测、不评分。
     """
-    params = {"pn": 1, "pz": n, "po": 1, "np": 1, "fltt": 2, "invt": 2, "fid": "f6",
-              "fs": "m:0 t:6,m:0 t:80,m:1 t:2,m:1 t:23,m:0 t:81 s:2048",
-              "fields": "f12,f14,f2,f3,f6,f20,f21,f100"}
+    params = {
+        "pn": 1,
+        "pz": n,
+        "po": 1,
+        "np": 1,
+        "fltt": 2,
+        "invt": 2,
+        "fid": "f6",
+        "fs": "m:0 t:6,m:0 t:80,m:1 t:2,m:1 t:23,m:0 t:81 s:2048",
+        "fields": "f12,f14,f2,f3,f6,f20,f21,f100",
+    }
     diff: list[dict] = []
     for host in ("push2.eastmoney.com", "push2delay.eastmoney.com"):
         try:
-            r = em_get(f"https://{host}/api/qt/clist/get", params=params,
-                       headers={"User-Agent": UA}, timeout=12)
+            r = em_get(
+                f"https://{host}/api/qt/clist/get",
+                params=params,
+                headers={"User-Agent": UA},
+                timeout=12,
+            )
             diff = (r.json().get("data") or {}).get("diff") or []
             if diff:
                 break
         except Exception:
             continue
-    return [{
-        "code": str(d.get("f12", "")), "name": d.get("f14", ""),
-        "price": _numf(d.get("f2")), "pct": _numf(d.get("f3")),
-        "amount": _numf(d.get("f6")), "mcap": _numf(d.get("f20")),
-        "float_cap": _numf(d.get("f21")), "industry": d.get("f100", "") or "",
-    } for d in diff]
+    return [
+        {
+            "code": str(d.get("f12", "")),
+            "name": d.get("f14", ""),
+            "price": _numf(d.get("f2")),
+            "pct": _numf(d.get("f3")),
+            "amount": _numf(d.get("f6")),
+            "mcap": _numf(d.get("f20")),
+            "float_cap": _numf(d.get("f21")),
+            "industry": d.get("f100", "") or "",
+        }
+        for d in diff
+    ]
 
 
-def eastmoney_datacenter(report_name: str, columns: str = "ALL", filter_str: str = "",
-                         page_size: int = 50, sort_columns: str = "", sort_types: str = "-1") -> list[dict]:
+def eastmoney_datacenter(
+    report_name: str,
+    columns: str = "ALL",
+    filter_str: str = "",
+    page_size: int = 50,
+    sort_columns: str = "",
+    sort_types: str = "-1",
+) -> list[dict]:
     """东财数据中心统一查询 —— 龙虎榜/解禁/融资融券/大宗交易/股东户数/分红 共用（已内置限流）。"""
     params = {
-        "reportName": report_name, "columns": columns, "filter": filter_str,
-        "pageNumber": "1", "pageSize": str(page_size),
-        "sortColumns": sort_columns, "sortTypes": sort_types, "source": "WEB", "client": "WEB",
+        "reportName": report_name,
+        "columns": columns,
+        "filter": filter_str,
+        "pageNumber": "1",
+        "pageSize": str(page_size),
+        "sortColumns": sort_columns,
+        "sortTypes": sort_types,
+        "source": "WEB",
+        "client": "WEB",
     }
     try:
         d = em_get(_DATACENTER_URL, params=params, timeout=15).json()
@@ -566,60 +694,93 @@ def eastmoney_datacenter(report_name: str, columns: str = "ALL", filter_str: str
 def margin_trading(code: str, page_size: int = 30) -> list[dict]:
     """融资融券明细（日级）：融资余额 / 融资买入 / 融券余额 / 两融合计。"""
     data = eastmoney_datacenter(
-        "RPTA_WEB_RZRQ_GGMX", filter_str=f'(SCODE="{code}")',
-        page_size=page_size, sort_columns="DATE", sort_types="-1")
-    return [{
-        "date": str(r.get("DATE", ""))[:10],
-        "rzye": r.get("RZYE", 0), "rzmre": r.get("RZMRE", 0), "rzche": r.get("RZCHE", 0),
-        "rqye": r.get("RQYE", 0), "rqmcl": r.get("RQMCL", 0),
-        "rzrqye": r.get("RZRQYE", 0),
-    } for r in data]
+        "RPTA_WEB_RZRQ_GGMX",
+        filter_str=f'(SCODE="{code}")',
+        page_size=page_size,
+        sort_columns="DATE",
+        sort_types="-1",
+    )
+    return [
+        {
+            "date": str(r.get("DATE", ""))[:10],
+            "rzye": r.get("RZYE", 0),
+            "rzmre": r.get("RZMRE", 0),
+            "rzche": r.get("RZCHE", 0),
+            "rqye": r.get("RQYE", 0),
+            "rqmcl": r.get("RQMCL", 0),
+            "rzrqye": r.get("RZRQYE", 0),
+        }
+        for r in data
+    ]
 
 
 def block_trade(code: str, page_size: int = 20) -> list[dict]:
     """大宗交易：成交价 / 折溢价率 / 量 / 买卖方营业部。"""
     data = eastmoney_datacenter(
-        "RPT_DATA_BLOCKTRADE", filter_str=f'(SECURITY_CODE="{code}")',
-        page_size=page_size, sort_columns="TRADE_DATE", sort_types="-1")
+        "RPT_DATA_BLOCKTRADE",
+        filter_str=f'(SECURITY_CODE="{code}")',
+        page_size=page_size,
+        sort_columns="TRADE_DATE",
+        sort_types="-1",
+    )
     rows = []
     for r in data:
         close = r.get("CLOSE_PRICE") or 0
         deal = r.get("DEAL_PRICE") or 0
-        rows.append({
-            "date": str(r.get("TRADE_DATE", ""))[:10],
-            "price": deal, "close": close,
-            "premium_pct": round((deal / close - 1) * 100, 2) if close else 0,
-            "vol": r.get("DEAL_VOLUME", 0), "amount": r.get("DEAL_AMT", 0),
-            "buyer": r.get("BUYER_NAME", ""), "seller": r.get("SELLER_NAME", ""),
-        })
+        rows.append(
+            {
+                "date": str(r.get("TRADE_DATE", ""))[:10],
+                "price": deal,
+                "close": close,
+                "premium_pct": round((deal / close - 1) * 100, 2) if close else 0,
+                "vol": r.get("DEAL_VOLUME", 0),
+                "amount": r.get("DEAL_AMT", 0),
+                "buyer": r.get("BUYER_NAME", ""),
+                "seller": r.get("SELLER_NAME", ""),
+            }
+        )
     return rows
 
 
 def holder_num_change(code: str, page_size: int = 10) -> list[dict]:
     """股东户数变化（季度级）：户数 / 环比 / 户均持股。持续减少 = 筹码集中。"""
     data = eastmoney_datacenter(
-        "RPT_HOLDERNUMLATEST", filter_str=f'(SECURITY_CODE="{code}")',
-        page_size=page_size, sort_columns="END_DATE", sort_types="-1")
-    return [{
-        "date": str(r.get("END_DATE", ""))[:10],
-        "holder_num": r.get("HOLDER_NUM", 0),
-        "change_ratio": r.get("HOLDER_NUM_RATIO", 0),
-        "avg_shares": r.get("AVG_FREE_SHARES", 0),
-    } for r in data]
+        "RPT_HOLDERNUMLATEST",
+        filter_str=f'(SECURITY_CODE="{code}")',
+        page_size=page_size,
+        sort_columns="END_DATE",
+        sort_types="-1",
+    )
+    return [
+        {
+            "date": str(r.get("END_DATE", ""))[:10],
+            "holder_num": r.get("HOLDER_NUM", 0),
+            "change_ratio": r.get("HOLDER_NUM_RATIO", 0),
+            "avg_shares": r.get("AVG_FREE_SHARES", 0),
+        }
+        for r in data
+    ]
 
 
 def dividend_history(code: str, page_size: int = 20) -> list[dict]:
     """分红送转历史：每股派息（税前）/ 每10股转增 / 每10股送股 / 进度。"""
     data = eastmoney_datacenter(
-        "RPT_SHAREBONUS_DET", filter_str=f'(SECURITY_CODE="{code}")',
-        page_size=page_size, sort_columns="EX_DIVIDEND_DATE", sort_types="-1")
-    return [{
-        "date": str(r.get("EX_DIVIDEND_DATE", ""))[:10],
-        "bonus_rmb": r.get("PRETAX_BONUS_RMB", 0),
-        "transfer_ratio": r.get("TRANSFER_RATIO", 0),
-        "bonus_ratio": r.get("BONUS_RATIO", 0),
-        "plan": r.get("ASSIGN_PROGRESS", ""),
-    } for r in data]
+        "RPT_SHAREBONUS_DET",
+        filter_str=f'(SECURITY_CODE="{code}")',
+        page_size=page_size,
+        sort_columns="EX_DIVIDEND_DATE",
+        sort_types="-1",
+    )
+    return [
+        {
+            "date": str(r.get("EX_DIVIDEND_DATE", ""))[:10],
+            "bonus_rmb": r.get("PRETAX_BONUS_RMB", 0),
+            "transfer_ratio": r.get("TRANSFER_RATIO", 0),
+            "bonus_ratio": r.get("BONUS_RATIO", 0),
+            "plan": r.get("ASSIGN_PROGRESS", ""),
+        }
+        for r in data
+    ]
 
 
 def stock_fund_flow_120d(code: str) -> list[dict]:
@@ -631,44 +792,69 @@ def stock_fund_flow_120d(code: str) -> list[dict]:
         "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f62,f63,f64,f65",
         "lmt": "120",
     }
-    headers = {"User-Agent": UA, "Referer": "https://quote.eastmoney.com/", "Origin": "https://quote.eastmoney.com"}
+    headers = {
+        "User-Agent": UA,
+        "Referer": "https://quote.eastmoney.com/",
+        "Origin": "https://quote.eastmoney.com",
+    }
     try:
-        d = em_get("https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get",
-                   params=params, headers=headers, timeout=15).json()
+        d = em_get(
+            "https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get",
+            params=params,
+            headers=headers,
+            timeout=15,
+        ).json()
     except Exception:
         return []
     rows = []
     for line in d.get("data", {}).get("klines", []):
         p = line.split(",")
         if len(p) >= 6:
+
             def _f(x):
                 try:
                     return float(x) if x not in ("-", "") else 0.0
                 except ValueError:
                     return 0.0
-            rows.append({
-                "date": p[0], "main_net": _f(p[1]), "small_net": _f(p[2]),
-                "mid_net": _f(p[3]), "large_net": _f(p[4]), "super_net": _f(p[5]),
-            })
+
+            rows.append(
+                {
+                    "date": p[0],
+                    "main_net": _f(p[1]),
+                    "small_net": _f(p[2]),
+                    "mid_net": _f(p[3]),
+                    "large_net": _f(p[4]),
+                    "super_net": _f(p[5]),
+                }
+            )
     return rows
 
 
-def dragon_tiger_board(code: str, trade_date: str | None = None, look_back: int = 30) -> dict:
+def dragon_tiger_board(
+    code: str, trade_date: str | None = None, look_back: int = 30
+) -> dict:
     """龙虎榜：该股近期上榜记录 + 最近一次买卖席位 TOP5 + 机构专用席位净买。"""
     trade_date = trade_date or datetime.now().strftime("%Y-%m-%d")
-    start = (datetime.strptime(trade_date, "%Y-%m-%d") - timedelta(days=look_back)).strftime("%Y-%m-%d")
+    start = (
+        datetime.strptime(trade_date, "%Y-%m-%d") - timedelta(days=look_back)
+    ).strftime("%Y-%m-%d")
     records = []
     data = eastmoney_datacenter(
         "RPT_DAILYBILLBOARD_DETAILSNEW",
-        filter_str=f'(TRADE_DATE>=\'{start}\')(TRADE_DATE<=\'{trade_date}\')(SECURITY_CODE="{code}")',
-        page_size=50, sort_columns="TRADE_DATE", sort_types="-1")
+        filter_str=f"(TRADE_DATE>='{start}')(TRADE_DATE<='{trade_date}')(SECURITY_CODE=\"{code}\")",
+        page_size=50,
+        sort_columns="TRADE_DATE",
+        sort_types="-1",
+    )
     for r in data:
-        records.append({
-            "date": str(r.get("TRADE_DATE", ""))[:10],
-            "reason": r.get("EXPLANATION", ""),
-            "net_buy": round((r.get("BILLBOARD_NET_AMT") or 0) / 10000, 1),  # 万元
-            "turnover": round(float(r.get("TURNOVERRATE") or 0), 2),
-        })
+        records.append(
+            {
+                "date": str(r.get("TRADE_DATE", ""))[:10],
+                "reason": r.get("EXPLANATION", ""),
+                "net_buy": round((r.get("BILLBOARD_NET_AMT") or 0) / 10000, 1),  # 万元
+                "turnover": round(float(r.get("TURNOVERRATE") or 0), 2),
+            }
+        )
 
     seats = {"buy": [], "sell": []}
     institution = {"buy_amt": 0.0, "sell_amt": 0.0, "net_amt": 0.0}
@@ -676,22 +862,36 @@ def dragon_tiger_board(code: str, trade_date: str | None = None, look_back: int 
         latest = records[0]["date"]
         buy_data = eastmoney_datacenter(
             "RPT_BILLBOARD_DAILYDETAILSBUY",
-            filter_str=f'(TRADE_DATE=\'{latest}\')(SECURITY_CODE="{code}")',
-            page_size=10, sort_columns="BUY", sort_types="-1")
+            filter_str=f"(TRADE_DATE='{latest}')(SECURITY_CODE=\"{code}\")",
+            page_size=10,
+            sort_columns="BUY",
+            sort_types="-1",
+        )
         sell_data = eastmoney_datacenter(
             "RPT_BILLBOARD_DAILYDETAILSSELL",
-            filter_str=f'(TRADE_DATE=\'{latest}\')(SECURITY_CODE="{code}")',
-            page_size=10, sort_columns="SELL", sort_types="-1")
+            filter_str=f"(TRADE_DATE='{latest}')(SECURITY_CODE=\"{code}\")",
+            page_size=10,
+            sort_columns="SELL",
+            sort_types="-1",
+        )
         for r in buy_data[:5]:
-            seats["buy"].append({"name": r.get("OPERATEDEPT_NAME", ""),
-                                 "buy_amt": round((r.get("BUY") or 0) / 10000, 1),
-                                 "sell_amt": round((r.get("SELL") or 0) / 10000, 1),
-                                 "net": round((r.get("NET") or 0) / 10000, 1)})
+            seats["buy"].append(
+                {
+                    "name": r.get("OPERATEDEPT_NAME", ""),
+                    "buy_amt": round((r.get("BUY") or 0) / 10000, 1),
+                    "sell_amt": round((r.get("SELL") or 0) / 10000, 1),
+                    "net": round((r.get("NET") or 0) / 10000, 1),
+                }
+            )
         for r in sell_data[:5]:
-            seats["sell"].append({"name": r.get("OPERATEDEPT_NAME", ""),
-                                  "buy_amt": round((r.get("BUY") or 0) / 10000, 1),
-                                  "sell_amt": round((r.get("SELL") or 0) / 10000, 1),
-                                  "net": round((r.get("NET") or 0) / 10000, 1)})
+            seats["sell"].append(
+                {
+                    "name": r.get("OPERATEDEPT_NAME", ""),
+                    "buy_amt": round((r.get("BUY") or 0) / 10000, 1),
+                    "sell_amt": round((r.get("SELL") or 0) / 10000, 1),
+                    "net": round((r.get("NET") or 0) / 10000, 1),
+                }
+            )
         for detail, side in ((buy_data, "buy"), (sell_data, "sell")):
             for r in detail:
                 if str(r.get("OPERATEDEPT_CODE", "")) == "0":  # 机构专用席位
@@ -699,52 +899,99 @@ def dragon_tiger_board(code: str, trade_date: str | None = None, look_back: int 
                     institution[f"{side}_amt"] += amt
         institution["buy_amt"] = round(institution["buy_amt"] / 10000, 1)
         institution["sell_amt"] = round(institution["sell_amt"] / 10000, 1)
-        institution["net_amt"] = round(institution["buy_amt"] - institution["sell_amt"], 1)
+        institution["net_amt"] = round(
+            institution["buy_amt"] - institution["sell_amt"], 1
+        )
     return {"records": records, "seats": seats, "institution": institution}
 
 
-def lockup_expiry(code: str, trade_date: str | None = None, forward_days: int = 90) -> dict:
+def lockup_expiry(
+    code: str, trade_date: str | None = None, forward_days: int = 90
+) -> dict:
     """限售解禁日历：历史解禁记录 + 未来 N 天待解禁事件。
 
     字段随东财 2026 改列名同步（a-stock-data §3.6）：旧 LIMITED_STOCK_TYPE/FREE_SHARES_NUM
     已废、致 type/shares 恒空 → 改 FREE_SHARES_TYPE/FREE_SHARES，并补 able_shares（实际可流通股数）。
     """
     trade_date = trade_date or datetime.now().strftime("%Y-%m-%d")
-    history = [{
-        "date": str(r.get("FREE_DATE", ""))[:10], "type": r.get("FREE_SHARES_TYPE", ""),
-        "shares": r.get("FREE_SHARES", 0), "able_shares": r.get("ABLE_FREE_SHARES", 0),
-        "ratio": r.get("FREE_RATIO", 0),
-    } for r in eastmoney_datacenter(
-        "RPT_LIFT_STAGE", filter_str=f'(SECURITY_CODE="{code}")',
-        page_size=15, sort_columns="FREE_DATE", sort_types="-1")]
+    history = [
+        {
+            "date": str(r.get("FREE_DATE", ""))[:10],
+            "type": r.get("FREE_SHARES_TYPE", ""),
+            "shares": r.get("FREE_SHARES", 0),
+            "able_shares": r.get("ABLE_FREE_SHARES", 0),
+            "ratio": r.get("FREE_RATIO", 0),
+        }
+        for r in eastmoney_datacenter(
+            "RPT_LIFT_STAGE",
+            filter_str=f'(SECURITY_CODE="{code}")',
+            page_size=15,
+            sort_columns="FREE_DATE",
+            sort_types="-1",
+        )
+    ]
 
-    end = (datetime.strptime(trade_date, "%Y-%m-%d") + timedelta(days=forward_days)).strftime("%Y-%m-%d")
-    upcoming = [{
-        "date": str(r.get("FREE_DATE", ""))[:10], "type": r.get("FREE_SHARES_TYPE", ""),
-        "shares": r.get("FREE_SHARES", 0), "able_shares": r.get("ABLE_FREE_SHARES", 0),
-        "ratio": r.get("FREE_RATIO", 0),
-    } for r in eastmoney_datacenter(
-        "RPT_LIFT_STAGE",
-        filter_str=f'(SECURITY_CODE="{code}")(FREE_DATE>=\'{trade_date}\')(FREE_DATE<=\'{end}\')',
-        page_size=20, sort_columns="FREE_DATE", sort_types="1")]
+    end = (
+        datetime.strptime(trade_date, "%Y-%m-%d") + timedelta(days=forward_days)
+    ).strftime("%Y-%m-%d")
+    upcoming = [
+        {
+            "date": str(r.get("FREE_DATE", ""))[:10],
+            "type": r.get("FREE_SHARES_TYPE", ""),
+            "shares": r.get("FREE_SHARES", 0),
+            "able_shares": r.get("ABLE_FREE_SHARES", 0),
+            "ratio": r.get("FREE_RATIO", 0),
+        }
+        for r in eastmoney_datacenter(
+            "RPT_LIFT_STAGE",
+            filter_str=f"(SECURITY_CODE=\"{code}\")(FREE_DATE>='{trade_date}')(FREE_DATE<='{end}')",
+            page_size=20,
+            sort_columns="FREE_DATE",
+            sort_types="1",
+        )
+    ]
     return {"history": history, "upcoming": upcoming}
 
 
 def concept_blocks(code: str) -> dict:
     """个股所属板块/概念归属（东财 slist，行业/概念/地域混合，板块名自解释）。"""
     market_code = 1 if code.startswith("6") else 0
-    params = {"fltt": "2", "invt": "2", "secid": f"{market_code}.{code}",
-              "spt": "3", "pi": "0", "pz": "200", "po": "1", "fields": "f12,f14,f3,f128"}
+    params = {
+        "fltt": "2",
+        "invt": "2",
+        "secid": f"{market_code}.{code}",
+        "spt": "3",
+        "pi": "0",
+        "pz": "200",
+        "po": "1",
+        "fields": "f12,f14,f3,f128",
+    }
     headers = {"User-Agent": UA, "Referer": "https://quote.eastmoney.com/"}
     try:
-        d = em_get("https://push2.eastmoney.com/api/qt/slist/get", params=params, headers=headers, timeout=15).json()
+        d = em_get(
+            "https://push2.eastmoney.com/api/qt/slist/get",
+            params=params,
+            headers=headers,
+            timeout=15,
+        ).json()
     except Exception:
         return {"total": 0, "boards": [], "concept_tags": []}
     diff = (d.get("data") or {}).get("diff") or {}
     items = diff.values() if isinstance(diff, dict) else diff
-    boards = [{"name": it.get("f14", ""), "code": it.get("f12", ""),
-               "change_pct": it.get("f3", ""), "lead_stock": it.get("f128", "")} for it in items]
-    return {"total": len(boards), "boards": boards, "concept_tags": [b["name"] for b in boards]}
+    boards = [
+        {
+            "name": it.get("f14", ""),
+            "code": it.get("f12", ""),
+            "change_pct": it.get("f3", ""),
+            "lead_stock": it.get("f128", ""),
+        }
+        for it in items
+    ]
+    return {
+        "total": len(boards),
+        "boards": boards,
+        "concept_tags": [b["name"] for b in boards],
+    }
 
 
 def hot_concepts(code: str) -> list[dict]:
@@ -755,12 +1002,25 @@ def hot_concepts(code: str) -> list[dict]:
         prefix = "SH" if code.startswith("6") else "SZ"
         r = requests.post(
             "https://emappdata.eastmoney.com/stockrank/getHotStockRankList",
-            json={"appId": "appId01", "globalId": "786e4c21-70dc-435a-93bb-38", "srcSecurityCode": prefix + code},
-            headers={"User-Agent": UA}, timeout=10)
+            json={
+                "appId": "appId01",
+                "globalId": "786e4c21-70dc-435a-93bb-38",
+                "srcSecurityCode": prefix + code,
+            },
+            headers={"User-Agent": UA},
+            timeout=10,
+        )
         data = r.json().get("data") or []
     except Exception:
         return []
-    return [{"concept": x.get("conceptName"), "bk": x.get("conceptId"), "hit": x.get("hitCount")} for x in data]
+    return [
+        {
+            "concept": x.get("conceptName"),
+            "bk": x.get("conceptId"),
+            "hit": x.get("hitCount"),
+        }
+        for x in data
+    ]
 
 
 def investor_qa(code: str, page_size: int = 30) -> list[dict]:
@@ -768,38 +1028,76 @@ def investor_qa(code: str, page_size: int = 30) -> list[dict]:
     import requests
 
     try:
-        r1 = requests.post("https://irm.cninfo.com.cn/newircs/index/queryKeyboardInfo",
-                           data={"keyWord": code}, headers={"User-Agent": UA}, timeout=10)
+        r1 = requests.post(
+            "https://irm.cninfo.com.cn/newircs/index/queryKeyboardInfo",
+            data={"keyWord": code},
+            headers={"User-Agent": UA},
+            timeout=10,
+        )
         d1 = r1.json().get("data") or []
         if not d1:
             return []
         org_id = d1[0].get("secid")
-        params = {"_t": 1, "stockcode": code, "orgId": org_id, "pageSize": page_size,
-                  "pageNum": 1, "keyWord": "", "startDay": "", "endDay": ""}
-        rows = requests.post("https://irm.cninfo.com.cn/newircs/company/question",
-                             params=params, headers={"User-Agent": UA}, timeout=10).json().get("rows") or []
+        params = {
+            "_t": 1,
+            "stockcode": code,
+            "orgId": org_id,
+            "pageSize": page_size,
+            "pageNum": 1,
+            "keyWord": "",
+            "startDay": "",
+            "endDay": "",
+        }
+        rows = (
+            requests.post(
+                "https://irm.cninfo.com.cn/newircs/company/question",
+                params=params,
+                headers={"User-Agent": UA},
+                timeout=10,
+            )
+            .json()
+            .get("rows")
+            or []
+        )
     except Exception:
         return []
     out = []
     for it in rows:
         ts = it.get("pubDate")
-        out.append({
-            "company": it.get("companyShortName"),
-            "question": it.get("mainContent"), "answer": it.get("attachedContent"),
-            "answerer": it.get("attachedAuthor"),
-            "ask_time": datetime.fromtimestamp(ts / 1000).strftime("%Y-%m-%d %H:%M") if ts else "",
-        })
+        out.append(
+            {
+                "company": it.get("companyShortName"),
+                "question": it.get("mainContent"),
+                "answer": it.get("attachedContent"),
+                "answerer": it.get("attachedAuthor"),
+                "ask_time": datetime.fromtimestamp(ts / 1000).strftime("%Y-%m-%d %H:%M")
+                if ts
+                else "",
+            }
+        )
     return out
 
 
 def industry_comparison(top_n: int = 20) -> dict:
     """全行业涨跌幅排名（东财行业板块，~100 个行业）：板块级涨跌 / 涨跌家数 / 领涨。"""
-    params = {"pn": "1", "pz": "100", "po": "1", "np": "1", "fltt": "2", "invt": "2",
-              "fid": "f3",  # fid=f3 + po=1：按涨跌幅降序，否则 top/bottom 切片非涨幅序（a-stock-data §3.7）
-              "fs": "m:90+t:2", "fields": "f2,f3,f4,f12,f13,f14,f104,f105,f128,f136,f140,f141,f207"}
+    params = {
+        "pn": "1",
+        "pz": "100",
+        "po": "1",
+        "np": "1",
+        "fltt": "2",
+        "invt": "2",
+        "fid": "f3",  # fid=f3 + po=1：按涨跌幅降序，否则 top/bottom 切片非涨幅序（a-stock-data §3.7）
+        "fs": "m:90+t:2",
+        "fields": "f2,f3,f4,f12,f13,f14,f104,f105,f128,f136,f140,f141,f207",
+    }
     try:
-        d = em_get("https://push2.eastmoney.com/api/qt/clist/get",
-                   params=params, headers={"User-Agent": UA}, timeout=15).json()
+        d = em_get(
+            "https://push2.eastmoney.com/api/qt/clist/get",
+            params=params,
+            headers={"User-Agent": UA},
+            timeout=15,
+        ).json()
     except Exception:
         return {"top": [], "bottom": [], "total": 0}
     items = d.get("data", {}).get("diff", [])
@@ -807,8 +1105,15 @@ def industry_comparison(top_n: int = 20) -> dict:
         items = list(items.values())
     if not items:
         return {"top": [], "bottom": [], "total": 0}
-    rows = [{
-        "rank": i + 1, "name": it.get("f14", ""), "change_pct": it.get("f3", 0),
-        "code": it.get("f12", ""), "up_count": it.get("f104", 0), "down_count": it.get("f105", 0),
-    } for i, it in enumerate(items)]
+    rows = [
+        {
+            "rank": i + 1,
+            "name": it.get("f14", ""),
+            "change_pct": it.get("f3", 0),
+            "code": it.get("f12", ""),
+            "up_count": it.get("f104", 0),
+            "down_count": it.get("f105", 0),
+        }
+        for i, it in enumerate(items)
+    ]
     return {"top": rows[:top_n], "bottom": rows[-top_n:], "total": len(rows)}

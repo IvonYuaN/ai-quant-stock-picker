@@ -41,7 +41,12 @@ def _snapshot() -> dict[str, object]:
             }
         ],
         "summaries": ["测试"],
-        "source": {"effective": "fixture", "latest_trade_date": "2026-07-17", "lag_days": 0, "status": "fresh"},
+        "source": {
+            "effective": "fixture",
+            "latest_trade_date": "2026-07-17",
+            "lag_days": 0,
+            "status": "fresh",
+        },
         "coldstart": {"status": "ready", "detail": "fixture"},
         "messages": [
             {

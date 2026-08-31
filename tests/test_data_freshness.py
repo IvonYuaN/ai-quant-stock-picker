@@ -51,9 +51,7 @@ def test_data_freshness_rejects_empty_frames_explicitly() -> None:
 
 
 def test_data_freshness_uses_trade_day_lag_on_weekend(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "aqsp.data.freshness.today_shanghai", lambda: date(2026, 5, 31)
-    )
+    monkeypatch.setattr("aqsp.data.freshness.today_shanghai", lambda: date(2026, 5, 31))
     monkeypatch.setattr(
         "aqsp.data.freshness.load_optional_trade_calendar", lambda *_args: None
     )
@@ -65,9 +63,7 @@ def test_data_freshness_uses_trade_day_lag_on_weekend(monkeypatch) -> None:
 
 
 def test_data_freshness_uses_supplied_holiday_calendar(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "aqsp.data.freshness.today_shanghai", lambda: date(2026, 10, 2)
-    )
+    monkeypatch.setattr("aqsp.data.freshness.today_shanghai", lambda: date(2026, 10, 2))
     monkeypatch.setattr(
         "aqsp.data.freshness.load_optional_trade_calendar",
         lambda *_args: pd.DataFrame(

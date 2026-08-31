@@ -515,9 +515,7 @@ class SystemRiskManager:
             snapshot_date = snapshot.date.isoformat()
             last_trigger_date = str(state.get("last_trigger_date") or "")
             if last_trigger_date != snapshot_date:
-                state["consecutive_triggers"] = (
-                    state.get("consecutive_triggers", 0) + 1
-                )
+                state["consecutive_triggers"] = state.get("consecutive_triggers", 0) + 1
                 state["last_trigger_date"] = snapshot_date
         else:
             state["consecutive_triggers"] = 0

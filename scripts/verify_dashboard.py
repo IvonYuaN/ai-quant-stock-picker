@@ -206,9 +206,7 @@ def main():
         return 0
     else:
         print("\n✗ 部分检查失败，请先解决上述问题。")
-        print(
-            "  旧 Streamlit 入口不属于 canonical 生产工作台。"
-        )
+        print("  旧 Streamlit 入口不属于 canonical 生产工作台。")
         return 1
 
 

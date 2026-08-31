@@ -6,7 +6,9 @@ from pathlib import Path
 from scripts.mark_intraday_observation import mark_intraday_observation
 
 
-def test_mark_intraday_observation_marks_fresh_csv_without_ledger(tmp_path: Path) -> None:
+def test_mark_intraday_observation_marks_fresh_csv_without_ledger(
+    tmp_path: Path,
+) -> None:
     csv_path = tmp_path / "intraday.csv"
     report_path = tmp_path / "intraday.md"
     with csv_path.open("w", encoding="utf-8", newline="") as handle:

@@ -242,7 +242,9 @@ class IntradayService:
             thread_name_prefix="aqsp-intraday",
         )
         futures = {
-            executor.submit(self._fetch_intraday_batch, batch, period, method_name): batch
+            executor.submit(
+                self._fetch_intraday_batch, batch, period, method_name
+            ): batch
             for batch, method_name in jobs
         }
         try:

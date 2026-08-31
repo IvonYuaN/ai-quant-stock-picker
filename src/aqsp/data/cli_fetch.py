@@ -78,7 +78,9 @@ def fetch_frames_for_cli_with_metadata(
                     for frame in frames.values():
                         if isinstance(frame, pd.DataFrame):
                             frame.attrs["live_short_missing_symbols"] = tuple(missing)
-                            frame.attrs["live_short_resolved_symbol_count"] = len(symbols)
+                            frame.attrs["live_short_resolved_symbol_count"] = len(
+                                symbols
+                            )
                             frame.attrs["live_short_fetched_frame_count"] = fetched
                 else:
                     fetched = len(symbols)

@@ -102,9 +102,9 @@ def test_static_holiday_overrides_runtime_calendar_previous_and_next_trade_day()
         ]
     )
 
-    assert resolve_previous_trading_day(date(2026, 6, 22), calendar_df=calendar) == date(
-        2026, 6, 18
-    )
+    assert resolve_previous_trading_day(
+        date(2026, 6, 22), calendar_df=calendar
+    ) == date(2026, 6, 18)
     assert resolve_next_trading_day(date(2026, 6, 18), calendar_df=calendar) == date(
         2026, 6, 22
     )

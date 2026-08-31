@@ -56,9 +56,9 @@ def test_load_realtime_symbol_name_map_keeps_vendor_names(monkeypatch) -> None:
     )
     monkeypatch.setattr(cli_mod, "_get_source", lambda _name: source)
 
-    assert cli_mod._load_realtime_symbol_name_map(
-        ["688612", "688618"], "tencent"
-    ) == {"688612": "威迈斯"}
+    assert cli_mod._load_realtime_symbol_name_map(["688612", "688618"], "tencent") == {
+        "688612": "威迈斯"
+    }
 
 
 def test_intraday_debate_coordinator_requires_second_round() -> None:
@@ -1097,7 +1097,9 @@ def test_live_short_rejects_candidate_actual_source() -> None:
     assert "仅可作为 observation 层" in reason
 
 
-def test_force_intraday_observation_keeps_candidate_actionable_when_only_benchmark_missing() -> None:
+def test_force_intraday_observation_keeps_candidate_actionable_when_only_benchmark_missing() -> (
+    None
+):
     import aqsp.cli as cli_mod
     from aqsp.core.types import PickResult
 

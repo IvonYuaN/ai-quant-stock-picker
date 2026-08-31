@@ -4,7 +4,9 @@ import importlib.util
 from pathlib import Path
 
 
-SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "prepare_intraday_batch.py"
+SCRIPT_PATH = (
+    Path(__file__).resolve().parents[1] / "scripts" / "prepare_intraday_batch.py"
+)
 SPEC = importlib.util.spec_from_file_location("prepare_intraday_batch", SCRIPT_PATH)
 assert SPEC is not None and SPEC.loader is not None
 MODULE = importlib.util.module_from_spec(SPEC)

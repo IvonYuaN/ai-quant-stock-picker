@@ -43,7 +43,11 @@ def canonical_regime_from_hmm(
         return "emergency_defensive"
     state = str(hmm_regime or "sideways").strip().lower()
     if state == "bull":
-        return "volatile_bull" if annualized_volatility > volatility_high else "aggressive_bull"
+        return (
+            "volatile_bull"
+            if annualized_volatility > volatility_high
+            else "aggressive_bull"
+        )
     if state == "bear":
         return "defensive_bear"
     return "rotation_sideways"

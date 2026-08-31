@@ -7327,7 +7327,11 @@ def _snapshot_status_bucket(candidate) -> str:
 def _snapshot_display_status(candidate, *, historical: bool = False) -> str:
     """Use archive wording for recommendation labels on historical dates."""
     status = str(candidate.research_status or "").strip()
-    return "历史复核" if historical and _snapshot_status_bucket(candidate) == "推荐" else status
+    return (
+        "历史复核"
+        if historical and _snapshot_status_bucket(candidate) == "推荐"
+        else status
+    )
 
 
 def _snapshot_display_next_step(candidate, *, historical: bool = False) -> str:
@@ -7485,7 +7489,7 @@ def _render_simple_recommendation_panel(
     st.markdown(
         f'<div class="aqsp-board-section">候选卡</div>'
         f'<div class="aqsp-board-section-note">当前筛选: {escape(status_filter)} · '
-        f'{escape(history_label)}只作回看 · 直接展示，不折叠。</div>',
+        f"{escape(history_label)}只作回看 · 直接展示，不折叠。</div>",
         unsafe_allow_html=True,
     )
     if visible_candidates:
@@ -7522,7 +7526,7 @@ def _render_simple_agent_panel(
     history_label = _provider_home_history_label(provider, signal_date)
     st.markdown(
         f'<div class="aqsp-board-section">'
-        f'{escape("历史 Agent 讨论" if history_label == "历史回看" else "Agent 讨论结果")}</div>',
+        f"{escape('历史 Agent 讨论' if history_label == '历史回看' else 'Agent 讨论结果')}</div>",
         unsafe_allow_html=True,
     )
     if not debates:
@@ -7584,7 +7588,7 @@ def _render_simple_today_digest(
     history_label = _provider_home_history_label(provider, signal_date)
     st.markdown(
         f'<div class="aqsp-board-section">'
-        f'{escape("历史消息汇总" if history_label == "历史回看" else "消息汇总")}</div>',
+        f"{escape('历史消息汇总' if history_label == '历史回看' else '消息汇总')}</div>",
         unsafe_allow_html=True,
     )
     digest_lines = _same_day_digest_snapshot_lines(
@@ -7653,7 +7657,7 @@ def _render_simple_home_date_picker(
         marker = "当前日" if date_value == latest_date else "历史回看"
         st.markdown(
             f'<div class="aqsp-simple-date-pill-meta">{escape(marker)} · '
-            f'{escape(date_value)}</div>',
+            f"{escape(date_value)}</div>",
             unsafe_allow_html=True,
         )
         if _stretch_button(
@@ -7770,10 +7774,7 @@ def _render_simple_home_rail(
         status = home_status(signal_date, overview=overview)
     else:
         runtime = getattr(provider, "runtime_overview", lambda _: None)(signal_date)
-        source = (
-            str(getattr(runtime, "effective_source", "") or "").strip()
-            or "未记录"
-        )
+        source = str(getattr(runtime, "effective_source", "") or "").strip() or "未记录"
         status = DashboardHomeStatus(
             label=(
                 "阻塞"
@@ -7936,7 +7937,9 @@ def _snapshot_observation_grid(
         ):
             continue
         cards.append(
-            _snapshot_candidate_card_markup(candidate, historical=historical, observation=True)
+            _snapshot_candidate_card_markup(
+                candidate, historical=historical, observation=True
+            )
         )
     return '<div class="aqsp-simple-candidate-grid">' + "".join(cards) + "</div>"
 
@@ -7954,7 +7957,7 @@ def _snapshot_candidate_card_markup(
     )
     contribution = (
         f'<div class="aqsp-simple-candidate-line">贡献: '
-        f'{escape(_compact_snapshot_text("；".join(candidate.score_breakdown)))}</div>'
+        f"{escape(_compact_snapshot_text('；'.join(candidate.score_breakdown)))}</div>"
         if candidate.score_breakdown
         else ""
     )
@@ -7964,9 +7967,9 @@ def _snapshot_candidate_card_markup(
         f'<div class="aqsp-simple-candidate-name">{escape(_compact_snapshot_text(candidate.display_name))}</div>'
         f'<div class="aqsp-simple-candidate-score">{candidate.score:.1f}</div>'
         f'<div class="aqsp-simple-candidate-line">{escape(_compact_snapshot_text(candidate.context))}</div>'
-        f'{contribution}'
+        f"{contribution}"
         f'<div class="aqsp-simple-candidate-line">{("历史记录" if historical else "下一步")}: '
-        f'{escape(_compact_snapshot_text(_snapshot_display_next_step(candidate, historical=historical)))}</div>'
+        f"{escape(_compact_snapshot_text(_snapshot_display_next_step(candidate, historical=historical)))}</div>"
         "</article>"
     )
 
@@ -8232,9 +8235,7 @@ def _render_snapshot_home_board(
         if _snapshot_is_expired(snapshot, historical=historical):
             _render_snapshot_waiting_card()
         elif selected_date != snapshot.selected_date:
-            _render_snapshot_waiting_card(
-                f"已选择 {selected_date}，等待该日期快照刷新"
-            )
+            _render_snapshot_waiting_card(f"已选择 {selected_date}，等待该日期快照刷新")
         else:
             message_status_label = _snapshot_message_status_label(
                 snapshot.message_status
@@ -8257,7 +8258,9 @@ def _render_snapshot_home_board(
             if snapshot.summaries:
                 conclusion_title = _compact_snapshot_text(snapshot.summaries[0])
             elif historical and non_recommend_candidates:
-                conclusion_title = f"历史日期保留 {len(non_recommend_candidates)} 个候选"
+                conclusion_title = (
+                    f"历史日期保留 {len(non_recommend_candidates)} 个候选"
+                )
             elif recommend_candidates:
                 conclusion_title = f"当天有 {len(recommend_candidates)} 个实时候选"
             elif non_recommend_candidates:
@@ -8320,15 +8323,13 @@ def _render_snapshot_home_board(
                 _render_cockpit_card(
                     kicker="候选卡",
                     title=(
-                        "当前筛选没有候选"
-                        if snapshot.candidates
-                        else "当天暂无候选卡"
+                        "当前筛选没有候选" if snapshot.candidates else "当天暂无候选卡"
                     ),
                     lines=(
                         "左侧切换状态查看观察或阻塞对象。"
                         if snapshot.candidates
-                        else "实时任务尚未产出候选。"
-                    ,),
+                        else "实时任务尚未产出候选。",
+                    ),
                     tone="archive",
                 )
 
@@ -8411,13 +8412,13 @@ def _render_snapshot_home_board(
                 )
 
             message_title = (
-                "历史消息汇总"
-                if history_label == "历史回看"
-                else "当天消息汇总"
-            ) if snapshot.messages else (
-                "历史暂无有效消息事件"
-                if history_label == "历史回看"
-                else "当天暂无有效消息事件"
+                ("历史消息汇总" if history_label == "历史回看" else "当天消息汇总")
+                if snapshot.messages
+                else (
+                    "历史暂无有效消息事件"
+                    if history_label == "历史回看"
+                    else "当天暂无有效消息事件"
+                )
             )
             message_tone = (
                 "focus"
@@ -10382,9 +10383,7 @@ def _render_top_navigation(
         available_task_ids = [row.task_id for row in same_day_rows]
         if not available_task_ids:
             available_task_ids = [option.task_id for option in options]
-        selected_task_id = str(
-            st.session_state.get("dashboard_task_id", "") or ""
-        )
+        selected_task_id = str(st.session_state.get("dashboard_task_id", "") or "")
         if selected_task_id not in available_task_ids:
             selected_task_id = provider.preferred_task_for_date(selected_date)
         st.session_state["dashboard_selected_date"] = selected_date or "最新"

@@ -216,9 +216,7 @@ def test_news_catalysts_cli_writes_structured_runtime_artifact(
         warnings=("国际源超时",),
         event_status="no_valid_news",
     )
-    monkeypatch.setattr(
-        "aqsp.news.build_catalyst_report", lambda **_kwargs: report
-    )
+    monkeypatch.setattr("aqsp.news.build_catalyst_report", lambda **_kwargs: report)
     output = tmp_path / "news.json"
 
     assert (
@@ -440,8 +438,9 @@ def test_run_briefing_rehydrates_candidate_quality_boundary_from_ledger(
     captured: dict[str, object] = {}
     monkeypatch.setattr(
         "aqsp.briefing.enhance_briefing",
-        lambda briefing, enable_llm: captured.setdefault("briefing", briefing)
-        or briefing,
+        lambda briefing, enable_llm: (
+            captured.setdefault("briefing", briefing) or briefing
+        ),
     )
     monkeypatch.setattr(
         "aqsp.briefing.notifier.send_smart_summary_card", lambda briefing: None
@@ -1880,9 +1879,7 @@ def test_serialize_debate_result_preserves_discussion_rounds() -> None:
     payload = cli_mod.serialize_debate_result(result)
 
     assert [item["round_num"] for item in payload["rounds"]] == [1, 2]
-    assert payload["rounds"][1]["opinions"][0]["counterarguments"] == [
-        "量能尚未确认"
-    ]
+    assert payload["rounds"][1]["opinions"][0]["counterarguments"] == ["量能尚未确认"]
 
 
 def test_resolve_pick_debate_roles_adds_policy_role_for_event_context(

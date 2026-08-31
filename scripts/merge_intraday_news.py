@@ -218,16 +218,10 @@ def merge_intraday_news(
                 "observation_only": "true",
                 "paper_review_eligible": "false",
                 "candidate_status": "消息产业链观察",
-                "news_catalyst_title": str(
-                    getattr(watch, "event_title", "") or ""
-                ),
-                "news_catalyst_summary": str(
-                    getattr(watch, "summary", "") or ""
-                ),
+                "news_catalyst_title": str(getattr(watch, "event_title", "") or ""),
+                "news_catalyst_summary": str(getattr(watch, "summary", "") or ""),
                 "news_catalyst_source": str(getattr(watch, "source", "") or ""),
-                "news_catalyst_url": str(
-                    getattr(watch, "source_url", "") or ""
-                ),
+                "news_catalyst_url": str(getattr(watch, "source_url", "") or ""),
                 "news_catalyst_published_at": str(
                     getattr(watch, "published_at", "") or ""
                 ),

@@ -10,6 +10,4 @@ def test_normalize_rss_time_converts_utc_to_shanghai_before_snapshot_storage() -
 
 
 def test_normalize_rss_time_converts_iso_utc_to_shanghai() -> None:
-    assert _normalize_rss_time("2026-07-19T16:30:00Z") == (
-        "2026-07-20T00:30:00+08:00"
-    )
+    assert _normalize_rss_time("2026-07-19T16:30:00Z") == ("2026-07-20T00:30:00+08:00")

@@ -132,7 +132,9 @@ class TencentSource(DataSource):
                 max_workers=workers, thread_name_prefix="aqsp-tencent-daily"
             ) as executor:
                 futures = {
-                    executor.submit(self._fetch_tencent_daily, symbol, start, end): symbol
+                    executor.submit(
+                        self._fetch_tencent_daily, symbol, start, end
+                    ): symbol
                     for symbol in pending
                 }
                 for future in as_completed(futures):
@@ -203,7 +205,11 @@ class TencentSource(DataSource):
         self,
         symbols: list[str],
     ) -> dict[str, dict]:
-        requested = tuple(dict.fromkeys(str(symbol).strip() for symbol in symbols if str(symbol).strip()))
+        requested = tuple(
+            dict.fromkeys(
+                str(symbol).strip() for symbol in symbols if str(symbol).strip()
+            )
+        )
         if not requested:
             raise DataError("tencent 实时行情未请求标的")
         quotes = self._fetch_tencent_quotes_batch(requested)
@@ -211,9 +217,7 @@ class TencentSource(DataSource):
             raise DataError(f"{self.name} 实时行情获取失败: {symbols}")
         return quotes
 
-    def _fetch_tencent_quotes_batch(
-        self, symbols: tuple[str, ...]
-    ) -> dict[str, dict]:
+    def _fetch_tencent_quotes_batch(self, symbols: tuple[str, ...]) -> dict[str, dict]:
         """Fetch a quote batch in one request and retain partial successes.
 
         Tencent's quote endpoint accepts comma-separated market-prefixed
@@ -232,9 +236,7 @@ class TencentSource(DataSource):
                 )
                 quotes = self._parse_tencent_quote_response(response.text)
                 return {
-                    symbol: quotes[symbol]
-                    for symbol in symbols
-                    if symbol in quotes
+                    symbol: quotes[symbol] for symbol in symbols if symbol in quotes
                 }
             except Exception as exc:
                 if attempt < _MAX_RETRIES - 1:
@@ -261,8 +263,16 @@ class TencentSource(DataSource):
                 ask1 = float(parts[19]) if parts[19] else 0.0
                 volume = float(parts[6]) if parts[6] else 0.0
                 amount = float(parts[37]) if parts[37] else 0.0
-                limit_up = float(parts[TENCENT_QUOTE_FIELD_LIMIT_UP]) if parts[TENCENT_QUOTE_FIELD_LIMIT_UP] else None
-                limit_down = float(parts[TENCENT_QUOTE_FIELD_LIMIT_DOWN]) if parts[TENCENT_QUOTE_FIELD_LIMIT_DOWN] else None
+                limit_up = (
+                    float(parts[TENCENT_QUOTE_FIELD_LIMIT_UP])
+                    if parts[TENCENT_QUOTE_FIELD_LIMIT_UP]
+                    else None
+                )
+                limit_down = (
+                    float(parts[TENCENT_QUOTE_FIELD_LIMIT_DOWN])
+                    if parts[TENCENT_QUOTE_FIELD_LIMIT_DOWN]
+                    else None
+                )
             except (TypeError, ValueError):
                 continue
             received_at = now_shanghai().isoformat()
@@ -329,9 +339,7 @@ class TencentSource(DataSource):
             try:
                 self._throttle()
                 market_symbol = (
-                    symbol
-                    if is_index
-                    else f"{_get_market_prefix(symbol)}{symbol}"
+                    symbol if is_index else f"{_get_market_prefix(symbol)}{symbol}"
                 )
                 params = {
                     "param": (

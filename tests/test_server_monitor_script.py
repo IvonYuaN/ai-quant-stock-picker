@@ -18,7 +18,7 @@ def test_server_monitor_script_runs_monitor_with_notify() -> None:
     assert 'export AQSP_GATE_NOTIFY="false"' in script
     assert 'MONITOR_NOTIFY="${AQSP_MONITOR_NOTIFY:-false}"' in script
     assert 'MONITOR_ARGS=( -m aqsp monitor --config "${MONITOR_CONFIG}" )' in script
-    assert 'MONITOR_ARGS+=( --notify )' in script
+    assert "MONITOR_ARGS+=( --notify )" in script
     assert "--notify-critical-only" in script
     assert 'QUIET_HEALTHY="${AQSP_MONITOR_QUIET_HEALTHY:-true}"' in script
     assert "--quiet-healthy" in script

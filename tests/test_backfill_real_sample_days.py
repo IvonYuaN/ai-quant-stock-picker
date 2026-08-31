@@ -190,9 +190,7 @@ def test_fetch_history_window_retries_after_filtering_missing_symbols() -> None:
             batch = list(symbols)
             seen.append(batch)
             if "688981" in batch:
-                raise backfill.DataError(
-                    "tdx_vipdoc 日线获取不完整: 缺少 ['688981']"
-                )
+                raise backfill.DataError("tdx_vipdoc 日线获取不完整: 缺少 ['688981']")
             return {
                 symbol: pd.DataFrame([{"date": "2026-06-23", "close": 1.0}])
                 for symbol in batch

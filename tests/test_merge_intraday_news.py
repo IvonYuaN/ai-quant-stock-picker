@@ -152,9 +152,7 @@ def test_merge_intraday_news_expands_industry_event_using_entity_graph(
             fieldnames=("symbol", "name", "date", "score", "rating"),
         )
         writer.writeheader()
-        writer.writerow(
-            {"symbol": "__RUN__", "name": "run_event", "date": signal_date}
-        )
+        writer.writerow({"symbol": "__RUN__", "name": "run_event", "date": signal_date})
     report = CatalystReport(
         date=signal_date,
         generated_at=generated_at,

@@ -219,9 +219,7 @@ class AkquantWalkForwardEngine:
             return trades
 
         selected = list(
-            strategy.select_stocks(
-                tester._screening_data(signal_data), n=tester.top_n
-            )
+            strategy.select_stocks(tester._screening_data(signal_data), n=tester.top_n)
         )
         executable_data: dict[str, pd.DataFrame] = {}
 
@@ -270,8 +268,7 @@ class AkquantWalkForwardEngine:
         on_bar = _make_akquant_on_bar(
             entry_plan={symbol: 1.0 for symbol in executable_data},
             frame_lengths={
-                symbol: len(test_data[symbol])
-                for symbol in executable_data
+                symbol: len(test_data[symbol]) for symbol in executable_data
             },
             horizon_days=tester.horizon_days,
             stop_loss_pct=tester.stop_loss_pct,

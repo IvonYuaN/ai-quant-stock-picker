@@ -881,11 +881,17 @@ def assign_variant_lifecycle(results: list[dict[str, Any]]) -> None:
                 f"独立入场日 {signal_days}/{MIN_EVOLUTION_SIGNAL_DAYS}，未达到进化门槛"
             )
         elif return_pct <= 0.0 or rank > elimination_cutoff:
-            strategy = item.get("strategy") if isinstance(item.get("strategy"), dict) else {}
+            strategy = (
+                item.get("strategy") if isinstance(item.get("strategy"), dict) else {}
+            )
             evolved_on = str(strategy.get("evolved_on") or "")
-            parent_id = str(item.get("parent_variant_id") or strategy.get("parent_variant_id") or "")
+            parent_id = str(
+                item.get("parent_variant_id") or strategy.get("parent_variant_id") or ""
+            )
             if not evolved_on and parent_id:
-                evolved_on = str(item.get("end_date") or item.get("holdings_date") or "")
+                evolved_on = str(
+                    item.get("end_date") or item.get("holdings_date") or ""
+                )
             evidence_end = str(item.get("end_date") or item.get("holdings_date") or "")
             elapsed = _elapsed_calendar_days(evolved_on, evidence_end)
             if elapsed is not None and elapsed < EVOLUTION_COOLDOWN_CALENDAR_DAYS:

@@ -556,7 +556,9 @@ def test_intraday_refresh_script_uses_isolated_outputs() -> None:
         'rm -f "$INTRADAY_LEDGER" "$INTRADAY_REPORT" "$INTRADAY_OUTPUT_CSV"'
         not in script
     )
-    assert 'RUNTIME_DATA_ROOT="${AQSP_RUNTIME_DATA_ROOT:-${RUNTIME_ROOT}/data}"' in script
+    assert (
+        'RUNTIME_DATA_ROOT="${AQSP_RUNTIME_DATA_ROOT:-${RUNTIME_ROOT}/data}"' in script
+    )
     assert (
         'LOG_DIR="${AQSP_INTRADAY_LOG_DIR:-${RUNTIME_DATA_ROOT}/logs/intraday}"'
         in script
@@ -1451,7 +1453,7 @@ def test_intraday_bridge_marks_failed_attempt_without_blocking_midday_task() -> 
     assert "午盘桥接失败，今日不再重复桥接" in script
     assert 'touch "$AQSP_MIDDAY_MARKER_FILE"' in script
     assert "12:05 午盘任务仍会独立重试" in script
-    assert '午盘任务未真实执行，不写完成标记；后续定时仍可重试' in script
+    assert "午盘任务未真实执行，不写完成标记；后续定时仍可重试" in script
 
 
 def test_intraday_refresh_default_batch_can_rotate_full_market_in_session() -> None:

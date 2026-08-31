@@ -1531,7 +1531,11 @@ def _format_debate_summary(
             provenance = debate_evidence_provenance(result)
             parts.append(
                 "真实消息 "
-                + ("；".join(provenance.real_messages) if provenance.real_messages else "无")
+                + (
+                    "；".join(provenance.real_messages)
+                    if provenance.real_messages
+                    else "无"
+                )
                 + " / 规则传导 "
                 + (
                     "；".join(provenance.rule_transmissions)
@@ -1587,7 +1591,11 @@ def _format_debate_summary(
         provenance = debate_evidence_provenance(result)
         parts.append(
             "真实消息 "
-            + ("；".join(provenance.real_messages) if provenance.real_messages else "无")
+            + (
+                "；".join(provenance.real_messages)
+                if provenance.real_messages
+                else "无"
+            )
             + " / 规则传导 "
             + (
                 "；".join(provenance.rule_transmissions)

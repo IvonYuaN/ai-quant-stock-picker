@@ -339,9 +339,7 @@ class WalkForwardTester:
         ordered_symbols = list(dict.fromkeys(str(symbol) for symbol in symbols))
         if self.benchmark_symbol:
             ordered_symbols = [
-                symbol
-                for symbol in ordered_symbols
-                if symbol != self.benchmark_symbol
+                symbol for symbol in ordered_symbols if symbol != self.benchmark_symbol
             ]
         if not ordered_symbols:
             raise ValueError("No non-benchmark symbols available for streaming run")
@@ -420,10 +418,14 @@ class WalkForwardTester:
                         candidate_train[symbol] = train_batch[symbol]
                         candidate_test[symbol] = test_batch[symbol]
 
-                selected = self._select_stocks(
-                    candidate_signal,
-                    regime=market_regime,
-                ) if candidate_signal else []
+                selected = (
+                    self._select_stocks(
+                        candidate_signal,
+                        regime=market_regime,
+                    )
+                    if candidate_signal
+                    else []
+                )
                 trades = self._run_selected_trades(
                     candidate_train,
                     candidate_test,
@@ -708,9 +710,10 @@ class WalkForwardTester:
                     "benchmark_symbol": benchmark,
                     "thresholds": getattr(self.strategy, "thresholds", None),
                 }
-                if "as_of" in inspect.signature(
-                    detect_runtime_regime_context
-                ).parameters:
+                if (
+                    "as_of"
+                    in inspect.signature(detect_runtime_regime_context).parameters
+                ):
                     detect_kwargs["as_of"] = as_of
                 context = detect_runtime_regime_context(signal_data, **detect_kwargs)
                 regime = canonicalize_regime(str(context.regime or "unknown"))
@@ -767,9 +770,7 @@ class WalkForwardTester:
         )
         return max(0.0, stop_pct), max(0.0, take_profit_pct)
 
-    def _benchmark_symbol_for(
-        self, signal_data: Dict[str, pd.DataFrame]
-    ) -> str | None:
+    def _benchmark_symbol_for(self, signal_data: Dict[str, pd.DataFrame]) -> str | None:
         benchmark = self.benchmark_symbol
         if benchmark is None and "000300" in signal_data:
             benchmark = "000300"
@@ -969,10 +970,16 @@ class WalkForwardTester:
             test_matrix = np.concatenate([blocks[i] for i in test_indices], axis=0)
 
             train_sr = np.array(
-                [_sample_sharpe_ratio(train_matrix[:, j], annualized=False) for j in range(n)]
+                [
+                    _sample_sharpe_ratio(train_matrix[:, j], annualized=False)
+                    for j in range(n)
+                ]
             )
             test_sr = np.array(
-                [_sample_sharpe_ratio(test_matrix[:, j], annualized=False) for j in range(n)]
+                [
+                    _sample_sharpe_ratio(test_matrix[:, j], annualized=False)
+                    for j in range(n)
+                ]
             )
 
             n_star = int(np.argmax(train_sr))

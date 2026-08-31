@@ -381,9 +381,7 @@ def gate_notification_allowed(
     )
     gate_notify_enabled = gate_notify_flag in {"1", "true", "yes", "on"}
     return (
-        normalized in {"daily", "scheduled"}
-        and notify_enabled
-        and gate_notify_enabled
+        normalized in {"daily", "scheduled"} and notify_enabled and gate_notify_enabled
     )
 
 
@@ -437,7 +435,9 @@ def finalize_scheduled_notification(
 ) -> ScheduledNotificationArtifacts:
     output_markdown = markdown
     notify_enabled = bool(args_notify)
-    normalized_task_id = str(task_id or os.getenv("AQSP_RUN_TASK_ID", "")).strip().lower()
+    normalized_task_id = (
+        str(task_id or os.getenv("AQSP_RUN_TASK_ID", "")).strip().lower()
+    )
     is_high_frequency = high_frequency_task(task_id)
     is_gate_task = gate_notification_task(task_id)
     is_manual_task = normalized_task_id == "manual"

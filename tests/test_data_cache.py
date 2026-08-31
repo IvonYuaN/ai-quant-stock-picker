@@ -310,16 +310,22 @@ def test_cache_targeted_cleanup_preserves_historical_rows(tmp_path):
     deleted = cache.clear_expired(max_age_hours=0, workloads=("live_short",))
 
     assert deleted == 1
-    assert cache.get_ohlcv(
-        "600000", date(2024, 1, 2), date(2024, 1, 2), source="eastmoney"
-    ) is not None
-    assert cache.get_ohlcv(
-        "600000",
-        date(2024, 1, 2),
-        date(2024, 1, 2),
-        source="eastmoney",
-        workload="live_short",
-    ) is None
+    assert (
+        cache.get_ohlcv(
+            "600000", date(2024, 1, 2), date(2024, 1, 2), source="eastmoney"
+        )
+        is not None
+    )
+    assert (
+        cache.get_ohlcv(
+            "600000",
+            date(2024, 1, 2),
+            date(2024, 1, 2),
+            source="eastmoney",
+            workload="live_short",
+        )
+        is None
+    )
 
 
 def test_adjustment_apply_qfq():

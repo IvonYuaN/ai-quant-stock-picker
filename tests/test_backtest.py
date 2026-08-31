@@ -279,9 +279,7 @@ class TestWalkForwardDataOps:
         seen: dict[str, object] = {}
 
         def fake_detect(frames, *, benchmark_symbol, thresholds):
-            seen["latest"] = max(
-                str(value["date"].max()) for value in frames.values()
-            )
+            seen["latest"] = max(str(value["date"].max()) for value in frames.values())
             seen["benchmark"] = benchmark_symbol
             return RuntimeRegimeContext(
                 regime="volatile_bull",
@@ -291,9 +289,7 @@ class TestWalkForwardDataOps:
                 detector="test",
             )
 
-        monkeypatch.setattr(
-            walk_forward, "detect_runtime_regime_context", fake_detect
-        )
+        monkeypatch.setattr(walk_forward, "detect_runtime_regime_context", fake_detect)
         tester = WalkForwardTester(strategy=object(), benchmark_symbol="000300")
         frame = pd.DataFrame(
             {
@@ -330,9 +326,11 @@ class TestWalkForwardDataOps:
                 detector="test",
             ),
         )
-        dates = pd.date_range("2026-01-01", periods=25, freq="B").strftime(
-            "%Y-%m-%d"
-        ).tolist()
+        dates = (
+            pd.date_range("2026-01-01", periods=25, freq="B")
+            .strftime("%Y-%m-%d")
+            .tolist()
+        )
         next_date = pd.date_range("2026-01-01", periods=26, freq="B")[-1]
         tester = WalkForwardTester(strategy=Strategy(), benchmark_symbol="000300")
 
@@ -416,9 +414,11 @@ class TestWalkForwardRun:
     def _build_multi_period_data(
         n_days: int = 60, symbols: int = 3
     ) -> dict[str, pd.DataFrame]:
-        dates = pd.date_range("2026-01-01", periods=n_days, freq="B").strftime(
-            "%Y-%m-%d"
-        ).tolist()
+        dates = (
+            pd.date_range("2026-01-01", periods=n_days, freq="B")
+            .strftime("%Y-%m-%d")
+            .tolist()
+        )
         data: dict[str, pd.DataFrame] = {}
         rng = np.random.RandomState(42)
         for i in range(symbols):
@@ -602,9 +602,11 @@ class TestWalkForwardRun:
 
     def test_purge_gap_between_train_and_test(self) -> None:
         n = 60
-        dates = pd.date_range("2026-01-01", periods=n, freq="B").strftime(
-            "%Y-%m-%d"
-        ).tolist()
+        dates = (
+            pd.date_range("2026-01-01", periods=n, freq="B")
+            .strftime("%Y-%m-%d")
+            .tolist()
+        )
         closes = [10.0 + i * 0.05 for i in range(n)]
         opens = closes[:]
         data = {
@@ -1009,11 +1011,10 @@ def test_walkforward_planned_period_count_matches_window_math() -> None:
     assert tester._planned_period_count(0, 707) == 19
 
 
-def test_walkforward_streaming_matches_full_run_when_data_is_loaded_in_batches() -> None:
-    dates = [
-        (date(2024, 1, 1) + timedelta(days=day)).isoformat()
-        for day in range(40)
-    ]
+def test_walkforward_streaming_matches_full_run_when_data_is_loaded_in_batches() -> (
+    None
+):
+    dates = [(date(2024, 1, 1) + timedelta(days=day)).isoformat() for day in range(40)]
     frames = {
         symbol: _make_ohlcv(
             symbol,
@@ -1062,14 +1063,12 @@ def test_walkforward_streaming_matches_full_run_when_data_is_loaded_in_batches()
 
     calls: list[int] = []
 
-    def load_batch(
-        symbols: list[str], start: str, end: str
-    ) -> dict[str, pd.DataFrame]:
+    def load_batch(symbols: list[str], start: str, end: str) -> dict[str, pd.DataFrame]:
         calls.append(len(symbols))
         return {
-            symbol: frames[symbol].loc[
-                (frames[symbol]["date"] >= start) & (frames[symbol]["date"] <= end)
-            ].copy()
+            symbol: frames[symbol]
+            .loc[(frames[symbol]["date"] >= start) & (frames[symbol]["date"] <= end)]
+            .copy()
             for symbol in symbols
         }
 
@@ -1095,10 +1094,7 @@ def test_walkforward_streaming_matches_full_run_when_data_is_loaded_in_batches()
 def test_walkforward_streaming_uses_fixed_benchmark_for_regime_detection(
     monkeypatch,
 ) -> None:
-    dates = [
-        (date(2024, 1, 1) + timedelta(days=day)).isoformat()
-        for day in range(20)
-    ]
+    dates = [(date(2024, 1, 1) + timedelta(days=day)).isoformat() for day in range(20)]
     frames = {
         symbol: _make_ohlcv(
             symbol,

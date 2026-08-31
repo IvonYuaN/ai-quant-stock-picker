@@ -1099,7 +1099,8 @@ def _parse_variant(payload: object) -> AQSPVariant:
         ),
         lifecycle_status=_optional_text(
             item.get("lifecycle_status"), "variant.lifecycle_status"
-        ) or "样本积累",
+        )
+        or "样本积累",
         lifecycle_reason=_optional_text(
             item.get("lifecycle_reason"), "variant.lifecycle_reason"
         ),

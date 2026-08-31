@@ -92,9 +92,7 @@ def mark_intraday_observation(
             continue
         candidate_count += 1
         reasons = [
-            item
-            for item in _text(row.get("quality_gate_reasons")).split(";")
-            if item
+            item for item in _text(row.get("quality_gate_reasons")).split(";") if item
         ]
         if "observation_only" not in reasons:
             reasons.append("observation_only")

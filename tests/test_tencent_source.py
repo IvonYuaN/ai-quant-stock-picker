@@ -268,9 +268,7 @@ def test_tencent_daily_request_keeps_beijing_board_raw_suffix(
         "920186", start=date(2026, 7, 20), end=date(2026, 7, 20)
     )
 
-    assert captured["params"]["param"] == (
-        "bj920186,day,2026-07-20,2026-07-20,640,"
-    )
+    assert captured["params"]["param"] == ("bj920186,day,2026-07-20,2026-07-20,640,")
     assert "qfq" not in captured["params"]["param"]
 
 
@@ -366,7 +364,9 @@ def test_tencent_public_fetch_methods_raise_data_error_when_empty(
     monkeypatch, tencent_source
 ) -> None:
     monkeypatch.setattr(tencent_source, "_fetch_tencent_intraday", lambda *_args: None)
-    monkeypatch.setattr(tencent_source, "_fetch_tencent_quotes_batch", lambda *_args: {})
+    monkeypatch.setattr(
+        tencent_source, "_fetch_tencent_quotes_batch", lambda *_args: {}
+    )
     monkeypatch.setattr(
         tencent_source,
         "_fetch_tencent_daily",

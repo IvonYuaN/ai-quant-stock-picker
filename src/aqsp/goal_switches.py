@@ -59,12 +59,17 @@ class GoalSwitchMatrix:
     def active_tracks(self) -> tuple[GoalTrackState, ...]:
         return tuple(item for item in self.tracks if item.enabled)
 
-    def prioritized_tracks(self, limit: int | None = None) -> tuple[GoalTrackState, ...]:
+    def prioritized_tracks(
+        self, limit: int | None = None
+    ) -> tuple[GoalTrackState, ...]:
         priority_order = {"p0": 0, "p1": 1, "p2": 2, "p3": 3}
         ordered = tuple(
             sorted(
                 self.active_tracks(),
-                key=lambda item: (priority_order.get(item.priority.lower(), 99), item.track_id),
+                key=lambda item: (
+                    priority_order.get(item.priority.lower(), 99),
+                    item.track_id,
+                ),
             )
         )
         if limit is None or limit < 0:
@@ -74,8 +79,7 @@ class GoalSwitchMatrix:
 
 def _goal_switch_override_env_name(switch_id: str) -> str:
     normalized = "".join(
-        char.upper() if char.isalnum() else "_"
-        for char in switch_id.strip()
+        char.upper() if char.isalnum() else "_" for char in switch_id.strip()
     )
     return f"AQSP_GOAL_SWITCH_{normalized}"
 
@@ -172,9 +176,7 @@ def goal_switch_runtime_summary(path: str = "") -> str:
         else "关"
     )
     fallback_label = (
-        "开"
-        if matrix.switch_enabled("realtime_fallback_chain", default=True)
-        else "关"
+        "开" if matrix.switch_enabled("realtime_fallback_chain", default=True) else "关"
     )
     domestic_label = (
         "开"

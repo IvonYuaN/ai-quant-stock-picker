@@ -155,7 +155,14 @@ def test_validate_realtime_quotes_rejects_future_vendor_timestamp() -> None:
         validate_realtime_quotes(
             {"600000": _quote(vendor_ts="2026-07-13T10:01:00+08:00")},
             require_vendor_timestamp=True,
-            now=datetime(2026, 7, 13, 10, 0, tzinfo=datetime.fromisoformat("2026-07-13T10:00:00+08:00").tzinfo),
+            now=datetime(
+                2026,
+                7,
+                13,
+                10,
+                0,
+                tzinfo=datetime.fromisoformat("2026-07-13T10:00:00+08:00").tzinfo,
+            ),
         )
 
 

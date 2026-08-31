@@ -38,9 +38,7 @@ DEFAULT_STATUS_PATH = Path(
     )
 )
 DEFAULT_LOCK_PATH = Path(
-    os.getenv(
-        "AQSP_DEBATE_BACKFILL_LOCK_PATH", "data/backfill_intraday_debate.lock"
-    )
+    os.getenv("AQSP_DEBATE_BACKFILL_LOCK_PATH", "data/backfill_intraday_debate.lock")
 )
 DEFAULT_STALE_LOCK_SECONDS = 30 * 60
 STATUS_RUNNING = "running"
@@ -826,7 +824,9 @@ def _run_candidate_debate(
     # consistent even when runtime configuration asks for one round.
     requested_rounds = max(2, int(runtime.max_rounds))
     reconsideration_evidence = _reconsideration_evidence(pick, frame, data_context)
-    debate_context_lines = market_context_lines + _candidate_technical_context_lines(pick)
+    debate_context_lines = market_context_lines + _candidate_technical_context_lines(
+        pick
+    )
     if requested_rounds >= 2:
         debate_context_lines += reconsideration_evidence
     result = active_coordinator.run_debate(

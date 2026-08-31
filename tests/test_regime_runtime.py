@@ -200,9 +200,7 @@ def test_runtime_hmm_uses_configured_minimum_sample_size(monkeypatch) -> None:
     detect_runtime_regime_context(
         {"000300": _benchmark_frame()},
         benchmark_symbol="000300",
-        thresholds=Thresholds(
-            regime=replace(RegimeThresholds(), min_sample_size=7)
-        ),
+        thresholds=Thresholds(regime=replace(RegimeThresholds(), min_sample_size=7)),
     )
 
     assert captured["min_data_points"] == 7

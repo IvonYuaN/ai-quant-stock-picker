@@ -24,7 +24,9 @@ import astock
 HERE = os.path.dirname(os.path.abspath(__file__))
 _OLD_PF_FILE = os.path.join(HERE, ".cache", "portfolio.json")  # ≤v0.1.1 旧位置
 # CACHE_DIR 名字保留（测试/外部按此名 monkeypatch），实际已是用户数据目录
-CACHE_DIR = os.environ.get("VR_DATA_DIR") or os.path.join(os.path.expanduser("~"), ".vibe-research")
+CACHE_DIR = os.environ.get("VR_DATA_DIR") or os.path.join(
+    os.path.expanduser("~"), ".vibe-research"
+)
 PF_FILE = os.path.join(CACHE_DIR, "portfolio.json")
 BEIJING = timezone(timedelta(hours=8))
 _LOCK = threading.Lock()
@@ -37,10 +39,15 @@ def _migrate_legacy() -> None:
             os.makedirs(CACHE_DIR, exist_ok=True)
             tmp = PF_FILE + ".migrate.tmp"
             shutil.copy2(_OLD_PF_FILE, tmp)
-            os.replace(tmp, PF_FILE)  # 原子落位：复制中断不会留半截 portfolio.json 挡住下次重试
+            os.replace(
+                tmp, PF_FILE
+            )  # 原子落位：复制中断不会留半截 portfolio.json 挡住下次重试
     except OSError as e:
         # 迁移失败不阻塞启动，但要出声——旧数据原样保留在 _OLD_PF_FILE，可手工复制
-        print(f"[vibe-research] 持仓数据迁移失败（旧数据仍在 {_OLD_PF_FILE}）: {e}", file=sys.stderr)
+        print(
+            f"[vibe-research] 持仓数据迁移失败（旧数据仍在 {_OLD_PF_FILE}）: {e}",
+            file=sys.stderr,
+        )
 
 
 _migrate_legacy()
@@ -75,7 +82,11 @@ def add_holding(code: str, shares: float, cost: float) -> dict:
             if h["code"] == code:
                 total = h["shares"] + shares
                 # 4 位小数：ETF/基金成本常见 3-4 位（issue #13），2-3 位会让市值/盈亏对不上账
-                h["cost"] = round((h["shares"] * h["cost"] + shares * cost) / total, 4) if total else cost
+                h["cost"] = (
+                    round((h["shares"] * h["cost"] + shares * cost) / total, 4)
+                    if total
+                    else cost
+                )
                 h["shares"] = total
                 break
         else:
@@ -92,7 +103,9 @@ def remove_holding(code: str) -> dict:
     return get_portfolio()
 
 
-def close_position(code: str, date: str, price: float, shares: float, cost: float) -> dict:
+def close_position(
+    code: str, date: str, price: float, shares: float, cost: float
+) -> dict:
     """记一笔已清仓：算已实现盈亏，存入 closed 列表。"""
     pnl = (price - cost) * shares
     with _LOCK:
@@ -102,11 +115,18 @@ def close_position(code: str, date: str, price: float, shares: float, cost: floa
             name = astock.tencent_quote([code]).get(code, {}).get("name", code)
         except Exception:
             name = code
-        d["closed"].append({
-            "code": code, "name": name, "date": date, "price": price,
-            "shares": shares, "cost": cost, "pnl": round(pnl, 2),
-            "pnl_pct": round((price - cost) / cost * 100, 2) if cost else 0.0,
-        })
+        d["closed"].append(
+            {
+                "code": code,
+                "name": name,
+                "date": date,
+                "price": price,
+                "shares": shares,
+                "cost": cost,
+                "pnl": round(pnl, 2),
+                "pnl_pct": round((price - cost) / cost * 100, 2) if cost else 0.0,
+            }
+        )
         _save(d)
     return get_portfolio()
 
@@ -138,12 +158,18 @@ def get_portfolio() -> dict:
             mv = price * h["shares"]
             cv = h["cost"] * h["shares"]
             pnl = mv - cv
-            rows.append({
-                "code": h["code"], "name": q.get("name", h["code"]),
-                "price": price, "shares": h["shares"], "cost": h["cost"],
-                "market_value": round(mv, 2), "pnl": round(pnl, 2),
-                "pnl_pct": round(pnl / cv * 100, 2) if cv else 0.0,
-            })
+            rows.append(
+                {
+                    "code": h["code"],
+                    "name": q.get("name", h["code"]),
+                    "price": price,
+                    "shares": h["shares"],
+                    "cost": h["cost"],
+                    "market_value": round(mv, 2),
+                    "pnl": round(pnl, 2),
+                    "pnl_pct": round(pnl / cv * 100, 2) if cv else 0.0,
+                }
+            )
             tmv += mv
             tcost += cv
     total_pnl = tmv - tcost
@@ -151,7 +177,8 @@ def get_portfolio() -> dict:
     return {
         "holdings": rows,
         "totals": {
-            "market_value": round(tmv, 2), "cost": round(tcost, 2),
+            "market_value": round(tmv, 2),
+            "cost": round(tcost, 2),
             "pnl": round(total_pnl, 2),
             "pnl_pct": round(total_pnl / tcost * 100, 2) if tcost else 0.0,
         },
@@ -172,6 +199,7 @@ def _refresh_snapshot() -> None:
 
 def start_scheduler(interval: int = 1800) -> None:
     """每半小时后台刷新一次持仓数据（daemon 线程）。"""
+
     def loop():
         while True:
             time.sleep(interval)
@@ -179,4 +207,5 @@ def start_scheduler(interval: int = 1800) -> None:
                 _refresh_snapshot()
             except Exception:
                 pass
+
     threading.Thread(target=loop, daemon=True).start()
