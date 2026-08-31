@@ -28,7 +28,7 @@
 - 通知：Server 酱、Webhook、Telegram、企业微信、飞书等通道；收盘汇总默认走 `summary`，避免重复轰炸。
 - 服务器：`server_sync_and_run.sh` 自动拉代码并跑批；`install_server_cron.sh` 安装盘中、收盘、监控 cron。
 - 监控：`server_monitor.sh` 和 `aqsp doctor` 可检查运行文件、数据源登录、Tushare、GLM/Agnes、通知通道。
-- CI：本地全量测试最近通过 `658 passed`；GitHub Actions 已做路径过滤和重复运行降噪。
+- CI：测试分为 `live`（需联网）与默认 `not live` 两组；默认 `pytest -m 'not live'` 排除联网用例，避免 CI/本地全量跑时卡死在 live 用例上；完整联网套件用 `pytest -m live` 单独运行。GitHub Actions 已做路径过滤和重复运行降噪。
 
 ## GitHub 仓库说明
 

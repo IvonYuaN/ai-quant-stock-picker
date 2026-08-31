@@ -23,6 +23,8 @@ def _fake_git(monkeypatch, values: dict[tuple[str, ...], tuple[bool, str]]) -> N
 
 def _manifest(root: Path, commit: str = SHA_A) -> Path:
     path = root / ".aqsp-release.json"
+    # 不可变发布需要已校验的 content_digest（防篡改）；非 immutable 模式下该字段惰性忽略。
+    files = checker._release_files_for_digest(root, path)
     path.write_text(
         json.dumps(
             {
@@ -32,6 +34,7 @@ def _manifest(root: Path, commit: str = SHA_A) -> Path:
                 "tree": "tree",
                 "remote": "origin",
                 "remote_url": "https://github.com/example/aqsp.git",
+                "content_digest": checker._content_digest(root, files),
             }
         ),
         encoding="utf-8",
@@ -247,6 +250,7 @@ def test_release_consistency_immutable_release_ignores_remote_and_overlay(
         monkeypatch,
         {
             ("rev-parse", "HEAD"): (False, "git metadata unavailable"),
+            ("rev-parse", "--verify", "refs/remotes/origin/main"): (True, SHA_B),
             ("status", "--porcelain=v1", "--untracked-files=all"): (
                 False,
                 "git metadata unavailable",
@@ -278,6 +282,7 @@ def test_release_consistency_immutable_release_allows_release_generated_files(
         monkeypatch,
         {
             ("rev-parse", "HEAD"): (False, "git metadata unavailable"),
+            ("rev-parse", "--verify", "refs/remotes/origin/main"): (True, SHA_B),
             ("status", "--porcelain=v1", "--untracked-files=all"): (
                 True,
                 "?? .aqsp-release.json\n?? .venv-vibe-research\n",

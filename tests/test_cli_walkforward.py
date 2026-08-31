@@ -856,7 +856,13 @@ class TestCLIDataSources:
         )
 
         ordered = [source.primary.name] + [item.name for item in source.fallbacks[:-1]]
-        assert ordered == ["tencent", "eastmoney", "sina", "akshare"]
+        # online_first 已按 source_factory.build_data_source 的注释有意剔除
+        # eastmoney（其日线 API 单只串行重试会占住 worker 超出盘中共享截止时间），
+        # 计划固定为 tencent -> sina -> akshare -> tdx_vipdoc，且不按 source-health
+        # 重排；见 tests/test_source_factory.py 中 online_first 的两个用例。
+        # 本用例的核心断言不变：即使健康度把 akshare 排到首位，它仍是最后的补充源。
+        assert ordered == ["tencent", "sina", "akshare"]
+        assert ordered[-1] == "akshare"
 
     def test_auto_source_does_not_require_local_vipdoc_at_construction(
         self, monkeypatch

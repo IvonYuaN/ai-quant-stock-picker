@@ -183,8 +183,12 @@ def test_backfill_intraday_debate_writes_current_task_records(
             "disagreement_score": result.disagreement_score,
             "data_status": "available",
             "final_consensus": "split",
+            # 回填强制补齐 bull/bear/risk_control 三条评审车道
+            # (backfill_intraday_debate._ensure_committee_roles)，因此桩造的
+            # 委员会记录必须包含 bear，否则质量审计按 missing_role 拦截。
             "final_vote": {
                 "bull": "bullish",
+                "bear": "bearish",
                 "risk_control": "bearish",
                 "cross_market": "neutral",
             },
@@ -208,6 +212,15 @@ def test_backfill_intraday_debate_writes_current_task_records(
                             "arguments": ["先观察承接。"],
                             "risk_factors": [],
                             "opportunity_factors": ["量价承接"],
+                        },
+                        {
+                            "agent_id": "bear-agent",
+                            "role": "bear",
+                            "stance": "bearish",
+                            "confidence": 0.6,
+                            "arguments": ["涨幅已透支短期空间"],
+                            "risk_factors": ["高位承接不足"],
+                            "opportunity_factors": [],
                         },
                         {
                             "agent_id": "risk-agent",
@@ -242,6 +255,19 @@ def test_backfill_intraday_debate_writes_current_task_records(
                             "opportunity_factors": ["量价承接"],
                             "peer_reviewed_roles": ["risk_control"],
                             "counterarguments": [],
+                            "rebuttal_records": [],
+                        },
+                        {
+                            "agent_id": "bear-agent",
+                            "role": "bear",
+                            "stance": "bearish",
+                            "confidence": 0.6,
+                            "arguments": ["涨幅已透支短期空间"],
+                            "risk_factors": ["高位承接不足"],
+                            "opportunity_factors": [],
+                            "counterarguments": ["承接量能尚未验证"],
+                            "counterargument_roles": ["bull"],
+                            "peer_reviewed_roles": ["bull"],
                             "rebuttal_records": [],
                         },
                         {

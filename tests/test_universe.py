@@ -116,7 +116,10 @@ def test_new_stock_filter():
         "600002": None,
     }
     universe = ["600000", "600001", "600002"]
-    result = filter.filter(universe, listing_dates)
+    # 新股判定必须锚定评估基准日（NewStockFilter 现支持 as_of，与
+    # UniversePool.get_symbols 一致）。此前用例依赖挂钟时间，2026-05-01 这只
+    # 次新股在运行日超过 2026-07-30 后已满 90 天，用例会随时间自然失效。
+    result = filter.filter(universe, listing_dates, as_of=date(2026, 6, 1))
     assert len(result) == 1
     assert "600000" in result
 

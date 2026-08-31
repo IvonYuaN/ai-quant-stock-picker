@@ -43,9 +43,11 @@ def test_ledger_path_exists():
 
 
 def test_ledger_records_have_required_fields():
+    # `__RUN__` 记录有两种合法状态：组合保护触发(aborted) 或 正常完成无候选。
+    valid_run_statuses = {"blocked_by_circuit_breaker", "run_completed_no_picks"}
     for i, rec in _iter_records():
         if _is_run_event(rec):
-            assert rec.get("status") == "blocked_by_circuit_breaker"
+            assert rec.get("status") in valid_run_statuses
             assert rec.get("reason")
             continue
         missing = REQUIRED_LEDGER_FIELDS - set(rec.keys())

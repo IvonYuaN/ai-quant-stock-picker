@@ -50,3 +50,8 @@ select = ["E4", "E7", "E9", "F"]
 [tool.pytest.ini_options]
 testpaths = ["tests", "backend/tests"]
 pythonpath = ["src", "."]
+markers = [
+    "live: 需要真实联网的测试（腾讯行情/akshare/美股/港股等）；用 `pytest -m live` 单独运行，`pytest -m 'not live'` 跳过",
+]
+# 默认排除联网测试，避免 CI/本地全量跑时卡死在 live 用例上
+addopts = "-m 'not live'"
