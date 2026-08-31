@@ -18,6 +18,17 @@ REQUIRED_LEDGER_FIELDS = {
     "signal_day_group",
 }
 
+# 生产代码对 __RUN__ 运行事件实际写入的合法 status 集合
+# （src/aqsp/cli.py 写 blocked_by_circuit_breaker / run_completed_no_picks，
+#  scripts/backfill_real_sample_days.py 写 backfill_no_picks）。
+RUN_EVENT_STATUSES = frozenset(
+    {
+        "blocked_by_circuit_breaker",
+        "run_completed_no_picks",
+        "backfill_no_picks",
+    }
+)
+
 LEDGER_PATH = Path("data/predictions.jsonl")
 
 
@@ -45,8 +56,10 @@ def test_ledger_path_exists():
 def test_ledger_records_have_required_fields():
     for i, rec in _iter_records():
         if _is_run_event(rec):
-            assert rec.get("status") == "blocked_by_circuit_breaker"
-            assert rec.get("reason")
+            assert rec.get("status") in RUN_EVENT_STATUSES, (
+                f"line {i + 1} unexpected run event status: {rec.get('status')!r}"
+            )
+            assert rec.get("reason"), f"line {i + 1} run event missing reason"
             continue
         missing = REQUIRED_LEDGER_FIELDS - set(rec.keys())
         assert not missing, f"line {i + 1} missing: {missing}"
