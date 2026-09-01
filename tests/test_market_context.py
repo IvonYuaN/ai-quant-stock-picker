@@ -2060,6 +2060,127 @@ def test_market_context_does_not_trigger_us_risk_on_on_us_market_name_only() -> 
     )
 
 
+def test_market_context_maps_us_rate_dollar_risk_off_to_high_beta_pressure() -> None:
+    report = CatalystReport(
+        date="2026-07-14",
+        generated_at="2026-07-14T14:35:00+08:00",
+        source_status="ok",
+        events=(
+            CatalystEvent(
+                title="美债收益率上行，美元指数走强",
+                source="新华社",
+                published_at="2026-07-14 09:40:00+08:00",
+                impact="negative",
+                category="海外利率",
+                inference=(
+                    "美债与美元共振上行，抬升全球贴现率并压制A股"
+                    "高估值成长与外资重仓。"
+                ),
+                source_quality_label="多源/权威媒体",
+                source_quality_score=3,
+            ),
+        ),
+        warnings=(),
+    )
+    artifact = build_market_context_artifact(catalyst_report=report)
+    pick = PickResult(
+        symbol="688256",
+        name="寒武纪",
+        date="2026-07-14",
+        close=260.0,
+        score=66.0,
+        rating="watch",
+        entry_type="relative_strength",
+        ideal_buy=260.0,
+        stop_loss=245.0,
+        take_profit=285.0,
+        position="watch",
+        metrics={"sector": "算力", "industry": "AI芯片"},
+    )
+
+    assert any(
+        item.rule_id == "us_rate_dollar_risk_off"
+        for item in artifact.cross_market_implications
+    )
+    assert (
+        artifact.cross_market_overview
+        == "海外利率美元上行压制，重点看 A股高估值成长、外资重仓、港股核心资产"
+    )
+
+    metrics = market_context_metrics_for_pick(pick, artifact)
+    assert metrics["cross_market_primary_theme"] == "海外利率美元上行压制"
+    assert metrics["cross_market_linkage_basis"] == "利率汇率压制估值与外资"
+    assert metrics["cross_market_first_order_targets"] == (
+        "高估值成长",
+        "外资重仓消费医药",
+        "港股核心资产",
+    )
+    assert metrics["cross_market_pressure_targets"] == (
+        "高估值成长",
+        "外资重仓",
+        "港股核心资产",
+    )
+    assert metrics["cross_market_validation_signals"][0] == (
+        "次日高估值成长明显弱于防御方向"
+    )
+    assert metrics["cross_market_invalidation_signals"][0] == (
+        "美债美元上行但A股成长韧性承接"
+    )
+
+    formatted_pick = PickResult(
+        symbol=pick.symbol,
+        name=pick.name,
+        date=pick.date,
+        close=pick.close,
+        score=pick.score,
+        rating=pick.rating,
+        entry_type=pick.entry_type,
+        ideal_buy=pick.ideal_buy,
+        stop_loss=pick.stop_loss,
+        take_profit=pick.take_profit,
+        position=pick.position,
+        metrics=metrics,
+    )
+    assert (
+        format_pick_market_context_summary(formatted_pick)
+        == "重点跟踪｜海外利率美元上行压制｜观察窗 次日-3日"
+    )
+    assert "先看 高估值成长" in format_pick_market_context_chain_summary(formatted_pick)
+
+    pick_lines = market_context_lines_for_pick(pick, artifact)
+    assert any(
+        line.startswith("承压方向: 高估值成长、外资重仓") for line in pick_lines
+    )
+
+
+def test_market_context_does_not_trigger_us_rate_dollar_risk_off_on_name_only() -> None:
+    report = CatalystReport(
+        date="2026-07-14",
+        generated_at="2026-07-14T11:00:00+08:00",
+        source_status="ok",
+        events=(
+            CatalystEvent(
+                title="美元指数成分股调整方案公布",
+                source="新华社",
+                published_at="2026-07-14 10:40:00+08:00",
+                impact="positive",
+                category="指数",
+                inference="指数成分调整不涉及利率汇率方向变化。",
+                source_quality_label="多源/权威媒体",
+                source_quality_score=3,
+            ),
+        ),
+        warnings=(),
+    )
+
+    artifact = build_market_context_artifact(catalyst_report=report)
+
+    assert not any(
+        item.rule_id == "us_rate_dollar_risk_off"
+        for item in artifact.cross_market_implications
+    )
+
+
 def test_market_context_maps_global_liquidity_easing_to_growth_and_gold() -> None:
     report = CatalystReport(
         date="2026-07-07",
