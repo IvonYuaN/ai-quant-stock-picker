@@ -222,6 +222,24 @@ function ActionRail({ snapshot }: { snapshot: AqspSnapshot }) {
   );
 }
 
+// §4: 首页统一「跨市主线 | 先看 | 确认 | 失效」四段式 framing，主线取自 market_context.cross_market[0]
+function CrossMarketLine({ snapshot }: { snapshot: AqspSnapshot }) {
+  const link = snapshot.market_context?.cross_market?.[0] ?? null;
+  if (!link) return null;
+  const line = [link.theme, link.action].filter(Boolean).join(" · ") || link.summary || "暂无跨市主线";
+  const watch = unique([...link.affected_sectors, ...link.transmission_path], 3).join(" → ") || "等待产业链传导信号";
+  const confirm = unique(link.validation_signals, 2).join("；") || "暂无确认信号";
+  const invalid = unique(link.invalidation_signals, 2).join("；") || "暂无失效信号";
+  return (
+    <div className="aqsp-cross-market" aria-label="跨市主线">
+      <div className="aqsp-cm-item aqsp-cm-line"><span className="aqsp-cm-label">跨市主线</span><b>{line}</b>{link.strength && <span className="aqsp-cm-strength">{link.strength}</span>}</div>
+      <div className="aqsp-cm-item"><span className="aqsp-cm-label">先看</span><b>{watch}</b></div>
+      <div className="aqsp-cm-item aqsp-cm-confirm"><span className="aqsp-cm-label">确认</span><b>{confirm}</b></div>
+      <div className="aqsp-cm-item aqsp-cm-invalid"><span className="aqsp-cm-label">失效</span><b>{invalid}</b></div>
+    </div>
+  );
+}
+
 function CandidateCard({ candidate }: { candidate: AqspCandidate }) {
   return (
     <article className="aqsp-card">
@@ -406,7 +424,7 @@ export function AqspResearchWorkspace() {
 
   const conclusion = snapshotConclusion(data);
   const formalSections = {
-    overview: <section id="overview" className="aqsp-module aqsp-module-overview"><SectionHead number={FORMAL_RESEARCH_SECTIONS[0].number} title={FORMAL_RESEARCH_SECTIONS[0].label} count={`${data.candidates.length} 个候选`} /><ActionRail snapshot={data} /><div className="aqsp-summary-conclusion"><Sparkles className="h-5 w-5 shrink-0 text-primary" /><div><strong>{conclusion || "当天结论未记录"}</strong><ResearchChainState snapshot={data} /></div></div><PhaseLane snapshot={data} /><SourceCoverage snapshot={data} /><CandidateResearchTable snapshot={data} /><GateState snapshot={data} /><EmptyToday snapshot={data} /><ResearchChain chain={data.research_chain} candidates={data.candidates} /><StatusLine snapshot={data} /></section>,
+    overview: <section id="overview" className="aqsp-module aqsp-module-overview"><SectionHead number={FORMAL_RESEARCH_SECTIONS[0].number} title={FORMAL_RESEARCH_SECTIONS[0].label} count={`${data.candidates.length} 个候选`} /><CrossMarketLine snapshot={data} /><ActionRail snapshot={data} /><div className="aqsp-summary-conclusion"><Sparkles className="h-5 w-5 shrink-0 text-primary" /><div><strong>{conclusion || "当天结论未记录"}</strong><ResearchChainState snapshot={data} /></div></div><PhaseLane snapshot={data} /><SourceCoverage snapshot={data} /><CandidateResearchTable snapshot={data} /><GateState snapshot={data} /><EmptyToday snapshot={data} /><ResearchChain chain={data.research_chain} candidates={data.candidates} /><StatusLine snapshot={data} /></section>,
     messages: <section id="messages" className="aqsp-module aqsp-module-messages"><SectionHead number={FORMAL_RESEARCH_SECTIONS[1].number} title={FORMAL_RESEARCH_SECTIONS[1].label} count={`${data.messages.length} 条`} />{data.messages.length === 0 ? <MessageEvidenceState snapshot={data} /> : <div className="aqsp-list">{data.messages.map((message, index) => <MessageCard key={`${message.title}-${message.published_at}-${index}`} message={message} />)}</div>}<MarketContext snapshot={data} /></section>,
     candidates: <section id="candidates" className="aqsp-module aqsp-module-candidates"><SectionHead number={FORMAL_RESEARCH_SECTIONS[2].number} title={FORMAL_RESEARCH_SECTIONS[2].label} count={`${data.candidates.length} 个`} />{data.candidates.length === 0 ? <EmptyState title="当天没有候选" detail="当前没有通过数据质量与短线筛选的对象，不用历史候选填充。" /> : <div className="aqsp-list">{data.candidates.map((candidate) => <CandidateCard key={candidate.symbol} candidate={candidate} />)}</div>}</section>,
     discussion: <section id="discussion" className="aqsp-module aqsp-module-discussion"><SectionHead number={FORMAL_RESEARCH_SECTIONS[3].number} title={FORMAL_RESEARCH_SECTIONS[3].label} count={`${data.debates.length} 条`} />{data.debates.length === 0 ? <DiscussionBlockedState chain={data.research_chain} candidates={data.candidates} /> : <div className="aqsp-list">{data.debates.map((result) => <DebateCard key={result.symbol} result={result} />)}</div>}</section>,
