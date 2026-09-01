@@ -26,4 +26,9 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install -e ".[data]"
-      - run: aqsp monitor
+      # 本 workflow 是“冒烟测试”：GitHub Actions 运行器无持久 data/，
+      # 数据依赖型检查会标记为 skipped（不产出业务结论）。
+      # --allow-skipped 显式声明本次不做业务判定，避免“零监控=健康”的假绿。
+      # 权威监控与告警推送由生产服务器 cron（install_server_cron.sh，
+      # 命令 `aqsp monitor --notify`）承载，详见 docs/monitoring-boundary.md。
+      - run: aqsp monitor --allow-skipped

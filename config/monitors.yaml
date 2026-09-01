@@ -1,4 +1,20 @@
-version: "1.1.0"
+# 监控配置 — 版本与运行边界说明
+#
+# 运行边界（重要）：
+# - GitHub Actions 上的 `aqsp monitor` 是“冒烟测试”：运行环境无持久 data/，
+#   所有数据依赖型检查会被标记为 `skipped`（跳过），不产生业务结论。
+#   因此 CI 必须加 `--allow-skipped`，否则会因“零监控”而失败（假绿防护）。
+# - 生产环境的权威监控由本地 Linux 服务器 cron（`install_server_cron.sh`）
+#   承载，使用 `aqsp monitor --notify`：data/ 持久存在，检查真正执行并推送告警。
+# - `skipped` 绝不等于“健康”。被跳过仅代表“本次因数据不可用无法评估”，
+#   调用方（cli.run_monitor）会显式暴露被跳过的数量，CI/观察者不得据此判定系统正常。
+#
+# 数据依赖型检查的 `required` 语义：
+# - required: false → 目标文件缺失时标记为 skipped（CI/无数据环境预期如此）。
+# - required: true  → 目标文件缺失时按真实故障处理（triggered=True）。
+#   当前各项均为 false，以保证无数据 CI 稳定；生产环境若希望把“缓存缺失”
+#   当作严重故障，可在服务器侧使用覆盖配置并将对应项设为 required: true。
+version: "1.2.0"
 monitors:
   - name: "stale_data"
     description: "数据滞后超过阈值"
@@ -7,16 +23,18 @@ monitors:
     params:
       cache_path: data/cache.db
       max_lag_days: 3
+      # CI 无持久 data/，缓存缺失是预期现象 → 标记 skipped 而非误报。
+      # 生产环境 data/cache.db 由数据刷新流水线维护，缓存存在时仍会校验新鲜度。
       required: false
     severity: "critical"
-    
+
   - name: "circuit_breaker"
     description: "组合熔断触发"
     enabled: true
     check: "circuit_breaker"
     params: {}
     severity: "critical"
-    
+
   - name: "win_rate_drop"
     description: "胜率异常下降"
     enabled: true
@@ -25,7 +43,7 @@ monitors:
       min_win_rate: 0.3
       min_samples: 10
     severity: "warning"
-    
+
   - name: "data_source_failure"
     description: "数据源连续失败"
     enabled: true
@@ -42,6 +60,8 @@ monitors:
       gate_path: data/walkforward_gate.json
       status_path: data/walkforward_production_status.json
       max_age_days: 35
+      # gate 缺失在 CI 中标记 skipped（见 checker._check_walkforward_runtime）；
+      # 生产环境 gate 由流水线写入，存在时过期/未完成逻辑照常触发。
     severity: "critical"
 
   - name: "screening_liveness"

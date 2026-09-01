@@ -901,6 +901,15 @@ def main(argv: list[str] | None = None) -> int:
     monitor_cmd.add_argument("--quiet-healthy", action="store_true")
     monitor_cmd.add_argument("--suppress-console-alert", action="store_true")
     monitor_cmd.add_argument("--dry-run", action="store_true")
+    monitor_cmd.add_argument(
+        "--allow-skipped",
+        action="store_true",
+        help=(
+            "显式声明本次允许检查项因数据不可用被跳过（仅用于无持久 data/ 的 "
+            "CI/冒烟场景）。不加此参数时，若全部检查被跳过会以退出码 2 失败，"
+            "避免“绿灯但零监控”的假绿。"
+        ),
+    )
 
     news_cmd = sub.add_parser(
         "news-catalysts", help="summarize high-impact market news catalysts"
@@ -7092,8 +7101,50 @@ def run_monitor(args: argparse.Namespace) -> int:
     )
 
     triggered = [r for r in results if r.triggered]
+    skipped = [r for r in results if getattr(r, "skipped", False)]
+
+    # 被跳过的检查（数据不可用）必须显式暴露：否则 CI 上会出现
+    # “所有监控项正常”的绿灯，而实际上一项都没真正检查过（假绿）。
+    if skipped:
+        print(
+            f"⚠️ {len(skipped)}/{len(results)} 项检查因数据不可用被跳过，"
+            f"未真正执行：{', '.join(r.name for r in skipped)}"
+        )
+        print(
+            "   常见于 CI 环境缺少持久数据目录（data/），或该项配置为 "
+            "required=false。被跳过的检查不代表健康，请勿据此判定系统正常。"
+        )
+
+    # 全部检查都被跳过 = 本次运行未产生任何有效监控结论。
+    # “零监控”绝不等于“健康”：必须显式失败，否则调度器/观察者会把
+    # 一次什么都没查的运行当成系统正常的证据。
+    if results and len(skipped) == len(results):
+        if getattr(args, "allow_skipped", False):
+            print(
+                "ℹ️  --allow-skipped 已开启：本次仅作为 CLI/配置冒烟运行，"
+                "不产生业务监控结论，不判定为失败"
+            )
+        else:
+            print(
+                "❌ 全部监控项均因数据不可用被跳过，本次运行未产生任何有效"
+                "监控结论（零监控 ≠ 健康）"
+            )
+            print(
+                "   若确认这是无持久数据目录的 CI/冒烟环境，请显式加 "
+                "`--allow-skipped` 声明本次不做业务判定；"
+                "否则请检查 data/ 与 config/monitors.yaml 的路径配置。"
+            )
+            return 2
+
     if not triggered:
-        if not getattr(args, "quiet_healthy", False):
+        if skipped:
+            # 有检查被跳过时，绝不说“所有监控项正常”——那会制造假绿。
+            # 明确说明本次无触发告警，但部分检查因数据不可用未做业务判定。
+            print(
+                "⚠️ 监控冒烟通过：无触发告警，但 "
+                f"{len(skipped)}/{len(results)} 项因数据不可用被跳过，未做业务判定"
+            )
+        elif not getattr(args, "quiet_healthy", False):
             print("✅ 所有监控项正常")
         return 0
 

@@ -1,3 +1,13 @@
+"""v2 报告生成器。
+
+⚠️ 生产未接线：本模块目前仅被 `aqsp.reports.__init__` 导出，并被
+`tests/test_reports_v2.py` 覆盖；`src/` 与 `scripts/` 中没有任何生产调用点。
+
+保留原因：它定义了报告数据结构（StrategyReport / PortfolioReport /
+DailyReport）与渲染逻辑，属于待接线功能。请勿删除（会连带丢失测试覆盖），
+但在正式接线前也不要依赖其输出。
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

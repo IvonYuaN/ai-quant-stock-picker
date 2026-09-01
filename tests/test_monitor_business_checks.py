@@ -96,6 +96,7 @@ def test_screening_liveness_missing_file_not_triggered(tmp_path: Path) -> None:
     )
     results = MonitorChecker(str(cfg)).check_all()
     assert results[0].triggered is False
+    assert results[0].skipped is True
     assert "不存在" in results[0].message
 
 
@@ -181,6 +182,25 @@ def test_empty_picks_ok_when_paper_trades_present(tmp_path: Path) -> None:
     )
     results = MonitorChecker(str(cfg)).check_all()
     assert results[0].triggered is False
+
+
+def test_empty_picks_skipped_when_ledger_missing(tmp_path: Path) -> None:
+    cfg = tmp_path / "monitors.yaml"
+    _write_config(
+        cfg,
+        [
+            {
+                "name": "empty_picks",
+                "check": "empty_picks",
+                "params": {"ledger_path": str(tmp_path / "nope.jsonl")},
+                "severity": "warning",
+            }
+        ],
+    )
+    results = MonitorChecker(str(cfg)).check_all()
+    assert results[0].triggered is False
+    assert results[0].skipped is True
+    assert "跳过空结果检查" in results[0].message
 
 
 def test_unknown_check_surfaces_triggered(tmp_path: Path) -> None:

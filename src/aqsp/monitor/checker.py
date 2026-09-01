@@ -27,6 +27,12 @@ class MonitorResult:
     severity: Literal["critical", "warning", "info"]
     message: str
     details: dict[str, Any] = field(default_factory=dict)
+    # True 表示该检查因数据不可用被跳过（如 CI 环境无持久 data/、或
+    # 该项被配置为 required=false 而目标文件缺失）。
+    # 被跳过的检查 triggered 恒为 False，但**绝不代表该项健康**——
+    # 调用方必须显式统计并暴露 skipped 数量，否则 CI 会出现
+    # “绿灯但零监控”的假绿。
+    skipped: bool = False
 
 
 @dataclass(frozen=True)
@@ -109,6 +115,9 @@ class MonitorChecker:
                     severity=monitor.severity,
                     message=result.message,
                     details=result.details,
+                    # 必须透传 skipped：数据依赖型检查在缺失数据时会标记 skipped，
+                    # 若此处重建时丢弃，会导致“被跳过 ≠ 健康”的假绿防护失效。
+                    skipped=result.skipped,
                 )
 
             results.append(result)
@@ -128,6 +137,7 @@ class MonitorChecker:
                     severity="warning",
                     message="数据缓存文件不存在，跳过本地缓存新鲜度检查",
                     details={"cache_path": str(cache_path), "required": required},
+                    skipped=True,
                 )
             return MonitorResult(
                 name="stale_data",
@@ -357,12 +367,20 @@ class MonitorChecker:
             raise ValueError("max_age_days must be non-negative")
 
         if not gate_path.exists():
+            # 数据依赖型检查：在缺少持久数据（CI / 冒烟）环境，gate 本就不该存在。
+            # 此时无法评估“自评估是否过期/未完成”这一业务条件，应标记为 skipped
+            # 而非误报 critical——否则无数据环境的 CI 会稳定红，掩盖真实信号。
+            # 生产环境由流水线保证 gate 被写入，gate 存在时的过期/未完成逻辑照常触发。
             return MonitorResult(
                 name="walkforward_runtime",
-                triggered=True,
-                severity="critical",
-                message="walk-forward gate 文件缺失，无法验证自评估状态",
+                triggered=False,
+                severity="warning",
+                message=(
+                    "walk-forward gate 文件缺失，跳过自评估状态检查"
+                    "（CI/无持久数据环境预期如此；生产环境应由流水线保证 gate 被写入）"
+                ),
                 details={"gate_path": str(gate_path), "status_path": str(status_path)},
+                skipped=True,
             )
 
         try:
@@ -486,6 +504,7 @@ class MonitorChecker:
                 severity="warning",
                 message="账本文件不存在，无法判断筛选心跳（CI 环境可能无持久数据）",
                 details={"ledger_path": str(ledger_path)},
+                skipped=True,
             )
 
         try:
@@ -557,6 +576,7 @@ class MonitorChecker:
                 severity="warning",
                 message="账本不存在，跳过空结果检查",
                 details={"ledger_path": str(ledger_path)},
+                skipped=True,
             )
 
         try:
@@ -581,6 +601,7 @@ class MonitorChecker:
                 triggered=False,
                 severity="warning",
                 message="账本无信号日期，跳过空结果检查",
+                skipped=True,
             )
 
         latest = max(signal_dates)

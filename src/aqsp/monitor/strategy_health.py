@@ -220,57 +220,12 @@ class StrategyHealthMonitor:
 
         return statuses
 
-    def auto_adjust_weights(
-        self,
-        current_weights: dict[str, float],
-        strategies_trades: dict[str, list[Trade]] | None = None,
-        lookback_days: int = 30,
-    ) -> dict[str, float]:
-        """
-        根据健康度自动调整权重。
-
-        规则：
-        - HEALTHY: 保持原权重
-        - WARNING: 权重降低50%
-        - UNHEALTHY: 权重设为0
-
-        Args:
-            current_weights: 当前权重映射
-            strategies_trades: 策略交易数据（用于动态计算状态）
-            lookback_days: 回溯天数
-
-        Returns:
-            dict: 调整后的权重映射
-        """
-        adjusted_weights = {}
-
-        for strategy_name, weight in current_weights.items():
-            # 获取策略状态
-            if strategies_trades:
-                status = self.check_strategy_health(
-                    strategy_name,
-                    strategies_trades.get(strategy_name, []),
-                    lookback_days=lookback_days,
-                )
-            else:
-                status = self._health_cache.get(strategy_name, HealthStatus.HEALTHY)
-
-            # 根据状态调整权重
-            if status == HealthStatus.UNHEALTHY:
-                adjusted_weights[strategy_name] = 0.0
-            elif status == HealthStatus.WARNING:
-                adjusted_weights[strategy_name] = weight * 0.5
-            else:
-                adjusted_weights[strategy_name] = weight
-
-        # 归一化权重，确保总和为1
-        total_weight = sum(adjusted_weights.values())
-        if total_weight > 0:
-            adjusted_weights = {
-                k: v / total_weight for k, v in adjusted_weights.items()
-            }
-
-        return adjusted_weights
+    # ⚠️ 此处曾有 auto_adjust_weights()：按近 30 天表现自动改策略权重
+    # （UNHEALTHY 归零 / WARNING 减半 / 再归一化）。
+    # 该逻辑违反 AGENTS.md 红线「引入'看到上周亏损就调参数'的逻辑（违反冻结原则）」，
+    # 已在本 PR 移除，且**不得重新引入**。
+    # 策略权重必须保持冻结、由 thresholds.yaml 显式管理；
+    # 本模块只负责"观测与报告"策略健康度，绝不参与权重调整。
 
     def _calculate_win_rate(self, trades: list[Trade]) -> float:
         """
