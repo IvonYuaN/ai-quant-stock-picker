@@ -192,6 +192,36 @@ function GateState({ snapshot }: { snapshot: AqspSnapshot }) {
   return <div className="aqsp-gate aqsp-gate-warn"><ShieldAlert className="h-4 w-4 shrink-0" /><span>{label}。当前为研究展示，不进入正式推荐或纸面复核。</span></div>;
 }
 
+function ActionRail({ snapshot }: { snapshot: AqspSnapshot }) {
+  const { selectDate } = useWorkspaceSnapshot();
+  const conclusion = snapshotConclusion(snapshot);
+  const gate = snapshot.recommendation_gate;
+  const presentation = gatePresentation(gate);
+  const next =
+    presentation === "ready"
+      ? "按当前结论进入纸面复核"
+      : gate?.reasons[0]?.startsWith("freshness_not_ready")
+        ? "等待实时数据新鲜度达标"
+        : gate?.reasons[0]?.startsWith("circuit_breaker")
+          ? "等待组合保护冷却"
+          : "当前仅观察，等消息与讨论闭环";
+  const blocker =
+    snapshot.research_chain?.blocker ||
+    (presentation !== "ready" ? (gate?.reasons[0] ?? "结果未放行") : "") ||
+    "证据链已闭环";
+  const reviewDate = latestReviewDate(snapshot);
+  return (
+    <nav className="aqsp-action-rail" aria-label="操盘前台">
+      <div className="aqsp-rail-item"><span className="aqsp-rail-label">当前结论</span><b>{conclusion || "当天结论未记录"}</b></div>
+      <div className="aqsp-rail-item"><span className="aqsp-rail-label">下一步</span><b>{next}</b></div>
+      <div className="aqsp-rail-item"><span className="aqsp-rail-label">当前卡点</span><b className={blocker !== "证据链已闭环" ? "aqsp-rail-block" : ""}>{blocker}</b></div>
+      <button type="button" className="aqsp-rail-item aqsp-rail-action" onClick={() => reviewDate && selectDate(reviewDate)} disabled={!reviewDate}>
+        <span className="aqsp-rail-label">收盘后回看</span><b>{reviewDate ? `查看 ${formatResearchDate(reviewDate).day} 复盘` : "暂无复盘"}</b>
+      </button>
+    </nav>
+  );
+}
+
 function CandidateCard({ candidate }: { candidate: AqspCandidate }) {
   return (
     <article className="aqsp-card">
@@ -376,7 +406,7 @@ export function AqspResearchWorkspace() {
 
   const conclusion = snapshotConclusion(data);
   const formalSections = {
-    overview: <section id="overview" className="aqsp-module aqsp-module-overview"><SectionHead number={FORMAL_RESEARCH_SECTIONS[0].number} title={FORMAL_RESEARCH_SECTIONS[0].label} count={`${data.candidates.length} 个候选`} /><div className="aqsp-summary-conclusion"><Sparkles className="h-5 w-5 shrink-0 text-primary" /><div><strong>{conclusion || "当天结论未记录"}</strong><ResearchChainState snapshot={data} /></div></div><PhaseLane snapshot={data} /><SourceCoverage snapshot={data} /><CandidateResearchTable snapshot={data} /><GateState snapshot={data} /><EmptyToday snapshot={data} /><ResearchChain chain={data.research_chain} candidates={data.candidates} /><StatusLine snapshot={data} /></section>,
+    overview: <section id="overview" className="aqsp-module aqsp-module-overview"><SectionHead number={FORMAL_RESEARCH_SECTIONS[0].number} title={FORMAL_RESEARCH_SECTIONS[0].label} count={`${data.candidates.length} 个候选`} /><ActionRail snapshot={data} /><div className="aqsp-summary-conclusion"><Sparkles className="h-5 w-5 shrink-0 text-primary" /><div><strong>{conclusion || "当天结论未记录"}</strong><ResearchChainState snapshot={data} /></div></div><PhaseLane snapshot={data} /><SourceCoverage snapshot={data} /><CandidateResearchTable snapshot={data} /><GateState snapshot={data} /><EmptyToday snapshot={data} /><ResearchChain chain={data.research_chain} candidates={data.candidates} /><StatusLine snapshot={data} /></section>,
     messages: <section id="messages" className="aqsp-module aqsp-module-messages"><SectionHead number={FORMAL_RESEARCH_SECTIONS[1].number} title={FORMAL_RESEARCH_SECTIONS[1].label} count={`${data.messages.length} 条`} />{data.messages.length === 0 ? <MessageEvidenceState snapshot={data} /> : <div className="aqsp-list">{data.messages.map((message, index) => <MessageCard key={`${message.title}-${message.published_at}-${index}`} message={message} />)}</div>}<MarketContext snapshot={data} /></section>,
     candidates: <section id="candidates" className="aqsp-module aqsp-module-candidates"><SectionHead number={FORMAL_RESEARCH_SECTIONS[2].number} title={FORMAL_RESEARCH_SECTIONS[2].label} count={`${data.candidates.length} 个`} />{data.candidates.length === 0 ? <EmptyState title="当天没有候选" detail="当前没有通过数据质量与短线筛选的对象，不用历史候选填充。" /> : <div className="aqsp-list">{data.candidates.map((candidate) => <CandidateCard key={candidate.symbol} candidate={candidate} />)}</div>}</section>,
     discussion: <section id="discussion" className="aqsp-module aqsp-module-discussion"><SectionHead number={FORMAL_RESEARCH_SECTIONS[3].number} title={FORMAL_RESEARCH_SECTIONS[3].label} count={`${data.debates.length} 条`} />{data.debates.length === 0 ? <DiscussionBlockedState chain={data.research_chain} candidates={data.candidates} /> : <div className="aqsp-list">{data.debates.map((result) => <DebateCard key={result.symbol} result={result} />)}</div>}</section>,
