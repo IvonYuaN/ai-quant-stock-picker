@@ -1914,6 +1914,16 @@ def test_run_screen_blocks_history_actual_source_after_fallback(
             "tdx_vipdoc",
         ),
     )
+    # 历史基线返回空，迫使 run_screen 走「实时源历史」fallback（即上面 mock 的
+    # tdx_vipdoc），从而触发 _runtime_actual_source_workload_allowed 对
+    # 「请求源 auto 实际落到历史源」的拦截。screen 流程重构后先走
+    # _fetch_intraday_historical_baseline，若不显式置空会直接用 sqlite_db 而
+    # 不触发拦截，使本测试失去断言意义。
+    monkeypatch.setattr(
+        cli_mod,
+        "_fetch_intraday_historical_baseline",
+        lambda *args, **kwargs: {},
+    )
 
     args = Namespace(
         csv="",

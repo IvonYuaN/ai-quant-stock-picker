@@ -130,7 +130,9 @@ def test_server_doctor_sqlite_default_is_raw(monkeypatch) -> None:
 
     checks = {item.name: item for item in server_doctor._artifact_checks()}
 
-    assert checks["sqlite_db"].detail.endswith("data/astocks_raw.db")
+    # 默认（未配置 AQSP_SQLITE_DB_PATH）应指向原始库 astocks_raw.db；
+    # 数据目录已重命名为「A股量化分析数据」，故只校验文件名，避免路径改名即脆断。
+    assert "astocks_raw.db" in checks["sqlite_db"].detail
 
 
 def test_server_doctor_reports_serverchan_notify_channel(monkeypatch) -> None:
