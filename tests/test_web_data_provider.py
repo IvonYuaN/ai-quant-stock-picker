@@ -3905,7 +3905,9 @@ def test_dashboard_data_provider_surfaces_closing_review_sections(
     same_day_rows = provider.same_day_task_rows("2025-06-01")
     closing_row = next(row for row in same_day_rows if row.task_id == "closing_review")
 
-    assert review_view.market_environment == "震荡市"
+    # market_environment 现已携带胜率/收益等增强信息（如「纸面震荡（胜率 50.0%，平均收益 +1.50%）」），
+    # 只校验震荡态关键词，避免展示格式微调即脆断。
+    assert "震荡" in review_view.market_environment
     assert review_view.report_markdown == ""
     assert closing_row.status_label == "已验证未归档"
     assert "2 笔已验证，胜率 50%，总收益 1.50%" in review_view.headline

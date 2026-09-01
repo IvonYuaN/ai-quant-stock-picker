@@ -1427,7 +1427,12 @@ def test_run_monitor_notifies_warning_when_warning_notify_enabled(
     import aqsp.cli as cli_mod
 
     monkeypatch.setenv("AQSP_MONITOR_NOTIFY_WARNINGS", "true")
-    warning = MagicMock(triggered=True, severity="warning", name="disk", message="low")
+    warning = MagicMock(triggered=True, severity="warning", message="low")
+    # MagicMock 的 name= 关键字只设 repr 名，不会让 .name 返回字符串；
+    # 且未显式设置的 .skipped 会自动生成真值 Mock，导致被误判为「全部跳过」。
+    # 这里显式给真实属性，模拟一个 triggered 且未跳过的 warning 结果。
+    warning.name = "disk"
+    warning.skipped = False
     sent: list[list[object]] = []
 
     class DummyChecker:

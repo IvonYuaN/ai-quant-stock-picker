@@ -7108,7 +7108,7 @@ def run_monitor(args: argparse.Namespace) -> int:
     if skipped:
         print(
             f"⚠️ {len(skipped)}/{len(results)} 项检查因数据不可用被跳过，"
-            f"未真正执行：{', '.join(r.name for r in skipped)}"
+            f"未真正执行：{', '.join(str(r.name) for r in skipped)}"
         )
         print(
             "   常见于 CI 环境缺少持久数据目录（data/），或该项配置为 "

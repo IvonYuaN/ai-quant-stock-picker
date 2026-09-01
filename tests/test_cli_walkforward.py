@@ -1622,14 +1622,16 @@ class TestCLIPoolSelection:
                 seen["pool_as_of"] = as_of.isoformat()
                 return ["000001", "600519"]
 
-        def mock_fetch_frames(
+        def mock_fetch_special(
             source_name,
             symbols,
+            *,
             benchmark_symbol=None,
-            cache_path=None,
-            days=0,
-            workload=None,
+            days=250,
+            intraday_period="5",
         ):
+            # 记录实际取数使用的标的（来自 --pool zz500 解析结果），
+            # 验证 screen 在「无候选」时仍正确解析并传递了池内标的。
             seen["symbols"] = list(symbols)
             latest = TEST_TRADE_DAY.isoformat()
             frame = pd.DataFrame(
@@ -1659,9 +1661,11 @@ class TestCLIPoolSelection:
             "aqsp.universe.pool.UniversePool.from_default",
             lambda pool_name: DummyPool(),
         )
+        # screen 流程重构后取数走 _fetch_special_strategy_frames（而非旧的
+        # _fetch_frames_for_cli_with_metadata），这里改 mock 当前实际调用点。
         monkeypatch.setattr(
-            "aqsp.cli._fetch_frames_for_cli_with_metadata",
-            mock_fetch_frames,
+            "aqsp.cli._fetch_special_strategy_frames",
+            mock_fetch_special,
         )
         monkeypatch.setattr("aqsp.cli.screen_universe", lambda *_args, **_kwargs: [])
         monkeypatch.setattr(
