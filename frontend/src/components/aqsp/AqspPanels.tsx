@@ -293,14 +293,39 @@ function DiscussionBlockedState({ chain, candidates }: { chain?: AqspResearchCha
 }
 
 function DebateCard({ result }: { result: AqspAgentResult }) {
-  const process = debateProcessText(result);
   const conclusion = result.conclusion.trim();
+  const process = debateProcessText(result);
   const rounds = dedupeResearchText((result.round_summaries ?? []).map(cleanDebateRoundText)).filter((item) => !sameResearchText(item, conclusion) && !sameResearchText(item, process)).slice(0, 3);
   const bucketLabels: Record<string, string> = { bullish: "看多证据", bearish: "看空证据", event_fundamental: "事件/基本面", technical: "个股技术", strategy: "命中策略", risk_counterevidence: "风险/反证", uncertainty: "不确定性" };
   const buckets = Object.entries(result.viewpoint_buckets ?? {}).filter(([, points]) => points.length > 0).slice(0, 6);
   const disagreement = unique(result.disagreement_points, 3);
   const quality = disagreement.length > 0 ? "有个股分歧" : "待补个股反驳";
-  return <article className="aqsp-card aqsp-debate-card"><div className="aqsp-card-head"><div className="aqsp-agent-title"><span className="aqsp-agent-mark"><Bot className="h-4 w-4" /></span><div><h3>{result.display_name || result.symbol || "对象未记录"}</h3><span className="aqsp-code">{result.symbol || "代码未记录"}</span></div></div><span className={cn("aqsp-badge", quality === "有个股分歧" ? "aqsp-badge-ok" : "aqsp-badge-warn")}>{quality}</span></div><div className="aqsp-discussion"><p className="aqsp-label"><UsersRound className="h-3.5 w-3.5" />讨论过程</p><p>{process || "过程未记录"}</p>{result.active_roles.length > 0 && <div className="aqsp-tags">{result.active_roles.map((role) => <span className="aqsp-tag" key={role}>{role}</span>)}</div>}{rounds.length > 0 && <ol>{rounds.map((round, index) => <li key={`${index}-${round}`}>第 {index + 1} 轮：{round}</li>)}</ol>}</div><div className="aqsp-debate-stats"><span>参与角色 <b>{result.active_roles.length}</b></span><span>复核轮次 <b>{result.round_count}</b></span><span>个股分歧 <b>{disagreement.length}</b></span></div>{buckets.length > 0 && <div className="aqsp-viewpoint-buckets"><p className="aqsp-label">个股证据</p>{buckets.map(([bucket, points]) => <div key={bucket}><b>{bucketLabels[bucket] || bucket}</b><span>{points.slice(0, 2).join("；")}</span></div>)}</div>}{disagreement.length ? <div className="aqsp-debate-foot">{disagreement.map((item) => <span key={item}><CircleAlert className="h-3.5 w-3.5" />分歧：{item}</span>)}</div> : <p className="aqsp-warning-text">没有个股级反驳证据，当前只保留规则复核，不宣称形成有效复合讨论。</p>}<div className="aqsp-debate-conclusion"><p className="aqsp-label">汇总结论</p><strong>{conclusion || "暂无结论"}</strong></div>{(result.primary_risk_gate || result.next_trigger) && <div className="aqsp-debate-foot">{result.primary_risk_gate && <span><ShieldAlert className="h-3.5 w-3.5" />风险：{result.primary_risk_gate}</span>}{result.next_trigger && <span><Sparkles className="h-3.5 w-3.5" />下一验证：{result.next_trigger}</span>}</div>}</article>;
+  return (
+    <article className="aqsp-card aqsp-debate-card">
+      <div className="aqsp-card-head">
+        <div className="aqsp-agent-title"><span className="aqsp-agent-mark"><Bot className="h-4 w-4" /></span><div><h3>{result.display_name || result.symbol || "对象未记录"}</h3><span className="aqsp-code">{result.symbol || "代码未记录"}</span></div></div>
+        <span className={cn("aqsp-badge", quality === "有个股分歧" ? "aqsp-badge-ok" : "aqsp-badge-warn")}>{quality}</span>
+      </div>
+      {/* §4: 委员会结论优先——候选复盘顶部先给结论，不堆讨论过程 */}
+      <div className="aqsp-debate-conclusion aqsp-debate-conclusion-top"><p className="aqsp-label">委员会结论</p><strong>{conclusion || "暂无结论"}</strong></div>
+      {/* §4: 讨论过程与个股证据下沉到抽屉，同日速读默认收起 */}
+      <details className="aqsp-debate-drawer">
+        <summary className="aqsp-debate-drawer-summary"><UsersRound className="h-3.5 w-3.5" />多 Agent 过程与证据</summary>
+        <div className="aqsp-debate-drawer-body">
+          <div className="aqsp-discussion">
+            <p className="aqsp-label"><UsersRound className="h-3.5 w-3.5" />讨论过程</p>
+            <p>{process || "过程未记录"}</p>
+            {result.active_roles.length > 0 && <div className="aqsp-tags">{result.active_roles.map((role) => <span className="aqsp-tag" key={role}>{role}</span>)}</div>}
+            {rounds.length > 0 && <ol>{rounds.map((round, index) => <li key={`${index}-${round}`}>第 {index + 1} 轮：{round}</li>)}</ol>}
+          </div>
+          {buckets.length > 0 && <div className="aqsp-viewpoint-buckets"><p className="aqsp-label">个股证据</p>{buckets.map(([bucket, points]) => <div key={bucket}><b>{bucketLabels[bucket] || bucket}</b><span>{points.slice(0, 2).join("；")}</span></div>)}</div>}
+          {disagreement.length ? <div className="aqsp-debate-foot">{disagreement.map((item) => <span key={item}><CircleAlert className="h-3.5 w-3.5" />分歧：{item}</span>)}</div> : <p className="aqsp-warning-text">没有个股级反驳证据，当前只保留规则复核，不宣称形成有效复合讨论。</p>}
+        </div>
+      </details>
+      <div className="aqsp-debate-stats"><span>参与角色 <b>{result.active_roles.length}</b></span><span>复核轮次 <b>{result.round_count}</b></span><span>个股分歧 <b>{disagreement.length}</b></span></div>
+      {(result.primary_risk_gate || result.next_trigger) && <div className="aqsp-debate-foot">{result.primary_risk_gate && <span><ShieldAlert className="h-3.5 w-3.5" />风险：{result.primary_risk_gate}</span>}{result.next_trigger && <span><Sparkles className="h-3.5 w-3.5" />下一验证：{result.next_trigger}</span>}</div>}
+    </article>
+  );
 }
 
 function TestVariantsPanel({ snapshot }: { snapshot?: AqspSnapshot }) {
