@@ -183,6 +183,7 @@ class TestMonitorChecker:
         assert result.name == "stale_data"
         assert result.triggered is False
         assert result.severity == "warning"
+        assert result.skipped is True
         assert "跳过本地缓存新鲜度检查" in result.message
 
     def test_check_data_freshness_fails_when_cache_missing_and_required(
@@ -371,6 +372,26 @@ class TestMonitorChecker:
 
         assert result.triggered is True
         assert result.message == "walk-forward gate 已过期: 53 天"
+
+    def test_monitor_walkforward_runtime_skipped_when_gate_missing(
+        self, sample_config: Path, tmp_path: Path
+    ) -> None:
+        checker = MonitorChecker(config_path=str(sample_config))
+        missing_gate = tmp_path / "missing_walkforward_gate.json"
+        missing_status = tmp_path / "missing_status.json"
+
+        result = checker._check_walkforward_runtime(
+            {
+                "gate_path": str(missing_gate),
+                "status_path": str(missing_status),
+                "max_age_days": 35,
+            }
+        )
+
+        assert result.name == "walkforward_runtime"
+        assert result.triggered is False
+        assert result.skipped is True
+        assert "跳过" in result.message
 
 
 class TestNotifier:

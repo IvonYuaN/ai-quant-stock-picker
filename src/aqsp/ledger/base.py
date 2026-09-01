@@ -799,6 +799,17 @@ def strategy_weights_from_ledger(
     weight_floor: float = 0.65,
     weight_ceiling: float = 1.45,
 ) -> dict[str, float]:
+    """按账本历史表现估算策略权重（**遗留工具，禁止接回打分链路**）。
+
+    本函数属于"自适应"计算，历史上曾被用于自动调整策略权重。目前生产链路
+    已不再调用它：`cli.py` 仅保留导入以兼容 legacy monkeypatch，且
+    `tests/test_cli_runtime_fixes.py` 明确断言 CLI 源码中不得出现
+    `strategy_weights_from_ledger(...)` 的调用。
+
+    因此**不要把它接回打分/筛选链路**（那会违反 AGENTS.md 的冻结原则）。
+    它仅作为离线分析/对照用途保留，且已带最低样本量门槛
+    （`min_independent_signal_days`）与权重上下限（floor/ceiling）。
+    """
     groups: dict[str, dict[str, list[float]]] = {}
     for row in read_ledger(path):
         if str(row.get("status") or "").strip() != "validated":
