@@ -30,6 +30,22 @@ class TradeReview:
 
 
 @dataclass(frozen=True)
+class MarketEnvironmentBands:
+    """市场环境分档阈值（复盘展示口径，不参与打分/筛选决策）。
+
+    超额收益与收益单位均为百分点；胜率单位为比例（0~1）。
+    此处仅用于生成复盘报告中的描述性文字，任何策略阈值仍以
+    thresholds.yaml 为准，不得引用本 dataclass。
+    """
+
+    strong_outperform: float = 2.0
+    mild_underperform: float = -2.0
+    strong_win_rate: float = 0.6
+    weak_win_rate: float = 0.4
+    max_drawdown_limit: float = 5.0
+
+
+@dataclass(frozen=True)
 class DailyReview:
     """每日复盘"""
 
@@ -48,6 +64,12 @@ class DailyReview:
     main_chain_summary: tuple[str, ...]
     key_lessons: tuple[str, ...]
     improvement_suggestions: tuple[str, ...]
+    # 以下为账本直连口径（来自 predictions.jsonl 中已验证行），
+    # 与上方纸面虚拟盘口径相互独立，便于对照复盘。
+    ledger_validated_count: int = 0
+    ledger_win_rate: float = 0.0
+    ledger_avg_return: float = 0.0
+    ledger_avg_excess_return: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -139,7 +161,43 @@ class ClosingReviewer:
         )
 
         strategy_breakdown = self._calculate_strategy_breakdown(reviews)
-        market_environment = self._evaluate_market_environment(today)
+        validated_rows = [
+            p for p in predictions if str(p.get("status", "")).strip() == "validated"
+        ]
+        ledger_returns = [
+            float(p["return_pct"])
+            for p in validated_rows
+            if p.get("return_pct") is not None
+        ]
+        ledger_excess = [
+            float(p["excess_return_pct"])
+            for p in validated_rows
+            if p.get("excess_return_pct") is not None
+        ]
+        ledger_validated_count = len(validated_rows)
+        ledger_win_rate = (
+            sum(1 for p in validated_rows if p.get("win") is True)
+            / ledger_validated_count
+            if ledger_validated_count
+            else 0.0
+        )
+        ledger_avg_return = (
+            sum(ledger_returns) / len(ledger_returns) if ledger_returns else 0.0
+        )
+        ledger_avg_excess_return = (
+            sum(ledger_excess) / len(ledger_excess) if ledger_excess else 0.0
+        )
+
+        if ledger_validated_count > 0:
+            market_environment = self._evaluate_market_environment(
+                ledger_avg_excess_return=ledger_avg_excess_return
+            )
+        else:
+            market_environment = self._evaluate_market_environment(
+                win_rate=win_rate,
+                avg_return=total_return,
+                executed=executed_signals,
+            )
         key_lessons = self._extract_key_lessons(
             reviews,
             blocked_count=len(blocked_rows),
@@ -172,6 +230,10 @@ class ClosingReviewer:
             main_chain_summary=main_chain_summary,
             key_lessons=key_lessons,
             improvement_suggestions=improvement_suggestions,
+            ledger_validated_count=ledger_validated_count,
+            ledger_win_rate=ledger_win_rate,
+            ledger_avg_return=ledger_avg_return,
+            ledger_avg_excess_return=ledger_avg_excess_return,
         )
 
     def _latest_review_date(self) -> str:
@@ -680,9 +742,79 @@ class ClosingReviewer:
 
         return breakdown
 
-    def _evaluate_market_environment(self, date: str) -> str:
-        """评估市场环境"""
-        return "震荡市"
+    def _evaluate_market_environment(
+        self,
+        date: str | None = None,
+        *,
+        win_rate: float = 0.0,
+        avg_return: float = 0.0,
+        executed: int = 0,
+        ledger_avg_excess_return: float | None = None,
+        bands: MarketEnvironmentBands | None = None,
+    ) -> str:
+        """评估市场环境。
+
+        优先采用账本口径（相对基准的超额收益，来自已验证的
+        predictions.jsonl 行）；无账本验证样本时回退纸面口径。
+        样本不足时明确标注"暂不评估"，绝不返回未经数据支撑的假设值。
+        """
+        bands = bands or MarketEnvironmentBands()
+
+        if ledger_avg_excess_return is not None:
+            excess = ledger_avg_excess_return
+            if excess >= bands.strong_outperform:
+                return f"显著跑赢大盘（账本平均超额 {excess:+.2f}%）"
+            if excess > 0:
+                return f"温和跑赢大盘（账本平均超额 {excess:+.2f}%）"
+            if excess <= bands.mild_underperform:
+                return f"显著跑输大盘（账本平均超额 {excess:+.2f}%）"
+            return f"小幅跑输大盘（账本平均超额 {excess:+.2f}%）"
+
+        if executed <= 0:
+            return "样本不足，暂不评估市场环境"
+        if win_rate >= bands.strong_win_rate and avg_return > 0:
+            return f"纸面偏强（胜率 {win_rate:.1%}，平均收益 {avg_return:+.2f}%）"
+        if win_rate <= bands.weak_win_rate:
+            return f"纸面偏弱（胜率 {win_rate:.1%}，平均收益 {avg_return:+.2f}%）"
+        return f"纸面震荡（胜率 {win_rate:.1%}，平均收益 {avg_return:+.2f}%）"
+
+    def _evaluate_weekly_trend(
+        self,
+        *,
+        win_rate: float,
+        total_return: float,
+        total_trades: int,
+        bands: MarketEnvironmentBands | None = None,
+    ) -> str:
+        """周度趋势（数据驱动，替代原先写死的"震荡"）。"""
+        bands = bands or MarketEnvironmentBands()
+        if total_trades <= 0:
+            return "本周无成交样本，趋势不明"
+        if total_return > 0 and win_rate >= bands.strong_win_rate:
+            return f"上行（周收益 {total_return:+.2f}%，胜率 {win_rate:.1%}）"
+        if total_return < 0 and win_rate <= bands.weak_win_rate:
+            return f"下行（周收益 {total_return:+.2f}%，胜率 {win_rate:.1%}）"
+        return f"震荡（周收益 {total_return:+.2f}%，胜率 {win_rate:.1%}）"
+
+    def _evaluate_next_week_outlook(
+        self,
+        *,
+        win_rate: float,
+        max_drawdown: float,
+        total_trades: int,
+        bands: MarketEnvironmentBands | None = None,
+    ) -> str:
+        """下周展望（数据驱动，替代原先写死的"观望为主"）。"""
+        bands = bands or MarketEnvironmentBands()
+        if total_trades <= 0:
+            return "样本不足，暂不给出展望"
+        if max_drawdown > bands.max_drawdown_limit:
+            return f"回撤偏大（{max_drawdown:.2f}%），建议收紧参与"
+        if win_rate >= bands.strong_win_rate:
+            return "可维持现有节奏，正常参与"
+        if win_rate <= bands.weak_win_rate:
+            return "胜率偏低，建议减量观察"
+        return "维持观望，等待更明确信号"
 
     def _extract_key_lessons(
         self,
@@ -851,8 +983,16 @@ class ClosingReviewer:
             max_drawdown=max_drawdown,
             best_strategy=best_strategy,
             worst_strategy=worst_strategy,
-            market_trend="震荡",
-            next_week_outlook="观望为主",
+            market_trend=self._evaluate_weekly_trend(
+                win_rate=win_rate,
+                total_return=total_return,
+                total_trades=total_trades,
+            ),
+            next_week_outlook=self._evaluate_next_week_outlook(
+                win_rate=win_rate,
+                max_drawdown=max_drawdown,
+                total_trades=total_trades,
+            ),
         )
 
     def _calculate_sharpe_ratio(self, returns: list[float]) -> float:
