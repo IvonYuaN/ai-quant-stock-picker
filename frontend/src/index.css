@@ -447,6 +447,15 @@
   .aqsp-debate-stats b { color: hsl(var(--foreground) / 0.9); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
   .aqsp-debate-conclusion { margin-top: 0.65rem; border-left: 2px solid hsl(var(--primary) / 0.7); padding-left: 0.6rem; }
   .aqsp-debate-conclusion strong { display: block; margin-top: 0.2rem; font-size: 0.75rem; line-height: 1.45; }
+  .aqsp-debate-conclusion-top { margin-top: 0.55rem; border-left-color: hsl(var(--primary)); background: hsl(var(--primary) / 0.07); padding: 0.6rem 0.65rem; border-radius: 0.35rem; }
+  .aqsp-debate-conclusion-top strong { font-size: 0.82rem; }
+  /* §4: 讨论过程下沉到抽屉，同日速读默认收起，压缩判断负担 */
+  .aqsp-debate-drawer { margin-top: 0.6rem; border: 1px solid hsl(var(--border) / 0.55); border-radius: 0.4rem; background: hsl(var(--muted) / 0.18); overflow: hidden; }
+  .aqsp-debate-drawer-summary { display: flex; align-items: center; gap: 0.4rem; cursor: pointer; padding: 0.5rem 0.6rem; font-size: 0.7rem; font-weight: 600; color: hsl(var(--foreground) / 0.86); list-style: none; user-select: none; }
+  .aqsp-debate-drawer-summary::-webkit-details-marker { display: none; }
+  .aqsp-debate-drawer-summary::before { content: "▸"; margin-right: 0.12rem; color: hsl(var(--muted-foreground)); }
+  .aqsp-debate-drawer[open] > .aqsp-debate-drawer-summary::before { content: "▾"; }
+  .aqsp-debate-drawer-body { display: grid; gap: 0.5rem; padding: 0 0.6rem 0.6rem; }
   .aqsp-debate-foot { display: grid; gap: 0.25rem; margin-top: 0.6rem; border-top: 1px solid hsl(var(--border) / 0.45); padding-top: 0.5rem; color: hsl(var(--muted-foreground)); font-size: 0.65rem; }
   .aqsp-debate-foot span:first-child { color: hsl(var(--warning)); }
   .aqsp-empty, .aqsp-state { display: flex; align-items: flex-start; gap: 0.55rem; border: 1px dashed hsl(var(--border) / 0.9); border-radius: 0.45rem; padding: 0.75rem; color: hsl(var(--muted-foreground)); font-size: 0.7rem; line-height: 1.45; }
