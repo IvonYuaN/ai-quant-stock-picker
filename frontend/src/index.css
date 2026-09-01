@@ -456,6 +456,16 @@
   .aqsp-debate-drawer-summary::before { content: "▸"; margin-right: 0.12rem; color: hsl(var(--muted-foreground)); }
   .aqsp-debate-drawer[open] > .aqsp-debate-drawer-summary::before { content: "▾"; }
   .aqsp-debate-drawer-body { display: grid; gap: 0.5rem; padding: 0 0.6rem 0.6rem; }
+  /* §4: 首页 action rail — 操盘前台表达，避免堆研究流程术语 */
+  .aqsp-action-rail { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.5rem; margin-bottom: 0.7rem; }
+  .aqsp-rail-item { display: flex; flex-direction: column; gap: 0.22rem; border: 1px solid hsl(var(--border) / 0.6); border-radius: 0.4rem; padding: 0.5rem 0.6rem; background: hsl(var(--card) / 0.5); text-align: left; min-width: 0; }
+  .aqsp-rail-item > b { font-size: 0.72rem; line-height: 1.35; font-weight: 600; color: hsl(var(--foreground) / 0.9); overflow-wrap: anywhere; }
+  .aqsp-rail-label { font-size: 0.58rem; color: hsl(var(--muted-foreground)); letter-spacing: 0.04em; }
+  .aqsp-rail-block { color: hsl(var(--warning)); }
+  .aqsp-rail-action { cursor: pointer; font: inherit; }
+  .aqsp-rail-action:hover:not(:disabled) { background: hsl(var(--muted) / 0.4); }
+  .aqsp-rail-action:disabled { opacity: 0.55; cursor: default; }
+  @media (max-width: 640px) { .aqsp-action-rail { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   .aqsp-debate-foot { display: grid; gap: 0.25rem; margin-top: 0.6rem; border-top: 1px solid hsl(var(--border) / 0.45); padding-top: 0.5rem; color: hsl(var(--muted-foreground)); font-size: 0.65rem; }
   .aqsp-debate-foot span:first-child { color: hsl(var(--warning)); }
   .aqsp-empty, .aqsp-state { display: flex; align-items: flex-start; gap: 0.55rem; border: 1px dashed hsl(var(--border) / 0.9); border-radius: 0.45rem; padding: 0.75rem; color: hsl(var(--muted-foreground)); font-size: 0.7rem; line-height: 1.45; }
