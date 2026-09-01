@@ -466,6 +466,15 @@
   .aqsp-rail-action:hover:not(:disabled) { background: hsl(var(--muted) / 0.4); }
   .aqsp-rail-action:disabled { opacity: 0.55; cursor: default; }
   @media (max-width: 640px) { .aqsp-action-rail { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  /* §4: 跨市主线四段式 framing，与 action-rail 并列为首页顶部上下文条 */
+  .aqsp-cross-market { display: grid; grid-template-columns: 1.6fr 1fr 1fr 1fr; gap: 0.5rem; margin-bottom: 0.7rem; }
+  .aqsp-cm-item { display: flex; flex-direction: column; gap: 0.22rem; border: 1px solid hsl(var(--border) / 0.6); border-radius: 0.4rem; padding: 0.5rem 0.6rem; background: hsl(var(--card) / 0.5); min-width: 0; }
+  .aqsp-cm-item > b { font-size: 0.72rem; line-height: 1.35; font-weight: 600; color: hsl(var(--foreground) / 0.9); overflow-wrap: anywhere; }
+  .aqsp-cm-label { font-size: 0.58rem; color: hsl(var(--muted-foreground)); letter-spacing: 0.04em; }
+  .aqsp-cm-strength { font-size: 0.58rem; color: hsl(var(--muted-foreground)); margin-top: 0.12rem; }
+  .aqsp-cm-confirm > b { color: hsl(var(--success)); }
+  .aqsp-cm-invalid > b { color: hsl(var(--warning)); }
+  @media (max-width: 640px) { .aqsp-cross-market { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   .aqsp-debate-foot { display: grid; gap: 0.25rem; margin-top: 0.6rem; border-top: 1px solid hsl(var(--border) / 0.45); padding-top: 0.5rem; color: hsl(var(--muted-foreground)); font-size: 0.65rem; }
   .aqsp-debate-foot span:first-child { color: hsl(var(--warning)); }
   .aqsp-empty, .aqsp-state { display: flex; align-items: flex-start; gap: 0.55rem; border: 1px dashed hsl(var(--border) / 0.9); border-radius: 0.45rem; padding: 0.75rem; color: hsl(var(--muted-foreground)); font-size: 0.7rem; line-height: 1.45; }
