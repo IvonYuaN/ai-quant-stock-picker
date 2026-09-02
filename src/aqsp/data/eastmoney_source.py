@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from datetime import date
 from typing import Literal
@@ -33,6 +34,78 @@ _TRENDS2_FIELDS2 = "f51,f52,f53,f54,f55,f56,f57"
 _INTRADAY_PM_SESSION_HOUR = 13
 
 _logger = logging.getLogger("aqsp.data.eastmoney")
+
+# 东财按生产机 IP 限流：trends2 端点密集请求后连接被 WAF 立即重置（curl HTTP=000）。
+# 所有 EastmoneySource 实例/线程共享同一请求节奏与熔断状态（限流按 IP 计），
+# 用全局节流串行化并发请求 + 熔断快速失败，避免被限流架空盘中新鲜度门。
+_REQ_LOCK = threading.Lock()
+_LAST_REQ_TS = 0.0
+_MIN_REQ_INTERVAL = _REQUEST_DELAY  # 全局最小请求间隔（秒），串行化对东财的并发请求
+_BREAKER_CONSEC_FAILURES = 0
+_BREAKER_OPEN_UNTIL = 0.0
+_BREAKER_THRESHOLD = 4       # 连续限流失败达到此数即熔断
+_BREAKER_COOLDOWN = 20.0     # 熔断冷却（秒）
+
+
+def _eastmoney_is_throttle(exc: BaseException) -> bool:
+    """异常是否为东财限流特征（连接被对端无响应重置）。"""
+    if isinstance(exc, (requests.ConnectionError, ConnectionError, ConnectionAbortedError)):
+        return True
+    text = str(exc).lower()
+    return (
+        "remote disconnected" in text
+        or "connection aborted" in text
+        or "remote end closed connection" in text
+    )
+
+
+def _eastmoney_acquire_request_slot() -> bool:
+    """申请一个对东财的请求槽位。
+
+    返回 False 表示熔断器已开启，调用方应直接放弃本次请求（快速失败，
+    不再打满单 IP 限额）。否则按全局最小间隔节流后返回 True。
+    """
+    global _LAST_REQ_TS, _BREAKER_OPEN_UNTIL
+    now = time.monotonic()
+    with _REQ_LOCK:
+        if now < _BREAKER_OPEN_UNTIL:
+            return False
+        elapsed = now - _LAST_REQ_TS
+        if elapsed < _MIN_REQ_INTERVAL:
+            time.sleep(_MIN_REQ_INTERVAL - elapsed)
+        _LAST_REQ_TS = time.monotonic()
+    return True
+
+
+def _eastmoney_record_result(throttled: bool) -> None:
+    """上报一次请求结果，更新熔断计数。
+
+    仅限流特征累加失败并可能在达阈值时开启熔断；成功或普通错误重置计数
+    （熔断只应被限流触发，避免把偶发业务错误误判为限流）。
+    """
+    global _BREAKER_CONSEC_FAILURES, _BREAKER_OPEN_UNTIL
+    with _REQ_LOCK:
+        if throttled:
+            _BREAKER_CONSEC_FAILURES += 1
+            if _BREAKER_CONSEC_FAILURES >= _BREAKER_THRESHOLD:
+                _BREAKER_OPEN_UNTIL = time.monotonic() + _BREAKER_COOLDOWN
+                _logger.warning(
+                    "eastmoney 熔断开启：连续 %d 次限流，冷却 %.0fs 后恢复",
+                    _BREAKER_CONSEC_FAILURES,
+                    _BREAKER_COOLDOWN,
+                )
+        else:
+            _BREAKER_CONSEC_FAILURES = 0
+            _BREAKER_OPEN_UNTIL = 0.0  # 成功即证明限流已解除，立即闭合熔断
+
+
+def _eastmoney_reset_breaker() -> None:
+    """测试/运维用：重置熔断与节奏状态。"""
+    global _BREAKER_CONSEC_FAILURES, _BREAKER_OPEN_UNTIL, _LAST_REQ_TS
+    with _REQ_LOCK:
+        _BREAKER_CONSEC_FAILURES = 0
+        _BREAKER_OPEN_UNTIL = 0.0
+        _LAST_REQ_TS = 0.0
 
 
 class EastmoneySource(DataSource):
@@ -72,10 +145,8 @@ class EastmoneySource(DataSource):
         return frame
 
     def _throttle(self) -> None:
-        elapsed = time.monotonic() - self._last_request_ts
-        if elapsed < _REQUEST_DELAY:
-            time.sleep(_REQUEST_DELAY - elapsed)
-        self._last_request_ts = time.monotonic()
+        # 改为全局节流（串行化对东财的并发请求），避免触发按 IP 限流。
+        _eastmoney_acquire_request_slot()
 
     def fetch_daily(
         self,
@@ -318,8 +389,10 @@ class EastmoneySource(DataSource):
         self, symbol: str, period: str, *, is_index: bool = False
     ) -> pd.DataFrame | None:
         for attempt in range(_MAX_RETRIES):
+            if not _eastmoney_acquire_request_slot():
+                _logger.warning("eastmoney 熔断中，跳过 %s trends2 分时请求", symbol)
+                return None
             try:
-                self._throttle()
                 market = "1" if is_index or symbol.startswith("6") else "0"
                 response = self._session.get(
                     _TRENDS2_URL,
@@ -342,9 +415,15 @@ class EastmoneySource(DataSource):
                     return None
                 frame["symbol"] = symbol
                 frame["name"] = str(payload.get("name") or symbol)
+                _eastmoney_record_result(False)
                 return frame
             except Exception as exc:
+                throttled = _eastmoney_is_throttle(exc)
+                _eastmoney_record_result(throttled)
                 if attempt < _MAX_RETRIES - 1:
+                    if throttled:
+                        # 限流时不再紧凑重试，交给熔断冷却避免打满单 IP 限额
+                        return None
                     time.sleep(_BACKOFF_BASE ** (attempt + 1))
                 else:
                     _logger.warning(
@@ -360,8 +439,10 @@ class EastmoneySource(DataSource):
         self, symbol: str, period: str, *, is_index: bool = False
     ) -> pd.DataFrame | None:
         for attempt in range(_MAX_RETRIES):
+            if not _eastmoney_acquire_request_slot():
+                _logger.warning("eastmoney 熔断中，跳过 %s 分时(kline)请求", symbol)
+                return None
             try:
-                self._throttle()
                 market = "1" if is_index or symbol.startswith("6") else "0"
                 klt_map = {"1": "1", "5": "5", "15": "15", "30": "30", "60": "60"}
                 url = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
@@ -399,9 +480,15 @@ class EastmoneySource(DataSource):
                 df = pd.DataFrame(rows)
                 df["symbol"] = symbol
                 df["name"] = symbol
+                _eastmoney_record_result(False)
                 return df
             except Exception as exc:
+                throttled = _eastmoney_is_throttle(exc)
+                _eastmoney_record_result(throttled)
                 if attempt < _MAX_RETRIES - 1:
+                    if throttled:
+                        # 限流时不再紧凑重试，交给熔断冷却避免打满单 IP 限额
+                        return None
                     time.sleep(_BACKOFF_BASE ** (attempt + 1))
                 else:
                     _logger.warning(
