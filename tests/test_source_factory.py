@@ -146,8 +146,14 @@ def test_build_data_source_online_first_prioritizes_concurrent_tencent_daily_sou
     assert [fallback.name for fallback in source.fallbacks] == [
         "sina",
         "akshare",
+        "eastmoney",
         "tdx_vipdoc",
     ]
+    # Eastmoney is a deferred intraday reserve: present in the chain so the
+    # live_short path is not single-sourced, but excluded from the concurrent
+    # race and from the daily chain so its per-IP quota is never burned while
+    # tencent answers.
+    assert source.deferred_live_short_sources == frozenset({"eastmoney"})
 
 
 def test_build_data_source_online_first_does_not_reorder_live_sources_by_history(

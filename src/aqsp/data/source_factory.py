@@ -128,12 +128,16 @@ def build_data_source(
             validate_consistency=False,
         )
     if source_name == "online_first":
-        # Tencent batches daily requests concurrently. Eastmoney's daily API
-        # retries one symbol at a time and can keep worker threads alive past
-        # the shared live deadline, so it must not participate in this path.
-        # Sina remains the bounded secondary source for partial live batches.
+        # Tencent batches daily requests concurrently and stays the primary.
+        # Sina is the bounded secondary source for partial live batches.
+        # Eastmoney is a deferred reserve, never part of the concurrent race:
+        # its daily API retries one symbol at a time and can keep worker
+        # threads alive past the shared live deadline, and its intraday
+        # endpoint is rate-limited per IP. It is tried sequentially only after
+        # every raced source failed, so a healthy Tencent never spends its
+        # quota while the reserve still removes the single-source failure mode.
         online_sources = _build_source_refs(
-            ("tencent", "sina", "akshare"),
+            ("tencent", "sina", "akshare", "eastmoney"),
             builders,
             source_cache,
         )
@@ -141,6 +145,7 @@ def build_data_source(
             online_sources[0],
             online_sources[1:] + [SourceFactory("tdx_vipdoc", builders["tdx_vipdoc"])],
             validate_consistency=False,
+            deferred_live_short_sources=frozenset({"eastmoney"}),
         )
     if source_name == "multi":
         sources = _reorder_source_refs(

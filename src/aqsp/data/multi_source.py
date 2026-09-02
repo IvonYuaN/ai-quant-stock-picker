@@ -39,6 +39,7 @@ class MultiSource(DataSource):
         *,
         validate_consistency: bool = True,
         live_fetch_deadline_seconds: float = 30.0,
+        deferred_live_short_sources: frozenset[str] | set[str] | None = None,
     ) -> None:
         self.primary = primary
         self.fallbacks = fallbacks
@@ -46,6 +47,14 @@ class MultiSource(DataSource):
         if live_fetch_deadline_seconds <= 0:
             raise ValueError("live_fetch_deadline_seconds 必须大于 0")
         self.live_fetch_deadline_seconds = float(live_fetch_deadline_seconds)
+        # Sources listed here are intraday reserves: excluded from the
+        # concurrent live_short race, tried sequentially only after every raced
+        # source failed, and skipped entirely on the daily/index chain. Use it
+        # for rate-limited endpoints whose request budget must not be spent
+        # while a healthy primary already answers.
+        self.deferred_live_short_sources: frozenset[str] = frozenset(
+            deferred_live_short_sources or ()
+        )
         self._last_used_source: str | None = None
         self._last_used_sources: dict[str, str] = {}
         self._active_workload: WorkloadId | None = None
@@ -104,6 +113,7 @@ class MultiSource(DataSource):
         """Race realtime sources under one deadline without admitting history."""
         self._clear_last_used()
         eligible: list[tuple[int, DataSource | SourceFactory, str]] = []
+        deferred: list[tuple[int, DataSource | SourceFactory, str]] = []
         exceptions: list[tuple[str, object]] = []
         for index, source_ref in enumerate([self.primary] + self.fallbacks):
             source_name = self._source_name(source_ref)
@@ -114,16 +124,19 @@ class MultiSource(DataSource):
             if source_role_for_workload(source_name, "live_short") == "observation":
                 exceptions.append((source_name, "candidate 来源仅可观察"))
                 continue
+            if source_name in self.deferred_live_short_sources:
+                deferred.append((index, source_ref, source_name))
+                continue
             eligible.append((index, source_ref, source_name))
 
-        if not eligible:
+        if not eligible and not deferred:
             raise DataError(
                 f"所有数据源获取{method_name}失败: "
                 + ", ".join(f"{name}: {error}" for name, error in exceptions)
             )
 
         executor = ThreadPoolExecutor(
-            max_workers=len(eligible),
+            max_workers=max(1, len(eligible) + len(deferred)),
             thread_name_prefix="aqsp-live-source",
         )
         futures = {
@@ -202,6 +215,17 @@ class MultiSource(DataSource):
                 self._set_last_used_provenance(merged_result, "multi")
                 self._last_used_source = "multi"
                 return merged_result
+
+            deferred_result = self._run_deferred_live_short_fallback(
+                deferred,
+                func,
+                expected_keys=expected_keys,
+                exceptions=exceptions,
+                executor=executor,
+            )
+            if deferred_result is not None:
+                return deferred_result
+
             raise DataError(
                 f"所有数据源获取{method_name}失败: "
                 + ", ".join(f"{name}: {str(error)[:80]}" for name, error in exceptions)
@@ -210,6 +234,51 @@ class MultiSource(DataSource):
             for future in pending:
                 future.cancel()
             executor.shutdown(wait=False, cancel_futures=True)
+
+    def _run_deferred_live_short_fallback(
+        self,
+        deferred: list[tuple[int, DataSource | SourceFactory, str]],
+        func,
+        *,
+        expected_keys: list[str],
+        exceptions: list[tuple[str, object]],
+        executor: ThreadPoolExecutor,
+    ) -> dict[str, object] | None:
+        """Try reserve realtime sources one at a time after the race failed.
+
+        Deferred sources are rate-limited reserves (per-IP quotas, circuit
+        breakers). Racing them on every call burns their quota while a healthy
+        primary already answers, so they run only here — as the last line of
+        defence before the intraday freshness gate hard-fails. Each attempt is
+        bounded by its own deadline so a hung reserve cannot block the caller.
+        """
+        if not deferred:
+            return None
+        deadline = time.monotonic() + self.live_fetch_deadline_seconds
+        for _index, source_ref, source_name in deferred:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                exceptions.append((source_name, "deferred fallback 超出时间预算"))
+                break
+            try:
+                future = executor.submit(self._fetch_live_source, source_ref, func)
+                result = future.result(timeout=remaining)
+                if not result:
+                    raise DataError("empty result")
+                result = _annotate_result(result, source_name, "live_short")
+                if not _has_realtime_provenance(result):
+                    raise DataError("实时 workload 缺少逐标的 provenance")
+                missing = _missing_requested_keys(result, expected_keys)
+                if missing:
+                    raise DataError(
+                        f"partial result missing {len(missing)}/{len(expected_keys)}"
+                    )
+            except Exception as exc:
+                exceptions.append((source_name, exc))
+                continue
+            self._set_last_used_provenance(result, source_name)
+            return result
+        return None
 
     def _fetch_live_source(
         self,
@@ -349,6 +418,12 @@ class MultiSource(DataSource):
 
         for source_ref in sources:
             source_name = self._source_name(source_ref)
+            if source_name in self.deferred_live_short_sources:
+                # Reserved for the intraday (live_short) path only. Bar history
+                # APIs of these sources retry one symbol at a time, so they must
+                # not lengthen the daily/index chain.
+                exceptions.append((source_name, "仅作盘中延迟兜底，不参与该路径"))
+                continue
             if effective_workload is not None:
                 guard_message = workload_guard_message(source_name, effective_workload)
                 if guard_message:
