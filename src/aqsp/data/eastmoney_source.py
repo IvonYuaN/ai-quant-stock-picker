@@ -25,6 +25,12 @@ _MAX_RETRIES = 3
 _BACKOFF_BASE = 2.0
 _SPOT_PAGE_SIZE = 200
 _SPOT_HOSTS = ("push2.eastmoney.com", "push2delay.eastmoney.com")
+# 东财真正的分时（分钟线）端点。kline/get?klt=N 在生产环境返回空体/连接重置，
+# 只能作为兜底保留；trends2 只提供 1 分钟粒度，更大周期由 _resample_intraday_bars 合成。
+_TRENDS2_URL = "https://push2his.eastmoney.com/api/qt/stock/trends2/get"
+_TRENDS2_FIELDS2 = "f51,f52,f53,f54,f55,f56,f57"
+# A 股午后场次起点；分时重采样需按场次分段，否则午休空档会把 60 分钟桶切歪。
+_INTRADAY_PM_SESSION_HOUR = 13
 
 _logger = logging.getLogger("aqsp.data.eastmoney")
 
@@ -296,6 +302,63 @@ class EastmoneySource(DataSource):
     def _fetch_eastmoney_intraday(
         self, symbol: str, period: str, *, is_index: bool = False
     ) -> pd.DataFrame | None:
+        """抓取东财当日分时。
+
+        主路径走 trends2（1 分钟粒度 + 本地重采样）；trends2 空返回时
+        回落到旧的 kline/get?klt=N，避免单点端点抖动直接判死。
+        """
+        frame = self._fetch_eastmoney_intraday_trends2(
+            symbol, period, is_index=is_index
+        )
+        if frame is not None and not frame.empty:
+            return frame
+        return self._fetch_eastmoney_intraday_kline(symbol, period, is_index=is_index)
+
+    def _fetch_eastmoney_intraday_trends2(
+        self, symbol: str, period: str, *, is_index: bool = False
+    ) -> pd.DataFrame | None:
+        for attempt in range(_MAX_RETRIES):
+            try:
+                self._throttle()
+                market = "1" if is_index or symbol.startswith("6") else "0"
+                response = self._session.get(
+                    _TRENDS2_URL,
+                    params={
+                        "secid": f"{market}.{symbol}",
+                        "ut": "7eea3edcaed734bea9cbfc24409ed989",
+                        "fields1": "f1,f2,f3,f4,f5,f6",
+                        "fields2": _TRENDS2_FIELDS2,
+                        "iscr": "0",
+                        "ndays": "1",
+                    },
+                    timeout=10,
+                )
+                payload = (response.json() or {}).get("data") or {}
+                frame = _parse_eastmoney_trends2(payload.get("trends") or [])
+                if frame.empty:
+                    return None
+                frame = _resample_intraday_bars(frame, period)
+                if frame.empty:
+                    return None
+                frame["symbol"] = symbol
+                frame["name"] = str(payload.get("name") or symbol)
+                return frame
+            except Exception as exc:
+                if attempt < _MAX_RETRIES - 1:
+                    time.sleep(_BACKOFF_BASE ** (attempt + 1))
+                else:
+                    _logger.warning(
+                        "eastmoney trends2 分时获取失败 %s（重试%d次后放弃）: %s",
+                        symbol,
+                        _MAX_RETRIES,
+                        exc,
+                    )
+                    return None
+        return None
+
+    def _fetch_eastmoney_intraday_kline(
+        self, symbol: str, period: str, *, is_index: bool = False
+    ) -> pd.DataFrame | None:
         for attempt in range(_MAX_RETRIES):
             try:
                 self._throttle()
@@ -546,6 +609,96 @@ def _safe_float(value: object) -> float:
         return float(value)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _parse_eastmoney_trends2(trends: list[object]) -> pd.DataFrame:
+    """Parse eastmoney trends2 rows.
+
+    行格式 ``"YYYY-MM-DD HH:MM,open,close,high,low,volume,amount"``；
+    volume 单位为手，由 ``_normalize_stock_volume_to_shares`` 统一换算成股。
+    """
+    rows: list[dict[str, object]] = []
+    for item in trends or []:
+        parts = str(item).split(",")
+        if len(parts) < 7:
+            continue
+        try:
+            rows.append(
+                {
+                    "date": parts[0].strip(),
+                    "open": float(parts[1]),
+                    "close": float(parts[2]),
+                    "high": float(parts[3]),
+                    "low": float(parts[4]),
+                    "volume": float(parts[5]),
+                    "amount": float(parts[6]),
+                }
+            )
+        except ValueError:
+            continue
+    return pd.DataFrame(
+        rows,
+        columns=[
+            "date",
+            "open",
+            "close",
+            "high",
+            "low",
+            "volume",
+            "amount",
+        ],
+    )
+
+
+def _resample_intraday_bars(frame: pd.DataFrame, period: object) -> pd.DataFrame:
+    """把 1 分钟分时合成 period 分钟粒度。
+
+    A 股分早晚两场（09:30-11:30 / 13:00-15:00）。直接对整日 resample 会让午休
+    空档把 60 分钟桶切歪（13:00-13:29 会被塞进 12:30 桶），所以按场次分段、
+    各以本场首根 K 为 origin 重采样，再按时间顺序拼接。
+    """
+    try:
+        minutes = int(period)
+    except (TypeError, ValueError):
+        return frame
+    if minutes <= 1 or frame.empty or "date" not in frame.columns:
+        return frame
+    stamps = pd.to_datetime(frame["date"], errors="coerce")
+    if stamps.isna().any():
+        # 时间列不可信时宁可返回 1 分钟原始数据，也不产出错误聚合。
+        return frame
+    work = frame.copy()
+    work["_ts"] = stamps
+    work["_session"] = (stamps.dt.hour >= _INTRADAY_PM_SESSION_HOUR).astype(int)
+    chunks: list[pd.DataFrame] = []
+    for _, block in work.groupby([stamps.dt.date, work["_session"]], sort=True):
+        block = block.sort_values("_ts")
+        resampled = (
+            block.set_index("_ts")
+            .resample(f"{minutes}min", origin=block["_ts"].iloc[0])
+            .agg(
+                {
+                    "open": "first",
+                    "close": "last",
+                    "high": "max",
+                    "low": "min",
+                    "volume": "sum",
+                    "amount": "sum",
+                }
+            )
+            .dropna(subset=["open"])
+        )
+        if resampled.empty:
+            continue
+        chunks.append(resampled.reset_index())
+    if not chunks:
+        return frame.iloc[0:0]
+    merged = pd.concat(chunks, ignore_index=True)
+    merged = merged.rename(columns={"_ts": "date"})
+    merged["date"] = pd.to_datetime(merged["date"]).dt.strftime("%Y-%m-%d %H:%M")
+    return merged[
+        ["date", "open", "close", "high", "low", "volume", "amount"]
+    ].reset_index(drop=True)
 
 
 def _normalize_stock_volume_to_shares(df: pd.DataFrame) -> pd.DataFrame:
