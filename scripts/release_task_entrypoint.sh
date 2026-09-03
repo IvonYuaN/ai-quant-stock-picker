@@ -162,4 +162,17 @@ if [[ -z "${AQSP_INTRADAY_FAST_SYMBOL_CSVS:-}" ]]; then
     export AQSP_INTRADAY_FAST_SYMBOL_CSVS="$(runtime_path reports/intraday_latest.csv),$(runtime_path reports/latest.csv)"
 fi
 
-exec /bin/bash "${RELEASE_ROOT}/scripts/bt_task.sh" "$@"
+# Guard scheduled tasks with a hard timeout so a hung task can never silently
+# peg the CPU and break the pipeline. Lesson from 2026-09-03: a stuck ad-hoc
+# probe pegged one core for ~1.5 days, causing tencent timeouts + eastmoney
+# breaker -> intraday gate "stale" failures. 3600s covers backtests
+# (walkforward-gate) while still killing anything that hangs for hours.
+# Override per-task via AQSP_TASK_TIMEOUT_SEC. Falls back to unguarded exec if
+# `timeout` (GNU coreutil, present on prod Linux) is unavailable.
+TASK_TIMEOUT_SEC="${AQSP_TASK_TIMEOUT_SEC:-3600}"
+if command -v timeout >/dev/null 2>&1; then
+    exec timeout "$TASK_TIMEOUT_SEC" /bin/bash "${RELEASE_ROOT}/scripts/bt_task.sh" "$@"
+else
+    echo "[WARN] 'timeout' unavailable; running scheduled task WITHOUT guard" >&2
+    exec /bin/bash "${RELEASE_ROOT}/scripts/bt_task.sh" "$@"
+fi
