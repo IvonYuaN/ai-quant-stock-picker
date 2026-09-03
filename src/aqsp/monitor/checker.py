@@ -9,7 +9,7 @@ from typing import Any, Literal
 
 import yaml
 
-from aqsp.core.time import today_shanghai
+from aqsp.core.time import is_trading_day, today_shanghai
 from aqsp.data.trading_calendar import trading_day_lag
 from aqsp.ledger.base import (
     is_ledger_row_paper_review_eligible,
@@ -92,6 +92,8 @@ class MonitorChecker:
                     result = self._check_screening_liveness(monitor.params)
                 elif monitor.check == "empty_picks":
                     result = self._check_empty_picks(monitor.params)
+                elif monitor.check == "daily_report_freshness":
+                    result = self._check_daily_report_freshness(monitor.params)
                 else:
                     result = MonitorResult(
                         name=monitor.name,
@@ -640,4 +642,111 @@ class MonitorChecker:
             severity="warning",
             message=f"最近一次筛选（{latest}）产出 {len(tradable)} 只可交易标的",
             details={"signal_date": latest, "tradable": len(tradable)},
+        )
+
+    def _check_daily_report_freshness(self, params: dict[str, Any]) -> MonitorResult:
+        """v2 研究日报当日新鲜度：监控当日/最近交易日是否真的落地了 v2 日报。
+
+        对 PR #70「临时 --report 目录被清导致 v2 日报从不落地」业务盲区的监控
+        补强——主流程跑成功、其他检查全绿，但 v2 日报若因路径 bug 未落地，此前
+        无任何检查能发现。此处显式校验落盘文件的新鲜度。
+
+        路径解析与 ``cli._write_daily_research_report`` 完全一致（PR #70 修复后）：
+          1) ``AQSP_DAILY_RESEARCH_REPORT`` 显式覆盖（仅目录则补 daily_report.md）
+          2) 否则 ``AQSP_RUNTIME_DATA_ROOT/reports/daily_report.md``
+          3) 无 env 时回退 ``params.report_path``（默认 ``reports/daily_report.md``，dev 行为）
+
+        新鲜度用 ``trading_day_lag(report_date, today)``：周末/节假日会把 anchor 退到
+        上一交易日，因此周五的日报整个周末都算新鲜，不会误报；交易日滞后超过阈值才触发。
+        """
+        report_path_env = os.environ.get("AQSP_DAILY_RESEARCH_REPORT", "").strip()
+        runtime_data_root = os.environ.get("AQSP_RUNTIME_DATA_ROOT", "").strip()
+        if report_path_env:
+            report_path = Path(report_path_env)
+            if not report_path.suffix:
+                report_path = report_path / "daily_report.md"
+        elif runtime_data_root:
+            report_path = Path(runtime_data_root) / "reports" / "daily_report.md"
+        else:
+            report_path = Path(str(params.get("report_path", "reports/daily_report.md")))
+
+        max_lag_trading_days = int(params.get("max_lag_trading_days", 2))
+        if max_lag_trading_days < 0:
+            raise ValueError("max_lag_trading_days must be non-negative")
+
+        # 是否有“持久数据环境”信号：生产 cron 会注入 AQSP_RUNTIME_DATA_ROOT
+        # （或显式 AQSP_DAILY_RESEARCH_REPORT）；CI/冒烟无这两个 env。
+        has_persistent_env = bool(report_path_env or runtime_data_root)
+
+        if not report_path.exists():
+            if not has_persistent_env:
+                # CI/无持久数据环境：dev 回退路径相对、无持久 data，v2 日报本就不该
+                # 存在，无法评估 → 标记 skipped 而非误报（与 stale_data 等约定一致）。
+                return MonitorResult(
+                    name="daily_report_freshness",
+                    triggered=False,
+                    severity="warning",
+                    message=(
+                        "v2 研究日报文件不存在，跳过新鲜度检查"
+                        "（CI/无持久数据环境预期如此；生产环境应由 scheduled 运行写入）"
+                    ),
+                    details={"report_path": str(report_path)},
+                    skipped=True,
+                )
+            # 生产环境（持久 env 已设）却无日报 → 真实故障：v2 日报未落地。
+            return MonitorResult(
+                name="daily_report_freshness",
+                triggered=True,
+                severity="critical",
+                message=f"v2 研究日报未生成：期望路径 {report_path} 不存在",
+                details={"report_path": str(report_path)},
+            )
+
+        try:
+            mtime = report_path.stat().st_mtime
+            report_date = date.fromtimestamp(mtime)
+        except OSError as exc:
+            return MonitorResult(
+                name="daily_report_freshness",
+                triggered=True,
+                severity="critical",
+                message=f"v2 研究日报无法读取: {exc}",
+                details={"report_path": str(report_path)},
+            )
+
+        today = today_shanghai()
+        lag = trading_day_lag(report_date, today)
+        if lag > max_lag_trading_days:
+            return MonitorResult(
+                name="daily_report_freshness",
+                triggered=True,
+                severity="critical",
+                message=(
+                    f"v2 研究日报滞后 {lag} 个交易日，超过阈值 {max_lag_trading_days}；"
+                    f"最后生成于 {report_date.isoformat()}"
+                ),
+                details={
+                    "report_path": str(report_path),
+                    "report_date": report_date.isoformat(),
+                    "trading_lag_days": lag,
+                    "max_lag_trading_days": max_lag_trading_days,
+                    "today": today.isoformat(),
+                    "is_trading_day_today": is_trading_day(today),
+                },
+            )
+        return MonitorResult(
+            name="daily_report_freshness",
+            triggered=False,
+            severity="warning",
+            message=(
+                f"v2 研究日报新鲜度正常，滞后 {lag} 个交易日"
+                f"（最后生成于 {report_date.isoformat()}）"
+            ),
+            details={
+                "report_path": str(report_path),
+                "report_date": report_date.isoformat(),
+                "trading_lag_days": lag,
+                "today": today.isoformat(),
+                "is_trading_day_today": is_trading_day(today),
+            },
         )

@@ -1,10 +1,21 @@
 from __future__ import annotations
 
 import json
+import os
+from datetime import datetime
 from pathlib import Path
+
+import pytest
 
 from aqsp.core.time import today_shanghai
 from aqsp.monitor.checker import MonitorChecker
+
+
+@pytest.fixture(autouse=True)
+def _clear_report_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """保证测试走 dev 回退路径：清掉生产 env，让 params.report_path 生效。"""
+    monkeypatch.delenv("AQSP_DAILY_RESEARCH_REPORT", raising=False)
+    monkeypatch.delenv("AQSP_RUNTIME_DATA_ROOT", raising=False)
 
 
 def _write_ledger(path: Path, rows: list[dict]) -> None:
@@ -219,3 +230,106 @@ def test_unknown_check_surfaces_triggered(tmp_path: Path) -> None:
     results = MonitorChecker(str(cfg)).check_all()
     assert results[0].triggered is True
     assert "Unknown check" in results[0].message
+
+
+def test_daily_report_freshness_ok_when_fresh(tmp_path: Path) -> None:
+    report = tmp_path / "reports" / "daily_report.md"
+    report.parent.mkdir(parents=True, exist_ok=True)
+    report.write_text("# v2 daily research report\n", encoding="utf-8")
+    # 用当前时刻作为 mtime，确保 report_date == today（含非交易日 anchor 退避）。
+    now = datetime.now().timestamp()
+    os.utime(report, (now, now))
+    cfg = tmp_path / "monitors.yaml"
+    _write_config(
+        cfg,
+        [
+            {
+                "name": "daily_report_freshness",
+                "check": "daily_report_freshness",
+                "params": {
+                    "report_path": str(report),
+                    "max_lag_trading_days": 2,
+                },
+                "severity": "critical",
+            }
+        ],
+    )
+    results = MonitorChecker(str(cfg)).check_all()
+    assert results[0].triggered is False
+    assert results[0].name == "daily_report_freshness"
+
+
+def test_daily_report_freshness_triggers_when_stale(tmp_path: Path) -> None:
+    report = tmp_path / "reports" / "daily_report.md"
+    report.parent.mkdir(parents=True, exist_ok=True)
+    report.write_text("# v2 daily research report\n", encoding="utf-8")
+    # mtime 退到很久以前（2020-01-01），交易日滞后远超阈值。
+    stale = datetime(2020, 1, 1).timestamp()
+    os.utime(report, (stale, stale))
+    cfg = tmp_path / "monitors.yaml"
+    _write_config(
+        cfg,
+        [
+            {
+                "name": "daily_report_freshness",
+                "check": "daily_report_freshness",
+                "params": {
+                    "report_path": str(report),
+                    "max_lag_trading_days": 2,
+                },
+                "severity": "critical",
+            }
+        ],
+    )
+    results = MonitorChecker(str(cfg)).check_all()
+    assert results[0].triggered is True
+    assert results[0].severity == "critical"
+    assert results[0].details["trading_lag_days"] > 2
+
+
+def test_daily_report_freshness_skipped_when_missing_no_env(tmp_path: Path) -> None:
+    # 无持久 env 且文件不存在 → skipped（CI/冒烟环境预期如此）。
+    cfg = tmp_path / "monitors.yaml"
+    _write_config(
+        cfg,
+        [
+            {
+                "name": "daily_report_freshness",
+                "check": "daily_report_freshness",
+                "params": {
+                    "report_path": str(tmp_path / "reports" / "daily_report.md"),
+                    "max_lag_trading_days": 2,
+                },
+                "severity": "critical",
+            }
+        ],
+    )
+    results = MonitorChecker(str(cfg)).check_all()
+    assert results[0].triggered is False
+    assert results[0].skipped is True
+    assert "跳过新鲜度检查" in results[0].message
+
+
+def test_daily_report_freshness_triggers_when_missing_in_prod(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 生产环境（AQSP_RUNTIME_DATA_ROOT 已注入）却无日报 → 真实故障，触发而非跳过。
+    runtime_root = tmp_path / "runtime"
+    runtime_root.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("AQSP_RUNTIME_DATA_ROOT", str(runtime_root))
+    cfg = tmp_path / "monitors.yaml"
+    _write_config(
+        cfg,
+        [
+            {
+                "name": "daily_report_freshness",
+                "check": "daily_report_freshness",
+                "params": {"max_lag_trading_days": 2},
+                "severity": "critical",
+            }
+        ],
+    )
+    results = MonitorChecker(str(cfg)).check_all()
+    assert results[0].triggered is True
+    assert results[0].skipped is False
+    assert "未生成" in results[0].message
