@@ -4607,7 +4607,11 @@ def _write_daily_research_report(
     - 市场状态：``regime``（``MarketRegime``）
     - 熔断：``breaker_status``（``BreakerStatus``）
 
-    输出路径为 ``--report`` 同级目录下的 ``daily_report.md``。
+    输出路径默认为运行时数据 ``reports/daily_report.md``（与生产 intraday 报告
+    ``reports/`` 同目录、可持久）；可用 ``AQSP_DAILY_RESEARCH_REPORT`` 覆盖。
+    注意：绝不能从 ``args.report`` 的父目录派生——盘中刷新把 ``--report`` 指向
+    mktemp 临时目录，脚本退出即被 trap 清理，日报生成后会立刻被删除、从不在
+    服务器落地。详见 PR #70 修复说明。
     """
     try:
         from aqsp.portfolio.diversification import DiversificationEngine
@@ -4634,14 +4638,29 @@ def _write_daily_research_report(
         report = ReportGenerator().generate(
             strategy_performances, portfolio_report, regime, breaker_status
         )
-        report_parent = Path(str(getattr(args, "report", "") or "")).parent
-        report_dir = (
-            report_parent
-            if str(report_parent).strip() not in ("", ".")
-            else Path("reports")
-        )
-        report_dir.mkdir(parents=True, exist_ok=True)
-        report_path = report_dir / "daily_report.md"
+        # 关键修复（PR #70）：scheduled 运行可能把 --report 指向临时目录
+        # （盘中刷新用 mktemp 目录，脚本退出即被 trap 清理），绝不能从
+        # args.report 的父目录派生日报位置，否则日报生成后立刻被删、从不在
+        # 服务器落地。解析持久位置优先级：
+        #   1) AQSP_DAILY_RESEARCH_REPORT 显式覆盖（完整路径；若只给目录则补 daily_report.md）
+        #   2) 否则落到运行时数据 reports 目录（与生产 intraday 报告 reports/ 同目录）
+        #   3) 本地无 env 时回退到 args.report 父目录（保持 dev 行为）
+        report_path_env = os.environ.get("AQSP_DAILY_RESEARCH_REPORT", "").strip()
+        runtime_data_root = os.environ.get("AQSP_RUNTIME_DATA_ROOT", "").strip()
+        if report_path_env:
+            report_path = Path(report_path_env)
+            if not report_path.suffix:
+                report_path = report_path / "daily_report.md"
+        elif runtime_data_root:
+            report_path = Path(runtime_data_root) / "reports" / "daily_report.md"
+        else:
+            report_parent = Path(str(getattr(args, "report", "") or "")).parent
+            report_path = (
+                report_parent
+                if str(report_parent).strip() not in ("", ".")
+                else Path("reports")
+            ) / "daily_report.md"
+        report_path.parent.mkdir(parents=True, exist_ok=True)
         ReportGenerator().save(report, str(report_path))
         LOGGER.info("v2 研究日报已生成: %s", report_path)
         return str(report_path)
