@@ -6,6 +6,11 @@ from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Literal
+import json
+import os
+import re
+from pathlib import Path
+
 import pandas as pd
 
 from aqsp.data.source import DataSource, OhlcvFrame
@@ -41,6 +46,98 @@ _DEFAULT_FETCH_MAX_WORKERS = 4
 # exceed it and get dropped ("跳过 5/5 个批次"); 20-symbol batches stay well under
 # while still bounding request fan-out.
 _DEFAULT_FETCH_BATCH_SIZE = 20
+
+
+# Last-good intraday cache: when the live source is throttled / circuit-broken
+# during the trading session, reuse the most recent same-trading-day snapshot so
+# the quality gate does not hard-fail and the pipeline keeps flowing. The cache is
+# only consulted for the current trading day; a previous-day cache is never
+# eligible for live_short (it would fail freshness validation anyway).
+_DEFAULT_INTRADAY_CACHE_DIR = "data/intraday_cache"
+# Symbols served from last-good cache in the current process (transient rate-limit
+# fallback). Read by the CLI run command to mark the source health as degraded.
+_INTRADAY_CACHE_FALLBACK_SYMBOLS: set[str] = set()
+
+
+def intraday_cache_fallback_symbols() -> tuple[str, ...]:
+    """Symbols reused from last-good cache this process (empty when all live)."""
+    return tuple(sorted(_INTRADAY_CACHE_FALLBACK_SYMBOLS))
+
+
+def _intraday_cache_dir() -> Path:
+    raw = (os.environ.get("AQSP_INTRADAY_CACHE_DIR") or "").strip()
+    base = Path(raw) if raw else Path(_DEFAULT_INTRADAY_CACHE_DIR)
+    try:
+        base.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
+    return base
+
+
+def _intraday_cache_paths(symbol: str) -> tuple[Path, Path]:
+    safe = re.sub(r"[^0-9A-Za-z]", "_", str(symbol))
+    directory = _intraday_cache_dir()
+    return directory / f"{safe}.csv", directory / f"{safe}.meta.json"
+
+
+def _write_intraday_cache(symbol: str, frame: pd.DataFrame) -> None:
+    """Persist a successfully-fetched live intraday frame for last-good fallback."""
+    if frame is None or frame.empty or "date" not in frame.columns:
+        return
+    try:
+        parsed = pd.to_datetime(frame["date"], errors="coerce").dropna()
+        if parsed.empty:
+            return
+        latest_date = parsed.max().date()
+        if latest_date != now_shanghai().date():
+            return  # only same-trading-day bars are eligible for live_short fallback
+        source_name = str(
+            frame.attrs.get("source_name") or frame.attrs.get("source") or ""
+        ).strip()
+        timestamp_source = str(frame.attrs.get("timestamp_source") or "").strip()
+        if not source_name or not timestamp_source:
+            return
+        meta = {
+            "source_name": source_name,
+            "fetched_at": str(
+                frame.attrs.get("fetched_at") or now_shanghai().isoformat()
+            ),
+            "timestamp_source": timestamp_source,
+            "latest_date": latest_date.isoformat(),
+            "workload": "live_short",
+        }
+        csv_path, meta_path = _intraday_cache_paths(symbol)
+        frame.to_csv(csv_path, index=False)
+        meta_path.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+    except Exception as exc:  # cache I/O must never break the live path
+        _logger.warning("盘中分时 last-good 缓存写入失败 %s: %s", symbol, exc)
+
+
+def _read_intraday_cache(symbol: str) -> pd.DataFrame | None:
+    """Return cached same-trading-day bars for fallback, or None when unavailable."""
+    csv_path, meta_path = _intraday_cache_paths(symbol)
+    if not csv_path.is_file() or not meta_path.is_file():
+        return None
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        if meta.get("latest_date") != now_shanghai().date().isoformat():
+            return None  # previous trading day cache cannot satisfy live_short
+        frame = pd.read_csv(csv_path)
+        if frame.empty or "date" not in frame.columns:
+            return None
+        frame.attrs.update(
+            {
+                "source_name": meta.get("source_name", ""),
+                "source": meta.get("source_name", ""),
+                "workload": "live_short",
+                "fetched_at": meta.get("fetched_at", now_shanghai().isoformat()),
+                "timestamp_source": meta.get("timestamp_source", "bar_time"),
+            }
+        )
+        return frame
+    except Exception as exc:
+        _logger.warning("盘中分时 last-good 缓存读取失败 %s: %s", symbol, exc)
+        return None
 
 
 def _chunked(values: list[str], size: int) -> list[list[str]]:
@@ -185,6 +282,7 @@ class IntradayService:
         validated: dict[str, OhlcvFrame] = {}
         rejected_reasons: list[str] = []
         replay = target_date is not None and target_date != now_shanghai().date()
+        live_failed: list[str] = []
         for symbol, frame in result.items():
             try:
                 _validate_live_bar_freshness(
@@ -209,8 +307,52 @@ class IntradayService:
                     exc,
                 )
                 rejected_reasons.append(str(exc))
+                live_failed.append(symbol)
                 continue
+            if not replay:
+                _write_intraday_cache(symbol, frame)
             validated[symbol] = frame
+
+        # Transient rate-limit fallback: when the live source returns empty bodies
+        # or trips its circuit breaker mid-session, reuse the most recent
+        # same-trading-day snapshot for the symbols that could not be fetched live.
+        # This keeps the quality gate from hard-failing (lag_days stays 0 for current
+        # day data) and the pipeline keeps flowing; it auto-recovers when live returns.
+        if not replay:
+            for symbol in list(missing) + live_failed:
+                if symbol in validated:
+                    continue
+                cached = _read_intraday_cache(symbol)
+                if cached is None:
+                    continue
+                try:
+                    _validate_live_bar_freshness(
+                        symbol, cached, period, target_date=target_date
+                    )
+                    _annotate_live_intraday_provenance(
+                        symbol,
+                        cached,
+                        source=self.source,
+                        fetched_at=cached.attrs.get("fetched_at"),
+                        workload="live_short",
+                        freshness="cached",
+                    )
+                except DataError as exc:
+                    _logger.warning(
+                        "盘中分时 last-good 缓存 %s 仍不满足新鲜度，跳过: %s",
+                        symbol,
+                        exc,
+                    )
+                    continue
+                cached.attrs["cache_fallback"] = True
+                cached.attrs["freshness"] = "cached"
+                validated[symbol] = cached
+                _INTRADAY_CACHE_FALLBACK_SYMBOLS.add(symbol)
+                _logger.warning(
+                    "盘中分时 %s 限流窗复用 last-good 缓存（降级，非实时）",
+                    symbol,
+                )
+
         if not validated:
             reason = "分时数据全部缺失或已过期"
             if rejected_reasons:
