@@ -5617,6 +5617,20 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         run_metadata=run_metadata,
     )
 
+    # 生成 v2 结构化研究日报（策略表现 + 研究覆盖 + 市场状态 + 熔断），纯增强。
+    # 提前到通知/LLM 尾巴之前落盘：盘中 `aqsp run` 被 1200s 硬超时宰杀时，
+    # 通知构建（finalize/dispatch_scheduled_daily_notification）是超时 sink，
+    # 原调用点（_run_scheduled_legacy 末尾）到不了，v2 日报从不在生产落地。
+    # 此处核心研究结果（picks/portfolio/strategy_performances/regime/status）
+    # 已全部就绪，提前写可保证即便后续通知尾巴超时被杀，日报也已持久。
+    _write_daily_research_report(
+        args=args,
+        strategy_performances=strategy_performances,
+        picks=picks,
+        regime=regime,
+        breaker_status=status,
+    )
+
     table = (
         to_intraday_dataframe(picks, metadata=run_metadata)
         if _is_high_frequency_task(normalized_task_id)
@@ -5898,14 +5912,6 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
             summary_markdown=kwargs.get("summary_markdown"),
         ),
         notification_kind=f"daily:{latest.isoformat()}",
-    )
-    # 生成 v2 结构化研究日报（策略表现 + 研究覆盖 + 市场状态 + 熔断），纯增强。
-    _write_daily_research_report(
-        args=args,
-        strategy_performances=strategy_performances,
-        picks=picks,
-        regime=regime,
-        breaker_status=status,
     )
     if status.triggered and not allow_research_during_protection:
         return 2

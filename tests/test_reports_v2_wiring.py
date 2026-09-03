@@ -40,7 +40,7 @@ def test_write_daily_research_report_wires_inputs(tmp_path: Path, monkeypatch) -
         _FakePick("300750", 0.7, "新能源"),
         _FakePick("000001", 0.5, "金融"),
     ]
-    regime = SimpleNamespace(name="bull", confidence=0.8, description="上行")
+    regime = "bull"
     breaker = SimpleNamespace(triggered=False, reason="正常")
 
     path = _write_daily_research_report(
@@ -57,7 +57,8 @@ def test_write_daily_research_report_wires_inputs(tmp_path: Path, monkeypatch) -
     assert "600519" in content
     assert "消费" in content
     assert "momentum" in content
-    assert "上行" in content
+    # 调度流传 str regime（PR #72 契约），to_markdown 渲染市场状态标签
+    assert "bull" in content
     # 落盘路径应为 --report 同级目录下的 daily_report.md
     assert Path(path).name == "daily_report.md"
     assert Path(path).parent == tmp_path
@@ -104,7 +105,7 @@ def test_write_daily_research_report_persists_outside_temp_report(monkeypatch) -
         _FakePick("600519", 0.9, "消费"),
         _FakePick("300750", 0.7, "新能源"),
     ]
-    regime = SimpleNamespace(name="bull", confidence=0.8, description="上行")
+    regime = "bull"
     breaker = SimpleNamespace(triggered=False, reason="正常")
 
     path = _write_daily_research_report(
@@ -129,4 +130,80 @@ def test_write_daily_research_report_persists_outside_temp_report(monkeypatch) -
     assert expected.is_file(), "临时目录清理后，持久日报应仍在"
     content = expected.read_text(encoding="utf-8")
     assert "600519" in content
+    assert "bull" in content
+
+
+def test_write_daily_research_report_explicit_env_override(monkeypatch) -> None:
+    """PR #73 回归：AQSP_DAILY_RESEARCH_REPORT 显式设置时，v2 日报必须精确落到该路径，
+    优先级高于 AQSP_RUNTIME_DATA_ROOT 与 --report 父目录派生。
+
+    复现真实问题：不同 cron 各自 --report 目录不同（如 daily_pipeline.sh 用
+    /tmp/aqsp_v2_prod/...），早先未显式设 AQSP_DAILY_RESEARCH_REPORT 时，日报落到
+    --report 父目录（/tmp/aqsp_v2_prod/daily_report.md），与 daily_report_freshness
+    监控检查的 /opt/aqsp/data/reports/daily_report.md 不一致，监控误报且日报分散。
+    release_task_entrypoint.sh 现在显式 export 该变量，此测试锁定该契约。
+    """
+    runtime_root = tempfile.mkdtemp(prefix="aqsp_runtime_")
+    monkeypatch.setenv("AQSP_RUNTIME_DATA_ROOT", runtime_root)
+    # 即便 --report 指向完全不同的临时目录，也应服从显式 env
+    temp_report_dir = tempfile.mkdtemp(prefix="aqsp_tmp_report_")
+    args = Namespace(report=str(Path(temp_report_dir) / "intraday_latest.md"))
+
+    explicit_path = Path(runtime_root) / "reports" / "daily_report.md"
+    monkeypatch.setenv("AQSP_DAILY_RESEARCH_REPORT", str(explicit_path))
+
+    picks = [
+        _FakePick("600519", 0.9, "消费"),
+        _FakePick("300750", 0.7, "新能源"),
+    ]
+    regime = "bull"
+    breaker = SimpleNamespace(triggered=False, reason="正常")
+
+    path = _write_daily_research_report(
+        args=args,
+        strategy_performances=_fake_strategy_perf(),
+        picks=picks,
+        regime=regime,
+        breaker_status=breaker,
+    )
+
+    assert path is not None
+    assert Path(path) == explicit_path
+    assert explicit_path.is_file()
+    # 不应落到 --report 父目录（验证 env 覆盖生效）
+    assert Path(path).parent != Path(temp_report_dir)
+    content = explicit_path.read_text(encoding="utf-8")
+    assert "600519" in content
+    assert "bull" in content
+
+
+def test_write_daily_research_report_market_regime_renders_description(monkeypatch) -> None:
+    """真实 MarketRegime 对象应渲染 description 到摘要（_generate_summary 的 regime 分支）；
+    与 str regime（调度流契约）区分：对象途径保留市场描述可读性。"""
+    monkeypatch.delenv("AQSP_RUNTIME_DATA_ROOT", raising=False)
+    monkeypatch.delenv("AQSP_DAILY_RESEARCH_REPORT", raising=False)
+    args = Namespace(report=str(Path(tempfile.mkdtemp(prefix="aqsp_rpt_")) / "latest.md"))
+    from aqsp.regime.detector import MarketRegime
+    from datetime import datetime
+
+    regime = MarketRegime(
+        name="bull",
+        description="上行",
+        features={},
+        confidence=0.8,
+        timestamp=datetime.now(),
+    )
+    breaker = SimpleNamespace(triggered=False, reason="正常")
+
+    path = _write_daily_research_report(
+        args=args,
+        strategy_performances=_fake_strategy_perf(),
+        picks=[_FakePick("600519", 0.9, "消费")],
+        regime=regime,
+        breaker_status=breaker,
+    )
+
+    assert path is not None
+    content = Path(path).read_text(encoding="utf-8")
+    # 摘要分支渲染完整描述（PR #72 之前 SimpleNamespace 桩依赖此路径，现用真实对象覆盖）
     assert "上行" in content
