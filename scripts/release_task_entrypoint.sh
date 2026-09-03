@@ -68,6 +68,9 @@ esac
 export AQSP_PROJECT_ROOT="$RELEASE_ROOT"
 export AQSP_RUNTIME_ROOT="$RUNTIME_ROOT"
 export AQSP_RUNTIME_DATA_ROOT="$RUNTIME_DATA_ROOT"
+# v2 研究日报固定落点：避免不同 cron 各自 --report 目录导致日报落到临时/分散路径，
+# 使 daily_report_freshness 监控与生产路径一致（PR #73）。
+export AQSP_DAILY_RESEARCH_REPORT="${AQSP_DAILY_RESEARCH_REPORT:-${RUNTIME_DATA_ROOT}/reports/daily_report.md}"
 export AQSP_IMMUTABLE_RELEASE="${AQSP_IMMUTABLE_RELEASE:-true}"
 export AQSP_RELEASE_MANIFEST="${AQSP_RELEASE_MANIFEST:-${RELEASE_ROOT}/.aqsp-release.json}"
 if [[ -f "$AQSP_RELEASE_MANIFEST" ]]; then
