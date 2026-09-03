@@ -49,3 +49,27 @@ def test_reports_v2_reloads_thresholds_on_generate(monkeypatch) -> None:
     report = generator.generate(strategies={}, portfolio=portfolio)
 
     assert report.version == "new"
+
+
+def test_reports_v2_accepts_str_regime_from_scheduled_flow() -> None:
+    """回归：cli._run_scheduled_legacy 传入的 regime 是 _detect_runtime_regime
+    返回的 str 标签，而非 MarketRegime 对象。v2.py 曾对 regime.name 取值，
+    在 prod 抛 'str' object has no attribute 'name'，导致整份日报从不落地。"""
+    from aqsp.portfolio.diversification import DiversificationEngine
+
+    engine = DiversificationEngine()
+    result = engine.optimize({"600000": 1.0}, {"600000": "银行"})
+    portfolio = PortfolioReport(
+        symbols=result.symbols,
+        weights=result.weights,
+        sector_allocations=result.sector_allocations,
+        diversification_score=result.diversification_score,
+    )
+
+    # regime 传 str（模拟调度流），breaker 传 None
+    report = ReportGenerator().generate({}, portfolio, "bull", None)
+    assert report.market_regime == "bull"
+    assert report.regime_confidence == 0.0
+    markdown = ReportGenerator().to_markdown(report)
+    assert "市场状态: bull" in markdown
+    assert "研究分散度" in markdown
