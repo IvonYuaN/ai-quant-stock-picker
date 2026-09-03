@@ -29,9 +29,18 @@ _INTRADAY_MAX_AGE_SECONDS: dict[str, int] = {
 _MAX_FUTURE_BAR_SECONDS = 120
 _COMPOSITE_SOURCES = frozenset({"auto", "local_first", "online_first", "multi"})
 _A_SHARE_SESSION_MINUTES = 240
-_DEFAULT_FETCH_DEADLINE_SECONDS = 30.0
+# Per-batch budget for the intraday fetch. Batches run concurrently, so one
+# get_intraday_bars call takes at most ~this long in wall-clock (not
+# batches x this). 90s gives a throttled composite source comfortable margin
+# while the scheduler entrypoint's 3600s guard still bounds pathological hangs.
+# (2026-09-03: 30s dropped whole 64-symbol batches under transient slowness.)
+_DEFAULT_FETCH_DEADLINE_SECONDS = 90.0
 _DEFAULT_FETCH_MAX_WORKERS = 4
-_DEFAULT_FETCH_BATCH_SIZE = 64
+# Keep each source request small enough to finish within the composite source's
+# own 30s live_fetch_deadline under throttle. 64-symbol batches were observed to
+# exceed it and get dropped ("跳过 5/5 个批次"); 20-symbol batches stay well under
+# while still bounding request fan-out.
+_DEFAULT_FETCH_BATCH_SIZE = 20
 
 
 def _chunked(values: list[str], size: int) -> list[list[str]]:
