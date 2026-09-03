@@ -271,6 +271,82 @@ def test_intraday_service_shared_deadline_leaves_slow_symbols_missing() -> None:
     assert result == {}
 
 
+def test_intraday_service_small_batches_survive_source_throttle() -> None:
+    # Regression for the 2026-09-03 prod failure: a composite source drops
+    # requests it cannot finish within its own live_fetch_deadline. With the
+    # default 20-symbol batch size every request stays under that limit and
+    # completes; with the old 64-symbol default large batches were dropped and
+    # the whole universe came back empty ("跳过 5/5 个批次").
+    class SourceDropsLargeBatches(MockSource):
+        def __init__(self):
+            super().__init__(
+                intraday_data={
+                    symbol: pd.DataFrame(
+                        {
+                            "date": ["2026-07-16 09:30:00"],
+                            "open": [10.0],
+                            "high": [10.1],
+                            "low": [9.9],
+                            "close": [10.0],
+                            "volume": [1000],
+                        }
+                    )
+                    for symbol in (f"{i:06d}" for i in range(80))
+                }
+            )
+
+        def fetch_intraday(self, symbols, period="5"):
+            if len(symbols) > 20:
+                raise DataError("source dropped large batch (throttled)")
+            return super().fetch_intraday(symbols, period)
+
+    symbols = [f"{i:06d}" for i in range(80)]
+    service = IntradayService(SourceDropsLargeBatches(), fetch_max_workers=4)
+    result = service._fetch_intraday_with_symbol_isolation(symbols, "5")
+
+    assert set(result) == set(symbols)
+
+
+def test_intraday_service_isolates_slow_batch_keeps_fast() -> None:
+    # A single slow batch must be dropped on its own deadline without taking
+    # down the fast batches in the same call.
+    class MixedSource(MockSource):
+        def __init__(self):
+            super().__init__(
+                intraday_data={
+                    symbol: pd.DataFrame(
+                        {
+                            "date": ["2026-07-16 09:30:00"],
+                            "open": [10.0],
+                            "high": [10.1],
+                            "low": [9.9],
+                            "close": [10.0],
+                            "volume": [1000],
+                        }
+                    )
+                    for symbol in ("600000", "000001", "000002", "000003")
+                }
+            )
+
+        def fetch_intraday(self, symbols, period="5"):
+            if "000003" in symbols:
+                time.sleep(0.3)
+            return super().fetch_intraday(symbols, period)
+
+    service = IntradayService(
+        MixedSource(),
+        fetch_deadline_seconds=0.1,
+        fetch_batch_size=1,
+        fetch_max_workers=4,
+    )
+    result = service._fetch_intraday_with_symbol_isolation(
+        ["600000", "000001", "000002", "000003"], "5"
+    )
+
+    assert set(result) == {"600000", "000001", "000002"}
+    assert "000003" not in result
+
+
 def test_intraday_service_rejects_invalid_fetch_limits() -> None:
     with pytest.raises(ValueError, match="fetch_deadline_seconds"):
         IntradayService(MockSource(), fetch_deadline_seconds=0)
