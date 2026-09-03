@@ -81,3 +81,14 @@ monitors:
       ledger_path: data/predictions.jsonl
       paper_ledger_path: data/paper_trades.jsonl
     severity: "warning"
+
+  - name: "daily_report_freshness"
+    description: "v2 研究日报当日新鲜度（PR #70 路径修复后业务盲区补强）"
+    enabled: true
+    check: "daily_report_freshness"
+    params:
+      max_lag_trading_days: 2
+      # 落点解析与 cli._write_daily_research_report 完全一致：
+      # 生产由 scheduled 运行写入 AQSP_RUNTIME_DATA_ROOT/reports/daily_report.md；
+      # 无持久 env（CI）时日报不存在 → 标记 skipped（与 stale_data 等约定一致）。
+    severity: "critical"
