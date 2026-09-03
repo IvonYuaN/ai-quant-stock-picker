@@ -89,11 +89,22 @@ class ReportGenerator:
                 )
             )
 
-        regime_name = regime.name if regime else "unknown"
-        regime_confidence = regime.confidence if regime else 0.0
+        # 调度流（cli._run_scheduled_legacy）传入的是 regime 标签字符串
+        # （_detect_runtime_regime 返回 str），而非 MarketRegime 对象；直接构造
+        # 时可能传入 MarketRegime。统一归一化，避免 'str' has no attribute 'name'
+        # 导致整份日报生成失败、从不在生产落地（PR #69 引入、PR #70 仅修了落点）。
+        if isinstance(regime, MarketRegime):
+            regime_name = regime.name
+            regime_confidence = regime.confidence
+            regime_view = regime
+        else:
+            regime_name = regime if isinstance(regime, str) and regime.strip() else "unknown"
+            regime_confidence = 0.0
+            regime_view = None
+
         breaker_status = breaker.reason if breaker and breaker.triggered else "正常"
 
-        summary = self._generate_summary(strategy_reports, portfolio, regime, breaker)
+        summary = self._generate_summary(strategy_reports, portfolio, regime_view, breaker)
 
         return DailyReport(
             date=now_shanghai().isoformat(timespec="seconds"),
