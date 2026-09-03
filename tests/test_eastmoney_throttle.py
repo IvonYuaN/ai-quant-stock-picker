@@ -123,3 +123,82 @@ class TestIntradayThrottle:
         assert "close" in out.columns
         # 成功后熔断计数清零，下一帧仍可正常申请槽位
         assert _eastmoney_acquire_request_slot() is True
+
+
+class TestTrends2HostFallback:
+    """trends2 多域名回退。
+
+    生产机 IP 会对 push2his 按 IP 限流（连接被无响应重置，curl HTTP=000），
+    而 push2delay 走同一 trends2 路径仍可用。故域名按重试轮转，优先 push2delay。
+    """
+
+    @staticmethod
+    def _payload() -> dict:
+        return {
+            "data": {
+                "name": "平安银行",
+                "trends": [
+                    "2026-09-03 09:30,11.0,11.5,11.6,11.0,100,1150",
+                    "2026-09-03 09:31,11.5,11.7,11.8,11.5,200,2340",
+                ],
+            }
+        }
+
+    @staticmethod
+    def _source_with(handler):
+        src = EastmoneySource()
+        src._session.get = MagicMock(side_effect=handler)
+        return src
+
+    def test_primary_host_is_push2delay(self):
+        urls: list[str] = []
+
+        def handler(url, **kwargs):
+            urls.append(url)
+            resp = MagicMock()
+            resp.json.return_value = self._payload()
+            return resp
+
+        out = self._source_with(handler)._fetch_eastmoney_intraday_trends2("000001", "5")
+        assert out is not None and not out.empty
+        assert urls, "应至少发起一次 trends2 请求"
+        assert urls[0].startswith("https://")
+        assert em._TRENDS2_HOSTS[0] in urls[0]
+
+    def test_falls_back_to_secondary_host_on_error(self, monkeypatch):
+        # 关掉退避等待，避免测试变慢
+        monkeypatch.setattr(em, "_BACKOFF_BASE", 0.0)
+        urls: list[str] = []
+
+        def handler(url, **kwargs):
+            urls.append(url)
+            if em._TRENDS2_HOSTS[0] in url:
+                # 非限流错误：允许重试并轮转到备用域名
+                raise ValueError("boom")
+            resp = MagicMock()
+            resp.json.return_value = self._payload()
+            return resp
+
+        out = self._source_with(handler)._fetch_eastmoney_intraday_trends2("000001", "5")
+        assert out is not None and not out.empty
+        assert any(em._TRENDS2_HOSTS[1] in u for u in urls), f"未回退到备用域名: {urls}"
+
+    def test_all_hosts_fail_returns_none(self, monkeypatch):
+        monkeypatch.setattr(em, "_BACKOFF_BASE", 0.0)
+
+        def handler(url, **kwargs):
+            raise ValueError("boom")
+
+        out = self._source_with(handler)._fetch_eastmoney_intraday_trends2(
+            "000001", "5"
+        )
+        assert out is None
+
+    def test_hosts_rotation_covers_both_hosts(self):
+        """重试轮转应覆盖全部域名（与 _SPOT_HOSTS 同样按 attempt 取模）。"""
+        assert len(em._TRENDS2_HOSTS) >= 2
+        seen = {
+            em._TRENDS2_HOSTS[a % len(em._TRENDS2_HOSTS)]
+            for a in range(em._MAX_RETRIES)
+        }
+        assert seen == set(em._TRENDS2_HOSTS)
