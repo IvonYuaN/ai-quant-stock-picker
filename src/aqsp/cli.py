@@ -4591,6 +4591,65 @@ def run_scheduled(args: argparse.Namespace) -> int:
     return scheduled.run_scheduled_service(args, legacy_runner=_run_scheduled_legacy)
 
 
+def _write_daily_research_report(
+    *,
+    args: argparse.Namespace,
+    strategy_performances: dict[str, Any],
+    picks: list[Any],
+    regime: Any,
+    breaker_status: Any,
+) -> str | None:
+    """生成 v2 结构化研究日报并落盘；纯增强，异常不影响主运行流。
+
+    复用运行流已计算的对象：
+    - 策略表现：ledger 学习得到的 ``Dict[str, StrategyPerformance]``
+    - 研究覆盖：筛选标的 + ``DiversificationEngine`` 板块分散度
+    - 市场状态：``regime``（``MarketRegime``）
+    - 熔断：``breaker_status``（``BreakerStatus``）
+
+    输出路径为 ``--report`` 同级目录下的 ``daily_report.md``。
+    """
+    try:
+        from aqsp.portfolio.diversification import DiversificationEngine
+        from aqsp.reports.v2 import (
+            PortfolioReport as V2PortfolioReport,
+            ReportGenerator,
+        )
+
+        scores = {
+            str(p.symbol): float(max(float(getattr(p, "score", 1.0) or 0.0), 1e-6))
+            for p in picks
+        }
+        sector_map = {
+            str(p.symbol): str(p.metrics.get("sector", "") or "") for p in picks
+        }
+        engine = DiversificationEngine()
+        result = engine.optimize(scores, sector_map)
+        portfolio_report = V2PortfolioReport(
+            symbols=result.symbols,
+            weights=result.weights,
+            sector_allocations=result.sector_allocations,
+            diversification_score=result.diversification_score,
+        )
+        report = ReportGenerator().generate(
+            strategy_performances, portfolio_report, regime, breaker_status
+        )
+        report_parent = Path(str(getattr(args, "report", "") or "")).parent
+        report_dir = (
+            report_parent
+            if str(report_parent).strip() not in ("", ".")
+            else Path("reports")
+        )
+        report_dir.mkdir(parents=True, exist_ok=True)
+        report_path = report_dir / "daily_report.md"
+        ReportGenerator().save(report, str(report_path))
+        LOGGER.info("v2 研究日报已生成: %s", report_path)
+        return str(report_path)
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.warning("v2 研究日报生成失败，跳过: %s", exc)
+        return None
+
+
 def _run_scheduled_legacy(args: argparse.Namespace) -> int:
     env = load_runtime_config()
     as_of_raw = str(getattr(args, "as_of", "") or "").strip()
@@ -4713,14 +4772,14 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
             f"（降级，非实时）: {', '.join(_cache_fallback[:10])}"
             f"；近30分钟累计 {_rate_window['events']} 次"
         )
-        _logger.warning("盘中分时降级: %s", source_health_message)
+        LOGGER.warning("盘中分时降级: %s", source_health_message)
     elif _rate_window["events"] > 0 and not _rate_window["recovered"]:
         source_health_label = "degraded"
         source_health_message = (
             f"盘中分时限流窗恢复中（近30分钟累计 {_rate_window['events']} 次，"
             f"最近 {_rate_window['last_ts']}）"
         )
-        _logger.info("盘中分时限流窗恢复中: %s", source_health_message)
+        LOGGER.info("盘中分时限流窗恢复中: %s", source_health_message)
     elif _rate_window["recovered"]:
         source_health_label = "healthy"
         source_health_message = "盘中分时限流窗已恢复（近30分钟无兜底，自愈）"
@@ -4820,13 +4879,18 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
     )
 
     weight_proposals: dict[str, float] = {}
+    strategy_performances: dict[str, Any] = {}
     try:
         from aqsp.ledger.base import ledger_rows_to_frame, read_ledger
         from aqsp.ledger.learner import PerformanceLearner
 
         learner = PerformanceLearner()
         ledger_df = ledger_rows_to_frame(read_ledger(formal_ledger_path))
-        weight_proposals = learner.compute_weights(ledger_df)
+        strategy_performances = learner.learn_from_ledger(ledger_df)
+        weight_proposals = {
+            name: perf.weights.get("base", 1.0)
+            for name, perf in strategy_performances.items()
+        }
     except Exception as exc:
         LOGGER.warning("学习权重提案计算失败，按无提案继续: %s", exc)
         weight_proposals = {}
@@ -5815,6 +5879,14 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
             summary_markdown=kwargs.get("summary_markdown"),
         ),
         notification_kind=f"daily:{latest.isoformat()}",
+    )
+    # 生成 v2 结构化研究日报（策略表现 + 研究覆盖 + 市场状态 + 熔断），纯增强。
+    _write_daily_research_report(
+        args=args,
+        strategy_performances=strategy_performances,
+        picks=picks,
+        regime=regime,
+        breaker_status=status,
     )
     if status.triggered and not allow_research_during_protection:
         return 2
