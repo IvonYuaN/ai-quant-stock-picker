@@ -269,8 +269,6 @@ class IntradayService:
             index_symbols=index_symbols,
         )
         missing = [s for s in symbols if s not in result or result[s].empty]
-        if missing and len(missing) == len(symbols):
-            raise MissingDataError(symbols[0], reason=f"分时数据全部缺失: {missing}")
         if missing:
             _logger.warning(
                 "数据源 %s 分时获取不完整，跳过 %d/%d 个标的: %s",
@@ -326,9 +324,6 @@ class IntradayService:
                 if cached is None:
                     continue
                 try:
-                    _validate_live_bar_freshness(
-                        symbol, cached, period, target_date=target_date
-                    )
                     _annotate_live_intraday_provenance(
                         symbol,
                         cached,
@@ -339,7 +334,7 @@ class IntradayService:
                     )
                 except DataError as exc:
                     _logger.warning(
-                        "盘中分时 last-good 缓存 %s 仍不满足新鲜度，跳过: %s",
+                        "盘中分时 last-good 缓存 %s provenance 标注失败，跳过: %s",
                         symbol,
                         exc,
                     )
