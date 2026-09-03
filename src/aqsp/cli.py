@@ -4699,16 +4699,31 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
     )
     # Mark degraded when the intraday path served last-good cache under rate-limiting,
     # so the quality gate / reports surface a cached (non-live) snapshot honestly.
-    from aqsp.data.intraday import intraday_cache_fallback_symbols
+    from aqsp.data.intraday import (
+        intraday_cache_fallback_symbols,
+        summarize_rate_limit_window,
+    )
 
     _cache_fallback = intraday_cache_fallback_symbols()
+    _rate_window = summarize_rate_limit_window(30)
     if _cache_fallback:
         source_health_label = "degraded"
         source_health_message = (
             f"盘中分时限流窗复用 last-good 缓存 {len(_cache_fallback)} 只"
             f"（降级，非实时）: {', '.join(_cache_fallback[:10])}"
+            f"；近30分钟累计 {_rate_window['events']} 次"
         )
         _logger.warning("盘中分时降级: %s", source_health_message)
+    elif _rate_window["events"] > 0 and not _rate_window["recovered"]:
+        source_health_label = "degraded"
+        source_health_message = (
+            f"盘中分时限流窗恢复中（近30分钟累计 {_rate_window['events']} 次，"
+            f"最近 {_rate_window['last_ts']}）"
+        )
+        _logger.info("盘中分时限流窗恢复中: %s", source_health_message)
+    elif _rate_window["recovered"]:
+        source_health_label = "healthy"
+        source_health_message = "盘中分时限流窗已恢复（近30分钟无兜底，自愈）"
 
     formal_ledger_path = _formal_runtime_ledger_path(args.ledger, task_id=task_id)
 
