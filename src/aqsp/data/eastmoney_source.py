@@ -28,7 +28,12 @@ _SPOT_PAGE_SIZE = 200
 _SPOT_HOSTS = ("push2.eastmoney.com", "push2delay.eastmoney.com")
 # 东财真正的分时（分钟线）端点。kline/get?klt=N 在生产环境返回空体/连接重置，
 # 只能作为兜底保留；trends2 只提供 1 分钟粒度，更大周期由 _resample_intraday_bars 合成。
-_TRENDS2_URL = "https://push2his.eastmoney.com/api/qt/stock/trends2/get"
+# 生产机 IP 会对 push2his 按 IP 限流（连接被无响应重置，curl HTTP=000），而
+# push2delay 域名走同一 trends2 路径仍可用（2026-09-03 实测 200 + 当日实时分钟数据，
+# 最新一根与服务器时钟同步）。故按域名轮转回退，优先 push2delay。
+_TRENDS2_PATH = "/api/qt/stock/trends2/get"
+_TRENDS2_HOSTS = ("push2delay.eastmoney.com", "push2his.eastmoney.com")
+_TRENDS2_URL = f"https://{_TRENDS2_HOSTS[0]}{_TRENDS2_PATH}"
 _TRENDS2_FIELDS2 = "f51,f52,f53,f54,f55,f56,f57"
 # A 股午后场次起点；分时重采样需按场次分段，否则午休空档会把 60 分钟桶切歪。
 _INTRADAY_PM_SESSION_HOUR = 13
@@ -394,8 +399,11 @@ class EastmoneySource(DataSource):
                 return None
             try:
                 market = "1" if is_index or symbol.startswith("6") else "0"
+                # 与 _SPOT_HOSTS 同样按重试轮转域名：优先 push2delay（生产机实测可用），
+                # 失败则回退 push2his，避免单域名被 IP 限流即判死整个东财兜底。
+                host = _TRENDS2_HOSTS[attempt % len(_TRENDS2_HOSTS)]
                 response = self._session.get(
-                    _TRENDS2_URL,
+                    f"https://{host}{_TRENDS2_PATH}",
                     params={
                         "secid": f"{market}.{symbol}",
                         "ut": "7eea3edcaed734bea9cbfc24409ed989",

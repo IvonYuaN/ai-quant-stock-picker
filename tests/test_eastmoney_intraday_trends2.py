@@ -10,6 +10,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
+import aqsp.data.eastmoney_source as em
 from aqsp.core.errors import DataError
 from aqsp.data.eastmoney_source import (
     EastmoneySource,
@@ -18,6 +19,9 @@ from aqsp.data.eastmoney_source import (
 )
 
 KLINE_URL = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
+# trends2 会在多个东财域名间轮转（push2delay 优先、push2his 回退）。
+# 用模块常量引用首选域名，避免用例硬编码具体 host。
+TRENDS2_URL = em._TRENDS2_URL
 
 
 def _minute_stamps(day: str = "2026-09-02") -> list[str]:
@@ -50,15 +54,29 @@ def _trends_rows(day: str = "2026-09-02") -> list[str]:
 
 
 class _RecordingSession:
-    """按 URL 分派响应，并记录每次请求的 (url, params)。"""
+    """按 URL 分派响应，并记录每次请求的 (url, params)。
+
+    trends2 会在多个东财域名间轮转（push2delay / push2his），因此精确 URL
+    未命中时按 **路径** 回退匹配，让用例与具体域名解耦。
+    """
 
     def __init__(self, responses: dict[str, object]) -> None:
         self._responses = responses
         self.calls: list[tuple[str, dict]] = []
 
+    @staticmethod
+    def _path_of(url: str) -> str:
+        return url.split("eastmoney.com", 1)[-1]
+
     def get(self, url, params=None, **_kwargs):
         self.calls.append((url, dict(params or {})))
         payload = self._responses.get(url)
+        if payload is None:
+            path = self._path_of(url)
+            for key, value in self._responses.items():
+                if self._path_of(key) == path:
+                    payload = value
+                    break
         return _DummyResponse(payload)
 
 
@@ -168,7 +186,7 @@ def test_resample_returns_source_frame_when_period_is_unusable():
 def test_fetch_intraday_prefers_trends2_and_converts_lots_to_shares(monkeypatch):
     session = _RecordingSession(
         {
-            "https://push2his.eastmoney.com/api/qt/stock/trends2/get": {
+            TRENDS2_URL: {
                 "data": {
                     "code": "000001",
                     "name": "平安银行",
@@ -191,9 +209,7 @@ def test_fetch_intraday_prefers_trends2_and_converts_lots_to_shares(monkeypatch)
     assert frame.attrs.get("volume_unit") == "shares"
     assert frame["symbol"].iloc[0] == "000001"
     assert frame["name"].iloc[0] == "平安银行"
-    assert [url for url, _ in session.calls] == [
-        "https://push2his.eastmoney.com/api/qt/stock/trends2/get"
-    ]
+    assert [url for url, _ in session.calls] == [TRENDS2_URL]
 
 
 def test_fetch_intraday_resamples_trends2_minutes_into_requested_period(
@@ -201,7 +217,7 @@ def test_fetch_intraday_resamples_trends2_minutes_into_requested_period(
 ):
     session = _RecordingSession(
         {
-            "https://push2his.eastmoney.com/api/qt/stock/trends2/get": {
+            TRENDS2_URL: {
                 "data": {
                     "code": "000001",
                     "name": "平安银行",
@@ -226,11 +242,7 @@ def test_fetch_intraday_resamples_trends2_minutes_into_requested_period(
 
 def test_trends2_request_uses_bare_six_digit_secid(monkeypatch):
     session = _RecordingSession(
-        {
-            "https://push2his.eastmoney.com/api/qt/stock/trends2/get": {
-                "data": {"name": "浦发银行", "trends": _trends_rows()}
-            }
-        }
+        {TRENDS2_URL: {"data": {"name": "浦发银行", "trends": _trends_rows()}}}
     )
     source = _make_source(session)
     monkeypatch.setattr(source, "_throttle", lambda: None)
@@ -247,7 +259,7 @@ def test_trends2_request_uses_bare_six_digit_secid(monkeypatch):
 def test_fetch_intraday_falls_back_to_kline_when_trends2_empty(monkeypatch):
     session = _RecordingSession(
         {
-            "https://push2his.eastmoney.com/api/qt/stock/trends2/get": {"data": None},
+            TRENDS2_URL: {"data": None},
             KLINE_URL: {
                 "data": {
                     "name": "平安银行",
@@ -265,7 +277,7 @@ def test_fetch_intraday_falls_back_to_kline_when_trends2_empty(monkeypatch):
     frame = source.fetch_intraday(["000001"], period="5")["000001"]
 
     assert [url for url, _ in session.calls] == [
-        "https://push2his.eastmoney.com/api/qt/stock/trends2/get",
+        TRENDS2_URL,
         KLINE_URL,
     ]
     assert frame["date"].iloc[0] == "2026-09-02 09:35"
@@ -275,7 +287,7 @@ def test_fetch_intraday_falls_back_to_kline_when_trends2_empty(monkeypatch):
 def test_fetch_intraday_raises_when_both_endpoints_empty(monkeypatch):
     session = _RecordingSession(
         {
-            "https://push2his.eastmoney.com/api/qt/stock/trends2/get": {"data": None},
+            TRENDS2_URL: {"data": None},
             KLINE_URL: {"data": None},
         }
     )
@@ -288,11 +300,7 @@ def test_fetch_intraday_raises_when_both_endpoints_empty(monkeypatch):
 
 def test_fetch_index_intraday_uses_shanghai_market_prefix(monkeypatch):
     session = _RecordingSession(
-        {
-            "https://push2his.eastmoney.com/api/qt/stock/trends2/get": {
-                "data": {"name": "沪深300", "trends": _trends_rows()}
-            }
-        }
+        {TRENDS2_URL: {"data": {"name": "沪深300", "trends": _trends_rows()}}}
     )
     source = _make_source(session)
     monkeypatch.setattr(source, "_throttle", lambda: None)
@@ -306,9 +314,7 @@ def test_fetch_index_intraday_uses_shanghai_market_prefix(monkeypatch):
 def test_trends2_exception_falls_back_without_raising(monkeypatch):
     session = _RecordingSession(
         {
-            "https://push2his.eastmoney.com/api/qt/stock/trends2/get": ValueError(
-                "Expecting value: line 1 column 1"
-            ),
+            TRENDS2_URL: ValueError("Expecting value: line 1 column 1"),
             KLINE_URL: {
                 "data": {
                     "name": "平安银行",
