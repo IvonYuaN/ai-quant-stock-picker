@@ -4,7 +4,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor, wait
 from collections.abc import Collection
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Literal
 import json
 import os
@@ -139,6 +139,79 @@ def _read_intraday_cache(symbol: str) -> pd.DataFrame | None:
         _logger.warning("盘中分时 last-good 缓存读取失败 %s: %s", symbol, exc)
         return None
 
+
+def _parse_ts(ts: str) -> datetime | None:
+    try:
+        return datetime.fromisoformat(ts)
+    except Exception:
+        return None
+
+
+def _rate_limit_state_path() -> Path:
+    """JSON file tracking rate-limit fallback events (cross-run, for 自愈判定)."""
+    return _intraday_cache_dir() / "rate_limit_state.json"
+
+
+def record_rate_limit_fallback(symbols: list[str]) -> None:
+    """Persist a rate-limit fallback event so the CLI can judge frequency / recovery.
+
+    Never raises: cache I/O must not break the live intraday path.
+    """
+    if not symbols:
+        return
+    try:
+        now = now_shanghai()
+        path = _rate_limit_state_path()
+        state: list[dict] = []
+        if path.is_file():
+            try:
+                state = json.loads(path.read_text(encoding="utf-8")) or []
+            except Exception:
+                state = []
+        state.append({"ts": now.isoformat(), "symbols": list(sorted(set(symbols)))})
+        cutoff = now - timedelta(hours=24)
+        state = [
+            r for r in state
+            if (ts := r.get("ts")) and _parse_ts(ts) and _parse_ts(ts) >= cutoff
+        ]
+        path.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+    except Exception as exc:
+        _logger.warning("盘中分时限流窗状态记录失败: %s", exc)
+
+
+def summarize_rate_limit_window(window_minutes: int = 30) -> dict:
+    """Cross-run view of rate-limit fallback frequency for monitoring / 自愈.
+
+    Returns events in the last `window_minutes`, the most recent fallback timestamp,
+    and whether the window has recovered (no fallback for > window_minutes).
+    """
+    try:
+        path = _rate_limit_state_path()
+        if not path.is_file():
+            return {"events": 0, "last_ts": None, "recovered": False, "window_minutes": window_minutes}
+        state = json.loads(path.read_text(encoding="utf-8")) or []
+        now = now_shanghai()
+        window = timedelta(minutes=window_minutes)
+        in_window = [
+            r for r in state
+            if (ts := r.get("ts")) and _parse_ts(ts) and (now - _parse_ts(ts)) <= window
+        ]
+        last_ts = max((r["ts"] for r in state if r.get("ts")), default=None)
+        last_dt = _parse_ts(last_ts) if last_ts else None
+        recovered = (
+            len(in_window) == 0
+            and last_dt is not None
+            and (now - last_dt) > window
+        )
+        return {
+            "events": len(in_window),
+            "last_ts": last_ts,
+            "recovered": recovered,
+            "window_minutes": window_minutes,
+        }
+    except Exception as exc:
+        _logger.warning("盘中分时限流窗状态读取失败: %s", exc)
+        return {"events": 0, "last_ts": None, "recovered": False, "window_minutes": window_minutes}
 
 def _chunked(values: list[str], size: int) -> list[list[str]]:
     """Split symbols into bounded source requests."""
@@ -347,6 +420,8 @@ class IntradayService:
                     "盘中分时 %s 限流窗复用 last-good 缓存（降级，非实时）",
                     symbol,
                 )
+            if _INTRADAY_CACHE_FALLBACK_SYMBOLS:
+                record_rate_limit_fallback(sorted(_INTRADAY_CACHE_FALLBACK_SYMBOLS))
 
         if not validated:
             reason = "分时数据全部缺失或已过期"
