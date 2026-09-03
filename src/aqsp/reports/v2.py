@@ -1,11 +1,12 @@
-"""v2 报告生成器。
+"""v2 研究日报生成器。
 
-⚠️ 生产未接线：本模块目前仅被 `aqsp.reports.__init__` 导出，并被
-`tests/test_reports_v2.py` 覆盖；`src/` 与 `scripts/` 中没有任何生产调用点。
+已接入生产：`cli._run_scheduled_legacy` 在每次 scheduled 运行末尾调用
+`_write_daily_research_report`，复用运行流已算出的策略表现（ledger 学习）、
+研究覆盖（筛选标的 + `DiversificationEngine` 板块分散度）、市场状态（regime）、
+熔断（breaker），渲染为 `reports/daily_report.md`。
 
-保留原因：它定义了报告数据结构（StrategyReport / PortfolioReport /
-DailyReport）与渲染逻辑，属于待接线功能。请勿删除（会连带丢失测试覆盖），
-但在正式接线前也不要依赖其输出。
+数据结构：StrategyReport / PortfolioReport / DailyReport 与渲染逻辑。
+请勿删除（会连带丢失测试覆盖）。
 """
 
 from __future__ import annotations
