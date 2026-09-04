@@ -20,9 +20,17 @@ Notes
 -----
 - Tencent caps a single daily request at 640 bars and returns the *most recent*
   640, so full history is fetched by walking backward in calendar-day chunks.
-- Only index codes that do not collide with a real stock symbol are included.
-  ``000001`` (上证指数) is intentionally excluded because it collides with
-  ``000001.SZ`` 平安银行 in the shared ``stocks`` table.
+- ``SqliteDbSource._load_symbol_map`` keys the ``stocks`` table by the *bare*
+  code (``ts_code.split(".")[0]``), so an index whose code collides with a real
+  stock symbol would silently shadow that stock.  Three universe-pool index
+  codes collide and are therefore excluded:
+    * ``000001`` 上证指数 vs ``000001.SZ`` 平安银行
+    * ``000905`` 中证500  vs ``000905.SZ`` 厦门港务
+    * ``000852`` 中证1000 vs ``000852.SZ`` 石化机械
+  Only ``000300`` (沪深300) — the walkforward benchmark, which is the sole
+  index fetched via ``fetch_index`` — is backfilled.  The remaining pool
+  indices are resolved through ``load_optional_index_constituents`` (Tushare
+  point-in-time), not through ``fetch_index``, so they need no sqlite bars.
 """
 
 from __future__ import annotations
@@ -48,15 +56,11 @@ DEFAULT_START_DATE = date(2018, 1, 1)
 # ~340 trading days per chunk, comfortably under Tencent's 640-bar response cap.
 CHUNK_CALENDAR_DAYS = 500
 
-# Universe-pool indices (see aqsp/universe/pool.py).  Codes that collide with a
-# real stock symbol (e.g. 000001 上证指数 vs 000001.SZ 平安银行) are excluded.
-INDEX_UNIVERSE: tuple[tuple[str, str], ...] = (
-    ("000300", "沪深300"),
-    ("000905", "中证500"),
-    ("000852", "中证1000"),
-    ("399006", "创业板指"),
-    ("399005", "中小板指"),
-)
+# The walkforward benchmark ``000300`` is the only index fetched through
+# ``fetch_index``.  Universe-pool index codes that collide with a real stock
+# symbol in the shared ``stocks`` table (``000001``/``000905``/``000852``) are
+# excluded — see the module docstring for the full collision list.
+INDEX_UNIVERSE: tuple[tuple[str, str], ...] = (("000300", "沪深300"),)
 
 _INSERT_DAILY_SQL = """
     INSERT OR REPLACE INTO daily_qfq(

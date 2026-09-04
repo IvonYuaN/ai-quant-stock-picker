@@ -47,6 +47,16 @@ def test_index_ts_code_mapping() -> None:
     assert backfill._index_ts_code("899050") == "899050.BJ"
 
 
+def test_default_universe_excludes_colliding_stock_symbols() -> None:
+    # ``SqliteDbSource._load_symbol_map`` keys ``stocks`` by the bare code, so an
+    # index sharing a code with a real stock (000001 平安银行, 000905 厦门港务,
+    # 000852 石化机械) would silently shadow it.  The default universe must only
+    # carry the collision-free walkforward benchmark.
+    codes = {code for code, _ in backfill.INDEX_UNIVERSE}
+    assert codes == {"000300"}
+    assert not codes & {"000001", "000905", "000852"}
+
+
 def test_backfill_writes_index_bars_with_raw_convention(tmp_path: Path) -> None:
     frame = _bar_frame(
         [
