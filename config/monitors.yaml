@@ -4,8 +4,10 @@
 # - GitHub Actions 上的 `aqsp monitor` 是“冒烟测试”：运行环境无持久 data/，
 #   所有数据依赖型检查会被标记为 `skipped`（跳过），不产生业务结论。
 #   因此 CI 必须加 `--allow-skipped`，否则会因“零监控”而失败（假绿防护）。
-# - 生产环境的权威监控由本地 Linux 服务器 cron（`install_server_cron.sh`）
-#   承载，使用 `aqsp monitor --notify`：data/ 持久存在，检查真正执行并推送告警。
+# - 生产环境的权威监控由 `scripts/server_monitor.sh`（BT 计划任务每 15 分钟）
+#   承载：渲染时通过 envsubst 把 `${AQSP_RUNTIME_DATA_ROOT}` 注入字面量，让 yaml
+#   中的 `cache_path`/`ledger_path` 等解析到真实 runtime data 目录。
+#   最终以 `aqsp monitor --notify` 推送告警（`AQSP_MONITOR_NOTIFY=true` 启用）。
 # - `skipped` 绝不等于“健康”。被跳过仅代表“本次因数据不可用无法评估”，
 #   调用方（cli.run_monitor）会显式暴露被跳过的数量，CI/观察者不得据此判定系统正常。
 #
@@ -14,14 +16,21 @@
 # - required: true  → 目标文件缺失时按真实故障处理（triggered=True）。
 #   当前各项均为 false，以保证无数据 CI 稳定；生产环境若希望把“缓存缺失”
 #   当作严重故障，可在服务器侧使用覆盖配置并将对应项设为 required: true。
-version: "1.2.0"
+#
+# 路径变量约定（PR #77）：
+# - yaml 中所有 `data/...` 字面量改为 `${AQSP_RUNTIME_DATA_ROOT}/...`，
+#   由 `scripts/server_monitor.sh` 在执行 `aqsp monitor --config ...` 之前
+#   envsubst 渲染到临时副本（自动 trap cleanup）。
+# - CI 直接消费 yaml 时，未声明的 `${AQSP_RUNTIME_DATA_ROOT}` 替换为空，
+#   `cache_path.exists()` 仍走 skipped 分支，行为兼容（PR #77 修复前也是 skipped）。
+version: "1.3.0"
 monitors:
   - name: "stale_data"
     description: "数据滞后超过阈值"
     enabled: true
     check: "data_freshness"
     params:
-      cache_path: data/cache.db
+      cache_path: ${AQSP_RUNTIME_DATA_ROOT}/cache.db
       max_lag_days: 3
       # CI 无持久 data/，缓存缺失是预期现象 → 标记 skipped 而非误报。
       # 生产环境 data/cache.db 由数据刷新流水线维护，缓存存在时仍会校验新鲜度。
@@ -57,8 +66,8 @@ monitors:
     enabled: true
     check: "walkforward_runtime"
     params:
-      gate_path: data/walkforward_gate.json
-      status_path: data/walkforward_production_status.json
+      gate_path: ${AQSP_RUNTIME_DATA_ROOT}/walkforward_gate.json
+      status_path: ${AQSP_RUNTIME_DATA_ROOT}/walkforward_production_status.json
       max_age_days: 35
       # gate 缺失在 CI 中标记 skipped（见 checker._check_walkforward_runtime）；
       # 生产环境 gate 由流水线写入，存在时过期/未完成逻辑照常触发。
@@ -69,7 +78,7 @@ monitors:
     enabled: true
     check: "screening_liveness"
     params:
-      ledger_path: data/predictions.jsonl
+      ledger_path: ${AQSP_RUNTIME_DATA_ROOT}/predictions.jsonl
       max_staleness_trading_days: 2
     severity: "critical"
 
@@ -78,8 +87,8 @@ monitors:
     enabled: true
     check: "empty_picks"
     params:
-      ledger_path: data/predictions.jsonl
-      paper_ledger_path: data/paper_trades.jsonl
+      ledger_path: ${AQSP_RUNTIME_DATA_ROOT}/predictions.jsonl
+      paper_ledger_path: ${AQSP_RUNTIME_DATA_ROOT}/paper_trades.jsonl
     severity: "warning"
 
   - name: "daily_report_freshness"
@@ -89,6 +98,6 @@ monitors:
     params:
       max_lag_trading_days: 2
       # 落点解析与 cli._write_daily_research_report 完全一致：
-      # 生产由 scheduled 运行写入 AQSP_RUNTIME_DATA_ROOT/reports/daily_report.md；
+      # 生产由 scheduled 运行写入 ${AQSP_RUNTIME_DATA_ROOT}/reports/daily_report.md；
       # 无持久 env（CI）时日报不存在 → 标记 skipped（与 stale_data 等约定一致）。
     severity: "critical"

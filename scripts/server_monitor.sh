@@ -108,6 +108,35 @@ export AQSP_GATE_NOTIFY="false"
 
 cd "$PROJECT_ROOT"
 
+# PR #77: 渲染 monitors.yaml 中 ${AQSP_RUNTIME_DATA_ROOT} 等占位符
+# - 这样 yaml 字面量 `cache_path: ${AQSP_RUNTIME_DATA_ROOT}/cache.db` 在 prod 解析到
+#   真实的 /opt/aqsp/data/cache.db 而不是 release_root/data/cache.db（不存在 → skipped）。
+# - 临时副本 /tmp 隔离，trap 自动 cleanup，避免污染 immutable release。
+# - CI 直接跑 `aqsp monitor --config ...` 不走本脚本；那里 envsubst 未运行，
+#   `cache_path` 变成字面量 `/cache.db`（绝对路径，不存在），仍走 skipped 分支，
+#   与 PR #77 修复前行为兼容。
+MONITOR_RENDER_HELPER="${PROJECT_ROOT}/scripts/monitor_render.sh"
+if [ ! -f "$MONITOR_RENDER_HELPER" ]; then
+    log "[ERROR] 缺少 monitor config 渲染助手: ${MONITOR_RENDER_HELPER}"
+    exit 1
+fi
+# shellcheck disable=SC1090
+source "$MONITOR_RENDER_HELPER"
+
+RENDERED_CONFIG=""
+if [ -f "${MONITOR_CONFIG}" ]; then
+    RENDERED_CONFIG="$(mktemp -t aqsp-monitors.XXXXXX.yaml)"
+    if render_monitor_config "${MONITOR_CONFIG}" "${RENDERED_CONFIG}"; then
+        log "已渲染 monitors.yaml 到临时副本: ${RENDERED_CONFIG}"
+        MONITOR_CONFIG="${RENDERED_CONFIG}"
+        trap 'rm -f "$RENDERED_CONFIG"; rm -f "$LOCK_INFO_FILE"; rmdir "$LOCK_FILE"' EXIT
+    else
+        log "WARN monitors.yaml 渲染未启用，沿用原配置"
+        rm -f "$RENDERED_CONFIG"
+        RENDERED_CONFIG=""
+    fi
+fi
+
 log "=========================================="
 log "AQSP 服务器监控开始"
 log "项目目录: ${PROJECT_ROOT}"
