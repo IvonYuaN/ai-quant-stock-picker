@@ -18,6 +18,7 @@ from aqsp.data.source import (
 )
 from aqsp.data.cache import DataCache
 from aqsp.core.errors import DataError
+from aqsp.core.http import build_http_session, get_http_config
 from aqsp.core.time import now_shanghai
 from aqsp.data.quote_metadata import parse_vendor_timestamp, quote_timestamp_metadata
 
@@ -48,13 +49,15 @@ _LAST_REQ_TS = 0.0
 _MIN_REQ_INTERVAL = _REQUEST_DELAY  # 全局最小请求间隔（秒），串行化对东财的并发请求
 _BREAKER_CONSEC_FAILURES = 0
 _BREAKER_OPEN_UNTIL = 0.0
-_BREAKER_THRESHOLD = 4       # 连续限流失败达到此数即熔断
-_BREAKER_COOLDOWN = 20.0     # 熔断冷却（秒）
+_BREAKER_THRESHOLD = 4  # 连续限流失败达到此数即熔断
+_BREAKER_COOLDOWN = 20.0  # 熔断冷却（秒）
 
 
 def _eastmoney_is_throttle(exc: BaseException) -> bool:
     """异常是否为东财限流特征（连接被对端无响应重置）。"""
-    if isinstance(exc, (requests.ConnectionError, ConnectionError, ConnectionAbortedError)):
+    if isinstance(
+        exc, (requests.ConnectionError, ConnectionError, ConnectionAbortedError)
+    ):
         return True
     text = str(exc).lower()
     return (
@@ -117,12 +120,12 @@ class EastmoneySource(DataSource):
     name: str = "eastmoney"
 
     def __init__(self, cache: DataCache | None = None) -> None:
-        self._session = requests.Session()
-        self._session.headers.update(
-            {
+        self._session = build_http_session(
+            config=get_http_config(),
+            headers={
                 "Referer": "https://quote.eastmoney.com",
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            }
+            },
         )
         self.cache = cache or DataCache()
         self._last_request_ts: float = 0.0

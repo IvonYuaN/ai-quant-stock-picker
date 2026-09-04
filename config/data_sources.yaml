@@ -1,5 +1,16 @@
-version: "2026-07-14"
+version: "2026-09-04"
 default_policy: local_first
+# 全仓 outbound HTTP 默认 (PR #76) — 任何新增/漏传 timeout 的调用都受此保护;
+# ``aqsp.core.http.build_http_session`` 读取此块,缺字段或文件缺失时回落内置默认。
+# 调整后必须 bump version 并在 PR 描述中说明依据(walk-forward 或限流观测)。
+http:
+  connect_timeout: 5.0
+  read_timeout: 10.0
+  max_retries: 2
+  backoff_factor: 0.3
+  backoff_max: 2.0
+  status_forcelist: [429, 500, 502, 503, 504]
+  trust_env_key: "AQSP_DATA_TRUST_ENV"
 freshness_gate:
   stale_data: fail_closed
   missing_schema: fail_closed

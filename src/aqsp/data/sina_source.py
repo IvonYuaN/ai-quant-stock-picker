@@ -5,7 +5,6 @@ import time
 from datetime import date
 from typing import Literal
 import pandas as pd
-import requests
 
 from aqsp.data.source import (
     DataSource,
@@ -21,6 +20,7 @@ from aqsp.data.quote_metadata import (
     quote_timestamp_metadata,
 )
 from aqsp.core.errors import DataError
+from aqsp.core.http import build_http_session, get_http_config
 from aqsp.core.time import now_shanghai
 
 _REQUEST_DELAY = 0.3
@@ -40,12 +40,12 @@ class SinaSource(DataSource):
     name: str = "sina"
 
     def __init__(self, cache: DataCache | None = None) -> None:
-        self._session = requests.Session()
-        self._session.headers.update(
-            {
+        self._session = build_http_session(
+            config=get_http_config(),
+            headers={
                 "Referer": "http://finance.sina.com.cn",
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            }
+            },
         )
         self.cache = cache or DataCache()
         self._last_request_ts: float = 0.0
