@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from concurrent.futures import FIRST_COMPLETED, wait
 from datetime import date
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -15,6 +15,7 @@ from aqsp.data.source_readiness import (
     source_role_for_workload,
     workload_guard_message,
 )
+from aqsp.utils.concurrency import DaemonWorkerPool
 
 
 @dataclass(frozen=True)
@@ -135,12 +136,12 @@ class MultiSource(DataSource):
                 + ", ".join(f"{name}: {error}" for name, error in exceptions)
             )
 
-        executor = ThreadPoolExecutor(
+        pool = DaemonWorkerPool(
             max_workers=max(1, len(eligible) + len(deferred)),
             thread_name_prefix="aqsp-live-source",
         )
         futures = {
-            executor.submit(self._fetch_live_source, source_ref, func): (
+            pool.submit(self._fetch_live_source, source_ref, func): (
                 index,
                 source_name,
             )
@@ -221,7 +222,7 @@ class MultiSource(DataSource):
                 func,
                 expected_keys=expected_keys,
                 exceptions=exceptions,
-                executor=executor,
+                pool=pool,
             )
             if deferred_result is not None:
                 return deferred_result
@@ -233,7 +234,9 @@ class MultiSource(DataSource):
         finally:
             for future in pending:
                 future.cancel()
-            executor.shutdown(wait=False, cancel_futures=True)
+            # DaemonWorkerPool 的线程是 daemon 且未登记进 _threads_queues，
+            # 故被放弃的在途抓取不会在解释器退出时被 join 卡死（见 utils/concurrency.py）。
+            pool.shutdown(wait=False, cancel_futures=True)
 
     def _run_deferred_live_short_fallback(
         self,
@@ -242,7 +245,7 @@ class MultiSource(DataSource):
         *,
         expected_keys: list[str],
         exceptions: list[tuple[str, object]],
-        executor: ThreadPoolExecutor,
+        pool: DaemonWorkerPool,
     ) -> dict[str, object] | None:
         """Try reserve realtime sources one at a time after the race failed.
 
@@ -261,7 +264,7 @@ class MultiSource(DataSource):
                 exceptions.append((source_name, "deferred fallback 超出时间预算"))
                 break
             try:
-                future = executor.submit(self._fetch_live_source, source_ref, func)
+                future = pool.submit(self._fetch_live_source, source_ref, func)
                 result = future.result(timeout=remaining)
                 if not result:
                     raise DataError("empty result")

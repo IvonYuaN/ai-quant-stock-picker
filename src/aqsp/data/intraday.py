@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from concurrent.futures import ThreadPoolExecutor, wait
+from concurrent.futures import wait
 from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -21,6 +21,7 @@ from aqsp.data.source_readiness import (
     source_role_for_workload,
     workload_guard_message,
 )
+from aqsp.utils.concurrency import DaemonWorkerPool
 
 _logger = logging.getLogger(__name__)
 
@@ -458,12 +459,12 @@ class IntradayService:
         setter = getattr(self.source, "set_workload", None)
         if callable(setter):
             setter("live_short")
-        executor = ThreadPoolExecutor(
+        pool = DaemonWorkerPool(
             max_workers=min(self.fetch_max_workers, len(jobs)),
             thread_name_prefix="aqsp-intraday",
         )
         futures = {
-            executor.submit(
+            pool.submit(
                 self._fetch_intraday_batch, batch, period, method_name
             ): batch
             for batch, method_name in jobs
@@ -500,7 +501,9 @@ class IntradayService:
         finally:
             # Do not wait again after the shared deadline. Requests are independently
             # bounded by their adapter; incomplete symbols remain explicit missing.
-            executor.shutdown(wait=False, cancel_futures=True)
+            # DaemonWorkerPool 的线程是 daemon 且未登记进 _threads_queues，
+            # 故被放弃的在途抓取不会在解释器退出时被 join 卡死（见 utils/concurrency.py）。
+            pool.shutdown(wait=False, cancel_futures=True)
             if callable(setter):
                 setter(None)
 
