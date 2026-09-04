@@ -524,6 +524,12 @@ case "$ACTION" in
         export AQSP_NOTIFY="false"
         export AQSP_GATE_NOTIFY="false"
         sync_code_only
+        # 回填指数日线（沪深300 等 universe-pool 指数）到 raw sqlite，供
+        # walkforward 基准/regime 解析真实指数数据。best-effort：腾讯瞬时
+        # 故障不阻断主股票数据刷新，下次 data-refresh 自动增量补齐。
+        run_python_script "${PROJECT_ROOT}/scripts/backfill_index_to_sqlite.py" \
+            --db "${AQSP_SQLITE_DB_PATH:-${AQSP_VARIANT_DB:-/opt/market-data/astocks_raw.db}}" \
+            || log "指数日线回填未完成，将在下次 data-refresh 重试"
         run_python_script "${PROJECT_ROOT}/scripts/refresh_sqlite_batch.py" \
             --db "${AQSP_SQLITE_DB_PATH:-${AQSP_VARIANT_DB:-/opt/market-data/astocks_raw.db}}" \
             --state "${STATE_DIR}/sqlite-refresh-cursor.json" \

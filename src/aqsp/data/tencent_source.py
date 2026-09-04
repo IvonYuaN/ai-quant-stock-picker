@@ -42,9 +42,16 @@ _DEFAULT_DAILY_FETCH_WORKERS = 8
 
 
 def _get_market_prefix(symbol: str, *, is_index: bool = False) -> str:
-    if not is_index and symbol.startswith("920"):
+    if is_index:
+        # 指数市场归属：399/390 深交所、899 北交所、其余（000/930 等）上交所
+        if symbol.startswith(("399", "390")):
+            return "sz"
+        if symbol.startswith("899"):
+            return "bj"
+        return "sh"
+    if symbol.startswith("920"):
         return "bj"
-    if is_index or symbol.startswith("6"):
+    if symbol.startswith("6"):
         return "sh"
     return "sz"
 
@@ -338,9 +345,7 @@ class TencentSource(DataSource):
         for attempt in range(_MAX_RETRIES):
             try:
                 self._throttle()
-                market_symbol = (
-                    symbol if is_index else f"{_get_market_prefix(symbol)}{symbol}"
-                )
+                market_symbol = f"{_get_market_prefix(symbol, is_index=is_index)}{symbol}"
                 params = {
                     "param": (
                         f"{market_symbol},day,{start.strftime('%Y-%m-%d')},"

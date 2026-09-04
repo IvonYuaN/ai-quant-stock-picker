@@ -104,6 +104,16 @@ def test_get_market_prefix_bj_for_current_beijing_board_code():
     assert _get_market_prefix("920186") == "bj"
 
 
+def test_get_market_prefix_index():
+    # 指数市场归属：000/930 上交所、399/390 深交所、899 北交所
+    assert _get_market_prefix("000300", is_index=True) == "sh"
+    assert _get_market_prefix("000001", is_index=True) == "sh"
+    assert _get_market_prefix("000905", is_index=True) == "sh"
+    assert _get_market_prefix("399001", is_index=True) == "sz"
+    assert _get_market_prefix("399006", is_index=True) == "sz"
+    assert _get_market_prefix("899050", is_index=True) == "bj"
+
+
 def test_tencent_quote_parser_accepts_beijing_board_prefix(tencent_source):
     parts = [""] * 50
     parts[1] = "中科仪"
@@ -248,6 +258,38 @@ def test_tencent_daily_uses_kline_endpoint_not_fqkline(monkeypatch, tencent_sour
     assert frame is not None
     assert "/kline/kline" in captured["url"]
     assert "fqkline" not in captured["url"]
+
+
+def test_tencent_fetch_index_uses_market_prefixed_symbol(monkeypatch, tencent_source):
+    """fetch_index 走 is_index=True 时，market_symbol 必须带市场前缀
+    （sh000300/sz399001），裸代码会让腾讯 kline/kline 返回 param error。"""
+    captured = {}
+
+    class FakeResponse:
+        def json(self):
+            return {
+                "data": {
+                    "sh000300": {
+                        "day": [
+                            ["2026-07-20", "4972.69", "4958.98", "5017.38", "4925.63", "342934747"]
+                        ]
+                    }
+                }
+            }
+
+    def fake_get(url, params=None, **kwargs):
+        captured["params"] = params
+        return FakeResponse()
+
+    monkeypatch.setattr(tencent_source._session, "get", fake_get)
+    monkeypatch.setattr(tencent_source, "_throttle", lambda: None)
+
+    frame = tencent_source._fetch_tencent_daily(
+        "000300", start=date(2026, 7, 20), end=date(2026, 7, 20), is_index=True
+    )
+
+    assert frame is not None
+    assert captured["params"]["param"].startswith("sh000300,day,")
 
 
 def test_tencent_daily_request_uses_market_prefixed_payload_key(
@@ -404,6 +446,9 @@ def test_tencent_public_fetch_methods_raise_data_error_when_empty(
         "_fetch_tencent_daily",
         lambda *_args, **_kwargs: None,
     )
+    # 隔离共享 cache：test_fetch_index_returns_dict 真实取数成功后会写库，
+    # 使 fetch_index 命中缓存绕过 fetch 路径。这里强制 cache miss。
+    monkeypatch.setattr(tencent_source.cache, "get_index", lambda *_a, **_k: None)
 
     with pytest.raises(DataError, match="tencent 分时获取失败"):
         tencent_source.fetch_intraday(["600000"])
