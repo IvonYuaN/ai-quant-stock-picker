@@ -2237,6 +2237,11 @@ def test_news_http_get_disables_macos_environment_proxy_lookup(monkeypatch) -> N
         def close(self) -> None:
             return None
 
+        # PR #76 走 build_http_session,会 mount HTTPAdapter。mock 提供
+        # 空 mount 即可,断言仍聚焦 trust_env / 一次 Session 实例。
+        def mount(self, *_args, **_kwargs) -> None:
+            return None
+
     monkeypatch.setattr(news_source.sys, "platform", "darwin")
     monkeypatch.setattr(news_source.requests, "Session", Session)
     monkeypatch.setattr(

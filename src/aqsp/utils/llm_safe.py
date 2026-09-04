@@ -24,6 +24,7 @@ from datetime import timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from aqsp.core.http import build_http_session, get_http_config
 from aqsp.core.time import now_shanghai
 from aqsp.utils.jsonl_io import append_jsonl, atomic_write_text
 
@@ -110,17 +111,23 @@ def _load_siliconflow_models_cache() -> dict[str, Any]:
 def refresh_siliconflow_models(
     *, timeout_s: float = _DEFAULT_TIMEOUT_S
 ) -> dict[str, Any]:
-    import requests
-
     api_key = os.getenv("SILICONFLOW_API_KEY", "").strip()
     if not api_key:
         raise ValueError("SILICONFLOW_API_KEY 未配置")
 
-    response = requests.get(
-        "https://api.siliconflow.cn/v1/models",
+    # 走 build_http_session 拿 session-level default timeout (PR #76);
+    # 显式 timeout 仍可覆盖。LLM 上游偶发 5xx,默认 max_retries=2 帮扛住一波。
+    session = build_http_session(
+        config=get_http_config(),
         headers={"Authorization": f"Bearer {api_key}"},
-        timeout=timeout_s,
     )
+    try:
+        response = session.get(
+            "https://api.siliconflow.cn/v1/models",
+            timeout=timeout_s,
+        )
+    finally:
+        session.close()
     response.raise_for_status()
     payload = response.json()
     _save_siliconflow_models(payload)
