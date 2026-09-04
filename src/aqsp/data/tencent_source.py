@@ -30,7 +30,7 @@ _logger = logging.getLogger("aqsp.data.tencent")
 TENCENT_SIMPLE_QUOTE_URL = "http://qt.gtimg.cn/q=s_{symbol}"
 TENCENT_FULL_QUOTE_URL = "http://qt.gtimg.cn/q={market}{symbol}"
 TENCENT_BATCH_QUOTE_URL = "http://qt.gtimg.cn/q={symbols}"
-TENCENT_KLINE_URL = "http://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
+TENCENT_KLINE_URL = "https://web.ifzq.gtimg.cn/appstock/app/kline/kline"
 
 TENCENT_QUOTE_FIELD_LIMIT_UP = 47
 TENCENT_QUOTE_FIELD_LIMIT_DOWN = 48
