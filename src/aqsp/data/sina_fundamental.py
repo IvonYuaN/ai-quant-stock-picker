@@ -4,11 +4,16 @@ import json
 from typing import Any
 
 import pandas as pd
-import requests
+
+from aqsp.core.http import build_http_session, get_http_config
 
 
 class SinaFundamentalSource:
     name: str = "sina_fundamental"
+
+    def __init__(self) -> None:
+        # 单 Session 复用,继承重试 + (connect, read) timeout 兜底 (PR #76)
+        self._session = build_http_session(config=get_http_config())
 
     def fetch_realtime_fundamentals(
         self, symbols: list[str]
@@ -42,7 +47,7 @@ class SinaFundamentalSource:
                 "_s_r_a": "init",
             }
             try:
-                r = requests.get(url, params=params, timeout=30)
+                r = self._session.get(url, params=params, timeout=30)
                 data = json.loads(r.text)
                 if not data:
                     break

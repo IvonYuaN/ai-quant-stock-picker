@@ -21,6 +21,7 @@ import requests
 import yaml
 
 from aqsp.core.errors import DataError
+from aqsp.core.http import build_http_session, get_http_config
 from aqsp.core.time import now_shanghai
 
 _RSS_CORE_TRIGGER_KEYWORDS: dict[str, tuple[str, ...]] = {
@@ -55,8 +56,8 @@ def _http_get(url: str, **kwargs: Any) -> requests.Response:
         or getattr(requests.get, "__module__", "") != "requests.api"
     ):
         return requests.get(url, **kwargs)
-    session = requests.Session()
-    session.trust_env = False
+    # darwin + 真 requests 实现:走 build_http_session,统一继承重试 + 默认 timeout。
+    session = build_http_session(config=get_http_config())
     with _MACOS_PROXY_LOCK:
         proxies = _MACOS_PROXY_CACHE.get(url)
         if proxies is None:

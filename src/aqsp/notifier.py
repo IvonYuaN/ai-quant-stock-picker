@@ -7,6 +7,7 @@ from typing import Any
 
 import requests
 
+from aqsp.core.http import HttpClientConfig, build_http_session, get_http_config
 from aqsp.core.time import today_shanghai
 from aqsp.data.source_health import notification_level_for_health_label
 from aqsp.notification_style import compact_notification_markdown
@@ -409,8 +410,19 @@ def _post(channel: str, url: str, **kwargs: object) -> NotifyResult:
     if _should_suppress_real_notifications():
         return NotifyResult(channel, True, "suppressed in Codex session")
     try:
-        response = requests.post(url, timeout=15, **kwargs)
-        response.raise_for_status()
+        # 通知渠道 (飞书/钉钉/webhook) 端点维护中时易 5xx,retry 反而会拖延失败;
+        # 这里显式关 retry,但仍走统一 factory 拿 session-level default timeout (PR #76)。
+        no_retry = HttpClientConfig(
+            connect_timeout=get_http_config().connect_timeout,
+            read_timeout=get_http_config().read_timeout,
+            max_retries=0,
+        )
+        session = build_http_session(config=no_retry)
+        try:
+            response = session.post(url, timeout=15, **kwargs)
+            response.raise_for_status()
+        finally:
+            session.close()
     except requests.RequestException as exc:
         return NotifyResult(channel, False, str(exc))
     business_error = _extract_business_error(channel, response)

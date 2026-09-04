@@ -28,7 +28,7 @@ def test_send_dingtalk_sends_with_secret(monkeypatch):
     mock_response.status_code = 200
     mock_post.return_value = mock_response
 
-    with patch("aqsp.notifier.requests.post", mock_post):
+    with patch("requests.sessions.Session.post", mock_post):
         result = _send_dingtalk("test message")
 
     assert result is not None
@@ -47,7 +47,7 @@ def test_send_feishu_uses_interactive_card(monkeypatch):
     mock_post.return_value = mock_response
 
     markdown = "# 收盘总览\n\n## 🧭 一眼看懂\n\n**🎯 今日结论**：仅供研究复核"
-    with patch("aqsp.notifier.requests.post", mock_post):
+    with patch("requests.sessions.Session.post", mock_post):
         result = _send_feishu(markdown)
 
     assert result is not None
@@ -74,7 +74,7 @@ def test_send_dingtalk_uses_markdown_title(monkeypatch):
     mock_response.status_code = 200
     mock_post.return_value = mock_response
 
-    with patch("aqsp.notifier.requests.post", mock_post):
+    with patch("requests.sessions.Session.post", mock_post):
         result = _send_dingtalk("# 午盘分析-2026-06-11\n\n内容")
 
     assert result is not None
@@ -100,7 +100,7 @@ def test_send_bark_sends(monkeypatch):
     mock_response.status_code = 200
     mock_post.return_value = mock_response
 
-    with patch("aqsp.notifier.requests.post", mock_post):
+    with patch("requests.sessions.Session.post", mock_post):
         result = _send_bark("# 午盘分析-2026-06-11\n\ntest message")
 
     assert result is not None
@@ -122,7 +122,7 @@ def test_send_bark_url_encodes_title_and_body(monkeypatch):
     mock_response.raise_for_status.return_value = None
     mock_post.return_value = mock_response
 
-    with patch("aqsp.notifier.requests.post", mock_post):
+    with patch("requests.sessions.Session.post", mock_post):
         result = _send_bark("# 标题 含 空格\n\n内容/带?特殊#符号")
 
     assert result is not None
@@ -150,7 +150,7 @@ def test_send_pushplus_sends(monkeypatch):
     mock_response.status_code = 200
     mock_post.return_value = mock_response
 
-    with patch("aqsp.notifier.requests.post", mock_post):
+    with patch("requests.sessions.Session.post", mock_post):
         result = _send_pushplus("# 午盘分析-2026-06-11\n\ntest message")
 
     assert result is not None
@@ -175,7 +175,7 @@ def test_send_wechat_marks_business_failure(monkeypatch):
     mock_response.json.return_value = {"errcode": 93000, "errmsg": "invalid markdown"}
     mock_post.return_value = mock_response
 
-    with patch("aqsp.notifier.requests.post", mock_post):
+    with patch("requests.sessions.Session.post", mock_post):
         result = _send_wechat("# 标题\n\n内容")
 
     assert result is not None
@@ -190,7 +190,7 @@ def test_notify_markdown_suppresses_real_delivery_in_codex_session(monkeypatch):
     monkeypatch.setenv("SERVERCHAN_SENDKEY", "test_sendkey")
 
     with patch("aqsp.notifier._should_suppress_real_notifications", return_value=True):
-        with patch("aqsp.notifier.requests.post") as mock_post:
+        with patch("requests.sessions.Session.post") as mock_post:
             results = notify_markdown("# 收盘研究日报-2026-06-15\n\n内容")
 
     assert results
@@ -206,7 +206,7 @@ def test_notify_markdown_allows_delivery_when_explicitly_enabled(monkeypatch):
     monkeypatch.setenv("AQSP_ALLOW_REAL_NOTIFICATIONS", "1")
     monkeypatch.setenv("SERVERCHAN_SENDKEY", "test_sendkey")
 
-    with patch("aqsp.notifier.requests.post") as mock_post:
+    with patch("requests.sessions.Session.post") as mock_post:
         results = notify_markdown("# 收盘研究日报-2026-06-15\n\n内容")
 
     assert results
@@ -478,7 +478,7 @@ def test_send_discord_sends(monkeypatch):
     mock_response.status_code = 200
     mock_post.return_value = mock_response
 
-    with patch("aqsp.notifier.requests.post", mock_post):
+    with patch("requests.sessions.Session.post", mock_post):
         result = _send_discord("test message")
 
     assert result is not None
@@ -503,7 +503,7 @@ def test_send_slack_sends(monkeypatch):
     mock_response.status_code = 200
     mock_post.return_value = mock_response
 
-    with patch("aqsp.notifier.requests.post", mock_post):
+    with patch("requests.sessions.Session.post", mock_post):
         result = _send_slack("test message")
 
     assert result is not None
