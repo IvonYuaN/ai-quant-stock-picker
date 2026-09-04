@@ -5041,6 +5041,21 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         print(f"T+1 过滤剔除 {len(removed)} 只（昨日已买）: {removed}")
     picks = [r for r in picks if r.symbol in kept]
 
+    # 生成 v2 结构化研究日报（策略表现 + 研究覆盖 + 市场状态 + 熔断），纯增强。
+    # 关键：在 picks 定稿（T+1 过滤后）即落盘，位于市场上下文/通知/任何后续重计算之前。
+    # 生产实证（2026-09-03）：盘中 `aqsp run` 被 1200s 硬超时在计算尾段/通知 sink 附近
+    # 宰杀（退出码 124，耗时 ~1255s）；PR #73 仅把 v2 提到通知尾巴之前仍到不了——
+    # 运行在计算阶段即被杀，v2 从不在 cron 落地（daily_report.md 仅靠人工快跑产出，
+    # 监控转绿是假象）。此处 picks/regime/breaker_status/strategy_performances 已全部就绪，
+    # 提前写可保证即便后续被超时宰杀，日报也已持久（详见 PR #74）。
+    _write_daily_research_report(
+        args=args,
+        strategy_performances=strategy_performances,
+        picks=picks,
+        regime=regime,
+        breaker_status=status,
+    )
+
     execution_fee_bps, execution_slippage_bps = _resolve_execution_cost_bps(
         thresholds,
         fee_bps=args.fee_bps,
@@ -5615,20 +5630,6 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         circuit_breaker_triggered=status.triggered,
         regime=regime,
         run_metadata=run_metadata,
-    )
-
-    # 生成 v2 结构化研究日报（策略表现 + 研究覆盖 + 市场状态 + 熔断），纯增强。
-    # 提前到通知/LLM 尾巴之前落盘：盘中 `aqsp run` 被 1200s 硬超时宰杀时，
-    # 通知构建（finalize/dispatch_scheduled_daily_notification）是超时 sink，
-    # 原调用点（_run_scheduled_legacy 末尾）到不了，v2 日报从不在生产落地。
-    # 此处核心研究结果（picks/portfolio/strategy_performances/regime/status）
-    # 已全部就绪，提前写可保证即便后续通知尾巴超时被杀，日报也已持久。
-    _write_daily_research_report(
-        args=args,
-        strategy_performances=strategy_performances,
-        picks=picks,
-        regime=regime,
-        breaker_status=status,
     )
 
     table = (
