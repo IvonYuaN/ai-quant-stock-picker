@@ -218,6 +218,38 @@ def test_tencent_daily_request_does_not_use_qfq(monkeypatch, tencent_source):
     assert "qfq" not in captured["params"]["param"]
 
 
+def test_tencent_daily_uses_kline_endpoint_not_fqkline(monkeypatch, tencent_source):
+    """fqkline/get 现已要求复权字段（无复权字段返回 bad params），
+    日线必须走不复权的 kline/kline 端点。"""
+    captured = {}
+
+    class FakeResponse:
+        def json(self):
+            return {
+                "data": {
+                    "sh600000": {
+                        "day": [["2026-07-20", "10", "10.2", "10.3", "9.9", "100"]]
+                    }
+                }
+            }
+
+    def fake_get(url, params=None, **kwargs):
+        captured["url"] = url
+        captured["params"] = params
+        return FakeResponse()
+
+    monkeypatch.setattr(tencent_source._session, "get", fake_get)
+    monkeypatch.setattr(tencent_source, "_throttle", lambda: None)
+
+    frame = tencent_source._fetch_tencent_daily(
+        "600000", start=date(2026, 7, 20), end=date(2026, 7, 20)
+    )
+
+    assert frame is not None
+    assert "/kline/kline" in captured["url"]
+    assert "fqkline" not in captured["url"]
+
+
 def test_tencent_daily_request_uses_market_prefixed_payload_key(
     monkeypatch, tencent_source
 ):
