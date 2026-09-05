@@ -139,7 +139,11 @@ class FactorCalculator:
 
         return factors
 
-    def calculate_volatility_factors(self, df: pd.DataFrame) -> Dict[str, float]:
+    def calculate_volatility_factors(
+        self,
+        df: pd.DataFrame,
+        benchmark_returns: np.ndarray | None = None,
+    ) -> Dict[str, float]:
         if df is None or len(df) < 20:
             return {}
 
@@ -155,9 +159,18 @@ class FactorCalculator:
 
         if len(close) >= 60:
             returns = np.diff(close[-60:]) / close[-61:-1]
-            market_returns = returns
-            beta = np.cov(returns, market_returns)[0][1] / np.var(market_returns)
-            factors["beta_60"] = float(np.clip(1.0 - abs(beta - 1.0), 0, 1))
+            # beta_60 衡量个股对系统性风险的暴露，必须以「外部市场基准收益率」
+            # 为分母。早期版本曾用 `market_returns = returns` 自引用，导致
+            # beta 恒等于 1、`factors["beta_60"]` 恒为 1.0（区分度=0）。
+            # 修复：无 benchmark 或基准不足时跳过该因子，绝不假造数值。
+            market = (
+                np.asarray(benchmark_returns, dtype=float)[-60:]
+                if benchmark_returns is not None
+                else None
+            )
+            if market is not None and len(market) >= 60 and np.var(market) > 1e-12:
+                beta = np.cov(returns, market)[0][1] / np.var(market)
+                factors["beta_60"] = float(np.clip(1.0 - abs(beta - 1.0), 0, 1))
 
         if len(close) >= 20:
             returns_20 = np.diff(close[-20:]) / close[-21:-1]
@@ -254,12 +267,13 @@ class FactorCalculator:
         self,
         df: pd.DataFrame,
         fundamental: Optional[Dict[str, float]] = None,
+        benchmark_returns: np.ndarray | None = None,
     ) -> Dict[str, Dict[str, float]]:
         return {
             "momentum": self.calculate_momentum_factors(df),
             "value": self.calculate_value_factors(df, fundamental),
             "quality": self.calculate_quality_factors(df, fundamental),
-            "volatility": self.calculate_volatility_factors(df),
+            "volatility": self.calculate_volatility_factors(df, benchmark_returns),
             "liquidity": self.calculate_liquidity_factors(df),
         }
 
@@ -372,18 +386,28 @@ class MultiFactorRotationStrategy(BaseStrategy):
         return adjusted_weights
 
     def calculate_score(
-        self, data: Dict[str, pd.DataFrame], regime: str = "unknown"
+        self,
+        data: Dict[str, pd.DataFrame],
+        regime: str = "unknown",
+        benchmark_returns: np.ndarray | None = None,
     ) -> Dict[str, float]:
         scores = {}
         for symbol, df in data.items():
             if df is None or df.empty:
                 scores[symbol] = 0.0
                 continue
-            scores[symbol] = self._calculate_single_score(df, regime)
+            scores[symbol] = self._calculate_single_score(df, regime, benchmark_returns)
         return scores
 
-    def _calculate_single_score(self, df: pd.DataFrame, regime: str) -> float:
-        all_factors = self.factor_calculator.calculate_all_factors(df)
+    def _calculate_single_score(
+        self,
+        df: pd.DataFrame,
+        regime: str,
+        benchmark_returns: np.ndarray | None = None,
+    ) -> float:
+        all_factors = self.factor_calculator.calculate_all_factors(
+            df, None, benchmark_returns
+        )
 
         adjusted_weights = self.get_regime_adjusted_weights(regime)
 
@@ -407,6 +431,7 @@ class MultiFactorRotationStrategy(BaseStrategy):
         data: Dict[str, pd.DataFrame],
         regime: str = "unknown",
         fundamental_data: Optional[Dict[str, Dict[str, float]]] = None,
+        benchmark_returns: np.ndarray | None = None,
     ) -> Dict[str, Dict[str, Any]]:
         detailed = {}
 
@@ -416,7 +441,9 @@ class MultiFactorRotationStrategy(BaseStrategy):
                 continue
 
             fundamental = fundamental_data.get(symbol) if fundamental_data else None
-            all_factors = self.factor_calculator.calculate_all_factors(df, fundamental)
+            all_factors = self.factor_calculator.calculate_all_factors(
+                df, fundamental, benchmark_returns
+            )
             adjusted_weights = self.get_regime_adjusted_weights(regime)
 
             factor_scores = {}

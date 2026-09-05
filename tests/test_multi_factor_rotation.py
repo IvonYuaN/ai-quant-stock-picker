@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+from datetime import date, timedelta
+
+import numpy as np
+import pandas as pd
+
 from aqsp.strategies.multi_factor_rotation import MultiFactorRotationStrategy
 
 
@@ -50,3 +55,89 @@ def test_factor_weight_update_is_blocked_without_samples_or_gate() -> None:
         )
         is None
     )
+
+
+# ---------------------------------------------------------------------------
+# beta_60 修复：必须由调用方提供 benchmark_returns；无 benchmark 时跳过该因子
+# （旧版假造 market_returns = returns 导致 beta 恒 1、factors["beta_60"] 恒 1）。
+# 宪法 §3.7：evaluate 纯函数，无 IO/网络。
+# ---------------------------------------------------------------------------
+
+
+def _make_close_df(n: int, seed: int = 0) -> pd.DataFrame:
+    """构造 n 行 close 数据。"""
+    rng = np.random.default_rng(seed)
+    base = 10.0 + np.cumsum(rng.normal(0, 0.01, n))
+    return pd.DataFrame(
+        {
+            "date": [date(2024, 1, 1) + timedelta(days=i) for i in range(n)],
+            "open": base,
+            "high": base * 1.005,
+            "low": base * 0.995,
+            "close": base,
+            "volume": np.full(n, 1000.0),
+        }
+    )
+
+
+def test_volatility_factors_omits_beta_60_without_benchmark() -> None:
+    """无 benchmark_returns → 不返回 beta_60（绝不假造 market_returns）。"""
+    strategy = MultiFactorRotationStrategy()
+    df = _make_close_df(120, seed=1)
+    factors = strategy.factor_calculator.calculate_volatility_factors(df)
+    assert "beta_60" not in factors
+    # 其他波动率因子应仍在
+    assert "atr_14" in factors
+
+
+def test_volatility_factors_beta_60_uses_external_benchmark() -> None:
+    """有 benchmark_returns → beta_60 必须依赖外部市场收益率（非恒 1）。"""
+    strategy = MultiFactorRotationStrategy()
+    df = _make_close_df(120, seed=2)
+    # 构造与个股相关性<1 的市场收益率（独立 rng）
+    market = np.random.default_rng(99).normal(0, 0.01, 120)
+    factors = strategy.factor_calculator.calculate_volatility_factors(
+        df, benchmark_returns=market
+    )
+    assert "beta_60" in factors
+    assert 0.0 <= factors["beta_60"] <= 1.0
+    # 用不同的市场序列，结果应该不同 —— 验证确实依赖外部基准
+    market2 = np.random.default_rng(7).normal(0, 0.02, 120)
+    factors2 = strategy.factor_calculator.calculate_volatility_factors(
+        df, benchmark_returns=market2
+    )
+    assert factors["beta_60"] != factors2["beta_60"]
+
+
+def test_volatility_factors_beta_60_skipped_when_benchmark_too_short() -> None:
+    """benchmark 长度不足 60 → 跳过 beta_60。"""
+    strategy = MultiFactorRotationStrategy()
+    df = _make_close_df(120, seed=3)
+    short_market = np.zeros(30)  # 长度 < 60
+    factors = strategy.factor_calculator.calculate_volatility_factors(
+        df, benchmark_returns=short_market
+    )
+    assert "beta_60" not in factors
+
+
+def test_volatility_factors_beta_60_skipped_when_benchmark_zero_variance() -> None:
+    """benchmark 零方差（常平）→ 跳过 beta_60，避免除零。"""
+    strategy = MultiFactorRotationStrategy()
+    df = _make_close_df(120, seed=4)
+    flat_market = np.zeros(120)  # var = 0
+    factors = strategy.factor_calculator.calculate_volatility_factors(
+        df, benchmark_returns=flat_market
+    )
+    assert "beta_60" not in factors
+
+
+def test_calculate_score_accepts_benchmark_passthrough() -> None:
+    """calculate_score 必须接受 benchmark_returns 参数并透传。"""
+    strategy = MultiFactorRotationStrategy()
+    df = _make_close_df(120, seed=5)
+    market = np.random.default_rng(11).normal(0, 0.01, 120)
+    scores = strategy.calculate_score(
+        {"000001.SZ": df}, regime="trend", benchmark_returns=market
+    )
+    assert "000001.SZ" in scores
+    assert isinstance(scores["000001.SZ"], float)
