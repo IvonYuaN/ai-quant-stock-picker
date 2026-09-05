@@ -2110,6 +2110,13 @@ def main() -> int:
     try:
         env["AQSP_SQLITE_DB_PATH"] = str(args.db)
         env["AQSP_SQLITE_PREFILTERED_SYMBOLS"] = "1"
+        # The walkforward universe is listing-aware: late-IPOs (e.g. stocks
+        # listed after period-1 train start) have zero rows in the earliest
+        # sub-window and would otherwise fail the data source's hard
+        # missing-symbol assert. The streaming child already filters short
+        # frames, so empty symbols are safely skipped per period. Without
+        # this, a single late-listed batch aborts the whole 20-period run.
+        env["AQSP_SQLITE_ALLOW_EMPTY_SYMBOLS"] = "1"
         warn_if_report_path_not_writable(Path(args.report))
         preserve_formal_report_snapshot(Path(args.report))
         requested_timeout_seconds = int(args.timeout_seconds or 0)

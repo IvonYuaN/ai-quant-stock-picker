@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import logging
 import os
 from datetime import date, timedelta
 from pathlib import Path
@@ -22,8 +23,15 @@ _SQLITE_TIMEOUT_SECONDS = 30.0
 _SQLITE_BATCH_SIZE = 400
 _ALLOW_QFQ_SQLITE_SOURCE_ENV = "AQSP_ALLOW_QFQ_SQLITE_SOURCE"
 _PREFILTERED_SYMBOLS_ENV = "AQSP_SQLITE_PREFILTERED_SYMBOLS"
+_ALLOW_EMPTY_SYMBOLS_ENV = "AQSP_SQLITE_ALLOW_EMPTY_SYMBOLS"
 _LIQUID_SYMBOL_MIN_HISTORY_ROWS = 250
 _LIQUID_SYMBOL_LOOKBACK_CALENDAR_DAYS = 500
+
+_LOGGER = logging.getLogger(__name__)
+
+
+def _truthy_env(name: str) -> bool:
+    return str(os.getenv(name, "")).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _chunks(items: list[str], size: int) -> list[list[str]]:
@@ -423,7 +431,33 @@ class SqliteDbSource(DataSource):
                         out[symbol] = frame
         self._set_cached_daily_frames(frames_to_cache, price_mode=adjust or "raw")
 
-        require_non_empty_fetch_result(self.name, "日线", effective_symbols, out)
+        # In prefiltered streaming mode (e.g. walkforward-gate), the caller has
+        # already selected a covered universe and accepts that some symbols may
+        # be empty for the current batch's [start, end] window (they will
+        # simply be skipped downstream by _prepare_stream_batch's frame-length
+        # filter). Raising here would abort the entire walkforward study over
+        # listing-aware late-IPOs. Opt-in via AQSP_SQLITE_ALLOW_EMPTY_SYMBOLS=1.
+        # We still raise if the *entire* result is empty — that is a real
+        # data-source failure, not a late-listing edge case.
+        allow_empty = _truthy_env(_ALLOW_EMPTY_SYMBOLS_ENV) and _truthy_env(
+            _PREFILTERED_SYMBOLS_ENV
+        )
+        if allow_empty:
+            if not out:
+                raise DataError(
+                    f"{self.name} 日线获取失败: 整个批次为空 "
+                    f"(effective={len(effective_symbols)})"
+                )
+            missing = [s for s in effective_symbols if s not in out]
+            if missing:
+                _LOGGER.warning(
+                    "%s 日线 fetch 缺 %d 个空标的，已跳过: %s",
+                    self.name,
+                    len(missing),
+                    missing,
+                )
+        else:
+            require_non_empty_fetch_result(self.name, "日线", effective_symbols, out)
 
         return {symbol: self._annotate_frame(frame) for symbol, frame in out.items()}
 
