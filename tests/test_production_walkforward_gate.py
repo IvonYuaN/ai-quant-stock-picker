@@ -2344,3 +2344,17 @@ def test_production_walkforward_gate_repair_only_rewrites_diagnostic_with_status
     assert "**标的数量**: 5157" in text
     assert "| covered_symbols | 5157 |" in text
     assert "| rows | 3752714 |" in text
+
+
+def test_gate_exports_allow_empty_env_for_listing_aware_universe() -> None:
+    """Late-listed IPOs would otherwise fail sqlite's hard missing-symbol assert."""
+    script = (
+        Path(__file__).resolve().parents[1]
+        / "scripts"
+        / "run_production_walkforward_gate.py"
+    ).read_text(encoding="utf-8")
+
+    # Both env vars must be set together; the data source only honours the
+    # opt-in when prefiltered is also declared.
+    assert 'env["AQSP_SQLITE_PREFILTERED_SYMBOLS"] = "1"' in script
+    assert 'env["AQSP_SQLITE_ALLOW_EMPTY_SYMBOLS"] = "1"' in script
