@@ -111,6 +111,60 @@ def test_release_task_entrypoint_maps_relative_runtime_paths_once_to_data(
     ]
 
 
+def test_release_task_entrypoint_exports_pythonpath_for_release_src() -> None:
+    script = (PROJECT_ROOT / "scripts/release_task_entrypoint.sh").read_text(
+        encoding="utf-8"
+    )
+
+    # The shared venv editable .pth can point at a deleted release directory, so a
+    # bare "python3 -m aqsp" resolves to nothing. Scheduled tasks must import from
+    # the release actually being executed.
+    assert (
+        'export PYTHONPATH="${RELEASE_ROOT}/src:${RELEASE_ROOT}${PYTHONPATH:+:${PYTHONPATH}}"'
+        in script
+    )
+
+
+def test_release_task_entrypoint_pythonpath_reaches_scheduled_task(
+    tmp_path: Path,
+) -> None:
+    release = tmp_path / "release"
+    runtime = tmp_path / "runtime"
+    marker = tmp_path / "env.txt"
+    (release / "scripts").mkdir(parents=True)
+    (release / ".aqsp-release.json").write_text(
+        '{"commit": "0123456789abcdef0123456789abcdef01234567"}\n',
+        encoding="utf-8",
+    )
+    (release / "scripts" / "bt_task.sh").write_text(
+        '#!/usr/bin/env bash\nprintf \'%s\\n\' "PYTHONPATH=$PYTHONPATH" > "$MARKER"\n',
+        encoding="utf-8",
+    )
+    (release / "scripts" / "bt_task.sh").chmod(0o755)
+    env = {
+        **os.environ,
+        "AQSP_RELEASE_ROOT": str(release),
+        "AQSP_RUNTIME_ROOT": str(runtime),
+        "AQSP_RUNTIME_DATA_ROOT": str(runtime / "data"),
+        "MARKER": str(marker),
+        "PYTHONPATH": "/opt/stale-editable",
+    }
+
+    result = subprocess.run(
+        ["bash", str(PROJECT_ROOT / "scripts" / "release_task_entrypoint.sh")],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    seen = marker.read_text(encoding="utf-8").splitlines()
+    assert seen == [
+        f"PYTHONPATH={release / 'src'}:{release}:/opt/stale-editable",
+    ]
+
+
 def test_release_task_entrypoint_replaces_legacy_release_python(
     tmp_path: Path,
 ) -> None:

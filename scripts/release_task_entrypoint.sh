@@ -66,6 +66,12 @@ case "$RUNTIME_DATA_ROOT" in
 esac
 
 export AQSP_PROJECT_ROOT="$RELEASE_ROOT"
+# The shared venv editable .pth can point at a deleted release directory, so
+# "python3 -m aqsp" would fail with "No module named aqsp". intraday_refresh.sh
+# exported PYTHONPATH locally; walkforward-gate never did, and the gate died on
+# import every run. Every scheduled task must resolve imports from the release
+# being executed, not from whatever release the venv was originally built for.
+export PYTHONPATH="${RELEASE_ROOT}/src:${RELEASE_ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
 export AQSP_RUNTIME_ROOT="$RUNTIME_ROOT"
 export AQSP_RUNTIME_DATA_ROOT="$RUNTIME_DATA_ROOT"
 # v2 研究日报固定落点：避免不同 cron 各自 --report 目录导致日报落到临时/分散路径，
