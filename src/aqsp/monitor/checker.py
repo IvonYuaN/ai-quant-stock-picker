@@ -19,6 +19,37 @@ from aqsp.paper import read_paper_trades
 from aqsp.ratings import is_tradable_rating
 from aqsp.walkforward_gate import MAX_GATE_AGE_DAYS, validate_walkforward_gate_payload
 
+# 这些 production status 值代表「本周自评估确实跑过且失败/未完成」，监控必须标
+# triggered（critical），绝不能当作 skipped 或健康。注意包含 "failed"/"failed_metadata"：
+# 子进程非 0 退出时 wrapper 写 status="failed"，但 gate sidecar 可能未刷新，
+# 过去正是这类失败导致「状态文件明写 failed，监控却静默」的盲区。
+WALKFORWARD_BLOCKED_STATUSES: frozenset[str] = frozenset(
+    {
+        "blocked_resources",
+        "blocked_db",
+        "blocked_cutoff",
+        "blocked_coverage",
+        "blocked_symbols",
+        "timeout",
+        "failed",
+        "failed_metadata",
+    }
+)
+
+
+def _read_production_status_status(status_path: Path) -> str | None:
+    """读取 walkforward production status 文件的 status 字段；缺失/损坏返回 None。"""
+    if not status_path.exists():
+        return None
+    try:
+        raw = json.loads(status_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(raw, dict):
+        return None
+    value = raw.get("status")
+    return str(value).strip() if value else None
+
 
 @dataclass(frozen=True)
 class MonitorResult:
@@ -370,9 +401,30 @@ class MonitorChecker:
 
         if not gate_path.exists():
             # 数据依赖型检查：在缺少持久数据（CI / 冒烟）环境，gate 本就不该存在。
-            # 此时无法评估“自评估是否过期/未完成”这一业务条件，应标记为 skipped
-            # 而非误报 critical——否则无数据环境的 CI 会稳定红，掩盖真实信号。
-            # 生产环境由流水线保证 gate 被写入，gate 存在时的过期/未完成逻辑照常触发。
+            # 但若流水线已经写入 production status（如 failed/blocked/timeout），说明本周
+            # 自评估确实跑过且失败——这是真实的运行失败，必须标 triggered 而非 skipped，
+            # 否则会出现「状态文件明写 failed，监控却报 skipped=健康」的假绿盲区
+            # （这正是过去 30+ 次 walkforward-gate 静默失败无人知的根因之一）。
+            # 仅当 gate 与 status 都不存在时，才回到 skipped（CI/无数据环境预期如此）。
+            failed_status = _read_production_status_status(status_path)
+            if (
+                failed_status is not None
+                and failed_status in WALKFORWARD_BLOCKED_STATUSES
+            ):
+                return MonitorResult(
+                    name="walkforward_runtime",
+                    triggered=True,
+                    severity="critical",
+                    message=(
+                        f"walk-forward 未完成: {failed_status}"
+                        "（gate 未落盘，但状态文件记录失败）"
+                    ),
+                    details={
+                        "gate_path": str(gate_path),
+                        "status_path": str(status_path),
+                        "production_status": failed_status,
+                    },
+                )
             return MonitorResult(
                 name="walkforward_runtime",
                 triggered=False,
@@ -432,14 +484,7 @@ class MonitorChecker:
             max_age_days=max_age_days,
         )
         status = str(status_payload.get("status") or "missing").strip()
-        blocked_statuses = {
-            "blocked_resources",
-            "blocked_db",
-            "blocked_cutoff",
-            "blocked_coverage",
-            "blocked_symbols",
-            "timeout",
-        }
+        blocked_statuses = WALKFORWARD_BLOCKED_STATUSES
         is_stale = any(
             blocker.startswith("gate stale:") for blocker in validation.blockers
         )
@@ -668,7 +713,9 @@ class MonitorChecker:
         elif runtime_data_root:
             report_path = Path(runtime_data_root) / "reports" / "daily_report.md"
         else:
-            report_path = Path(str(params.get("report_path", "reports/daily_report.md")))
+            report_path = Path(
+                str(params.get("report_path", "reports/daily_report.md"))
+            )
 
         max_lag_trading_days = int(params.get("max_lag_trading_days", 2))
         if max_lag_trading_days < 0:

@@ -393,6 +393,128 @@ class TestMonitorChecker:
         assert result.skipped is True
         assert "跳过" in result.message
 
+    def test_monitor_walkforward_runtime_alerts_when_failed(
+        self, sample_config: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # 子进程非 0 退出时 wrapper 写 status="failed"，但 gate sidecar 可能未刷新。
+        # 监控必须直接标 critical，而不是等 gate 过期（>max_age_days）才被动发现。
+        checker = MonitorChecker(config_path=str(sample_config))
+        gate_path = tmp_path / "walkforward_gate.json"
+        status_path = tmp_path / "walkforward_production_status.json"
+        gate_path.write_text(
+            json.dumps(
+                {
+                    "run_date": "2026-07-20",
+                    "deflated_sharpe": 1.2,
+                    "pbo": 0.2,
+                    "pbo_valid": True,
+                    "dsr_pass": True,
+                    "pbo_pass": True,
+                    "both_pass": True,
+                    "n_periods": 20,
+                }
+            ),
+            encoding="utf-8",
+        )
+        status_path.write_text(
+            json.dumps(
+                {
+                    "status": "failed",
+                    "updated_at": "2026-07-24T17:00:00+08:00",
+                    "child_exit_code": 1,
+                    "detail": "sqlite_db 指数获取失败: ['000300']",
+                }
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(
+            "aqsp.monitor.checker.today_shanghai", lambda: date(2026, 7, 24)
+        )
+
+        result = checker._check_walkforward_runtime(
+            {"gate_path": str(gate_path), "status_path": str(status_path)}
+        )
+
+        assert result.triggered is True
+        assert result.severity == "critical"
+        assert result.message == "walk-forward 未完成: failed"
+        assert (
+            result.details["production_detail"] == "sqlite_db 指数获取失败: ['000300']"
+        )
+
+    def test_monitor_walkforward_runtime_alerts_when_gate_missing_but_status_failed(
+        self, sample_config: Path, tmp_path: Path
+    ) -> None:
+        # gate sidecar 未落盘（失败发生在写 gate 之前），但 production status 已记录
+        # failed——这是真实的运行失败，绝不能误判为 skipped=健康。
+        checker = MonitorChecker(config_path=str(sample_config))
+        missing_gate = tmp_path / "missing_walkforward_gate.json"
+        status_path = tmp_path / "walkforward_production_status.json"
+        status_path.write_text(
+            json.dumps(
+                {
+                    "status": "failed",
+                    "updated_at": "2026-07-24T17:00:00+08:00",
+                    "child_exit_code": 1,
+                    "detail": "child walkforward returned non-zero",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        result = checker._check_walkforward_runtime(
+            {
+                "gate_path": str(missing_gate),
+                "status_path": str(status_path),
+                "max_age_days": 14,
+            }
+        )
+
+        assert result.name == "walkforward_runtime"
+        assert result.triggered is True
+        assert result.skipped is False
+        assert result.severity == "critical"
+        assert "failed" in result.message
+
+    def test_monitor_walkforward_runtime_alerts_when_gate_stale_at_14_days(
+        self, sample_config: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # 收紧后的 freshness 窗口：gate 每周六跑一次，单次缺失/失败应在一周内被标红。
+        # 20 天前的 gate 在 max_age_days=14 下必须触发 stale，而不是放行。
+        checker = MonitorChecker(config_path=str(sample_config))
+        gate_path = tmp_path / "walkforward_gate.json"
+        status_path = tmp_path / "walkforward_production_status.json"
+        gate_path.write_text(
+            json.dumps(
+                {
+                    "run_date": "2026-07-04",
+                    "deflated_sharpe": 1.2,
+                    "pbo": 0.2,
+                    "pbo_valid": True,
+                    "dsr_pass": True,
+                    "pbo_pass": True,
+                    "both_pass": True,
+                    "n_periods": 20,
+                }
+            ),
+            encoding="utf-8",
+        )
+        status_path.write_text(json.dumps({"status": "completed"}), encoding="utf-8")
+        monkeypatch.setattr(
+            "aqsp.monitor.checker.today_shanghai", lambda: date(2026, 7, 24)
+        )
+
+        result = checker._check_walkforward_runtime(
+            {
+                "gate_path": str(gate_path),
+                "status_path": str(status_path),
+                "max_age_days": 14,
+            }
+        )
+
+        assert result.triggered is True
+        assert result.message == "walk-forward gate 已过期: 20 天"
+
 
 class TestNotifier:
     @pytest.fixture(autouse=True)
