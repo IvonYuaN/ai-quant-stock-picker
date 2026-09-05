@@ -554,7 +554,14 @@ case "$ACTION" in
         export AQSP_NOTIFY="false"
         export AQSP_GATE_NOTIFY="${AQSP_WALKFORWARD_GATE_NOTIFY:-false}"
         sync_code_only
-        run_python_script "${PROJECT_ROOT}/scripts/run_production_walkforward_gate.py" "${@:2}"
+        # run_production_walkforward_gate.py resolves its default "data/..." status
+        # path against PROJECT_ROOT, i.e. the immutable release dir, while
+        # monitoring reads ${AQSP_RUNTIME_DATA_ROOT}. Without this the fresh status
+        # was invisible and monitoring kept alerting on a months-old file.
+        # Passed before "${@:2}" so an explicit --status-path still wins.
+        run_python_script "${PROJECT_ROOT}/scripts/run_production_walkforward_gate.py" \
+            --status-path "${AQSP_WALKFORWARD_PRODUCTION_STATUS:-${RUNTIME_DATA_ROOT}/walkforward_production_status.json}" \
+            "${@:2}"
         ;;
     monitor)
         skip_weekday_market_holiday
