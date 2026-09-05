@@ -153,7 +153,10 @@ class WalkForwardResult:
     robustness_score: float
     parameter_std: float
     deflated_sharpe: float = 0.0
-    pbo: float = 0.0
+    # PBO 经真 CSCV（多变体）才能计算。None 表示「单序列无法做 CSCV」或
+    # 计算未完成（如 N=1 walkforward）；调用方须显式区分 None 与 0.0，避免把
+    # 「无法计算」伪装成「无过拟合」——参见宪法 §17.7。
+    pbo: float | None = None
     regime_winrates: Dict[str, float] = None
     diagnostics: WalkForwardDiagnostics | None = None
 
@@ -938,9 +941,8 @@ class WalkForwardTester:
         return round(float(z_stat), 4)
 
     @staticmethod
-    def _calculate_pbo(periods: list[BacktestResult]) -> float:
-        pbo = WalkForwardTester.calculate_cscv_pbo_from_single(periods)
-        return pbo
+    def _calculate_pbo(periods: list[BacktestResult]) -> float | None:
+        return WalkForwardTester.calculate_cscv_pbo_from_single(periods)
 
     @staticmethod
     def calculate_cscv_pbo(
@@ -1013,13 +1015,22 @@ class WalkForwardTester:
     @staticmethod
     def calculate_cscv_pbo_from_single(
         periods: list[BacktestResult], s: int = 10
-    ) -> float:
+    ) -> float | None:
+        """单序列回测的 PBO 计算。
+
+        真 CSCV 要求 N>=2 个变体组合（多变体 walkforward），单策略场景
+        `calculate_cscv_pbo` 会抛 ValueError。**返回 None 表示「无法做有效 CSCV」**，
+        调用方需显式区分 None 与 0.0，避免把「无法计算」伪装成「零过拟合」。
+        参见宪法 §17.7（禁止 N=1 伪 CSCV）。
+        """
+        if len(periods) < 2:
+            return None
         returns = np.array([[p.total_return] for p in periods])
         try:
             pbo, _ = WalkForwardTester.calculate_cscv_pbo(returns, s=s)
             return pbo
         except ValueError:
-            return 0.0
+            return None
 
     def print_report(self, result: WalkForwardResult) -> None:
         print("=" * 60)
@@ -1028,7 +1039,8 @@ class WalkForwardTester:
         print(f"稳健性评分: {result.robustness_score:.2%}")
         print(f"参数标准差: {result.parameter_std:.4f}")
         print(f"Deflated Sharpe Ratio: {result.deflated_sharpe:.4f}")
-        print(f"PBO (过拟合概率): {result.pbo:.2%}")
+        pbo_repr = "N/A（单策略需 grid 多变体 CSCV）" if result.pbo is None else f"{result.pbo:.2%}"
+        print(f"PBO (过拟合概率): {pbo_repr}")
         print("-" * 60)
         print("整体表现:")
         print(f"  总收益: {result.overall.total_return:.2%}")
