@@ -68,9 +68,14 @@ monitors:
     params:
       gate_path: ${AQSP_RUNTIME_DATA_ROOT}/walkforward_gate.json
       status_path: ${AQSP_RUNTIME_DATA_ROOT}/walkforward_production_status.json
-      max_age_days: 35
+      # 该 gate 每周六 22:00 跑一次；35 天 ≈ 容忍 5 周静默，太宽——历史上因此漏掉
+      # 30+ 次失败无人知。14 天可在「单次周跑缺失/失败」后约 1 周内标红，且仍给
+      # 节假日/维护延后留足缓冲（gate 本身 evidence 可用性阈值 MAX_GATE_AGE_DAYS=35 不变）。
+      max_age_days: 14
       # gate 缺失在 CI 中标记 skipped（见 checker._check_walkforward_runtime）；
       # 生产环境 gate 由流水线写入，存在时过期/未完成逻辑照常触发。
+      # 若 gate 缺失但 walkforward_production_status.json 状态为 failed/blocked/timeout，
+      # 则直接标 triggered（不再误判 skipped=健康）。
     severity: "critical"
 
   - name: "screening_liveness"
