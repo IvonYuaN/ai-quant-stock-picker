@@ -37,6 +37,19 @@ WALKFORWARD_BLOCKED_STATUSES: frozenset[str] = frozenset(
 )
 
 
+def _dsr_pbo_blocked_alerting_enabled(params: dict[str, Any]) -> bool:
+    """DSR/PBO 双门未通过时是否告警（默认开启，可在 monitors.yaml 关闭）。
+
+    §3.5 要求阈值来自配置而非字面量。默认 True：双门未通过意味着策略不具备
+    上线资格，静默是不可接受的（健康报告 #R10）。仅在明确的临时抑制场景
+    （如已知策略重构期）才在 yaml 里关掉。
+    """
+    raw = params.get("alert_on_dsr_pbo_blocked", True)
+    if isinstance(raw, bool):
+        return raw
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _read_production_status_status(status_path: Path) -> str | None:
     """读取 walkforward production status 文件的 status 字段；缺失/损坏返回 None。"""
     if not status_path.exists():
@@ -523,15 +536,37 @@ class MonitorChecker:
                 details=details,
             )
         if validation.ok:
-            message = "walk-forward 已完成且双门通过"
-        else:
-            message = "walk-forward 已完成，但 DSR/PBO 双门未通过"
+            return MonitorResult(
+                name="walkforward_runtime",
+                triggered=False,
+                severity="critical",
+                message="walk-forward 已完成且双门通过",
+                details=details,
+            )
+        # 双门未通过：策略不具备上线资格，必须告警（健康报告 #R10 静默盲区）。
+        # 此前这里恒 triggered=False，只把结论写进 message——导致「gate 里明写
+        # pbo=1.0 / dsr<0 / both_pass=false，监控却全绿」的假绿。观察到生产
+        # gate 曾长期处于 DSR=-1.28、PBO=100% 而无人知晓，即此分支静默所致。
+        if not _dsr_pbo_blocked_alerting_enabled(params):
+            return MonitorResult(
+                name="walkforward_runtime",
+                triggered=False,
+                severity="critical",
+                message=(
+                    "walk-forward 已完成，但 DSR/PBO 双门未通过"
+                    "（已按配置 alert_on_dsr_pbo_blocked=false 抑制告警）"
+                ),
+                details={**details, "dsr_pbo_blocked": True, "alert_suppressed": True},
+            )
         return MonitorResult(
             name="walkforward_runtime",
-            triggered=False,
+            triggered=True,
             severity="critical",
-            message=message,
-            details=details,
+            message=(
+                "walk-forward 已完成，但 DSR/PBO 双门未通过（策略不具备上线资格）："
+                f"{'; '.join(validation.blockers)}"
+            ),
+            details={**details, "dsr_pbo_blocked": True, "alert_suppressed": False},
         )
 
     def _check_screening_liveness(self, params: dict[str, Any]) -> MonitorResult:
