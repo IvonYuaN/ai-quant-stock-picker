@@ -307,28 +307,115 @@ class TestMonitorChecker:
         assert result.message == "walk-forward 未完成: blocked_resources"
         assert result.details["production_detail"] == "server memory too low"
 
-    def test_monitor_walkforward_runtime_reports_quality_gate_without_false_alert(
+    def _write_gate_and_status(
+        self, gate_path: Path, status_path: Path, *, gate: dict, status: dict
+    ) -> None:
+        gate_path.write_text(json.dumps(gate), encoding="utf-8")
+        status_path.write_text(json.dumps(status), encoding="utf-8")
+
+    def test_monitor_walkforward_runtime_alerts_when_dsr_pbo_gate_blocked(
         self, sample_config: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """DSR/PBO 双门未通过必须告警（健康报告 #R10）。
+
+        修复前该分支恒 triggered=False，只把结论写进 message——gate 里明写
+        both_pass=false 而监控全绿。生产 gate 曾长期处于 DSR=-1.28、PBO=100%
+        无人知晓，即此静默所致。这里把「必须告警」钉死，防止回退。
+        """
         checker = MonitorChecker(config_path=str(sample_config))
         gate_path = tmp_path / "walkforward_gate.json"
         status_path = tmp_path / "walkforward_production_status.json"
-        gate_path.write_text(
-            json.dumps(
-                {
-                    "run_date": "2026-07-20",
-                    "deflated_sharpe": 0.8,
-                    "pbo": 0.7,
-                    "pbo_valid": True,
-                    "dsr_pass": False,
-                    "pbo_pass": False,
-                    "both_pass": False,
-                    "n_periods": 20,
-                }
-            ),
-            encoding="utf-8",
+        self._write_gate_and_status(
+            gate_path,
+            status_path,
+            gate={
+                "run_date": "2026-07-20",
+                "deflated_sharpe": 0.8,
+                "pbo": 0.7,
+                "pbo_valid": True,
+                "dsr_pass": False,
+                "pbo_pass": False,
+                "both_pass": False,
+                "n_periods": 20,
+            },
+            status={"status": "completed"},
         )
-        status_path.write_text(json.dumps({"status": "completed"}), encoding="utf-8")
+        monkeypatch.setattr(
+            "aqsp.monitor.checker.today_shanghai", lambda: date(2026, 7, 24)
+        )
+
+        result = checker._check_walkforward_runtime(
+            {"gate_path": str(gate_path), "status_path": str(status_path)}
+        )
+
+        assert result.triggered is True
+        assert result.severity == "critical"
+        assert result.details["dsr_pbo_blocked"] is True
+        assert "DSR/PBO 双门未通过" in result.message
+        # 具体是哪个门没过必须进正文，避免告警只能靠翻 gate 文件才能看懂
+        assert "dsr_pass" in result.message
+        assert "both_pass" in result.message
+
+    def test_monitor_walkforward_runtime_suppresses_dsr_pbo_alert_when_disabled(
+        self, sample_config: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """alert_on_dsr_pbo_blocked=false 时抑制告警，且必须在 details 里留痕。"""
+        checker = MonitorChecker(config_path=str(sample_config))
+        gate_path = tmp_path / "walkforward_gate.json"
+        status_path = tmp_path / "walkforward_production_status.json"
+        self._write_gate_and_status(
+            gate_path,
+            status_path,
+            gate={
+                "run_date": "2026-07-20",
+                "deflated_sharpe": 0.8,
+                "pbo": 0.7,
+                "pbo_valid": True,
+                "dsr_pass": False,
+                "pbo_pass": False,
+                "both_pass": False,
+                "n_periods": 20,
+            },
+            status={"status": "completed"},
+        )
+        monkeypatch.setattr(
+            "aqsp.monitor.checker.today_shanghai", lambda: date(2026, 7, 24)
+        )
+
+        result = checker._check_walkforward_runtime(
+            {
+                "gate_path": str(gate_path),
+                "status_path": str(status_path),
+                "alert_on_dsr_pbo_blocked": False,
+            }
+        )
+
+        assert result.triggered is False
+        assert result.details["dsr_pbo_blocked"] is True
+        assert result.details["alert_suppressed"] is True
+
+    def test_monitor_walkforward_runtime_silent_when_both_gates_pass(
+        self, sample_config: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """双门通过时不告警——确保 #R10 修复没有把正常状态误报成故障。"""
+        checker = MonitorChecker(config_path=str(sample_config))
+        gate_path = tmp_path / "walkforward_gate.json"
+        status_path = tmp_path / "walkforward_production_status.json"
+        self._write_gate_and_status(
+            gate_path,
+            status_path,
+            gate={
+                "run_date": "2026-07-20",
+                "deflated_sharpe": 1.5,
+                "pbo": 0.15,
+                "pbo_valid": True,
+                "dsr_pass": True,
+                "pbo_pass": True,
+                "both_pass": True,
+                "n_periods": 20,
+            },
+            status={"status": "completed"},
+        )
         monkeypatch.setattr(
             "aqsp.monitor.checker.today_shanghai", lambda: date(2026, 7, 24)
         )
@@ -338,7 +425,7 @@ class TestMonitorChecker:
         )
 
         assert result.triggered is False
-        assert result.message == "walk-forward 已完成，但 DSR/PBO 双门未通过"
+        assert result.message == "walk-forward 已完成且双门通过"
 
     def test_monitor_walkforward_runtime_alerts_when_gate_is_stale(
         self, sample_config: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

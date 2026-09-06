@@ -76,6 +76,13 @@ monitors:
       # 生产环境 gate 由流水线写入，存在时过期/未完成逻辑照常触发。
       # 若 gate 缺失但 walkforward_production_status.json 状态为 failed/blocked/timeout，
       # 则直接标 triggered（不再误判 skipped=健康）。
+      #
+      # DSR/PBO 双门未通过时是否告警（健康报告 #R10）：默认 true。
+      # 此前该场景恒 triggered=false，只把结论写进 message，形成「gate 里明写
+      # pbo=1.0 / dsr<0 / both_pass=false，监控却全绿」的假绿盲区——生产 gate
+      # 曾长期处于 DSR=-1.28、PBO=100% 而无人知晓。
+      # 仅在做已知的策略重构/重训练期才临时置 false，并务必记得改回。
+      alert_on_dsr_pbo_blocked: true
     severity: "critical"
 
   - name: "screening_liveness"
