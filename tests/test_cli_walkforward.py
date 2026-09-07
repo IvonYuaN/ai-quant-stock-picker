@@ -239,7 +239,10 @@ class TestWalkForwardWithMockData:
         assert isinstance(result.overall.sharpe_ratio, float)
         assert isinstance(result.overall.win_rate, float)
         assert isinstance(result.deflated_sharpe, float)
-        assert isinstance(result.pbo, float)
+        # 宪法 §17.7：pbo 现为 Optional[float]（#89 起）——单序列无法做有效 CSCV
+        # 时为 None，禁止用 0.0 占位把「无法计算」伪装成「无过拟合」。
+        # 故此处不可断言必为 float（#89 改为 None 后未同步本消费方用例，导致 CI 红）。
+        assert result.pbo is None or isinstance(result.pbo, float)
 
 
 class TestCLIFindThresholdsYaml:
@@ -862,9 +865,12 @@ class TestCLIDataSources:
         # eastmoney（其日线 API 单只串行重试会占住 worker 超出盘中共享截止时间），
         # 计划固定为 tencent -> sina -> akshare -> tdx_vipdoc，且不按 source-health
         # 重排；见 tests/test_source_factory.py 中 online_first 的两个用例。
-        # 本用例的核心断言不变：即使健康度把 akshare 排到首位，它仍是最后的补充源。
-        assert ordered == ["tencent", "sina", "akshare"]
-        assert ordered[-1] == "akshare"
+        # eastmoney 现以 deferred reserve 身份并入 online_first 计划（不参与并发竞速，
+        # 仅在前序源全部失败后串行兜底，见 source_factory.online_first 注释），故居于队尾。
+        # 本用例核心断言保留：即使健康度把 akshare 排到首位，它也不会前移抢占 tencent/sina。
+        assert ordered == ["tencent", "sina", "akshare", "eastmoney"]
+        assert ordered[-1] == "eastmoney"
+        assert ordered.index("akshare") > ordered.index("sina")
 
     def test_auto_source_does_not_require_local_vipdoc_at_construction(
         self, monkeypatch

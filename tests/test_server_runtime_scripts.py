@@ -509,7 +509,7 @@ def test_intraday_refresh_script_uses_isolated_outputs() -> None:
     assert "${AQSP_SOURCE:-eastmoney}" not in script
     assert 'INTRADAY_MODE="${AQSP_INTRADAY_MODE:-open}"' in script
     assert (
-        'INTRADAY_RUN_TIMEOUT_SECONDS="${AQSP_INTRADAY_RUN_TIMEOUT_SECONDS:-420}"'
+        'INTRADAY_RUN_TIMEOUT_SECONDS="${AQSP_INTRADAY_RUN_TIMEOUT_SECONDS:-1200}"'
         in script
     )
     assert (
@@ -1441,10 +1441,14 @@ def test_bt_task_exposes_walkforward_gate_as_controlled_action() -> None:
     assert 'SYNC_TASK_SKIPPED="false"' in script
     assert 'status" = "skipped_lock"' in script
     assert "不写入完成标记" in script
+    # 该调用现跨行展开并显式注入 --status-path（PR #83 修复「状态落点」，
+    # 避免 gate 状态写错路径），故按组成要素断言而非整行字面量。
     assert (
-        'run_python_script "${PROJECT_ROOT}/scripts/run_production_walkforward_gate.py" "${@:2}"'
+        'run_python_script "${PROJECT_ROOT}/scripts/run_production_walkforward_gate.py"'
         in script
     )
+    assert "--status-path" in script
+    assert '"${@:2}"' in script
 
 
 def test_intraday_bridge_marks_failed_attempt_without_blocking_midday_task() -> None:
