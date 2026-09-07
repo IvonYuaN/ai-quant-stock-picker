@@ -14,6 +14,26 @@ MAX_GATE_AGE_DAYS = 35
 MIN_PRODUCTION_GATE_SYMBOLS = 3000
 MIN_PRODUCTION_GATE_COVERAGE_RATIO = 0.9
 
+# thresholds 版本在 gate sidecar 里缺失时的展示占位（健康报告 #R8）。
+#
+# 语义边界：内部校验仍用 None（严格、fail-closed，缺失即 blocker），只有在
+# **展示/审计输出**时才替换为 "unknown"。二者不可混用——若把内部值也兜底成
+# "unknown"，就会与真实存在的版本号 "unknown" 混淆，且掩盖「gate 未记录版本」
+# 这一事实。生产 data/walkforward_gate.json 当前即无 thresholds_version 字段。
+UNKNOWN_THRESHOLDS_VERSION = "unknown"
+
+
+def display_thresholds_version(value: str | None) -> str:
+    """把可能缺失的 thresholds 版本渲染为审计可读文本。
+
+    None / 空串 → "unknown"，其余原样返回。仅用于展示与告警正文，
+    不参与任何版本一致性比对（比对请用原始值，见 _gate_blockers）。
+    """
+    if value is None:
+        return UNKNOWN_THRESHOLDS_VERSION
+    cleaned = value.strip()
+    return cleaned or UNKNOWN_THRESHOLDS_VERSION
+
 
 @dataclass(frozen=True)
 class WalkForwardGateValidation:
@@ -261,6 +281,7 @@ def validate_walkforward_gate_payload(
             pbo_pass=pbo_pass,
             pbo_valid=pbo_valid,
             both_pass=both_pass,
+            thresholds_version=thresholds_version,
             blockers=blockers,
         ),
     )
@@ -397,6 +418,7 @@ def _format_gate_detail(
     pbo_pass: bool | None,
     pbo_valid: bool | None,
     both_pass: bool | None,
+    thresholds_version: str | None,
     blockers: list[str],
 ) -> str:
     metric_detail = (
@@ -410,7 +432,8 @@ def _format_gate_detail(
         f"pbo_pass={_status_label(pbo_pass)}, "
         f"n_periods={_metric_status(n_periods, n_periods is not None and n_periods > 0)}"
         f"({_fmt_int(n_periods)}), "
-        f"age_days={_fmt_int(age_days)}"
+        f"age_days={_fmt_int(age_days)}, "
+        f"thresholds_version={display_thresholds_version(thresholds_version)}"
     )
     if blockers:
         return f"{metric_detail}; blockers: {', '.join(blockers)}"

@@ -17,7 +17,11 @@ from aqsp.ledger.base import (
 )
 from aqsp.paper import read_paper_trades
 from aqsp.ratings import is_tradable_rating
-from aqsp.walkforward_gate import MAX_GATE_AGE_DAYS, validate_walkforward_gate_payload
+from aqsp.walkforward_gate import (
+    MAX_GATE_AGE_DAYS,
+    display_thresholds_version,
+    validate_walkforward_gate_payload,
+)
 
 # 这些 production status 值代表「本周自评估确实跑过且失败/未完成」，监控必须标
 # triggered（critical），绝不能当作 skipped 或健康。注意包含 "failed"/"failed_metadata"：
@@ -510,6 +514,7 @@ class MonitorChecker:
             "gate_age_days": validation.age_days,
             "gate_blockers": list(validation.blockers),
             "production_detail": status_payload.get("detail"),
+            "thresholds_version": display_thresholds_version(validation.thresholds_version),
         }
         if status in blocked_statuses:
             return MonitorResult(
