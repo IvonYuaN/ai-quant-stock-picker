@@ -863,6 +863,14 @@ def test_fetch_special_strategy_frames_keeps_daily_when_intraday_overlay_is_empt
         "000300": _fresh_frame("2026-06-26"),
     }
 
+    # 历史基线与 sqlite 环境解耦：本用例必须走实时源回退路径（mock 生效），
+    # 否则在有真实 astocks_raw.db 的环境（如 prod）会命中 sqlite 基线而绕开 mock。
+    monkeypatch.setattr(
+        cli_mod,
+        "_fetch_intraday_historical_baseline",
+        lambda *_args, **_kwargs: {},
+    )
+
     monkeypatch.setattr(
         cli_mod,
         "_fetch_frames_for_cli_with_metadata",
@@ -911,6 +919,14 @@ def test_fetch_special_strategy_frames_overlays_today_on_prior_daily_history(
     }
     for frame in merged.values():
         frame.attrs["source_name"] = "tencent"
+
+    # 历史基线与 sqlite 环境解耦：直接注入 historical 作为基线，
+    # 保证 overlay 收到的 daily 即本用例构造的历史帧（不依赖本地是否有 astocks_raw.db）。
+    monkeypatch.setattr(
+        cli_mod,
+        "_fetch_intraday_historical_baseline",
+        lambda *_args, **_kwargs: historical,
+    )
 
     monkeypatch.setattr(
         cli_mod,
@@ -1383,6 +1399,14 @@ def test_fetch_special_strategy_frames_blocks_history_actual_source_after_fallba
     monkeypatch,
 ) -> None:
     import aqsp.cli as cli_mod
+
+    # 历史基线与 sqlite 环境解耦：本用例必须走实时源回退路径（mock 生效），
+    # 否则在有真实 astocks_raw.db 的环境（如 prod）会命中 sqlite 基线而绕开 mock。
+    monkeypatch.setattr(
+        cli_mod,
+        "_fetch_intraday_historical_baseline",
+        lambda *_args, **_kwargs: {},
+    )
 
     monkeypatch.setattr(
         cli_mod,
