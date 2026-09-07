@@ -1787,12 +1787,20 @@ def test_run_scheduled_daily_blocks_history_actual_source_after_fallback(
 
 
 def test_run_scheduled_keeps_learning_weights_proposal_only() -> None:
+    """学习权重必须维持「仅提案」：不得参与本次筛选的实际权重。
+
+    锚点随实现演进（learner.compute_weights -> learner.learn_from_ledger），
+    但治理语义不变：提案由 PerformanceLearner 产出后只做观察输出，
+    真正用于筛选的权重恒来自 _runtime_strategy_weights(thresholds, regime)。
+    """
     import aqsp.cli as cli_mod
 
     source = inspect.getsource(cli_mod._run_scheduled_legacy)
 
     assert "strategy_weights_from_ledger(args.ledger)" not in source
-    assert "learner.compute_weights(ledger_df)" in source
+    # 提案来源已改为 learn_from_ledger；cli 不再调用 learner.compute_weights
+    assert "learner.learn_from_ledger(ledger_df)" in source
+    assert "weight_proposals" in source
     assert "_runtime_strategy_weights(thresholds, regime)" in source
     assert "未应用到本次筛选" in source
 
@@ -1948,7 +1956,9 @@ def test_run_scheduled_runtime_weights_exclude_learner_proposals() -> None:
     import aqsp.cli as cli_mod
 
     source = inspect.getsource(cli_mod._run_scheduled_legacy)
-    proposal_at = source.index("weight_proposals = learner.compute_weights(ledger_df)")
+    # 锚点同步更新：提案块现由 learner.learn_from_ledger(ledger_df) 驱动，
+    # 起点是带类型注解的声明行（原 compute_weights 已不再被 cli 调用）。
+    proposal_at = source.index("weight_proposals: dict[str, float] = {}")
     runtime_weight_at = source.index(
         "weights = _runtime_strategy_weights(thresholds, regime)"
     )
