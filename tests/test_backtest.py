@@ -1243,7 +1243,7 @@ def test_walk_forward_result_default_pbo_is_none():
 def test_calculate_pbo_propagates_none_for_single_period():
     """_calculate_pbo 必须透传 None，而不是吞掉后返 0.0。"""
     tester = WalkForwardTester(
-        strategy=__import__("aqsp.strategies.ma_breakout", fromlist=["MaBreakoutStrategy"]).MaBreakoutStrategy(),
+        strategy=__import__("aqsp.strategies.ma_breakout", fromlist=["MABreakoutStrategy"]).MABreakoutStrategy(),
         data={},
         params={},
         top_n=1,

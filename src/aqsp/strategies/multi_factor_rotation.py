@@ -158,7 +158,10 @@ class FactorCalculator:
             factors["atr_14"] = float(np.clip(1.0 - atr_ratio * 10, 0, 1))
 
         if len(close) >= 60:
-            returns = np.diff(close[-60:]) / close[-61:-1]
+            # off-by-one 修复：np.diff 产出 len-1，分母必须与之对齐，
+            # 取 -61 使两侧均为 60 个元素（len(close)>=61 时原写法
+            # 得到 (59,) vs (60,) 直接 ValueError）。len==60 时行为与修复前一致。
+            returns = np.diff(close[-61:]) / close[-61:-1]
             # beta_60 衡量个股对系统性风险的暴露，必须以「外部市场基准收益率」
             # 为分母。早期版本曾用 `market_returns = returns` 自引用，导致
             # beta 恒等于 1、`factors["beta_60"]` 恒为 1.0（区分度=0）。
@@ -173,7 +176,7 @@ class FactorCalculator:
                 factors["beta_60"] = float(np.clip(1.0 - abs(beta - 1.0), 0, 1))
 
         if len(close) >= 20:
-            returns_20 = np.diff(close[-20:]) / close[-21:-1]
+            returns_20 = np.diff(close[-21:]) / close[-21:-1]
             volatility_20 = np.std(returns_20) * np.sqrt(252)
             factors["volatility_20"] = float(np.clip(1.0 - volatility_20, 0, 1))
 
