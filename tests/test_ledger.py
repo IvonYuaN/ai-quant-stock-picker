@@ -25,7 +25,11 @@ from aqsp.ledger import (
     write_ledger,
 )
 from aqsp.ledger.base import is_ledger_row_paper_review_eligible
-from aqsp.ledger.learner import format_decay_alerts
+from aqsp.ledger.learner import (
+    LearningResult,
+    PerformanceLearner,
+    format_decay_alerts,
+)
 from aqsp.models import PickResult
 
 
@@ -1760,3 +1764,109 @@ def test_append_predictions_preserves_not_executable_row_when_same_signal_key(
     assert row["score"] == 60
     assert row["not_executable_reason"] == "limit_up_at_open"
     assert row["entry_date"] == "2026-06-01"
+
+
+# ---------------------------------------------------------------------------
+# 宪法 §8：学习对象是 IC / 命中率分布 / 特征漂移，**不是 PnL**。
+# _calculate_weight 不得使用 avg_return / sharpe_ratio 调权，仅允许 win_rate。
+# ---------------------------------------------------------------------------
+
+
+def _make_learner(tmp_path, min_days: int = 30) -> PerformanceLearner:
+    return PerformanceLearner(
+        config=LearnerConfig(min_independent_signal_days=min_days),
+        weight_history_path=tmp_path / "weight_history.jsonl",
+    )
+
+
+def _learning_result(
+    *,
+    independent_signal_days: int = 30,
+    win_rate: float = 0.5,
+    avg_return: float = 0.0,
+    sharpe_ratio: float = 0.0,
+    total_picks: int = 30,
+) -> LearningResult:
+    win_count = int(round(win_rate * total_picks))
+    return LearningResult(
+        strategy_name="volume_breakout",
+        regime=None,
+        period="2026-01-01_2026-03-01",
+        independent_signal_days=independent_signal_days,
+        total_picks=total_picks,
+        win_count=win_count,
+        win_rate=win_rate,
+        avg_return=avg_return,
+        max_drawdown=0.0,
+        sharpe_ratio=sharpe_ratio,
+    )
+
+
+def test_calculate_weight_low_win_rate_reduces_weight(tmp_path) -> None:
+    """win_rate < 0.4 → 权重 ×0.7（命中率低 → 降权）。"""
+    learner = _make_learner(tmp_path)
+    result = _learning_result(win_rate=0.3)
+    weight = learner._calculate_weight(result)
+    assert weight == 0.7
+
+
+def test_calculate_weight_high_win_rate_increases_weight(tmp_path) -> None:
+    """win_rate > 0.6 → 权重 ×1.2（命中率高 → 升权）。"""
+    learner = _make_learner(tmp_path)
+    result = _learning_result(win_rate=0.8)
+    weight = learner._calculate_weight(result)
+    assert weight == 1.2
+
+
+def test_calculate_weight_neutral_win_rate_keeps_one(tmp_path) -> None:
+    """0.4 ≤ win_rate ≤ 0.6 → 权重保持 1.0（保守）。"""
+    learner = _make_learner(tmp_path)
+    for win_rate in (0.4, 0.5, 0.6):
+        result = _learning_result(win_rate=win_rate)
+        weight = learner._calculate_weight(result)
+        assert weight == 1.0
+
+
+def test_calculate_weight_insufficient_samples_returns_one(tmp_path) -> None:
+    """样本不足（independent_signal_days < min_independent_signal_days）→ 权重 1.0。"""
+    learner = _make_learner(tmp_path, min_days=30)
+    result = _learning_result(independent_signal_days=10, win_rate=0.9)
+    weight = learner._calculate_weight(result)
+    assert weight == 1.0
+
+
+def test_calculate_weight_ignores_high_avg_return_per_section_8(tmp_path) -> None:
+    """§8：avg_return 不得影响权重。
+    即使 avg_return 极高，权重也只受 win_rate 决定。
+    """
+    learner = _make_learner(tmp_path)
+    # win_rate 中性 + avg_return 极高（PnL 派生）
+    result = _learning_result(win_rate=0.5, avg_return=0.5, sharpe_ratio=5.0)
+    weight = learner._calculate_weight(result)
+    assert weight == 1.0  # 中性 win_rate → 不调权
+
+
+def test_calculate_weight_ignores_high_sharpe_ratio_per_section_8(tmp_path) -> None:
+    """§8：sharpe_ratio 不得影响权重。
+    win_rate < 0.4（应降权）+ 极高 sharpe_ratio → 仍降权。
+    """
+    learner = _make_learner(tmp_path)
+    result = _learning_result(
+        win_rate=0.2,  # 低命中率 → 应降权
+        avg_return=0.1,
+        sharpe_ratio=10.0,  # 但 PnL 派生指标极高
+    )
+    weight = learner._calculate_weight(result)
+    # 仅由 win_rate < 0.4 决定 ×0.7，sharpe_ratio 不再 ×1.1
+    assert weight == 0.7
+
+
+def test_calculate_weight_ignores_negative_avg_return_per_section_8(tmp_path) -> None:
+    """§8：负 avg_return 不得作为额外惩罚乘子。
+    win_rate > 0.6 + 负 avg_return → 仍按 win_rate 升权（不重复 ×0.7）。
+    """
+    learner = _make_learner(tmp_path)
+    result = _learning_result(win_rate=0.7, avg_return=-0.1)
+    weight = learner._calculate_weight(result)
+    # win_rate > 0.6 → ×1.2，avg_return 负不再追加 ×0.7
+    assert weight == 1.2

@@ -247,11 +247,19 @@ class LearnerConfig:
 **契约规则**:
 
 - 不满足 `min_independent_signal_days` 的策略权重必须为 `1.0`,不参与学习。
-- 同一个 `signal_day_group` 内多个 pick 合成 **1 个观察**(平均收益)。
+- 同一个 `signal_day_group` 内多个 pick 合成 **1 个观察**(平均收益)。该「平均收益」
+  属于**数据聚合层**产物（§5.2），用于形成 observation；**不得**作为调权信号进入
+  权重学习（机制层，受 §8 约束）。
 - 只看 `rolling_window_days` 内的样本。
 - 权重变更必须写入 `data/weight_history.jsonl`(前后值、reason、生效时间)。
 - 冷却期内不允许再次调整同一策略权重。
 - `status="not_executable"` 的记录**不进入胜率统计**。
+
+> **§5.2 vs §8 关系**：
+> - §5.2 描述的是 observation 层（同一信号日内多个 pick 合并为 1 个观察样本）；
+> - §8 描述的是 mechanism 层（学习对象是 IC / 命中率分布 / 特征漂移，**不是 PnL**）。
+> - `avg_return` / `sharpe_ratio` 是 PnL 派生指标，可作为观测与告警字段（见 StrategyDecayDetector），
+>   但**严禁**进入 `_calculate_weight` 权重乘法。
 
 ### 5.4 冷启动期规则
 
