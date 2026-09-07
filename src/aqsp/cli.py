@@ -4148,7 +4148,9 @@ def _append_walkforward_diagnostics(report_lines: list[str], result: Any) -> Non
         report_lines.append("*无可成交标的诊断*")
 
 
-def _format_walkforward_pbo(pbo: float, pbo_is_valid: bool) -> str:
+def _format_walkforward_pbo(pbo: float | None, pbo_is_valid: bool) -> str:
+    if pbo is None:
+        return "N/A（单序列回测无法做 CSCV）"
     value = f"{pbo:.2%}"
     return value if pbo_is_valid else f"{value}（无效占位，需 grid 多变体 CSCV）"
 
@@ -6699,19 +6701,20 @@ def run_walkforward(args: argparse.Namespace) -> int:
             if streaming_context is not None
             else None,
         )
+        pbo_repr = "N/A" if pbo_value is None else f"{pbo_value:.2%}"
         print(
             f"Grid CSCV 完成: DSR={dsr_value:.4f}, "
-            f"PBO={pbo_value:.2%}, profile={args.grid_profile}, variants={len(grid_rows)}"
+            f"PBO={pbo_repr}, profile={args.grid_profile}, variants={len(grid_rows)}"
         )
 
     tl_dr = []
     dsr_pass = dsr_value > 1.0
     # 宪法 §17.7：PBO 必须经真 CSCV（N>=2 变体）计算。
-    # 单序列回测无法做 CSCV，calculate_cscv_pbo_from_single 会返回占位值 0.0。
-    # 真 CSCV 的 PBO 几乎不可能恰为 0.0（252 组合中通常有 λ<=0）。
-    # 因此 pbo==0.0 视为「未经有效 CSCV 验证」，不予通过门 —— 避免单策略
-    # 用占位 0.0 蒙混过双门。需要 grid（多变体）walkforward 才能得到有效 PBO。
-    pbo_is_valid = pbo_value > 0.0
+    # 单序列回测无法做 CSCV，WalkForwardTester.calculate_cscv_pbo_from_single
+    # 现在显式返 None（而非旧版 0.0 占位），避免「无法计算」伪装成「无过拟合」。
+    # pbo is None 视为「未经有效 CSCV 验证」，不予通过门 —— 需要 grid（多变体）
+    # walkforward 才能得到有效 PBO。
+    pbo_is_valid = pbo_value is not None and pbo_value > 0.0
     pbo_pass = pbo_is_valid and pbo_value < 0.5
     both_pass = dsr_pass and pbo_pass
     verdict = "PASS" if both_pass else "FAIL"
@@ -6831,17 +6834,19 @@ def run_walkforward(args: argparse.Namespace) -> int:
     )
 
     if both_pass:
+        pbo_display = f"{pbo_value:.2%}" if pbo_value is not None else "N/A"
         report_lines.append(
-            f"✅ **{verdict}**: DSR={dsr_value:.4f} > 1.0 且 PBO={pbo_value:.2%} < 50%，可进入人工纸面复核候选。"
+            f"✅ **{verdict}**: DSR={dsr_value:.4f} > 1.0 且 PBO={pbo_display} < 50%，可进入人工纸面复核候选。"
         )
     else:
         reasons = []
         if not dsr_pass:
             reasons.append(f"DSR={dsr_value:.4f} < 1.0")
         if not pbo_pass:
-            if not pbo_is_valid:
+            if pbo_value is None or not pbo_is_valid:
+                pbo_repr = "N/A" if pbo_value is None else f"{pbo_value:.2%}"
                 reasons.append(
-                    f"PBO={pbo_value:.2%}（占位值，未经有效 CSCV 验证——"
+                    f"PBO={pbo_repr}（未做有效 CSCV 验证——"
                     "单策略回测无法做 CSCV，需用 grid 多变体网格，见宪法 §17.7）"
                 )
             else:

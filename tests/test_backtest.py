@@ -1194,3 +1194,53 @@ def test_trading_cost_calculator_slippage_default_unchanged():
     assert TradingCostCalculator.calculate_buy_cost(10_000.0) == pytest.approx(
         TradingCostCalculator.calculate_buy_cost(10_000.0, slippage_bps=15)
     )
+
+
+# ---------------------------------------------------------------------------
+# 宪法 §17.7：单序列回测无法做 CSCV，PBO 必须显式 None（不能 0.0 占位伪装）
+# ---------------------------------------------------------------------------
+
+
+def _make_backtest_result(period: str, total_return: float) -> BacktestResult:
+    return BacktestResult(
+        period=period,
+        total_return=total_return,
+        annual_return=total_return,
+        max_drawdown=0.0,
+        sharpe_ratio=0.0,
+        win_rate=0.0,
+        profit_factor=0.0,
+        trades=0,
+        not_executable=0,
+    )
+
+
+def test_calculate_cscv_pbo_from_single_returns_none_for_empty_periods():
+    """空 periods 列表 → None，避免 0.0 伪装成「无过拟合」。"""
+    pbo = WalkForwardTester.calculate_cscv_pbo_from_single([])
+    assert pbo is None
+
+
+def test_calculate_cscv_pbo_from_single_returns_none_for_single_period():
+    """N=1 walkforward → None，避免单策略用占位 0.0 蒙混过 PBO 门（宪法 §17.7）。"""
+    pbo = WalkForwardTester.calculate_cscv_pbo_from_single(
+        [_make_backtest_result("p1", 0.05)]
+    )
+    assert pbo is None
+
+
+def test_walk_forward_result_default_pbo_is_none():
+    """WalkForwardResult 默认 pbo 必须是 None（不是 0.0），避免「未计算」伪装「无过拟合」。"""
+    result = WalkForwardResult(
+        periods=[],
+        overall=_make_backtest_result("overall", 0.0),
+        robustness_score=0.0,
+        parameter_std=0.0,
+    )
+    assert result.pbo is None
+
+
+def test_calculate_pbo_propagates_none_for_single_period():
+    """_calculate_pbo 必须透传 None，而不是吞掉后返 0.0。"""
+    pbo = WalkForwardTester._calculate_pbo([_make_backtest_result("p1", 0.05)])
+    assert pbo is None
