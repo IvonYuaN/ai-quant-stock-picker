@@ -427,6 +427,40 @@ class TestMonitorChecker:
         assert result.triggered is False
         assert result.message == "walk-forward 已完成且双门通过"
 
+    def test_monitor_walkforward_runtime_renders_unknown_version_when_missing(
+        self, sample_config: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """健康报告 #R8：gate sidecar 缺 thresholds_version 字段时，审计 details
+        必须显示 "unknown" 而非空白，避免掩盖「gate 未记录版本」这一事实。"""
+        checker = MonitorChecker(config_path=str(sample_config))
+        gate_path = tmp_path / "walkforward_gate.json"
+        status_path = tmp_path / "walkforward_production_status.json"
+        # 注意：gate 没有 thresholds_version 字段（生产 data/walkforward_gate.json 现状）
+        self._write_gate_and_status(
+            gate_path,
+            status_path,
+            gate={
+                "run_date": "2026-07-20",
+                "deflated_sharpe": 1.5,
+                "pbo": 0.15,
+                "pbo_valid": True,
+                "dsr_pass": True,
+                "pbo_pass": True,
+                "both_pass": True,
+                "n_periods": 20,
+            },
+            status={"status": "completed"},
+        )
+        monkeypatch.setattr(
+            "aqsp.monitor.checker.today_shanghai", lambda: date(2026, 7, 24)
+        )
+
+        result = checker._check_walkforward_runtime(
+            {"gate_path": str(gate_path), "status_path": str(status_path)}
+        )
+
+        assert result.details["thresholds_version"] == "unknown"
+
     def test_monitor_walkforward_runtime_alerts_when_gate_is_stale(
         self, sample_config: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

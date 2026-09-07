@@ -44,6 +44,7 @@ data/walkforward_production_symbols.json
 data/source_health.json
 data/archive/
 data/walkforward_cache*
+data/intraday_cache/
 data/audit/
 data/backfill_intraday_debate_status.json
 runtime-backups/

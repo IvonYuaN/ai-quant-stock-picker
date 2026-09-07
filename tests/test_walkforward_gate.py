@@ -7,6 +7,7 @@ from aqsp.walkforward_gate import (
     MIN_PRODUCTION_GATE_SYMBOLS,
     build_walkforward_gate_evidence,
     build_walkforward_gate_payload,
+    display_thresholds_version,
     validate_walkforward_gate_payload,
     validate_walkforward_market_coverage,
 )
@@ -289,3 +290,39 @@ def test_walkforward_gate_accepts_clean_assumption_audit() -> None:
     assert result.ok is True
     assert result.assumption_audit_ok is True
     assert result.assumption_audit_blockers == ()
+
+
+def test_display_thresholds_version_returns_unknown_when_missing() -> None:
+    # 健康报告 #R8：gate sidecar 缺失 thresholds_version 时，展示/审计输出
+    # 必须是可读的 "unknown"，而非空白（空白会掩盖「gate 未记录版本」这一事实）。
+    assert display_thresholds_version(None) == "unknown"
+    assert display_thresholds_version("") == "unknown"
+    assert display_thresholds_version("   ") == "unknown"
+
+
+def test_display_thresholds_version_passthrough_when_present() -> None:
+    # 仅做空白清理，真实版本号原样返回；不应把合法版本也兜底成 unknown。
+    assert display_thresholds_version("thresholds@2026.09.05") == "thresholds@2026.09.05"
+    assert display_thresholds_version("  v2  ") == "v2"
+
+
+def test_walkforward_gate_detail_renders_unknown_when_version_missing() -> None:
+    # 生产 data/walkforward_gate.json 当前即无 thresholds_version 字段，
+    # 校验必须通过但 detail 必须显示 unknown（而非空白）。
+    result = validate_walkforward_gate_payload(
+        _valid_payload(),  # 不传 thresholds_version → payload 无该字段
+        today=date(2026, 6, 14),
+    )
+    assert result.ok is True
+    assert result.thresholds_version is None
+    assert "thresholds_version=unknown" in result.detail
+
+
+def test_walkforward_gate_detail_renders_version_when_present() -> None:
+    result = validate_walkforward_gate_payload(
+        _valid_payload(thresholds_version="thresholds@2026.09.05"),
+        today=date(2026, 6, 14),
+    )
+    assert result.ok is True
+    assert result.thresholds_version == "thresholds@2026.09.05"
+    assert "thresholds_version=thresholds@2026.09.05" in result.detail
