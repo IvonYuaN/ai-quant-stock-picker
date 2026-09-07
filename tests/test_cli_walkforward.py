@@ -239,7 +239,10 @@ class TestWalkForwardWithMockData:
         assert isinstance(result.overall.sharpe_ratio, float)
         assert isinstance(result.overall.win_rate, float)
         assert isinstance(result.deflated_sharpe, float)
-        assert isinstance(result.pbo, float)
+        # 宪法 §17.7：pbo 现为 Optional[float]（#89 起）——单序列无法做有效 CSCV
+        # 时为 None，禁止用 0.0 占位把「无法计算」伪装成「无过拟合」。
+        # 故此处不可断言必为 float（#89 改为 None 后未同步本消费方用例，导致 CI 红）。
+        assert result.pbo is None or isinstance(result.pbo, float)
 
 
 class TestCLIFindThresholdsYaml:
