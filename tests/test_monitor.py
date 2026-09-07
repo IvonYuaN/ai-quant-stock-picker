@@ -131,8 +131,10 @@ class TestMonitorChecker:
         assert result.triggered is True
         assert result.severity == "critical"
 
-    def test_check_data_freshness(self, sample_config: Path) -> None:
+    def test_check_data_freshness(self, sample_config: Path, tmp_path: Path) -> None:
         checker = MonitorChecker(config_path=str(sample_config))
+        cache = tmp_path / "cache.db"
+        cache.write_text("")  # 让 cache_path.exists() 为真，使其走数据库查询分支
 
         with patch("sqlite3.connect") as mock_connect:
             mock_cursor = MagicMock()
@@ -141,28 +143,35 @@ class TestMonitorChecker:
             mock_conn.cursor.return_value = mock_cursor
             mock_connect.return_value.__enter__.return_value = mock_conn
 
-            result = checker._check_data_freshness({"max_lag_days": 3})
+            result = checker._check_data_freshness(
+                {"max_lag_days": 3, "cache_path": str(cache)}
+            )
 
             assert result.name == "stale_data"
             assert result.severity == "critical"
-            mock_connect.assert_called_once_with("data/cache.db", timeout=30.0)
+            mock_connect.assert_called_once_with(str(cache), timeout=30.0)
 
     def test_check_data_freshness_uses_trading_day_lag(
-        self, sample_config: Path, monkeypatch: pytest.MonkeyPatch
+        self, sample_config: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         checker = MonitorChecker(config_path=str(sample_config))
+        cache = tmp_path / "cache.db"
+        cache.write_text("")  # 让 cache_path.exists() 为真，使其走数据库查询分支
         monkeypatch.setattr(
             "aqsp.monitor.checker.today_shanghai", lambda: date(2026, 6, 22)
         )
 
         with patch("sqlite3.connect") as mock_connect:
             mock_cursor = MagicMock()
-            mock_cursor.fetchone.return_value = ("2026-06-18",)
+            # 2026-06-19(五) 到 2026-06-22(一) 之间仅 1 个交易日，trading_day_lag=1
+            mock_cursor.fetchone.return_value = ("2026-06-19",)
             mock_conn = MagicMock()
             mock_conn.cursor.return_value = mock_cursor
             mock_connect.return_value.__enter__.return_value = mock_conn
 
-            result = checker._check_data_freshness({"max_lag_days": 1})
+            result = checker._check_data_freshness(
+                {"max_lag_days": 1, "cache_path": str(cache)}
+            )
 
         assert result.triggered is False
         assert result.details["trading_lag_days"] == 1
