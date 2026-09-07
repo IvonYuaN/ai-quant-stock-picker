@@ -1,6 +1,25 @@
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
+
+
+def _make_fake_session(status_code: int = 200, body: dict | None = None) -> MagicMock:
+    """构造一个 mock HTTP session，模拟 build_http_session() 的契约。
+
+    notifier._post() 走 build_http_session() 返回的 session.post，
+    所以测试必须 patch session factory —— 直接 patch requests.post
+    已脱靶（PR #76 合并后，notifier 改用统一 factory）。
+    """
+    response = MagicMock()
+    response.status_code = status_code
+    response.headers = {"content-type": "application/json"}
+    response.json.return_value = body if body is not None else {"code": 0}
+    response.raise_for_status = MagicMock()
+
+    session = MagicMock()
+    session.post.return_value = response
+    session.close = MagicMock()
+    return session
 
 
 def test_send_notification_delegates_to_markdown(monkeypatch):
@@ -22,14 +41,15 @@ def test_notify_markdown_sends_serverchan_when_sendkey_present(monkeypatch):
     monkeypatch.setenv("SERVERCHAN_SENDKEY", "test_sendkey")
     from aqsp.notifier import notify_markdown
 
-    with patch("aqsp.notifier.requests.post") as mock_post:
+    fake_session = _make_fake_session(body={"code": 0})
+    with patch("aqsp.notifier.build_http_session", return_value=fake_session):
         result = notify_markdown("test message")
 
     assert len(result) == 1
     assert result[0].channel == "serverchan"
     assert result[0].ok is True
-    mock_post.assert_called_once()
-    assert "sctapi.ftqq.com/test_sendkey.send" in mock_post.call_args.args[0]
+    fake_session.post.assert_called_once()
+    assert "sctapi.ftqq.com/test_sendkey.send" in fake_session.post.call_args.args[0]
 
 
 def test_serverchan_uses_markdown_title(monkeypatch):
@@ -37,11 +57,12 @@ def test_serverchan_uses_markdown_title(monkeypatch):
     monkeypatch.setenv("SERVERCHAN_SENDKEY", "test_sendkey")
     from aqsp.notifier import _send_serverchan
 
-    with patch("aqsp.notifier.requests.post") as mock_post:
+    fake_session = _make_fake_session(body={"code": 0})
+    with patch("aqsp.notifier.build_http_session", return_value=fake_session):
         result = _send_serverchan("# 午盘分析-2026-06-11\n\n内容")
 
     assert result is not None
-    payload = mock_post.call_args.kwargs["data"]
+    payload = fake_session.post.call_args.kwargs["data"]
     assert payload["title"] == "午盘分析-2026-06-11"
 
 

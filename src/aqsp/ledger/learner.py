@@ -329,25 +329,30 @@ class PerformanceLearner:
         return results
 
     def _calculate_weight(self, result: LearningResult) -> float:
+        """基于「命中率分布」计算策略权重。
+
+        学习对象（宪法 §8）：仅允许 IC / 命中率分布 / 特征漂移，**不是 PnL**。
+        `result.avg_return` 与 `result.sharpe_ratio` 是 PnL 派生指标，可用于
+        观测与告警（见 StrategyDecayDetector），**不得**进入权重乘法。
+
+        调权规则：
+        - 样本不足（independent_signal_days < min_independent_signal_days）→ 权重 1.0
+        - win_rate < 0.4 → 权重 ×0.7（命中率低 → 降权）
+        - win_rate > 0.6 → 权重 ×1.2（命中率高 → 升权）
+        - 0.4 ≤ win_rate ≤ 0.6 → 不调权（保守）
+        """
         if result.independent_signal_days < self.config.min_independent_signal_days:
             return 1.0
 
         weight = 1.0
 
+        # §8：学习对象是「命中率分布」，不是 PnL。
+        # win_rate 是 (returns > 0).sum() / len(returns)，属「命中率分布」。
+        # avg_return / sharpe_ratio 在此方法中**严禁**参与调权。
         if result.win_rate < 0.4:
             weight *= 0.7
         elif result.win_rate > 0.6:
             weight *= 1.2
-
-        if result.avg_return > 0:
-            weight *= min(1.3, 1 + result.avg_return / 0.2)
-        else:
-            weight *= max(0.7, 1 + result.avg_return / 0.2)
-
-        if result.sharpe_ratio > 1.0:
-            weight *= 1.1
-        elif result.sharpe_ratio < -0.5:
-            weight *= 0.8
 
         return round(
             max(self.config.weight_floor, min(self.config.weight_ceiling, weight)),
