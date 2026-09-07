@@ -94,15 +94,23 @@ def test_volatility_factors_beta_60_uses_external_benchmark() -> None:
     """有 benchmark_returns → beta_60 必须依赖外部市场收益率（非恒 1）。"""
     strategy = MultiFactorRotationStrategy()
     df = _make_close_df(120, seed=2)
-    # 构造与个股相关性<1 的市场收益率（独立 rng）
-    market = np.random.default_rng(99).normal(0, 0.01, 120)
+    # 基准必须与个股收益率「相关」，否则两条互不相关的随机序列都会让 beta≈0，
+    # 进而 clip(1-|beta-1|, 0, 1) 双双压到下界 0.0 ——
+    # 「不同基准 ⇒ 不同结果」这条断言会失去区分度（本测试最初用纯噪声即因此误红）。
+    # 故按实现同口径取最后 60 期收益率，构造两条关系已知且不同的基准：
+    # market ≈ rets → beta≈1.0；market2 ≈ 2*rets → beta≈0.5。
+    close = df["close"].values
+    rets = np.diff(close[-61:]) / close[-61:-1]
+    rng = np.random.default_rng(99)
+    noise = rng.normal(0.0, 1e-6, len(rets))
+    market = rets + noise
+    market2 = 2.0 * rets + noise
     factors = strategy.factor_calculator.calculate_volatility_factors(
         df, benchmark_returns=market
     )
     assert "beta_60" in factors
     assert 0.0 <= factors["beta_60"] <= 1.0
     # 用不同的市场序列，结果应该不同 —— 验证确实依赖外部基准
-    market2 = np.random.default_rng(7).normal(0, 0.02, 120)
     factors2 = strategy.factor_calculator.calculate_volatility_factors(
         df, benchmark_returns=market2
     )

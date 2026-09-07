@@ -202,7 +202,9 @@ class FactorCalculator:
         if len(df) >= 20:
             close = df["close"].values
             amount = close * volume
-            returns = np.diff(close[-20:]) / close[-21:-1]
+            # 与上文 volatility 窗口同一类 off-by-one 修复：diff 产出 len-1，
+            # 分母须取 -(window+1) 使两侧均为 window 个元素。
+            returns = np.diff(close[-21:]) / close[-21:-1]
             abs_returns = np.abs(returns)
             avg_amount = np.mean(amount[-20:])
             if avg_amount > 0:

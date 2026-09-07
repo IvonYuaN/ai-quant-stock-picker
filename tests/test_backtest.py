@@ -1243,9 +1243,9 @@ def test_walk_forward_result_default_pbo_is_none():
 def test_calculate_pbo_propagates_none_for_single_period():
     """_calculate_pbo 必须透传 None，而不是吞掉后返 0.0。"""
     tester = WalkForwardTester(
+        # WalkForwardTester.__init__ 无 data/params 形参，误传会 TypeError；
+        # _calculate_pbo 是 staticmethod，构造仅用于取得调用入口。
         strategy=__import__("aqsp.strategies.ma_breakout", fromlist=["MABreakoutStrategy"]).MABreakoutStrategy(),
-        data={},
-        params={},
         top_n=1,
     )
     pbo = tester._calculate_pbo([_make_backtest_result("p1", 0.05)])
