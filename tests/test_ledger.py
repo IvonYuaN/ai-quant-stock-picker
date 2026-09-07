@@ -27,7 +27,6 @@ from aqsp.ledger import (
 from aqsp.ledger.base import is_ledger_row_paper_review_eligible
 from aqsp.ledger.learner import (
     LearningResult,
-    PerformanceLearner,
     format_decay_alerts,
 )
 from aqsp.models import PickResult
