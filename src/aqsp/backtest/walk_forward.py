@@ -19,6 +19,7 @@ except (
 
 from aqsp.ledger.base import _check_executable as _ledger_check_executable
 from aqsp.backtest.audit import validate_backtest_frame
+from aqsp.execution.cost import BACKTEST_SLIPPAGE_BPS
 from aqsp.regime.runtime import detect_runtime_regime_context
 from aqsp.regime.strategy_mixer import canonicalize_regime
 from aqsp.strategies.composite import CompositeStrategy
@@ -170,7 +171,10 @@ class WalkForwardTester:
         purge_days: int = 5,
         horizon_days: int = 3,
         fee_bps: float = 3.0,
-        slippage_bps: float = 20.0,
+        # 与 backtest/variant_account.py 共用同一出处（execution/cost.py
+        # BACKTEST_SLIPPAGE_BPS，对齐 thresholds.yaml execution.slippage=0.002），
+        # 避免两个回测引擎成本口径不一致（健康报告 #R7）。
+        slippage_bps: float = BACKTEST_SLIPPAGE_BPS,
         top_n: int = 10,
         stop_loss_pct: float | None = None,
         take_profit_pct: float | None = None,

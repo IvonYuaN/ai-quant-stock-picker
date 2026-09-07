@@ -191,3 +191,36 @@ def test_filter_pipeline_with_stats():
     assert stats["initial_count"] == 2
     assert stats["final_count"] == 1
     assert stats["filter_stats"]["st"]["removed"] == 1
+
+
+def test_st_filter_detects_st_via_symbol_set_when_name_missing():
+    # 健康报告 #R4 双通道：名称缺失时，第二通道（显式 ST 符号集）仍可独立命中；
+    # 名称缺失且不在符号集者按 #R4 保守排除（宁可漏不可误纳入风险警示标的）。
+    st_filter = STFilter()
+    universe = ["600009", "600010"]
+    # 名称字典无 600009/600010，但显式符号集合命中 600009
+    names = {}
+    result = st_filter.filter(universe, names, st_symbols={"600009"})
+    # 通道2（符号集）在名称缺失场景下不依赖名称通道即可命中：
+    assert "600009" not in result  # 符号集通道命中 → 排除
+    # 名称缺失且不在符号集 → 保守排除（#R4）：
+    assert "600010" not in result
+
+
+def test_st_filter_conservatively_excludes_symbol_with_missing_name():
+    # 健康报告 #R4 name 缺失保守处理：名称通道无法确认「非 ST」，
+    # 且无第二通道佐证时，保守排除（选股宁可漏不可误纳入风险警示标的）。
+    st_filter = STFilter()
+    universe = ["600000", "600011"]
+    names = {"600000": "浦发银行"}  # 600011 名称缺失
+    result = st_filter.filter(universe, names)
+    assert "600000" in result
+    assert "600011" not in result
+
+
+def test_st_filter_treats_whitespace_only_name_as_missing():
+    # 边界：全空白名称与缺失等同，应保守排除（避免「  」被当作合法名）。
+    st_filter = STFilter()
+    assert st_filter.is_st("600012", "   ") is True
+    assert st_filter.is_st("600012", "") is True
+    assert st_filter.is_st("600012", None) is True

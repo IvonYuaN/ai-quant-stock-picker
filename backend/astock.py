@@ -17,8 +17,30 @@ import random
 import time
 import urllib.request
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+
+try:
+    _SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
+except Exception:  # pragma: no cover - 仅 tzdata 缺失环境触发
+    from datetime import timezone
+
+    _SHANGHAI_TZ = timezone(timedelta(hours=8))
+
+
+def _now_shanghai() -> datetime:
+    """当前上海时区时间（backend 自包含版，语义对齐 aqsp.core.time.now_shanghai）。
+
+    backend/ 是移植自 a-stock-data 的**自包含**数据层，刻意不 import aqsp 包，
+    因此本地实现而非复用 ``aqsp.core.time.now_shanghai``；但时区语义完全对齐
+    （Asia/Shanghai），且符合 AGENTS.md §3.4「禁止裸 datetime.now()」。
+
+    这不是风格问题：生产机若以 UTC 运行，裸 ``datetime.now()`` / ``date.today()``
+    在北京时间 00:00–08:00 会返回**前一天**日期，导致龙虎榜、限售解禁、研报
+    检索窗口整体偏移一天——属于静默的数据错误，症状是「数据看起来正常但慢一天」。
+    """
+    return datetime.now(tz=_SHANGHAI_TZ)
 
 
 def get_prefix(code: str) -> str:
@@ -170,10 +192,10 @@ def eastmoney_industry_reports(
     keywords: list[str] | None = None, days: int = 90, max_pages: int = 3
 ) -> list[dict]:
     """按行业拉研报（qType=1）——适合产业链 / 主题级检索。keywords 在标题上过滤。"""
-    from datetime import date, timedelta
+    from datetime import timedelta
 
     session = _report_session()
-    end = date.today()
+    end = _now_shanghai().date()
     begin = end - timedelta(days=days)
     out: list[dict] = []
     for page in range(1, max_pages + 1):
@@ -834,7 +856,7 @@ def dragon_tiger_board(
     code: str, trade_date: str | None = None, look_back: int = 30
 ) -> dict:
     """龙虎榜：该股近期上榜记录 + 最近一次买卖席位 TOP5 + 机构专用席位净买。"""
-    trade_date = trade_date or datetime.now().strftime("%Y-%m-%d")
+    trade_date = trade_date or _now_shanghai().strftime("%Y-%m-%d")
     start = (
         datetime.strptime(trade_date, "%Y-%m-%d") - timedelta(days=look_back)
     ).strftime("%Y-%m-%d")
@@ -913,7 +935,7 @@ def lockup_expiry(
     字段随东财 2026 改列名同步（a-stock-data §3.6）：旧 LIMITED_STOCK_TYPE/FREE_SHARES_NUM
     已废、致 type/shares 恒空 → 改 FREE_SHARES_TYPE/FREE_SHARES，并补 able_shares（实际可流通股数）。
     """
-    trade_date = trade_date or datetime.now().strftime("%Y-%m-%d")
+    trade_date = trade_date or _now_shanghai().strftime("%Y-%m-%d")
     history = [
         {
             "date": str(r.get("FREE_DATE", ""))[:10],

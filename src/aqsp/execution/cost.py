@@ -13,6 +13,23 @@ A股交易成本计算模块
 
 from __future__ import annotations
 
+# ── 回测 / paper 模拟统一滑点口径（健康报告 #R7）──────────────────────
+#
+# 出处：config/thresholds.yaml → execution.slippage = 0.002（=20bp）。
+# 这是项目唯一被 cli / walk-forward 生产链路实际消费的滑点配置，
+# 有测试锁定该契约（test_cli_runtime_fixes.py::test_direct_walkforward_
+# defaults_match_threshold_costs 断言 20.0）。
+#
+# 修复前：backtest/walk_forward.py 默认 20bp（对齐配置），而
+# backtest/variant_account.py 硬编码 15bp 字面量——两个回测引擎成本口径
+# 不一致，同一策略在两者下 PnL/DSR 不可比，且 15bp 违反 AGENTS.md §3.5
+# 「阈值不得写成字面量」。现两处共用本常量。
+#
+# 注意：本常量**不改变**下方 TradingCostCalculator 各方法的默认滑点（15bp）。
+# 那是实盘下单成本估算器的独立口径，改动会连锁影响 executor 链路，
+# 不在本 PR 范围内。
+BACKTEST_SLIPPAGE_BPS: float = 20.0
+
 
 class TradingCostCalculator:
     """
