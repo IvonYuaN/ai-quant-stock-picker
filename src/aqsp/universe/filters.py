@@ -9,20 +9,47 @@ from aqsp.core.time import today_shanghai
 
 class STFilter:
     def __init__(self):
+        # 名称关键字通道：精确包含匹配（ST/*ST 为风险警示，退为退市预警）。
+        # 顺序无关：因 "*ST" 已含 "ST" 子串，二者命中其一即可。
         self.st_keywords = ["ST", "*ST", "退"]
 
-    def is_st(self, symbol: str, name: str = "") -> bool:
-        name_upper = name.upper() if name else ""
+    def is_st(
+        self,
+        symbol: str,
+        name: str = "",
+        st_symbols: Optional[set[str]] = None,
+    ) -> bool:
+        # 通道1：名称关键字（展示名缺失时此通道不可用）。
+        # strip 后判空：None / "" / 全空白均视为缺失。
+        clean_name = (name or "").strip()
+        name_upper = clean_name.upper()
         for keyword in self.st_keywords:
             if keyword in name_upper:
                 return True
+        # 通道2：显式 ST 符号集（独立于名称，名称缺失时仍可判定）。
+        # 健康报告 #R4：原仅依赖名称单通道，名称缺失即判定为非 ST，可能漏掉
+        # 真实 ST 标的；增加符号集第二通道弥补。
+        if st_symbols and symbol in st_symbols:
+            return True
+        # name 缺失保守处理：名称通道无法确认「非 ST」，且无第二通道佐证时，
+        # 保守排除（选股宁可漏不可误纳入风险警示标的）。健康报告 #R4。
+        if not clean_name:
+            return True
         return False
 
     def filter(
-        self, universe: List[str], names: Optional[Dict[str, str]] = None, **kwargs
+        self,
+        universe: List[str],
+        names: Optional[Dict[str, str]] = None,
+        st_symbols: Optional[set[str]] = None,
+        **kwargs,
     ) -> List[str]:
         names = names or {}
-        return [s for s in universe if not self.is_st(s, names.get(s, ""))]
+        return [
+            s
+            for s in universe
+            if not self.is_st(s, names.get(s, ""), st_symbols=st_symbols)
+        ]
 
 
 class SuspendedFilter:

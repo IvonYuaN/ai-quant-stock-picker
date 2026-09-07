@@ -1600,6 +1600,44 @@ def test_sqlite_db_source_rejects_qfq_database_for_raw_fetch(
         source.fetch_daily(["600519"], date(2026, 1, 1), date(2026, 1, 2), adjust="")
 
 
+def test_sqlite_db_source_requires_opt_in_for_qfq_fetch(
+    tmp_path: Path, monkeypatch
+) -> None:
+    # 健康报告 #R1：qfq guard 反转为显式 opt-in。
+    # 原 guard 只拦 raw 请求落在 qfq 库，未拦「显式请求 qfq」，导致 qfq 数据
+    # 可在生产静默使用（违反 AGENTS.md §3.6 前复权仅用于展示/研究）。
+    db = tmp_path / "astocks_qfq.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute("create table stocks (ts_code text, name text)")
+        conn.execute(
+            """
+            create table daily_qfq (
+                ts_code text,
+                trade_date text,
+                open real,
+                high real,
+                low real,
+                close real,
+                volume real,
+                amount real
+            )
+            """
+        )
+    monkeypatch.delenv("AQSP_ALLOW_QFQ_SQLITE_SOURCE", raising=False)
+    source = SqliteDbSource(db_path=db)
+
+    # 无 opt-in：显式请求 qfq 必须被拦
+    with pytest.raises(DataError, match="opt-in"):
+        source._assert_price_mode_allowed("qfq")
+    with pytest.raises(DataError, match="opt-in"):
+        source._assert_price_mode_allowed("hfq")
+
+    # 有 opt-in：放行（研究/展示用途）
+    monkeypatch.setenv("AQSP_ALLOW_QFQ_SQLITE_SOURCE", "1")
+    source._assert_price_mode_allowed("qfq")
+    source._assert_price_mode_allowed("hfq")
+
+
 def test_sqlite_db_source_marks_raw_database_price_mode(tmp_path: Path) -> None:
     db = tmp_path / "astocks_raw.db"
     with sqlite3.connect(db) as conn:

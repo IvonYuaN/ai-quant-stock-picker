@@ -12,6 +12,7 @@ from typing import Any, Literal, Mapping, Sequence
 
 import pandas as pd
 
+from aqsp.execution.cost import BACKTEST_SLIPPAGE_BPS
 
 Side = Literal["buy", "sell"]
 
@@ -24,7 +25,10 @@ class VariantExecutionRules:
     commission_rate: float = 0.0003
     stamp_tax_rate: float = 0.001
     min_commission: float = 5.0
-    slippage_bps: float = 15.0
+    # 原为硬编码 15.0 字面量，与 backtest/walk_forward.py 的 20bp 口径不一致，
+    # 且违反 AGENTS.md §3.5。现共用 BACKTEST_SLIPPAGE_BPS（对齐 thresholds.yaml
+    # execution.slippage=0.002），使两个回测引擎成本可比（健康报告 #R7）。
+    slippage_bps: float = BACKTEST_SLIPPAGE_BPS
     lot_size: int = 100
 
 

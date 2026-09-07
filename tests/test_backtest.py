@@ -1152,3 +1152,45 @@ def test_walkforward_streaming_uses_fixed_benchmark_for_regime_detection(
 
     assert seen
     assert all(symbols == {"000300"} for symbols in seen)
+
+
+# ── 回测成本默认值统一（健康报告 #R7）────────────────────────────────
+
+
+def test_walkforward_and_variant_account_share_slippage_default():
+    """两个回测引擎的默认滑点必须同源，否则同策略 PnL/DSR 不可比。
+
+    修复前 walk_forward.py 为 20bp、variant_account.py 硬编码 15bp。
+    """
+    from aqsp.backtest.variant_account import VariantExecutionRules
+    from aqsp.backtest.walk_forward import WalkForwardTester
+
+    tester = WalkForwardTester(strategy=object())
+    rules = VariantExecutionRules()
+
+    assert tester.slippage_bps == rules.slippage_bps
+
+
+def test_backtest_slippage_default_matches_thresholds_yaml():
+    """默认滑点必须等于 config/thresholds.yaml 的 execution.slippage（0.002=20bp）。
+
+    这是 #R7 的关键：20bp 不是随手写的，而是对齐唯一被生产链路消费的配置；
+    若有人改了 yaml 却没同步常量，此测试会红。
+    """
+    from aqsp.execution.cost import BACKTEST_SLIPPAGE_BPS
+    from aqsp.strategies.thresholds import load_thresholds
+
+    thresholds_slippage_bps = float(load_thresholds().execution.slippage) * 10_000
+    assert BACKTEST_SLIPPAGE_BPS == pytest.approx(thresholds_slippage_bps)
+
+
+def test_trading_cost_calculator_slippage_default_unchanged():
+    """回归保护：实盘成本估算器的默认滑点仍是 15bp，未被 #R7 改动波及。
+
+    TradingCostCalculator 服务于 executor 下单链路，是独立于回测的口径。
+    """
+    from aqsp.execution.cost import TradingCostCalculator
+
+    assert TradingCostCalculator.calculate_buy_cost(10_000.0) == pytest.approx(
+        TradingCostCalculator.calculate_buy_cost(10_000.0, slippage_bps=15)
+    )

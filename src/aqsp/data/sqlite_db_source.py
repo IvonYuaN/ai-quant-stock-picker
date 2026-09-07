@@ -535,13 +535,26 @@ class SqliteDbSource(DataSource):
 
     def _assert_price_mode_allowed(self, adjust: str) -> None:
         mode = self.price_mode()
-        if adjust == "" and mode == "qfq":
-            allowed = os.getenv(_ALLOW_QFQ_SQLITE_SOURCE_ENV, "").strip().lower()
-            if allowed not in {"1", "true", "yes", "on"}:
-                raise DataError(
-                    "sqlite_db 当前指向 qfq 数据库；生产候选/ledger 必须使用 raw "
-                    f"数据库，或显式设置 {_ALLOW_QFQ_SQLITE_SOURCE_ENV}=1 仅用于研究"
-                )
+        if adjust == "":
+            if mode == "qfq":
+                allowed = os.getenv(_ALLOW_QFQ_SQLITE_SOURCE_ENV, "").strip().lower()
+                if allowed not in {"1", "true", "yes", "on"}:
+                    raise DataError(
+                        "sqlite_db 当前指向 qfq 数据库；生产候选/ledger 必须使用 raw "
+                        f"数据库，或显式设置 {_ALLOW_QFQ_SQLITE_SOURCE_ENV}=1 仅用于研究"
+                    )
+            return
+        # adjust 为非 raw（qfq/hfq）：前复权仅用于展示/研究（AGENTS.md §3.6），
+        # 生产/回测/ledger 严禁。原 guard 只拦「raw 请求落在 qfq 库」，未拦显式
+        # qfq 请求，导致 qfq 数据可在生产静默使用。反转为显式 opt-in（健康报告 #R1）：
+        # 必须设置 AQSP_ALLOW_QFQ_SQLITE_SOURCE=1 才允许取复权数据。
+        allowed = os.getenv(_ALLOW_QFQ_SQLITE_SOURCE_ENV, "").strip().lower()
+        if allowed not in {"1", "true", "yes", "on"}:
+            raise DataError(
+                f"请求 {adjust} 复权数据须经显式 opt-in：设置 "
+                f"{_ALLOW_QFQ_SQLITE_SOURCE_ENV}=1 仅用于研究/展示；"
+                "生产候选与 ledger 必须使用 raw（不复权）价格"
+            )
 
     def _normalize_daily_frame(self, df: pd.DataFrame, symbol: str) -> pd.DataFrame:
         if df.empty:
