@@ -988,6 +988,26 @@ def main(argv: list[str] | None = None) -> int:
     pit_cmd.add_argument("--symbols", default="600519")
     pit_cmd.add_argument("--json", action="store_true")
 
+    cyq_cmd = sub.add_parser(
+        "cyq",
+        help="compute CYQ chip distribution (profit ratio / cost / concentration)",
+    )
+    cyq_cmd.add_argument("--symbol", required=True, help="6-digit A-share code")
+    cyq_cmd.add_argument(
+        "--csv",
+        default="",
+        help="本地 qfq 日线 CSV，须含列 date,high,low,close,turn（turn 为百分数，如 0.31=0.31%%）",
+    )
+    cyq_cmd.add_argument(
+        "--source",
+        choices=SOURCE_CHOICES,
+        default="auto",
+        help="实时数据源（仅当数据源含 turn 列时可用，否则请用 --csv）",
+    )
+    cyq_cmd.add_argument("--grid-size", type=int, default=300)
+    cyq_cmd.add_argument("--decay", type=float, default=1.0)
+    cyq_cmd.add_argument("--json", action="store_true", help="输出 JSON")
+
     compare_cmd = sub.add_parser(
         "compare-snapshots", help="compare stock snapshots between two dates"
     )
@@ -1138,6 +1158,8 @@ def main(argv: list[str] | None = None) -> int:
             return run_runtime_snapshot(args)
         if args.command == "pit":
             return run_pit(args)
+        if args.command == "cyq":
+            return _run_cyq(args)
         if args.command == "compare-snapshots":
             return run_compare_snapshots(args)
         if args.command == "optimize":
@@ -4587,6 +4609,75 @@ def run_screen(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_cyq(args: argparse.Namespace) -> int:
+    """CLI 入口：计算单标的 CYQ 筹码分布（需 qfq 日线 + 换手率 turn）。"""
+    import json
+
+    import pandas as pd
+
+    from aqsp.core.errors import DataError
+    from aqsp.features.cyq import chip_distribution
+
+    df: pd.DataFrame | None = None
+    if args.csv:
+        try:
+            df = pd.read_csv(args.csv)
+        except Exception as exc:  # noqa: BLE001
+            print(f"读取 CSV 失败: {exc}")
+            return 1
+    else:
+        # 实时取数：仅当数据源返回 turn 列时可用；否则提示用 --csv。
+        try:
+            frames, _ = _fetch_special_strategy_frames(
+                args.source, [args.symbol], benchmark_symbol=""
+            )
+            df = frames.get(args.symbol)
+        except DataError as exc:
+            print(f"实时取数失败（{exc}）；请改用 --csv 提供 qfq 日线（含 turn 列）")
+            return 1
+        if df is None or "turn" not in df.columns:
+            print(
+                "实时数据源不含换手率 turn 列，无法计算 CYQ；"
+                "请用 --csv 提供 qfq 日线（date,high,low,close,turn）"
+            )
+            return 1
+
+    try:
+        dist = chip_distribution(
+            df, symbol=args.symbol, grid_size=args.grid_size, decay=args.decay
+        )
+    except DataError as exc:
+        print(str(exc))
+        return 1
+
+    out = {
+        "symbol": dist.symbol,
+        "price": round(dist.price, 4),
+        "profit_ratio": round(dist.profit_ratio, 6),
+        "avg_cost": round(dist.avg_cost, 4),
+        "cost_90": [round(v, 4) for v in dist.cost_90],
+        "cost_70": [round(v, 4) for v in dist.cost_70],
+        "concentration_90": round(dist.concentration_90, 6)
+        if dist.concentration_90 is not None
+        else None,
+        "concentration_70": round(dist.concentration_70, 6)
+        if dist.concentration_70 is not None
+        else None,
+        "peak_price": round(dist.peak_price, 4),
+    }
+    if args.json:
+        print(json.dumps(out, ensure_ascii=False, indent=2))
+    else:
+        print(f"标的 {dist.symbol}  现价 {dist.price:.2f}")
+        print(f"盈利比例 {dist.profit_ratio:.1%}  平均成本 {dist.avg_cost:.2f}")
+        print(
+            f"90% 成本区间 [{out['cost_90'][0]:.2f}, {out['cost_90'][1]:.2f}]  "
+            f"集中度 {out['concentration_90']}"
+        )
+        print(f"筹码峰价位 {dist.peak_price:.2f}")
+    return 0
+
+
 def run_scheduled(args: argparse.Namespace) -> int:
     from aqsp.services import scheduled
 
@@ -4626,9 +4717,13 @@ def _write_daily_research_report(
             str(p.symbol): float(max(float(getattr(p, "score", 1.0) or 0.0), 1e-6))
             for p in picks
         }
-        sector_map = {
-            str(p.symbol): str(p.metrics.get("sector", "") or "") for p in picks
-        }
+        # PIT 行业：板块去重/风控用「信号日时点」的申万行业（灭前视偏差红线），
+        # 仅在已预加载行业表时启用；否则优雅回退到各 pick 现有行业标签（行为不变）。
+        from aqsp.features.pit_enrichment import pit_sector_industry_maps
+
+        _pit_as_of = today_shanghai().isoformat()
+        _sector_map, _industry_map = pit_sector_industry_maps(picks, _pit_as_of)
+        sector_map = _sector_map
         engine = DiversificationEngine()
         result = engine.optimize(scores, sector_map)
         portfolio_report = V2PortfolioReport(
@@ -5007,16 +5102,14 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
 
     picks = screened_picks[:limit]
 
-    sector_map = {
-        pick.symbol: str(pick.metrics.get("sector", "") or "")
-        for pick in picks
-        if str(pick.metrics.get("sector", "") or "").strip()
-    }
-    industry_map = {
-        pick.symbol: str(pick.metrics.get("industry", "") or "")
-        for pick in picks
-        if str(pick.metrics.get("industry", "") or "").strip()
-    }
+    # PIT 行业：板块去重/风控/行业映射用「信号日时点」的申万行业（灭前视偏差红线）。
+    # as_of 取历史运行(--as-of)或今日；未预加载行业表时回退到现有标签（行为不变）。
+    from aqsp.features.pit_enrichment import pit_sector_industry_maps
+
+    _pit_as_of = getattr(args, "as_of", "") or today_shanghai().isoformat()
+    _sector_map, _industry_map = pit_sector_industry_maps(picks, _pit_as_of)
+    sector_map = _sector_map
+    industry_map = _industry_map
 
     lethal_pipeline = LethalFilterPipeline()
     filtered_picks = []

@@ -80,13 +80,25 @@
 - [DanisHack/ai-hedge-fund](https://github.com/DanisHack/ai-hedge-fund) | ⭐ 25 | Python | AI-native hedge fund using multi-agent LLM system with real market data and paper trading.
 - [renee-jia/alpha-agent](https://github.com/renee-jia/alpha-agent) | ⭐ 20 | Python | An AI-driven multi-agent trading platform for options trading and stock trends analysis. This project leverages advanced machine learning, real-time market data, and a modular multi-agent framework.
 
-### a-stock-data 审计记录（2026-06-11）
+### a-stock-data 审计记录（2026-06-11 初记，2026-09-08 复核）
 
-- 上游：[simonlin1212/a-stock-data](https://github.com/simonlin1212/a-stock-data)，审计版本 `9379ab9`，README 标注 v3.2.2 / 27 个 A 股端点 / Apache-2.0。
+- 上游：[simonlin1212/a-stock-data](https://github.com/simonlin1212/a-stock-data)，复核版本 **v3.8.0 (`2012ce7`)**；初记 `9379ab9` / v3.2.2 / 27 端点。现已 **12 层 / 60 端点 / 22 源**。
 - 当前状态：AQSP 没有运行时引用它；已登记为 `config/data_sources.yaml` 的 `a_stock_data_endpoint_reference`，只作为端点设计、字段映射、踩坑记录参考。
+- **已落地为 AQSP 独立模块（2026-09-08 合并）**：
+  - 筹码分布 CYQ（OHLC+换手率本地推演，`src/aqsp/features/cyq.py`）— 上游 v3.7 §4.6。
+  - 申万行业 PIT（`src/aqsp/data/industry_pit.py`）— 灭板块归类前视偏差，上游 v3.7 §6.7。
+  - 宏观社融/PMI PIT（`src/aqsp/data/macro_pit.py`）— 上游 v3.7 §11。
+- 设计参考未照搬：估值历史 PE/PB/PS、指数成分权重+官方日期、复权因子 qfq/hfq —— AQSP 已有自有实现（`adjust.py` / `index_constituents.py` / `market_context.py`），仅对齐口径不复制代码。
 - 可吸收：mootdx/腾讯优先、东方财富统一限流；东财 `slist` 概念板块替代失效百度 PAE；巨潮公告 `orgId` 动态映射；龙虎榜、解禁、两融、大宗、股东户数、分红、公告、研报等 report-only 数据面。
 - 不直接吸收：Markdown Skill 内嵌代码、直连网页端点、iwencai key 依赖、任何未经过 AQSP schema/freshness/fail-closed 测试的字段。
 - 复核节奏：每月或新增数据 adapter 前重新查看一次上游 changelog；如果上游出现“接口失效替换/字段变化/风控阈值”类更新，再决定是否迁移到本项目 adapter 待办。
+
+### TradingAgents-astock 审计记录（2026-09-08 新登）
+
+- 上游：[simonlin1212/TradingAgents-astock](https://github.com/simonlin1212/TradingAgents-astock)，当前 **v0.5.17**（⭐3.2k）。基于 TradingAgents 深度改造、适配 A 股（龙虎榜/游资/解禁等）。
+- 定位：A 股多 Agent 投研框架 —— 7 位分析师、牛熊辩论、风险评估；Web UI 持久化 LLM 配置；`role_llms` 支持按角色配 api_key；个人 Claude 订阅覆盖。
+- 与 AQSP 关系：**AQSP `briefing/` 模块已是同类且更完整**——`audit_debate_quality` + `DebateQualityAudit`（缺角色/空轮次/非交互轮次/证据充分性/可证伪条件/LLM 仅建议边界）+ `ArtifactMetadata.upstream_versions`（上游版本溯源）均已具备。**不重造**，仅作为角色设计（龙虎榜/游资/解禁视角）灵感来源。
+- 注意红线：上游 LLM 参与决策；AQSP 架构 §1.2 规定 LLM 只作通知附件、不参与选股打分，吸收时必须剥离 LLM 决策依赖。
 
 ## CN / A-share
 

@@ -25,6 +25,14 @@ filter:
   min_avg_volume: 1000000
   min_days_listed: 90
   min_price: 1.0
+# CYQ 筹码分布筛选扩展点（移植自 a-stock-data v3.8 §4.6）。
+# enabled=false 默认关闭：须经 walk-forward 验证后才置 true 接入主筛选
+# （架构 §3.5 / §5：新加权机制须有最低样本量 + 冷却期 + 验证报告）。
+cyq:
+  enabled: false
+  min_signal: 0.3
+  profit_ratio_min: 0.0
+  concentration_max: 1.0
 last_walkforward_run: '2026-05-30'
 momentum:
   lookback_days: 60

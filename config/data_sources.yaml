@@ -238,12 +238,13 @@ sources:
     research_status: design_absorbed
     license: Apache-2.0
     absorbed_from:
-      - "simonlin1212/a-stock-data@9379ab9"
+      - "simonlin1212/a-stock-data@v3.8.0 (2012ce7)"  # 复核于 2026-09-08：v3.2.2/27端点 -> v3.8.0/60端点/12层/22源
     strengths:
-      - 27 个 A 股端点按行情、研报、信号、资金面、新闻、基础数据、公告分层，适合作为 adapter 设计清单
+      - 60 个 A 股端点按 12 层（行情/研报/信号/资金面/筹码/新闻/基础/公告/估值/申万/宏观/指数）分层，适合作为 adapter 设计清单
       - 明确优先使用 mootdx/腾讯承接高频行情，东方财富仅用于独有数据并统一限流
       - 已记录东财概念板块 slist 替换、巨潮公告 orgId 动态映射等近期接口漂移修复
       - 可补充龙虎榜、解禁、融资融券、大宗交易、股东户数、分红、公告和研报的 report-only 数据面
+      - v3.7/v3.8 新增且已被 AQSP 吸收为独立模块的：筹码分布 CYQ（src/aqsp/features/cyq.py）、申万行业 PIT（src/aqsp/data/industry_pit.py）、宏观社融/PMI PIT（src/aqsp/data/macro_pit.py）；估值历史/指数成分权重/复权因子为设计参考，AQSP 已有自有实现
     risks:
       - 上游是 Skill/Markdown 内嵌代码，不是稳定 Python library API
       - 直连网页端点会漂移，不能绕过本项目 DataSource/schema/freshness gate
