@@ -1,4 +1,4 @@
-"""东财概念板块 fetcher 测试。"""
+"""东财概念板块 fetcher 测试（字段按 2026-09-08 生产机实测响应）。"""
 
 from __future__ import annotations
 
@@ -14,9 +14,11 @@ def test_parse_real_clist_shape():
                 {
                     "f12": "BK0001",
                     "f14": "人工智能",
-                    "f20": 156,
+                    "f104": 120,
+                    "f105": 30,
                     "f3": 1.23,
-                    "f184": 56789.0,
+                    "f62": 567890000.0,  # 元
+                    "f184": 2.5,
                 }
             ]
         }
@@ -26,9 +28,12 @@ def test_parse_real_clist_shape():
     it = items[0]
     assert it.board_code == "BK0001"
     assert it.board_name == "人工智能"
-    assert it.constituent_count == 156
+    assert it.up_count == 120
+    assert it.down_count == 30
     assert it.change_pct == pytest.approx(1.23)
+    # 元 → 万元
     assert it.main_net_inflow == pytest.approx(56789.0)
+    assert it.main_net_ratio == pytest.approx(2.5)
 
 
 def test_parse_skips_malformed():
@@ -36,13 +41,14 @@ def test_parse_skips_malformed():
         "data": {
             "diff": [
                 {"only": "junk"},
-                {"f12": "BK2", "f14": "n", "f20": 1, "f3": 0.0, "f184": 0.0},
+                {"f12": "BK2", "f14": "n", "f3": 0.0},
             ]
         }
     }
     items = _parse_items(payload)
     assert len(items) == 2
     assert items[1].board_name == "n"
+    assert items[1].up_count == 0
 
 
 def test_source_from_items():
@@ -51,9 +57,11 @@ def test_source_from_items():
             ConceptBoardItem(
                 board_code="BK1",
                 board_name="x",
-                constituent_count=1,
+                up_count=1,
+                down_count=0,
                 change_pct=0.0,
                 main_net_inflow=0.0,
+                main_net_ratio=0.0,
             )
         ]
     )
