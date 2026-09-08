@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 import json
 
@@ -2028,9 +2028,16 @@ def test_walkforward_defaults_to_recent_window_dates(monkeypatch, tmp_path) -> N
     )
 
     assert result == 0
-    assert seen["start"] == "2023-06-21"
+    expected_start = (
+        date(2026, 6, 20).replace(
+            year=2026 - cli_mod.DEFAULT_WALKFORWARD_LOOKBACK_YEARS
+        )
+        + timedelta(days=1)
+    ).isoformat()
+    assert expected_start == "2021-06-21"
+    assert seen["start"] == expected_start
     assert seen["end"] == "2026-06-20"
-    assert seen["run_start"] == "2023-06-21"
+    assert seen["run_start"] == expected_start
     assert seen["run_end"] == "2026-06-20"
     assert seen["benchmark_symbol"] == "000300"
 
