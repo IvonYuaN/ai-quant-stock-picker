@@ -185,6 +185,7 @@ class WalkForwardTester:
         use_tiered_stop: bool = False,
         n_variants: int = 1,
         benchmark_symbol: str | None = None,
+        crash_protection: bool = False,
     ):
         self.strategy = strategy
         self.train_period_days = train_period_days
@@ -200,6 +201,7 @@ class WalkForwardTester:
         self.use_tiered_stop = use_tiered_stop
         self.n_variants = n_variants
         self.benchmark_symbol = benchmark_symbol
+        self.crash_protection = crash_protection
 
     def run(
         self,
@@ -611,6 +613,10 @@ class WalkForwardTester:
             regime=market_regime,
         )
 
+        if self.crash_protection and market_regime == "crash":
+            reduced_n = max(1, self.top_n // 2)
+            selected = selected[:reduced_n]
+
         return self._run_selected_trades(
             train_data,
             test_data,
@@ -998,17 +1004,52 @@ class WalkForwardTester:
             lambdas.append(float(lam))
 
         lambdas_arr = np.array(lambdas)
-        pbo = float(np.mean(lambdas_arr <= 0))
+        n_le_0 = int(np.sum(lambdas_arr <= 0))
+        n_lt_0 = int(np.sum(lambdas_arr < 0))
+        pbo = float(n_le_0 / len(lambdas_arr))
+        pbo_strict = float(n_lt_0 / len(lambdas_arr))
+
+        warnings: list[str] = []
+        if block_size < 4:
+            warnings.append(
+                f"block_size={block_size} < 4: 每块仅 {block_size} 个周期，"
+                f"train/test Sharpe 估计噪声极大，PBO 读数方差高；"
+                f"建议拉长回测区间使 T >= 40（block_size >= 4）"
+            )
+        if n < 8:
+            warnings.append(
+                f"n_variants={n} < 8: λ 网格粗糙（仅 {n} 档），"
+                f"中性组合（λ=0）占比偏高时 PBO 易系统性向上偏置；"
+                f"建议扩 grid 到 N >= 8 提升 rank 分辨率"
+            )
+
+        if len(lambdas_arr) > 0:
+            percentiles = np.percentile(lambdas_arr, [25, 50, 75])
+            lambda_p25, lambda_p50, lambda_p75 = (
+                float(percentiles[0]),
+                float(percentiles[1]),
+                float(percentiles[2]),
+            )
+        else:
+            lambda_p25, lambda_p50, lambda_p75 = 0.0, 0.0, 0.0
 
         details = {
             "n_combos": n_combos,
-            "n_lambda_le_0": int(np.sum(lambdas_arr <= 0)),
-            "lambda_median": float(np.median(lambdas_arr)),
+            "n_lambda_le_0": n_le_0,
+            "n_lambda_lt_0": n_lt_0,
+            "n_lambda_eq_0": n_le_0 - n_lt_0,
+            "pbo_strict": round(pbo_strict, 4),
+            "lambda_median": lambda_p50,
             "lambda_mean": float(np.mean(lambdas_arr)),
+            "lambda_std": float(np.std(lambdas_arr)),
+            "lambda_p25": lambda_p25,
+            "lambda_p75": lambda_p75,
             "s": s,
             "block_size": block_size,
             "t_trimmed": block_size * s,
             "n_variants": n,
+            "cscv_reliability": "ok" if not warnings else "degraded",
+            "cscv_warnings": tuple(warnings),
         }
         return round(pbo, 4), details
 

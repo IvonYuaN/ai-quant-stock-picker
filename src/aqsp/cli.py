@@ -841,9 +841,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     wf.add_argument(
         "--grid-profile",
-        choices=("stable", "exploratory"),
+        choices=("stable", "stable_plus", "exploratory"),
         default="stable",
-        help="grid CSCV 变体集合：stable 用于上线门禁，exploratory 保留研究探索网格",
+        help="grid CSCV 变体集合：stable 用于上线门禁（N=5），stable_plus 用于功效增强（N=8，含因子族多样性），exploratory 保留研究探索网格（N=11）",
     )
     wf.add_argument(
         "--pool",
@@ -856,6 +856,12 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         default=False,
         help="启用分级止损（3.1%%硬止损+分级减仓）",
+    )
+    wf.add_argument(
+        "--crash-protection",
+        action="store_true",
+        default=False,
+        help="启用急跌保护：market_regime=crash 时 top_n 减半，降低高β暴露",
     )
     wf.add_argument(
         "--skip-pit-financials",
@@ -6054,26 +6060,38 @@ class WalkForwardGridVariant:
     lookback_days: int
     horizon_days: int
     top_n: int
+    strategy_mix: str = "momentum"
 
 
 _WALKFORWARD_VALIDATED_GRID_VARIANTS: tuple[WalkForwardGridVariant, ...] = (
-    WalkForwardGridVariant("WF-001", 0.3, 0.3, 60, 3, 10),
-    WalkForwardGridVariant("WF-B01", 0.3, 0.3, 60, 3, 5),
-    WalkForwardGridVariant("WF-B02", 0.3, 0.3, 60, 3, 20),
-    WalkForwardGridVariant("WF-B03", 0.3, 0.3, 20, 3, 10),
-    WalkForwardGridVariant("WF-B04", 0.3, 0.3, 120, 3, 10),
-    WalkForwardGridVariant("WF-B05", 0.3, 0.3, 60, 1, 10),
-    WalkForwardGridVariant("WF-B06", 0.3, 0.3, 60, 10, 10),
-    WalkForwardGridVariant("WF-B07", 0.2, 0.4, 40, 5, 5),
-    WalkForwardGridVariant("WF-B08", 0.4, 0.2, 100, 2, 15),
-    WalkForwardGridVariant("WF-B09", 0.5, 0.1, 80, 5, 10),
-    WalkForwardGridVariant("WF-B10", 0.1, 0.5, 40, 7, 10),
+    WalkForwardGridVariant("WF-001", 0.3, 0.3, 60, 3, 10, "momentum"),
+    WalkForwardGridVariant("WF-B01", 0.3, 0.3, 60, 3, 5, "momentum"),
+    WalkForwardGridVariant("WF-B02", 0.3, 0.3, 60, 3, 20, "momentum"),
+    WalkForwardGridVariant("WF-B03", 0.3, 0.3, 20, 3, 10, "momentum"),
+    WalkForwardGridVariant("WF-B04", 0.3, 0.3, 120, 3, 10, "momentum"),
+    WalkForwardGridVariant("WF-B05", 0.3, 0.3, 60, 1, 10, "momentum"),
+    WalkForwardGridVariant("WF-B06", 0.3, 0.3, 60, 10, 10, "momentum"),
+    WalkForwardGridVariant("WF-B07", 0.2, 0.4, 40, 5, 5, "momentum"),
+    WalkForwardGridVariant("WF-B08", 0.4, 0.2, 100, 2, 15, "momentum"),
+    WalkForwardGridVariant("WF-B09", 0.5, 0.1, 80, 5, 10, "momentum"),
+    WalkForwardGridVariant("WF-B10", 0.1, 0.5, 40, 7, 10, "momentum"),
+    WalkForwardGridVariant("WF-V01", 0.3, 0.3, 60, 3, 10, "volume"),
+    WalkForwardGridVariant("WF-MR1", 0.3, 0.3, 20, 3, 10, "mean_reversion"),
 )
 
 _WALKFORWARD_STABLE_GRID_VARIANTS: tuple[WalkForwardGridVariant, ...] = tuple(
     variant
     for variant in _WALKFORWARD_VALIDATED_GRID_VARIANTS
     if variant.variant_id in {"WF-001", "WF-B01", "WF-B02", "WF-B04", "WF-B08"}
+)
+
+_WALKFORWARD_STABLE_PLUS_GRID_VARIANTS: tuple[WalkForwardGridVariant, ...] = tuple(
+    variant
+    for variant in _WALKFORWARD_VALIDATED_GRID_VARIANTS
+    if variant.variant_id in {
+        "WF-001", "WF-B01", "WF-B02", "WF-B04", "WF-B08",
+        "WF-B07", "WF-V01", "WF-MR1",
+    }
 )
 
 _WALKFORWARD_EXPLORATORY_GRID_VARIANTS: tuple[WalkForwardGridVariant, ...] = (
@@ -6090,6 +6108,8 @@ def _walkforward_grid_variants(
 ) -> tuple[WalkForwardGridVariant, ...]:
     if profile == "exploratory":
         return _WALKFORWARD_EXPLORATORY_GRID_VARIANTS
+    if profile == "stable_plus":
+        return _WALKFORWARD_STABLE_PLUS_GRID_VARIANTS
     return _WALKFORWARD_STABLE_GRID_VARIANTS
 
 
@@ -6136,13 +6156,26 @@ def _apply_walkforward_grid_variant(
 ) -> Any:
     from aqsp.strategies.thresholds import CompositeThresholds, MomentumThresholds
 
+    composite_updates = {
+        "momentum_weight": variant.momentum_weight,
+        "triple_rise_weight": variant.triple_rise_weight,
+    }
+    strategy_mix = variant.strategy_mix or "momentum"
+    if strategy_mix == "volume":
+        composite_updates["volume_weight"] = 0.3
+        composite_updates["momentum_weight"] = 0.2
+        composite_updates["triple_rise_weight"] = 0.2
+    elif strategy_mix == "mean_reversion":
+        composite_updates["mean_reversion_weight"] = 0.4
+        composite_updates["momentum_weight"] = 0.1
+        composite_updates["triple_rise_weight"] = 0.1
+
     return replace(
         thresholds,
         composite=CompositeThresholds(
             **{
                 **thresholds.composite.__dict__,
-                "momentum_weight": variant.momentum_weight,
-                "triple_rise_weight": variant.triple_rise_weight,
+                **composite_updates,
             }
         ),
         momentum=MomentumThresholds(
@@ -6716,6 +6749,7 @@ def run_walkforward(args: argparse.Namespace) -> int:
         if args.grid_cscv
         else 1,
         benchmark_symbol=args.benchmark_symbol,
+        crash_protection=getattr(args, "crash_protection", False),
     )
 
     print("开始 walk-forward 回测...")

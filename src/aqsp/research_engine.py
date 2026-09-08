@@ -38,6 +38,7 @@ class WalkForwardEngineConfig:
     use_tiered_stop: bool = False
     n_variants: int = 1
     benchmark_symbol: str | None = None
+    crash_protection: bool = False
 
 
 @dataclass(frozen=True)
@@ -374,6 +375,7 @@ def _build_tester(
         use_tiered_stop=config.use_tiered_stop,
         n_variants=config.n_variants,
         benchmark_symbol=config.benchmark_symbol,
+        crash_protection=config.crash_protection,
     )
 
 

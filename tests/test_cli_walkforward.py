@@ -259,7 +259,7 @@ class TestCLIUpdateThresholdsMetadata:
     def test_update_writes_date(self, tmp_path):
         from aqsp.cli import _update_thresholds_metadata
 
-        yaml_content = 'version: "2.0.0"\nlast_walkforward_run: "2025-01-01"\n'
+        yaml_content = 'version: "2.0.0"\neffective_from: "2025-01-01"\nlast_walkforward_run: "2025-01-01"\n'
         yaml_file = tmp_path / "thresholds.yaml"
         yaml_file.write_text(yaml_content, encoding="utf-8")
 
@@ -1752,7 +1752,7 @@ def test_walkforward_grid_keeps_exploratory_wfb_variants() -> None:
 
     variants = cli_mod._walkforward_grid_variants("exploratory")
 
-    assert len(variants) == 11
+    assert len(variants) == 13
     assert [variant.variant_id for variant in variants] == [
         "WF-001",
         "WF-B01",
@@ -1765,10 +1765,82 @@ def test_walkforward_grid_keeps_exploratory_wfb_variants() -> None:
         "WF-B08",
         "WF-B09",
         "WF-B10",
+        "WF-V01",
+        "WF-MR1",
     ]
     assert {variant.lookback_days for variant in variants} == {20, 40, 60, 80, 100, 120}
     assert {variant.horizon_days for variant in variants} == {1, 2, 3, 5, 7, 10}
     assert {variant.top_n for variant in variants} == {5, 10, 15, 20}
+
+
+def test_walkforward_grid_profile_stable_plus_returns_eight_diverse_variants() -> None:
+    """CSCV 告警要求 N>=8 且含 volume/mean_reversion 因子族，解除 λ 网格粗糙告警。"""
+    import aqsp.cli as cli_mod
+
+    variants = cli_mod._walkforward_grid_variants("stable_plus")
+
+    assert len(variants) == 8
+    assert {variant.variant_id for variant in variants} == {
+        "WF-001",
+        "WF-B01",
+        "WF-B02",
+        "WF-B04",
+        "WF-B08",
+        "WF-B07",
+        "WF-V01",
+        "WF-MR1",
+    }
+    mixes = {variant.variant_id: variant.strategy_mix for variant in variants}
+    assert mixes["WF-V01"] == "volume"
+    assert mixes["WF-MR1"] == "mean_reversion"
+    assert {"volume", "mean_reversion", "momentum"} <= set(mixes.values())
+
+
+def test_walkforward_grid_variant_applies_strategy_mix_weights() -> None:
+    """strategy_mix 的权重写入此前零覆盖（旧测试把它 monkeypatch 成 no-op）。"""
+    import aqsp.cli as cli_mod
+    from aqsp.strategies.thresholds import load_thresholds
+
+    variants = {
+        v.variant_id: v for v in cli_mod._walkforward_grid_variants("stable_plus")
+    }
+
+    volume_thresholds = cli_mod._apply_walkforward_grid_variant(
+        load_thresholds(), variants["WF-V01"]
+    )
+    assert volume_thresholds.composite.volume_weight == 0.3
+    assert volume_thresholds.composite.momentum_weight == 0.2
+    assert volume_thresholds.composite.triple_rise_weight == 0.2
+
+    mr_thresholds = cli_mod._apply_walkforward_grid_variant(
+        load_thresholds(), variants["WF-MR1"]
+    )
+    assert mr_thresholds.composite.mean_reversion_weight == 0.4
+    assert mr_thresholds.composite.momentum_weight == 0.1
+    assert mr_thresholds.composite.triple_rise_weight == 0.1
+
+
+def test_cscv_pbo_flags_degraded_reliability_on_small_grid() -> None:
+    """N<8 且 block_size<4 时应产出 degraded 与告警；主口径 pbo 不得被 pbo_strict 改变。"""
+    import numpy as np
+
+    from aqsp.backtest.walk_forward import WalkForwardTester
+
+    rng = np.random.default_rng(42)
+    matrix = rng.normal(0.0005, 0.01, size=(16, 5))
+
+    pbo, details = WalkForwardTester.calculate_cscv_pbo(matrix, s=8)
+
+    assert details["n_variants"] == 5
+    assert details["block_size"] == 2
+    assert details["cscv_reliability"] == "degraded"
+    assert any("block_size=2 < 4" in w for w in details["cscv_warnings"])
+    assert any("n_variants=5 < 8" in w for w in details["cscv_warnings"])
+
+    n_combos = details["n_combos"]
+    assert details["n_lambda_lt_0"] <= details["n_lambda_le_0"] <= n_combos
+    assert details["n_lambda_eq_0"] == details["n_lambda_le_0"] - details["n_lambda_lt_0"]
+    assert 0.0 <= details["pbo_strict"] <= pbo <= 1.0
 
 
 def test_walkforward_sqlite_prefiltered_symbols_skip_duplicate_coverage_check(
@@ -2396,10 +2468,20 @@ def test_walkforward_grid_dsr_uses_period_level_observation_count(
             {
                 "n_combos": 1,
                 "n_lambda_le_0": 0,
+                "n_lambda_lt_0": 0,
+                "n_lambda_eq_0": 0,
+                "pbo_strict": 0.0,
                 "lambda_median": 0.1,
                 "lambda_mean": 0.1,
+                "lambda_std": 0.0,
+                "lambda_p25": 0.1,
+                "lambda_p75": 0.1,
                 "s": s,
                 "block_size": 2,
+                "t_trimmed": 4,
+                "n_variants": 5,
+                "cscv_reliability": "ok",
+                "cscv_warnings": (),
             },
         ),
     )
@@ -2429,3 +2511,19 @@ def test_walkforward_grid_dsr_uses_period_level_observation_count(
     assert min_periods == 4
     assert run_calls["count"] == 2
     assert captured["n_obs"] == 55
+
+
+def test_walkforward_crash_protection_passed_to_engine(monkeypatch) -> None:
+    from aqsp.research_engine import WalkForwardEngineConfig, _build_tester
+
+    cfg = WalkForwardEngineConfig(
+        train_days=120,
+        test_days=20,
+        purge_days=5,
+        horizon_days=3,
+        crash_protection=True,
+    )
+    assert cfg.crash_protection is True
+
+    tester = _build_tester(None, cfg)
+    assert tester.crash_protection is True

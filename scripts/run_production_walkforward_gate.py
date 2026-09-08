@@ -1208,6 +1208,8 @@ def build_walkforward_command(args: argparse.Namespace) -> list[str]:
         "--log",
         args.log,
     ]
+    if bool(getattr(args, "crash_protection", False)):
+        command.append("--crash-protection")
     if not bool(getattr(args, "no_streaming", False)):
         command[
             command.index("--skip-pit-financials") : command.index(
@@ -1741,7 +1743,15 @@ def main() -> int:
     parser.add_argument("--end", default="")
     parser.add_argument("--min-symbols", type=int, default=MIN_PRODUCTION_GATE_SYMBOLS)
     parser.add_argument(
-        "--grid-profile", choices=("stable", "exploratory"), default="stable"
+        "--grid-profile",
+        choices=("stable", "stable_plus", "exploratory"),
+        default="stable",
+        help="grid CSCV 变体集合：stable(N=5) 保守门禁，stable_plus(N=8，含 volume/mean_reversion 因子族) 功效增强，exploratory(N=11) 仅供研究",
+    )
+    parser.add_argument(
+        "--crash-protection",
+        action="store_true",
+        help="透传 --crash-protection 给 aqsp walkforward：market_regime=crash 时 top_n 减半",
     )
     parser.add_argument(
         "--report", default="reports/walkforward-grid-raw-production-latest.md"
