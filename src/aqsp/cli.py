@@ -433,7 +433,7 @@ HELDOUT_TRAIN_CUTOFF = "2024-12-31"
 WALKFORWARD_GATE_PATH = "data/walkforward_gate.json"
 GATE_NOTIFY_STATE_PATH = "data/gate_notify_state.json"
 NOTIFY_STATE_PATH = "data/notify_state.json"
-DEFAULT_WALKFORWARD_LOOKBACK_YEARS = 3
+DEFAULT_WALKFORWARD_LOOKBACK_YEARS = 5
 
 
 def _cold_start_min_days() -> int:

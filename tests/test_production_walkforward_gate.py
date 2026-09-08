@@ -1348,9 +1348,9 @@ def test_production_walkforward_gate_reuses_cached_symbols(
                 "end": "2024-12-31",
                 "min_symbols": 3,
                 "coverage_mode": "auto_recent_window",
-                "lookback_years": 3,
+                "lookback_years": gate.DEFAULT_LOOKBACK_YEARS,
                 "coverage_window": {
-                    "start": "2022-01-01",
+                    "start": "2020-01-01",
                     "end": "2024-12-31",
                     "listing_aware": True,
                     "expected_trade_days": 720,
@@ -1362,9 +1362,9 @@ def test_production_walkforward_gate_reuses_cached_symbols(
                     "first_trade_date": "20180102",
                     "last_trade_date": "20241231",
                     "coverage_mode": "auto_recent_window",
-                    "coverage_window_start": "2022-01-01",
+                    "coverage_window_start": "2020-01-01",
                     "coverage_window_end": "2024-12-31",
-                    "lookback_years": 3,
+                    "lookback_years": gate.DEFAULT_LOOKBACK_YEARS,
                     "listing_aware": True,
                     "expected_trade_days": 720,
                 },
@@ -2358,3 +2358,17 @@ def test_gate_exports_allow_empty_env_for_listing_aware_universe() -> None:
     # opt-in when prefiltered is also declared.
     assert 'env["AQSP_SQLITE_PREFILTERED_SYMBOLS"] = "1"' in script
     assert 'env["AQSP_SQLITE_ALLOW_EMPTY_SYMBOLS"] = "1"' in script
+
+
+def test_gate_and_cli_lookback_defaults_are_aligned() -> None:
+    """两边各写各的 lookback 默认值，漂移会让 gate 与 ad-hoc 回测窗口不一致。
+
+    同时兜住 CSCV 功效下限：T 需 >= 40 才能让 block_size >= 4，
+    3 年窗口只给到 T=19（block_size=2，cscv_reliability=degraded）。
+    """
+    import scripts.run_production_walkforward_gate as gate
+
+    from aqsp import cli as cli_mod
+
+    assert gate.DEFAULT_LOOKBACK_YEARS == cli_mod.DEFAULT_WALKFORWARD_LOOKBACK_YEARS
+    assert gate.DEFAULT_LOOKBACK_YEARS >= 5
