@@ -1820,6 +1820,14 @@ def market_context_metrics_for_pick(
         "cross_market_priority_boost": structured_rule_match,
         "cross_market_context_only": not structured_rule_match,
     }
+    # 宏观 PIT（社融/PMI）时点增强：仅当已预加载宏观缓存时注入 market_context，
+    # 未加载则 macro_pit_context 返回空 dict（行为不变，无网络依赖）。
+    from aqsp.core.time import today_shanghai
+    from aqsp.features.pit_enrichment import macro_pit_context
+
+    _macro = macro_pit_context(today_shanghai().isoformat())
+    if _macro:
+        metrics["macro_pit"] = _macro
     if news_metrics:
         metrics.update(news_metrics)
         if not context.summary_lines:
