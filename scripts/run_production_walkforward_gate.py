@@ -112,6 +112,19 @@ def _status_path(raw: str | Path) -> Path:
     return PROJECT_ROOT / path
 
 
+def _resolve_runtime_path(raw: str | Path) -> Path:
+    """把 gate 的输出路径（report/gate/cache/log）绝对化到 PROJECT_ROOT。
+
+    父进程与子进程的 cwd 可能不一致（systemd/手工触发），若这些路径保持相对，
+    明细会散落在调用者 cwd 而非 runtime 目录，导致分周期×分变体明细丢失
+    （见 reports/pbo-attribution-2026-09-07.md §7）。
+    """
+    path = Path(raw).expanduser()
+    if path.is_absolute():
+        return path
+    return PROJECT_ROOT / path
+
+
 def _symbol_cache_path(raw: str | Path) -> Path:
     path = Path(raw).expanduser()
     if path.is_absolute():
@@ -1830,6 +1843,10 @@ def main() -> int:
         )
     status_path = _status_path(args.status_path)
     symbols_cache_path = _symbol_cache_path(args.symbols_cache_path)
+    args.report = str(_resolve_runtime_path(args.report))
+    args.gate_path = str(_resolve_runtime_path(args.gate_path))
+    args.cache_path = str(_resolve_runtime_path(args.cache_path))
+    args.log = str(_resolve_runtime_path(args.log))
     repair_stale_running_status(status_path, args=args)
     active_payload = _read_status(status_path)
     active_detail = _active_running_production_detail(active_payload)
