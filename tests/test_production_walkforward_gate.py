@@ -631,6 +631,29 @@ def test_effective_timeout_seconds_keeps_small_smoke_timeout() -> None:
     )
 
 
+def test_resolve_runtime_path_absolutizes_relative_report_cache_log() -> None:
+    import scripts.run_production_walkforward_gate as gate
+
+    assert (
+        gate._resolve_runtime_path("reports/x.md")
+        == gate.PROJECT_ROOT / "reports" / "x.md"
+    )
+    assert (
+        gate._resolve_runtime_path("data/y.db") == gate.PROJECT_ROOT / "data" / "y.db"
+    )
+    assert (
+        gate._resolve_runtime_path("logs/z.log") == gate.PROJECT_ROOT / "logs" / "z.log"
+    )
+
+
+def test_resolve_runtime_path_keeps_absolute_path_untouched() -> None:
+    import scripts.run_production_walkforward_gate as gate
+
+    assert gate._resolve_runtime_path("/opt/aqsp/reports/x.md") == Path(
+        "/opt/aqsp/reports/x.md"
+    )
+
+
 def test_annotate_production_gate_metadata_preserves_gate_result(
     tmp_path: Path,
 ) -> None:
