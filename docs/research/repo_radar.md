@@ -93,11 +93,59 @@
 - 不直接吸收：Markdown Skill 内嵌代码、直连网页端点、iwencai key 依赖、任何未经过 AQSP schema/freshness/fail-closed 测试的字段。
 - 复核节奏：每月或新增数据 adapter 前重新查看一次上游 changelog；如果上游出现“接口失效替换/字段变化/风控阈值”类更新，再决定是否迁移到本项目 adapter 待办。
 
-### TradingAgents-astock 审计记录（2026-09-08 新登）
+### TradingAgents-astock 审计记录（2026-09-08 新登 + 深度复核）
 
-- 上游：[simonlin1212/TradingAgents-astock](https://github.com/simonlin1212/TradingAgents-astock)，当前 **v0.5.17**（⭐3.2k）。基于 TradingAgents 深度改造、适配 A 股（龙虎榜/游资/解禁等）。
-- 定位：A 股多 Agent 投研框架 —— 7 位分析师、牛熊辩论、风险评估；Web UI 持久化 LLM 配置；`role_llms` 支持按角色配 api_key；个人 Claude 订阅覆盖。
-- 与 AQSP 关系：**AQSP `briefing/` 模块已是同类且更完整**——`audit_debate_quality` + `DebateQualityAudit`（缺角色/空轮次/非交互轮次/证据充分性/可证伪条件/LLM 仅建议边界）+ `ArtifactMetadata.upstream_versions`（上游版本溯源）均已具备。**不重造**，仅作为角色设计（龙虎榜/游资/解禁视角）灵感来源。
+- 上游：[simonlin1212/TradingAgents-astock](https://github.com/simonlin1212/TradingAgents-astock)，当前 **v0.5.17**（⭐3.2k）。基于 TauricResearch/TradingAgents 改造，适配 A 股。
+- **架构能力**（v0.5.17）：7 位 Analyst（市场/情绪/新闻/基本面 + 政策/游资/解禁）→ 牛熊辩论 → Research Manager → Trader（A 股 T+1/涨跌停/手数/ST 约束）→ 风险三方辩论 → Portfolio Manager；双 LLM（quick/deep）；`role_llms` 按角色分模型；Web UI 持久化 LLM 配置到 `~/.tradingagents/llm_config.json`；GitHub Actions 零成本部署。
+- **数据层**（全免费直连）：mootdx（TCP 7709）、腾讯 `qt.gtimg.cn`、东方财富（datacenter/push2，含龙虎榜/限售解禁/板块行情）、新浪、同花顺（EPS 一致预期）、财联社（cls.cn 全球快讯）、百度 PAE（概念板块+资金流向）。**v0.2.11 起内置 `_em_get()` 串行限流**（间隔 ≥1s + 0.1~0.5s 随机抖动 + Keep-Alive）专门防东财封 IP（实测 >5 req/s / 并发 ≥10 / 1min ≥200 触发封禁）；环境变量 `EM_MIN_INTERVAL=1.5~2` 可进一步降速。
+
+**与 AQSP 关系（按红线条目逐项裁决）**
+
+| 上游能力 | AQSP 现状 | 裁决 |
+|---|---|---|
+| 7 位 LLM 分析师 + 辩论 + 决策 | `briefing/` + `audit_debate_quality` + `DebateQualityAudit`（缺角色/空轮次/非交互/证据充分性/可证伪/LLM 仅建议边界） | **拒收**——架构 §1.2：LLM 只作通知附件、不参与选股打分；AQSP briefing 反而更严 |
+| `~/.tradingagents/llm_config.json` 持久化 | 暂无 LLM 通知配置持久化 | 可选小工具（与 §1.2 不冲突）；非阻塞 |
+| 龙虎榜 / 限售解禁 fetcher | **无独立 fetcher**（东财源未覆盖这两个端点） | **真实缺口**——可作下个 PR 候选 |
+| 财联社 `cls.cn` 快讯 | `news/catalysts` 未确认含此源；`news_catalysts` 主要是东财新闻 | **真实缺口**——可作下个 PR 候选 |
+| 百度 PAE 概念板块 + 资金流向 | a-stock-data 注明「东财 slist 替代失效百度 PAE」；AQSP 是否实装 slist 待核 | **真实缺口**（或补 slist）——下个 PR 候选 |
+| 东财 `_em_get()` 限流 + Keep-Alive | `data/eastmoney_source.py` 已有 `_throttle()` / `_BACKOFF_BASE` / `_eastmoney_is_throttle` / 电路检测 | **已覆盖**——本仓库实现反而更完整（含指数退避+throttle 响应识别），无需合并 |
+| mootdx / 腾讯 / 新浪优先 | `source_factory` 已 `online_first = tencent→sina→akshare→(defer eastmoney)→tdx_vipdoc` | 已覆盖 |
+| Web UI / PDF 报告 | `dashboard` + `dashboard-static` + `briefing report` | 已覆盖 |
+
+**结论**：TradingAgents 真正的合并价值在 **3 个 A 股数据 fetcher（龙虎榜 / 解禁 / 财联社）** + 可能的 slist 概念板块；LLM 多 Agent 层与 AQSP 红线冲突，不并入。
+
+### daily_stock_analysis 审计记录（2026-09-08 新登 + 深度复核）
+
+- 上游：[ZhuLinsen/daily_stock_analysis](https://github.com/ZhuLinsen/daily_stock_analysis)（DSA），⭐65k，MIT。当前 main commit `089d9d2`（2026-09-06），版本线 v3.32+。
+- **能力范围**：多市场（A/H/US/日/韩/台 + ETF）、多源行情（AkShare/Tushare/Pytdx/Baostock/YFinance/Longbridge/TickFlow）、多搜索源（Anspire/SerpAPI/Tavily/Bocha/Brave/MiniMax/SearXNG）、新闻+公告+舆情；AI 决策报告（核心结论/评分/趋势/买卖点位/风险/催化/检查清单）；Agent 策略问股（15 种内置：均线/缠论/波浪/趋势/热点/事件/成长/预期）；Web 桌面工作台（FastAPI+React）；推送渠道（企微/飞书/Telegram/Discord/Slack/邮件）；`evals/agent_trajectory`（Agent 轨迹评估）；`strategies/`（主流策略 skills）；GitHub Actions/Docker/本地。
+
+**与 AQSP 关系（按红线条目逐项裁决）**
+
+| 上游能力 | AQSP 现状 | 裁决 |
+|---|---|---|
+| AI 决策报告（核心结论/评分/买卖点位） | 无 LLM 评分（红线 §1.2） | **拒收**——LLM 评分即让 LLM 参与打分 |
+| Agent 策略问股（15 种内置策略 + 多轮追问） | 无 LLM 问股（红线 §1.2） | **拒收**——同上限 LLM 决策依赖 |
+| `evals/agent_trajectory` Agent 轨迹评估 | `briefing/audit_debate_quality` + `DebateQualityAudit`（缺角色/空轮次/非交互/证据/可证伪/LLM 仅建议） | **AQSP 更完整**——覆盖项 ≥ 上游 |
+| 多源行情（AkShare/Tushare/Pytdx/Baostock/YFinance/Longbridge） | `source_factory` + `mootdx/tencent/sina/akshare/baostock/efinance/sqlite_db/tdx_vipdoc` | 已有；Longbridge/YFinance 多市场非当前需求 |
+| 多搜索源（Anspire/SerpAPI/Tavily/Bocha/Brave/SearXNG） | `news_catalysts` 用东财为主 | 财联社是真实缺口（与 TradingAgents 共用） |
+| 推送渠道矩阵 | `aqsp notify`（企微等已有） | 已覆盖 |
+| GitHub Actions 零成本运行 | CI 已配 4 shard verify | 已覆盖 |
+| 指数入口（`--stocks` 板块指数 / `STOCK_LIST` 指数） | `args.pool` 含 sh300/zz500/zz1000/cyb/zxb | 已有，无新增 |
+
+**结论**：DSA 真正的合并价值几乎全部在 **LLM 应用层**（决策报告、策略问股、轨迹评估）——而 AQSP 红线禁止 LLM 参与打分，仅允许作通知附件。**DSA 无可合并的数据层缺口**（其新增数据 fetcher = TradingAgents 那 4 个），DSA 的多市场与推送矩阵 AQSP 不需要复制。
+
+### 跨项目真实可合并缺口汇总（2026-09-08 深度审计）
+
+1. **龙虎榜 fetcher**（TradingAgents）— 风险/事件信号源。规模 ~200-300 行（fetcher + schema + schema 测试 + 集成点）。需要生产机东财验证。**推荐优先**：高信号、与 `news/catalysts` 集成自然。
+2. **限售解禁 fetcher**（TradingAgents）— 风险日历。规模同上。**次选**：与风控模块集成。
+3. **财联社 `cls.cn` 快讯 fetcher**（TradingAgents / DSA）— 实时催化。**与 1、2 同级**，可合并为「A-股事件/公告/快讯源」大 PR（>300 行需拆）。
+4. **东财概念板块 slist 端点**（a-stock-data v3.8 strengths 注明）— 概念板块分类。规模小。若 AQSP eastmoney 源未实装 slist，则为缺口；需先核 `eastmoney_source.py` 是否有 `bk`/`cl` 端点再决定。
+
+**否决项**（红线）：
+- TradingAgents 7 LLM 分析师 / DSA 决策报告 → §1.2 拒
+- DSA Agent 策略问股 / 轨迹评估 → §1.2 拒（AQSP briefing 反而更严）
+- Longbridge / YFinance 多市场 → 非当前需求
+
 - 注意红线：上游 LLM 参与决策；AQSP 架构 §1.2 规定 LLM 只作通知附件、不参与选股打分，吸收时必须剥离 LLM 决策依赖。
 
 ## CN / A-share
