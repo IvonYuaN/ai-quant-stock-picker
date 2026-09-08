@@ -146,10 +146,10 @@ class LongHubangSource:
                 date = str(rows[0].get("TRADE_DATE") or "")[:10]
                 if not date:
                     return []
-            # 金额排序取当日全量
+            # TRADE_DATE 东财存全串 datetime，等值 filter 恒 0 行 → 改用当日区间
             params = {
                 **base_params,
-                "filter": f'(TRADE_DATE="{date}")',
+                "filter": f"(TRADE_DATE>='{date} 00:00:00')(TRADE_DATE<='{date} 23:59:59')",
                 "sortColumns": "BILLBOARD_NET_AMT",
                 "sortTypes": "-1",
             }
