@@ -270,12 +270,23 @@ class WalkForwardTester:
         all_executable = [t for t in all_trades if t.executable]
         all_returns = [t.return_pct for t in all_executable]
         not_exec_count = sum(1 for t in all_trades if not t.executable)
-        overall = _compute_backtest_metrics(all_returns, "Overall", not_exec_count)
+        periods_per_year = 252.0 / max(step, 1)
+        overall = _compute_aggregate_metrics(
+            [p.total_return for p in periods],
+            period="Overall",
+            periods_per_year=periods_per_year,
+            trades=len(all_returns),
+            not_executable=not_exec_count,
+        )
         robustness = self._calculate_robustness(periods)
 
         n_trials = self.n_variants
         dsr = self._calculate_deflated_sharpe(
-            overall.sharpe_ratio, n_trials, len(all_returns)
+            overall.sharpe_ratio,
+            n_trials,
+            len(periods),
+            sharpe_is_annualized=True,
+            periods_per_year=periods_per_year,
         )
         pbo = self._calculate_pbo(periods)
 
@@ -458,10 +469,13 @@ class WalkForwardTester:
 
         all_executable = [trade for trade in all_trades if trade.executable]
         all_returns = [trade.return_pct for trade in all_executable]
-        overall = _compute_backtest_metrics(
-            all_returns,
-            "Overall",
-            sum(1 for trade in all_trades if not trade.executable),
+        periods_per_year = 252.0 / max(step, 1)
+        overall = _compute_aggregate_metrics(
+            [p.total_return for p in periods],
+            period="Overall",
+            periods_per_year=periods_per_year,
+            trades=len(all_returns),
+            not_executable=sum(1 for trade in all_trades if not trade.executable),
         )
         regime_winrates: dict[str, list[float]] = {}
         for trade in all_executable:
@@ -476,7 +490,9 @@ class WalkForwardTester:
             deflated_sharpe=self._calculate_deflated_sharpe(
                 overall.sharpe_ratio,
                 self.n_variants,
-                len(all_returns),
+                len(periods),
+                sharpe_is_annualized=True,
+                periods_per_year=periods_per_year,
             ),
             pbo=self._calculate_pbo(periods),
             regime_winrates={
@@ -829,12 +845,12 @@ class WalkForwardTester:
     def _calculate_robustness(periods: list[BacktestResult]) -> float:
         if len(periods) < 2:
             return 0.0
-        sharpe_ratios = [p.sharpe_ratio for p in periods if p.sharpe_ratio != 0]
-        if not sharpe_ratios:
+        period_returns = [p.total_return for p in periods if p.total_return != 0]
+        if not period_returns:
             return 0.0
-        mean_sharpe = float(np.mean(sharpe_ratios))
-        std_sharpe = float(np.std(sharpe_ratios))
-        consistency = 1.0 - (std_sharpe / (abs(mean_sharpe) + 1e-6))
+        mean_return = float(np.mean(period_returns))
+        std_return = float(np.std(period_returns))
+        consistency = 1.0 - (std_return / (abs(mean_return) + 1e-6))
         return max(0.0, min(1.0, consistency))
 
     @staticmethod
@@ -896,7 +912,7 @@ class WalkForwardTester:
         skew: float = 0.0,
         kurtosis: float = 3.0,
         sharpe_is_annualized: bool = True,
-        periods_per_year: int = 252,
+        periods_per_year: float = 252.0,
     ) -> float:
         """Deflated Sharpe Ratio (Bailey & López de Prado 2014, eq. 8).
 
@@ -954,6 +970,14 @@ class WalkForwardTester:
     def calculate_cscv_pbo(
         returns_matrix: np.ndarray, s: int = 10
     ) -> tuple[float, dict]:
+        """Combinatorially Symmetric Cross-Validation (CSCV) PBO。
+
+        口径说明（参见 reports/pbo-attribution-2026-09-07.md §3.1）：
+
+        - 返回的 ``pbo`` = mean(λ ≤ 0)，即训练最优变体在测试集排名
+          **不优于中位数**（rank 恰好中位时 ω=0.5、λ=0）的比例。这是
+          Bailey & López de Prado 的原始定义，作为 gate 门禁判定的唯一依据。
+        """
         t, n = returns_matrix.shape
         if n < 2:
             raise ValueError("CSCV requires N >= 2 strategy configurations")
@@ -1080,7 +1104,11 @@ class WalkForwardTester:
         print(f"稳健性评分: {result.robustness_score:.2%}")
         print(f"参数标准差: {result.parameter_std:.4f}")
         print(f"Deflated Sharpe Ratio: {result.deflated_sharpe:.4f}")
-        pbo_repr = "N/A（单策略需 grid 多变体 CSCV）" if result.pbo is None else f"{result.pbo:.2%}"
+        pbo_repr = (
+            "N/A（单策略需 grid 多变体 CSCV）"
+            if result.pbo is None
+            else f"{result.pbo:.2%}"
+        )
         print(f"PBO (过拟合概率): {pbo_repr}")
         print("-" * 60)
         print("整体表现:")
@@ -1127,8 +1155,20 @@ def _resolve_exit(
     take_profit: float,
     slippage_bps: float,
 ) -> tuple[pd.Series, float, str]:
+    """Resolve exit bar/price/reason from a horizon window.
+
+    A-share T+1 semantics: the entry bar (``window.iloc[0]``) is the bar at
+    which the position was opened; it cannot be exited on the same bar. We
+    therefore start scanning from the **second bar** onward. If the window
+    contains only the entry bar, the position is carried to the close of that
+    bar (``hold_period_close``), matching the ``variant_account`` engine's
+    ``available_quantity`` rollover.
+    """
     slippage = slippage_bps / 10000
-    for bar in window.itertuples(index=False, name="PriceBar"):
+    if len(window) <= 1:
+        last = window.iloc[-1]
+        return last, float(last["close"]) * (1 - slippage), "hold_period_close"
+    for bar in window.iloc[1:].itertuples(index=False, name="PriceBar"):
         bar_close = float(getattr(bar, "close"))
         low = float(getattr(bar, "low", bar_close))
         high = float(getattr(bar, "high", bar_close))
@@ -1166,13 +1206,23 @@ def _resolve_exit_tiered(
     hard_stop_pct: float,
     slippage_bps: float,
 ) -> tuple[pd.Series, float, str]:
+    """Tiered partial-exit with A-share T+1 semantics.
+
+    See :func:`_resolve_exit` for the entry-bar skip rationale. The tiered
+    logic applies identically, but starts from the second bar onward.
+    """
     slippage = slippage_bps / 10000
     hard_stop = entry_price * (1 - hard_stop_pct)
     remaining_weight = 1.0
     weighted_exit = 0.0
     exit_bar = None
 
-    for bar in window.itertuples(index=False, name="PriceBar"):
+    if len(window) <= 1:
+        last = window.iloc[-1]
+        close = float(last["close"]) * (1 - slippage)
+        return last, close, "hold_period_close"
+
+    for bar in window.iloc[1:].itertuples(index=False, name="PriceBar"):
         bar_series = pd.Series(bar._asdict())
         low = float(getattr(bar, "low", getattr(bar, "close")))
         close = float(getattr(bar, "close"))
@@ -1227,8 +1277,21 @@ def _sample_sharpe_ratio(
 
 
 def _compute_backtest_metrics(
-    returns: list[float], period: str, not_executable: int = 0
+    returns: list[float],
+    period: str,
+    not_executable: int = 0,
+    *,
+    trading_days: int | None = None,
+    periods_per_year: float = 252.0,
 ) -> BacktestResult:
+    """单期指标：``total_return`` 为 top_n 并行持仓的**等权组合收益**。
+
+    一个信号日的 top_n 只股票是同时买入、并行持有的，组合收益应取等权平均，
+    而不是 ``np.cumprod`` 串行复利。旧实现把并行持仓误当串行滚仓，放大了收益
+    并污染 PBO/DSR 的输入（参见 reports/pbo-attribution-2026-09-07.md §3.2）。
+    跨期 annual/sharpe/max_drawdown 由 :func:`_compute_aggregate_metrics` 计算，
+    本函数仅承担单期口径。
+    """
     if not returns:
         return BacktestResult(
             period=period,
@@ -1242,14 +1305,10 @@ def _compute_backtest_metrics(
             not_executable=not_executable,
         )
     arr = np.array(returns) / 100.0
-    equity = np.cumprod(1 + arr)
-    total_return = float(equity[-1] - 1)
+    total_return = float(np.mean(arr))
     n = len(returns)
-    annual_return = float((1 + total_return) ** (252 / max(n, 1)) - 1)
-    running_max = np.maximum.accumulate(equity)
-    drawdown = 1 - equity / running_max
-    max_drawdown = float(drawdown.max())
-    sharpe_ratio = _sample_sharpe_ratio(arr, annualized=True)
+    span = trading_days if trading_days and trading_days > 0 else n
+    annual_return = float((1 + total_return) ** (periods_per_year / span) - 1)
     wins = sum(1 for r in returns if r > 0)
     win_rate = wins / n
     pos_sum = float(np.sum(arr[arr > 0])) if any(r > 0 for r in returns) else 0.0
@@ -1259,10 +1318,65 @@ def _compute_backtest_metrics(
         period=period,
         total_return=round(total_return, 6),
         annual_return=round(annual_return, 6),
+        max_drawdown=0.0,
+        sharpe_ratio=0.0,
+        win_rate=round(win_rate, 4),
+        profit_factor=round(profit_factor, 4),
+        trades=n,
+        not_executable=not_executable,
+    )
+
+
+def _compute_aggregate_metrics(
+    period_returns: list[float],
+    *,
+    period: str,
+    periods_per_year: float,
+    trades: int,
+    not_executable: int,
+) -> BacktestResult:
+    """跨期组合层指标：基于各期等权组合收益序列（小数）。
+
+    每个 period 贡献一个组合收益点，相邻 period 之间资金滚动（``np.cumprod``
+    跨期复合是**正确**的，因为 period 之间是串行时间）。年化按 ``periods_per_year``
+    折算，Sharpe 用跨期收益序列、以 ``sqrt(periods_per_year)`` 年化。这是 DSR
+    与 overall 展示的正确口径。
+    """
+    if not period_returns:
+        return BacktestResult(
+            period=period,
+            total_return=0.0,
+            annual_return=0.0,
+            max_drawdown=0.0,
+            sharpe_ratio=0.0,
+            win_rate=0.0,
+            profit_factor=0.0,
+            trades=trades,
+            not_executable=not_executable,
+        )
+    arr = np.array(period_returns, dtype=float)
+    equity = np.cumprod(1 + arr)
+    total_return = float(equity[-1] - 1)
+    n_periods = len(arr)
+    annual_return = float((1 + total_return) ** (periods_per_year / n_periods) - 1)
+    running_max = np.maximum.accumulate(equity)
+    max_drawdown = float((1 - equity / running_max).max())
+    sharpe_ratio = _sample_sharpe_ratio(
+        arr, annualized=True, periods_per_year=periods_per_year
+    )
+    wins = sum(1 for r in period_returns if r > 0)
+    win_rate = wins / n_periods
+    pos_sum = float(np.sum(arr[arr > 0])) if any(r > 0 for r in period_returns) else 0.0
+    neg_sum = float(np.sum(arr[arr < 0])) if any(r < 0 for r in period_returns) else 0.0
+    profit_factor = pos_sum / abs(neg_sum) if neg_sum != 0 else 0.0
+    return BacktestResult(
+        period=period,
+        total_return=round(total_return, 6),
+        annual_return=round(annual_return, 6),
         max_drawdown=round(max_drawdown, 6),
         sharpe_ratio=round(sharpe_ratio, 4),
         win_rate=round(win_rate, 4),
         profit_factor=round(profit_factor, 4),
-        trades=n,
+        trades=trades,
         not_executable=not_executable,
     )

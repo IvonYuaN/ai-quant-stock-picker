@@ -13,6 +13,7 @@ from aqsp.backtest.walk_forward import (
     WalkForwardResult,
     WalkForwardTester,
     _check_executable,
+    _compute_aggregate_metrics,
     _compute_backtest_metrics,
     _norm_cdf,
     _norm_ppf,
@@ -217,7 +218,52 @@ class TestResolveExit:
         _, _, reason = _resolve_exit(
             window, stop_loss=9.5, take_profit=11.0, slippage_bps=0
         )
+        assert reason == "hold_period_close"
+
+    def test_single_bar_entry_returns_hold(self) -> None:
+        window = pd.DataFrame(
+            {
+                "date": ["d1"],
+                "open": [10.0],
+                "high": [11.0],
+                "low": [9.0],
+                "close": [10.5],
+            }
+        )
+        _, _, reason = _resolve_exit(
+            window, stop_loss=9.0, take_profit=12.0, slippage_bps=0
+        )
+        assert reason == "hold_period_close"
+
+    def test_stop_loss_triggers_on_second_bar_t_plus_one(self) -> None:
+        window = pd.DataFrame(
+            {
+                "date": ["d1", "d2"],
+                "open": [10.0, 9.8],
+                "high": [10.2, 9.9],
+                "low": [9.9, 9.4],
+                "close": [10.1, 9.5],
+            }
+        )
+        _, _, reason = _resolve_exit(
+            window, stop_loss=9.5, take_profit=11.0, slippage_bps=0
+        )
         assert reason == "stop_loss"
+
+    def test_take_profit_triggers_on_second_bar_t_plus_one(self) -> None:
+        window = pd.DataFrame(
+            {
+                "date": ["d1", "d2"],
+                "open": [10.0, 10.5],
+                "high": [10.2, 11.1],
+                "low": [9.9, 10.4],
+                "close": [10.1, 11.0],
+            }
+        )
+        _, _, reason = _resolve_exit(
+            window, stop_loss=9.0, take_profit=11.0, slippage_bps=0
+        )
+        assert reason == "take_profit"
 
 
 class TestComputeBacktestMetrics:
@@ -246,17 +292,62 @@ class TestComputeBacktestMetrics:
         result = _compute_backtest_metrics(returns, "test")
         assert result.trades == 4
         assert result.win_rate == 0.5
-        expected_total = (1.05 * 0.98 * 1.03 * 0.99) - 1
+        expected_total = (0.05 + (-0.02) + 0.03 + (-0.01)) / 4
         assert result.total_return == pytest.approx(expected_total, rel=1e-4)
         assert result.profit_factor > 0
 
-    def test_max_drawdown(self) -> None:
-        returns = [10.0, -20.0, 5.0]
-        result = _compute_backtest_metrics(returns, "test")
+    def test_single_period_drawdown_is_zero(self) -> None:
+        result = _compute_backtest_metrics([10.0, -20.0, 5.0], "test")
+        assert result.max_drawdown == 0.0
+        assert result.sharpe_ratio == 0.0
+
+
+class TestComputeAggregateMetrics:
+    def test_compounds_period_returns_equally_weighted(self) -> None:
+        result = _compute_aggregate_metrics(
+            [0.05, -0.02, 0.03],
+            period="Overall",
+            periods_per_year=252.0,
+            trades=30,
+            not_executable=2,
+        )
+        expected_total = (1.05 * 0.98 * 1.03) - 1
+        assert result.total_return == pytest.approx(expected_total, rel=1e-4)
+        assert result.trades == 30
+        assert result.not_executable == 2
+
+    def test_annualizes_by_periods_per_year(self) -> None:
+        result = _compute_aggregate_metrics(
+            [0.05, -0.02, 0.03],
+            period="Overall",
+            periods_per_year=252.0,
+            trades=30,
+            not_executable=0,
+        )
+        total = (1.05 * 0.98 * 1.03) - 1
+        expected_annual = (1 + total) ** (252.0 / 3) - 1
+        assert result.annual_return == pytest.approx(expected_annual, rel=1e-4)
+        assert result.sharpe_ratio > 0
+
+    def test_max_drawdown_from_period_equity_curve(self) -> None:
+        result = _compute_aggregate_metrics(
+            [0.10, -0.20, 0.05],
+            period="Overall",
+            periods_per_year=252.0,
+            trades=30,
+            not_executable=0,
+        )
         equity_0 = 1.1
         equity_1 = 1.1 * 0.8
         dd = 1 - equity_1 / equity_0
         assert result.max_drawdown == pytest.approx(dd, rel=1e-4)
+
+    def test_empty_period_returns_zero_metrics(self) -> None:
+        result = _compute_aggregate_metrics(
+            [], period="Overall", periods_per_year=252.0, trades=0, not_executable=0
+        )
+        assert result.total_return == 0.0
+        assert result.annual_return == 0.0
 
     def test_sharpe_ratio_zero_for_zero_variance_returns(self) -> None:
         returns = [1.0] * 20

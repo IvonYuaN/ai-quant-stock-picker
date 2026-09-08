@@ -384,6 +384,22 @@ class CircuitBreakerConfig:
 
 ---
 
+## 9. 回测计量口径规范（2026-09 校正）
+
+> 本节是 `reports/pbo-attribution-2026-09-07.md` 归因分析的工程落地。所有回测/账本/门禁必须遵循以下口径，避免 PBO/DSR 读数不可信。
+
+### 9.1 收益聚合
+
+- **单期（一个信号日）**：`total_return = mean(各股收益%)`（等权并行持仓），**不是** `cumprod` 串行复利。
+- **跨期（Overall）**：`equity = cumprod(1 + 各期组合收益)`，年化按 `(1+R)^(periods_per_year / n_periods)`，Sharpe 用跨期收益序列 + `sqrt(periods_per_year)` 年化。
+- **periods_per_year**：`252.0 / test_period_days`（如 test=30 天 → 8.4），不是固定 252。
+
+### 9.2 T+1 退出语义
+
+`_resolve_exit` / `_resolve_exit_tiered` 必须跳过 entry bar 当日，从第二根 bar 开始检查止损/止盈。与 `variant_account.py` 的 `available_quantity` 机制对齐。
+
+---
+
 ## 10. 联系点
 
 - 文档同步:任何改动 `architecture.md` 的 PR 必须包含 `docs:` 前缀,Claude 优先审查。
