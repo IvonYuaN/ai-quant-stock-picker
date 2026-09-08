@@ -15,23 +15,31 @@ import pandas as pd
 
 from aqsp.core.errors import DataError
 
-# 东财龙虎榜明细（生产机验证；沙箱不直连）
+# 东财龙虎榜明细（2026-09-08 生产机实测：RPT_DAILYBILLBOARD_DETAILSNEW，
+# 每股票-日一行，含机构解读 EXPLAIN；金额单位为元）
 EM_LHB_URL = "https://datacenter-web.eastmoney.com/api/data/v1/get"
+EM_LHB_REPORT = "RPT_DAILYBILLBOARD_DETAILSNEW"
+_EM_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
+    ),
+}
 
 
 @dataclass(frozen=True)
 class LongHubangItem:
-    """单条龙虎榜成交明细。"""
+    """单条龙虎榜上榜记录（股票-交易日粒度）。"""
 
     trade_date: str  # 交易日期 YYYY-MM-DD
     symbol: str
     name: str
-    side: str  # 买/卖
-    dept_name: str
-    buy_amount: float  # 万元
-    sell_amount: float  # 万元
-    net_amount: float  # 万元
-    interpretation: str  # 解读
+    close_price: float  # 收盘价（元）
+    change_rate: float  # 涨跌幅（%）
+    buy_amount: float  # 龙虎榜买入额（万元）
+    sell_amount: float  # 龙虎榜卖出额（万元）
+    net_amount: float  # 龙虎榜净买入额（万元）
+    interpretation: str  # 机构解读（东财 EXPLAIN）
 
 
 def _to_float(v: object) -> float:
@@ -70,15 +78,13 @@ def _parse_items(payload: object) -> list[LongHubangItem]:
                     name=str(
                         raw.get("SECURITY_NAME_ABBR") or raw.get("name") or ""
                     ).strip(),
-                    side=str(raw.get("SIDE") or raw.get("side") or "").strip(),
-                    dept_name=str(
-                        raw.get("OPERATE_DEPT_NAME") or raw.get("dept_name") or ""
-                    ).strip(),
-                    buy_amount=_to_float(raw.get("BUY_AMT") or raw.get("buy")),
-                    sell_amount=_to_float(raw.get("SELL_AMT") or raw.get("sell")),
-                    net_amount=_to_float(raw.get("NET_AMT") or raw.get("net")),
+                    close_price=_to_float(raw.get("CLOSE_PRICE")),
+                    change_rate=_to_float(raw.get("CHANGE_RATE")),
+                    buy_amount=_to_float(raw.get("BILLBOARD_BUY_AMT")) / 1e4,
+                    sell_amount=_to_float(raw.get("BILLBOARD_SELL_AMT")) / 1e4,
+                    net_amount=_to_float(raw.get("BILLBOARD_NET_AMT")) / 1e4,
                     interpretation=str(
-                        raw.get("EXPLANATION") or raw.get("interpretation") or ""
+                        raw.get("EXPLAIN") or raw.get("interpretation") or ""
                     ).strip(),
                 )
             )
@@ -112,16 +118,42 @@ class LongHubangSource:
             import requests
         except ImportError as e:  # pragma: no cover
             raise DataError(f"longhubang: 缺少依赖 requests（{e}）") from e
-        params = {
-            "reportName": "RPT_BILLBOARD_TRADE_DETAIL",
+        base_params = {
+            "reportName": EM_LHB_REPORT,
             "columns": "ALL",
             "pageSize": "500",
             "pageNumber": "1",
         }
-        if trade_date:
-            params["filter"] = '(TRADE_DATE="{trade_date}")'
         try:
-            r = requests.get(EM_LHB_URL, params=params, timeout=60)
+            # 未指定日期时先取最新有数据的交易日（按 TRADE_DATE 倒序第 1 行）
+            date = trade_date.strip()
+            if not date:
+                probe = requests.get(
+                    EM_LHB_URL,
+                    params={
+                        **base_params,
+                        "pageSize": "1",
+                        "sortColumns": "TRADE_DATE",
+                        "sortTypes": "-1",
+                    },
+                    headers=_EM_HEADERS,
+                    timeout=60,
+                )
+                probe.raise_for_status()
+                rows = ((probe.json().get("result") or {}).get("data")) or []
+                if not rows:
+                    return []
+                date = str(rows[0].get("TRADE_DATE") or "")[:10]
+                if not date:
+                    return []
+            # 金额排序取当日全量
+            params = {
+                **base_params,
+                "filter": f'(TRADE_DATE="{date}")',
+                "sortColumns": "BILLBOARD_NET_AMT",
+                "sortTypes": "-1",
+            }
+            r = requests.get(EM_LHB_URL, params=params, headers=_EM_HEADERS, timeout=60)
             r.raise_for_status()
             payload = r.json()
         except Exception as e:

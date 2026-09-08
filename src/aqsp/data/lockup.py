@@ -15,7 +15,16 @@ import pandas as pd
 
 from aqsp.core.errors import DataError
 
+# 东财解禁（2026-09-08 生产机实测：RPT_LIFT_STAGE，FREE_DATE 倒序；
+# RPT_LIFTING_DATA 不存在。FREE_SHARES 为东财原值未换算）
 EM_LOCKUP_URL = "https://datacenter-web.eastmoney.com/api/data/v1/get"
+EM_LOCKUP_REPORT = "RPT_LIFT_STAGE"
+_EM_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -66,14 +75,14 @@ def _parse_items(payload: object) -> list[LockupItem]:
                         raw.get("SECURITY_NAME_ABBR") or raw.get("name") or ""
                     ).strip(),
                     plan_date=str(
-                        raw.get("PLAN_DATE") or raw.get("plan_date") or ""
+                        raw.get("FREE_DATE") or raw.get("plan_date") or ""
                     ).strip(),
                     lockup_shares=_to_float(
-                        raw.get("LIFTING_VOL") or raw.get("shares")
+                        raw.get("FREE_SHARES") or raw.get("shares")
                     ),
-                    ratio=_to_float(raw.get("LIFTING_RATIO") or raw.get("ratio")),
+                    ratio=_to_float(raw.get("FREE_RATIO") or raw.get("ratio")),
                     lockup_type=str(
-                        raw.get("LIFTING_TYPE") or raw.get("type") or ""
+                        raw.get("FREE_SHARES_TYPE") or raw.get("type") or ""
                     ).strip(),
                 )
             )
@@ -102,26 +111,32 @@ class LockupSource:
         self._items = list(items)
         return self
 
-    def _fetch(self) -> list[LockupItem]:
+    def _fetch(self, from_date: str = "") -> list[LockupItem]:
         try:
             import requests
         except ImportError as e:  # pragma: no cover
             raise DataError(f"lockup: 缺少依赖 requests（{e}）") from e
-        params = {
-            "reportName": "RPT_LIFTING_DATA",
+        params: dict[str, str] = {
+            "reportName": EM_LOCKUP_REPORT,
             "columns": "ALL",
             "pageSize": "500",
             "pageNumber": "1",
+            "sortColumns": "FREE_DATE",
+            "sortTypes": "-1",
         }
+        if from_date.strip():
+            params["filter"] = f"(FREE_DATE>='{from_date.strip()}')"
         try:
-            r = requests.get(EM_LOCKUP_URL, params=params, timeout=60)
+            r = requests.get(
+                EM_LOCKUP_URL, params=params, headers=_EM_HEADERS, timeout=60
+            )
             r.raise_for_status()
             payload = r.json()
         except Exception as e:
             raise DataError(f"lockup: 东财解禁抓取失败（{e}）") from e
         return _parse_items(payload)
 
-    def load(self, force: bool = False) -> list[LockupItem]:
+    def load(self, force: bool = False, from_date: str = "") -> list[LockupItem]:
         path = self._default_cache_path()
         if not force and not self._items and os.path.exists(path):
             try:
@@ -130,14 +145,14 @@ class LockupSource:
                 return self._items
             except Exception:
                 self._items = []
-        self._items = self._fetch()
+        self._items = self._fetch(from_date=from_date)
         try:
             pd.DataFrame([i.__dict__ for i in self._items]).to_csv(path, index=False)
         except Exception:
             pass
         return self._items
 
-    def items(self, autoload: bool = False) -> list[LockupItem]:
+    def items(self, autoload: bool = False, from_date: str = "") -> list[LockupItem]:
         if not self._items and autoload:
-            self.load()
+            self.load(from_date=from_date)
         return list(self._items)

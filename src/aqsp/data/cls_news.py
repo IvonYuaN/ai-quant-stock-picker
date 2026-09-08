@@ -13,7 +13,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
+import urllib.parse
 from dataclasses import dataclass
 from typing import Optional
 
@@ -21,8 +23,16 @@ import pandas as pd
 
 from aqsp.core.errors import DataError
 
-# 财联社电报列表（生产机验证；沙箱不直连）
-CLS_TELEGRAPH_URL = "https://www.cls.cn/nodeapi/updateTelegraphList"
+# 财联社电报列表（2026-09-08 生产机实测：nodeapi/* 已 404，v1 roll 接口需
+# sign = md5(sha1(querystring))，querystring 须按参数名排序后拼接）
+CLS_ROLL_URL = "https://www.cls.cn/v1/roll/get_roll_list"
+_CLS_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
+    ),
+    "Referer": "https://www.cls.cn/",
+}
 
 
 @dataclass(frozen=True)
@@ -122,11 +132,31 @@ class ClsNewsSource:
             import requests
         except ImportError as e:  # pragma: no cover - 依赖缺失属环境态
             raise DataError(f"cls_news: 缺少依赖 requests（{e}）") from e
-        params = {"app": "CailianpressWeb", "os": "web", "rn": str(limit)}
+        # sign 算法要求 querystring 按参数名字典序拼接（md5(sha1(qs))）
+        params = {
+            "app": "CailianpressWeb",
+            "category": "",
+            "last_time": "",
+            "os": "web",
+            "refresh_type": 1,
+            "rn": limit,
+            "subscribedColumnIds": "",
+            "sv": 1,
+        }
         try:
-            r = requests.get(CLS_TELEGRAPH_URL, params=params, timeout=60)
+            qs = urllib.parse.urlencode(params)
+            digest = hashlib.md5(
+                hashlib.sha1(qs.encode()).hexdigest().encode()
+            ).hexdigest()
+            r = requests.get(
+                f"{CLS_ROLL_URL}?{qs}&sign={digest}",
+                headers=_CLS_HEADERS,
+                timeout=60,
+            )
             r.raise_for_status()
             payload = r.json()
+        except DataError:
+            raise
         except Exception as e:  # 网络/SSL/超时/JSON 失败
             raise DataError(f"cls_news: cls.cn 抓取失败（{e}）") from e
         return _parse_items(payload)

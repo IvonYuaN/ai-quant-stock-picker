@@ -14,10 +14,10 @@ def test_parse_real_shape():
                 {
                     "SECURITY_CODE": "300750",
                     "SECURITY_NAME_ABBR": "宁德时代",
-                    "PLAN_DATE": "2026-09-15 00:00:00",
-                    "LIFTING_VOL": 1234.5,
-                    "LIFTING_RATIO": 0.0264,
-                    "LIFTING_TYPE": "首发",
+                    "FREE_DATE": "2026-09-15 00:00:00",
+                    "FREE_SHARES": 1234.5,
+                    "FREE_RATIO": 0.0264,
+                    "FREE_SHARES_TYPE": "首发原股东限售股份",
                 }
             ]
         }
@@ -26,7 +26,7 @@ def test_parse_real_shape():
     assert len(items) == 1
     it = items[0]
     assert it.symbol == "300750"
-    assert it.lockup_type == "首发"
+    assert it.lockup_type == "首发原股东限售股份"
     assert it.ratio == pytest.approx(0.0264)
 
 
@@ -38,17 +38,17 @@ def test_parse_skips_malformed_returns_at_least_valid():
                 {
                     "SECURITY_CODE": "000001",
                     "SECURITY_NAME_ABBR": "ok",
-                    "PLAN_DATE": "2026-01-01",
-                    "LIFTING_VOL": 1,
-                    "LIFTING_RATIO": 0.01,
-                    "LIFTING_TYPE": "定增",
+                    "FREE_DATE": "2026-01-01",
+                    "FREE_SHARES": 1,
+                    "FREE_RATIO": 0.01,
+                    "FREE_SHARES_TYPE": "定向增发机构配售股份",
                 },
             ]
         }
     }
     items = _parse_items(payload)
     assert len(items) == 2
-    assert items[1].lockup_type == "定增"
+    assert items[1].lockup_type == "定向增发机构配售股份"
 
 
 def test_source_from_items():

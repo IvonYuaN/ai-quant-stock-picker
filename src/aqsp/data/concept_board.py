@@ -16,7 +16,21 @@ import pandas as pd
 
 from aqsp.core.errors import DataError
 
-EM_CLIST_URL = "https://push2.eastmoney.com/api/qt/clist/get"
+# 东财 clist 概念板块（2026-09-08 生产机实测：push2 主域被服务器级断连，
+# push2delay 可用；m:90+t:3 = 概念板块；f104/f105 = 上涨/下跌家数，
+# f62 = 主力净流入（元），f184 = 主力净占比（%））
+EM_CLIST_HOSTS = (
+    "https://push2delay.eastmoney.com/api/qt/clist/get",
+    "https://82.push2.eastmoney.com/api/qt/clist/get",
+    "https://push2.eastmoney.com/api/qt/clist/get",
+)
+_EM_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
+    ),
+    "Referer": "https://quote.eastmoney.com/",
+}
 
 
 @dataclass(frozen=True)
@@ -25,9 +39,11 @@ class ConceptBoardItem:
 
     board_code: str
     board_name: str
-    constituent_count: int
-    change_pct: float  # 当日涨跌幅 %
-    main_net_inflow: float  # 主力净流入（万元）
+    up_count: int  # 上涨家数（f104）
+    down_count: int  # 下跌家数（f105）
+    change_pct: float  # 当日涨跌幅 %（f3）
+    main_net_inflow: float  # 主力净流入（万元，f62 元 → 万元）
+    main_net_ratio: float  # 主力净占比 %（f184）
 
 
 def _to_float(v: object) -> float:
@@ -72,11 +88,14 @@ def _parse_items(payload: object) -> list[ConceptBoardItem]:
                 ConceptBoardItem(
                     board_code=str(raw.get("f12") or raw.get("code") or "").strip(),
                     board_name=str(raw.get("f14") or raw.get("name") or "").strip(),
-                    constituent_count=_to_int(raw.get("f20") or raw.get("count")),
+                    up_count=_to_int(raw.get("f104") or raw.get("up_count")),
+                    down_count=_to_int(raw.get("f105") or raw.get("down_count")),
                     change_pct=_to_float(raw.get("f3") or raw.get("change_pct")),
                     main_net_inflow=_to_float(
-                        raw.get("f184") or raw.get("main_net_inflow")
-                    ),
+                        raw.get("f62") or raw.get("main_net_inflow")
+                    )
+                    / 1e4,
+                    main_net_ratio=_to_float(raw.get("f184") or 0.0),
                 )
             )
         except Exception:  # noqa: BLE001
@@ -109,25 +128,30 @@ class ConceptBoardSource:
             import requests
         except ImportError as e:  # pragma: no cover
             raise DataError(f"concept_board: 缺少依赖 requests（{e}）") from e
-        # m:90+t:2 = 概念板块；fs 按东财 clist 约定
+        # m:90+t:3 = 概念板块；fs 按东财 clist 约定
         params = {
             "pn": "1",
-            "pz": "200",
+            "pz": "500",
             "po": "1",
             "np": "1",
             "fltt": "2",
             "invt": "2",
             "fid": "f3",
-            "fs": "m:90+t:2",
-            "fields": "f1,f2,f3,f4,f12,f14,f20,f184",
+            "fs": "m:90+t:3",
+            "fields": "f12,f14,f3,f104,f105,f62,f184",
         }
-        try:
-            r = requests.get(EM_CLIST_URL, params=params, timeout=60)
-            r.raise_for_status()
-            payload = r.json()
-        except Exception as e:
-            raise DataError(f"concept_board: 东财概念板块抓取失败（{e}）") from e
-        return _parse_items(payload)
+        last_exc: Exception | None = None
+        for host in EM_CLIST_HOSTS:
+            try:
+                r = requests.get(host, params=params, headers=_EM_HEADERS, timeout=60)
+                r.raise_for_status()
+                return _parse_items(r.json())
+            except Exception as e:  # noqa: PERF203 - 逐 host 降级重试
+                last_exc = e
+                continue
+        raise DataError(
+            f"concept_board: 东财概念板块抓取失败（所有 host 均不可达: {last_exc}）"
+        )
 
     def load(self, force: bool = False) -> list[ConceptBoardItem]:
         path = self._default_cache_path()
