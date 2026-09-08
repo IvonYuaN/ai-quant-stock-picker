@@ -1110,8 +1110,15 @@ class WalkForwardTester:
         print("=" * 60)
 
 
-def _check_executable(entry_bar: pd.Series, prev_close: float) -> tuple[bool, str]:
-    return _ledger_check_executable(entry_bar, prev_close, {})
+def _check_executable(
+    entry_bar: pd.Series, prev_close: float, symbol: str = ""
+) -> tuple[bool, str]:
+    name = entry_bar.get("name") if hasattr(entry_bar, "get") else None
+    if name is None or bool(pd.isna(name)):
+        name = ""
+    return _ledger_check_executable(
+        entry_bar, prev_close, {"symbol": symbol, "name": str(name)}
+    )
 
 
 def _resolve_exit(

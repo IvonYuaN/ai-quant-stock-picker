@@ -593,6 +593,30 @@ def _is_terminal_prediction_row(row: dict) -> bool:
     return str(row.get("status", "") or "pending") in TERMINAL_PREDICTION_STATUSES
 
 
+def _is_suspended_flag(value: object) -> bool:
+    """把停牌标志列的值解析为 bool，排除 NaN 与 numpy 标量误判。
+
+    数据源生成的 ``suspended`` 是 pandas bool 列，元素为 ``numpy.bool_``：
+    ``numpy.bool_(True) is True`` 为 False、``isinstance(numpy.bool_, (int, float))``
+    也为 False，直接用 ``is True`` 或 isinstance 会漏判停牌。反之 ``float('nan')``
+    是 float 且 ``bool(nan) is True``，会把未停牌的 bar 误判为停牌。
+    """
+    if value is None:
+        return False
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes", "y"}:
+            return True
+        if normalized in {"", "false", "0", "no", "n", "nan", "none", "null"}:
+            return False
+    try:
+        if bool(pd.isna(value)):
+            return False
+    except (TypeError, ValueError):
+        pass
+    return bool(value)
+
+
 def _fallback_limit_pct(row: dict) -> float:
     explicit = row.get("limit_up_pct") or row.get("limit_down_pct")
     if explicit:
@@ -603,7 +627,11 @@ def _fallback_limit_pct(row: dict) -> float:
         if value > 0:
             return value
 
-    symbol = str(row.get("symbol", ""))
+    # 与 data/source.get_limit_pct 的板块分类保持一致（单一事实源语义）。
+    # 往日这里用 `"ST" in name` 与 `("8", "4", "920")`，会把名称恰好含 "ST"
+    # 子串的股票误判为 5%，把 4/8 开头的退市整理等股票误判为 30%。见
+    # reports/pbo-attribution-2026-09-07.md 之外的第 5 项不一致清单。
+    symbol = str(row.get("symbol", "")).strip().split(".", 1)[0]
     name = str(row.get("name", "")).upper()
     try:
         from aqsp.strategies.thresholds import load_thresholds
@@ -612,11 +640,11 @@ def _fallback_limit_pct(row: dict) -> float:
     except Exception:
         return 0.10
 
-    if "ST" in name:
+    if "*ST" in name or name.endswith("ST"):
         return float(execution.fallback_limit_st_pct)
     if symbol.startswith(("300", "301", "688", "689")):
         return float(execution.fallback_limit_growth_pct)
-    if symbol.startswith(("8", "4", "920")):
+    if symbol.startswith(("43", "83", "87", "88", "920")):
         return float(execution.fallback_limit_bse_pct)
     return float(execution.fallback_limit_main_pct)
 
@@ -636,10 +664,7 @@ def _check_executable(
     if open_price <= 0:
         return False, "no_open_price"
 
-    suspended_flag = entry_bar.get("suspended")
-    if suspended_flag is True or (
-        isinstance(suspended_flag, (int, float)) and suspended_flag
-    ):
+    if _is_suspended_flag(entry_bar.get("suspended")):
         return False, "suspended_or_no_trade"
 
     volume = entry_bar.get("volume")

@@ -243,7 +243,7 @@ class AkquantWalkForwardEngine:
             prev_close = float(prev_rows.iloc[-1]["close"])
             entry_bar = test_df.iloc[0]
             entry_date = str(entry_bar["date"])
-            executable, reason = _check_executable(entry_bar, prev_close)
+            executable, reason = _check_executable(entry_bar, prev_close, symbol)
             if not executable:
                 trades.append(
                     TradeResult(

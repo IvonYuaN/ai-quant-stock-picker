@@ -154,6 +154,61 @@ def test_check_executable_blocks_when_prev_close_missing() -> None:
     )
 
 
+def test_check_executable_treats_numpy_bool_and_nan_suspended() -> None:
+    import numpy as np
+
+    from aqsp.ledger.base import _check_executable
+
+    bar = pd.Series(
+        {
+            "open": 10.0,
+            "high": 10.2,
+            "low": 9.8,
+            "close": 10.0,
+            "volume": 1000,
+            "suspended": np.bool_(True),
+        }
+    )
+    assert _check_executable(bar, 10.0, {"symbol": "600000"}) == (
+        False,
+        "suspended_or_no_trade",
+    )
+
+    bar_nan = pd.Series(
+        {
+            "open": 10.0,
+            "high": 10.2,
+            "low": 9.8,
+            "close": 10.0,
+            "volume": 1000,
+            "suspended": float("nan"),
+        }
+    )
+    assert _check_executable(bar_nan, 10.0, {"symbol": "600000"}) == (True, "")
+
+
+def test_fallback_limit_pct_does_not_misclassify_name_containing_st() -> None:
+    from aqsp.ledger.base import _fallback_limit_pct
+
+    assert _fallback_limit_pct({"symbol": "000001", "name": "CASTEX"}) == pytest.approx(
+        0.10
+    )
+    assert _fallback_limit_pct(
+        {"symbol": "000001", "name": "*ST 某某"}
+    ) == pytest.approx(0.05)
+    assert _fallback_limit_pct({"symbol": "000001", "name": "某某ST"}) == pytest.approx(
+        0.05
+    )
+
+
+def test_fallback_limit_pct_bse_prefix_excludes_leading_4_symbols() -> None:
+    from aqsp.ledger.base import _fallback_limit_pct
+
+    assert _fallback_limit_pct({"symbol": "400001"}) == pytest.approx(0.10)
+    assert _fallback_limit_pct({"symbol": "830000"}) == pytest.approx(0.30)
+    assert _fallback_limit_pct({"symbol": "920001"}) == pytest.approx(0.30)
+
+
 def test_ledger_validates_pending_prediction(tmp_path) -> None:
     ledger = tmp_path / "predictions.jsonl"
     pick = PickResult(
