@@ -3956,7 +3956,7 @@ def test_run_optimize_apply_writes_proposal_without_touching_thresholds(
 
     applied: list[dict[str, float]] = []
 
-    monkeypatch.setattr(cli_mod, "load_thresholds", lambda: Thresholds(version="test"))
+    monkeypatch.setattr(cli_mod, "load_thresholds", lambda: Thresholds(version="test", effective_from="2025-01-01", last_walkforward_run="2025-01-01"))
     monkeypatch.setattr(cli_mod, "_get_hs300_symbols", lambda _as_of=None: ["600519"])
     monkeypatch.setattr(cli_mod, "_walkforward_fetch_days", lambda *_args: 120)
     monkeypatch.setattr(

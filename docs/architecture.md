@@ -398,6 +398,41 @@ class CircuitBreakerConfig:
 
 `_resolve_exit` / `_resolve_exit_tiered` 必须跳过 entry bar 当日，从第二根 bar 开始检查止损/止盈。与 `variant_account.py` 的 `available_quantity` 机制对齐。
 
+### 9.3 CSCV 诊断强化
+
+`WalkForwardTester.calculate_cscv_pbo` 输出：
+- 主口径 `pbo` = mean(λ ≤ 0)（Bailey & López de Prado 原始定义）
+- 对照口径 `pbo_strict` = mean(λ < 0)（剔除中性组合）
+- `n_lambda_eq_0` / `n_lambda_lt_0` / `lambda_p25/p50/p75/std` 分布明细
+- `cscv_reliability`：`"ok"` 或 `"degraded"`（`block_size < 4` 或 `N < 8` 时告警）
+
+### 9.4 Grid Profile 选择
+
+| profile | N 变体 | 用途 | 因子族多样性 |
+|---------|--------|------|-------------|
+| `stable` | 5 | 上线门禁（保守） | 仅 momentum/triple_rise |
+| `stable_plus` | 8 | 功效增强（推荐） | +volume / mean_reversion |
+| `exploratory` | 11 | 研究探索 | 全部 |
+
+**门禁判定**：`stable` 或 `stable_plus` 的 PBO < 50% 且 DSR > 1.0。`exploratory` 仅用于研究，不参与生产门禁。
+
+### 9.5 涨跌停板块分类
+
+单一事实源：`data/source.py::get_limit_pct`。账本 fallback `_fallback_limit_pct` 必须与之对齐：
+- ST：`"*ST" in name or name.endswith("ST")` → 5%
+- 创业板/科创板：`300/301/688/689` 前缀 → 20%
+- 北交所：`43/83/87/88/920` 前缀 → 30%
+- 主板：其他 → 10%
+
+### 9.6 急跌保护（crash_protection）
+
+当 `market_regime="crash"`（大盘暴跌检测）时，`WalkForwardTester` 自动将 `top_n` 减半，降低高β暴露。这是对报告 §4 急跌段全族软肋的工程响应：
+
+- 触发条件：`SystemRiskManager.check_market` 判定 `hs300_change <= market_crash_threshold`
+- 回测生效：`WalkForwardTester(crash_protection=True)`，`_run_single_period` 内减半 `selected`
+- 生产生效：`--crash-protection` CLI 参数
+- 注意：这是**硬编码减半**，不是参数调参；不触碰"冻结调参"红线
+
 ---
 
 ## 10. 联系点

@@ -669,7 +669,7 @@ class WalkForwardTester:
             entry_bar = test_df.iloc[0]
             entry_date = str(entry_bar["date"])
 
-            executable, reason = _check_executable(entry_bar, prev_close)
+            executable, reason = _check_executable(entry_bar, prev_close, symbol)
             if not executable:
                 trades.append(
                     TradeResult(
@@ -974,9 +974,14 @@ class WalkForwardTester:
 
         口径说明（参见 reports/pbo-attribution-2026-09-07.md §3.1）：
 
-        - 返回的 ``pbo`` = mean(λ ≤ 0)，即训练最优变体在测试集排名
+        - 返回的 ``pbo``（主口径）= mean(λ ≤ 0)，即训练最优变体在测试集排名
           **不优于中位数**（rank 恰好中位时 ω=0.5、λ=0）的比例。这是
           Bailey & López de Prado 的原始定义，作为 gate 门禁判定的唯一依据。
+        - ``details["pbo_strict"]``（对照口径）= mean(λ < 0)，把「恰好中位」的
+          中性组合剔除后的严格读数，仅用于对照展示，**不参与 gate 判定**。
+        - ``details["n_lambda_eq_0"]`` 显式暴露中性组合数，供小 N 场景评估
+          λ 网格离散化造成的偏置。二者绝不可反向用于「调低门禁」——那属于
+          数据窥探红线。
         """
         t, n = returns_matrix.shape
         if n < 2:

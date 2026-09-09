@@ -34,7 +34,7 @@ def test_reports_v2_reloads_thresholds_on_generate(monkeypatch) -> None:
     import aqsp.reports.v2 as reports_v2
     from aqsp.strategies.thresholds import Thresholds
 
-    first = Thresholds(version="old")
+    first = Thresholds(version="old", effective_from="2025-01-01", last_walkforward_run="2025-01-01")
     second = replace(first, version="new")
     loaded = iter([first, second])
     monkeypatch.setattr(reports_v2, "load_thresholds", lambda: next(loaded))
