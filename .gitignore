@@ -47,6 +47,8 @@ data/walkforward_cache*
 data/intraday_cache/
 data/audit/
 data/backfill_intraday_debate_status.json
+data/gate_*.json
+.arts/
 runtime-backups/
 *.tsbuildinfo
 src/data/

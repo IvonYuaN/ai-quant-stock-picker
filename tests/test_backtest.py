@@ -1335,3 +1335,116 @@ def test_calculate_pbo_propagates_none_for_single_period():
     """_calculate_pbo 必须透传 None，而不是吞掉后返 0.0。"""
     pbo = WalkForwardTester._calculate_pbo([_make_backtest_result("p1", 0.05)])
     assert pbo is None
+
+
+def test_calculate_cscv_pbo_outputs_neutral_count_and_strict_metric_when_mid_rank():
+    """训练最优变体在测试集恰好排中位（λ=0）时，中性组合被显式计数，
+    且严格口径（λ<0）与主口径（λ≤0）正确分离。"""
+    returns_matrix = np.array(
+        [
+            [0.12, 0.04, -0.01],
+            [0.08, 0.02, -0.03],
+            [0.04, 0.12, -0.01],
+            [0.02, 0.08, -0.03],
+        ],
+        dtype=float,
+    )
+    pbo, details = WalkForwardTester.calculate_cscv_pbo(returns_matrix, s=2)
+
+    assert pbo == 1.0
+    assert details["n_lambda_eq_0"] == 2
+    assert details["n_lambda_lt_0"] == 0
+    assert details["n_lambda_le_0"] == 2
+    assert details["pbo_strict"] == 0.0
+
+
+def test_calculate_cscv_pbo_primary_metric_unchanged_by_strict_auxiliary():
+    """主口径（λ≤0）与新增对照口径自洽：le = lt + eq，严格口径不高于主口径。"""
+    rng = np.random.RandomState(42)
+    returns_matrix = rng.normal(0.0, 0.02, size=(20, 5)).astype(float)
+    pbo, details = WalkForwardTester.calculate_cscv_pbo(returns_matrix, s=10)
+
+    assert details["n_variants"] == 5
+    assert details["block_size"] == 2
+    assert details["n_lambda_le_0"] == (
+        details["n_lambda_lt_0"] + details["n_lambda_eq_0"]
+    )
+    assert details["n_lambda_eq_0"] >= 0
+    assert 0.0 <= details["pbo_strict"] <= pbo <= 1.0
+
+
+class TestCheckExecutableSymbolAware:
+    def test_growth_board_symbol_uses_20pct_limit_when_no_bar_limit(self) -> None:
+        bar = pd.Series(
+            {"open": 11.0, "high": 11.0, "low": 11.0, "close": 11.0, "volume": 1000}
+        )
+        ok, reason = _check_executable(bar, prev_close=10.0, symbol="300750")
+        assert ok is True
+        assert reason == ""
+
+    def test_star_market_one_word_limit_up_blocked_when_symbol_provided(self) -> None:
+        bar = pd.Series(
+            {"open": 12.0, "high": 12.0, "low": 12.0, "close": 12.0, "volume": 1000}
+        )
+        ok, reason = _check_executable(bar, prev_close=10.0, symbol="688981")
+        assert ok is False
+        assert reason == "limit_up_at_open"
+
+    def test_main_board_defaults_to_10pct_when_symbol_omitted(self) -> None:
+        bar = pd.Series(
+            {"open": 11.0, "high": 11.0, "low": 11.0, "close": 11.0, "volume": 1000}
+        )
+        ok, reason = _check_executable(bar, prev_close=10.0)
+        assert ok is False
+        assert reason == "limit_up_at_open"
+
+
+class TestCrashProtection:
+    def test_crash_protection_halves_top_n_on_crash_regime(self) -> None:
+        from unittest.mock import MagicMock
+
+        from aqsp.backtest.walk_forward import WalkForwardTester
+
+        strategy = MagicMock()
+        strategy.select_stocks = lambda data, n: list(data.keys())[:n]
+        strategy.thresholds = None
+        tester = WalkForwardTester(
+            strategy=strategy,
+            top_n=10,
+            crash_protection=True,
+        )
+        # Mock regime to return "crash"
+        tester._resolve_market_regime = lambda data, as_of=None: ("crash", False)
+        data = {f"SYM{i:03d}": pd.DataFrame({"date": ["d1"], "close": [10.0]}) for i in range(20)}
+
+        result = tester._run_single_period(
+            train_data=data,
+            test_data=data,
+            signal_date="d1",
+        )
+
+        assert len(result) == 5
+
+    def test_crash_protection_disabled_preserves_top_n(self) -> None:
+        from unittest.mock import MagicMock
+
+        from aqsp.backtest.walk_forward import WalkForwardTester
+
+        strategy = MagicMock()
+        strategy.select_stocks = lambda data, n: list(data.keys())[:n]
+        strategy.thresholds = None
+        tester = WalkForwardTester(
+            strategy=strategy,
+            top_n=10,
+            crash_protection=False,
+        )
+        tester._resolve_market_regime = lambda data, as_of=None: ("stable_bull", False)
+        data = {f"SYM{i:03d}": pd.DataFrame({"date": ["d1"], "close": [10.0]}) for i in range(20)}
+
+        result = tester._run_single_period(
+            train_data=data,
+            test_data=data,
+            signal_date="d1",
+        )
+
+        assert len(result) == 10

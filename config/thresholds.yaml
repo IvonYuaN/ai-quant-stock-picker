@@ -1,4 +1,5 @@
-version: "1.1.17"
+version: "1.1.18"
+effective_from: '2026-09-08'
 composite:
   base_blend_weight: 0.7
   min_total_score: 0.4
@@ -9,8 +10,8 @@ composite:
   volume_weight: 0.0
   mean_reversion_weight: 0.0
   triple_rise_weight: 0.3
-description: "策略阈值配置 — v1.1.17：上调跨市场中等强度主线的截断前重排权重"
-effective_from: '2026-06-17'
+  description: "策略阈值配置 — v1.1.18：新增 stable_plus 网格（N=8，含因子族多样性），回测区间拉长至 2021 起（功效增强，参见 reports/pbo-attribution-2026-09-07.md §5 #2/#3）"
+  min_sample_size: 30
 execution:
   commission_rate: 0.0003
   limit_down_tolerance: 0.005
@@ -461,4 +462,4 @@ internet_strategy:
   low_vol_amplitude_max: 5.5
   low_vol_volume_max: 1.8
   low_vol_score: 10.0
-version: 1.1.17
+
