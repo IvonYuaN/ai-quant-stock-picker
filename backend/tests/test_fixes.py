@@ -44,7 +44,6 @@ def test_api_key_auth(monkeypatch):
 @pytest.fixture()
 def tmp_pf(tmp_path, monkeypatch):
     monkeypatch.setattr(pf, "CACHE_DIR", str(tmp_path))
-    monkeypatch.setattr(pf, "PF_FILE", str(tmp_path / "portfolio.json"))
     monkeypatch.setattr(
         astock,
         "tencent_quote",
@@ -141,7 +140,6 @@ def test_portfolio_legacy_migration(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(pf, "_OLD_PF_FILE", str(old))
     monkeypatch.setattr(pf, "CACHE_DIR", str(tmp_path / "userdata"))
-    monkeypatch.setattr(pf, "PF_FILE", str(tmp_path / "userdata" / "portfolio.json"))
     pf._migrate_legacy()
     assert pf._load()["holdings"][0]["code"] == "600519"
     # 新位置已有数据 → 再跑迁移不覆盖
@@ -158,7 +156,7 @@ def test_myreports_legacy_migration(tmp_path, monkeypatch):
     (old / "index.json").write_text("[]", encoding="utf-8")
     monkeypatch.delenv("VR_REPORTS_DIR", raising=False)
     monkeypatch.setattr(mr, "_OLD_DEFAULT_DIR", old)
-    monkeypatch.setattr(mr, "REPORTS_DIR", tmp_path / "userdata" / "myreports")
+    monkeypatch.setattr(mr, "_REPORTS_ROOT", tmp_path / "userdata" / "myreports")
     # 上次复制中断留下的半截临时目录，不该挡住这次迁移
     stale = tmp_path / "userdata" / "myreports.migrate.tmp"
     stale.mkdir(parents=True)

@@ -27,11 +27,15 @@ import newsradar
 import portfolio as pf
 import market
 import myreports as mr
+import tenant as _tenant
 
 app = FastAPI(title="AQSP API", version="0.1.3")
 
-# 每半小时后台刷新持仓数据
-pf.start_scheduler(1800)
+# 每半小时后台刷新持仓数据（仅本地/私有模式：单用户，tenant 恒为 local）。
+# 公网/鉴权模式（设了 VR_API_KEY）下多用户各自有独立租户目录，全局调度器无法
+# 靶向单个用户，关掉它，改由前端「手动刷新」按需重算盈亏。
+if not os.environ.get("VR_API_KEY", "").strip():
+    pf.start_scheduler(1800)
 
 # 本地自托管默认开放；设置 VR_API_KEY 或 VR_PUBLIC_MODE=1 即进入公网模式。
 _API_KEY = os.environ.get("VR_API_KEY", "").strip()
@@ -81,7 +85,15 @@ async def _require_api_key(request: Request, call_next):
                 {"detail": "未授权：缺少或错误的 API Key（VR_API_KEY）"},
                 status_code=401,
             )
-    return await call_next(request)
+    # 解析租户（X-User-Id > API Key 哈希 > local），让不同用户的数据目录互相隔离
+    tid = _tenant.resolve_tenant_id(
+        request.headers.get("x-user-id", ""), _API_KEY
+    )
+    token = _tenant.current_tenant.set(tid)
+    try:
+        return await call_next(request)
+    finally:
+        _tenant.current_tenant.reset(token)
 
 
 _CODE_RE = r"^\d{6}$"
