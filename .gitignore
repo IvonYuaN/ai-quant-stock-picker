@@ -48,6 +48,8 @@ data/intraday_cache/
 data/audit/
 data/backfill_intraday_debate_status.json
 data/gate_*.json
+gate_run/
+gate_run_5y/
 .arts/
 runtime-backups/
 *.tsbuildinfo
