@@ -20,6 +20,7 @@ import time
 from datetime import datetime, timezone, timedelta
 
 import astock
+import tenant as _tenant
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 _OLD_PF_FILE = os.path.join(HERE, ".cache", "portfolio.json")  # ≤v0.1.1 旧位置
@@ -27,20 +28,40 @@ _OLD_PF_FILE = os.path.join(HERE, ".cache", "portfolio.json")  # ≤v0.1.1 旧�
 CACHE_DIR = os.environ.get("VR_DATA_DIR") or os.path.join(
     os.path.expanduser("~"), ".vibe-research"
 )
-PF_FILE = os.path.join(CACHE_DIR, "portfolio.json")
 BEIJING = timezone(timedelta(hours=8))
 _LOCK = threading.Lock()
+
+
+def _tenant_id() -> str:
+    return _tenant.current_tenant.get()
+
+
+def _tenant_dir() -> str:
+    """当前租户的数据根目录；local 用原始 CACHE_DIR，其余落到 users/<tid>/。"""
+    tid = _tenant_id()
+    if tid == "local":
+        return CACHE_DIR
+    return os.path.join(CACHE_DIR, "users", tid)
+
+
+def _pf_file() -> str:
+    return os.path.join(_tenant_dir(), "portfolio.json")
+
+
+def _legacy_local_pf() -> str:
+    """单用户时代（local 租户）的持仓文件位置，用作多用户迁移的源。"""
+    return os.path.join(CACHE_DIR, "portfolio.json")
 
 
 def _migrate_legacy() -> None:
     """旧版持仓在仓库内 .cache/ 里，重下载项目会丢；迁到用户目录（新位置已有则不动）。"""
     try:
-        if not os.path.exists(PF_FILE) and os.path.exists(_OLD_PF_FILE):
+        if not os.path.exists(_legacy_local_pf()) and os.path.exists(_OLD_PF_FILE):
             os.makedirs(CACHE_DIR, exist_ok=True)
-            tmp = PF_FILE + ".migrate.tmp"
+            tmp = _legacy_local_pf() + ".migrate.tmp"
             shutil.copy2(_OLD_PF_FILE, tmp)
             os.replace(
-                tmp, PF_FILE
+                tmp, _legacy_local_pf()
             )  # 原子落位：复制中断不会留半截 portfolio.json 挡住下次重试
     except OSError as e:
         # 迁移失败不阻塞启动，但要出声——旧数据原样保留在 _OLD_PF_FILE，可手工复制
@@ -57,9 +78,31 @@ def _now() -> str:
     return datetime.now(BEIJING).strftime("%Y-%m-%d %H:%M")
 
 
-def _load() -> dict:
+# 已尝试过迁移的租户，避免每次读都 stat 旧文件
+_MIGRATED_TENANTS: set[str] = set()
+
+
+def _maybe_migrate_to_tenant() -> None:
+    """非 local 租户首次访问时，若自身为空且本地 legacy 持仓存在，复制过来
+    （让「从单用户升级到多用户」的老数据无缝落到主人自己的租户桶）。"""
+    tid = _tenant_id()
+    if tid == "local" or tid in _MIGRATED_TENANTS:
+        return
+    _MIGRATED_TENANTS.add(tid)
+    tf = _pf_file()
+    if os.path.exists(tf) or not os.path.exists(_legacy_local_pf()):
+        return
     try:
-        with open(PF_FILE, encoding="utf-8") as f:
+        os.makedirs(_tenant_dir(), exist_ok=True)
+        shutil.copy2(_legacy_local_pf(), tf)
+    except OSError:
+        pass
+
+
+def _load() -> dict:
+    _maybe_migrate_to_tenant()
+    try:
+        with open(_pf_file(), encoding="utf-8") as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return {"holdings": [], "last_refresh": None}
@@ -67,11 +110,11 @@ def _load() -> dict:
 
 def _save(d: dict) -> None:
     # 先写临时文件再原子改名：并发读若撞上写中途的半截 JSON，会被 _load 静默当成空持仓
-    os.makedirs(CACHE_DIR, exist_ok=True)
-    tmp = PF_FILE + ".tmp"
+    os.makedirs(_tenant_dir(), exist_ok=True)
+    tmp = _pf_file() + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(d, f, ensure_ascii=False)
-    os.replace(tmp, PF_FILE)
+    os.replace(tmp, _pf_file())
 
 
 def add_holding(code: str, shares: float, cost: float) -> dict:

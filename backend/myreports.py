@@ -22,14 +22,39 @@ import time
 import uuid
 from pathlib import Path
 
+import tenant as _tenant
+
 _OLD_DEFAULT_DIR = (
     Path(__file__).resolve().parent / ".cache" / "myreports"
 )  # ≤v0.1.1 旧位置
 _DATA_DIR = Path(os.environ.get("VR_DATA_DIR") or Path.home() / ".vibe-research")
 _DEFAULT_DIR = _DATA_DIR / "myreports"
 # 空串视同未设置（与 VR_DATA_DIR 语义一致，避免 Path("") 落到进程工作目录）
-REPORTS_DIR = Path(os.environ.get("VR_REPORTS_DIR") or str(_DEFAULT_DIR))
-_INDEX = REPORTS_DIR / "index.json"
+_REPORTS_ROOT = Path(os.environ.get("VR_REPORTS_DIR") or str(_DEFAULT_DIR))
+
+
+def _tenant_id() -> str:
+    return _tenant.current_tenant.get()
+
+
+def _tenant_dir() -> Path:
+    """当前租户研报根；local 用原始 _REPORTS_ROOT，其余落到 users/<tid>/myreports。"""
+    tid = _tenant_id()
+    if tid == "local":
+        return _REPORTS_ROOT
+    return _DATA_DIR / "users" / tid / "myreports"
+
+
+def _reports_dir() -> Path:
+    return _tenant_dir()
+
+
+def _index() -> Path:
+    return _tenant_dir() / "index.json"
+
+
+def _legacy_local_dir() -> Path:
+    return _REPORTS_ROOT
 
 
 def _migrate_legacy() -> None:
@@ -37,15 +62,15 @@ def _migrate_legacy() -> None:
     try:
         if (
             os.environ.get("VR_REPORTS_DIR")
-            or REPORTS_DIR.exists()
+            or _REPORTS_ROOT.exists()
             or not _OLD_DEFAULT_DIR.exists()
         ):
             return
-        tmp = REPORTS_DIR.with_name(REPORTS_DIR.name + ".migrate.tmp")
+        tmp = _REPORTS_ROOT.with_name(_REPORTS_ROOT.name + ".migrate.tmp")
         if tmp.exists():
             shutil.rmtree(tmp)  # 上次中断留下的半截目录，重来
         shutil.copytree(_OLD_DEFAULT_DIR, tmp)
-        os.replace(tmp, REPORTS_DIR)  # 同盘原子改名：复制中断不会留半套研报挡住下次重试
+        os.replace(tmp, _REPORTS_ROOT)  # 同盘原子改名：复制中断不会留半套研报挡住下次重试
     except OSError as e:
         # 迁移失败不阻塞启动，但要出声——旧数据原样保留在 _OLD_DEFAULT_DIR，可手工复制
         print(
@@ -58,6 +83,8 @@ _migrate_legacy()
 _LOCK = (
     threading.Lock()
 )  # 索引读-改-写串行化（与 portfolio.py 同款），防并发上传/删除互相覆盖
+# 已尝试过迁移的租户，避免每次读都 stat 旧目录
+_MIGRATED_TENANTS: set[str] = set()
 
 MAX_BYTES = 25 * 1024 * 1024  # 单文件上限 25MB
 # 允许的文档类型（白名单——不存可执行 / 网页等，避免下载回放风险）
@@ -158,15 +185,33 @@ class ReportError(ValueError):
     """上传/校验类错误（对应 HTTP 400/413）。"""
 
 
+def _maybe_migrate_to_tenant() -> None:
+    """非 local 租户首次访问时，若自身为空且本地 legacy 研报存在，复制过来
+    （让「从单用户升级到多用户」的老数据无缝落到主人自己的租户桶）。"""
+    tid = _tenant_id()
+    if tid == "local" or tid in _MIGRATED_TENANTS:
+        return
+    _MIGRATED_TENANTS.add(tid)
+    tdir = _reports_dir()
+    if tdir.exists() or not _legacy_local_dir().exists():
+        return
+    try:
+        shutil.copytree(_legacy_local_dir(), tdir)
+    except OSError:
+        pass
+
+
 def _ensure_dir() -> None:
-    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    _maybe_migrate_to_tenant()
+    _reports_dir().mkdir(parents=True, exist_ok=True)
 
 
 def _load_index() -> list[dict]:
-    if not _INDEX.exists():
+    _maybe_migrate_to_tenant()
+    if not _index().exists():
         return []
     try:
-        data = json.loads(_INDEX.read_text("utf-8"))
+        data = json.loads(_index().read_text("utf-8"))
         return data if isinstance(data, list) else []
     except (json.JSONDecodeError, OSError):
         return []
@@ -174,9 +219,9 @@ def _load_index() -> list[dict]:
 
 def _save_index(items: list[dict]) -> None:
     _ensure_dir()
-    tmp = _INDEX.with_suffix(".json.tmp")
+    tmp = _index().with_suffix(".json.tmp")
     tmp.write_text(json.dumps(items, ensure_ascii=False, indent=2), "utf-8")
-    os.replace(tmp, _INDEX)  # 原子改名，避免半截写入损坏索引（进程被 kill / OOM）
+    os.replace(tmp, _index())  # 原子改名，避免半截写入损坏索引（进程被 kill / OOM）
 
 
 def classify(filename: str) -> str:
@@ -228,7 +273,7 @@ def save_report(name: str, content_b64: str) -> dict:
 
     _ensure_dir()
     rid = uuid.uuid4().hex
-    (REPORTS_DIR / f"{rid}{ext}").write_bytes(blob)
+    (_reports_dir() / f"{rid}{ext}").write_bytes(blob)
     meta = {
         "id": rid,
         "name": fname,
@@ -248,7 +293,7 @@ def report_path(rid: str) -> tuple[Path, str] | None:
     """按 id 取 (磁盘路径, 原始文件名)；不存在返回 None。"""
     for r in _load_index():
         if r.get("id") == rid:
-            p = REPORTS_DIR / f"{rid}{r.get('ext', '')}"
+            p = _reports_dir() / f"{rid}{r.get('ext', '')}"
             return (p, r.get("name", rid)) if p.exists() else None
     return None
 
@@ -260,7 +305,7 @@ def delete_report(rid: str) -> bool:
         hit = next((r for r in items if r.get("id") == rid), None)
         if hit is None:
             return False
-        fp = REPORTS_DIR / f"{rid}{hit.get('ext', '')}"
+        fp = _reports_dir() / f"{rid}{hit.get('ext', '')}"
         try:
             fp.unlink(missing_ok=True)
         except OSError:
