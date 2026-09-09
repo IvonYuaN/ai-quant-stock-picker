@@ -42,6 +42,10 @@ export function isAqspAbortError(reason: unknown): boolean {
 // 后端访问密钥（对应后端部署时的 VR_API_KEY，公网部署防蹭用）。只存本地浏览器。
 const ACCESS_KEY = "vr-access-key";
 
+// 本浏览器稳定身份：用于在「同一把共享 Key 下」让不同访客的数据互相隔离
+// （后端按 X-User-Id 切分目录）。与自选/笔记一样只存本地浏览器，换浏览器即另一人。
+const USER_ID = "vr-user-id";
+
 export function loadAccessKey(): string {
   try {
     return localStorage.getItem(ACCESS_KEY) || "";
@@ -59,9 +63,28 @@ export function saveAccessKey(key: string) {
   }
 }
 
+// 取本浏览器身份；首次访问时生成并固化一个 UUID，后续复用。
+export function loadUserId(): string {
+  try {
+    let id = localStorage.getItem(USER_ID);
+    if (!id) {
+      id = (crypto.randomUUID?.() ?? `u-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+      localStorage.setItem(USER_ID, id);
+    }
+    return id;
+  } catch {
+    return "";
+  }
+}
+
 export function authHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {};
   const k = loadAccessKey();
-  return k ? { Authorization: `Bearer ${k}` } : {};
+  if (k) headers["Authorization"] = `Bearer ${k}`;
+  // 本浏览器身份：公网/鉴权模式下让持仓、研报按访客隔离（本地单用户模式后端忽略此头）。
+  const uid = loadUserId();
+  if (uid) headers["X-User-Id"] = uid;
+  return headers;
 }
 
 export interface MyReport {

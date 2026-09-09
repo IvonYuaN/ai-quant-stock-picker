@@ -414,10 +414,11 @@ function SectionHead({ number, title, count }: { number: string; title: string; 
 function LoadingState() { return <div className="aqsp-state"><RefreshCw className="h-4 w-4 animate-spin text-primary" />正在读取当前研究数据</div>; }
 function ErrorState({ error, onRefresh }: { error: string; onRefresh: () => void }) { return <div className="aqsp-state aqsp-state-warn"><AlertCircle className="h-4 w-4 shrink-0" /><span>读取失败：{error}</span><button type="button" onClick={onRefresh} title="重新读取"><RefreshCw className="h-4 w-4" /></button></div>; }
 
-export function AqspResearchWorkspace() {
+export function AqspResearchWorkspace({ view }: { view?: ResearchViewId } = {}) {
   const { data, loading, error, refresh } = useWorkspaceSnapshot();
   const { hash } = useLocation();
-  const activeView: ResearchViewId = resolveResearchView(hash);
+  // view 由路由显式指定时优先（真路由）；否则退回 hash 锚点（页内分段，如复盘的三个小页签）。
+  const activeView: ResearchViewId = view ?? resolveResearchView(hash);
   if (loading && !data) return <div className="aqsp-page">{activeView === TEST_VARIANTS_SECTION_ID ? <TestVariantsPanel /> : <LoadingState />}</div>;
   if (error && !data) return <div className="aqsp-page">{activeView === TEST_VARIANTS_SECTION_ID ? <TestVariantsPanel /> : <ErrorState error={error} onRefresh={refresh} />}</div>;
   if (!data) return <div className="aqsp-page">{activeView === TEST_VARIANTS_SECTION_ID ? <TestVariantsPanel /> : <EmptyState title="当前没有研究快照" detail="等待正式 AQSP 任务产出，当前不显示历史内容。" />}</div>;
