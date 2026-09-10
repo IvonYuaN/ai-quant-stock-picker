@@ -1,4 +1,4 @@
-version: "1.1.18"
+version: "1.2.0"
 effective_from: '2026-09-08'
 composite:
   base_blend_weight: 0.7
@@ -10,7 +10,10 @@ composite:
   volume_weight: 0.0
   mean_reversion_weight: 0.0
   triple_rise_weight: 0.3
-  description: "策略阈值配置 — v1.1.18：新增 stable_plus 网格（N=8，含因子族多样性），回测区间拉长至 2021 起（功效增强，参见 reports/pbo-attribution-2026-09-07.md §5 #2/#3）"
+  high_tight_flag_weight: 0.0
+  low_vol_weight: 0.0
+  pullback_weight: 0.0
+  description: "策略阈值配置 — v1.2.0：新增选股内核 v2 因子族（high_tight_flag 高窄旗形 / low_vol 低波动 / pullback 回调不破位），默认权重 0.0 不影响现有变体（含 WF-001）；由 v2 网格变体显式启用。依据：composite 族 IC 反向失效（见 outputs/regime_条件化IC_结论_2026-09-10.md）"
   min_sample_size: 30
 execution:
   commission_rate: 0.0003

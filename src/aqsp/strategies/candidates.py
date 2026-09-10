@@ -28,7 +28,10 @@ import numpy as np
 import pandas as pd
 
 from aqsp.strategies.base import BaseStrategy, StrategyConfig
+from aqsp.strategies.family_v2 import HighTightFlagStrategy as HighTightFlagCandidate
 from aqsp.strategies.thresholds import Thresholds, load_thresholds
+
+__all__ = ["RpsCandidate", "HighTightFlagCandidate"]
 
 
 def _clamp(x: float, lo: float = 0.0, hi: float = 1.0) -> float:
@@ -87,75 +90,5 @@ class RpsCandidate(BaseStrategy):
         return _clamp(0.5 + float(np.tanh(r)), 0.0, 1.0)
 
 
-class HighTightFlagCandidate(BaseStrategy):
-    """高而窄的旗形（波动收敛）候选因子，连续化打分。
-
-    构造（全部点-in-time，用截面日及之前窗口）：
-      - 强动量：近 40 日 最高/最低 > mom_min（区间涨幅超阈值）
-      - 极窄整理：近 10 日 最高/最低 < tight_max（振幅收敛）
-      - 高位抗跌：近 10 日最低 >= 40 日最高 * level_floor
-      - 缩量：当日成交量 < 近 20 日均量 * vol_shrink
-    综合为 0~1 连续分，越高=越符合"强势后极窄整理"的 continuation 形态。
-    """
-
-    name: str = "high_tight_flag_candidate"
-
-    def __init__(self, config: StrategyConfig, thresholds: Thresholds = None):
-        self.thresholds = thresholds or load_thresholds()
-        p = config.params or {}
-        self.strong_win: int = int(p.get("strong_win", 40))
-        self.tight_win: int = int(p.get("tight_win", 10))
-        self.mom_min: float = float(p.get("mom_min", 1.6))
-        self.tight_max: float = float(p.get("tight_max", 1.15))
-        self.level_floor: float = float(p.get("level_floor", 0.8))
-        self.vol_shrink: float = float(p.get("vol_shrink", 0.6))
-        super().__init__(
-            config,
-            id="high_tight_flag_candidate",
-            version=self.thresholds.version,
-            hypothesis="强势后的极窄缩量整理（波动收敛）后倾向延续/突破，未来收益为正",
-        )
-
-    def calculate_score(self, data: Dict[str, pd.DataFrame]) -> Dict[str, float]:
-        out: Dict[str, float] = {}
-        for sym, df in data.items():
-            out[sym] = self._calculate_single_score(df) if df is not None else float("nan")
-        return out
-
-    def _calculate_single_score(self, df: pd.DataFrame) -> float:
-        if df is None or len(df) < self.strong_win:
-            return 0.0
-        df = df.sort_values("date")
-        high = df["high"].astype(float).values
-        low = df["low"].astype(float).values
-        vol = df["volume"].astype(float).values
-
-        tail40_h = high[-self.strong_win :]
-        tail40_l = low[-self.strong_win :]
-        high40 = float(np.max(tail40_h))
-        low40 = float(np.min(tail40_l))
-        if low40 <= 0:
-            return 0.0
-        momentum_ratio = high40 / low40
-
-        tail10_h = high[-self.tight_win :]
-        tail10_l = low[-self.tight_win :]
-        high10 = float(np.max(tail10_h))
-        low10 = float(np.min(tail10_l))
-        if low10 <= 0:
-            return 0.0
-        tightness = high10 / low10
-
-        # 强动量分：1.0~mom_min 映射到 0~1，超过 mom_min 取 1
-        mom_score = _clamp((momentum_ratio - 1.0) / (self.mom_min - 1.0)) if momentum_ratio > 1.0 else 0.0
-        # 极窄整理分：tight_max~1.0 映射到 0~1（越窄越高）
-        tight_score = _clamp((self.tight_max - tightness) / (self.tight_max - 1.0)) if tightness < self.tight_max else 0.0
-        # 高位抗跌：近 10 日最低守住 40 日最高的 level_floor
-        level_score = 1.0 if (low10 >= high40 * self.level_floor) else 0.0
-        # 缩量：当日量 < 近 20 日均量 * vol_shrink
-        vol_ma20 = float(np.mean(vol[-21:-1])) if len(vol) >= 21 else 0.0
-        vol_score = 1.0 if (vol_ma20 > 0 and vol[-1] < vol_ma20 * self.vol_shrink) else 0.0
-
-        # 形态主导（动量 + 收敛），量与位作为确认
-        score = mom_score * 0.4 + tight_score * 0.4 + level_score * 0.1 + vol_score * 0.1
-        return _clamp(score)
+# 高窄旗形的实现已迁至 family_v2（单一事实来源：HighTightFlagStrategy）。
+# 此处通过顶部 import 的别名 HighTightFlagCandidate 保留兼容（诊断脚本仍按旧名引用）。

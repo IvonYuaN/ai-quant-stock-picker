@@ -841,9 +841,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     wf.add_argument(
         "--grid-profile",
-        choices=("stable", "stable_plus", "exploratory"),
+        choices=("stable", "stable_plus", "exploratory", "v2"),
         default="stable",
-        help="grid CSCV 变体集合：stable 用于上线门禁（N=5），stable_plus 用于功效增强（N=8，含因子族多样性），exploratory 保留研究探索网格（N=11）",
+        help="grid CSCV 变体集合：stable 用于上线门禁（N=5），stable_plus 用于功效增强（N=8，含因子族多样性），exploratory 保留研究探索网格，v2 为选股内核 v2 验证（stable_plus 基线 + WF-V2A/V2B）",
     )
     wf.add_argument(
         "--pool",
@@ -6098,6 +6098,17 @@ _WALKFORWARD_EXPLORATORY_GRID_VARIANTS: tuple[WalkForwardGridVariant, ...] = (
     _WALKFORWARD_VALIDATED_GRID_VARIANTS
 )
 
+# v2 验证 profile：stable_plus 基线 + 选股内核 v2 变体，用于与 v1 头对头 CSCV/PBO/DSR 验证。
+# 刻意不加入 _WALKFORWARD_VALIDATED_GRID_VARIANTS，以保持 stable/stable_plus/exploratory 三个
+# 既有 profile 的变体集合不变（避免扰动已定标的门禁口径与既有测试）。
+_WALKFORWARD_V2_GRID_VARIANTS: tuple[WalkForwardGridVariant, ...] = (
+    _WALKFORWARD_STABLE_PLUS_GRID_VARIANTS
+    + (
+        WalkForwardGridVariant("WF-V2A", 0.0, 0.0, 60, 3, 10, "v2"),
+        WalkForwardGridVariant("WF-V2B", 0.0, 0.0, 60, 3, 10, "v2_mr"),
+    )
+)
+
 _WALKFORWARD_GRID_VARIANTS: tuple[WalkForwardGridVariant, ...] = (
     _WALKFORWARD_EXPLORATORY_GRID_VARIANTS
 )
@@ -6110,6 +6121,8 @@ def _walkforward_grid_variants(
         return _WALKFORWARD_EXPLORATORY_GRID_VARIANTS
     if profile == "stable_plus":
         return _WALKFORWARD_STABLE_PLUS_GRID_VARIANTS
+    if profile == "v2":
+        return _WALKFORWARD_V2_GRID_VARIANTS
     return _WALKFORWARD_STABLE_GRID_VARIANTS
 
 
@@ -6169,6 +6182,24 @@ def _apply_walkforward_grid_variant(
         composite_updates["mean_reversion_weight"] = 0.4
         composite_updates["momentum_weight"] = 0.1
         composite_updates["triple_rise_weight"] = 0.1
+    elif strategy_mix == "v2":
+        # 选股内核 v2：整族轮换到 反转/低波动/强势后收敛（替换 IC 反预测的动量/三连涨族）。
+        # 依据 outputs/regime_条件化IC_结论_2026-09-10.md（composite 全状态反向）。
+        composite_updates["momentum_weight"] = 0.0
+        composite_updates["triple_rise_weight"] = 0.0
+        composite_updates["high_tight_flag_weight"] = 0.4
+        composite_updates["low_vol_weight"] = 0.3
+        composite_updates["pullback_weight"] = 0.3
+        composite_updates["min_total_score"] = 0.2
+    elif strategy_mix == "v2_mr":
+        # v2 + 弱正向的均值回复（IC≈+0.02 不显著，作次要补充）。
+        composite_updates["momentum_weight"] = 0.0
+        composite_updates["triple_rise_weight"] = 0.0
+        composite_updates["high_tight_flag_weight"] = 0.35
+        composite_updates["low_vol_weight"] = 0.25
+        composite_updates["pullback_weight"] = 0.25
+        composite_updates["mean_reversion_weight"] = 0.15
+        composite_updates["min_total_score"] = 0.2
 
     return replace(
         thresholds,

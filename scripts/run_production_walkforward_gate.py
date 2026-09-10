@@ -1757,7 +1757,7 @@ def main() -> int:
     parser.add_argument("--min-symbols", type=int, default=MIN_PRODUCTION_GATE_SYMBOLS)
     parser.add_argument(
         "--grid-profile",
-        choices=("stable", "stable_plus", "exploratory"),
+        choices=("stable", "stable_plus", "exploratory", "v2"),
         default="stable",
         help="grid CSCV 变体集合：stable(N=5) 保守门禁，stable_plus(N=8，含 volume/mean_reversion 因子族) 功效增强，exploratory(N=11) 仅供研究",
     )

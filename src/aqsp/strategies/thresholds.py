@@ -92,6 +92,11 @@ class CompositeThresholds:
     min_total_score: float = 0.6
     base_blend_weight: float = 0.7
     regime_blend_weight: float = 0.3
+    # v2 因子族（反转/低波动/强势后收敛）——默认 0.0，不影响现有变体（含 WF-001）。
+    # 由 gate 的 v2 变体或显式配置置为非零权重后才会参与合成。
+    high_tight_flag_weight: float = 0.0
+    low_vol_weight: float = 0.0
+    pullback_weight: float = 0.0
 
 
 @dataclass(frozen=True)

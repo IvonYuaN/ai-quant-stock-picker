@@ -47,6 +47,10 @@ from aqsp.strategies.composite import CompositeStrategy
 from aqsp.strategies.mean_reversion import MeanReversionStrategy
 from aqsp.strategies.volume import VolumeBreakoutStrategy
 from aqsp.strategies.candidates import RpsCandidate, HighTightFlagCandidate
+from aqsp.strategies.family_v2 import (
+    LowVolatilityStrategy,
+    PullbackContinuationStrategy,
+)
 from aqsp.strategies.base import StrategyConfig
 
 # 与 gate 主变体 WF-001 完全一致（mom=0.3 / tr=0.3 / lookback=60 / horizon=3 / top_n=10）
@@ -239,6 +243,8 @@ def main() -> int:
         candidate_classes = (
             ("rps", RpsCandidate),
             ("high_tight_flag", HighTightFlagCandidate),
+            ("low_vol", LowVolatilityStrategy),
+            ("pullback", PullbackContinuationStrategy),
         )
     extra_factors: dict[str, object] = {}
     for _name, _cls in (
@@ -255,7 +261,14 @@ def main() -> int:
     # 固定顺序：先既有三因子，再追加扩展因子（含候选因子）
     factor_order = ["momentum", "triple_rise", "composite"] + [
         k
-        for k in ("mean_reversion", "volume", "rps", "high_tight_flag")
+        for k in (
+            "mean_reversion",
+            "volume",
+            "rps",
+            "high_tight_flag",
+            "low_vol",
+            "pullback",
+        )
         if k in extra_factors
     ]
     factor_objs: dict[str, object] = {

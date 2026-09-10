@@ -11,6 +11,11 @@ from aqsp.strategies.value import ValueStrategy
 from aqsp.strategies.volume import VolumeBreakoutStrategy
 from aqsp.strategies.mean_reversion import MeanReversionStrategy
 from aqsp.strategies.triple_rise import TripleRiseStrategy
+from aqsp.strategies.family_v2 import (
+    HighTightFlagStrategy,
+    LowVolatilityStrategy,
+    PullbackContinuationStrategy,
+)
 from aqsp.strategies.thresholds import Thresholds, load_thresholds
 
 
@@ -64,6 +69,29 @@ class CompositeStrategy(BaseStrategy):
             thresholds=self.thresholds,
         )
 
+        # v2 因子族（反转/低波动/强势后收敛）——仅当权重 > 0 时实例化并参与合成。
+        self.high_tight_flag_strategy = HighTightFlagStrategy(
+            StrategyConfig(name="high_tight_flag", enabled=self._has_htf()),
+            thresholds=self.thresholds,
+        )
+        self.low_vol_strategy = LowVolatilityStrategy(
+            StrategyConfig(name="low_volatility", enabled=self._has_lowvol()),
+            thresholds=self.thresholds,
+        )
+        self.pullback_strategy = PullbackContinuationStrategy(
+            StrategyConfig(name="pullback_continuation", enabled=self._has_pullback()),
+            thresholds=self.thresholds,
+        )
+
+    def _has_htf(self) -> bool:
+        return self.thresholds.composite.high_tight_flag_weight > 0
+
+    def _has_lowvol(self) -> bool:
+        return self.thresholds.composite.low_vol_weight > 0
+
+    def _has_pullback(self) -> bool:
+        return self.thresholds.composite.pullback_weight > 0
+
     def _has_volume(self) -> bool:
         return (
             self.thresholds.volume.enabled
@@ -95,8 +123,15 @@ class CompositeStrategy(BaseStrategy):
 
     def get_regime_adjusted_weights(
         self, regime: str
-    ) -> tuple[float, float, float, float, float, float]:
-        """根据市场状态调整策略权重"""
+    ) -> tuple[float, float, float, float, float, float, float, float, float]:
+        """根据市场状态调整策略权重。
+
+        返回 9 元组：前 6 个为旧因子族（受 regime 调整），后 3 个为 v2 因子族
+        （high_tight_flag / low_vol / pullback —— 按因子族轮换使用，**不做 regime 调整**：
+        数据已证 regime 条件化救不了反向的旧族，v2 的方向是换族而非换状态）。
+
+        兼容性：历史调用方按位置索引 [0]..[5] 取值，故 v2 权重追加在末尾不破坏契约。
+        """
         base = self.thresholds.composite
         canonical_regime = canonicalize_regime(regime)
         adjustment = self.thresholds.regime.strategy_weights.get(canonical_regime)
@@ -110,6 +145,12 @@ class CompositeStrategy(BaseStrategy):
             if legacy_regime:
                 adjustment = self.thresholds.regime.strategy_weights.get(legacy_regime)
 
+        v2_tail = (
+            base.high_tight_flag_weight,
+            base.low_vol_weight,
+            base.pullback_weight,
+        )
+
         if adjustment is None:
             return (
                 base.momentum_weight,
@@ -118,7 +159,7 @@ class CompositeStrategy(BaseStrategy):
                 base.volume_weight,
                 base.mean_reversion_weight,
                 base.triple_rise_weight,
-            )
+            ) + v2_tail
 
         def blended(multiplier: float) -> float:
             return base.base_blend_weight + base.regime_blend_weight * multiplier
@@ -130,7 +171,7 @@ class CompositeStrategy(BaseStrategy):
             base.volume_weight * blended(adjustment.volume),
             base.mean_reversion_weight * blended(adjustment.mean_reversion),
             base.triple_rise_weight * blended(adjustment.triple_rise),
-        )
+        ) + v2_tail
 
     def calculate_score(
         self, data: Dict[str, pd.DataFrame], regime: str = "unknown"
@@ -157,15 +198,31 @@ class CompositeStrategy(BaseStrategy):
         if self._has_tr():
             tr_scores = self.triple_rise_strategy.calculate_score(data)
 
+        # v2 因子族（仅在权重 > 0 时计算）
+        htf_scores: Dict[str, float] = {}
+        if self._has_htf():
+            htf_scores = self.high_tight_flag_strategy.calculate_score(data)
+        lv_scores: Dict[str, float] = {}
+        if self._has_lowvol():
+            lv_scores = self.low_vol_strategy.calculate_score(data)
+        pb_scores: Dict[str, float] = {}
+        if self._has_pullback():
+            pb_scores = self.pullback_strategy.calculate_score(data)
+
         all_symbols = set(momentum_scores.keys())
         all_symbols |= set(quality_scores.keys())
         all_symbols |= set(value_scores.keys())
         all_symbols |= set(volume_scores.keys())
         all_symbols |= set(mr_scores.keys())
         all_symbols |= set(tr_scores.keys())
+        all_symbols |= set(htf_scores.keys())
+        all_symbols |= set(lv_scores.keys())
+        all_symbols |= set(pb_scores.keys())
 
         # 使用市场状态调整后的权重
-        mw, qw, vw, volw, mrw, trw = self.get_regime_adjusted_weights(regime)
+        mw, qw, vw, volw, mrw, trw, htfw, lvw, pbw = (
+            self.get_regime_adjusted_weights(regime)
+        )
 
         final_scores = {}
         for symbol in all_symbols:
@@ -201,6 +258,18 @@ class CompositeStrategy(BaseStrategy):
                 total += tr * trw
                 w_sum += trw
 
+            if self._has_htf():
+                total += htf_scores.get(symbol, 0.0) * htfw
+                w_sum += htfw
+
+            if self._has_lowvol():
+                total += lv_scores.get(symbol, 0.0) * lvw
+                w_sum += lvw
+
+            if self._has_pullback():
+                total += pb_scores.get(symbol, 0.0) * pbw
+                w_sum += pbw
+
             base_score = total / w_sum if w_sum > 0 else 0.0
             final_scores[symbol] = max(0.0, min(1.0, base_score))
 
@@ -231,15 +300,31 @@ class CompositeStrategy(BaseStrategy):
         if self._has_tr():
             tr_scores = self.triple_rise_strategy.calculate_score(data)
 
+        # v2 因子族（仅在权重 > 0 时计算）
+        htf_scores: Dict[str, float] = {}
+        if self._has_htf():
+            htf_scores = self.high_tight_flag_strategy.calculate_score(data)
+        lv_scores: Dict[str, float] = {}
+        if self._has_lowvol():
+            lv_scores = self.low_vol_strategy.calculate_score(data)
+        pb_scores: Dict[str, float] = {}
+        if self._has_pullback():
+            pb_scores = self.pullback_strategy.calculate_score(data)
+
         all_symbols = set(momentum_scores.keys())
         all_symbols |= set(quality_scores.keys())
         all_symbols |= set(value_scores.keys())
         all_symbols |= set(volume_scores.keys())
         all_symbols |= set(mr_scores.keys())
         all_symbols |= set(tr_scores.keys())
+        all_symbols |= set(htf_scores.keys())
+        all_symbols |= set(lv_scores.keys())
+        all_symbols |= set(pb_scores.keys())
 
         # 使用市场状态调整后的权重
-        mw, qw, vw, volw, mrw, trw = self.get_regime_adjusted_weights(regime)
+        mw, qw, vw, volw, mrw, trw, htfw, lvw, pbw = (
+            self.get_regime_adjusted_weights(regime)
+        )
 
         detailed = {}
         for symbol in all_symbols:
@@ -277,6 +362,24 @@ class CompositeStrategy(BaseStrategy):
                 entry["triple_rise"] = tr
                 total += tr * trw
                 w_sum += trw
+
+            if self._has_htf():
+                htf = htf_scores.get(symbol, 0.0)
+                entry["high_tight_flag"] = htf
+                total += htf * htfw
+                w_sum += htfw
+
+            if self._has_lowvol():
+                lv = lv_scores.get(symbol, 0.0)
+                entry["low_volatility"] = lv
+                total += lv * lvw
+                w_sum += lvw
+
+            if self._has_pullback():
+                pb = pb_scores.get(symbol, 0.0)
+                entry["pullback_continuation"] = pb
+                total += pb * pbw
+                w_sum += pbw
 
             base_total = total / w_sum if w_sum > 0 else 0.0
             entry["total"] = max(0.0, min(1.0, base_total))
