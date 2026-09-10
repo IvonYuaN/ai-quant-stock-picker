@@ -44,6 +44,9 @@ from aqsp.cli import (
     load_thresholds,
 )
 from aqsp.strategies.composite import CompositeStrategy
+from aqsp.strategies.mean_reversion import MeanReversionStrategy
+from aqsp.strategies.volume import VolumeBreakoutStrategy
+from aqsp.strategies.base import StrategyConfig
 
 # 与 gate 主变体 WF-001 完全一致（mom=0.3 / tr=0.3 / lookback=60 / horizon=3 / top_n=10）
 WF001 = WalkForwardGridVariant("WF-001", 0.3, 0.3, 60, 3, 10, "momentum")
@@ -153,10 +156,48 @@ def main() -> int:
     thresholds = load_thresholds()
     variant_thresholds = _apply_walkforward_grid_variant(thresholds, WF001)
     strategy = CompositeStrategy(thresholds=variant_thresholds)
-    has_tr = strategy._has_tr()  # noqa: SLF001 - 诊断脚本读取内部开关以决定输出列
+
+    # 诊断 mean_reversion / volume 时强制启用：
+    # 这两个因子在 config/thresholds.yaml 里 enabled=false（含义只是 composite 不参与混合），
+    # 但它们各自的打分逻辑与 enabled 开关无关。IC 诊断要看"因子原始打分"对未来收益的预测力，
+    # 因此必须解除 enabled 开关，否则 MeanReversionStrategy 直接对每只票返回 0.0
+    # （volume.py 不读 enabled 故不受影响，但为一致也一并启用）。
+    # 注意：composite 仍用原始 variant_thresholds（与 gate 完全一致），只有独立因子的诊断
+    # 对象用启用了 enabled 的派生副本（frozen dataclass 不能原地改，用 with_overrides）。
+    diag_thresholds = (
+        variant_thresholds.with_overrides("mean_reversion", {"enabled": True})
+        .with_overrides("volume", {"enabled": True})
+    )
+
+    # 扩展诊断：除既有的 momentum / triple_rise / composite 外，
+    # 额外覆盖 mean_reversion / volume（二者只需 OHLCV，可在 runner 的 daily_qfq 上直接算；
+    # quality / value 需基本面表，本诊断样本无，跳过）。
+    extra_factors: dict[str, object] = {}
+    for _name, _cls in (
+        ("mean_reversion", MeanReversionStrategy),
+        ("volume", VolumeBreakoutStrategy),
+    ):
+        try:
+            extra_factors[_name] = _cls(
+                StrategyConfig(name=_name, enabled=True), diag_thresholds
+            )
+        except Exception as exc:  # noqa: BLE001 - 单个因子不可用不应中断整体诊断
+            print(f"[warn] {_name} 无法实例化，跳过: {exc}")
+
+    # 固定顺序：先既有三因子，再追加扩展因子
+    factor_order = ["momentum", "triple_rise", "composite"] + [
+        k for k in ("mean_reversion", "volume") if k in extra_factors
+    ]
+    factor_objs: dict[str, object] = {
+        "momentum": strategy.momentum_strategy,
+        "triple_rise": strategy.triple_rise_strategy,
+        "composite": strategy,
+    }
+    factor_objs.update(extra_factors)
 
     dates = list(close.index[args.lookback :: args.step])
     print(f"[info] 横截面: {len(dates)} 个（每 {args.step} 个交易日）")
+    print(f"[info] 诊断因子: {', '.join(factor_order)}")
 
     rows: list[dict] = []
     for i, d in enumerate(dates, 1):
@@ -169,31 +210,28 @@ def main() -> int:
         }
         if len(data) < 50:
             continue
-        mom_s = pd.Series(strategy.momentum_strategy.calculate_score(data), dtype=float)
-        tr_s = (
-            pd.Series(strategy.triple_rise_strategy.calculate_score(data), dtype=float)
-            if has_tr
-            else pd.Series(dtype=float)
-        )
-        comp_s = pd.Series(strategy.calculate_score(data), dtype=float)
+        scores: dict[str, pd.Series] = {}
+        for name in factor_order:
+            try:
+                scores[name] = pd.Series(
+                    factor_objs[name].calculate_score(data), dtype=float
+                )
+            except Exception as exc:  # noqa: BLE001 - 单截面单因子失败不影响其它
+                scores[name] = pd.Series(dtype=float)
+                print(f"[warn] {name} 在 {d} 打分失败: {exc}")
         fwd = fwd_ret.loc[d].dropna()
 
-        row = {
-            "date": d,
-            "n": int(len(fwd)),
-            "ic_mom": _ic(mom_s, fwd),
-            "ic_tr": _ic(tr_s, fwd) if has_tr else float("nan"),
-            "ic_comp": _ic(comp_s, fwd),
-        }
+        row: dict[str, object] = {"date": d, "n": int(len(fwd))}
+        for name in factor_order:
+            row[f"ic_{name}"] = _ic(scores[name], fwd)
         rows.append(row)
         if i % 5 == 0 or i == len(dates):
-            print(
-                f"[ic {i}/{len(dates)}] {d} n={row['n']} "
-                f"mom={row['ic_mom']:+.4f} tr={row['ic_tr']:+.4f} comp={row['ic_comp']:+.4f}",
-                flush=True,
+            parts = " ".join(
+                f"{name}={row[f'ic_{name}']:+.4f}" for name in factor_order
             )
+            print(f"[ic {i}/{len(dates)}] {d} n={row['n']} {parts}", flush=True)
 
-    _write_report(args, rows)
+    _write_report(args, rows, factor_order)
     print(f"[ok] 报告已写出: {args.output}")
     return 0
 
@@ -225,10 +263,10 @@ def _fmt(x: float, nd: int = 4) -> str:
     return "N/A" if x != x else f"{x:.{nd}f}"
 
 
-def _write_report(args: argparse.Namespace, rows: list[dict]) -> None:
-    mom = _stats([r["ic_mom"] for r in rows])
-    tr = _stats([r["ic_tr"] for r in rows])
-    comp = _stats([r["ic_comp"] for r in rows])
+def _write_report(
+    args: argparse.Namespace, rows: list[dict], factor_order: list[str]
+) -> None:
+    stats = {name: _stats([r[f"ic_{name}"] for r in rows]) for name in factor_order}
 
     lines: list[str] = []
     lines.append("# 选股因子 IC 诊断（gate 失败归因）\n")
@@ -239,12 +277,14 @@ def _write_report(args: argparse.Namespace, rows: list[dict]) -> None:
         f"- 口径: WF-001（mom=0.3 / tr=0.3 / lookback={args.lookback} / horizon={args.horizon} / top_n=10）"
     )
     lines.append(f"- 横截面: 每 {args.step} 个交易日一个，共 {len(rows)} 个")
-    lines.append(f"- IC 定义: 打分与未来 {args.horizon} 日收益的 Spearman 相关系数\n")
+    lines.append(f"- IC 定义: 打分与未来 {args.horizon} 日收益的 Spearman 相关系数")
+    lines.append(f"- 诊断因子: {', '.join(factor_order)}\n")
 
     lines.append("## 汇总\n")
     lines.append("| 因子 | IC 均值 | IC 标准差 | ICIR | t 值 | IC>0 占比 | 截面数 |")
     lines.append("|---|---|---|---|---|---|---|")
-    for name, s in (("momentum", mom), ("triple_rise", tr), ("composite(加权)", comp)):
+    for name in factor_order:
+        s = stats[name]
         lines.append(
             f"| {name} | {_fmt(s['mean'])} | {_fmt(s['std'])} | {_fmt(s['icir'], 3)} | "
             f"{_fmt(s['t'], 2)} | {_fmt(s['pos_rate'], 2)} | {s['n']} |"
@@ -257,20 +297,23 @@ def _write_report(args: argparse.Namespace, rows: list[dict]) -> None:
     lines.append(
         "- `IC 均值为负` 且显著 → 因子在该窗口**反向**有效，越按它选越亏（最危险）。"
     )
-    lines.append("- `ICIR < 0.3` → 即便有 IC 也不稳定。")
+    lines.append(
+        "- `IC 均值为正` 且显著 → 因子在该窗口**正向**有效，是下一步应加权的方向。"
+    )
+    lines.append(
+        "- `ICIR` 绝对值 < 0.3 → 即便有 IC 也不稳定；ICIR 为负表示方向持续性反向。"
+    )
     lines.append("- ⚠️ 本脚本仅做诊断，**不产出交易信号、不进入回测/上线路径**；")
     lines.append(
         "  IC 检验以未来收益为被解释变量，与回测信号生成中的 look-ahead 违规无关。\n"
     )
 
     lines.append("## 逐截面 IC\n")
-    lines.append("| # | 日期 | 样本数 | momentum | triple_rise | composite |")
-    lines.append("|---|---|---|---|---|---|")
+    lines.append("| # | 日期 | 样本数 | " + " | ".join(factor_order) + " |")
+    lines.append("|---|---|---|" + "---|" * len(factor_order))
     for i, r in enumerate(rows, 1):
-        lines.append(
-            f"| {i} | {r['date']} | {r['n']} | {_fmt(r['ic_mom'])} | "
-            f"{_fmt(r['ic_tr'])} | {_fmt(r['ic_comp'])} |"
-        )
+        cells = " | ".join(_fmt(r[f"ic_{name}"]) for name in factor_order)
+        lines.append(f"| {i} | {r['date']} | {r['n']} | {cells} |")
 
     Path(args.output).write_text("\n".join(lines) + "\n", encoding="utf-8")
 
