@@ -46,6 +46,7 @@ from aqsp.cli import (
 from aqsp.strategies.composite import CompositeStrategy
 from aqsp.strategies.mean_reversion import MeanReversionStrategy
 from aqsp.strategies.volume import VolumeBreakoutStrategy
+from aqsp.strategies.candidates import RpsCandidate, HighTightFlagCandidate
 from aqsp.strategies.base import StrategyConfig
 
 # 与 gate 主变体 WF-001 完全一致（mom=0.3 / tr=0.3 / lookback=60 / horizon=3 / top_n=10）
@@ -117,6 +118,11 @@ def main() -> int:
         "--max-symbols", type=int, default=0, help=">0 时只取前 N 只（快速试跑用）"
     )
     ap.add_argument("--output", required=True)
+    ap.add_argument(
+        "--candidates",
+        action="store_true",
+        help="额外诊断候选因子（rps / high_tight_flag，吸收自外部方案，仅作候选）",
+    )
     args = ap.parse_args()
 
     symbols: list[str] | None = None
@@ -181,11 +187,17 @@ def main() -> int:
     # 扩展诊断：除既有的 momentum / triple_rise / composite 外，
     # 额外覆盖 mean_reversion / volume（二者只需 OHLCV，可在 runner 的 daily_qfq 上直接算；
     # quality / value 需基本面表，本诊断样本无，跳过）。
+    candidate_classes = ()
+    if getattr(args, "candidates", False):
+        candidate_classes = (
+            ("rps", RpsCandidate),
+            ("high_tight_flag", HighTightFlagCandidate),
+        )
     extra_factors: dict[str, object] = {}
     for _name, _cls in (
         ("mean_reversion", MeanReversionStrategy),
         ("volume", VolumeBreakoutStrategy),
-    ):
+    ) + candidate_classes:
         try:
             extra_factors[_name] = _cls(
                 StrategyConfig(name=_name, enabled=True), diag_thresholds
@@ -193,9 +205,11 @@ def main() -> int:
         except Exception as exc:  # noqa: BLE001 - 单个因子不可用不应中断整体诊断
             print(f"[warn] {_name} 无法实例化，跳过: {exc}")
 
-    # 固定顺序：先既有三因子，再追加扩展因子
+    # 固定顺序：先既有三因子，再追加扩展因子（含候选因子）
     factor_order = ["momentum", "triple_rise", "composite"] + [
-        k for k in ("mean_reversion", "volume") if k in extra_factors
+        k
+        for k in ("mean_reversion", "volume", "rps", "high_tight_flag")
+        if k in extra_factors
     ]
     factor_objs: dict[str, object] = {
         "momentum": strategy.momentum_strategy,
