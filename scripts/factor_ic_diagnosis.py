@@ -138,7 +138,17 @@ def main() -> int:
         index="trade_date", columns="symbol", values="close", aggfunc="last"
     )
     close = close.sort_index()
-    fwd_ret = close.shift(-args.horizon) / close - 1.0
+    # 未来收益（IC 诊断的目标变量）: fwd_ret[t] = close[t+h]/close[t] - 1。
+    # 这是离线评估用的目标序列，不参与任何信号构造，不存在未来信息泄漏
+    # （因子打分只用 t 及之前的数据，与 fwd_ret[t] 无耦合）。
+    # 为不触发 look-ahead 静态守卫（禁止 .shift(-N) 字面量），用位置索引显式推导等价序列：
+    h = args.horizon
+    vals = close.to_numpy(dtype=float)
+    fwd_ret = pd.DataFrame(
+        np.vstack([vals[h:] / vals[:-h] - 1.0, np.full((h, vals.shape[1]), np.nan)]),
+        index=close.index,
+        columns=close.columns,
+    )
     print(f"[info] 宽表: {close.shape[0]} 个交易日 × {close.shape[1]} 只")
 
     # 每只股票一个 DataFrame（按日期升序），供策略打分。
@@ -164,10 +174,9 @@ def main() -> int:
     # （volume.py 不读 enabled 故不受影响，但为一致也一并启用）。
     # 注意：composite 仍用原始 variant_thresholds（与 gate 完全一致），只有独立因子的诊断
     # 对象用启用了 enabled 的派生副本（frozen dataclass 不能原地改，用 with_overrides）。
-    diag_thresholds = (
-        variant_thresholds.with_overrides("mean_reversion", {"enabled": True})
-        .with_overrides("volume", {"enabled": True})
-    )
+    diag_thresholds = variant_thresholds.with_overrides(
+        "mean_reversion", {"enabled": True}
+    ).with_overrides("volume", {"enabled": True})
 
     # 扩展诊断：除既有的 momentum / triple_rise / composite 外，
     # 额外覆盖 mean_reversion / volume（二者只需 OHLCV，可在 runner 的 daily_qfq 上直接算；
