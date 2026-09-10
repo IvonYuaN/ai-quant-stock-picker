@@ -843,7 +843,7 @@ def main(argv: list[str] | None = None) -> int:
         "--grid-profile",
         choices=("stable", "stable_plus", "exploratory", "v2"),
         default="stable",
-        help="grid CSCV 变体集合：stable 用于上线门禁（N=5），stable_plus 用于功效增强（N=8，含因子族多样性），exploratory 保留研究探索网格，v2 为选股内核 v2 验证（stable_plus 基线 + WF-V2A/V2B）",
+        help="grid CSCV 变体集合：stable 用于上线门禁（N=5），stable_plus 用于功效增强（N=8，含因子族多样性），exploratory 保留研究探索网格，v2 为选股内核 v2 验证（stable_plus 基线 + WF-V2A/V2B/V2C）",
     )
     wf.add_argument(
         "--pool",
@@ -6104,8 +6104,10 @@ _WALKFORWARD_EXPLORATORY_GRID_VARIANTS: tuple[WalkForwardGridVariant, ...] = (
 _WALKFORWARD_V2_GRID_VARIANTS: tuple[WalkForwardGridVariant, ...] = (
     _WALKFORWARD_STABLE_PLUS_GRID_VARIANTS
     + (
-        WalkForwardGridVariant("WF-V2A", 0.0, 0.0, 60, 3, 10, "v2"),
-        WalkForwardGridVariant("WF-V2B", 0.0, 0.0, 60, 3, 10, "v2_mr"),
+        # 三段式归因：隔离(hTF) → 配对(hTF+低波动) → 全家族(+弱MR+形态分散)。
+        WalkForwardGridVariant("WF-V2A", 0.0, 0.0, 60, 3, 10, "v2_htf"),
+        WalkForwardGridVariant("WF-V2B", 0.0, 0.0, 60, 3, 10, "v2_hl"),
+        WalkForwardGridVariant("WF-V2C", 0.0, 0.0, 60, 3, 10, "v2"),
     )
 )
 
@@ -6182,23 +6184,34 @@ def _apply_walkforward_grid_variant(
         composite_updates["mean_reversion_weight"] = 0.4
         composite_updates["momentum_weight"] = 0.1
         composite_updates["triple_rise_weight"] = 0.1
-    elif strategy_mix == "v2":
-        # 选股内核 v2：整族轮换到 反转/低波动/强势后收敛（替换 IC 反预测的动量/三连涨族）。
-        # 依据 outputs/regime_条件化IC_结论_2026-09-10.md（composite 全状态反向）。
+    elif strategy_mix == "v2_htf":
+        # 选股内核 v2 / 隔离段：只用高窄旗形（全研究唯一稳健正向因子），
+        # 用于在 gate 口径独立确认单因子有效性（不掺其他族）。
+        # 依据 outputs/factor_ic_v2_2026-09-10.md（htf IC +0.0366, t=+2.45，分状态全正）。
         composite_updates["momentum_weight"] = 0.0
         composite_updates["triple_rise_weight"] = 0.0
-        composite_updates["high_tight_flag_weight"] = 0.4
-        composite_updates["low_vol_weight"] = 0.3
-        composite_updates["pullback_weight"] = 0.3
+        composite_updates["high_tight_flag_weight"] = 1.0
+        composite_updates["low_vol_weight"] = 0.0
+        composite_updates["pullback_weight"] = 0.0
         composite_updates["min_total_score"] = 0.2
-    elif strategy_mix == "v2_mr":
-        # v2 + 弱正向的均值回复（IC≈+0.02 不显著，作次要补充）。
+    elif strategy_mix == "v2_hl":
+        # 选股内核 v2 / 配对段：高窄旗形(牛市强) + 低波动(熊/中性强) —— 两个无条件正 IC 因子，
+        # 其分状态优势互补，无需 regime 条件化即形成天然对冲。
         composite_updates["momentum_weight"] = 0.0
         composite_updates["triple_rise_weight"] = 0.0
-        composite_updates["high_tight_flag_weight"] = 0.35
-        composite_updates["low_vol_weight"] = 0.25
-        composite_updates["pullback_weight"] = 0.25
-        composite_updates["mean_reversion_weight"] = 0.15
+        composite_updates["high_tight_flag_weight"] = 0.5
+        composite_updates["low_vol_weight"] = 0.5
+        composite_updates["pullback_weight"] = 0.0
+        composite_updates["min_total_score"] = 0.2
+    elif strategy_mix == "v2":
+        # 选股内核 v2 / 全家族段：正向因子 + 弱正向均值回复（IC≈+0.02 不显著）+ 形态分散(pullback)。
+        # pullback 权重压低（gate 口径 IC≈0, t=0.19），仅作形态分散项。
+        composite_updates["momentum_weight"] = 0.0
+        composite_updates["triple_rise_weight"] = 0.0
+        composite_updates["high_tight_flag_weight"] = 0.45
+        composite_updates["low_vol_weight"] = 0.35
+        composite_updates["pullback_weight"] = 0.10
+        composite_updates["mean_reversion_weight"] = 0.10
         composite_updates["min_total_score"] = 0.2
 
     return replace(
