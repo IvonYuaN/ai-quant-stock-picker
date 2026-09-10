@@ -1822,6 +1822,25 @@ def test_walkforward_grid_subset_filters_variants_and_rejects_unknown() -> None:
         )
 
 
+def test_walkforward_cli_actually_registers_grid_variants_flag() -> None:
+    """回归守卫：--grid-variants 必须真正挂到 parser 上。
+
+    曾出现 `_selected_grid_variants` helper 已加入、但 argparse 注册被静默漏掉，
+    导致运行期报 "unrecognized arguments: --grid-variants" 而白跑。函数级测试
+    抓不到这类问题，所以这里直接对 --help 输出做集成断言。
+    """
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [sys.executable, "-m", "aqsp", "walkforward", "--help"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert "--grid-variants" in result.stdout
+
+
 def test_walkforward_grid_variant_applies_strategy_mix_weights() -> None:
     """strategy_mix 的权重写入此前零覆盖（旧测试把它 monkeypatch 成 no-op）。"""
     import aqsp.cli as cli_mod

@@ -846,6 +846,12 @@ def main(argv: list[str] | None = None) -> int:
         help="grid CSCV 变体集合：stable 用于上线门禁（N=5），stable_plus 用于功效增强（N=8，含因子族多样性），exploratory 保留研究探索网格，v2 为选股内核 v2 验证（stable_plus 基线 + WF-V2A/V2B/V2C）",
     )
     wf.add_argument(
+        "--grid-variants",
+        default="",
+        help="逗号分隔的 variant_id 子集（仅对 --grid-cscv 生效），如 'WF-001,WF-V2A'；"
+        "默认空 = 整包。用于把变体拆成多个独立进程并行跑，压缩墙钟时间。",
+    )
+    wf.add_argument(
         "--pool",
         type=str,
         default="all",
