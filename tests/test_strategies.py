@@ -835,3 +835,91 @@ def test_n_rebound_strategy_scores_detected_pattern() -> None:
     scores = strategy.calculate_score({"600000": _make_n_rebound_df()})
 
     assert 0.0 < scores["600000"] <= 1.0
+
+
+def test_composite_guards_non_finite_factor_scores(monkeypatch) -> None:
+    """NaN 因子分不得被 clamp 成 1.0。
+
+    回归：``min(1.0, float('nan')) == 1.0``（CPython 比较语义），旧实现会让
+    缺历史的票（如 LowVolatilityStrategy 返回 NaN）拿到满分排到第一。
+    """
+    from aqsp.strategies.thresholds import CompositeThresholds, Thresholds
+
+    thresholds = Thresholds(
+        composite=CompositeThresholds(
+            momentum_weight=0.0,
+            quality_weight=0.0,
+            value_weight=0.0,
+            volume_weight=0.0,
+            mean_reversion_weight=0.0,
+            triple_rise_weight=0.0,
+            high_tight_flag_weight=0.5,
+            low_vol_weight=0.5,
+            pullback_weight=0.0,
+        )
+    )
+    strategy = CompositeStrategy(
+        StrategyConfig(name="composite"), thresholds=thresholds
+    )
+    monkeypatch.setattr(
+        strategy.high_tight_flag_strategy,
+        "calculate_score",
+        lambda _data: {"600000": 0.2, "600001": 0.6},
+    )
+    monkeypatch.setattr(
+        strategy.low_vol_strategy,
+        "calculate_score",
+        lambda _data: {"600000": float("nan"), "600001": 0.4},
+    )
+
+    scores = strategy.calculate_score(
+        {"600000": pd.DataFrame(), "600001": pd.DataFrame()}
+    )
+
+    for value in scores.values():
+        assert value == value  # 非 NaN
+        assert 0.0 <= value <= 1.0
+    # 600000：htf=0.2 + lv=NaN(→缺失 0.0) → 0.1（旧实现会打成 1.0）
+    assert scores["600000"] == pytest.approx(0.1)
+    assert scores["600001"] == pytest.approx(0.5)
+
+
+def test_composite_skips_momentum_when_weight_zero(monkeypatch) -> None:
+    """momentum 权重为 0 时不应调用 momentum 打分（v2 变体省时，且数学等价）。"""
+    from aqsp.strategies.thresholds import CompositeThresholds, Thresholds
+
+    thresholds = Thresholds(
+        composite=CompositeThresholds(
+            momentum_weight=0.0,
+            quality_weight=0.0,
+            value_weight=0.0,
+            volume_weight=0.0,
+            mean_reversion_weight=0.0,
+            triple_rise_weight=0.0,
+            high_tight_flag_weight=1.0,
+            low_vol_weight=0.0,
+            pullback_weight=0.0,
+        )
+    )
+    strategy = CompositeStrategy(
+        StrategyConfig(name="composite"), thresholds=thresholds
+    )
+    calls = {"n": 0}
+
+    def _fail_if_called(_data):
+        calls["n"] += 1
+        raise AssertionError("momentum_weight=0 时不应调用 momentum 打分")
+
+    monkeypatch.setattr(strategy.momentum_strategy, "calculate_score", _fail_if_called)
+    monkeypatch.setattr(
+        strategy.high_tight_flag_strategy,
+        "calculate_score",
+        lambda _data: {"600000": 0.7},
+    )
+
+    detailed = strategy.calculate_detailed_scores({"600000": pd.DataFrame()})
+    scores = strategy.calculate_score({"600000": pd.DataFrame()})
+
+    assert calls["n"] == 0
+    assert detailed["600000"]["total"] == pytest.approx(0.7)
+    assert scores["600000"] == pytest.approx(0.7)

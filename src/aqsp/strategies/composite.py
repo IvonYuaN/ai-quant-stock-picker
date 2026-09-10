@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import math
 from typing import Dict, List
+
 import pandas as pd
 
 from aqsp.regime.strategy_mixer import canonicalize_regime
@@ -17,6 +19,23 @@ from aqsp.strategies.family_v2 import (
     PullbackContinuationStrategy,
 )
 from aqsp.strategies.thresholds import Thresholds, load_thresholds
+
+
+def _finite(value: float, default: float) -> float:
+    """Return ``value`` when it is a finite number, else ``default``.
+
+    Factor strategies legitimately return ``nan`` for symbols that lack the
+    required history (e.g. :class:`LowVolatilityStrategy` needs
+    ``vol_window + 1`` bars). Left unguarded, ``nan`` reaches
+    ``min(1.0, nan)`` which evaluates to **1.0** under CPython comparison
+    semantics — silently promoting data-poor symbols to the top of the
+    ranking. Guard every factor contribution with this helper.
+    """
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return default
+    return number if math.isfinite(number) else default
 
 
 class CompositeStrategy(BaseStrategy):
@@ -176,7 +195,15 @@ class CompositeStrategy(BaseStrategy):
     def calculate_score(
         self, data: Dict[str, pd.DataFrame], regime: str = "unknown"
     ) -> Dict[str, float]:
-        momentum_scores = self.momentum_strategy.calculate_score(data)
+        # 权重先解析：momentum 权重为 0 的变体（v2 三段式）无需计算 momentum ——
+        # 原实现无条件计算后整体乘 0，属纯浪费（gate 时间受限时影响可观）。
+        mw, qw, vw, volw, mrw, trw, htfw, lvw, pbw = (
+            self.get_regime_adjusted_weights(regime)
+        )
+
+        momentum_scores: Dict[str, float] = (
+            self.momentum_strategy.calculate_score(data) if mw > 0 else {}
+        )
 
         quality_scores: Dict[str, float] = {}
         if self._has_quality():
@@ -219,55 +246,50 @@ class CompositeStrategy(BaseStrategy):
         all_symbols |= set(lv_scores.keys())
         all_symbols |= set(pb_scores.keys())
 
-        # 使用市场状态调整后的权重
-        mw, qw, vw, volw, mrw, trw, htfw, lvw, pbw = (
-            self.get_regime_adjusted_weights(regime)
-        )
-
         final_scores = {}
         for symbol in all_symbols:
             total = 0.0
             w_sum = 0.0
 
-            m = momentum_scores.get(symbol, 0.5)
+            m = _finite(momentum_scores.get(symbol), 0.5)
             total += m * mw
             w_sum += mw
 
             if self._has_quality():
-                q = quality_scores.get(symbol, 0.5)
+                q = _finite(quality_scores.get(symbol), 0.5)
                 total += q * qw
                 w_sum += qw
 
             if self._has_value():
-                v = value_scores.get(symbol, 0.5)
+                v = _finite(value_scores.get(symbol), 0.5)
                 total += v * vw
                 w_sum += vw
 
             if self._has_volume():
-                vol = volume_scores.get(symbol, 0.5)
+                vol = _finite(volume_scores.get(symbol), 0.5)
                 total += vol * volw
                 w_sum += volw
 
             if self._has_mr():
-                mr = mr_scores.get(symbol, 0.5)
+                mr = _finite(mr_scores.get(symbol), 0.5)
                 total += mr * mrw
                 w_sum += mrw
 
             if self._has_tr():
-                tr = tr_scores.get(symbol, 0.5)
+                tr = _finite(tr_scores.get(symbol), 0.5)
                 total += tr * trw
                 w_sum += trw
 
             if self._has_htf():
-                total += htf_scores.get(symbol, 0.0) * htfw
+                total += _finite(htf_scores.get(symbol), 0.0) * htfw
                 w_sum += htfw
 
             if self._has_lowvol():
-                total += lv_scores.get(symbol, 0.0) * lvw
+                total += _finite(lv_scores.get(symbol), 0.0) * lvw
                 w_sum += lvw
 
             if self._has_pullback():
-                total += pb_scores.get(symbol, 0.0) * pbw
+                total += _finite(pb_scores.get(symbol), 0.0) * pbw
                 w_sum += pbw
 
             base_score = total / w_sum if w_sum > 0 else 0.0
@@ -278,7 +300,14 @@ class CompositeStrategy(BaseStrategy):
     def calculate_detailed_scores(
         self, data: Dict[str, pd.DataFrame], regime: str = "unknown"
     ) -> Dict[str, Dict[str, float]]:
-        momentum_scores = self.momentum_strategy.calculate_score(data)
+        # 与 calculate_score 同口径：mw=0 时跳过 momentum 计算。
+        mw, qw, vw, volw, mrw, trw, htfw, lvw, pbw = (
+            self.get_regime_adjusted_weights(regime)
+        )
+
+        momentum_scores: Dict[str, float] = (
+            self.momentum_strategy.calculate_score(data) if mw > 0 else {}
+        )
 
         quality_scores: Dict[str, float] = {}
         if self._has_quality():
@@ -321,62 +350,57 @@ class CompositeStrategy(BaseStrategy):
         all_symbols |= set(lv_scores.keys())
         all_symbols |= set(pb_scores.keys())
 
-        # 使用市场状态调整后的权重
-        mw, qw, vw, volw, mrw, trw, htfw, lvw, pbw = (
-            self.get_regime_adjusted_weights(regime)
-        )
-
         detailed = {}
         for symbol in all_symbols:
-            m = momentum_scores.get(symbol, 0.5)
+            m = _finite(momentum_scores.get(symbol), 0.5)
             entry: Dict[str, float] = {"momentum": m}
             total = m * mw
             w_sum = mw
 
             if self._has_quality():
-                q = quality_scores.get(symbol, 0.5)
+                q = _finite(quality_scores.get(symbol), 0.5)
                 entry["quality"] = q
                 total += q * qw
                 w_sum += qw
 
             if self._has_value():
-                v = value_scores.get(symbol, 0.5)
+                v = _finite(value_scores.get(symbol), 0.5)
                 entry["value"] = v
                 total += v * vw
                 w_sum += vw
 
             if self._has_volume():
-                vol = volume_scores.get(symbol, 0.5)
+                vol = _finite(volume_scores.get(symbol), 0.5)
                 entry["volume"] = vol
                 total += vol * volw
                 w_sum += volw
 
             if self._has_mr():
-                mr = mr_scores.get(symbol, 0.5)
+                mr = _finite(mr_scores.get(symbol), 0.5)
                 entry["mean_reversion"] = mr
                 total += mr * mrw
                 w_sum += mrw
 
             if self._has_tr():
-                tr = tr_scores.get(symbol, 0.5)
+                tr = _finite(tr_scores.get(symbol), 0.5)
                 entry["triple_rise"] = tr
                 total += tr * trw
                 w_sum += trw
 
             if self._has_htf():
-                htf = htf_scores.get(symbol, 0.0)
+                htf = _finite(htf_scores.get(symbol), 0.0)
                 entry["high_tight_flag"] = htf
                 total += htf * htfw
                 w_sum += htfw
 
             if self._has_lowvol():
-                lv = lv_scores.get(symbol, 0.0)
+                lv = _finite(lv_scores.get(symbol), 0.0)
                 entry["low_volatility"] = lv
                 total += lv * lvw
                 w_sum += lvw
 
             if self._has_pullback():
-                pb = pb_scores.get(symbol, 0.0)
+                pb = _finite(pb_scores.get(symbol), 0.0)
                 entry["pullback_continuation"] = pb
                 total += pb * pbw
                 w_sum += pbw
