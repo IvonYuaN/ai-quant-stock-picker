@@ -1796,6 +1796,32 @@ def test_walkforward_grid_profile_stable_plus_returns_eight_diverse_variants() -
     assert {"volume", "mean_reversion", "momentum"} <= set(mixes.values())
 
 
+def test_walkforward_grid_subset_filters_variants_and_rejects_unknown() -> None:
+    """--grid-variants 子集：把变体拆到独立进程并行跑的关键开关。"""
+    import aqsp.cli as cli_mod
+
+    selected = cli_mod._selected_grid_variants(
+        SimpleNamespace(grid_profile="v2", grid_variants="wf-001, WF-V2A")
+    )
+    assert [variant.variant_id for variant in selected] == ["WF-001", "WF-V2A"]
+
+    # 空子集 = 整包（v2 profile = stable_plus 8 + WF-V2A/B/C 3 = 11）
+    assert (
+        len(
+            cli_mod._selected_grid_variants(
+                SimpleNamespace(grid_profile="v2", grid_variants="")
+            )
+        )
+        == 11
+    )
+
+    # 未知 id 必须显式报错，避免静默跑一个空集合
+    with pytest.raises(ValueError, match="未知变体"):
+        cli_mod._selected_grid_variants(
+            SimpleNamespace(grid_profile="v2", grid_variants="WF-001,NOPE")
+        )
+
+
 def test_walkforward_grid_variant_applies_strategy_mix_weights() -> None:
     """strategy_mix 的权重写入此前零覆盖（旧测试把它 monkeypatch 成 no-op）。"""
     import aqsp.cli as cli_mod

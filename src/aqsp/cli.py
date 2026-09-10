@@ -6128,6 +6128,30 @@ def _walkforward_grid_variants(
     return _WALKFORWARD_STABLE_GRID_VARIANTS
 
 
+def _selected_grid_variants(
+    args: argparse.Namespace,
+) -> tuple[WalkForwardGridVariant, ...]:
+    """解析 profile 并应用 ``--grid-variants`` 子集过滤。
+
+    为什么需要子集：grid CSCV 是「外层变体 × 内层周期」的串行循环，全集 11 变体
+    × ~20 期 ≈ 220 格，单进程需数小时。允许按 ``variant_id`` 取子集后，可把若干
+    变体拆到互相独立的进程里并行跑（各进程共享同一份 warm fetch cache，只重算打分
+    与回测），把墙钟时间按并行度压缩——这是绕开串行长跑的唯一手段。
+    """
+    variants = _walkforward_grid_variants(
+        getattr(args, "grid_profile", "stable") or "stable"
+    )
+    subset = str(getattr(args, "grid_variants", "") or "").strip()
+    if not subset:
+        return variants
+    wanted = {item.strip().upper() for item in subset.split(",") if item.strip()}
+    known = {variant.variant_id for variant in variants}
+    unknown = sorted(wanted - known)
+    if unknown:
+        raise ValueError(f"--grid-variants 含未知变体 {unknown}；可用: {sorted(known)}")
+    return tuple(variant for variant in variants if variant.variant_id in wanted)
+
+
 def _parse_walkforward_period_range(period: object) -> tuple[str, str] | None:
     if not isinstance(period, str) or " to " not in period:
         return None
@@ -6259,7 +6283,7 @@ def _run_walkforward_grid_cscv(
     period_labels: list[str] | None = None
     min_periods: int | None = None
 
-    variants = _walkforward_grid_variants(args.grid_profile)
+    variants = _selected_grid_variants(args)
 
     for variant in variants:
         print(
