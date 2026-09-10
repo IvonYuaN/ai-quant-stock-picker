@@ -10,7 +10,7 @@
     保证 IC 可比），不引入未来复权信息。
   - Sequoia-X 因子是布尔"是否入选"；本书写改为**连续打分**（0~1，越高=信号越强），
     以便做横截面 Spearman IC。
-  - 全部点-in-time：只用截面日及之前的数据，禁止 .shift(-N) / 中心化 rolling，
+  - 全部点-in-time：只用截面日及之前的数据，禁止负向 shift / 中心化 rolling，
     通过 look-ahead 静态守卫（tests/test_runtime_redline_guard.py）。
   - 这里只产出打分，不进 composite、不进回测、不产出交易信号。
 
