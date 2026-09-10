@@ -46,6 +46,7 @@ from aqsp.cli import (
 from aqsp.strategies.composite import CompositeStrategy
 from aqsp.strategies.mean_reversion import MeanReversionStrategy
 from aqsp.strategies.volume import VolumeBreakoutStrategy
+from aqsp.strategies.candidates import RpsCandidate, HighTightFlagCandidate
 from aqsp.strategies.base import StrategyConfig
 
 # 与 gate 主变体 WF-001 完全一致（mom=0.3 / tr=0.3 / lookback=60 / horizon=3 / top_n=10）
@@ -99,6 +100,29 @@ def _ic(scores: pd.Series, fwd: pd.Series) -> float:
     return float(joined["s"].rank().corr(joined["f"].rank()))
 
 
+def _regime_at(
+    mkt_ret: pd.Series, d: str, window: int, bull_th: float, bear_th: float
+) -> str:
+    """按 trailing 等权市场累计收益标注市场状态（只用 d 及之前的数据，点-in-time）。
+
+    仅用于**把 IC 横截面分组**，不参与任何信号/打分构造；即便有偏差也不会泄漏进信号，
+    但仍按点-in-time 实现以保持诊断严谨。
+    """
+    try:
+        pos = int(mkt_ret.index.get_loc(d))
+    except KeyError:
+        return "unknown"
+    if pos + 1 < window:
+        return "unknown"
+    tail = mkt_ret.iloc[pos - window + 1 : pos + 1]
+    cum = float((1.0 + tail).prod() - 1.0)
+    if cum > bull_th:
+        return "bull"
+    if cum < bear_th:
+        return "bear"
+    return "neutral"
+
+
 def main() -> int:
     _optin_prefiltered_universe()
     ap = argparse.ArgumentParser(description=__doc__)
@@ -117,6 +141,31 @@ def main() -> int:
         "--max-symbols", type=int, default=0, help=">0 时只取前 N 只（快速试跑用）"
     )
     ap.add_argument("--output", required=True)
+    ap.add_argument(
+        "--candidates",
+        action="store_true",
+        help="额外诊断候选因子（rps / high_tight_flag，吸收自外部方案，仅作候选）",
+    )
+    ap.add_argument(
+        "--regime",
+        action="store_true",
+        help="附加分市场状态 IC（按 trailing 市场收益划分 bull/neutral/bear，点-in-time）",
+    )
+    ap.add_argument(
+        "--regime-window", type=int, default=20, help="市场状态 trailing 窗口（交易日）"
+    )
+    ap.add_argument(
+        "--regime-bull",
+        type=float,
+        default=0.02,
+        help="trailing 市场累计收益 > 此值 = bull",
+    )
+    ap.add_argument(
+        "--regime-bear",
+        type=float,
+        default=-0.02,
+        help="trailing 市场累计收益 < 此值 = bear",
+    )
     args = ap.parse_args()
 
     symbols: list[str] | None = None
@@ -151,6 +200,10 @@ def main() -> int:
     )
     print(f"[info] 宽表: {close.shape[0]} 个交易日 × {close.shape[1]} 只")
 
+    # 市场状态基础序列（点-in-time）：等权市场日收益 = 全池个股日收益的横截面均值。
+    # 只用于把 IC 横截面按市场状态分组，不参与任何信号构造。
+    mkt_ret = close.pct_change().mean(axis=1)
+
     # 每只股票一个 DataFrame（按日期升序），供策略打分。
     # 注意：策略内部按 "date" **列** 排序（momentum.py: sort_values("date")），
     # 因此这里必须保留 date 列而不是拿它当索引。
@@ -181,11 +234,17 @@ def main() -> int:
     # 扩展诊断：除既有的 momentum / triple_rise / composite 外，
     # 额外覆盖 mean_reversion / volume（二者只需 OHLCV，可在 runner 的 daily_qfq 上直接算；
     # quality / value 需基本面表，本诊断样本无，跳过）。
+    candidate_classes = ()
+    if getattr(args, "candidates", False):
+        candidate_classes = (
+            ("rps", RpsCandidate),
+            ("high_tight_flag", HighTightFlagCandidate),
+        )
     extra_factors: dict[str, object] = {}
     for _name, _cls in (
         ("mean_reversion", MeanReversionStrategy),
         ("volume", VolumeBreakoutStrategy),
-    ):
+    ) + candidate_classes:
         try:
             extra_factors[_name] = _cls(
                 StrategyConfig(name=_name, enabled=True), diag_thresholds
@@ -193,9 +252,11 @@ def main() -> int:
         except Exception as exc:  # noqa: BLE001 - 单个因子不可用不应中断整体诊断
             print(f"[warn] {_name} 无法实例化，跳过: {exc}")
 
-    # 固定顺序：先既有三因子，再追加扩展因子
+    # 固定顺序：先既有三因子，再追加扩展因子（含候选因子）
     factor_order = ["momentum", "triple_rise", "composite"] + [
-        k for k in ("mean_reversion", "volume") if k in extra_factors
+        k
+        for k in ("mean_reversion", "volume", "rps", "high_tight_flag")
+        if k in extra_factors
     ]
     factor_objs: dict[str, object] = {
         "momentum": strategy.momentum_strategy,
@@ -233,6 +294,10 @@ def main() -> int:
         row: dict[str, object] = {"date": d, "n": int(len(fwd))}
         for name in factor_order:
             row[f"ic_{name}"] = _ic(scores[name], fwd)
+        if args.regime:
+            row["regime"] = _regime_at(
+                mkt_ret, d, args.regime_window, args.regime_bull, args.regime_bear
+            )
         rows.append(row)
         if i % 5 == 0 or i == len(dates):
             parts = " ".join(
@@ -288,6 +353,14 @@ def _write_report(
     lines.append(f"- 横截面: 每 {args.step} 个交易日一个，共 {len(rows)} 个")
     lines.append(f"- IC 定义: 打分与未来 {args.horizon} 日收益的 Spearman 相关系数")
     lines.append(f"- 诊断因子: {', '.join(factor_order)}\n")
+    if rows and "regime" in rows[0]:
+        lines.append(
+            f"- 市场状态: 等权市场 trailing {args.regime_window} 日累计收益 "
+            f"> {args.regime_bull:+.0%} = bull / < {args.regime_bear:+.0%} = bear / 其余 neutral"
+        )
+        lines.append(
+            "  （regime 仅用于给 IC 横截面分组，点-in-time，不参与信号构造）\n"
+        )
 
     lines.append("## 汇总\n")
     lines.append("| 因子 | IC 均值 | IC 标准差 | ICIR | t 值 | IC>0 占比 | 截面数 |")
@@ -317,12 +390,42 @@ def _write_report(
         "  IC 检验以未来收益为被解释变量，与回测信号生成中的 look-ahead 违规无关。\n"
     )
 
+    if rows and "regime" in rows[0]:
+        counts = {
+            r: sum(1 for x in rows if x.get("regime") == r)
+            for r in ("bull", "neutral", "bear", "unknown")
+        }
+        lines.append("\n## 分市场状态 IC\n")
+        lines.append(
+            "横截面按市场状态分组（截面数："
+            + "，".join(f"{k}={v}" for k, v in counts.items() if v)
+            + "）。小样本 t 值仅供参考。\n"
+        )
+        lines.append("| 因子 | 状态 | IC 均值 | ICIR | t 值 | IC>0 占比 | 截面数 |")
+        lines.append("|---|---|---|---|---|---|---|")
+        for name in factor_order:
+            for regime in ("bull", "neutral", "bear"):
+                sub = [r[f"ic_{name}"] for r in rows if r.get("regime") == regime]
+                if not sub:
+                    continue
+                st = _stats(sub)
+                lines.append(
+                    f"| {name} | {regime} | {_fmt(st['mean'])} | {_fmt(st['icir'], 3)} | "
+                    f"{_fmt(st['t'], 2)} | {_fmt(st['pos_rate'], 2)} | {st['n']} |"
+                )
+
     lines.append("## 逐截面 IC\n")
-    lines.append("| # | 日期 | 样本数 | " + " | ".join(factor_order) + " |")
-    lines.append("|---|---|---|" + "---|" * len(factor_order))
+    header = "| # | 日期 | 样本数 |"
+    sep = "|---|---|---|"
+    if rows and "regime" in rows[0]:
+        header += " 状态 |"
+        sep += "---|"
+    lines.append(header + " " + " | ".join(factor_order) + " |")
+    lines.append(sep + "---|" * len(factor_order))
     for i, r in enumerate(rows, 1):
         cells = " | ".join(_fmt(r[f"ic_{name}"]) for name in factor_order)
-        lines.append(f"| {i} | {r['date']} | {r['n']} | {cells} |")
+        mid = f" {r.get('regime', '')} |" if (rows and "regime" in rows[0]) else ""
+        lines.append(f"| {i} | {r['date']} | {r['n']} |{mid} {cells} |")
 
     Path(args.output).write_text("\n".join(lines) + "\n", encoding="utf-8")
 
