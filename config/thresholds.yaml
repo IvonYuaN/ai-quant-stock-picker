@@ -14,6 +14,10 @@ composite:
   min_sample_size: 30
 execution:
   commission_rate: 0.0003
+  # 印花税（仅卖出端，T2 net 口径；与 variant_account.py 同值）
+  stamp_tax_rate: 0.001
+  # net 成本口径开关：false=legacy（每笔单边佣金，历史行为逐位不变）
+  net_fee_mode: false
   limit_down_tolerance: 0.005
   limit_up_tolerance: 0.005
   slippage: 0.002

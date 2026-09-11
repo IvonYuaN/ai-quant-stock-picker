@@ -173,6 +173,12 @@ class ExecutionThresholds:
     limit_down_tolerance: float = 0.005
     slippage: float = 0.002
     commission_rate: float = 0.0003
+    # 印花税（仅卖出端）。与 backtest/variant_account.py 的
+    # VariantExecutionRules.stamp_tax_rate 同值同出处（T2 net 口径）。
+    stamp_tax_rate: float = 0.001
+    # net 成本口径开关（默认关=legacy：每笔只扣单边佣金 3bp，行为逐位不变）。
+    # 开启后 walk-forward 每笔额外扣卖出端 (commission+stamp)=13bp。
+    net_fee_mode: bool = False
     fallback_limit_main_pct: float = 0.10
     fallback_limit_growth_pct: float = 0.20
     fallback_limit_bse_pct: float = 0.30

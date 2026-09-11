@@ -796,6 +796,14 @@ def main(argv: list[str] | None = None) -> int:
     wf.add_argument("--test-days", type=int, default=30)
     wf.add_argument("--purge-days", type=int, default=5)
     wf.add_argument(
+        "--net-fees",
+        action="store_true",
+        help=(
+            "enable net cost mode: additionally deduct sell-side commission + "
+            "stamp tax (13bp/trade) on top of the legacy single-side fee"
+        ),
+    )
+    wf.add_argument(
         "--min-score",
         type=float,
         default=None,
@@ -3506,6 +3514,26 @@ def _execution_cost_bps_from_thresholds(thresholds: Any) -> tuple[float, float]:
     return execution.fee_bps, execution.slippage_bps
 
 
+def _resolve_walkforward_cost_bps(
+    thresholds: Any, *, net_fees: bool = False
+) -> tuple[float, float, float | None]:
+    """Resolve walk-forward cost triple.
+
+    Returns ``(fee_bps, slippage_bps, sell_fee_bps)`` where ``sell_fee_bps``
+    is ``None`` in legacy mode (single-side commission, bit-identical to the
+    historical behaviour) and ``commission+stamp`` bps when the net cost mode
+    is requested via ``--net-fees`` or ``thresholds.execution.net_fee_mode``.
+    """
+    fee_bps, slippage_bps = _execution_cost_bps_from_thresholds(thresholds)
+    execution = execution_config_from_thresholds(thresholds)
+    sell_fee_bps = execution.sell_fee_bps
+    if net_fees and sell_fee_bps is None:
+        sell_fee_bps = fee_bps + float(
+            getattr(thresholds.execution, "stamp_tax_rate", 0.001)
+        ) * 10000.0
+    return fee_bps, slippage_bps, sell_fee_bps
+
+
 def _resolve_execution_cost_bps(
     thresholds: Any,
     *,
@@ -4101,7 +4129,10 @@ def _write_walkforward_gate(
 
 
 def _walkforward_gate_metadata(
-    args: argparse.Namespace, *, effective_symbols: int | None = None
+    args: argparse.Namespace,
+    *,
+    effective_symbols: int | None = None,
+    net_fees: bool = False,
 ) -> dict[str, object]:
     metadata: dict[str, object] = {
         "source": str(getattr(args, "source", "") or ""),
@@ -4109,6 +4140,9 @@ def _walkforward_gate_metadata(
             getattr(args, "window_mode", "rolling_recent") or "rolling_recent"
         ),
         "skip_pit_financials": bool(getattr(args, "skip_pit_financials", False)),
+        # 成本口径显式落产物：legacy=单边佣金；net=补卖出端佣金+印花税。
+        # 防新旧口径产物混读（同双窗口对比的口径红线）。
+        "cost_mode": "net" if net_fees else "legacy",
     }
     if effective_symbols is not None:
         metadata["effective_symbols"] = int(effective_symbols)
@@ -4192,10 +4226,15 @@ def _walkforward_runtime_rows(
     *,
     fee_bps: float,
     slippage_bps: float,
+    sell_fee_bps: float | None = None,
 ) -> list[tuple[str, str]]:
     min_score = "thresholds.yaml"
     if getattr(args, "min_score", None) is not None:
         min_score = str(args.min_score)
+    if sell_fee_bps is not None:
+        fee_mode = f"net(buy {fee_bps:.4g}bp + sell {sell_fee_bps:.4g}bp)"
+    else:
+        fee_mode = f"legacy({fee_bps:.4g}bp)"
     return [
         ("source", str(args.source)),
         ("pool", str(getattr(args, "pool", ""))),
@@ -4209,6 +4248,7 @@ def _walkforward_runtime_rows(
             if bool(getattr(args, "grid_cscv", False))
             else "-",
         ),
+        ("fee_mode", fee_mode),
         ("fee_bps", f"{fee_bps:.4g}"),
         ("slippage_bps", f"{slippage_bps:.4g}"),
         ("tiered_stop", str(bool(getattr(args, "tiered_stop", False)))),
@@ -6737,9 +6777,14 @@ def run_walkforward(args: argparse.Namespace) -> int:
     requested_engine = (args.engine or runtime_cfg.research_engine or "auto").strip()
     engine, resolution = resolve_walkforward_engine(requested_engine)
     effective_horizon = args.horizon_days or 3
-    walkforward_fee_bps, walkforward_slippage_bps = _execution_cost_bps_from_thresholds(
-        thresholds
+    walkforward_net_fees = bool(getattr(args, "net_fees", False)) or bool(
+        getattr(thresholds.execution, "net_fee_mode", False)
     )
+    (
+        walkforward_fee_bps,
+        walkforward_slippage_bps,
+        walkforward_sell_fee_bps,
+    ) = _resolve_walkforward_cost_bps(thresholds, net_fees=walkforward_net_fees)
     engine_cfg = WalkForwardEngineConfig(
         train_days=args.train_days,
         test_days=args.test_days,
@@ -6747,6 +6792,7 @@ def run_walkforward(args: argparse.Namespace) -> int:
         horizon_days=effective_horizon,
         fee_bps=walkforward_fee_bps,
         slippage_bps=walkforward_slippage_bps,
+        sell_fee_bps=walkforward_sell_fee_bps,
         use_tiered_stop=getattr(args, "tiered_stop", False),
         n_variants=len(_walkforward_grid_variants(args.grid_profile))
         if args.grid_cscv
@@ -6890,6 +6936,7 @@ def run_walkforward(args: argparse.Namespace) -> int:
                 effective_horizon,
                 fee_bps=walkforward_fee_bps,
                 slippage_bps=walkforward_slippage_bps,
+                sell_fee_bps=walkforward_sell_fee_bps,
             )
         ],
         "",
@@ -7007,7 +7054,11 @@ def run_walkforward(args: argparse.Namespace) -> int:
         end=args.end,
         n_periods=grid_periods if args.grid_cscv else len(result.periods),
         n_variants=grid_n_variants,
-        metadata=_walkforward_gate_metadata(args, effective_symbols=effective_symbols),
+        metadata=_walkforward_gate_metadata(
+            args,
+            effective_symbols=effective_symbols,
+            net_fees=walkforward_net_fees,
+        ),
         diagnostics=grid_details if args.grid_cscv and grid_details else None,
         gate_path=getattr(args, "gate_path", WALKFORWARD_GATE_PATH),
     )

@@ -178,6 +178,9 @@ class WalkForwardTester:
         # BACKTEST_SLIPPAGE_BPS，对齐 thresholds.yaml execution.slippage=0.002），
         # 避免两个回测引擎成本口径不一致（健康报告 #R7）。
         slippage_bps: float = BACKTEST_SLIPPAGE_BPS,
+        # net 口径卖出端费率（佣金+印花税，bps）。None = legacy（每笔只扣
+        # 单边 fee_bps，历史行为逐位不变）；非 None 时每笔额外扣 sell_fee_bps。
+        sell_fee_bps: float | None = None,
         top_n: int = 10,
         stop_loss_pct: float | None = None,
         take_profit_pct: float | None = None,
@@ -194,6 +197,7 @@ class WalkForwardTester:
         self.horizon_days = horizon_days
         self.fee_bps = fee_bps
         self.slippage_bps = slippage_bps
+        self.sell_fee_bps = sell_fee_bps
         self.top_n = top_n
         self.stop_loss_pct = stop_loss_pct
         self.take_profit_pct = take_profit_pct
@@ -707,6 +711,9 @@ class WalkForwardTester:
 
             fee_pct = self.fee_bps / 100
             ret = (exit_price - entry_price) / entry_price * 100 - fee_pct
+            if self.sell_fee_bps is not None:
+                # net 口径：补卖出端佣金+印花税（legacy 缺口 13bp/笔）。
+                ret -= self.sell_fee_bps / 100
 
             trades.append(
                 TradeResult(
