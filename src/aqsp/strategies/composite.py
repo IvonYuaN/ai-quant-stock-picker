@@ -11,6 +11,7 @@ from aqsp.strategies.value import ValueStrategy
 from aqsp.strategies.volume import VolumeBreakoutStrategy
 from aqsp.strategies.mean_reversion import MeanReversionStrategy
 from aqsp.strategies.triple_rise import TripleRiseStrategy
+from aqsp.strategies.candidates import HighTightFlagCandidate
 from aqsp.strategies.thresholds import Thresholds, load_thresholds
 
 
@@ -63,6 +64,13 @@ class CompositeStrategy(BaseStrategy):
             ),
             thresholds=self.thresholds,
         )
+        self.htf_strategy = HighTightFlagCandidate(
+            StrategyConfig(
+                name="high_tight_flag",
+                enabled=self._has_htf(),
+            ),
+            thresholds=self.thresholds,
+        )
 
     def _has_volume(self) -> bool:
         return (
@@ -93,10 +101,16 @@ class CompositeStrategy(BaseStrategy):
             and self.thresholds.composite.triple_rise_weight > 0
         )
 
+    def _has_htf(self) -> bool:
+        return (
+            self.thresholds.high_tight_flag.enabled
+            and self.thresholds.composite.high_tight_flag_weight > 0
+        )
+
     def get_regime_adjusted_weights(
         self, regime: str
-    ) -> tuple[float, float, float, float, float, float]:
-        """根据市场状态调整策略权重"""
+    ) -> tuple[float, float, float, float, float, float, float]:
+        """根据市场状态调整策略权重（7 因子：mom/quality/value/vol/mr/tr/htf）"""
         base = self.thresholds.composite
         canonical_regime = canonicalize_regime(regime)
         adjustment = self.thresholds.regime.strategy_weights.get(canonical_regime)
@@ -118,6 +132,7 @@ class CompositeStrategy(BaseStrategy):
                 base.volume_weight,
                 base.mean_reversion_weight,
                 base.triple_rise_weight,
+                base.high_tight_flag_weight,
             )
 
         def blended(multiplier: float) -> float:
@@ -130,6 +145,7 @@ class CompositeStrategy(BaseStrategy):
             base.volume_weight * blended(adjustment.volume),
             base.mean_reversion_weight * blended(adjustment.mean_reversion),
             base.triple_rise_weight * blended(adjustment.triple_rise),
+            base.high_tight_flag_weight * blended(adjustment.high_tight_flag),
         )
 
     def calculate_score(
@@ -157,15 +173,20 @@ class CompositeStrategy(BaseStrategy):
         if self._has_tr():
             tr_scores = self.triple_rise_strategy.calculate_score(data)
 
+        htf_scores: Dict[str, float] = {}
+        if self._has_htf():
+            htf_scores = self.htf_strategy.calculate_score(data)
+
         all_symbols = set(momentum_scores.keys())
         all_symbols |= set(quality_scores.keys())
         all_symbols |= set(value_scores.keys())
         all_symbols |= set(volume_scores.keys())
         all_symbols |= set(mr_scores.keys())
         all_symbols |= set(tr_scores.keys())
+        all_symbols |= set(htf_scores.keys())
 
         # 使用市场状态调整后的权重
-        mw, qw, vw, volw, mrw, trw = self.get_regime_adjusted_weights(regime)
+        mw, qw, vw, volw, mrw, trw, htfw = self.get_regime_adjusted_weights(regime)
 
         final_scores = {}
         for symbol in all_symbols:
@@ -201,6 +222,11 @@ class CompositeStrategy(BaseStrategy):
                 total += tr * trw
                 w_sum += trw
 
+            if self._has_htf():
+                htf = htf_scores.get(symbol, 0.5)
+                total += htf * htfw
+                w_sum += htfw
+
             base_score = total / w_sum if w_sum > 0 else 0.0
             final_scores[symbol] = max(0.0, min(1.0, base_score))
 
@@ -231,15 +257,20 @@ class CompositeStrategy(BaseStrategy):
         if self._has_tr():
             tr_scores = self.triple_rise_strategy.calculate_score(data)
 
+        htf_scores: Dict[str, float] = {}
+        if self._has_htf():
+            htf_scores = self.htf_strategy.calculate_score(data)
+
         all_symbols = set(momentum_scores.keys())
         all_symbols |= set(quality_scores.keys())
         all_symbols |= set(value_scores.keys())
         all_symbols |= set(volume_scores.keys())
         all_symbols |= set(mr_scores.keys())
         all_symbols |= set(tr_scores.keys())
+        all_symbols |= set(htf_scores.keys())
 
         # 使用市场状态调整后的权重
-        mw, qw, vw, volw, mrw, trw = self.get_regime_adjusted_weights(regime)
+        mw, qw, vw, volw, mrw, trw, htfw = self.get_regime_adjusted_weights(regime)
 
         detailed = {}
         for symbol in all_symbols:
@@ -277,6 +308,12 @@ class CompositeStrategy(BaseStrategy):
                 entry["triple_rise"] = tr
                 total += tr * trw
                 w_sum += trw
+
+            if self._has_htf():
+                htf = htf_scores.get(symbol, 0.5)
+                entry["high_tight_flag"] = htf
+                total += htf * htfw
+                w_sum += htfw
 
             base_total = total / w_sum if w_sum > 0 else 0.0
             entry["total"] = max(0.0, min(1.0, base_total))

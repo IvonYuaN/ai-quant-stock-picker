@@ -842,9 +842,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     wf.add_argument(
         "--grid-profile",
-        choices=("stable", "stable_plus", "exploratory"),
+        choices=("stable", "stable_plus", "exploratory", "htf_mr"),
         default="stable",
-        help="grid CSCV 变体集合：stable 用于上线门禁（N=5），stable_plus 用于功效增强（N=8，含因子族多样性），exploratory 保留研究探索网格（N=11）",
+        help="grid CSCV 变体集合：stable 用于上线门禁（N=5），stable_plus 用于功效增强（N=8，含因子族多样性），exploratory 保留研究探索网格（N=11），htf_mr 为 T3 方案 A 因子族替换验证网格（htf+mr 换 mom+tr，N=8，不改动默认）",
     )
     wf.add_argument(
         "--pool",
@@ -6101,6 +6101,21 @@ _WALKFORWARD_EXPLORATORY_GRID_VARIANTS: tuple[WalkForwardGridVariant, ...] = (
     _WALKFORWARD_VALIDATED_GRID_VARIANTS
 )
 
+# T3 方案 A：因子族替换验证网格（htf+mr 换 mom+tr）。全新 profile，不改动
+# stable / stable_plus 任何变体或权重。N=8 满足 MIN_CSCV_VARIANTS，CSCV 可靠。
+# momentum_weight / triple_rise_weight 传给构造器的值会被 htf_mr 分支清零覆盖，
+# 仅 lookback/horizon/top_n 参与网格分辨力。
+_WALKFORWARD_HTF_MR_GRID_VARIANTS: tuple[WalkForwardGridVariant, ...] = (
+    WalkForwardGridVariant("WF-H01", 0.0, 0.0, 60, 3, 10, "htf_mr"),
+    WalkForwardGridVariant("WF-H02", 0.0, 0.0, 60, 3, 5, "htf_mr"),
+    WalkForwardGridVariant("WF-H03", 0.0, 0.0, 60, 3, 20, "htf_mr"),
+    WalkForwardGridVariant("WF-H04", 0.0, 0.0, 20, 3, 10, "htf_mr"),
+    WalkForwardGridVariant("WF-H05", 0.0, 0.0, 120, 3, 10, "htf_mr"),
+    WalkForwardGridVariant("WF-H06", 0.0, 0.0, 60, 1, 10, "htf_mr"),
+    WalkForwardGridVariant("WF-H07", 0.0, 0.0, 60, 10, 10, "htf_mr"),
+    WalkForwardGridVariant("WF-H08", 0.0, 0.0, 40, 5, 5, "htf_mr"),
+)
+
 _WALKFORWARD_GRID_VARIANTS: tuple[WalkForwardGridVariant, ...] = (
     _WALKFORWARD_EXPLORATORY_GRID_VARIANTS
 )
@@ -6113,6 +6128,8 @@ def _walkforward_grid_variants(
         return _WALKFORWARD_EXPLORATORY_GRID_VARIANTS
     if profile == "stable_plus":
         return _WALKFORWARD_STABLE_PLUS_GRID_VARIANTS
+    if profile == "htf_mr":
+        return _WALKFORWARD_HTF_MR_GRID_VARIANTS
     return _WALKFORWARD_STABLE_GRID_VARIANTS
 
 
@@ -6157,13 +6174,18 @@ def _summarize_walkforward_market_window(
 def _apply_walkforward_grid_variant(
     thresholds: Any, variant: WalkForwardGridVariant
 ) -> Any:
-    from aqsp.strategies.thresholds import CompositeThresholds, MomentumThresholds
+    from aqsp.strategies.thresholds import (
+        CompositeThresholds,
+        MomentumThresholds,
+    )
 
     composite_updates = {
         "momentum_weight": variant.momentum_weight,
         "triple_rise_weight": variant.triple_rise_weight,
     }
     strategy_mix = variant.strategy_mix or "momentum"
+    enable_mr = False
+    enable_htf = False
     if strategy_mix == "volume":
         composite_updates["volume_weight"] = 0.3
         composite_updates["momentum_weight"] = 0.2
@@ -6172,22 +6194,43 @@ def _apply_walkforward_grid_variant(
         composite_updates["mean_reversion_weight"] = 0.4
         composite_updates["momentum_weight"] = 0.1
         composite_updates["triple_rise_weight"] = 0.1
+        enable_mr = True
+    elif strategy_mix == "htf_mr":
+        # T3 方案 A：htf + mr 替换 mom + tr（两个显著负 IC 因子 → 一个显著正 + 一个正向）
+        composite_updates["high_tight_flag_weight"] = 0.3
+        composite_updates["mean_reversion_weight"] = 0.3
+        composite_updates["momentum_weight"] = 0.0
+        composite_updates["triple_rise_weight"] = 0.0
+        # htf+mr 信号弱（IC≈0.03），下调 min_total_score 避免 select_stocks 滤光
+        composite_updates["min_total_score"] = 0.1
+        enable_mr = True
+        enable_htf = True
 
-    return replace(
-        thresholds,
-        composite=CompositeThresholds(
+    replace_kwargs: dict[str, Any] = {
+        "composite": CompositeThresholds(
             **{
                 **thresholds.composite.__dict__,
                 **composite_updates,
             }
         ),
-        momentum=MomentumThresholds(
+        "momentum": MomentumThresholds(
             **{
                 **thresholds.momentum.__dict__,
                 "lookback_days": variant.lookback_days,
             }
         ),
-    )
+    }
+    # 修潜伏 bug：strategy_mix 用到 mr/htf 时必须同步 enable 对应因子，
+    # 否则 _has_mr()/_has_htf() 因 enabled==False 永不放行（WF-MR1 旧读数形同废跑）。
+    if enable_mr:
+        replace_kwargs["mean_reversion"] = replace(
+            thresholds.mean_reversion, enabled=True
+        )
+    if enable_htf:
+        replace_kwargs["high_tight_flag"] = replace(
+            thresholds.high_tight_flag, enabled=True
+        )
+    return replace(thresholds, **replace_kwargs)
 
 
 def _run_walkforward_grid_cscv(

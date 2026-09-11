@@ -89,6 +89,7 @@ class CompositeThresholds:
     volume_weight: float = 0.2
     mean_reversion_weight: float = 0.0
     triple_rise_weight: float = 0.0
+    high_tight_flag_weight: float = 0.0
     min_total_score: float = 0.6
     base_blend_weight: float = 0.7
     regime_blend_weight: float = 0.3
@@ -187,6 +188,7 @@ class RegimeStrategyWeights:
     volume: float = 1.0
     mean_reversion: float = 1.0
     triple_rise: float = 1.0
+    high_tight_flag: float = 1.0
 
 
 _DEFAULT_REGIME_STRATEGY_WEIGHTS: Dict[str, RegimeStrategyWeights] = {
@@ -197,6 +199,7 @@ _DEFAULT_REGIME_STRATEGY_WEIGHTS: Dict[str, RegimeStrategyWeights] = {
         volume=1.1,
         mean_reversion=0.7,
         triple_rise=1.1,
+        high_tight_flag=1.2,
     ),
     "volatile_bull": RegimeStrategyWeights(
         momentum=1.1,
@@ -205,6 +208,7 @@ _DEFAULT_REGIME_STRATEGY_WEIGHTS: Dict[str, RegimeStrategyWeights] = {
         volume=1.2,
         mean_reversion=0.8,
         triple_rise=1.0,
+        high_tight_flag=1.1,
     ),
     "stable_bear": RegimeStrategyWeights(
         momentum=0.7,
@@ -213,6 +217,7 @@ _DEFAULT_REGIME_STRATEGY_WEIGHTS: Dict[str, RegimeStrategyWeights] = {
         volume=0.8,
         mean_reversion=1.3,
         triple_rise=0.8,
+        high_tight_flag=0.7,
     ),
     "volatile_bear": RegimeStrategyWeights(
         momentum=0.6,
@@ -221,6 +226,7 @@ _DEFAULT_REGIME_STRATEGY_WEIGHTS: Dict[str, RegimeStrategyWeights] = {
         volume=0.9,
         mean_reversion=1.4,
         triple_rise=0.7,
+        high_tight_flag=0.6,
     ),
     "stable_sideways": RegimeStrategyWeights(
         momentum=0.9,
@@ -229,6 +235,7 @@ _DEFAULT_REGIME_STRATEGY_WEIGHTS: Dict[str, RegimeStrategyWeights] = {
         volume=1.0,
         mean_reversion=1.1,
         triple_rise=0.9,
+        high_tight_flag=0.9,
     ),
     "volatile_sideways": RegimeStrategyWeights(
         momentum=0.8,
@@ -237,6 +244,7 @@ _DEFAULT_REGIME_STRATEGY_WEIGHTS: Dict[str, RegimeStrategyWeights] = {
         volume=1.1,
         mean_reversion=1.2,
         triple_rise=0.8,
+        high_tight_flag=0.8,
     ),
 }
 
@@ -326,6 +334,19 @@ class TripleRiseThresholds:
     volume_medium_score: float = 0.6
     volume_price_up_score: float = 0.3
     weights: TripleRiseWeights = field(default_factory=TripleRiseWeights)
+
+
+@dataclass(frozen=True)
+class HighTightFlagThresholds:
+    """高而窄旗形（波动收敛）候选因子的接入开关。
+
+    因子打分逻辑本身在 candidates.HighTightFlagCandidate（用 config.params），
+    此段仅作为 composite 的门控开关（_has_htf），与 mean_reversion/triple_rise 同级。
+    默认 enabled=True：因子替换方案 A 通过变体开启；默认 composite.high_tight_flag_weight=0
+    保证默认 WF-001 行为不变（门控在 weight>0 才放行）。
+    """
+
+    enabled: bool = True
 
 
 @dataclass(frozen=True)
@@ -585,6 +606,9 @@ class Thresholds:
         default_factory=MeanReversionThresholds
     )
     triple_rise: TripleRiseThresholds = field(default_factory=TripleRiseThresholds)
+    high_tight_flag: HighTightFlagThresholds = field(
+        default_factory=HighTightFlagThresholds
+    )
     scoring: ScoringThresholds = field(default_factory=ScoringThresholds)
     internet_strategy: InternetStrategyThresholds = field(
         default_factory=InternetStrategyThresholds
