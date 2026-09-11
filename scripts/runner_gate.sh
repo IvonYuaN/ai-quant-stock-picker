@@ -2,7 +2,7 @@
 # runner_gate.sh — 在计算节点(runner)上执行：校验同步产物 → 跑 walkforward gate → 回传 prod。
 #
 # 用法（在 runner 上）：
-#   [GRID_PROFILE=stable_plus] [LOOKBACK_YEARS=3] [BATCH_SIZE=500] \
+#   [GRID_PROFILE=stable_plus] [LOOKBACK_YEARS=5] [BATCH_SIZE=500] \
 #   BACK_HOST=root@8.130.124.238 bash /opt/aqsp-runner/scripts/runner_gate.sh
 #
 # 关键参数：
@@ -18,7 +18,7 @@ DATA="$RUNNER_ROOT/data/astocks_raw.db"
 OUT="$RUNNER_ROOT/gate_run"
 
 GRID_PROFILE="${GRID_PROFILE:-stable_plus}"
-LOOKBACK_YEARS="${LOOKBACK_YEARS:-3}"
+LOOKBACK_YEARS="${LOOKBACK_YEARS:-5}"
 TIMEOUT_SEC="${TIMEOUT_SEC:-36000}"
 BATCH_SIZE="${BATCH_SIZE:-500}"        # prod 只能 200（内存逼的），runner 8G 可开 500
 MIN_MEMORY_GIB="${MIN_MEMORY_GIB:-4}"  # 预检阈值，runner 8G 无压力；prod 只能 1.5
