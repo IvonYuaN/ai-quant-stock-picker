@@ -19,6 +19,7 @@ def _passing_gate_payload() -> dict[str, object]:
         start="2023-01-01",
         end="2024-12-31",
         n_periods=12,
+        n_variants=8,
         metadata={
             "backtest_assumptions": {
                 "uses_raw_prices": True,

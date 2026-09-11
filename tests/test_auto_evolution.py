@@ -40,6 +40,7 @@ def _passing_gate_payload() -> dict[str, object]:
         start="2023-01-01",
         end="2024-12-31",
         n_periods=12,
+        n_variants=8,
         thresholds_version="test",
         metadata={
             "backtest_assumptions": {
@@ -86,6 +87,7 @@ def test_auto_evolution_proposal_records_failure_evidence_samples_and_validation
         start="2023-06-30",
         end="2026-06-29",
         n_periods=19,
+        n_variants=8,
     )
 
     result = evolution.evolve_parameters(

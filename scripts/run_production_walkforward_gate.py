@@ -1758,8 +1758,9 @@ def main() -> int:
     parser.add_argument(
         "--grid-profile",
         choices=("stable", "stable_plus", "exploratory"),
-        default="stable",
-        help="grid CSCV 变体集合：stable(N=5) 保守门禁，stable_plus(N=8，含 volume/mean_reversion 因子族) 功效增强，exploratory(N=11) 仅供研究",
+        default="stable_plus",
+        help="grid CSCV 变体集合：stable_plus(N=8，默认，满足 CSCV n_variants>=8 硬前置) 功效增强，"
+        "stable(N=5，CSCV 变体不足、门禁 fail-closed) 已被取代，exploratory(N=11) 仅供研究",
     )
     parser.add_argument(
         "--crash-protection",

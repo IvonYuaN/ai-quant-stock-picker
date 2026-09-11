@@ -13,6 +13,11 @@ MAX_PBO = 0.5
 MAX_GATE_AGE_DAYS = 35
 MIN_PRODUCTION_GATE_SYMBOLS = 3000
 MIN_PRODUCTION_GATE_COVERAGE_RATIO = 0.9
+# CSCV 的 PBO 只有在足够多的变体档位下才可信：n_variants < 8 时 λ 网格粗糙、
+# 中性组合（λ=0）占比偏高，PBO 系统性上偏（见 walk_forward.calculate_cscv_pbo
+# 的 cscv_warnings）。门禁据此 fail-closed：变体数不足即视为「未经有效 CSCV 验证」，
+# 不允许通过双门（对齐宪法 §17.7「禁止 N=1 伪 CSCV」的同一精神）。
+MIN_CSCV_VARIANTS = 8
 
 # thresholds 版本在 gate sidecar 里缺失时的展示占位（健康报告 #R8）。
 #
@@ -47,6 +52,8 @@ class WalkForwardGateValidation:
     pbo_pass: bool | None
     pbo_valid: bool | None
     both_pass: bool | None
+    n_variants: int | None
+    cscv_reliable: bool | None
     data_end: date | None
     thresholds_version: str | None
     assumption_audit_ok: bool | None
@@ -64,6 +71,7 @@ class WalkForwardGateEvidence:
     dsr: float | None
     pbo: float | None
     n_periods: int | None
+    n_variants: int | None
     run_date: date | None
     data_end: date | None
     thresholds_version: str | None
@@ -90,20 +98,26 @@ def build_walkforward_gate_payload(
     start: str,
     end: str,
     n_periods: int,
+    n_variants: int | None = None,
     thresholds_version: str | None = None,
     metadata: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     pbo_valid = pbo is not None and pbo > 0.0
     dsr_pass = dsr > MIN_DSR
     pbo_pass = pbo_valid and pbo < MAX_PBO
+    # CSCV 可信度前置：n_variants < 8 时 PBO 系统性上偏，不得据其通过门禁。
+    # 单序列（n_variants=1，未做 grid CSCV）本就无法出有效 PBO，同样不计入。
+    cscv_reliable = n_variants is not None and n_variants >= MIN_CSCV_VARIANTS
     payload: dict[str, object] = {
         "run_date": run_date,
         "deflated_sharpe": dsr,
         "pbo": pbo,
         "pbo_valid": pbo_valid,
+        "n_variants": n_variants if n_variants is not None else 0,
+        "cscv_reliable": cscv_reliable,
         "dsr_pass": dsr_pass,
         "pbo_pass": pbo_pass,
-        "both_pass": dsr_pass and pbo_pass,
+        "both_pass": dsr_pass and pbo_pass and cscv_reliable,
         "data_start": start,
         "data_end": end,
         "n_periods": n_periods,
@@ -201,6 +215,8 @@ def validate_walkforward_gate_payload(
     pbo_pass = _strict_bool(payload.get("pbo_pass"))
     pbo_valid = _strict_bool(payload.get("pbo_valid"))
     both_pass = _strict_bool(payload.get("both_pass"))
+    n_variants = _strict_int(payload.get("n_variants"))
+    cscv_reliable = _strict_bool(payload.get("cscv_reliable"))
     thresholds_version = _strict_text(payload.get("thresholds_version"))
     window_mode = (
         str(
@@ -237,6 +253,8 @@ def validate_walkforward_gate_payload(
         pbo_pass=pbo_pass,
         pbo_valid=pbo_valid,
         both_pass=both_pass,
+        n_variants=n_variants,
+        cscv_reliable=cscv_reliable,
         raw_data_end=payload.get("data_end"),
         data_end=data_end,
         raw_data_start=payload.get("data_start"),
@@ -267,6 +285,8 @@ def validate_walkforward_gate_payload(
         pbo_pass=pbo_pass,
         pbo_valid=pbo_valid,
         both_pass=both_pass,
+        n_variants=n_variants,
+        cscv_reliable=cscv_reliable,
         data_end=data_end,
         thresholds_version=thresholds_version,
         assumption_audit_ok=assumption_audit_ok,
@@ -281,6 +301,8 @@ def validate_walkforward_gate_payload(
             pbo_pass=pbo_pass,
             pbo_valid=pbo_valid,
             both_pass=both_pass,
+            n_variants=n_variants,
+            cscv_reliable=cscv_reliable,
             thresholds_version=thresholds_version,
             blockers=blockers,
         ),
@@ -314,6 +336,7 @@ def build_walkforward_gate_evidence(
         dsr=validation.dsr,
         pbo=validation.pbo,
         n_periods=validation.n_periods,
+        n_variants=validation.n_variants,
         run_date=validation.run_date,
         data_end=validation.data_end,
         thresholds_version=validation.thresholds_version,
@@ -333,6 +356,8 @@ def _gate_blockers(
     pbo_pass: bool | None,
     pbo_valid: bool | None,
     both_pass: bool | None,
+    n_variants: int | None,
+    cscv_reliable: bool | None,
     raw_data_end: object,
     data_end: date | None,
     raw_data_start: object,
@@ -370,6 +395,18 @@ def _gate_blockers(
         blockers.append("n_periods missing/invalid")
     elif n_periods <= 0:
         blockers.append("n_periods=0")
+
+    # CSCV 可信度硬前置：变体数 < MIN_CSCV_VARIANTS 时 PBO 系统性上偏，
+    # 视为「未经有效 CSCV 验证」，门禁 fail-closed。
+    # 仅当字段「明确不足」时拦截（缺席视为未提供，向后兼容手工 payload）；
+    # 生产侧由 build_walkforward_gate_payload 始终填充 n_variants/cscv_reliable，
+    # 且 both_pass 已纳入口径 → 生产仍 fail-closed。
+    if n_variants is not None and n_variants < MIN_CSCV_VARIANTS:
+        blockers.append(
+            f"n_variants={n_variants} < {MIN_CSCV_VARIANTS} (CSCV 变体不足，PBO 不可信)"
+        )
+    if cscv_reliable is False:
+        blockers.append("cscv_reliable flag false (CSCV 变体不足)")
 
     if dsr_pass is not True:
         blockers.append("dsr_pass flag missing/invalid/false")
@@ -418,6 +455,8 @@ def _format_gate_detail(
     pbo_pass: bool | None,
     pbo_valid: bool | None,
     both_pass: bool | None,
+    n_variants: int | None,
+    cscv_reliable: bool | None,
     thresholds_version: str | None,
     blockers: list[str],
 ) -> str:
@@ -430,6 +469,9 @@ def _format_gate_detail(
         f"pbo_valid={_status_label(pbo_valid)}, "
         f"dsr_pass={_status_label(dsr_pass)}, "
         f"pbo_pass={_status_label(pbo_pass)}, "
+        f"cscv_reliable={_status_label(cscv_reliable)}, "
+        f"n_variants={_metric_status(n_variants, n_variants is not None and n_variants >= MIN_CSCV_VARIANTS)}"
+        f"({_fmt_int(n_variants)} >= {MIN_CSCV_VARIANTS}), "
         f"n_periods={_metric_status(n_periods, n_periods is not None and n_periods > 0)}"
         f"({_fmt_int(n_periods)}), "
         f"age_days={_fmt_int(age_days)}, "

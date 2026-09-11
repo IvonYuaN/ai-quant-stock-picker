@@ -133,6 +133,7 @@ from aqsp.universe import DEFAULT_SYMBOLS
 from aqsp.utils.jsonl_io import advisory_lock, atomic_write_text
 from aqsp.walkforward_gate import (
     MAX_GATE_AGE_DAYS,
+    MIN_CSCV_VARIANTS,
     WalkForwardGateValidation,
     build_walkforward_gate_payload,
     validate_walkforward_gate_payload,
@@ -4072,6 +4073,7 @@ def _write_walkforward_gate(
     start: str,
     end: str,
     n_periods: int,
+    n_variants: int | None = None,
     metadata: dict[str, object] | None = None,
     diagnostics: dict[str, object] | None = None,
     gate_path: str | Path = WALKFORWARD_GATE_PATH,
@@ -4088,6 +4090,7 @@ def _write_walkforward_gate(
         start=start,
         end=end,
         n_periods=n_periods,
+        n_variants=n_variants,
         metadata=metadata,
     )
     if diagnostics:
@@ -6843,7 +6846,11 @@ def run_walkforward(args: argparse.Namespace) -> int:
     # walkforward 才能得到有效 PBO。
     pbo_is_valid = pbo_value is not None and pbo_value > 0.0
     pbo_pass = pbo_is_valid and pbo_value < 0.5
-    both_pass = dsr_pass and pbo_pass
+    # CSCV 可信度硬前置：变体数 < MIN_CSCV_VARIANTS 时 PBO 系统性上偏，
+    # 不得据其通过双门（与 sidecar 同口径，见 walkforward_gate）。
+    grid_n_variants = len(grid_rows) if args.grid_cscv else 1
+    cscv_reliable = grid_n_variants >= MIN_CSCV_VARIANTS
+    both_pass = dsr_pass and pbo_pass and cscv_reliable
     verdict = "PASS" if both_pass else "FAIL"
     pbo_display = _format_walkforward_pbo(pbo_value, pbo_is_valid)
     tl_dr.append(
@@ -6978,6 +6985,11 @@ def run_walkforward(args: argparse.Namespace) -> int:
                 )
             else:
                 reasons.append(f"PBO={pbo_value:.2%} > 50%")
+        if not cscv_reliable:
+            reasons.append(
+                f"CSCV 变体数 n_variants={grid_n_variants} < {MIN_CSCV_VARIANTS}"
+                "（λ 网格粗糙、PBO 系统性上偏，不予采信）"
+            )
         report_lines.append(f"❌ **{verdict}**: {'，'.join(reasons)}，不建议实盘使用。")
 
     report = "\n".join(report_lines)
@@ -6994,6 +7006,7 @@ def run_walkforward(args: argparse.Namespace) -> int:
         start=args.start,
         end=args.end,
         n_periods=grid_periods if args.grid_cscv else len(result.periods),
+        n_variants=grid_n_variants,
         metadata=_walkforward_gate_metadata(args, effective_symbols=effective_symbols),
         diagnostics=grid_details if args.grid_cscv and grid_details else None,
         gate_path=getattr(args, "gate_path", WALKFORWARD_GATE_PATH),
