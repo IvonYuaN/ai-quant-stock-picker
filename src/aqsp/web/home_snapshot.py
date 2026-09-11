@@ -768,13 +768,19 @@ def _compact_snapshot_for_index(
         )
         for variant in snapshot.variants
     )
+    # 保留 review evidence：multi_agent debate 的校验不变量要求
+    # viewpoint_buckets 至少 2 个实质桶、disagreement_points 非空。清空这两项
+    # 会让压缩产物违反 _validate_snapshot —— 而 replace() 会重新触发
+    # __post_init__ 校验，导致首页快照索引写入抛 ValueError
+    # ("multi-agent debates require independent evidence and disagreement")，
+    # 进而使盘中刷新的收尾首页快照失败、调度任务退出码 1。
+    # 这里只剥离可复现的明细（轮次摘要 / 逐角色视图 / 不确定点），证据本身保留；
+    # 若仍超预算，_fit_index_to_byte_budget 的后续阶段会继续裁天、乃至清空 debates。
     debates = tuple(
         replace(
             debate,
             round_summaries=(),
             agent_views=(),
-            viewpoint_buckets={},
-            disagreement_points=(),
             uncertainty_points=(),
         )
         for debate in snapshot.debates

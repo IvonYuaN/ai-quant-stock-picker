@@ -791,3 +791,47 @@ def test_home_snapshot_module_has_no_ledger_or_network_dependencies() -> None:
 
     assert not any("ledger" in name for name in imports)
     assert not any(name.startswith(("requests", "urllib")) for name in imports)
+
+
+def test_compact_index_snapshot_keeps_multi_agent_debate_evidence() -> None:
+    """压缩首页索引时不得清空 multi_agent debate 的证据。
+
+    回归：_compact_snapshot_for_index 曾把 viewpoint_buckets / disagreement_points
+    清空却仍保留 debate 本体 → replace() 重新触发 __post_init__ → _validate_snapshot
+    抛 ValueError("multi-agent debates require independent evidence and disagreement")
+    → 首页快照索引写入失败 → 盘中刷新收尾首页快照失败 → 调度任务退出码 1。
+    """
+    debate = HomeSnapshotDebate(
+        symbol="600001",
+        display_name="示例",
+        conclusion="保留纸面复核",
+        primary_risk_gate="承接强度",
+        next_trigger="放量确认",
+        active_roles=("技术多头", "风控", "跨市场"),
+        round_count=3,
+        bull_count=1,
+        bear_count=1,
+        neutral_count=1,
+        process_summary="3轮；看多 1 / 看空 1 / 中性 1",
+        viewpoint_buckets={
+            "technical": ("均线多头",),
+            "risk_counterevidence": ("量能不足",),
+        },
+        disagreement_points=("风控质询看多",),
+        uncertainty_points=("等待板块扩散",),
+        review_kind="multi_agent",
+    )
+    snapshot = _snapshot(candidates=(_candidate("600001"),), debates=(debate,))
+
+    compacted = home_snapshot._compact_snapshot_for_index(snapshot)
+
+    assert compacted.debates[0].review_kind == "multi_agent"
+    substantive = sum(
+        bool(points) for points in compacted.debates[0].viewpoint_buckets.values()
+    )
+    assert substantive >= 2
+    assert compacted.debates[0].disagreement_points
+    # 可复现明细仍应被剥离
+    assert compacted.debates[0].agent_views == ()
+    assert compacted.debates[0].round_summaries == ()
+    assert compacted.debates[0].uncertainty_points == ()
