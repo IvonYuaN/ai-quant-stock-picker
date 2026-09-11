@@ -93,7 +93,7 @@ def build_walkforward_gate_payload(
     thresholds_version: str | None = None,
     metadata: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
-    pbo_valid = pbo > 0.0
+    pbo_valid = pbo is not None and pbo > 0.0
     dsr_pass = dsr > MIN_DSR
     pbo_pass = pbo_valid and pbo < MAX_PBO
     payload: dict[str, object] = {

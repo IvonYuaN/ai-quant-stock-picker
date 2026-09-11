@@ -326,3 +326,21 @@ def test_walkforward_gate_detail_renders_version_when_present() -> None:
     assert result.ok is True
     assert result.thresholds_version == "thresholds@2026.09.05"
     assert "thresholds_version=thresholds@2026.09.05" in result.detail
+
+
+def test_walkforward_gate_payload_accepts_none_pbo_for_single_strategy_run() -> None:
+    # 单档案（未跑 CSCV）walk-forward 的 PBO 为 None（经有效 CSCV 验证前为 None，
+    # 宪法 §17.7）。build_walkforward_gate_payload 必须容忍 None，不能 `pbo > 0.0`
+    # 崩溃（修复前这里会抛 TypeError: '>' not supported between NoneType and float）。
+    payload = build_walkforward_gate_payload(
+        dsr=0.0,
+        pbo=None,
+        run_date="2026-06-10",
+        start="2023-01-01",
+        end="2024-12-31",
+        n_periods=12,
+    )
+    assert payload["pbo"] is None
+    assert payload["pbo_valid"] is False
+    assert payload["pbo_pass"] is False
+    assert payload["both_pass"] is False
