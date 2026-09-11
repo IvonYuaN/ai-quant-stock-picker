@@ -21,6 +21,7 @@ def _valid_payload(**overrides: object) -> dict[str, object]:
         start="2023-01-01",
         end="2024-12-31",
         n_periods=12,
+        n_variants=8,
     )
     payload.update(overrides)
     return payload
@@ -46,6 +47,7 @@ def test_walkforward_gate_evidence_preserves_real_dsr_and_pbo_failures() -> None
             start="2023-06-30",
             end="2026-06-29",
             n_periods=19,
+            n_variants=8,
         ),
         today=date(2026, 7, 13),
     )
@@ -339,8 +341,46 @@ def test_walkforward_gate_payload_accepts_none_pbo_for_single_strategy_run() -> 
         start="2023-01-01",
         end="2024-12-31",
         n_periods=12,
+        n_variants=1,
     )
     assert payload["pbo"] is None
     assert payload["pbo_valid"] is False
     assert payload["pbo_pass"] is False
     assert payload["both_pass"] is False
+    assert payload["cscv_reliable"] is False
+
+
+def test_walkforward_gate_blocks_when_cscv_variants_below_minimum() -> None:
+    # n_variants < MIN_CSCV_VARIANTS(8) 时 PBO 系统性上偏，须 fail-closed，
+    # 即使 DSR/PBO 数值本身达标也不放行（恢复 CSCV N>=8 硬前置）。
+    payload = build_walkforward_gate_payload(
+        dsr=1.9,
+        pbo=0.24,
+        run_date="2026-06-10",
+        start="2023-01-01",
+        end="2024-12-31",
+        n_periods=12,
+        n_variants=5,
+    )
+    assert payload["both_pass"] is False
+    assert payload["cscv_reliable"] is False
+    result = validate_walkforward_gate_payload(
+        payload,
+        today=date(2026, 6, 14),
+        heldout_cutoff=date(2024, 12, 31),
+    )
+    assert result.ok is False
+    assert any("n_variants=5 < 8" in item for item in result.blockers)
+    assert any("cscv_reliable" in item for item in result.blockers)
+
+
+def test_walkforward_gate_passes_with_eight_variants() -> None:
+    # 恰好 N=8 即满足硬前置（stable_plus profile）。
+    result = validate_walkforward_gate_payload(
+        _valid_payload(n_variants=8),
+        today=date(2026, 6, 14),
+        heldout_cutoff=date(2024, 12, 31),
+    )
+    assert result.ok is True
+    assert result.n_variants == 8
+    assert result.cscv_reliable is True
