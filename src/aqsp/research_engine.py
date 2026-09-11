@@ -34,6 +34,8 @@ class WalkForwardEngineConfig:
     horizon_days: int
     fee_bps: float = 3.0
     slippage_bps: float = 20.0
+    # net 口径卖出端费率（佣金+印花税，bps）；None = legacy 单边佣金口径。
+    sell_fee_bps: float | None = None
     top_n: int = 10
     use_tiered_stop: bool = False
     n_variants: int = 1
@@ -371,6 +373,7 @@ def _build_tester(
         horizon_days=config.horizon_days,
         fee_bps=config.fee_bps,
         slippage_bps=config.slippage_bps,
+        sell_fee_bps=getattr(config, "sell_fee_bps", None),
         top_n=config.top_n,
         use_tiered_stop=config.use_tiered_stop,
         n_variants=config.n_variants,

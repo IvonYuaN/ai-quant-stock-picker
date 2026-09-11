@@ -75,6 +75,9 @@ class ExecutionConfig:
     benchmark_symbol: str = "000300"
     limit_up_pct: float = 0.10
     limit_down_pct: float = 0.10
+    # net 口径下卖出端费率（佣金+印花税）。None = legacy（单边佣金口径，
+    # 历史行为逐位不变）；仅 thresholds.execution.net_fee_mode 开启时非 None。
+    sell_fee_bps: float | None = None
 
 
 def _normalize_strategies(raw: object) -> list[str]:
@@ -135,6 +138,12 @@ def execution_config_from_thresholds(
         thresholds = load_thresholds()
     execution = getattr(thresholds, "execution")
     main_limit = float(execution.fallback_limit_main_pct)
+    net_fee_mode = bool(getattr(execution, "net_fee_mode", False))
+    sell_fee_bps: float | None = None
+    if net_fee_mode:
+        sell_fee_bps = (
+            float(execution.commission_rate) + float(getattr(execution, "stamp_tax_rate", 0.0))
+        ) * 10000.0
     return ExecutionConfig(
         horizon_days=horizon_days,
         fee_bps=float(execution.commission_rate) * 10000.0,
@@ -142,6 +151,7 @@ def execution_config_from_thresholds(
         benchmark_symbol=benchmark_symbol,
         limit_up_pct=main_limit,
         limit_down_pct=main_limit,
+        sell_fee_bps=sell_fee_bps,
     )
 
 
