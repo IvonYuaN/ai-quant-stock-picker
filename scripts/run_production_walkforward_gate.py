@@ -2144,6 +2144,17 @@ def main() -> int:
         # frames, so empty symbols are safely skipped per period. Without
         # this, a single late-listed batch aborts the whole 20-period run.
         env["AQSP_SQLITE_ALLOW_EMPTY_SYMBOLS"] = "1"
+        # Pin the hash seed so the child walkforward is reproducible across
+        # processes. Root cause of the earlier divergence: the composite
+        # strategy aggregates its universe into a ``set``, and CPython string
+        # ``set`` iteration order depends on PYTHONHASHSEED; combined with the
+        # stable sort in ``BaseStrategy.rank`` that let *tied* scores swap
+        # places at the top-n cut-off, so the same config could select
+        # different symbols in different processes (observed 3y -13.90% vs
+        # -15.30%, 5y 44.90% vs 47.65%). The ranking itself now has an explicit
+        # symbol tie-break; this env var is defence-in-depth against any other
+        # set/dict ordering dependency.
+        env["PYTHONHASHSEED"] = "0"
         warn_if_report_path_not_writable(Path(args.report))
         preserve_formal_report_snapshot(Path(args.report))
         requested_timeout_seconds = int(args.timeout_seconds or 0)

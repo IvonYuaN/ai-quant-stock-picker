@@ -1169,6 +1169,7 @@ def test_production_walkforward_gate_passes_raw_db_to_child_process(
     ):
         seen["command"] = command
         seen["db"] = env.get("AQSP_SQLITE_DB_PATH")
+        seen["pythonhashseed"] = env.get("PYTHONHASHSEED")
         seen["cwd"] = cwd
         seen["timeout"] = timeout_seconds
         seen["status_path"] = status_path
@@ -1196,6 +1197,7 @@ def test_production_walkforward_gate_passes_raw_db_to_child_process(
     assert seen == {
         "command": ["python", "-m", "aqsp"],
         "db": str(db),
+        "pythonhashseed": "0",
         "cwd": gate.PROJECT_ROOT,
         "timeout": 7200,
         "status_path": status_path,
