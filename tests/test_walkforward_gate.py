@@ -7,6 +7,7 @@ from aqsp.walkforward_gate import (
     MIN_PRODUCTION_GATE_SYMBOLS,
     build_walkforward_gate_evidence,
     build_walkforward_gate_payload,
+    build_window_consistency,
     display_thresholds_version,
     validate_walkforward_gate_payload,
     validate_walkforward_market_coverage,
@@ -384,3 +385,80 @@ def test_walkforward_gate_passes_with_eight_variants() -> None:
     assert result.ok is True
     assert result.n_variants == 8
     assert result.cscv_reliable is True
+
+
+def test_build_window_consistency_flags_agreeing_windows() -> None:
+    consistency = build_window_consistency(
+        [
+            {"label": "w1", "both_pass": True},
+            {"label": "w2", "both_pass": True},
+        ]
+    )
+    assert consistency["consistent"] is True
+    assert consistency["n_windows"] == 2
+
+
+def test_build_window_consistency_flags_disagreeing_windows() -> None:
+    # 3y 未过、5y 过 → 窗口依赖，不一致（对齐「须两窗口方向一致」）。
+    consistency = build_window_consistency(
+        [
+            {"label": "3y", "both_pass": False},
+            {"label": "5y", "both_pass": True},
+        ]
+    )
+    assert consistency["consistent"] is False
+
+
+def test_build_window_consistency_requires_two_windows() -> None:
+    assert build_window_consistency([{"both_pass": True}])["consistent"] is False
+
+
+def test_walkforward_gate_blocks_on_inconsistent_windows() -> None:
+    consistency = build_window_consistency(
+        [
+            {"label": "3y", "both_pass": False},
+            {"label": "5y", "both_pass": True},
+        ]
+    )
+    payload = build_walkforward_gate_payload(
+        dsr=1.9,
+        pbo=0.24,
+        run_date="2026-06-10",
+        start="2023-01-01",
+        end="2024-12-31",
+        n_periods=12,
+        n_variants=8,
+        window_consistency=consistency,
+    )
+    result = validate_walkforward_gate_payload(
+        payload,
+        today=date(2026, 6, 14),
+        heldout_cutoff=date(2024, 12, 31),
+    )
+    assert result.ok is False
+    assert any("window_consistency" in item for item in result.blockers)
+
+
+def test_walkforward_gate_passes_on_consistent_windows() -> None:
+    consistency = build_window_consistency(
+        [
+            {"label": "3y", "both_pass": True},
+            {"label": "5y", "both_pass": True},
+        ]
+    )
+    result = validate_walkforward_gate_payload(
+        _valid_payload(window_consistency=consistency),
+        today=date(2026, 6, 14),
+        heldout_cutoff=date(2024, 12, 31),
+    )
+    assert result.ok is True
+
+
+def test_walkforward_gate_ignores_absent_window_consistency() -> None:
+    # 缺席（单窗口 sidecar）向后兼容，不受影响。
+    result = validate_walkforward_gate_payload(
+        _valid_payload(),
+        today=date(2026, 6, 14),
+        heldout_cutoff=date(2024, 12, 31),
+    )
+    assert result.ok is True
