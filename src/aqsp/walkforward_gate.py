@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from datetime import date
-from typing import Mapping
+from typing import Mapping, Sequence
 
 from aqsp.backtest.audit import audit_backtest_assumptions
 
@@ -18,6 +18,10 @@ MIN_PRODUCTION_GATE_COVERAGE_RATIO = 0.9
 # 的 cscv_warnings）。门禁据此 fail-closed：变体数不足即视为「未经有效 CSCV 验证」，
 # 不允许通过双门（对齐宪法 §17.7「禁止 N=1 伪 CSCV」的同一精神）。
 MIN_CSCV_VARIANTS = 8
+# 窗口一致性前置：单一窗口的收益结论极易被样本区间主导（同一条 WF-001
+# 3y −15.30% vs 5y +47.65%）。要求同一策略在 >= 2 个不重叠窗口上方向一致
+# （both_pass 全真或全假），否则视为「窗口依赖、不予采信」，门禁 fail-closed。
+MIN_CONSISTENT_WINDOWS = 2
 
 # thresholds 版本在 gate sidecar 里缺失时的展示占位（健康报告 #R8）。
 #
@@ -90,6 +94,32 @@ class WalkForwardMarketCoverageValidation:
     detail: str
 
 
+def build_window_consistency(
+    windows: Sequence[Mapping[str, object]],
+) -> dict[str, object]:
+    """由多个不重叠窗口的双门结果构造一致性证据（供 gate 前置校验）。
+
+    - 每个窗口项建议含 ``label`` / ``start`` / ``end`` / ``total_return`` / ``both_pass``。
+    - ``consistent`` = 窗口数 >= :data:`MIN_CONSISTENT_WINDOWS` 且所有窗口
+      ``both_pass`` 取值相同（全真 → 同向「有效」；全假 → 同向「无效」；
+      混合 → 窗口依赖，不一致）。
+
+    仅做结构化整理，不改变任何门禁判定；判定在
+    :func:`validate_walkforward_gate_payload` 内对 ``windows`` 重新计算（不轻信
+    传入的 ``consistent`` 布尔）。
+    """
+    normalized = [dict(window) for window in windows]
+    verdicts = [bool(window.get("both_pass")) for window in normalized]
+    consistent = (
+        len(normalized) >= MIN_CONSISTENT_WINDOWS and len(set(verdicts)) == 1
+    )
+    return {
+        "n_windows": len(normalized),
+        "consistent": consistent,
+        "windows": normalized,
+    }
+
+
 def build_walkforward_gate_payload(
     *,
     dsr: float,
@@ -99,6 +129,7 @@ def build_walkforward_gate_payload(
     end: str,
     n_periods: int,
     n_variants: int | None = None,
+    window_consistency: Mapping[str, object] | None = None,
     thresholds_version: str | None = None,
     metadata: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
@@ -126,6 +157,8 @@ def build_walkforward_gate_payload(
         payload.update({str(key): value for key, value in metadata.items()})
     if thresholds_version is not None:
         payload["thresholds_version"] = thresholds_version
+    if window_consistency is not None:
+        payload["window_consistency"] = dict(window_consistency)
     return payload
 
 
@@ -255,6 +288,7 @@ def validate_walkforward_gate_payload(
         both_pass=both_pass,
         n_variants=n_variants,
         cscv_reliable=cscv_reliable,
+        window_consistency=payload.get("window_consistency"),
         raw_data_end=payload.get("data_end"),
         data_end=data_end,
         raw_data_start=payload.get("data_start"),
@@ -358,6 +392,7 @@ def _gate_blockers(
     both_pass: bool | None,
     n_variants: int | None,
     cscv_reliable: bool | None,
+    window_consistency: object,
     raw_data_end: object,
     data_end: date | None,
     raw_data_start: object,
@@ -407,6 +442,29 @@ def _gate_blockers(
         )
     if cscv_reliable is False:
         blockers.append("cscv_reliable flag false (CSCV 变体不足)")
+
+    # 窗口一致性前置：当 sidecar 携带多窗口证据时，要求 >= 2 个不重叠窗口
+    # both_pass 方向一致（重新从 windows 计算，不轻信传入的 consistent 布尔）。
+    # 缺席视为未提供（向后兼容单窗口 sidecar）。
+    if isinstance(window_consistency, Mapping):
+        raw_windows = window_consistency.get("windows")
+        if isinstance(raw_windows, list) and raw_windows:
+            verdicts = [
+                bool(item.get("both_pass"))
+                for item in raw_windows
+                if isinstance(item, Mapping)
+            ]
+            if len(verdicts) < MIN_CONSISTENT_WINDOWS:
+                blockers.append(
+                    f"window_consistency: 仅 {len(verdicts)} 个窗口 < "
+                    f"{MIN_CONSISTENT_WINDOWS}（不足以判定方向一致）"
+                )
+            elif len(set(verdicts)) > 1:
+                blockers.append(
+                    "window_consistency: 窗口方向不一致（both_pass 混合，窗口依赖）"
+                )
+        elif window_consistency.get("consistent") is False:
+            blockers.append("window_consistency: 标记为不一致（窗口依赖）")
 
     if dsr_pass is not True:
         blockers.append("dsr_pass flag missing/invalid/false")
