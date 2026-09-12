@@ -41,7 +41,8 @@ src/
     market-view.ts      市场环境展示模型
     radar-view.ts       资讯雷达归一化
     portfolio-view.ts   持仓台账归一化
-    stock-detail.ts     个股细项归一化
+    candidate-view.ts   候选链展示模型（研究链：lib/candidate-chain.ts 的视图层）
+    performance-view.ts 绩效只读展示模型（不产生新信号）
     chart-options.ts    图表 option 构建（纯对象，可断言）
     format.ts     格式化与 A 股涨跌配色
     ia.ts         信息架构（导航 + 旧路由映射）

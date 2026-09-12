@@ -83,6 +83,12 @@ jobs:
           npm ci --prefix frontend
           npm run build --prefix frontend
 
+      # 契约断言必须进 CI：这些 *.test.ts 曾只被 tsc 做类型检查、布尔表达式从未求值，
+      # 看着像测试实际不验证任何东西，项目 IA 漂移就是这样漏过去的。放在 build 之后
+      # 复用已装好的 node_modules。
+      - name: Frontend contracts
+        run: npm test --prefix frontend
+
       - name: Check AQSP deployment bundle
         run: |
           python3 - <<'PY'
