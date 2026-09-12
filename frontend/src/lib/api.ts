@@ -178,6 +178,21 @@ export interface Report {
   emRatingName?: string; indvInduName?: string; pdfUrl?: string | null;
 }
 
+/**
+ * K 线原始行（mootdx bars）：列名由上游决定，日期键可能是 datetime/date，
+ * 成交量键可能是 vol/volume。展示前必须经 `normalizeKline` 归一化。
+ */
+export interface KlineRow {
+  datetime?: string; date?: string;
+  open?: number; close?: number; high?: number; low?: number;
+  vol?: number; volume?: number; amount?: number;
+  [key: string]: unknown;
+}
+/**
+ * 个股基本面（东财）：键是中文名（行业 / 总股本 / 上市时间…），具体字段由上游决定，
+ * 所以只声明成字典，展示时按后端返回顺序原样列出。
+ */
+export type StockInfo = Record<string, string | number | null>;
 export interface ValMetric {
   current: number; percentile: number; min: number; max: number;
   p20: number; p50: number; p80: number; n: number;
@@ -286,7 +301,8 @@ export interface Board { name: string; code: string; change_pct: number | string
 export interface Blocks { total: number; boards: Board[]; concept_tags: string[] }
 export interface HotConcept { concept: string; bk: string; hit: number }
 export interface QaRow { company: string; question: string; answer: string | null; answerer: string; ask_time: string }
-export interface IndustryRow { rank: number; name: string; change_pct: number; code: string; up_count: number; down_count: number }
+// 行业涨跌幅：东财对停牌/无数据的板块会给 "-" 占位串，故不能只声明 number。
+export interface IndustryRow { rank: number; name: string; change_pct: number | string; code: string; up_count: number; down_count: number }
 export interface IndustryData { top: IndustryRow[]; bottom: IndustryRow[]; total: number }
 
 // 全球市场（美股 / 港股，使用东财域内公开行情源）
@@ -310,8 +326,60 @@ export interface GlobalStock {
   quote: GlobalQuote; metrics: GlobalMetrics | null;
 }
 
+/** 单个策略的表现（后端复用 ledger learner 计算，口径唯一）。 */
+export interface PerformanceStrategy {
+  name: string;
+  independent_signal_days: number;
+  total_picks: number;
+  win_count: number;
+  /** 命中率 —— §8 允许的主指标 */
+  hit_rate: number;
+  /** 冷启动期（独立信号日 < 30）为 false，此时前端不得展示命中率 */
+  displayable: boolean;
+  weight_base: number;
+  weight_confidence: number;
+  /** ↓ PnL 派生，仅观测/告警用（§8 禁止作为主指标） */
+  avg_return_pct: number;
+  max_drawdown: number;
+  sharpe_ratio: number;
+}
+
+export interface PerformanceDecayAlert {
+  strategy: string;
+  lookback_days: number;
+  decay_days: number;
+  recent_win_rate: number;
+  recent_avg_return_pct: number;
+  severity: string;
+  recommendation: string;
+}
+
+export interface PerformancePayload {
+  schema_version: string;
+  generated_at: string;
+  available: boolean;
+  reason: string;
+  cold_start: {
+    is_cold_start: boolean;
+    min_independent_signal_days: number;
+    independent_signal_days: number;
+    max_strategy_signal_days: number;
+  };
+  overall: {
+    observations: number;
+    win_count: number;
+    hit_rate: number;
+    displayable: boolean;
+  } | null;
+  strategies: PerformanceStrategy[];
+  decay_alerts: PerformanceDecayAlert[];
+  status_counts: Record<string, number>;
+  notes: string[];
+}
+
 export const api = {
   health: () => get<{ ok: boolean }>("/health"),
+  performance: () => get<PerformancePayload>("/aqsp/performance"),
   aqspSnapshot: (date?: string, options?: AqspRequestOptions): Promise<AqspSnapshotView> =>
     getEnvelope<AqspSnapshotEnvelope>(
       date ? `/aqsp/snapshot?date=${encodeURIComponent(date)}` : "/aqsp/snapshot",
@@ -337,9 +405,13 @@ export const api = {
   valuation: (code: string) => get<Valuation>(`/valuation?code=${code}`),
   percentile: (code: string) => get<ValPercentile>(`/valuation/percentile?code=${code}`),
   financials: (code: string) => get<Financials>(`/financials?code=${code}`),
+  // 需 akshare；键是中文名，见 StockInfo
+  info: (code: string) => get<StockInfo>(`/info?code=${code}`),
   announcements: (code: string) => get<Announcement[]>(`/announcements?code=${code}`),
   quote: (codes: string) => get<Record<string, Quote>>(`/quote?codes=${codes}`),
   reports: (code: string) => get<Report[]>(`/reports?code=${code}`),
+  // category 4=日 5=周 6=月 11=60分钟；依赖 mootdx，未安装时后端返回 501
+  kline: (code: string, offset = 60) => get<KlineRow[]>(`/kline?code=${code}&category=4&offset=${offset}`),
   news: (code: string) => get<NewsItem[]>(`/news?code=${code}`),
   margin: (code: string) => get<MarginRow[]>(`/margin?code=${code}`),
   blockTrade: (code: string) => get<BlockTradeRow[]>(`/block-trade?code=${code}`),

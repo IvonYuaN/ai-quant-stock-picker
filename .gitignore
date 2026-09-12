@@ -54,6 +54,8 @@ gate_run_5y/
 .arts/
 runtime-backups/
 *.tsbuildinfo
+# 本机 AI 助手的工作记忆，属本地数据，不上传
+.workbuddy-ai/
 src/data/
 dist/
 build/

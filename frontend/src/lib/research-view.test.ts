@@ -32,6 +32,9 @@ const emptySnapshot = {
 const currentBlockedSnapshot = {
   ...emptySnapshot,
   meta: { historical: false, stale: false },
+  // 真实快照的 available_dates 一定包含 selected_date（日期条据此渲染并高亮当前项）。
+  // 这里必须与 available_dates 保持一致，否则 latestReviewDate 的断言前提不成立。
+  selected_date: "2026-07-19",
   available_dates: ["2026-07-19", "2026-07-18", "2026-07-17"],
   recommendation_gate: {
     recommendation_allowed: false,

@@ -4,16 +4,21 @@
 //   - 系统线 = 服务端产出的公共只读数据。任何人打开看到的都一样，不需要隔离，也不该被个人改动。
 //   - 我的线 = 只属于当前浏览器的私有数据。它不上传服务端，因此天然不会与他人冲突。
 //
-// 这条分界线同时回答了「多人访问会不会串号」：公共数据本就该一致；私有数据不进服务端，故无从串起。
+// 这次改造把原来的「每日复盘」与「今日推荐」合并为单页「今日研究」：
+// 两者本来就是同一个交易日的同一份数据（推荐 = 门禁 + 候选，复盘 = 结论 + 证据 + 分歧），
+// 拆成两页只会让"今天到底能不能买"这个判断被割到两个入口里，还容易口径不一致。
+// 现在按**阅读顺序**在页内分段：结论 → 推荐 → 候选 → 证据 → 讨论。
 import {
   Archive,
-  FlaskConical,
+  Compass,
   FileText,
-  LineChart,
+  FlaskConical,
+  Gauge,
+  Globe2,
   NotebookPen,
-  ScrollText,
-  Sparkles,
+  Rss,
   Star,
+  Wallet,
   type LucideIcon,
 } from "lucide-react";
 
@@ -41,21 +46,23 @@ export const SYSTEM_LINE: NavLine = {
   subtitle: "AI 自动产出 · 公共只读",
   scope: "public",
   items: [
-    { to: "/system/review", label: "每日复盘", desc: "当天结论、证据与分歧", icon: ScrollText },
-    { to: "/system/recommend", label: "今日推荐", desc: "通过门禁的候选", icon: Sparkles },
-    { to: "/system/lab", label: "策略实验室", desc: "变体对比与门禁状态", icon: FlaskConical },
-    { to: "/system/archive", label: "结论归档", desc: "按交易日回看", icon: Archive },
+    { to: "/today", label: "今日研究", desc: "结论 · 门禁 · 候选 · 证据", icon: Compass },
+    { to: "/market", label: "市场环境", desc: "指数 · 情绪 · 榜单", icon: Globe2 },
+    { to: "/radar", label: "资讯雷达", desc: "12 赛道 RSS 聚合", icon: Rss },
+    { to: "/lab", label: "策略实验室", desc: "变体对比与生命周期", icon: FlaskConical },
+    { to: "/archive", label: "结论归档", desc: "按日回看与多日对比", icon: Archive },
+    { to: "/performance", label: "选股绩效", desc: "命中率与策略衰减", icon: Gauge },
   ],
 };
 
 export const MY_LINE: NavLine = {
   id: "my",
   title: "我的线",
-  subtitle: "只存此浏览器 · 不上传服务端",
+  subtitle: "只存本机 · 不上传服务端",
   scope: "private",
   items: [
-    { to: "/my/watchlist", label: "我的自选", desc: "关注股与分组", icon: Star },
-    { to: "/my/lab", label: "我的测试", desc: "手动选股对照", icon: LineChart },
+    { to: "/my/watchlist", label: "我的自选", desc: "关注股与行情", icon: Star },
+    { to: "/my/holdings", label: "我的持仓", desc: "台账与盈亏", icon: Wallet },
     { to: "/my/notes", label: "我的笔记", desc: "投研沉淀", icon: NotebookPen },
     { to: "/my/reports", label: "我的研报", desc: "私有资料", icon: FileText },
   ],
@@ -63,8 +70,17 @@ export const MY_LINE: NavLine = {
 
 export const NAV_LINES: readonly NavLine[] = [SYSTEM_LINE, MY_LINE];
 
-export const DEFAULT_ROUTE = SYSTEM_LINE.items[0].to;
+export const DEFAULT_ROUTE = "/today";
 
-export function isPrivateRoute(pathname: string): boolean {
-  return pathname.startsWith("/my");
-}
+/**
+ * 旧路由 → 新路由。保留书签、外部链接与服务器上旧文档里的链接可用，
+ * 不在页面上暴露任何"迁移"概念。
+ */
+export const LEGACY_ROUTES: Readonly<Record<string, string>> = {
+  "/system/review": "/today",
+  "/system/recommend": "/today#candidates",
+  "/system/lab": "/lab",
+  "/system/archive": "/archive",
+  // 「我的测试」已升级为「我的持仓」；对照所需的额外列已并入「我的自选」。
+  "/my/lab": "/my/holdings",
+};
