@@ -3624,28 +3624,24 @@ def _build_streaming_sqlite_context(
             adjust="",
         )
 
-    def summarize_market_window(window_start: str, window_end: str):
+    def summarize_market_window(
+        window_start: str, window_end: str, hold_days: int | None = None
+    ):
         returns: list[float] = []
+        hold_returns: list[float] = []
         batch_size = int(getattr(args, "stream_batch_size", DEFAULT_STREAM_BATCH_SIZE))
         for index in range(0, len(effective_symbols), batch_size):
             batch = effective_symbols[index : index + batch_size]
             frames = load_batch(batch, window_start, window_end)
             for frame in frames.values():
-                if len(frame) < 2:
+                value = _exposure_window_return(frame, None)
+                if value is None:
                     continue
-                first = float(frame.iloc[0]["close"])
-                last = float(frame.iloc[-1]["close"])
-                if first > 0:
-                    returns.append((last - first) / first)
-        if not returns:
-            return {"sample_count": 0}
-        return {
-            "sample_count": len(returns),
-            "avg_return": float(sum(returns) / len(returns)),
-            "negative_ratio": float(
-                sum(1 for value in returns if value < 0.0) / len(returns)
-            ),
-        }
+                returns.append(value)
+                held_value = _exposure_window_return(frame, hold_days)
+                if held_value is not None:
+                    hold_returns.append(held_value)
+        return _market_window_summary_payload(returns, hold_returns, hold_days)
 
     return (
         effective_symbols,
@@ -4144,6 +4140,16 @@ def _walkforward_gate_metadata(
         # 防新旧口径产物混读（同双窗口对比的口径红线）。
         "cost_mode": "net" if net_fees else "legacy",
     }
+    # 资本利用率显式落产物（A1）：缺此字段无法判断「策略收益」与「全池收益」是否同暴露。
+    _metadata_horizon = getattr(args, "horizon_days", None) or 3
+    _metadata_test_days = getattr(args, "test_days", None)
+    _metadata_utilization = _walkforward_utilization(
+        _metadata_horizon, _metadata_test_days
+    )
+    if _metadata_utilization is not None:
+        metadata["horizon_days"] = int(_metadata_horizon)
+        metadata["test_days"] = int(_metadata_test_days)
+        metadata["utilization"] = round(float(_metadata_utilization), 6)
     if effective_symbols is not None:
         metadata["effective_symbols"] = int(effective_symbols)
     if bool(getattr(args, "grid_cscv", False)):
@@ -4220,6 +4226,25 @@ def _format_walkforward_pbo(pbo: float | None, pbo_is_valid: bool) -> str:
     return value if pbo_is_valid else f"{value}（无效占位，需 grid 多变体 CSCV）"
 
 
+def _walkforward_utilization(
+    effective_horizon: int | None, test_days: int | None
+) -> float | None:
+    """资本利用率 = 持仓天数 / 测试步长（A1）。
+
+    策略每期只在第 0 根 bar 入场、``horizon`` 根内平仓，其余为现金；历史报告未
+    披露该比例，导致「策略 3 天收益」被直接与「市场 30 天涨幅」相减。落产物便于
+    读者按同暴露解读。
+    """
+    try:
+        horizon = int(effective_horizon)  # type: ignore[arg-type]
+        step = int(test_days)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    if horizon <= 0 or step <= 0:
+        return None
+    return min(1.0, horizon / step)
+
+
 def _walkforward_runtime_rows(
     args: argparse.Namespace,
     effective_horizon: int,
@@ -4235,6 +4260,12 @@ def _walkforward_runtime_rows(
         fee_mode = f"net(buy {fee_bps:.4g}bp + sell {sell_fee_bps:.4g}bp)"
     else:
         fee_mode = f"legacy({fee_bps:.4g}bp)"
+    test_days = getattr(args, "test_days", None)
+    utilization = _walkforward_utilization(effective_horizon, test_days)
+    if utilization is None:
+        utilization_text = "-"
+    else:
+        utilization_text = f"{effective_horizon}/{int(test_days)} = {utilization:.1%}"
     return [
         ("source", str(args.source)),
         ("pool", str(getattr(args, "pool", ""))),
@@ -4242,6 +4273,7 @@ def _walkforward_runtime_rows(
         ("engine", str(getattr(args, "engine", "") or "runtime_config/auto")),
         ("min_score", min_score),
         ("horizon_days", str(effective_horizon)),
+        ("utilization", utilization_text),
         (
             "grid_profile",
             str(getattr(args, "grid_profile", "stable") or "stable")
@@ -6165,33 +6197,82 @@ def _parse_walkforward_period_range(period: object) -> tuple[str, str] | None:
     return start[:10], end[:10]
 
 
-def _summarize_walkforward_market_window(
-    frames: dict[str, pd.DataFrame], start: str, end: str
-) -> dict[str, float | int]:
-    returns: list[float] = []
-    for df in frames.values():
-        if df is None or df.empty or not {"date", "close"}.issubset(df.columns):
-            continue
-        ordered = df.sort_values("date")
-        date_col = ordered["date"].astype(str)
-        window = ordered.loc[(date_col >= start) & (date_col <= end)]
-        if len(window) < 2:
-            continue
-        first = float(window.iloc[0]["close"] or 0.0)
-        last = float(window.iloc[-1]["close"] or 0.0)
-        if first <= 0.0:
-            continue
-        returns.append((last - first) / first)
+def _exposure_window_return(window: Any, hold_days: int | None) -> float | None:
+    """窗口等权收益；给定 ``hold_days`` 时只用窗口**前 hold_days 根** bar。
 
+    A1 口径修正：策略只在场 ``horizon / test_days``，而历史「全池平均收益」用的是
+    整个测试窗口（~30 根 bar）的涨幅 —— 两者暴露不同、**不可直接相减**。用
+    ``hold_days=horizon`` 产出与策略等长的市场收益供同暴露对照；``hold_days=None``
+    退化为整窗口收益，与历史行为**逐位一致**。
+    """
+    if window is None or len(window) < 2:
+        return None
+    held = window
+    if hold_days is not None:
+        try:
+            span = int(hold_days)
+        except (TypeError, ValueError):
+            return None
+        if span < 2:
+            return None
+        held = window.iloc[:span]
+        if len(held) < 2:
+            return None
+    try:
+        first = float(held.iloc[0]["close"] or 0.0)
+        last = float(held.iloc[-1]["close"] or 0.0)
+    except (KeyError, TypeError, ValueError):
+        return None
+    if first <= 0.0:
+        return None
+    return (last - first) / first
+
+
+def _market_window_summary_payload(
+    returns: list[float], hold_returns: list[float], hold_days: int | None
+) -> dict[str, float | int | None]:
+    """把整窗口 / 同暴露两组收益汇总成 payload；``hold_*`` 字段仅在给定 hold_days 时附加。"""
     if not returns:
         return {"sample_count": 0}
-    return {
+    summary: dict[str, float | int | None] = {
         "sample_count": len(returns),
         "avg_return": float(sum(returns) / len(returns)),
         "negative_ratio": float(
             sum(1 for value in returns if value < 0.0) / len(returns)
         ),
     }
+    if hold_days is not None:
+        summary["hold_days"] = int(hold_days)
+        summary["hold_sample_count"] = len(hold_returns)
+        summary["avg_return_hold"] = (
+            float(sum(hold_returns) / len(hold_returns)) if hold_returns else None
+        )
+    return summary
+
+
+def _summarize_walkforward_market_window(
+    frames: dict[str, pd.DataFrame],
+    start: str,
+    end: str,
+    hold_days: int | None = None,
+) -> dict[str, float | int | None]:
+    returns: list[float] = []
+    hold_returns: list[float] = []
+    for df in frames.values():
+        if df is None or df.empty or not {"date", "close"}.issubset(df.columns):
+            continue
+        ordered = df.sort_values("date")
+        date_col = ordered["date"].astype(str)
+        window = ordered.loc[(date_col >= start) & (date_col <= end)]
+        value = _exposure_window_return(window, None)
+        if value is None:
+            continue
+        returns.append(value)
+        held_value = _exposure_window_return(window, hold_days)
+        if held_value is not None:
+            hold_returns.append(held_value)
+
+    return _market_window_summary_payload(returns, hold_returns, hold_days)
 
 
 def _apply_walkforward_grid_variant(
@@ -6240,6 +6321,7 @@ def _run_walkforward_grid_cscv(
     base_test_days: int,
     base_purge_days: int,
     base_tiered_stop: bool,
+    hold_days: int | None = None,
     streaming_runner: Any | None = None,
     market_window_summary: Any | None = None,
 ) -> tuple[
@@ -6357,10 +6439,12 @@ def _run_walkforward_grid_cscv(
         start, end = parsed
         if market_window_summary is None:
             worst_market_windows.append(
-                _summarize_walkforward_market_window(filtered, start, end)
+                _summarize_walkforward_market_window(filtered, start, end, hold_days)
             )
         else:
-            worst_market_windows.append(market_window_summary(start, end))
+            worst_market_windows.append(
+                market_window_summary(start, end, hold_days)
+            )
     details.update(
         {
             "variant_dispersion_sharpe": float(
@@ -6381,6 +6465,14 @@ def _run_walkforward_grid_cscv(
                     "dispersion": float(period_stds[idx]),
                     "negative_variant_count": int(np.sum(returns_matrix[idx, :] < 0)),
                     "market_avg_return": worst_market_windows[pos].get("avg_return"),
+                    # 同暴露对照（A1）：与策略持仓 horizon 等长的全池收益。
+                    "market_avg_return_hold": worst_market_windows[pos].get(
+                        "avg_return_hold"
+                    ),
+                    "market_hold_days": worst_market_windows[pos].get("hold_days"),
+                    "market_hold_sample_count": worst_market_windows[pos].get(
+                        "hold_sample_count"
+                    ),
                     "market_negative_ratio": worst_market_windows[pos].get(
                         "negative_ratio"
                     ),
@@ -6499,8 +6591,8 @@ def _append_walkforward_grid_diagnostics(
         report_lines.extend(
             [
                 "",
-                "| 最差对齐周期 | 测试窗口 | 平均收益 | 分散度 | 亏损变体数 | 全池平均收益 | 全池下跌占比 | 样本数 |",
-                "|--------------|----------|----------|--------|------------|--------------|--------------|--------|",
+                "| 最差对齐周期 | 测试窗口 | 平均收益 | 分散度 | 亏损变体数 | 全池平均收益 | 全池同暴露收益 | 全池下跌占比 | 样本数 |",
+                "|--------------|----------|----------|--------|------------|--------------|----------------|--------------|--------|",
             ]
         )
         for item in worst_periods:
@@ -6513,8 +6605,26 @@ def _append_walkforward_grid_diagnostics(
                 f"{_format_optional_float(item.get('dispersion'), pct=True)} | "
                 f"{item.get('negative_variant_count', '-')} | "
                 f"{_format_optional_float(item.get('market_avg_return'), pct=True)} | "
+                f"{_format_optional_float(item.get('market_avg_return_hold'), pct=True)} | "
                 f"{_format_optional_float(item.get('market_negative_ratio'), pct=True)} | "
                 f"{item.get('market_sample_count', '-')} |"
+            )
+        hold_days = next(
+            (
+                item.get("market_hold_days")
+                for item in worst_periods
+                if isinstance(item, dict) and item.get("market_hold_days")
+            ),
+            None,
+        )
+        if hold_days:
+            report_lines.extend(
+                [
+                    "",
+                    f"> 「全池同暴露收益」= 全池在**前 {hold_days} 根 bar**（与策略持仓等长）的等权收益；"
+                    "「全池平均收益」= 整个测试窗口的等权收益。"
+                    "策略平均收益应与**同暴露**列对照，直接与整窗口列相减会系统性放大跑输幅度（A1 口径）。",
+                ]
             )
 
     inversions = details.get("selection_inversions")
@@ -6549,6 +6659,7 @@ def _append_walkforward_grid_rows(
     periods: int,
     rows: list[tuple[WalkForwardGridVariant, float, float, int, int]],
     details: dict[str, Any] | None = None,
+    test_days: int | None = None,
 ) -> None:
     report_lines.extend(
         [
@@ -6571,11 +6682,16 @@ def _append_walkforward_grid_rows(
     report_lines.extend(
         [
             "",
-            "| 变体 | mom | tr | lb | h | top | Sharpe | 总收益 | 周期数 |",
-            "|------|-----|----|----|---|-----|--------|--------|--------|",
+            "| 变体 | mom | tr | lb | h | top | Sharpe | 总收益 | 暴露归一化收益 | 周期数 |",
+            "|------|-----|----|----|---|-----|--------|--------|----------------|--------|",
         ]
     )
     for variant, sharpe, total_return, period_count, _trade_count in rows:
+        utilization = _walkforward_utilization(variant.horizon_days, test_days)
+        if utilization:
+            normalized = f"{total_return / utilization:.2%}"
+        else:
+            normalized = "-"
         report_lines.append(
             f"| {variant.variant_id} | "
             f"{variant.momentum_weight:.1f} | "
@@ -6585,7 +6701,16 @@ def _append_walkforward_grid_rows(
             f"{variant.top_n} | "
             f"{sharpe:.2f} | "
             f"{total_return:.2%} | "
+            f"{normalized} | "
             f"{period_count} |"
+        )
+    if test_days:
+        report_lines.extend(
+            [
+                "",
+                f"> 「暴露归一化收益」= 总收益 ÷ (h / {int(test_days)})，把各变体不同的持仓天数折算到同一暴露（A2）。"
+                "h 不同的变体之间**总收益不可直接比较**（暴露比可达 1:10），须看归一化列。",
+            ]
         )
 
     _append_walkforward_grid_diagnostics(report_lines, details)
@@ -6870,6 +6995,7 @@ def run_walkforward(args: argparse.Namespace) -> int:
             base_test_days=args.test_days,
             base_purge_days=args.purge_days,
             base_tiered_stop=getattr(args, "tiered_stop", False),
+            hold_days=effective_horizon,
             streaming_runner=run_engine_for_strategy
             if streaming_context is not None
             else None,
@@ -7004,6 +7130,7 @@ def run_walkforward(args: argparse.Namespace) -> int:
             periods=grid_periods,
             rows=grid_rows,
             details=grid_details,
+            test_days=getattr(args, "test_days", None),
         )
 
     report_lines.extend(
