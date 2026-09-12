@@ -41,6 +41,8 @@ src/
     market-view.ts      市场环境展示模型
     radar-view.ts       资讯雷达归一化
     portfolio-view.ts   持仓台账归一化
+    candidate-view.ts   候选链展示模型（研究链：lib/candidate-chain.ts 的视图层）
+    performance-view.ts 绩效只读展示模型（不产生新信号）
     chart-options.ts    图表 option 构建（纯对象，可断言）
     format.ts     格式化与 A 股涨跌配色
     ia.ts         信息架构（导航 + 旧路由映射）
@@ -88,12 +90,10 @@ src/
 改动后建议再跑一遍无头渲染校验（jsdom 直接 import `dist/assets/index-*.js`，
 stub `/api` 返回夹具）。**务必用"最小夹具"（其余接口返回 `{}`）跑一次** ——
 数据驱动的页面最容易死在接口给了意外结构上。
-（⚠️ 仓库内**暂无**该脚本：要长期做这一步需补 `frontend/scripts/render-check.mjs` 与
-`jsdom` devDependency。此前 README 引用的 `vite-react-frontend-verify` 技能并不存在，已更正。）
+可用技能 `vite-react-frontend-verify` 里的 `scripts/render-check.mjs`。
 
 ## 已知约束
 
-- ~~CI 只跑 `npm run build`、不跑 `npm test`~~ → **已修**：CI 现在跑 `npm test --prefix frontend`
-  （typecheck + 契约断言），IA / 契约漂移会在 PR 上直接变红。
+- CI 目前只跑 `npm run build`，**不跑 `npm test`**——契约断言在 CI 里不生效。
 - `src/data/sectors.json` 目前没有任何引用。
 - 部分个股接口依赖 akshare / mootdx，未安装时后端返回 501，UI 会如实提示缺哪个依赖。
