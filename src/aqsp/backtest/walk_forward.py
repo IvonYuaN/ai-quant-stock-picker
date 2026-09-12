@@ -134,6 +134,24 @@ class BacktestResult:
     profit_factor: float
     trades: int
     not_executable: int
+    # —— C4 口径分离（附加字段，历史读数逐位不变）——
+    # ``skipped`` 标记「整期被熊市过滤跳过」（策略空仓），与「真实 0 收益期」
+    # 区分开：二者 ``total_return`` 都是 0.0 且 ``trades`` 都是 0，产物里**同形**，
+    # 违反「skipped ≠ 健康」——整轮过滤若全命中，报告会显示「0% 收益 / 无交易」
+    # 像「很稳」，而不是「根本没跑」。
+    skipped: bool = False
+    # 聚合口径：跳过期数与真正出场的活跃期数。
+    skipped_periods: int = 0
+    active_periods: int = 0
+    # 仅用活跃期重算的统计量（``skipped`` 期不计入）；无跳过期时与主指标相等。
+    # 实测方向（见 tests/test_walkforward_skipped_periods.py）：
+    #   ``win_rate_active >= win_rate`` 恒成立 —— 跳过期被旧口径计成「非胜」，
+    #     故旧 win_rate 被系统性**低估**（实测 0.469 → 0.288，20 期跳过）。
+    #   ``|sharpe_active| >= |sharpe|`` 恒成立 —— 0 收益期把 |Sharpe| 拉向 0，
+    #     即对正 Sharpe 是**低估**、对负 Sharpe 是**美化**，**不是单向高估**。
+    # 故这两个字段是「口径敏感性」证据，不是「一定虚高」的断言。
+    sharpe_ratio_active: float = 0.0
+    win_rate_active: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -257,7 +275,11 @@ class WalkForwardTester:
             train_data = self._slice_data(normalized_data, train_start, train_end)
             test_data = self._slice_data(normalized_data, test_start, test_end)
 
-            trades = self._run_single_period(train_data, test_data, train_end)
+            period_skip: list[bool] = []
+            trades = self._run_single_period(
+                train_data, test_data, train_end, period_skip=period_skip
+            )
+            skipped = bool(period_skip and period_skip[0])
             all_trades.extend(trades)
 
             executable = [t for t in trades if t.executable]
@@ -266,6 +288,7 @@ class WalkForwardTester:
                 returns,
                 f"{test_start} to {test_end}",
                 len(trades) - len(executable),
+                skipped=skipped,
             )
             periods.append(period_result)
 
@@ -281,6 +304,7 @@ class WalkForwardTester:
             periods_per_year=periods_per_year,
             trades=len(all_returns),
             not_executable=not_exec_count,
+            period_skipped=[p.skipped for p in periods],
         )
         robustness = self._calculate_robustness(periods)
 
@@ -467,6 +491,7 @@ class WalkForwardTester:
                     [trade.return_pct for trade in executable],
                     f"{test_start} to {test_end}",
                     len(trades) - len(executable),
+                    skipped=bool(regime_is_bear_filter),
                 )
             )
             cursor += step
@@ -480,6 +505,7 @@ class WalkForwardTester:
             periods_per_year=periods_per_year,
             trades=len(all_returns),
             not_executable=sum(1 for trade in all_trades if not trade.executable),
+            period_skipped=[p.skipped for p in periods],
         )
         regime_winrates: dict[str, list[float]] = {}
         for trade in all_executable:
@@ -608,7 +634,15 @@ class WalkForwardTester:
         train_data: Dict[str, pd.DataFrame],
         test_data: Dict[str, pd.DataFrame],
         signal_date: str,
+        *,
+        period_skip: list[bool] | None = None,
     ) -> list[TradeResult]:
+        """跑一个信号日。返回值契约不变（仍是 trades 列表）。
+
+        ``period_skip`` 是可选**探针**：非 None 时每次调用恰好追加一个布尔值，
+        标记本期是否被熊市过滤整期跳过。仅用于让调用方区分「跳过」与「真实 0
+        有效交易期」——二者 trades 都是空列表，无法从返回值分辨。
+        """
         trades: list[TradeResult] = []
 
         signal_data: dict[str, pd.DataFrame] = {}
@@ -618,6 +652,8 @@ class WalkForwardTester:
                 signal_data[symbol] = hist
 
         if not signal_data:
+            if period_skip is not None:
+                period_skip.append(False)
             return trades
 
         market_regime, regime_is_bear_filter = self._resolve_market_regime(
@@ -625,6 +661,8 @@ class WalkForwardTester:
         )
         # Keep the historical safety filter, but label the trade with the same
         # canonical regime used by the live runtime whenever a benchmark exists.
+        if period_skip is not None:
+            period_skip.append(bool(regime_is_bear_filter))
         if regime_is_bear_filter:
             return trades
 
@@ -1295,6 +1333,7 @@ def _compute_backtest_metrics(
     *,
     trading_days: int | None = None,
     periods_per_year: float = 252.0,
+    skipped: bool = False,
 ) -> BacktestResult:
     """单期指标：``total_return`` 为 top_n 并行持仓的**等权组合收益**。
 
@@ -1303,6 +1342,10 @@ def _compute_backtest_metrics(
     并污染 PBO/DSR 的输入（参见 reports/pbo-attribution-2026-09-07.md §3.2）。
     跨期 annual/sharpe/max_drawdown 由 :func:`_compute_aggregate_metrics` 计算，
     本函数仅承担单期口径。
+
+    ``skipped=True`` 表示该期被熊市过滤**整期跳过**（策略空仓），其全零指标
+    与「真实 0 有效交易期」同形但语义不同 —— 只有前者会被聚合层排除出波动率/
+    胜率口径。
     """
     if not returns:
         return BacktestResult(
@@ -1315,6 +1358,9 @@ def _compute_backtest_metrics(
             profit_factor=0.0,
             trades=0,
             not_executable=not_executable,
+            skipped=skipped,
+            skipped_periods=1 if skipped else 0,
+            active_periods=0,
         )
     arr = np.array(returns) / 100.0
     total_return = float(np.mean(arr))
@@ -1336,6 +1382,11 @@ def _compute_backtest_metrics(
         profit_factor=round(profit_factor, 4),
         trades=n,
         not_executable=not_executable,
+        skipped=skipped,
+        skipped_periods=1 if skipped else 0,
+        active_periods=0 if skipped else 1,
+        sharpe_ratio_active=0.0,
+        win_rate_active=round(win_rate, 4),
     )
 
 
@@ -1346,6 +1397,7 @@ def _compute_aggregate_metrics(
     periods_per_year: float,
     trades: int,
     not_executable: int,
+    period_skipped: Sequence[bool] | None = None,
 ) -> BacktestResult:
     """跨期组合层指标：基于各期等权组合收益序列（小数）。
 
@@ -1353,7 +1405,33 @@ def _compute_aggregate_metrics(
     跨期复合是**正确**的，因为 period 之间是串行时间）。年化按 ``periods_per_year``
     折算，Sharpe 用跨期收益序列、以 ``sqrt(periods_per_year)`` 年化。这是 DSR
     与 overall 展示的正确口径。
+
+    ``period_skipped`` 与 ``period_returns`` **等长**，标记哪些期是熊市过滤跳过
+    期（策略空仓）。**主指标口径逐位不变**（0 收益期照旧进 ``cumprod``：空仓在
+    组合收益上确实贡献 0）。跳过期只额外产出 ``sharpe_ratio_active`` /
+    ``win_rate_active``，把「空仓不是一次投资判断」这件事从胜率/波动率分母里剔除
+    —— 旧口径下跳过期被计成「非胜」，win_rate 被系统性低估。长度不一致 →
+    fail-closed 抛错，绝不静默按最长序列截断。
     """
+    skipped_flags = list(period_skipped) if period_skipped is not None else []
+    if skipped_flags and len(skipped_flags) != len(period_returns):
+        raise ValueError(
+            "period_skipped must align with period_returns: "
+            f"{len(skipped_flags)} != {len(period_returns)}"
+        )
+    skipped_periods = sum(1 for flag in skipped_flags if flag)
+    active_returns = [
+        value
+        for value, flag in zip(period_returns, skipped_flags)
+        if not flag
+    ]
+    if skipped_flags and not active_returns:
+        # 全部期都被跳过 → 没有任何活跃期，活跃口径指标无意义，不得回落到主序列
+        # 假装「有活跃期」（那会把「根本没跑」伪装成「正常读数」）。
+        stats_returns: list[float] = []
+    else:
+        # 无标记（旧调用方，等价于全部活跃）→ 与主序列一致。
+        stats_returns = active_returns or list(period_returns)
     if not period_returns:
         return BacktestResult(
             period=period,
@@ -1365,6 +1443,9 @@ def _compute_aggregate_metrics(
             profit_factor=0.0,
             trades=trades,
             not_executable=not_executable,
+            skipped=skipped_periods > 0,
+            skipped_periods=skipped_periods,
+            active_periods=0,
         )
     arr = np.array(period_returns, dtype=float)
     equity = np.cumprod(1 + arr)
@@ -1381,6 +1462,15 @@ def _compute_aggregate_metrics(
     pos_sum = float(np.sum(arr[arr > 0])) if any(r > 0 for r in period_returns) else 0.0
     neg_sum = float(np.sum(arr[arr < 0])) if any(r < 0 for r in period_returns) else 0.0
     profit_factor = pos_sum / abs(neg_sum) if neg_sum != 0 else 0.0
+    active_arr = np.array(stats_returns, dtype=float)
+    if stats_returns:
+        sharpe_ratio_active = _sample_sharpe_ratio(
+            active_arr, annualized=True, periods_per_year=periods_per_year
+        )
+        win_rate_active = sum(1 for r in stats_returns if r > 0) / len(stats_returns)
+    else:
+        sharpe_ratio_active = 0.0
+        win_rate_active = 0.0
     return BacktestResult(
         period=period,
         total_return=round(total_return, 6),
@@ -1391,4 +1481,9 @@ def _compute_aggregate_metrics(
         profit_factor=round(profit_factor, 4),
         trades=trades,
         not_executable=not_executable,
+        skipped=skipped_periods > 0,
+        skipped_periods=skipped_periods,
+        active_periods=len(stats_returns),
+        sharpe_ratio_active=round(sharpe_ratio_active, 4),
+        win_rate_active=round(win_rate_active, 4),
     )
