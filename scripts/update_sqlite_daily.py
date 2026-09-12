@@ -30,6 +30,44 @@ from aqsp.data.sqlite_db_source import SqliteDbSource
 
 _QUERY_RETRY_LIMIT = 2
 _QUERY_RETRY_BASE_SLEEP_SECONDS = 0.2
+# Per-symbol query retry is capped so a throttled source cannot make a single
+# symbol block for minutes. The real protection against the baostock rate-limit
+# death-spiral lives at the process level (see consecutive-failure cooldown below).
+_QUERY_RETRY_MAX_SLEEP_SECONDS = 5.0
+
+# Initial login is retried with exponential backoff instead of dying on the
+# first throttled attempt. baostock sessions stay valid for the whole process,
+# so we never re-login on a transient per-symbol query failure.
+_LOGIN_RETRY_LIMIT = 5
+_LOGIN_RETRY_BASE_SECONDS = 2.0
+_LOGIN_RETRY_MAX_SECONDS = 60.0
+
+# Global rate-limit guard: once this many symbols fail in a row we assume the
+# upstream IP is throttled and pause (exponential, capped) before continuing.
+_RATE_LIMIT_COOLDOWN_THRESHOLD = 3
+_RATE_LIMIT_COOLDOWN_BASE_SECONDS = 5.0
+_RATE_LIMIT_COOLDOWN_MAX_SECONDS = 300.0
+
+
+def _exponential_delay(attempt: int, base_seconds: float, max_seconds: float) -> float:
+    """Capped exponential backoff in seconds. attempt is 1-based."""
+    if base_seconds <= 0:
+        return 0.0
+    delay = base_seconds * (2 ** max(0, attempt - 1))
+    return min(float(max_seconds), float(delay))
+
+
+def _cooldown_seconds(
+    consecutive_failures: int,
+    threshold: int,
+    base_seconds: float,
+    max_seconds: float,
+) -> float:
+    """Process-level cooldown once consecutive symbol failures cross threshold."""
+    if base_seconds <= 0 or consecutive_failures < threshold:
+        return 0.0
+    over = consecutive_failures - threshold + 1
+    return _exponential_delay(over, base_seconds, max_seconds)
 
 
 @dataclass(frozen=True)
@@ -126,10 +164,29 @@ def _load_baostock() -> Any:
     return bs
 
 
-def _login_baostock_session(bs: Any) -> None:
-    login = bs.login()
-    if str(getattr(login, "error_code", "")) != "0":
-        raise SystemExit(f"Baostock login failed: {getattr(login, 'error_msg', '')}")
+def _login_baostock_session(
+    bs: Any,
+    *,
+    retry_limit: int = _LOGIN_RETRY_LIMIT,
+    base_seconds: float = _LOGIN_RETRY_BASE_SECONDS,
+    max_seconds: float = _LOGIN_RETRY_MAX_SECONDS,
+) -> None:
+    last_msg = ""
+    for attempt in range(1, max(1, retry_limit) + 1):
+        login = bs.login()
+        if str(getattr(login, "error_code", "")) == "0":
+            return
+        last_msg = getattr(login, "error_msg", "")
+        if attempt < retry_limit:
+            delay = _exponential_delay(attempt, base_seconds, max_seconds)
+            print(
+                f"[WARN] baostock 登录失败 (第{attempt}次): {last_msg}; "
+                f"{delay:.1f}s 后重试",
+                flush=True,
+            )
+            if delay > 0:
+                time.sleep(delay)
+    raise RuntimeError(f"Baostock login failed after {retry_limit} attempts: {last_msg}")
 
 
 def _logout_baostock_session(bs: Any) -> None:
@@ -184,10 +241,10 @@ def _query_history_rows_with_retry(
                 if _exception_supports_retry(exc):
                     return "exception", []
                 raise
-            _logout_baostock_session(bs)
-            _login_baostock_session(bs)
+            # Reuse the session across retries; only the process-level cooldown
+            # (in update_sqlite_daily) backs off when the upstream IP is throttled.
             if retry_sleep_seconds > 0:
-                delay = retry_sleep_seconds * attempt
+                delay = _exponential_delay(attempt, retry_sleep_seconds, _QUERY_RETRY_MAX_SLEEP_SECONDS)
                 if deadline is not None:
                     delay = min(delay, max(0.0, deadline - time.monotonic()))
                 if delay > 0:
@@ -197,14 +254,13 @@ def _query_history_rows_with_retry(
             return error_code, rows
         if attempt >= attempts:
             return error_code, rows
-        _logout_baostock_session(bs)
-        _login_baostock_session(bs)
+        # Reuse the session across retries; never re-login on a transient failure.
         if retry_sleep_seconds > 0:
-            delay = retry_sleep_seconds * attempt
+            delay = _exponential_delay(attempt, retry_sleep_seconds, _QUERY_RETRY_MAX_SLEEP_SECONDS)
             if deadline is not None:
                 delay = min(delay, max(0.0, deadline - time.monotonic()))
-            if delay > 0:
-                time.sleep(delay)
+                if delay > 0:
+                    time.sleep(delay)
     return "exception", []
 
 
@@ -495,6 +551,8 @@ def update_sqlite_daily(
     offset: int = 0,
     max_runtime_seconds: float = 0.0,
     require_target_coverage: bool = True,
+    rate_limit_cooldown_seconds: float = _RATE_LIMIT_COOLDOWN_BASE_SECONDS,
+    max_consecutive_failures: int = 0,
 ) -> UpdateSummary:
     if (
         db_path.exists()
@@ -513,6 +571,7 @@ def update_sqlite_daily(
     already_current = 0
     empty_response = 0
     total_symbols = 0
+    consecutive_failures = 0
     try:
         with sqlite3.connect(db_path) as conn:
             configure_sqlite_connection(conn)
@@ -570,7 +629,32 @@ def update_sqlite_daily(
                 )
                 if error_code != "0":
                     failed += 1
+                    consecutive_failures += 1
+                    if (
+                        max_consecutive_failures > 0
+                        and consecutive_failures >= max_consecutive_failures
+                    ):
+                        print(
+                            f"[ABORT] 连续失败 {consecutive_failures} 次"
+                            f"（疑似上游限流）；终止本批更新以避免死循环。",
+                            flush=True,
+                        )
+                        budget_exhausted = True
+                        break
+                    cooldown = _cooldown_seconds(
+                        consecutive_failures,
+                        _RATE_LIMIT_COOLDOWN_THRESHOLD,
+                        rate_limit_cooldown_seconds,
+                        _RATE_LIMIT_COOLDOWN_MAX_SECONDS,
+                    )
+                    if cooldown > 0:
+                        print(
+                            f"连续失败 {consecutive_failures} 次，限流冷却 {cooldown:.1f}s",
+                            flush=True,
+                        )
+                        time.sleep(cooldown)
                     continue
+                consecutive_failures = 0
                 inserted = 0
                 for row in rows:
                     if _insert_bar(conn, ts_code, row):
@@ -632,7 +716,12 @@ def main() -> int:
         default="",
         help="YYYY-MM-DD, default previous/current trading day",
     )
-    parser.add_argument("--sleep-seconds", type=float, default=0.05)
+    parser.add_argument(
+        "--sleep-seconds",
+        type=float,
+        default=0.3,
+        help="seconds to sleep between symbols (default 0.3; raise if baostock throttles)",
+    )
     parser.add_argument(
         "--limit", type=int, default=0, help="update at most N selected symbols"
     )
@@ -685,6 +774,20 @@ def main() -> int:
         action="store_true",
         help="for a scheduled chunk, defer target-day coverage validation to its coordinator",
     )
+    parser.add_argument(
+        "--rate-limit-cooldown-seconds",
+        type=float,
+        default=5.0,
+        help="pause this many seconds (exponential, capped at 300s) after N consecutive "
+        "failures, assuming the upstream IP is throttled; 0 disables the cooldown",
+    )
+    parser.add_argument(
+        "--max-consecutive-failures",
+        type=int,
+        default=0,
+        help="abort the batch after this many consecutive symbol failures "
+        "(e.g. hard rate-limit); 0 disables the abort",
+    )
     args = parser.parse_args()
 
     if not args.db.exists():
@@ -721,6 +824,8 @@ def main() -> int:
         offset=args.offset,
         max_runtime_seconds=args.max_runtime_seconds,
         require_target_coverage=not args.allow_partial_target_coverage,
+        rate_limit_cooldown_seconds=args.rate_limit_cooldown_seconds,
+        max_consecutive_failures=args.max_consecutive_failures,
     )
     print(
         "sqlite daily backfill done: "
