@@ -49,6 +49,10 @@ data/intraday_cache/
 data/audit/
 data/backfill_intraday_debate_status.json
 data/gate_*.json
+# 补库运行态产物：日志与按日生成的待补/续跑清单（本地数据，随日期轮换，不进版本库）
+data/backfill_*.log
+data/backfill_remaining_*.txt
+data/backfill_resume_*.txt
 gate_run/
 gate_run_5y/
 .arts/
