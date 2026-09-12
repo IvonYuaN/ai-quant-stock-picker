@@ -20,11 +20,13 @@ export class ErrorBoundary extends Component<Props, State> {
 
   render() {
     if (this.state.hasError) {
-      return this.props.fallback ?? (
-        <div className="aqsp-state aqsp-state-warn">
-          <AlertTriangle className="h-4 w-4 shrink-0" />
-          <span>{this.state.error?.message || "页面加载失败"}</span>
-        </div>
+      return (
+        this.props.fallback ?? (
+          <div className="aq-state aq-state-warn">
+            <AlertTriangle aria-hidden="true" />
+            <span>{this.state.error?.message || "页面加载失败"}</span>
+          </div>
+        )
       );
     }
     return this.props.children;

@@ -27,6 +27,7 @@ import newsradar
 import portfolio as pf
 import market
 import myreports as mr
+import performance_bridge
 import tenant as _tenant
 
 app = FastAPI(title="AQSP API", version="0.1.3")
@@ -677,7 +678,10 @@ def industry(top: int = Query(20, ge=5, le=50)):
 
 
 # ---------------------------------------------------------------------------
-# AQSP 只读研究桥接：仅读 runtime snapshot，不访问行情源、ledger 或 LLM。
+# AQSP 只读研究桥接：仅读 runtime snapshot，不访问行情源或 LLM。
+#
+# 绩效（命中率）走单独的只读桥接 `performance_bridge`：
+# 它复用 aqsp.ledger.learner 的计算，只读台账、不写台账、不触发权重落盘。
 # ---------------------------------------------------------------------------
 
 
@@ -722,3 +726,14 @@ def aqsp_candidate(symbol: str, date: str | None = Query(default=None)):
 def aqsp_candidates(symbol: str, date: str | None = Query(default=None)):
     """兼容复数资源名的 AQSP 候选只读详情端点。"""
     return _aqsp_candidate(symbol, date)
+
+
+@app.get("/api/aqsp/performance")
+def aqsp_performance():
+    """纸面交易台账的命中率与策略表现（只读）。
+
+    口径完全复用 aqsp.ledger.learner：整体按 signal_date 合成观察（§5.2）、
+    not_executable 不计入（§5.3）、独立信号日不足 30 时标记冷启动期（§5.4）。
+    前端在冷启动期内**不得**展示胜率。
+    """
+    return {"data": performance_bridge.performance_payload()}
