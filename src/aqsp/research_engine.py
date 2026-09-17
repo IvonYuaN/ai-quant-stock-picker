@@ -17,6 +17,7 @@ from aqsp.backtest.walk_forward import (
     TradeResult,
     WalkForwardResult,
     _check_executable,
+    _compute_aggregate_metrics,
     _compute_backtest_metrics,
 )
 
@@ -168,6 +169,7 @@ class AkquantWalkForwardEngine:
 
             train_data = tester._slice_data(normalized_data, train_start, train_end)
             test_data = tester._slice_data(normalized_data, test_start, test_end)
+            period_skip: list[bool] = []
             trades = self._run_single_period(
                 akquant=akquant,
                 tester=tester,
@@ -175,7 +177,9 @@ class AkquantWalkForwardEngine:
                 train_data=train_data,
                 test_data=test_data,
                 signal_date=train_end,
+                period_skip=period_skip,
             )
+            skipped = bool(period_skip and period_skip[0])
             all_trades.extend(trades)
 
             executable = [trade for trade in trades if trade.executable]
@@ -188,11 +192,27 @@ class AkquantWalkForwardEngine:
                         len(trades) - len(executable),
                     )
                 )
+            elif skipped:
+                # C4：熊市过滤跳过期必须**显式落账**，不能静默丢期 —— 否则
+                # 同一份数据在 akquant 引擎下 T 会短于 builtin 引擎，跨引擎读数
+                # 无法对齐，且「跳过」被伪装成「没有这一期」。
+                periods.append(
+                    _compute_backtest_metrics(
+                        [],
+                        f"{test_start} to {test_end}",
+                        0,
+                        skipped=True,
+                    )
+                )
 
             cursor += step
 
         return _assemble_walkforward_result(
-            tester, periods, all_trades, config.n_variants
+            tester,
+            periods,
+            all_trades,
+            config.n_variants,
+            periods_per_year=252.0 / max(step, 1),
         )
 
     def _run_single_period(
@@ -204,7 +224,9 @@ class AkquantWalkForwardEngine:
         train_data: dict[str, pd.DataFrame],
         test_data: dict[str, pd.DataFrame],
         signal_date: str,
+        period_skip: list[bool] | None = None,
     ) -> list[TradeResult]:
+        """返回值契约不变；``period_skip`` 为可选的跳期探针（见 builtin 同名声明的说明）。"""
         trades: list[TradeResult] = []
         signal_data = {
             symbol: df[df["date"].astype(str) <= signal_date]
@@ -213,11 +235,15 @@ class AkquantWalkForwardEngine:
         }
         signal_data = {symbol: df for symbol, df in signal_data.items() if not df.empty}
         if not signal_data:
+            if period_skip is not None:
+                period_skip.append(False)
             return trades
 
         market_regime, regime_is_bear_filter = tester._resolve_market_regime(
             signal_data
         )
+        if period_skip is not None:
+            period_skip.append(bool(regime_is_bear_filter))
         if regime_is_bear_filter:
             return trades
 
@@ -387,11 +413,33 @@ def _assemble_walkforward_result(
     periods: list[BacktestResult],
     all_trades: list[TradeResult],
     n_trials: int,
+    *,
+    periods_per_year: float = 252.0,
 ) -> WalkForwardResult:
     executable = [trade for trade in all_trades if trade.executable]
     all_returns = [trade.return_pct for trade in executable]
     not_executable = sum(1 for trade in all_trades if not trade.executable)
     overall = _compute_backtest_metrics(all_returns, "Overall", not_executable)
+    # C4：跳过期口径视图（只用来取活跃期 Sharpe/期数，不替换上面的 overall 语义）。
+    active_view = _compute_aggregate_metrics(
+        [p.total_return for p in periods],
+        period="Overall",
+        periods_per_year=periods_per_year,
+        trades=len(all_returns),
+        not_executable=not_executable,
+        period_skipped=[p.skipped for p in periods],
+    )
+    dsr_active = (
+        tester._calculate_deflated_sharpe(
+            active_view.sharpe_ratio_active,
+            n_trials,
+            active_view.active_periods,
+            sharpe_is_annualized=True,
+            periods_per_year=periods_per_year,
+        )
+        if active_view.skipped_periods > 0 and active_view.active_periods > 1
+        else None
+    )
     regime_map: dict[str, list[float]] = {}
     for trade in executable:
         regime_map.setdefault(trade.market_regime, []).append(
@@ -411,6 +459,7 @@ def _assemble_walkforward_result(
         ),
         pbo=tester._calculate_pbo(periods),
         regime_winrates=regime_winrates,
+        deflated_sharpe_active=dsr_active,
     )
 
 
