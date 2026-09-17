@@ -2,8 +2,10 @@
 # T3 收口：从 runner 取回 8 个产物小文件（不取 cache.db）+ 跑双窗口对比。
 # 前置：4 个 gate_run_* 目录在 runner 上均有 walkforward_gate.json + report.md。
 # 用法（需 disable sandbox 以访问网络）：bash scripts/t3_fetch_and_compare.sh
-# 注意：htf_mr 变体烘焙了 min_total_score=0.1（原 0.6），与因子族换装耦合——
-#   对比结论须看 3y/5y 方向一致性，人工补注混杂变量后再交付。
+# 口径：htf_mr 变体烘焙 min_total_score=0.1，基线 WF-001 的**生效值**为 0.4。
+#   该差异已实测定性为「不构成混杂」（两臂阈值均不咬合 → 选股为纯 top-n 排名）；
+#   本脚本仍在结论末尾补注该口径（含「不要用 0.6 做对照」的警告），见步骤 3。
+#   判据仍以 3y/5y 方向一致性为准。
 set -u
 RUNNER_HOST=aqsp-runner
 RUNNER_BASE=/opt/aqsp-runner
@@ -33,17 +35,35 @@ PYTHONUNBUFFERED=1 python3 scripts/compare_t3_dual_window.py \
   --out "$OUT_MD"
 echo "=== compare 写出: $OUT_MD ==="
 
-# 3) 自动补注混杂变量（htf_mr 变体烘焙 min_total_score=0.1，原 WF-001 基线为 0.6）
-#    该阈值放宽与「因子族换装(htf+mr 换 mom+tr)」耦合，可能部分贡献方向改善；
-#    故判决以 3y/5y 方向一致性为准，幅度不可直接读作纯因子族增益。
+# 3) 自动补注口径说明：min_total_score 差异**已实测定性为不构成混杂**，补注只为留痕
+#    （避免后来者重复调查，并警告「不要用 0.6 做对照」——那会引入新的空仓期假象）。
 cat >> "$OUT_MD" <<'NOTE'
 
-## 五、混杂变量提示（自动补注）
+## 五、口径说明（自动补注：两臂 min_total_score 差异 = 已核查，无影响）
 
-- ⚠️ `htf_mr` 8 个变体（WF-H01..H08）在 `feat/t3-htf-mr-swap` 分支中**烘焙了 `min_total_score=0.1`**，
-  而基线 `WF-001`（stable_plus）使用的是 `min_total_score=0.6`。阈值放宽与「因子族换装」同时发生，
-  属**混杂变量**：方向改善可能部分来自选股门槛放松，而非纯因子族增益。
-- 判据铁律：**仅当 3y 与 5y 两窗口方向一致**才判方案 A 成立；幅度差异不 interpret 为纯因子族效应。
-- 若需剥离该混杂，须另跑一组 `htf_mr` 但 `min_total_score` 固定在 0.6 的对照（当前未跑）。
+- **实际取值**：基线 `WF-001`（`stable_plus`）**生效阈值 = 0.4**
+  （`config/thresholds.yaml` 覆盖 `thresholds.py` 中的 dataclass 默认 0.6）；
+  `htf_mr` 8 个变体（WF-H01..H08）在 `feat/t3-htf-mr-swap` 分支中烘焙 `min_total_score = 0.1`。
+- **为什么它不构成混杂**：`CompositeStrategy.select_stocks` 的机制是
+  `[s for s in ranked if score >= thr][:n]`（`composite.py:287-295`）——
+  **阈值只在「通过数 < top_n」时咬合**，否则选股退化为**纯 top-n 排名**。
+- **实测证据**（8 快照 × 全池 ~5400 票，走真实选股路径）：
+  - `WF-001@0.4` 通过数最少 **215** 票；`htf_mr@0.1` 最少 **5201** 票 ⇒ **两臂均未咬合**；
+  - 单快照（2026-09-11）下阈值 0.4 与 0.1 的 **top5/10/15/20 名单完全一致**；
+  - `htf_mr` 即便沿用 0.4 仍有 694 票、沿用 0.6 仍有 67 票通过。
+- ⇒ **两策略在实跑配置下选出的是同一批票**，阈值差异不改变选股结果 ⇒
+  本结论**可以读幅度**，不必退化为「只认方向」。
+- ⚠️ **反向警告（重要，别踩）**：阈值本身是个**失真旋钮**——选择率随 regime 漂移约 **7×**
+  （≥0.4 的通过数在 215~1480 之间）。
+  - **不要**拿 `0.6` 做「等选择性对照」：实测 `htf_mr@0.6` 会在 **2/8** 快照咬合到 **12~19 票**
+    （< `top_n=20`），反而制造「选出不足 n 只」的空仓期，与 C4 的空仓/跳过期口径混淆；
+  - 正确的对照值是 `0.4`，而 `htf_mr@0.4` 与 `@0.1` 选股**逐位相同** ⇒ 该对照**零信息量，不必跑**。
+- 判据仍以 **3y / 5y 两窗口方向一致性**为准（单窗口幅度可能受窗口特性影响）。
+- `DSR` 全负属已知 alpha 赤字（R3）：方案 A 成立仅代表「因子族替换方向正确」，
+  **不代表样本外已盈利**。
+
+> 裁定依据：`outputs/T3_混杂变量裁定_min_total_score_2026-09-17.md`；
+> 可复跑探针：`outputs/_probe_min_score_threshold.py`、`_probe_min_score_drift.py`、
+> `_probe_htfmr_distribution.py`、`_probe_confound_final.py`。
 NOTE
-echo "=== 已补注 min_total_score 混杂提示 ==="
+echo "=== 已补注 min_total_score 口径说明（已核查：不构成混杂）==="
