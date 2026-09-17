@@ -406,10 +406,14 @@ class SqliteDbSource(DataSource):
         # (1) 本库 daily_qfq 的 open/high/low_qfq 整列为 NULL（实测 2026-06-01 起 100%）
         #     → ``adjust="qfq"`` 会**静默返回全 NULL 的 open/high/low**，下游把它当真实
         #     行情用；
-        # (2) 更隐蔽的一种：qfq 列**有值、但逐字等于 raw**（实测 close_qfq/close 在
-        #     2010~2026 全部采样日恒为 1.000000、零方差）——该库 *_qfq 列是入库管道写入的
-        #     复制品，并非真正的前复权序列。此时返回的既不是 NULL、却也不是前复权价，
-        #     下游更加无从察觉。此处一并拒绝静默返回。
+        # (2) 更隐蔽的一种：qfq 列**有值、但逐字等于 raw**。本仓数据管道的**既定约定**是
+        #     ``close_qfq = close`` 且不回填 qfq OHLC（见 ``scripts/backfill_akshare.py``
+        #     与 ``scripts/backfill_index_to_sqlite.py`` 的文件头说明），因此本库是
+        #     **raw-only 存储**，并不含有真正的前复权序列 —— 并不是管道写坏了，而是
+        #     复权被有意留在代码侧（``data/adjust.py`` 用 point-in-time 因子算）。
+        #     ``price_mode()`` 已据此把本库标注为 "raw"；但 ``adjust="qfq"`` 一旦被显式
+        #     请求（opt-in 后），仍会拿到 raw 价而下游无从察觉。此处把该约定**enforce**
+        #     为 fail-closed，而非仅停留在"标注"。
         qfq_ohlc_seen = False
         qfq_copy_rows = 0
         qfq_copy_equal_rows = 0
@@ -491,10 +495,11 @@ class SqliteDbSource(DataSource):
             raise DataError(
                 f"请求 {adjust} 复权数据，但 daily_qfq 的 *_qfq 列本次读取有 "
                 f"{qfq_copy_equal_rows}/{qfq_copy_rows} 行（跨 {len(qfq_copy_dates)} 个"
-                "交易日）与 raw 列**逐字相同** —— 该库的复权列是入库管道写入的 raw 复制品，"
-                "并非真正的前复权序列，返回它们等于把不复权价当复权价使用（静默错误）。"
+                "交易日）与 raw 列**逐字相同** —— 本库沿用 ``close_qfq = close`` 的 raw-only "
+                "约定（qfq OHLC 不回填、复权在代码侧用 point-in-time 因子完成），并不含有"
+                "真正的前复权序列。返回这些列等于把不复权价当复权价使用，属静默错误。"
                 '回测/校验路径请用 adjust=""（不复权价）+ point-in-time 复权因子；'
-                "前复权仅供展示且需来自真正复权过的数据源（见 AGENTS §3.6）。"
+                "前复权仅供展示且须来自真正复权过的数据源（见 AGENTS §3.6）。"
             )
         self._set_cached_daily_frames(frames_to_cache, price_mode=adjust or "raw")
 

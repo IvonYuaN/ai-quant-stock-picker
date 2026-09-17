@@ -8,8 +8,10 @@
 2. 更隐蔽的一种：``*_qfq`` 列**有值、但逐字等于 raw**。实测 ``close_qfq/close`` 在
    2010-01-04 ~ 2026-09-11 的全部采样日恰为 1.000000（``min=max=1``、``std=0``），
    ``open/high/low_qfq == raw`` 亦 100%。真前复权序列不可能零方差（除权除息必然产生
-   偏离）⇒ 该库的复权列是**入库管道写入的复制品**。返回它同样是把不复权价当复权价
-   使用，只是从"全 NULL"变成了"非 NULL 的静默错误"。
+   偏离）⇒ 本库是 **raw-only 存储**：既定的 ``close_qfq = close`` 约定 + qfq OHLC 不回填
+   （见 ``scripts/backfill_akshare.py`` / ``backfill_index_to_sqlite.py`` 文件头），复权
+   有意留在代码侧（``data/adjust.py`` 用 point-in-time 因子算）。返回这些列同样是把
+   不复权价当复权价用，只是从"全 NULL"变成了"非 NULL 的静默错误"。
    反证：``amount/(close*volume) ≈ 1``（各采样日 89.6%~99.1%）⇒ raw 列确为不复权价。
 
 本文件锁死四件事：
