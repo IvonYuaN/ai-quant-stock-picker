@@ -396,6 +396,10 @@ class SqliteDbSource(DataSource):
             symbol_map[symbol] for symbol in pending_symbols if symbol in symbol_map
         ]
         frames_to_cache: dict[str, pd.DataFrame] = {}
+        # 复权路径的数据完整性探针：本库 daily_qfq 只填了 close_qfq，open/high/low_qfq
+        # 整列为 NULL（实测 100%）。若不复核，``adjust="qfq"`` 会**静默返回全 NULL 的
+        # open/high/low**，下游把它当真实行情用。此处 fail-closed。
+        qfq_ohlc_seen = False
         if pending_ts_codes:
             select_columns = (
                 "trade_date, ts_code, open, high, low, close, volume, amount"
@@ -418,6 +422,9 @@ class SqliteDbSource(DataSource):
                     )
                     if df.empty:
                         continue
+                    if adjust != "" and not qfq_ohlc_seen:
+                        if df[["open", "high", "low"]].notna().any().any():
+                            qfq_ohlc_seen = True
                     for ts_code, part in df.groupby("ts_code", sort=False):
                         symbol = ts_to_symbol.get(str(ts_code))
                         if symbol is None:
@@ -429,6 +436,12 @@ class SqliteDbSource(DataSource):
                             continue
                         frames_to_cache[symbol] = frame
                         out[symbol] = frame
+        if adjust != "" and frames_to_cache and not qfq_ohlc_seen:
+            raise DataError(
+                f"请求 {adjust} 复权数据，但 daily_qfq 的 open/high/low 复权列本次读取"
+                "整批为 NULL（该库不含前复权 OHLC）。拒绝静默返回全 NULL 行情；"
+                "如需前复权 OHLC 请先补齐 *_qfq 列，或改用 raw 价格 + 复权因子。"
+            )
         self._set_cached_daily_frames(frames_to_cache, price_mode=adjust or "raw")
 
         # In prefiltered streaming mode (e.g. walkforward-gate), the caller has
