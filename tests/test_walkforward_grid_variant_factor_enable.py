@@ -16,15 +16,19 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+import pytest
+
 from aqsp.cli import (
-    _WALKFORWARD_STABLE_GRID_VARIANTS,
-    _WALKFORWARD_STABLE_PLUS_GRID_VARIANTS,
     _WALKFORWARD_VALIDATED_GRID_VARIANTS,
     WalkForwardGridVariant,
     _apply_walkforward_grid_variant,
+    _walkforward_grid_variants,
 )
 from aqsp.strategies.composite import CompositeStrategy
 from aqsp.strategies.thresholds import load_thresholds
+from aqsp.walkforward_gate import MIN_CSCV_VARIANTS
+
+PROFILES = ("stable", "stable_plus", "exploratory")
 
 BARS = 220
 SYMBOL_COUNT = 40
@@ -101,29 +105,64 @@ def _score_vector(variant: WalkForwardGridVariant, data: dict[str, pd.DataFrame]
     return tuple(round(scores[s], 9) for s in sorted(scores))
 
 
+def _variant_signature(
+    variant: WalkForwardGridVariant, data: dict[str, pd.DataFrame]
+) -> tuple[tuple[float, ...], int, int]:
+    """一个变体的「行为签名」= 打分向量 + top_n + horizon_days。
+
+    判「重复变体」必须用**行为**而非参数表：``_apply_walkforward_grid_variant`` 产出的
+    有效阈值才是真正决定打分的对象（幽灵变体问题即源于「参数不同、行为相同」）。
+
+    为什么含 ``horizon_days``：它决定持有期（``cli.py`` 把它传给
+    ``WalkForwardEngineConfig(horizon_days=...)``），因而**改变各变体的期收益序列** ——
+    即 CSCV 收益矩阵里的列不同。故「同打分同 top_n、仅 horizon 不同」的变体
+    （如 ``WF-B05`` 1 天 vs ``WF-001`` 3 天）是**合法互异列**，不算重复。
+
+    反之，若打分 + top_n + horizon **三者全同**，则该变体在网格里是一根
+    **重复列**：既产出同样的选股、也产出同样的收益序列 ⇒ 污染 CSCV/PBO，
+    并使 ``MIN_CSCV_VARIANTS`` 被技术性凑数满足。
+    """
+    return (_score_vector(variant, data), variant.top_n, variant.horizon_days)
+
+
 def _profile_signature(
     variants, data: dict[str, pd.DataFrame]
-) -> dict[str, tuple[tuple[float, ...], int]]:
-    return {
-        v.variant_id: (_score_vector(v, data), v.top_n)
-        for v in variants
-    }
+) -> dict[str, tuple[tuple[float, ...], int, int]]:
+    return {v.variant_id: _variant_signature(v, data) for v in variants}
 
 
-def test_stable_plus_has_no_duplicate_variant_columns() -> None:
-    """门禁网格里不得出现「打分 + top_n 完全相同」的重复列。
+@pytest.mark.parametrize("profile", PROFILES)
+def test_profile_has_no_duplicate_variant_columns(profile: str) -> None:
+    """门禁网格里不得出现「打分 + top_n 完全相同」的重复列（三个档位全覆盖）。
 
     这是 ``MIN_CSCV_VARIANTS`` / PBO 统计有效性的前提：CSCV 假设 N 个**互异**策略，
     重复列会让参数被幻觉地"凑够"，并使 PBO 失真。
+
+    ``exploratory`` = 全部已验证变体（含 WF-V01/WF-MR1），此前未被覆盖；
+    ``_apply_walkforward_grid_variant`` 的因子 enable 逻辑对三个档位是同一份代码，
+    故必须三档同验。
     """
     data = _data()
-    for variants in (
-        _WALKFORWARD_STABLE_GRID_VARIANTS,
-        _WALKFORWARD_STABLE_PLUS_GRID_VARIANTS,
-    ):
-        seen: dict[tuple[tuple[float, ...], int], str] = {}
-        for vid, sig in _profile_signature(variants, data).items():
-            assert sig not in seen, (
-                f"{vid} 与 {seen[sig]} 打分+top_n 完全相同 → 网格存在重复列"
-            )
-            seen[sig] = vid
+    seen: dict[tuple[tuple[float, ...], int, int], str] = {}
+    for vid, sig in _profile_signature(_walkforward_grid_variants(profile), data).items():
+        assert sig not in seen, (
+            f"[{profile}] {vid} 与 {seen[sig]} 打分+top_n+horizon 完全相同 "
+            "→ 网格存在重复列"
+        )
+        seen[sig] = vid
+
+
+def test_stable_plus_meets_min_cscv_variants_with_distinct_columns() -> None:
+    """默认档位 ``stable_plus`` 的**互异**列数必须真正 >= ``MIN_CSCV_VARIANTS``。
+
+    幽灵变体（重复列）会让这道 fail-closed 守卫被**技术性满足** —— 守卫数的是
+    列数，而 CSCV/PBO 前提数的是**互异策略数**。此断言把两者钉在一起：仅当所有
+    变体互异时，「N=8」才等价于「8 个互异策略」。
+    """
+    data = _data()
+    variants = _walkforward_grid_variants("stable_plus")
+    distinct = set(_profile_signature(variants, data).values())
+    assert len(distinct) >= MIN_CSCV_VARIANTS, (
+        f"stable_plus 有 {len(variants)} 列但仅 {len(distinct)} 个互异列；"
+        f"MIN_CSCV_VARIANTS={MIN_CSCV_VARIANTS} 会被重复列凑数满足"
+    )
