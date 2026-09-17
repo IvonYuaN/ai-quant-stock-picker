@@ -47,8 +47,11 @@ def _norm_num(s: str) -> float | None:
 def parse_report_variants(report_path: Path) -> dict[str, dict]:
     """解析 report.md 逐变体表 -> {variant: {sharpe, total_return_pct, periods, raw}}。
 
-    表头判定：含 '臂' 且 'Sharpe' 且 '总收益' 的行；其后每个 '|' 行按列解析，
-    取 WF-001 / WF-H0x 开头的变体名。容忍分隔线、列顺序、unicode 减号。
+    适配真实 gate（--grid-cscv）报告表头（cli.py:_append_walkforward_grid_rows）：
+      | 变体 | mom | tr | lb | h | top | Sharpe | 总收益 | 周期数 |
+    Sharpe/总收益/周期数 在第 6/7/8 列（旧 '臂' 4 列表头在第 1/2/3 列），
+    故按表头列名**动态定位**列，避免硬编码错位。
+    取 WF-001 / WF-H0x 开头的变体名。容忍分隔线、unicode 减号。
     """
     out: dict[str, dict] = {}
     if not report_path.exists():
@@ -56,11 +59,35 @@ def parse_report_variants(report_path: Path) -> dict[str, dict]:
     lines = report_path.read_text(encoding="utf-8", errors="replace").splitlines()
     header_idx = None
     for i, line in enumerate(lines):
-        if re.search(r"\|\s*臂\s*\|", line) and "Sharpe" in line and "总收益" in line:
+        if (
+            "Sharpe" in line
+            and "总收益" in line
+            and re.search(r"\|\s*(变体|臂|variant)\s*\|", line, re.IGNORECASE)
+        ):
             header_idx = i
             break
     if header_idx is None:
         return out
+    header_cells = [c.strip() for c in lines[header_idx].strip().strip("|").split("|")]
+
+    def _col(sub: str) -> int:
+        for j, h in enumerate(header_cells):
+            if sub in h:
+                return j
+        return -1
+
+    name_idx = _col("变体") if _col("变体") >= 0 else _col("臂")
+    if name_idx < 0:
+        name_idx = 0
+    sharpe_idx = _col("Sharpe")
+    return_idx = _col("总收益")
+    periods_idx = _col("周期数") if _col("周期数") >= 0 else _col("周期")
+    if sharpe_idx < 0 or return_idx < 0:
+        return out
+    min_cols = max(sharpe_idx, return_idx, name_idx)
+    if periods_idx >= 0:
+        min_cols = max(min_cols, periods_idx)
+
     for line in lines[header_idx + 1:]:
         if not line.strip().startswith("|"):
             if out:
@@ -69,20 +96,20 @@ def parse_report_variants(report_path: Path) -> dict[str, dict]:
         if set(line.strip()) <= set("|-: "):
             continue
         cells = [c.strip() for c in line.strip().strip("|").split("|")]
-        if len(cells) < 3:
+        if len(cells) <= min_cols:
             continue
-        m = re.search(r"(WF-001|WF-H0\d)", cells[0])
+        m = re.search(r"(WF-001|WF-H0\d)", cells[name_idx])
         if not m:
             continue
         key = m.group(1)
-        sharpe = _norm_num(cells[1]) if len(cells) > 1 else None
-        total_return = _norm_num(cells[2]) if len(cells) > 2 else None
-        periods = _norm_num(cells[3]) if len(cells) > 3 else None
+        sharpe = _norm_num(cells[sharpe_idx])
+        total_return = _norm_num(cells[return_idx])
+        periods = _norm_num(cells[periods_idx]) if periods_idx >= 0 else None
         out[key] = {
             "sharpe": sharpe,
             "total_return_pct": total_return,
             "periods": periods,
-            "raw": cells[0],
+            "raw": cells[name_idx],
         }
     return out
 
