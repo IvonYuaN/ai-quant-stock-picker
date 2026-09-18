@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import threading
+import time
+
 import pytest
 from datetime import date
 import pandas as pd
@@ -8,6 +11,7 @@ from aqsp.core.errors import DataError
 from aqsp.data.tencent_source import (
     TENCENT_INTRADAY_URL,
     TencentSource,
+    _ENDPOINT_DOWN_THRESHOLD,
     _get_market_prefix,
     _normalize_tencent_intraday_volume_to_shares,
     _tencent_intraday_rows,
@@ -356,6 +360,28 @@ def test_tencent_daily_request_keeps_beijing_board_raw_suffix(
     assert "qfq" not in captured["params"]["param"]
 
 
+def _bare_intraday_source(monkeypatch, session, *, today=date(2026, 7, 10)):
+    """``__new__`` 构造（绕过 __init__）的 TencentSource，含短路状态初始化。
+
+    __init__ 被绕过，所以端点短路状态必须显式补上；缺了会在 _endpoint_down()
+    里炸 AttributeError，比默默不生效要好。
+    """
+
+    class FixedNow:
+        def date(self):
+            return today
+
+    source = TencentSource.__new__(TencentSource)
+    source._session = session
+    source._last_request_ts = 0.0
+    source._endpoint_down_lock = threading.Lock()
+    source._endpoint_down_streak = 0
+    source._endpoint_down_until = 0.0
+    monkeypatch.setattr(source, "_throttle", lambda: None)
+    monkeypatch.setattr("aqsp.data.tencent_source.now_shanghai", lambda: FixedNow())
+    return source
+
+
 def _tencent_intraday_source(
     monkeypatch, payload, *, today=date(2026, 7, 10), captured=None
 ):
@@ -373,16 +399,7 @@ def _tencent_intraday_source(
                 captured["params"] = params
             return FakeResponse()
 
-    class FixedNow:
-        def date(self):
-            return today
-
-    source = TencentSource.__new__(TencentSource)
-    source._session = FakeSession()
-    source._last_request_ts = 0.0
-    monkeypatch.setattr(source, "_throttle", lambda: None)
-    monkeypatch.setattr("aqsp.data.tencent_source.now_shanghai", lambda: FixedNow())
-    return source
+    return _bare_intraday_source(monkeypatch, FakeSession(), today=today)
 
 
 def test_tencent_intraday_uses_day_query_endpoint_not_blocked_minute_path(monkeypatch):
@@ -550,10 +567,12 @@ def test_tencent_intraday_supports_index_codes(monkeypatch):
     assert frame["close"].tolist() == [4511.21]
 
 
-def test_tencent_intraday_returns_none_for_waf_html_body(monkeypatch):
-    """WAF 拦截页不是 JSON；必须判空返回而不是抛出不可读错误。"""
+def test_tencent_intraday_raises_data_error_for_waf_html_body(monkeypatch):
+    """WAF 拦截页不是 JSON；必须以 DataError 收场，而不是抛出裸 ValueError。"""
 
     class FakeResponse:
+        status_code = 501
+
         def json(self):
             raise ValueError("Expecting value: line 1 column 1 (char 0)")
 
@@ -561,14 +580,148 @@ def test_tencent_intraday_returns_none_for_waf_html_body(monkeypatch):
         def get(self, url, params=None, **_kwargs):
             return FakeResponse()
 
-    source = TencentSource.__new__(TencentSource)
-    source._session = FakeSession()
-    source._last_request_ts = 0.0
-    monkeypatch.setattr(source, "_throttle", lambda: None)
+    source = _bare_intraday_source(monkeypatch, FakeSession())
     monkeypatch.setattr("aqsp.data.tencent_source.time.sleep", lambda _s: None)
 
     with pytest.raises(DataError):
         source._fetch_tencent_intraday("600519", "5")
+
+
+def _always_rejecting_session(status_code=501, calls=None):
+    class FakeResponse:
+        def __init__(self):
+            self.status_code = status_code
+
+        def json(self):
+            raise ValueError("Expecting value: line 1 column 1 (char 0)")
+
+    class FakeSession:
+        def get(self, url, params=None, **_kwargs):
+            if calls is not None:
+                calls.append(params)
+            return FakeResponse()
+
+    return FakeSession()
+
+
+def test_tencent_endpoint_short_circuits_after_consecutive_rejections(monkeypatch):
+    """端点确定性拒绝达阈值即短路，且此后不再发起任何请求。"""
+    calls: list = []
+    source = _bare_intraday_source(monkeypatch, _always_rejecting_session(calls=calls))
+    monkeypatch.setattr("aqsp.data.tencent_source.time.sleep", lambda _s: None)
+
+    with pytest.raises(DataError):
+        source._fetch_tencent_intraday("600519", "5")
+
+    assert source._endpoint_down() is True
+    assert len(calls) == _ENDPOINT_DOWN_THRESHOLD
+
+    # 冷却期内不得再发请求 —— 这是把预算让给兜底源的关键
+    before = len(calls)
+    with pytest.raises(DataError, match="短路冷却中"):
+        source._fetch_tencent_intraday("600000", "5")
+    assert len(calls) == before
+
+
+def test_tencent_endpoint_success_resets_rejection_streak(monkeypatch):
+    """偶发拒绝后恢复正常，不得累积到短路。"""
+    source = _bare_intraday_source(monkeypatch, _always_rejecting_session())
+
+    source._record_endpoint_rejection()
+    assert source._endpoint_down_streak == 1
+    assert source._endpoint_down() is False
+
+    source._record_endpoint_success()
+
+    assert source._endpoint_down_streak == 0
+    assert source._endpoint_down() is False
+
+
+def test_tencent_endpoint_cooldown_expires(monkeypatch):
+    """冷却期过后必须重新尝试，而不是永久拉黑。"""
+    source = _bare_intraday_source(monkeypatch, _always_rejecting_session())
+
+    for _ in range(_ENDPOINT_DOWN_THRESHOLD):
+        source._record_endpoint_rejection()
+    assert source._endpoint_down() is True
+
+    source._endpoint_down_until = time.monotonic() - 1.0
+
+    assert source._endpoint_down() is False
+
+
+def test_tencent_fetch_intraday_stops_early_when_endpoint_is_down(monkeypatch):
+    """端点已判死时 fetch_intraday 不再逐只消耗共享预算。"""
+    calls: list = []
+    source = _bare_intraday_source(monkeypatch, _always_rejecting_session(calls=calls))
+    source._endpoint_down_until = time.monotonic() + 60.0
+
+    with pytest.raises(DataError):
+        source.fetch_intraday(["600000", "600001", "600002"], "5")
+
+    assert calls == []
+
+
+def test_tencent_fetch_intraday_bounds_work_when_endpoint_dies_mid_batch(monkeypatch):
+    """端点中途判死时，剩余标的不得再逐个发起请求 —— 调用次数必须有界。"""
+    payload = {
+        "data": {
+            "sh600000": {
+                "data": [{"date": "20260710", "data": ["0930 9.05 2256 2041680.00"]}]
+            }
+        }
+    }
+
+    class FakeResponse:
+        status_code = 200
+
+        def __init__(self, body):
+            self._body = body
+
+        def json(self):
+            return self._body
+
+    class FakeSession:
+        """第一只正常；之后端点转为确定性拒绝。"""
+
+        def __init__(self):
+            self.calls = 0
+
+        def get(self, url, params=None, **_kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return FakeResponse(payload)
+            raise ValueError("endpoint went down")
+
+    session = FakeSession()
+    source = _bare_intraday_source(monkeypatch, session)
+    monkeypatch.setattr("aqsp.data.tencent_source.time.sleep", lambda _s: None)
+
+    # 4 只标的、3 次重试：不做短路的话是 12 次请求，且每次都带退避
+    with pytest.raises(DataError):
+        source.fetch_intraday(["600000", "600001", "600002", "600003"], "5")
+
+    # 第一只 1 次成功 + 第二只撞满阈值；第三、第四只见短路直接跳过
+    assert session.calls == 1 + _ENDPOINT_DOWN_THRESHOLD
+
+
+def test_tencent_fetch_intraday_still_raises_on_symbol_level_error(monkeypatch):
+    """单只标的问题不得被短路逻辑吞掉：既有语义要保住。"""
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"data": {}}
+
+    class FakeSession:
+        def get(self, url, params=None, **_kwargs):
+            return FakeResponse()
+
+    source = _bare_intraday_source(monkeypatch, FakeSession())
+
+    with pytest.raises(DataError):
+        source.fetch_intraday(["600000", "600001"], "5")
 
 
 def test_tencent_intraday_today_minutes_reports_empty_for_missing_session() -> None:
