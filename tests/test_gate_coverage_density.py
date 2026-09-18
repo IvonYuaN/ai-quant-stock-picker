@@ -17,8 +17,6 @@ import sqlite3
 from datetime import date, timedelta
 from pathlib import Path
 
-import pytest
-
 from scripts.run_production_walkforward_gate import (
     inspect_raw_coverage_window_with_symbols,
 )
