@@ -546,7 +546,7 @@ def update_sqlite_daily(
     start_day: date | None = None,
     force_from_start: bool = False,
     fill_history_gaps: bool = False,
-    price_mode: str = "qfq",
+    price_mode: str = "raw",
     query_timeout_seconds: float = 15.0,
     offset: int = 0,
     max_runtime_seconds: float = 0.0,
@@ -554,13 +554,21 @@ def update_sqlite_daily(
     rate_limit_cooldown_seconds: float = _RATE_LIMIT_COOLDOWN_BASE_SECONDS,
     max_consecutive_failures: int = 0,
 ) -> UpdateSummary:
-    if (
-        db_path.exists()
-        and SqliteDbSource(db_path=db_path, cache=None).price_mode() == "invalid"
-    ):
+    # 既有库的价基必须是 raw：验证链路（gate/walk-forward）以 ``adjust=""`` 读
+    # ``open/high/low/close``，把这些列写成前复权价会**静默污染验证价基**（比 qfq 列
+    # 本身缺失更隐蔽）。此处 fail-closed。
+    # ⚠️ ``SqliteDbSource.price_mode()`` 只会返回 "raw" / "qfq" / "unknown"（实测确认），
+    # 原先比对的 "invalid" 永不成立 ⇒ 守卫形同虚设，故改为 ``!= "raw"``。
+    existing_price_mode = (
+        SqliteDbSource(db_path=db_path, cache=None).price_mode()
+        if db_path.exists()
+        else "raw"
+    )
+    if existing_price_mode != "raw":
         raise RuntimeError(
-            "existing sqlite price basis is invalid; build a new raw database in "
-            "bounded batches and switch only after coverage validation"
+            f"existing sqlite price basis is {existing_price_mode!r}, but the "
+            "validation pipeline requires an unadjusted (raw) database; build a new "
+            "raw database in bounded batches and switch only after coverage validation"
         )
     bs = _load_baostock()
     _login_baostock_session(bs)

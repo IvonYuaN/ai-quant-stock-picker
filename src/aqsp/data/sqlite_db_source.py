@@ -22,6 +22,12 @@ from aqsp.data.source import (
 _SQLITE_TIMEOUT_SECONDS = 30.0
 _SQLITE_BATCH_SIZE = 400
 _ALLOW_QFQ_SQLITE_SOURCE_ENV = "AQSP_ALLOW_QFQ_SQLITE_SOURCE"
+# 「qfq 列是 raw 复制品」探针的触发门槛。刻意保守：要求足够的横截面与时间跨度，
+# 否则「最近若干根 bar 上真前复权与 raw 恰好相等」会被误判（真前复权以最新日为基期，
+# 其比值在基期附近天然趋近 1）。
+_QFQ_COPY_MIN_ROWS = 200
+_QFQ_COPY_MIN_DATES = 20
+_QFQ_COPY_EQUAL_RATIO = 0.999
 _PREFILTERED_SYMBOLS_ENV = "AQSP_SQLITE_PREFILTERED_SYMBOLS"
 _ALLOW_EMPTY_SYMBOLS_ENV = "AQSP_SQLITE_ALLOW_EMPTY_SYMBOLS"
 _LIQUID_SYMBOL_MIN_HISTORY_ROWS = 250
@@ -396,11 +402,32 @@ class SqliteDbSource(DataSource):
             symbol_map[symbol] for symbol in pending_symbols if symbol in symbol_map
         ]
         frames_to_cache: dict[str, pd.DataFrame] = {}
+        # 复权路径的数据完整性探针（两段，均 fail-closed）：
+        # (1) 本库 daily_qfq 的 open/high/low_qfq 整列为 NULL（实测 2026-06-01 起 100%）
+        #     → ``adjust="qfq"`` 会**静默返回全 NULL 的 open/high/low**，下游把它当真实
+        #     行情用；
+        # (2) 更隐蔽的一种：qfq 列**有值、但逐字等于 raw**。本仓数据管道的**既定约定**是
+        #     ``close_qfq = close`` 且不回填 qfq OHLC（见 ``scripts/backfill_akshare.py``
+        #     与 ``scripts/backfill_index_to_sqlite.py`` 的文件头说明），因此本库是
+        #     **raw-only 存储**，并不含有真正的前复权序列 —— 并不是管道写坏了，而是
+        #     复权被有意留在代码侧（``data/adjust.py`` 用 point-in-time 因子算）。
+        #     ``price_mode()`` 已据此把本库标注为 "raw"；但 ``adjust="qfq"`` 一旦被显式
+        #     请求（opt-in 后），仍会拿到 raw 价而下游无从察觉。此处把该约定**enforce**
+        #     为 fail-closed，而非仅停留在"标注"。
+        qfq_ohlc_seen = False
+        qfq_copy_rows = 0
+        qfq_copy_equal_rows = 0
+        qfq_copy_dates: set[str] = set()
         if pending_ts_codes:
             select_columns = (
                 "trade_date, ts_code, open, high, low, close, volume, amount"
                 if adjust == ""
-                else "trade_date, ts_code, open_qfq as open, high_qfq as high, low_qfq as low, close_qfq as close, volume, amount"
+                else (
+                    "trade_date, ts_code,"
+                    " open_qfq as open, high_qfq as high, low_qfq as low, close_qfq as close,"
+                    " open as open_raw, high as high_raw, low as low_raw, close as close_raw,"
+                    " volume, amount"
+                )
             )
             with sqlite3.connect(self.db_path, timeout=_SQLITE_TIMEOUT_SECONDS) as conn:
                 for chunk in _chunks(pending_ts_codes, _SQLITE_BATCH_SIZE):
@@ -418,6 +445,30 @@ class SqliteDbSource(DataSource):
                     )
                     if df.empty:
                         continue
+                    if adjust != "":
+                        if not qfq_ohlc_seen and (
+                            df[["open", "high", "low"]].notna().any().any()
+                        ):
+                            qfq_ohlc_seen = True
+                        # 「复制品」探针只统计四个复权列均有值的行，逐字比较（非近似）。
+                        filled = df[["open", "high", "low", "close"]].notna().all(axis=1)
+                        subset = df.loc[filled]
+                        if not subset.empty:
+                            qfq_copy_rows += len(subset)
+                            qfq_copy_dates.update(
+                                str(value) for value in subset["trade_date"].unique()
+                            )
+                            qfq_copy_equal_rows += int(
+                                (
+                                    subset["open"].eq(subset["open_raw"])
+                                    & subset["high"].eq(subset["high_raw"])
+                                    & subset["low"].eq(subset["low_raw"])
+                                    & subset["close"].eq(subset["close_raw"])
+                                ).sum()
+                            )
+                        df = df.drop(
+                            columns=["open_raw", "high_raw", "low_raw", "close_raw"]
+                        )
                     for ts_code, part in df.groupby("ts_code", sort=False):
                         symbol = ts_to_symbol.get(str(ts_code))
                         if symbol is None:
@@ -429,6 +480,27 @@ class SqliteDbSource(DataSource):
                             continue
                         frames_to_cache[symbol] = frame
                         out[symbol] = frame
+        if adjust != "" and frames_to_cache and not qfq_ohlc_seen:
+            raise DataError(
+                f"请求 {adjust} 复权数据，但 daily_qfq 的 open/high/low 复权列本次读取"
+                "整批为 NULL（该库不含前复权 OHLC）。拒绝静默返回全 NULL 行情；"
+                "如需前复权 OHLC 请先补齐 *_qfq 列，或改用 raw 价格 + 复权因子。"
+            )
+        if (
+            adjust != ""
+            and qfq_copy_rows >= _QFQ_COPY_MIN_ROWS
+            and len(qfq_copy_dates) >= _QFQ_COPY_MIN_DATES
+            and qfq_copy_equal_rows / qfq_copy_rows >= _QFQ_COPY_EQUAL_RATIO
+        ):
+            raise DataError(
+                f"请求 {adjust} 复权数据，但 daily_qfq 的 *_qfq 列本次读取有 "
+                f"{qfq_copy_equal_rows}/{qfq_copy_rows} 行（跨 {len(qfq_copy_dates)} 个"
+                "交易日）与 raw 列**逐字相同** —— 本库沿用 ``close_qfq = close`` 的 raw-only "
+                "约定（qfq OHLC 不回填、复权在代码侧用 point-in-time 因子完成），并不含有"
+                "真正的前复权序列。返回这些列等于把不复权价当复权价使用，属静默错误。"
+                '回测/校验路径请用 adjust=""（不复权价）+ point-in-time 复权因子；'
+                "前复权仅供展示且须来自真正复权过的数据源（见 AGENTS §3.6）。"
+            )
         self._set_cached_daily_frames(frames_to_cache, price_mode=adjust or "raw")
 
         # In prefiltered streaming mode (e.g. walkforward-gate), the caller has

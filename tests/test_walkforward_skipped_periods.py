@@ -197,3 +197,110 @@ def test_run_does_not_mark_empty_selection_as_skipped(monkeypatch) -> None:
     assert result.periods and all(p.trades == 0 for p in result.periods)
     assert not any(p.skipped for p in result.periods)
     assert result.overall.skipped_periods == 0
+
+
+# ---------------------------------------------------------------------------
+# 后续 PR：活跃期 DSR（``deflated_sharpe_active``）。
+# 目的不是"修" DSR，而是**证明**跳过期对 DSR 近似不敏感，防止把「有跳过期」
+# 误读成「门禁被放松」。
+# ---------------------------------------------------------------------------
+
+
+def test_deflated_sharpe_active_is_none_without_skipped_periods() -> None:
+    """无跳过期 → ``None``（未计算），调用方能与合法的 0.0 区分。"""
+    tester = _tester()
+    view = _aggregate([1.0, -0.5, 2.0])
+
+    assert view.skipped_periods == 0
+    assert tester._deflated_sharpe_active(view, PERIODS_PER_YEAR) is None
+
+
+def test_deflated_sharpe_active_computed_when_some_periods_skipped() -> None:
+    """有跳过期且活跃期 >1 → 用活跃期数重算，返回浮点值。"""
+    tester = _tester()
+    view = _aggregate([1.0, -0.5, 2.0, 0.0, 0.0], [False, False, False, True, True])
+
+    assert (view.skipped_periods, view.active_periods) == (2, 3)
+    value = tester._deflated_sharpe_active(view, PERIODS_PER_YEAR)
+
+    assert value is not None
+    assert isinstance(value, float)
+
+
+def test_deflated_sharpe_active_is_none_when_no_active_period() -> None:
+    """全期跳过 → 没有活跃期，不得拿主序列假装算得出活跃 DSR。"""
+    tester = _tester()
+    view = _aggregate([0.0, 0.0], [True, True])
+
+    assert view.active_periods == 0
+    assert tester._deflated_sharpe_active(view, PERIODS_PER_YEAR) is None
+
+
+def test_deflated_sharpe_active_tracks_active_view_not_main_series() -> None:
+    """活跃口径 DSR 必须建立在 ``sharpe_ratio_active`` 上，而非被 0 收益期稀释的主序列。"""
+    tester = _tester()
+    # 主序列被 0 收益期稀释，活跃序列更极端 → 两者 DSR 必然不同。
+    view = _aggregate(
+        [0.03, -0.01, 0.04, -0.02, 0.0, 0.0, 0.0, 0.0],
+        [False, False, False, False, True, True, True, True],
+    )
+    assert view.sharpe_ratio_active != view.sharpe_ratio
+
+    active_dsr = tester._deflated_sharpe_active(view, PERIODS_PER_YEAR)
+    main_dsr = tester._calculate_deflated_sharpe(
+        view.sharpe_ratio,
+        tester.n_variants,
+        len([1, 1, 1, 1, 0, 0, 0, 0]),  # type: ignore[arg-type]
+        sharpe_is_annualized=True,
+        periods_per_year=PERIODS_PER_YEAR,
+    )
+
+    assert active_dsr is not None
+    assert active_dsr != main_dsr
+
+
+def test_assemble_walkforward_result_aligns_skipped_periods_and_dsr() -> None:
+    """akquant 路径：跳过期必须落进 ``periods``（T 对齐），并产出活跃期 DSR。
+
+    ⚠️ 已知残留差异（有意保留，不属本 PR）：akquant 的 ``overall`` 由**交易**聚合，
+    builtin 的 ``overall`` 由**期收益**聚合 —— 故 ``result.overall.skipped_periods``
+    在两引擎间仍不同（此处恒为 0）。跳期计数以 ``result.periods`` 为准；活跃期指标
+    走独立的 ``active_view``。改动 ``overall`` 口径会动摇历史读数，需单独评估。
+    """
+    from aqsp.research_engine import _assemble_walkforward_result
+
+    tester = _tester()
+    periods = [
+        _compute_backtest_metrics([0.01], "p0"),
+        _compute_backtest_metrics([-0.02], "p1"),
+        _compute_backtest_metrics([], "p2", skipped=True),
+    ]
+
+    result = _assemble_walkforward_result(
+        tester, periods, [], 3, periods_per_year=PERIODS_PER_YEAR
+    )
+
+    # T 对齐：跳过期显式落进 periods，不再被静默丢弃。
+    assert len(result.periods) == 3
+    assert [p.skipped for p in result.periods] == [False, False, True]
+    # 活跃期 DSR 落值。
+    assert result.deflated_sharpe_active is not None
+    # 残留差异被显式钉住：跳期计数不在 overall 上（akquant overall 由交易聚合）。
+    assert result.overall.skipped_periods == 0
+
+
+def test_assemble_walkforward_result_no_skip_has_no_active_dsr() -> None:
+    from aqsp.research_engine import _assemble_walkforward_result
+
+    tester = _tester()
+    periods = [
+        _compute_backtest_metrics([0.01], "p0"),
+        _compute_backtest_metrics([-0.02], "p1"),
+    ]
+
+    result = _assemble_walkforward_result(
+        tester, periods, [], 3, periods_per_year=PERIODS_PER_YEAR
+    )
+
+    assert result.overall.skipped_periods == 0
+    assert result.deflated_sharpe_active is None
