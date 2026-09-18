@@ -354,6 +354,15 @@ export interface PerformanceDecayAlert {
   recommendation: string;
 }
 
+export interface PerformanceFreshness {
+  latest_signal_date: string;
+  ledger_updated_at: string;
+  /** 最新信号日之后过去的交易日数（按交易日历，长假不算） */
+  trading_days_since_latest: number | null;
+  stale: boolean;
+  stale_after_trading_days: number;
+}
+
 export interface PerformancePayload {
   schema_version: string;
   generated_at: string;
@@ -365,6 +374,8 @@ export interface PerformancePayload {
     independent_signal_days: number;
     max_strategy_signal_days: number;
   };
+  /** 台账新鲜度：区分"正在积累"与"已停止更新" */
+  freshness: PerformanceFreshness;
   overall: {
     observations: number;
     win_count: number;

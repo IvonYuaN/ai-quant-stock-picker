@@ -17,7 +17,11 @@ import {
   Tag,
   ToneCallout,
 } from "@/components/ui/primitives";
-import { normalizePerformance, performanceHeadline } from "@/lib/performance-view";
+import {
+  normalizePerformance,
+  performanceHeadline,
+  stalenessMessage,
+} from "@/lib/performance-view";
 import { cn } from "@/lib/utils";
 
 const EMPTY_PAYLOAD: PerformancePayload = {
@@ -30,6 +34,13 @@ const EMPTY_PAYLOAD: PerformancePayload = {
     min_independent_signal_days: 30,
     independent_signal_days: 0,
     max_strategy_signal_days: 0,
+  },
+  freshness: {
+    latest_signal_date: "",
+    ledger_updated_at: "",
+    trading_days_since_latest: null,
+    stale: false,
+    stale_after_trading_days: 5,
   },
   overall: null,
   strategies: [],
@@ -101,12 +112,27 @@ export function PerformancePage() {
 
       {view.available ? (
         <>
-          {view.coldStart ? (
+          {/* 停滞优先于冷启动提示：流水线停了，进度会永远卡住，必须说清 */}
+          {view.stale ? (
             <ToneCallout
               tone="warn"
+              title={`台账已停滞：${stalenessMessage(view)}`}
+              detail={`超过 ${view.staleAfterTradingDays} 个交易日未更新即视为停滞（按交易日历，长假不算）。冷启动进度不会再推进 —— 先检查产出流水线，而不是等它自己攒够样本。`}
+            />
+          ) : null}
+
+          {view.coldStart ? (
+            <ToneCallout
+              tone={view.stale ? "neutral" : "warn"}
               title={`冷启动期：已积累 ${view.independentSignalDays}/${view.minSignalDays} 个独立信号日`}
               detail="样本量不足以支撑统计推断，按宪法 §5.4 暂不展示胜率。攒够独立信号日后会自动显示。"
             />
+          ) : null}
+
+          {!view.stale && view.latestSignalDate ? (
+            <p className="aq-note">
+              {stalenessMessage(view)}（台账写入于 {view.ledgerUpdatedAt || "未知"}）
+            </p>
           ) : null}
 
           <div className="aq-progress" aria-label="信号日积累进度">

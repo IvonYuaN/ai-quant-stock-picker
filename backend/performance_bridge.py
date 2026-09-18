@@ -22,12 +22,14 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime
+from datetime import date as CalendarDate
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 
+from aqsp.core.time import is_trading_day, now_shanghai, to_shanghai
 from aqsp.ledger.base import read_ledger
 from aqsp.ledger.learner import (
     LearnerConfig,
@@ -42,6 +44,10 @@ from aqsp.ledger.learner import (
 DEFAULT_LEDGER_PATH = "data/predictions.jsonl"
 DEFAULT_WEIGHT_HISTORY_PATH = "data/weight_history.jsonl"
 PERFORMANCE_SCHEMA_VERSION = "v1"
+
+# 停滞判定：最新信号日之后已过去这么多个**交易日**就算停滞。
+# 用交易日而不是自然日 —— 春节/长假里停几天是正常的，按自然日会误报。
+STALE_AFTER_TRADING_DAYS = 5
 
 # 与 LearnerConfig 保持一致；这里显式写出，避免前端拿不到常量时无法解释"为什么是 30"
 MIN_INDEPENDENT_SIGNAL_DAYS = LearnerConfig().min_independent_signal_days
@@ -72,6 +78,65 @@ def _weight_history_path() -> Path:
     return _resolve(os.environ.get("AQSP_WEIGHT_HISTORY_PATH", "").strip(), DEFAULT_WEIGHT_HISTORY_PATH)
 
 
+def _trading_days_between(start: CalendarDate, end: CalendarDate) -> int:
+    """start（不含）到 end（含）之间的交易日数。"""
+    if end <= start:
+        return 0
+    count = 0
+    cursor = start + timedelta(days=1)
+    while cursor <= end:
+        if is_trading_day(cursor):
+            count += 1
+        cursor += timedelta(days=1)
+    return count
+
+
+def _freshness(rows: list[dict], path: Path) -> dict[str, Any]:
+    """台账新鲜度。
+
+    为什么必须有：**"正在积累"和"已经停止更新"是两件完全不同的事**。
+    没有这个字段，流水线停了以后页面会永远显示"27/30 冷启动期"，
+    用户会以为系统在正常攒样本 —— 那是误导，不是诚实。
+    """
+    dates = [str(row.get("signal_date") or "")[:10] for row in rows]
+    dates = [text for text in dates if len(text) == 10]
+    latest = max(dates) if dates else ""
+
+    try:
+        updated_at = to_shanghai(
+            datetime.fromtimestamp(path.stat().st_mtime)
+        ).strftime("%Y-%m-%d %H:%M")
+    except OSError:
+        updated_at = ""
+
+    trading_days: int | None = None
+    if latest:
+        try:
+            trading_days = _trading_days_between(
+                CalendarDate.fromisoformat(latest), now_shanghai().date()
+            )
+        except ValueError:
+            trading_days = None
+
+    return {
+        "latest_signal_date": latest,
+        "ledger_updated_at": updated_at,
+        "trading_days_since_latest": trading_days,
+        "stale": trading_days is not None and trading_days > STALE_AFTER_TRADING_DAYS,
+        "stale_after_trading_days": STALE_AFTER_TRADING_DAYS,
+    }
+
+
+def _freshness_unavailable() -> dict[str, Any]:
+    return {
+        "latest_signal_date": "",
+        "ledger_updated_at": "",
+        "trading_days_since_latest": None,
+        "stale": False,
+        "stale_after_trading_days": STALE_AFTER_TRADING_DAYS,
+    }
+
+
 def _unavailable(reason: str) -> dict[str, Any]:
     """台账不可用时的诚实返回。
 
@@ -85,8 +150,12 @@ def _unavailable(reason: str) -> dict[str, Any]:
         "cold_start": {
             "is_cold_start": True,
             "min_independent_signal_days": MIN_INDEPENDENT_SIGNAL_DAYS,
-            "max_independent_signal_days": 0,
+            # 字段名必须与正常分支一致：曾经这里是 max_independent_signal_days，
+            # 与主返回的 independent_signal_days 不同名，前端会静默读到 0。
+            "independent_signal_days": 0,
+            "max_strategy_signal_days": 0,
         },
+        "freshness": _freshness_unavailable(),
         "overall": None,
         "strategies": [],
         "decay_alerts": [],
@@ -245,6 +314,7 @@ def performance_payload() -> dict[str, Any]:
 
     notes: list[str] = [
         "命中率 = 观测收益为正的比例；整体按 signal_date 聚合成 1 个观察（§5.2）。",
+        f"最新信号日之后超过 {STALE_AFTER_TRADING_DAYS} 个交易日未更新即视为停滞（按交易日历，长假不算停滞）。",
         "not_executable 记录不计入胜率（§5.3）。",
         f"独立信号日 < {MIN_INDEPENDENT_SIGNAL_DAYS} 时不展示胜率（§5.4 冷启动期）。",
         "avg_return / sharpe / max_drawdown 为 PnL 派生指标，仅作观测与告警，不作为主指标（§8）。",
@@ -262,6 +332,7 @@ def performance_payload() -> dict[str, Any]:
             "independent_signal_days": total_signal_days,
             "max_strategy_signal_days": max_days,
         },
+        "freshness": _freshness(rows, path),
         "overall": overall,
         "strategies": strategies,
         "decay_alerts": decay_alerts,

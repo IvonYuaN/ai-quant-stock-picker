@@ -7,6 +7,7 @@ import {
   normalizePerformance,
   performanceHeadline,
   severityTone,
+  stalenessMessage,
 } from "./performance-view";
 
 const warm = {
@@ -81,6 +82,29 @@ const cold = {
 const warmView = normalizePerformance(warm);
 const coldView = normalizePerformance(cold);
 
+// 停滞样本：最新信号日之后已过 15 个交易日
+const staleView = normalizePerformance({
+  available: true,
+  cold_start: {
+    is_cold_start: true,
+    min_independent_signal_days: 30,
+    independent_signal_days: 27,
+    max_strategy_signal_days: 21,
+  },
+  overall: { observations: 27, win_count: 14, hit_rate: 0.5185, displayable: false },
+  strategies: [],
+  decay_alerts: [],
+  status_counts: {},
+  notes: [],
+  freshness: {
+    latest_signal_date: "2026-08-28",
+    ledger_updated_at: "2026-08-31 18:10",
+    trading_days_since_latest: 15,
+    stale: true,
+    stale_after_trading_days: 5,
+  },
+});
+
 export const performanceViewContract = {
   /* ---- 正常（样本充足）---- */
   warmIsAvailable: warmView.available,
@@ -108,6 +132,23 @@ export const performanceViewContract = {
   warningIsWarnTone: severityTone("warning") === "warn",
   unknownIsNeutral: severityTone("something") === "neutral",
   emptySeverityIsNeutral: severityTone("") === "neutral",
+
+  /* ---- 台账新鲜度：必须能区分"在积累"与"已停止" ---- */
+  staleIsFlagged: staleView.stale,
+  staleDaysParsed: staleView.tradingDaysSinceLatest === 15,
+  staleMessageMentionsDays: stalenessMessage(staleView).includes("15 个交易日"),
+  staleMessageMentionsLatest: stalenessMessage(staleView).includes("2026-08-28"),
+  freshIsNotStale: !warmView.stale,
+  freshMessageNoStaleWording: !stalenessMessage(warmView).includes("未更新"),
+  // null（无法判定）时不能谎称"未更新"
+  unknownDaysNotClaimedStale: !normalizePerformance({
+    available: true,
+    freshness: { latest_signal_date: "2026-08-28", trading_days_since_latest: null },
+  }).stale,
+  noSignalDateSaysSo: stalenessMessage(normalizePerformance({ available: true })).includes(
+    "还没有任何信号日",
+  ),
+  missingFreshnessIsSafe: normalizePerformance({ available: true }).stale === false,
 
   /* ---- 边界 ---- */
   nullSafe: !normalizePerformance(null).available,
