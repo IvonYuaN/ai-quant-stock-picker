@@ -4129,6 +4129,7 @@ def _walkforward_gate_metadata(
     *,
     effective_symbols: int | None = None,
     net_fees: bool = False,
+    skipped_periods: int | None = None,
 ) -> dict[str, object]:
     metadata: dict[str, object] = {
         "source": str(getattr(args, "source", "") or ""),
@@ -4152,6 +4153,10 @@ def _walkforward_gate_metadata(
         metadata["utilization"] = round(float(_metadata_utilization), 6)
     if effective_symbols is not None:
         metadata["effective_symbols"] = int(effective_symbols)
+    # C4：跳过期数显式落产物 —— 与「真实 0 收益期」区分。产物里若出现跳过期，
+    # 读 Sharpe/DSR 时必须同时看这个字段，否则会把空仓造成的低波动当策略稳定。
+    if skipped_periods is not None:
+        metadata["skipped_periods"] = int(skipped_periods)
     if bool(getattr(args, "grid_cscv", False)):
         metadata["grid_profile"] = str(
             getattr(args, "grid_profile", "stable") or "stable"
@@ -7078,19 +7083,57 @@ def run_walkforward(args: argparse.Namespace) -> int:
         f"| 盈利因子 | {result.overall.profit_factor:.2f} |",
         f"| 总交易次数 | {result.overall.trades} |",
         f"| 不可成交次数 | {result.overall.not_executable} |",
-        "",
-        "## 过拟合检测",
-        "",
-        "| 指标 | 值 | 说明 |",
-        "|------|-----|------|",
-        f"| Deflated Sharpe Ratio | {dsr_value:.4f} | > 1.0 表示策略可能有效 |",
-        f"| PBO (过拟合概率) | {pbo_display} | < 50% 且非占位才表示低过拟合风险 |",
-        f"| 稳健性评分 | {result.robustness_score:.2%} | > 70% 表示稳定 |",
-        f"| 参数标准差 | {result.parameter_std:.4f} | 越小越稳定 |",
-        "",
-        "## 分 Regime 统计",
-        "",
     ]
+    # C4：跳过期 ≠ 真实 0 收益期。熊市过滤整期空仓时，``total_return`` 同样是
+    # 0.0、``trades`` 同样是 0，产物里**无法分辨**「策略很稳」与「根本没跑」。
+    # 这里把「跳过几期」与「仅活跃期口径」并列展示：主指标口径不变（与历史读数
+    # 仍逐位可比），活跃期口径用于暴露口径敏感性 —— 旧 win_rate 把跳过期计成
+    # 「非胜」故被低估；|Sharpe| 则被 0 收益期拉向 0（双向，非单向虚高）。
+    skipped_periods = sum(
+        1 for period in result.periods if getattr(period, "skipped", False)
+    )
+    active_periods = len(result.periods) - skipped_periods
+    if skipped_periods > 0:
+        report_lines.extend(
+            [
+                f"| 跳过整期（熊市过滤） | {skipped_periods} / {len(result.periods)} 期 |",
+                f"| 活跃期数 | {active_periods} |",
+                (
+                    f"| Sharpe Ratio（仅活跃期） | "
+                    f"{result.overall.sharpe_ratio_active:.2f} |"
+                ),
+                (
+                    f"| 胜率（仅活跃期） | "
+                    f"{result.overall.win_rate_active:.2%} |"
+                ),
+            ]
+        )
+    report_lines.extend(
+        [
+            "",
+            "## 过拟合检测",
+            "",
+            "| 指标 | 值 | 说明 |",
+            "|------|-----|------|",
+            f"| Deflated Sharpe Ratio | {dsr_value:.4f} | > 1.0 表示策略可能有效 |",
+        ]
+    )
+    if skipped_periods > 0:
+        dsr_active = getattr(result, "deflated_sharpe_active", None)
+        active_text = "N/A（活跃期不足或未计算）" if dsr_active is None else f"{dsr_active:.4f}"
+        report_lines.append(
+            f"| DSR（仅活跃期） | {active_text} | 跳过期剔除后重算（实测近似不敏感） |"
+        )
+    report_lines.extend(
+        [
+            f"| PBO (过拟合概率) | {pbo_display} | < 50% 且非占位才表示低过拟合风险 |",
+            f"| 稳健性评分 | {result.robustness_score:.2%} | > 70% 表示稳定 |",
+            f"| 参数标准差 | {result.parameter_std:.4f} | 越小越稳定 |",
+            "",
+            "## 分 Regime 统计",
+            "",
+        ]
+    )
 
     if result.regime_winrates:
         report_lines.extend(
@@ -7110,15 +7153,17 @@ def run_walkforward(args: argparse.Namespace) -> int:
             "",
             "## 分阶段表现",
             "",
-            "| 阶段 | 收益 | Sharpe | 胜率 | 交易次数 | 不可成交 |",
-            "|------|------|--------|------|----------|----------|",
+            "| 阶段 | 收益 | Sharpe | 胜率 | 交易次数 | 不可成交 | 跳过 |",
+            "|------|------|--------|------|----------|----------|------|",
         ]
     )
 
     for period in result.periods:
+        skipped_mark = "是（熊市过滤）" if getattr(period, "skipped", False) else "-"
         report_lines.append(
             f"| {period.period} | {period.total_return:.2%} | {period.sharpe_ratio:.2f} | "
-            f"{period.win_rate:.2%} | {period.trades} | {period.not_executable} |"
+            f"{period.win_rate:.2%} | {period.trades} | {period.not_executable} | "
+            f"{skipped_mark} |"
         )
 
     _append_walkforward_diagnostics(report_lines, result)
@@ -7185,6 +7230,7 @@ def run_walkforward(args: argparse.Namespace) -> int:
             args,
             effective_symbols=effective_symbols,
             net_fees=walkforward_net_fees,
+            skipped_periods=skipped_periods,
         ),
         diagnostics=grid_details if args.grid_cscv and grid_details else None,
         gate_path=getattr(args, "gate_path", WALKFORWARD_GATE_PATH),

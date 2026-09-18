@@ -177,6 +177,9 @@ class WalkForwardResult:
     pbo: float | None = None
     regime_winrates: Dict[str, float] = None
     diagnostics: WalkForwardDiagnostics | None = None
+    # C4：把跳过期剔除后重算的 DSR（观测数用活跃期数）。``None`` = 未计算（无跳过
+    # 期，或该引擎没产出活跃期口径）；调用方须区分 ``None`` 与合法的 0.0。
+    deflated_sharpe_active: float | None = None
 
     def __post_init__(self):
         if self.regime_winrates is None:
@@ -317,7 +320,7 @@ class WalkForwardTester:
             periods_per_year=periods_per_year,
         )
         pbo = self._calculate_pbo(periods)
-
+        dsr_active = self._deflated_sharpe_active(overall, periods_per_year)
         regime_winrates_calc: dict[str, list[float]] = {}
         for trade in all_trades:
             if trade.executable:
@@ -337,6 +340,7 @@ class WalkForwardTester:
             pbo=pbo,
             regime_winrates=regime_winrate_dict,
             diagnostics=self._build_diagnostics(all_trades),
+            deflated_sharpe_active=dsr_active,
         )
 
     def run_streaming(
@@ -530,6 +534,9 @@ class WalkForwardTester:
                 for regime, values in sorted(regime_winrates.items())
             },
             diagnostics=self._build_diagnostics(all_trades),
+            deflated_sharpe_active=self._deflated_sharpe_active(
+                overall, periods_per_year
+            ),
         )
 
     def _prepare_stream_batch(
@@ -1006,6 +1013,26 @@ class WalkForwardTester:
 
         z_stat = sr / sigma_sr - threshold_in_sigma
         return round(float(z_stat), 4)
+
+    def _deflated_sharpe_active(
+        self, overall: BacktestResult, periods_per_year: float
+    ) -> float | None:
+        """C4：跳过期剔除后用活跃期数重算的 DSR。无跳过期返回 ``None``。
+
+        实测（32 期 + 追加 20 期跳过的合成序列）：DSR 对跳过期**近似不敏感**
+        （−2.8042 → −2.8051），因为 ``n_obs`` 变大带来的 σ_SR 收缩与 Sharpe 向 0
+        的衰减大致抵消。把它算出来并展示，是为了**证明**这件事 —— 防止把「有跳过
+        期」误读成「门禁被放松」。
+        """
+        if overall.skipped_periods <= 0 or overall.active_periods <= 1:
+            return None
+        return self._calculate_deflated_sharpe(
+            overall.sharpe_ratio_active,
+            self.n_variants,
+            overall.active_periods,
+            sharpe_is_annualized=True,
+            periods_per_year=periods_per_year,
+        )
 
     @staticmethod
     def _calculate_pbo(periods: list[BacktestResult]) -> float | None:
