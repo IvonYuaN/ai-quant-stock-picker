@@ -101,34 +101,63 @@ chmod 2750 "$SNAPSHOT_DIR"
 [[ -f "$SNAPSHOT_PATH" && -r "$SNAPSHOT_PATH" ]] \
     || { echo "Vibe 用户不可读 AQSP 快照: ${SNAPSHOT_PATH}" >&2; exit 1; }
 
-if ! runuser -u "$SERVICE_USER" -- test -r "$SNAPSHOT_PATH" || {
-    [[ -f "$SNAPSHOT_INDEX_PATH" ]] &&
-    ! runuser -u "$SERVICE_USER" -- test -r "$SNAPSHOT_INDEX_PATH"
-}; then
+# 隔离用户必须能读 **API 会 serve 的每一个运行时路径**，而不只是快照那两个。
+#
+# 2026-09-18 的教训：这里原本只给 SNAPSHOT_PATH / SNAPSHOT_INDEX_PATH 加 ACL，
+# 而环境文件里其实声明了 8 条读取路径。结果 predictions.jsonl、debate_results.jsonl、
+# paper_trades.jsonl、news_catalysts_latest.json 都是 600，隔离用户读不到 ——
+# 选股绩效、讨论、纸面交易、消息面雷达**四个功能全部静默降级成空数据**，
+# 而下面的一致性检查只查那两个文件，所以 provision 一直报成功、没人发现。
+#
+# 所以读取路径**从环境文件里抽**（绝对路径型的 AQSP_* 变量），不硬编码：
+# 新增读取路径只改环境文件，ACL 自动跟上。
+READ_PATHS=()
+while IFS= read -r var_name; do
+    var_value="${!var_name:-}"
+    [[ "$var_value" == /* ]] && READ_PATHS+=("$var_value")
+done < <(grep -oE '^AQSP_[A-Z0-9_]+=' "$ENV_FILE" | tr -d '=')
+[[ -f "$SNAPSHOT_INDEX_PATH" ]] && READ_PATHS+=("$SNAPSHOT_INDEX_PATH")
+
+if ((${#READ_PATHS[@]})); then
     if ! command -v setfacl >/dev/null 2>&1; then
-        echo "隔离用户无法读取 600 快照，且系统没有 setfacl: ${SNAPSHOT_PATH}" >&2
-        echo "请安装 acl 后重试；需要 u:${SERVICE_USER}:r-- 文件 ACL 和父目录 --x ACL。" >&2
+        echo "缺少 setfacl：隔离用户无法读取 600 运行时文件。" >&2
+        echo "请安装 acl 后重试；需要 u:${SERVICE_USER}:r-- 文件 ACL 和祖先目录 --x ACL。" >&2
         exit 1
     fi
-    snapshot_dir="$(dirname "$SNAPSHOT_PATH")"
-    while [[ "$snapshot_dir" != "/" && "$snapshot_dir" != "." ]]; do
-        setfacl -m "u:${SERVICE_USER}:--x" "$snapshot_dir"
-        snapshot_dir="$(dirname "$snapshot_dir")"
+    for read_path in "${READ_PATHS[@]}"; do
+        ancestor="$(dirname "$read_path")"
+        while [[ "$ancestor" != "/" && "$ancestor" != "." ]]; do
+            setfacl -m "u:${SERVICE_USER}:--x" "$ancestor" 2>/dev/null || true
+            ancestor="$(dirname "$ancestor")"
+        done
+        parent="$(dirname "$read_path")"
+        if [[ -d "$parent" ]]; then
+            # 默认 ACL：以后在该目录新建的文件自动对隔离用户可读，
+            # 不必每次写完文件还记得补 ACL —— 上次漏掉的正是这一环。
+            setfacl -m "d:u:${SERVICE_USER}:r-x,d:m:r-x" "$parent"
+        fi
+        if [[ -f "$read_path" ]]; then
+            setfacl -m "u:${SERVICE_USER}:r--,m:r--" "$read_path"
+        elif [[ -d "$read_path" ]]; then
+            setfacl -m "u:${SERVICE_USER}:r-x,m:r-x" "$read_path"
+            setfacl -m "d:u:${SERVICE_USER}:r-x,d:m:r-x" "$read_path"
+        fi
     done
-    setfacl -m "d:u:${SERVICE_USER}:r--,d:m:r--" "$(dirname "$SNAPSHOT_PATH")"
-    setfacl -m "u:${SERVICE_USER}:r--,m:r--" "$SNAPSHOT_PATH"
-    if [[ -f "$SNAPSHOT_INDEX_PATH" ]]; then
-        setfacl -m "u:${SERVICE_USER}:r--,m:r--" "$SNAPSHOT_INDEX_PATH"
+
+    # 逐条验证：**任何一个读取路径不可读都算 provision 失败**。
+    # 只验证两个快照文件是上次漏检的根因，这里必须覆盖全部。
+    unreadable=()
+    for read_path in "${READ_PATHS[@]}"; do
+        [[ -e "$read_path" ]] || continue
+        runuser -u "$SERVICE_USER" -- test -r "$read_path" || unreadable+=("$read_path")
+    done
+    if ((${#unreadable[@]})); then
+        echo "隔离用户仍无法读取以下运行时路径（服务用户=${SERVICE_USER}）：" >&2
+        printf '  %s\n' "${unreadable[@]}" >&2
+        echo "请检查: getfacl <路径>" >&2
+        exit 1
     fi
-    runuser -u "$SERVICE_USER" -- test -r "$SNAPSHOT_PATH" &&
-        { [[ ! -f "$SNAPSHOT_INDEX_PATH" ]] ||
-          runuser -u "$SERVICE_USER" -- test -r "$SNAPSHOT_INDEX_PATH"; } \
-        || {
-            echo "已尝试 ACL，但隔离用户仍无法读取快照或日期索引: ${SNAPSHOT_PATH}" >&2
-            echo "请检查: getfacl ${SNAPSHOT_PATH}" >&2
-            exit 1
-        }
-    echo "已授予 ${SERVICE_USER} 对快照的最小读取 ACL（文件 r--，父目录 --x）。"
+    echo "已授予 ${SERVICE_USER} 对 ${#READ_PATHS[@]} 条运行时读取路径的最小读取 ACL（文件 r--，目录 r-x，父目录带默认 ACL）。"
 fi
 
 if [[ -z "$NPM_BIN" ]]; then
