@@ -68,4 +68,6 @@ for f in evidence_symbols.txt extract_gate_summary.py stop_loss_exit_evidence.py
 done
 
 log "完成：代码 sha=$SHA，数据 $(basename "$RAW_DB")，cache=$SYNC_CACHE"
-log "下一步：在 runner 上跑  bash $RUNNER_ROOT/scripts/runner_gate.sh"
+# 注意：runner_gate.sh 随 release 代码同步（位于 releases/$SHA/scripts/ 下），
+# $RUNNER_ROOT/scripts/ 不是本脚本的同步目标（历史上该目录从未被填充过）。
+log "下一步：在 runner 上跑  bash $RUNNER_ROOT/aqsp-scheduler-current/scripts/runner_gate.sh"
