@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
@@ -46,6 +47,23 @@ _MAX_RETRIES = 3
 _BACKOFF_BASE = 2.0
 _DEFAULT_DAILY_FETCH_WORKERS = 8
 
+# 分时端点级故障短路。一个源彻底挂掉时（被 WAF 拦、被限流、域名不可达），若仍按
+# 每只标的重试 3 次（退避 2s+4s ≈ 6s），一批 20 只就要 120s，而 IntradayService 的
+# **整批**共享预算只有 90s —— 结果是一个源把预算吃光，兜底源根本没轮到
+# （2026-09-18 实测：90s 内只来得及试 8 只标的，257/257 全部跳过）。
+# 故连续 _ENDPOINT_DOWN_THRESHOLD 只端点级失败即短路，冷却期内直接快速失败，
+# 把预算让给竞速同伴与 deferred 兜底源。
+_ENDPOINT_DOWN_THRESHOLD = 3
+_ENDPOINT_DOWN_COOLDOWN = 30.0
+
+
+class TencentEndpointDownError(DataError):
+    """端点级故障：连接失败、HTTP 非 200，或响应体不是 JSON（WAF 拦截页）。
+
+    与「该标的没有分时数据」严格区分：前者说明整条链路不可用，后者只是单只
+    标的问题（停牌/退市）。只有前者计入短路计数。
+    """
+
 
 def _get_market_prefix(symbol: str, *, is_index: bool = False) -> str:
     if is_index:
@@ -84,6 +102,12 @@ class TencentSource(DataSource):
         self.cache = cache or DataCache()
         self._last_request_ts: float = 0.0
         self._active_workload: str | None = None
+        # 分时端点短路状态。按实例而非模块级持有：盘中一次刷新就是一个进程、
+        # 一个实例，4 个 worker 线程共享它，作用域正好等于「本次刷新」，
+        # 不需要引入跨进程全局状态。
+        self._endpoint_down_lock = threading.Lock()
+        self._endpoint_down_streak = 0
+        self._endpoint_down_until = 0.0
 
     def set_workload(self, workload: str | None) -> None:
         """Set provenance context for cache-backed runtime fetches."""
@@ -111,6 +135,33 @@ class TencentSource(DataSource):
         if elapsed < _REQUEST_DELAY:
             time.sleep(_REQUEST_DELAY - elapsed)
         self._last_request_ts = time.monotonic()
+
+    def _endpoint_down(self) -> bool:
+        """分时端点是否处于短路冷却期。"""
+        with self._endpoint_down_lock:
+            return time.monotonic() < self._endpoint_down_until
+
+    def _record_endpoint_rejection(self) -> bool:
+        """记一次确定性端点拒绝；返回短路是否已触发。"""
+        global_open = False
+        with self._endpoint_down_lock:
+            self._endpoint_down_streak += 1
+            if self._endpoint_down_streak >= _ENDPOINT_DOWN_THRESHOLD:
+                self._endpoint_down_until = time.monotonic() + _ENDPOINT_DOWN_COOLDOWN
+                global_open = True
+        if global_open:
+            _logger.warning(
+                "tencent 分时端点连续 %d 次确定性拒绝，短路 %.0fs 内快速失败，"
+                "把预算让给竞速同伴与兜底源",
+                _ENDPOINT_DOWN_THRESHOLD,
+                _ENDPOINT_DOWN_COOLDOWN,
+            )
+        return global_open
+
+    def _record_endpoint_success(self) -> None:
+        with self._endpoint_down_lock:
+            self._endpoint_down_streak = 0
+            self._endpoint_down_until = 0.0
 
     def fetch_daily(
         self,
@@ -186,6 +237,11 @@ class TencentSource(DataSource):
     ) -> dict[str, OhlcvFrame]:
         out: dict[str, OhlcvFrame] = {}
         for symbol in symbols:
+            if self._endpoint_down():
+                # 端点已判死：剩余标的只会逐个撞短路，直接停手，把共享预算留给
+                # 竞速同伴与 deferred 兜底源。（本批仍会因覆盖不全而判失败，
+                # 这是既有语义，不变。）
+                break
             out[symbol] = _normalize_tencent_intraday_volume_to_shares(
                 require_fetched_frame(
                     self.name,
@@ -400,45 +456,74 @@ class TencentSource(DataSource):
                     raise DataError(f"tencent 日线获取失败: {symbol}") from exc
         return None
 
+    def _fetch_tencent_intraday_payload(self, market_symbol: str) -> dict:
+        """请求并解码分时端点，端点级故障抛 ``TencentEndpointDownError``。"""
+        try:
+            response = self._session.get(
+                TENCENT_INTRADAY_URL,
+                params={"code": market_symbol},
+                timeout=10,
+            )
+        except Exception as exc:
+            raise TencentEndpointDownError(f"连接失败: {exc}") from exc
+        status_code = int(getattr(response, "status_code", 200))
+        try:
+            payload = response.json()
+        except Exception as exc:
+            # 非 200 + 非 JSON 就是拦截页（WAF 返回 HTML）。分开报错便于排障。
+            raise TencentEndpointDownError(
+                f"HTTP {status_code} 且响应不是 JSON（疑似拦截页）"
+            ) from exc
+        if status_code != 200:
+            raise TencentEndpointDownError(f"HTTP {status_code}")
+        if not isinstance(payload, dict):
+            raise TencentEndpointDownError("响应不是 JSON 对象")
+        return payload
+
     def _fetch_tencent_intraday(
         self, symbol: str, period: str, *, is_index: bool = False
     ) -> pd.DataFrame | None:
+        if self._endpoint_down():
+            # 冷却期内不发任何请求：让竞速同伴和 deferred 兜底源拿到预算。
+            raise DataError(f"tencent 分时端点短路冷却中，跳过 {symbol}")
+        market = _get_market_prefix(symbol, is_index=is_index)
+        market_symbol = f"{market}{symbol}"
         for attempt in range(_MAX_RETRIES):
             try:
                 self._throttle()
-                market = _get_market_prefix(symbol, is_index=is_index)
-                market_symbol = f"{market}{symbol}"
-                response = self._session.get(
-                    TENCENT_INTRADAY_URL,
-                    params={"code": market_symbol},
-                    timeout=10,
-                )
-                stock_data = _tencent_intraday_stock_data(
-                    response.json(), market_symbol, symbol
-                )
-                if not stock_data:
-                    return None
-                trade_date, minutes = _tencent_intraday_today_minutes(
-                    stock_data, today=now_shanghai().date()
-                )
-                rows = _tencent_intraday_rows(trade_date, minutes)
-                if not rows:
-                    return None
-                df = pd.DataFrame(rows)
-                df["symbol"] = symbol
-                df["name"] = symbol
-                return df
-            except Exception as exc:
+                payload = self._fetch_tencent_intraday_payload(market_symbol)
+            except TencentEndpointDownError as exc:
+                tripped = self._record_endpoint_rejection()
+                if tripped:
+                    raise DataError(
+                        f"tencent 分时端点连续拒绝，已短路: {symbol}"
+                    ) from exc
                 if attempt < _MAX_RETRIES - 1:
+                    # 退避同时充当宽限期：瞬时抖动能在几秒内恢复，
+                    # 确定性拒绝（WAF/限流）则会在阈值处被短路。
                     time.sleep(_BACKOFF_BASE ** (attempt + 1))
-                else:
-                    _logger.warning(
-                        "tencent 分时获取失败 %s（重试%d次后放弃）: %s",
-                        symbol,
-                        _MAX_RETRIES,
-                        exc,
-                    )
-                    raise DataError(f"tencent 分时获取失败: {symbol}") from exc
+                    continue
+                _logger.warning(
+                    "tencent 分时端点故障 %s（重试%d次后放弃）: %s",
+                    symbol,
+                    _MAX_RETRIES,
+                    exc,
+                )
+                raise DataError(f"tencent 分时获取失败: {symbol}") from exc
+            self._record_endpoint_success()
+            stock_data = _tencent_intraday_stock_data(payload, market_symbol, symbol)
+            if not stock_data:
+                return None
+            trade_date, minutes = _tencent_intraday_today_minutes(
+                stock_data, today=now_shanghai().date()
+            )
+            rows = _tencent_intraday_rows(trade_date, minutes)
+            if not rows:
+                return None
+            df = pd.DataFrame(rows)
+            df["symbol"] = symbol
+            df["name"] = symbol
+            return df
         return None
 
     def _fetch_tencent_quote(self, symbol: str) -> dict | None:
