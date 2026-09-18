@@ -1342,6 +1342,13 @@ def write_cached_coverage_symbols(
 
 
 def build_walkforward_command(args: argparse.Namespace) -> list[str]:
+    """构造子进程 walkforward 命令。
+
+    起点用 `args.start` —— 但调用方必须在覆盖判定后把**收敛后的起点写回**
+    `args.start`（见 main 里的 start-overridden 段）。否则子进程会从请求的
+    5 年窗口开跑，第一期训练窗口落在空缺区，整批取数为空直接崩 ——
+    正是 2026-09 连挂 6 天的死因。
+    """
     command = [
         sys.executable,
         "-m",
@@ -2219,6 +2226,19 @@ def main() -> int:
             "请先回填缺失区间的日线，或把 --start 收敛到数据覆盖范围内。"
         )
         return 2
+
+    # 覆盖判定收敛后，把**生效起点**写回 args。
+    # 下游（子进程命令、状态文件）都据此 —— 否则会出现"状态文件说跑了 5 年、
+    # 实际只跑了 3 年"，以及子进程从空窗口开跑直接崩（2026-09 的死因）。
+    if (
+        coverage.coverage_window_start
+        and coverage.coverage_window_start != args.start
+    ):
+        print(
+            "production gate start overridden by coverage: "
+            f"{args.start} -> {coverage.coverage_window_start}"
+        )
+        args.start = coverage.coverage_window_start
 
     if coverage.covered_symbols < args.min_symbols:
         _write_status(

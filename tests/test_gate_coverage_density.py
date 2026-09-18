@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import sqlite3
+import json
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -156,3 +157,127 @@ def test_coverage_payload_carries_density_fields(tmp_path: Path):
     assert payload["density_threshold"] > 0
     assert payload["density_note"]
     assert isinstance(payload["sparse_spans"], list)
+
+
+# --------------------------------------------------------------------------
+# --------------------------------------------------------------------------
+# 收敛必须一路传到子进程（2026-09 修复最容易漏的一环）
+# --------------------------------------------------------------------------
+
+
+def _gate_args(**overrides):
+    import argparse
+
+    base = dict(
+        start="2021-09-12",
+        end="2026-09-11",
+        grid_profile="stable_plus",
+        report="/tmp/r.md",
+        gate_path="/tmp/g.json",
+        cache_path="/tmp/c.db",
+        log="/tmp/l.log",
+    )
+    base.update(overrides)
+    return argparse.Namespace(**base)
+
+
+def test_build_command_uses_args_start():
+    """`build_walkforward_command` 直接读 args.start。
+
+    收敛是通过"把生效起点写回 args.start"实现的（见下一个测试），
+    所以这里固定住这条契约：构造命令只看 args.start。
+    """
+    from scripts.run_production_walkforward_gate import build_walkforward_command
+
+    command = build_walkforward_command(_gate_args(start="2023-09-05"))
+    assert command[command.index("--start") + 1] == "2023-09-05"
+    assert command[command.index("--end") + 1] == "2026-09-11"
+
+
+def test_main_writes_clamped_start_back_to_args(tmp_path: Path, monkeypatch) -> None:
+    """端到端：窗口被收敛后，子进程拿到的必须是**收敛后的**起点。
+
+    这是本次事故修复最容易漏的一环：覆盖判定把窗口收敛了，但子进程若仍拿
+    `--start 2023-01-01`（请求值），第一期训练窗口照旧落在空缺区，
+    整批取数为空 → 同样崩。
+    """
+    import sqlite3
+
+    import scripts.run_production_walkforward_gate as gate_mod
+
+    db = tmp_path / "raw.db"
+    # 数据只从 2024-01-02 开始；请求起点早了整整一年
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        """
+        CREATE TABLE stocks (ts_code TEXT PRIMARY KEY);
+        CREATE TABLE daily_qfq (
+            ts_code TEXT, trade_date TEXT,
+            open REAL, high REAL, low REAL, close REAL, volume REAL,
+            open_qfq REAL, high_qfq REAL, low_qfq REAL, close_qfq REAL
+        );
+        """
+    )
+    codes = [f"{600000 + i:06d}.SH" for i in range(5)]
+    conn.executemany("INSERT INTO stocks (ts_code) VALUES (?)", [(c,) for c in codes])
+    rows = []
+    cursor = date(2024, 1, 2)
+    while cursor <= date(2024, 1, 30):
+        if cursor.weekday() < 5:
+            for code in codes:
+                rows.append(
+                    (code, cursor.strftime("%Y%m%d"), 10.0, 11.0, 9.0, 10.0, 1e6, None, None, None, None)
+                )
+        cursor += timedelta(days=1)
+    conn.executemany("INSERT INTO daily_qfq VALUES (?,?,?,?,?,?,?,?,?,?,?)", rows)
+    conn.commit()
+    conn.close()
+
+    seen: dict[str, object] = {}
+
+    gate_path = tmp_path / "g.json"
+
+    def fake_execute(*, command, env, cwd, timeout_seconds, status_path, args, coverage, effective_symbols):
+        seen["start"] = args.start
+        seen["command_start"] = command[command.index("--start") + 1]
+        # 子进程成功时必须落下 sidecar，否则主流程会在"stamp metadata"处判失败
+        gate_path.write_text(
+            json.dumps(
+                {
+                    "run_date": "2026-06-27",
+                    "deflated_sharpe": 1.1,
+                    "pbo": 0.2,
+                    "pbo_valid": True,
+                    "dsr_pass": True,
+                    "pbo_pass": True,
+                    "both_pass": True,
+                    "n_periods": 10,
+                    "effective_symbols": 5,
+                }
+            ),
+            encoding="utf-8",
+        )
+        return 0, 12345
+
+    monkeypatch.setattr(gate_mod, "_execute_child_walkforward", fake_execute)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "scripts/run_production_walkforward_gate.py",
+            "--db", str(db),
+            "--start", "2023-01-01",
+            "--end", "2024-01-30",
+            "--min-symbols", "5",
+            "--report", str(tmp_path / "r.md"),
+            "--gate-path", str(tmp_path / "g.json"),
+            "--log", str(tmp_path / "l.log"),
+            "--cache-path", str(tmp_path / "c.db"),
+            "--status-path", str(tmp_path / "s.json"),
+            "--timeout-seconds", "30",
+        ],
+    )
+
+    assert gate_mod.main() == 0
+    # 请求的是 2023-01-01，数据只从 2024-01-02 起 → 必须收敛
+    assert seen["start"] == "2024-01-02"
+    assert seen["command_start"] == "2024-01-02"
