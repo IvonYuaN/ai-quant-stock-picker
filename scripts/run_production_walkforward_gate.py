@@ -23,18 +23,26 @@ from bisect import bisect_left
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
 from pathlib import Path
+import logging
 import re
 import signal
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from aqsp.core.time import get_previous_trading_day, now_shanghai, today_shanghai
+from aqsp.core.time import (
+    get_previous_trading_day,
+    is_trading_day,
+    now_shanghai,
+    today_shanghai,
+)
+from aqsp.data.coverage_density import build_density_report, resolve_effective_window
 from aqsp.data.sqlite_db_source import SqliteDbSource
 from aqsp.utils.jsonl_io import atomic_write_text
 from aqsp.walkforward_gate import MIN_PRODUCTION_GATE_SYMBOLS
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+_LOGGER = logging.getLogger("aqsp.walkforward_gate")
 DEFAULT_RAW_DB = Path("/opt/market-data/astocks_raw.db")
 MIN_COVERAGE_RATIO = 0.8
 DEFAULT_STATUS_PATH = "data/walkforward_production_status.json"
@@ -43,6 +51,12 @@ DEFAULT_LOCK_PATH = ".locks/walkforward-production.lock"
 DEFAULT_COVERAGE_MODE = "auto_recent_window"
 DEFAULT_LOOKBACK_YEARS = 5
 PRODUCTION_TIMEOUT_FLOOR_SECONDS = 7200
+# 前置空档容差：请求起点到"第一个有数据的交易日"之间，自然日差超过这个值
+# 就认为窗口超出数据覆盖（春节长假最长 ~15 天，不会误伤）。
+LEADING_GAP_TOLERANCE_DAYS = 20
+# 前置空档容差：请求起点到"第一个有数据的交易日"之间，自然日差超过这个值
+# 就认为窗口超出数据覆盖（春节长假最长 ~15 天，不会误伤）。
+LEADING_GAP_TOLERANCE_DAYS = 20
 PRODUCTION_TIMEOUT_SECONDS_PER_SYMBOL = 2
 MIN_PRODUCTION_MEMORY_GIB = 4.0
 DEFAULT_STREAM_BATCH_SIZE = 200
@@ -63,6 +77,15 @@ class CoverageSummary:
     lookback_years: int | None = None
     listing_aware: bool = False
     expected_trade_days: int = 0
+    # ---- 密度校验（2026-09 事故后新增）----
+    # 旧校验只比 MIN/MAX 日期，中段是空的也看不出来。这里记录逐交易日的密度结论，
+    # 并把"窗口起点被收敛到实际可用处"这件事写进产物，让结论带着真实窗口。
+    requested_window_start: str = ""
+    window_clamped: bool = False
+    density_ok: bool = True
+    density_threshold: int = 0
+    density_note: str = ""
+    sparse_spans: tuple[dict[str, object], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -84,6 +107,12 @@ def _coverage_payload_from_summary(coverage: CoverageSummary) -> dict[str, objec
         "lookback_years": coverage.lookback_years,
         "listing_aware": coverage.listing_aware,
         "expected_trade_days": coverage.expected_trade_days,
+        "requested_window_start": coverage.requested_window_start,
+        "window_clamped": coverage.window_clamped,
+        "density_ok": coverage.density_ok,
+        "density_threshold": coverage.density_threshold,
+        "density_note": coverage.density_note,
+        "sparse_spans": list(coverage.sparse_spans),
     }
 
 
@@ -668,6 +697,78 @@ def _compact_day(raw: str) -> str:
     return date.fromisoformat(raw).strftime("%Y%m%d")
 
 
+def _calendar_gap_days(left: str, right: str) -> int:
+    """两个交易日之间的自然日差（右 - 左）。无法解析时返回 0（保守：不触发收敛）。"""
+    try:
+        start = date.fromisoformat(_iso_day(left))
+        end = date.fromisoformat(_iso_day(right))
+    except ValueError:
+        return 0
+    return (end - start).days
+
+
+def _calendar_gap_days(left: str, right: str) -> int:
+    """两个交易日之间的自然日差（右 - 左）。无法解析时返回 0（保守：不触发收敛）。"""
+    try:
+        start = date.fromisoformat(_iso_day(left))
+        end = date.fromisoformat(_iso_day(right))
+    except ValueError:
+        return 0
+    return (end - start).days
+
+
+def _first_trading_day_on_or_after(day: str) -> str:
+    """请求起点之后的**首个交易日**（紧凑格式）。
+
+    用它当比较基准，才能区分两种"起点之后没数据"：
+    - 起点本身不是交易日（元旦/周末）→ 没有缺口，不该收敛窗口；
+    - 起点是交易日却迟迟没数据 → 真的缺数据，必须收敛。
+    不区分就会把 `2024-01-01`（元旦）误判成缺口，把窗口"收敛"到 01-02。
+    """
+    text = _iso_day(day)
+    try:
+        cursor = date.fromisoformat(text)
+    except ValueError:
+        return ""
+    for _ in range(30):  # 最多跨 30 天，足够覆盖春节长假
+        if is_trading_day(cursor):
+            return cursor.strftime("%Y%m%d")
+        cursor += timedelta(days=1)
+    return ""
+
+
+def _first_trading_day_on_or_after(day: str) -> str:
+    """请求起点之后的**首个交易日**（紧凑格式）。
+
+    用它当比较基准，才能区分两种"起点之后没数据"：
+    - 起点本身不是交易日（元旦/周末）→ 没有缺口，不该收敛窗口；
+    - 起点是交易日却迟迟没数据 → 真的缺数据，必须收敛。
+    不区分就会把 `2024-01-01`（元旦）误判成缺口，把窗口"收敛"到 01-02。
+    """
+    text = _iso_day(day)
+    try:
+        cursor = date.fromisoformat(text)
+    except ValueError:
+        return ""
+    for _ in range(30):  # 最多跨 30 天，足够覆盖春节长假
+        if is_trading_day(cursor):
+            return cursor.strftime("%Y%m%d")
+        cursor += timedelta(days=1)
+    return ""
+
+
+def _iso_day(value: str) -> str:
+    """紧凑交易日 → ISO。
+
+    窗口字段对外一直是 ISO（`coverage_window_start` 等），别让窗口收敛后的值
+    变成 `20230601` —— 状态文件的消费方按 ISO 解析，混格式会静默读错。
+    """
+    text = str(value or "").strip()
+    if len(text) == 8 and text.isdigit():
+        return f"{text[:4]}-{text[4:6]}-{text[6:]}"
+    return text
+
+
 def _parse_db_day(raw: str) -> date | None:
     text = str(raw or "").strip()
     if len(text) == 8 and text.isdigit():
@@ -863,19 +964,59 @@ def inspect_raw_coverage_window_with_symbols(
         stock_rows = conn.execute(
             "SELECT ts_code FROM stocks ORDER BY ts_code"
         ).fetchall()
-        market_days = [
-            str(raw_day[0] or "")
-            for raw_day in conn.execute(
-                """
-                SELECT DISTINCT trade_date
-                FROM daily_qfq
-                WHERE trade_date >= ? AND trade_date <= ?
-                ORDER BY trade_date
-                """,
-                (start_str, end_str),
-            ).fetchall()
-            if str(raw_day[0] or "")
-        ]
+        # 一次查出「交易日 + 当日标的数」。
+        # 密度校验必须知道**每一天有多少只**：只看 DISTINCT 日期无法发现"中段是空的"，
+        # 而那正是 2026-09 gate 连挂 6 天的原因。
+        market_rows = conn.execute(
+            """
+            SELECT trade_date, COUNT(DISTINCT ts_code)
+            FROM daily_qfq
+            WHERE trade_date >= ? AND trade_date <= ?
+            GROUP BY trade_date
+            ORDER BY trade_date
+            """,
+            (start_str, end_str),
+        ).fetchall()
+        market_days = [str(item[0] or "") for item in market_rows if str(item[0] or "")]
+        market_counts = [int(item[1] or 0) for item in market_rows if str(item[0] or "")]
+
+        # 密度校验 + 窗口收敛：把"边界上有数据"升级为"每个交易日都有足够标的"。
+        #
+        # 注意分层：**这里只报告，不中止**。inspect_* 是只读检查 API，
+        # 是否因数据不足而放弃跑批是**主流程**的策略决定（见 main 里的 density_ok 判定）。
+        # 在检查函数里 raise 会让所有小样本调用方（测试、诊断脚本）一起炸。
+        density = build_density_report(
+            market_days,
+            market_counts,
+            start=coverage_start,
+            end=coverage_end,
+        )
+        density_ok = density.usable
+        effective_start, clamped = (
+            resolve_effective_window(
+                density,
+                requested_start=coverage_start,
+                first_data_day=market_days[0] if market_days else "",
+            )
+            if density_ok
+            else (coverage_start, False)
+        )
+        if clamped:
+            _LOGGER.warning(
+                "覆盖窗口起点被收敛：%s → %s（%s）",
+                coverage_start,
+                effective_start,
+                density.describe(),
+            )
+            start_str = _compact_day(effective_start)
+            trimmed = [
+                (day, count)
+                for day, count in zip(market_days, market_counts)
+                if day >= start_str
+            ]
+            market_days = [day for day, _ in trimmed]
+            market_counts = [count for _, count in trimmed]
+
         row = conn.execute(
             """
             SELECT COUNT(*), MIN(trade_date), MAX(trade_date), COUNT(DISTINCT trade_date)
@@ -940,11 +1081,25 @@ def inspect_raw_coverage_window_with_symbols(
             first_trade_date=first_market_day,
             last_trade_date=last_market_day,
             coverage_mode=_normalize_coverage_mode(coverage_mode),
-            coverage_window_start=coverage_start,
+            coverage_window_start=_iso_day(effective_start),
             coverage_window_end=coverage_end,
             lookback_years=lookback_years if listing_aware else None,
             listing_aware=listing_aware,
             expected_trade_days=expected_rows,
+            requested_window_start=coverage_start,
+            window_clamped=clamped,
+            density_ok=density_ok,
+            density_threshold=density.threshold,
+            density_note=density.describe(),
+            sparse_spans=tuple(
+                {
+                    "start": span.start,
+                    "end": span.end,
+                    "trade_days": span.trade_days,
+                    "min_symbols": span.min_symbols,
+                }
+                for span in density.sparse_spans
+            ),
         ),
         covered_symbols=covered,
     )
@@ -2046,6 +2201,25 @@ def main() -> int:
         f"rows={coverage.rows} range={coverage.first_trade_date}..{coverage.last_trade_date} "
         f"mode={coverage.coverage_mode} window={coverage.coverage_window_start}..{coverage.coverage_window_end}"
     )
+    # 密度闸门（先于标的数闸门）：窗口内若没有一段"每个交易日都有足够标的"的区间，
+    # 直接中止。否则会一路跑到第 1/36 期才因整批取数为空而崩 ——
+    # 2026-09 就是这样连挂 6 天（monitor 对外恒返回 0，没人察觉）。
+    if not coverage.density_ok:
+        _write_status(
+            status_path,
+            status="blocked_density",
+            args=args,
+            coverage=coverage,
+            effective_symbols=coverage.covered_symbols,
+            detail=coverage.density_note,
+        )
+        print(f"BLOCK: {coverage.density_note}")
+        print(
+            "这不是「再等等就好」的问题：窗口内确实没有可用数据。"
+            "请先回填缺失区间的日线，或把 --start 收敛到数据覆盖范围内。"
+        )
+        return 2
+
     if coverage.covered_symbols < args.min_symbols:
         _write_status(
             status_path,
