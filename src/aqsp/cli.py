@@ -6290,30 +6290,48 @@ def _apply_walkforward_grid_variant(
         "triple_rise_weight": variant.triple_rise_weight,
     }
     strategy_mix = variant.strategy_mix or "momentum"
+    enable_volume = False
+    enable_mr = False
     if strategy_mix == "volume":
         composite_updates["volume_weight"] = 0.3
         composite_updates["momentum_weight"] = 0.2
         composite_updates["triple_rise_weight"] = 0.2
+        enable_volume = True
     elif strategy_mix == "mean_reversion":
         composite_updates["mean_reversion_weight"] = 0.4
         composite_updates["momentum_weight"] = 0.1
         composite_updates["triple_rise_weight"] = 0.1
+        enable_mr = True
 
-    return replace(
-        thresholds,
-        composite=CompositeThresholds(
+    replace_kwargs: dict[str, Any] = {
+        "composite": CompositeThresholds(
             **{
                 **thresholds.composite.__dict__,
                 **composite_updates,
             }
         ),
-        momentum=MomentumThresholds(
+        "momentum": MomentumThresholds(
             **{
                 **thresholds.momentum.__dict__,
                 "lookback_days": variant.lookback_days,
             }
         ),
-    )
+    }
+    # 潜伏 bug 修复：strategy_mix 声明要用 volume / mean_reversion 时，必须**同步 enable** 对应
+    # 因子。thresholds.yaml 里两者默认 ``enabled=False``，而本函数此前只改权重、不 enable，
+    # 于是 ``CompositeStrategy._has_volume()`` / ``_has_mr()`` 恒为 False —— 变体实际只用
+    # mom+tr，退化成**另一个变体的副本**：实测 WF-V01 的选出名单与 WF-001 **逐位相同**
+    # （WF-MR1 与 WF-B03 逐位相同）。后果是 ``stable_plus``（生产默认 N=8）声称的
+    # 「含因子族多样性」不成立，且 ``MIN_CSCV_VARIANTS=8`` 这道 fail-closed 守卫被一个
+    # **重复列**凑数通过（PBO/CSCV 假设 N 个互异策略，重复列会污染统计）。
+    if enable_volume:
+        replace_kwargs["volume"] = replace(thresholds.volume, enabled=True)
+    if enable_mr:
+        replace_kwargs["mean_reversion"] = replace(
+            thresholds.mean_reversion, enabled=True
+        )
+
+    return replace(thresholds, **replace_kwargs)
 
 
 def _run_walkforward_grid_cscv(
