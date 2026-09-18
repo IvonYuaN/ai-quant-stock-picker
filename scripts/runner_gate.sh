@@ -3,12 +3,18 @@
 #
 # 用法（在 runner 上）：
 #   [GRID_PROFILE=stable_plus] [LOOKBACK_YEARS=3] [BATCH_SIZE=500] \
-#   BACK_HOST=root@8.130.124.238 bash /opt/aqsp-runner/scripts/runner_gate.sh
+#   bash /opt/aqsp-runner/aqsp-scheduler-current/scripts/runner_gate.sh
+#   （不需要 BACK_HOST：结果不回传，由 prod 用 runner_fetch.sh 主动 pull）
 #
 # 关键参数：
 #   BATCH_SIZE   prod 是 200（内存逼出来的），runner 有余量可开 500~1000 提速
 #   TIMEOUT_SEC  stable_plus = 8 variant × 19 期 = 152 期，必须 ≥ 36000（prod 曾因 14400 超时白跑）
 #   END_DATE     必须 ≤ 库内 MAX(trade_date)，否则父脚本 BLOCK
+#   MAX_LOAD1    1 分钟 load 上限（默认 4）。runner 是共享业务机，超限让位并跳过本轮。
+#   LOAD_GUARD=0 关闭让位守卫（仅诊断用；生产排期必须开着）
+#
+# 建议在 cron 里再套 nice/ionice，进一步降低对业务的抢占：
+#   nice -n 19 ionice -c2 -n7 bash .../runner_gate.sh
 set -euo pipefail
 
 RUNNER_ROOT="${RUNNER_ROOT:-/opt/aqsp-runner}"
@@ -24,6 +30,14 @@ BATCH_SIZE="${BATCH_SIZE:-500}"        # prod 只能 200（内存逼的），run
 MIN_MEMORY_GIB="${MIN_MEMORY_GIB:-4}"  # 预检阈值，runner 8G 无压力；prod 只能 1.5
 END_DATE="${END_DATE:-}"
 
+# 共享业务机守卫。runner 上同时跑着 ifidy/lanshe 三个线上业务（PM2），AQSP 只是租户，
+# 所以 load 高时必须让位。跳过 ≠ 失败，故 exit 0 并把原因写进 skip.log，
+# 供 prod 侧 fetch 时发现"这周没跑"而不是"跑了但没结果"。
+LOAD_GUARD="${LOAD_GUARD:-1}"
+MAX_LOAD1="${MAX_LOAD1:-4}"                       # 1 分钟 load 上限
+LOAD_GUARD_WAIT_SEC="${LOAD_GUARD_WAIT_SEC:-300}" # 峰值宽限：先等再判，避免一次瞬时抖动白丢一周
+LOADAVG_PATH="${LOADAVG_PATH:-/proc/loadavg}"     # 可覆盖，便于测试
+
 # 结果不主动回传：runner 落盘本地，由 prod 用 runner_fetch.sh 主动 pull
 # （runner 因此不需要任何连回生产的 SSH 权限）
 #
@@ -33,6 +47,27 @@ BACK_DIR="${BACK_DIR:-/opt/aqsp/data/gate_run}"
 
 log() { printf '[gate %s] %s\n' "$(date '+%F %T')" "$*"; }
 mkdir -p "$OUT"
+
+# 0) 共享业务机守卫：load 高就让位给 ifidy/lanshe，不要跟业务抢盘。
+#    放在最前面：盒子忙的时候连 release/DB 都不要去碰。
+if [ "$LOAD_GUARD" = "1" ]; then
+  guard_deadline=$(( $(date +%s) + LOAD_GUARD_WAIT_SEC ))
+  while :; do
+    load1="$(cut -d' ' -f1 "$LOADAVG_PATH")"
+    if awk -v l="$load1" -v m="$MAX_LOAD1" 'BEGIN { exit !(l <= m) }'; then
+      log "load1=$load1 ≤ $MAX_LOAD1，继续"
+      break
+    fi
+    if [ "$(date +%s)" -ge "$guard_deadline" ]; then
+      printf '%s load1=%s > %s，让位于业务，跳过本轮\n' \
+        "$(date '+%F %T')" "$load1" "$MAX_LOAD1" >> "$OUT/skip.log"
+      log "load1=$load1 > $MAX_LOAD1，让位于业务，跳过本轮（见 $OUT/skip.log）"
+      exit 0
+    fi
+    log "load1=$load1 > $MAX_LOAD1，等待 30s 后重试"
+    sleep 30
+  done
+fi
 
 # 1) 前置校验：代码 / 数据 / venv
 [ -d "$RELEASE" ] || { echo "缺 release：$RELEASE（先跑 runner_sync.sh）"; exit 1; }
