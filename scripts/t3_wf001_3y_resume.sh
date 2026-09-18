@@ -8,12 +8,21 @@
 # 参数与 t3_parallel_gate.sh 的 run_one 完全一致（同一 src release / 同一 --end），
 # 唯一差异 = 独立 lock 路径；可复用上次遗留的 symbols.json。
 set -u
-R=/opt/aqsp-runner
-SRC_REL="$R/releases/htf-mr-swap"
+R="${T3_RUNNER_ROOT:-/opt/aqsp-runner}"
+# 代码基线：默认用 runner_sync.sh 产出的 current 软链（SHA release，htf_mr 由
+# feat/t3-htf-mr-rebase 合入 main 后自带）。旧值 releases/htf-mr-swap 是手工 rsync
+# 的具名目录，随 runner 重装丢失；如需指回：T3_SRC_REL=... bash 本脚本
+SRC_REL="${T3_SRC_REL:-$R/aqsp-scheduler-current}"
 OUT="$R/gate_run_wf001_3y"
 PYBIN="$R/venv/bin/python"
-SCRIPT="$R/t3_gate_script.py"
+# 包装脚本：由 scripts/build_t3_gate_script.py 生成（choices+=htf_mr、注入 --benchmark-symbol ""）；
+# 旧值是随重装丢失的手工产物。可用 T3_GATE_SCRIPT 覆盖路径。
+SCRIPT="${T3_GATE_SCRIPT:-$R/t3_gate_script.py}"
 LOG="$R/t3_wf001_3y_resume.log"
+
+# fail-closed 守卫：缺代码树 / 缺包装脚本时立即报清如何补救，不带病起跑
+[ -d "$SRC_REL/src/aqsp" ] || { echo "FATAL: 代码树缺失 $SRC_REL/src/aqsp（current 软链未建？先跑 runner_sync.sh；或 T3_SRC_REL=<htf-mr-swap 目录>）" >&2; exit 2; }
+[ -f "$SCRIPT" ] || { echo "FATAL: 包装脚本缺失 $SCRIPT（先在本仓跑 scripts/build_t3_gate_script.py 生成并上传；或 T3_GATE_SCRIPT=<路径>）" >&2; exit 2; }
 
 export PYTHONPATH="$SRC_REL/src:$SRC_REL"
 export AQSP_SQLITE_ALLOW_EMPTY_SYMBOLS=1
