@@ -7,8 +7,12 @@ These are shell-level integration tests (no live prod/runner required):
   * library mode (AQSP_DEPLOY_LIB=1) unit-tests the two pure helpers that the
     PR #46 upstream script lacked:
       - assert_idle_window(): optional allowed-window rejection
+      - assert_idle_before_switch(): re-checks busyness right before the
+        atomic symlink switch (issue #152: a BaoTa task that starts during
+        the minutes-long frontend build would run across two releases)
       - inherit_runtime_data(): release-local data/ + reports/ inheritance
 """
+
 from __future__ import annotations
 
 import os
@@ -77,7 +81,8 @@ def test_dry_run_mutates_nothing():
 @requires_script
 def test_idle_window_rejects_outside_window():
     # an impossible window (1 minute at midnight) must reject current time
-    bash = """
+    bash = (
+        """
 set -e
 export AQSP_DEPLOY_LIB=1
 source "%s"
@@ -87,14 +92,17 @@ if assert_idle_window; then
 else
   echo REJECTED
 fi
-""" % SCRIPT
+"""
+        % SCRIPT
+    )
     r = subprocess.run(["bash", "-c", bash], capture_output=True, text=True)
     assert r.returncode != 0 or "REJECTED" in r.stdout, r.stdout + r.stderr
 
 
 @requires_script
 def test_idle_window_allows_inside_window():
-    bash = """
+    bash = (
+        """
 set -e
 export AQSP_DEPLOY_LIB=1
 source "%s"
@@ -104,10 +112,84 @@ if assert_idle_window; then
 else
   echo REJECTED
 fi
-""" % SCRIPT
+"""
+        % SCRIPT
+    )
     r = subprocess.run(["bash", "-c", bash], capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
     assert "ALLOWED" in r.stdout
+
+
+@requires_script
+def test_pre_switch_guard_passes_when_nothing_running():
+    bash = (
+        """
+set -e
+export AQSP_DEPLOY_LIB=1
+source "%s"
+AQSP_DEPLOY_SWITCH_GRACE_SECONDS=5
+assert_idle_before_switch
+echo PRE_SWITCH_OK
+"""
+        % SCRIPT
+    )
+    r = subprocess.run(["bash", "-c", bash], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    assert "PRE_SWITCH_OK" in r.stdout
+
+
+@requires_script
+def test_pre_switch_guard_rejects_while_baota_task_runs():
+    """A busy BaoTa task must block the cut-over, not just the start-up check."""
+    with tempfile.TemporaryDirectory() as tmp:
+        # pgrep -f "[b]t_task[.]sh" matches any cmdline containing bt_task.sh,
+        # so a plain sleeping script with that name is a faithful stand-in.
+        fake = Path(tmp) / "bt_task.sh"
+        fake.write_text("sleep 60\n")
+        # the stand-in must not inherit the captured stdout pipe, or
+        # subprocess.run() blocks until its sleep finishes
+        bash = """
+set -e
+export AQSP_DEPLOY_LIB=1
+source "%s"
+bash "%s" >/dev/null 2>&1 &
+child=$!
+trap 'kill $child 2>/dev/null || true' EXIT
+sleep 1
+AQSP_DEPLOY_SWITCH_GRACE_SECONDS=1
+if assert_idle_before_switch; then
+  echo ALLOWED
+else
+  echo REJECTED
+fi
+""" % (SCRIPT, fake)
+        r = subprocess.run(["bash", "-c", bash], capture_output=True, text=True)
+        assert r.returncode != 0 or "REJECTED" in r.stdout, r.stdout + r.stderr
+
+
+@requires_script
+def test_pre_switch_guard_force_overrides():
+    with tempfile.TemporaryDirectory() as tmp:
+        fake = Path(tmp) / "bt_task.sh"
+        fake.write_text("sleep 60\n")
+        # the stand-in must not inherit the captured stdout pipe, or
+        # subprocess.run() blocks until its sleep finishes
+        bash = """
+set -e
+export AQSP_DEPLOY_LIB=1
+source "%s"
+bash "%s" >/dev/null 2>&1 &
+child=$!
+trap 'kill $child 2>/dev/null || true' EXIT
+sleep 1
+FORCE=true
+AQSP_DEPLOY_SWITCH_GRACE_SECONDS=1
+assert_idle_before_switch
+echo FORCE_PASSED
+""" % (SCRIPT, fake)
+        r = subprocess.run(["bash", "-c", bash], capture_output=True, text=True)
+        assert r.returncode == 0, r.stderr
+        assert "FORCE_PASSED" in r.stdout
 
 
 @requires_script
