@@ -50,6 +50,12 @@ export interface PerformanceView {
   decayAlerts: readonly DecayAlertView[];
   statusCounts: readonly [string, number][];
   notes: readonly string[];
+  /** 台账新鲜度 */
+  latestSignalDate: string;
+  ledgerUpdatedAt: string;
+  tradingDaysSinceLatest: number | null;
+  stale: boolean;
+  staleAfterTradingDays: number;
 }
 
 export function severityTone(severity: string): Tone {
@@ -95,6 +101,10 @@ export function normalizePerformance(raw: unknown): PerformanceView {
   const minDays = asNumber(cold.min_independent_signal_days, 30);
   const days = asNumber(cold.independent_signal_days);
   const overall = asRecord(record.overall);
+  const fresh = asRecord(record.freshness);
+  const rawTradingDays = fresh.trading_days_since_latest;
+  const tradingDaysSinceLatest =
+    rawTradingDays === null || rawTradingDays === undefined ? null : asNumber(rawTradingDays);
 
   const strategies = asArray<unknown>(record.strategies).map((item) => toStrategy(item, minDays));
   const alerts = asArray<unknown>(record.decay_alerts).map(toAlert);
@@ -119,7 +129,26 @@ export function normalizePerformance(raw: unknown): PerformanceView {
       ([key, value]) => [key, asNumber(value)] as [string, number],
     ),
     notes: asArray<unknown>(record.notes).map((item) => asString(item)),
+    latestSignalDate: asString(fresh.latest_signal_date),
+    ledgerUpdatedAt: asString(fresh.ledger_updated_at),
+    tradingDaysSinceLatest,
+    stale: Boolean(fresh.stale),
+    staleAfterTradingDays: asNumber(fresh.stale_after_trading_days, 5),
   };
+}
+
+/**
+ * 停滞提示。
+ *
+ * 这一条的存在理由：**"正在积累"和"已经停止更新"必须能区分开**。
+ * 流水线停了以后，冷启动进度会永远停在 27/30，用户却以为系统在正常攒样本。
+ */
+export function stalenessMessage(view: PerformanceView): string {
+  if (!view.latestSignalDate) return "台账里还没有任何信号日。";
+  const days = view.tradingDaysSinceLatest;
+  if (days === null) return `最新信号日 ${view.latestSignalDate}。`;
+  if (days <= 0) return `最新信号日 ${view.latestSignalDate}（今日已更新）。`;
+  return `最新信号日 ${view.latestSignalDate}，之后已过 ${days} 个交易日未更新。`;
 }
 
 /** 顶部那句话：冷启动期只报进度，不报命中率。 */

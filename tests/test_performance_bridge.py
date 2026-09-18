@@ -183,3 +183,88 @@ def test_learner_constructor_failure_degrades_without_crashing(tmp_path, monkeyp
     assert payload["available"] is True
     assert payload["strategies"] == []
     assert any("策略级学习器未完成" in note for note in payload["notes"])
+
+
+# --------------------------------------------------------------------------
+# 新鲜度：必须能区分"正在积累"与"已经停止更新"
+# --------------------------------------------------------------------------
+
+
+def _freeze_now(monkeypatch, iso_date: str):
+    """把"现在"固定下来，让交易日计算可复现。"""
+    from datetime import date as _date
+    from datetime import datetime as _datetime
+
+    from aqsp.core.time import SHANGHAI_TZ
+
+    fixed = _datetime.combine(
+        _date.fromisoformat(iso_date), _datetime.min.time(), tzinfo=SHANGHAI_TZ
+    )
+    monkeypatch.setattr(pb, "now_shanghai", lambda: fixed)
+
+
+def test_freshness_reports_latest_signal_date(tmp_path, monkeypatch):
+    rows = [_row("2026-01-05", 1.0), _row("2026-01-09", 1.0), _row("2026-01-07", 1.0)]
+    payload = _payload(tmp_path, rows, monkeypatch)
+    assert payload["freshness"]["latest_signal_date"] == "2026-01-09"
+    assert payload["freshness"]["ledger_updated_at"] != ""
+
+
+def test_recent_signal_is_not_stale(tmp_path, monkeypatch):
+    """周四的信号，周五看：只过了 1 个交易日，不该报停滞。"""
+    _freeze_now(monkeypatch, "2026-09-18")  # 周五
+    payload = _payload(tmp_path, [_row("2026-09-17", 1.0)], monkeypatch)
+    assert payload["freshness"]["trading_days_since_latest"] == 1
+    assert payload["freshness"]["stale"] is False
+
+
+def test_long_gap_is_stale(tmp_path, monkeypatch):
+    """跨多周未更新 → 停滞，避免用户以为样本还在攒。"""
+    _freeze_now(monkeypatch, "2026-09-18")
+    payload = _payload(tmp_path, [_row("2026-08-28", 1.0)], monkeypatch)
+    days = payload["freshness"]["trading_days_since_latest"]
+    assert days is not None and days > payload["freshness"]["stale_after_trading_days"]
+    assert payload["freshness"]["stale"] is True
+
+
+def test_long_holiday_is_not_stale(tmp_path, monkeypatch):
+    """长假不该被误判为停滞 —— 这正是用交易日而非自然日的原因。"""
+    _freeze_now(monkeypatch, "2026-10-09")  # 节后
+    payload = _payload(tmp_path, [_row("2026-09-30", 1.0)], monkeypatch)  # 节前
+    days = payload["freshness"]["trading_days_since_latest"]
+    # 自然日过了 9 天，但交易日远少于这个数
+    assert days is not None and days < 9
+
+
+def test_missing_signal_date_is_safe(tmp_path, monkeypatch):
+    """没有 signal_date 时不能谎称"未更新"。"""
+    path = _write_ledger(tmp_path, [{"status": "validated", "return_pct": 1.0}])
+    monkeypatch.setattr(pb, "_ledger_path", lambda: path)
+    monkeypatch.setattr(pb, "_weight_history_path", lambda: tmp_path / "w.jsonl")
+    payload = pb.performance_payload()
+    assert payload["freshness"]["latest_signal_date"] == ""
+    assert payload["freshness"]["trading_days_since_latest"] is None
+    assert payload["freshness"]["stale"] is False
+
+
+def test_unavailable_payload_has_same_cold_start_fields(tmp_path, monkeypatch):
+    """不可用分支与正常分支的字段名必须一致。
+
+    曾经不可用分支写的是 max_independent_signal_days，而正常分支是
+    independent_signal_days —— 前端按后者读会静默拿到 undefined。
+    """
+    monkeypatch.setattr(pb, "_ledger_path", lambda: tmp_path / "nope.jsonl")
+    payload = pb.performance_payload()
+    assert "independent_signal_days" in payload["cold_start"]
+    assert "max_independent_signal_days" not in payload["cold_start"]
+    assert payload["freshness"]["stale"] is False
+    assert payload["freshness"]["trading_days_since_latest"] is None
+
+
+def test_notes_declare_staleness_rule(tmp_path, monkeypatch):
+    """口径说明要写清停滞是怎么判的。"""
+    payload = _payload(tmp_path, [_row("2026-01-05", 1.0)], monkeypatch)
+    assert "交易日" in " ".join(payload["notes"])
+
+
+# --------------------------------------------------------------------------
