@@ -8,6 +8,10 @@ on:
       - "tests/**"
       - "backend/**"
       - "frontend/**"
+      # config/ 是被代码消费的：thresholds.yaml 驱动策略阈值（AGENTS §3.5 要求改它必须
+      # 升 version 并附说明），data_sources.yaml 驱动 source_catalog 的校验。
+      # 有 11 个测试文件读这两个文件 —— 不加这一条，纯 config 改动能零 CI 合进 main。
+      - "config/**"
       - "deploy/baota/**"
       - "deploy/nginx/**"
       - "deploy/systemd/**"
@@ -26,6 +30,7 @@ on:
       - "tests/**"
       - "backend/**"
       - "frontend/**"
+      - "config/**"
       - "deploy/baota/**"
       - "deploy/nginx/**"
       - "deploy/systemd/**"
