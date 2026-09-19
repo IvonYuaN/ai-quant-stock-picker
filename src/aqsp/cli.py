@@ -469,6 +469,20 @@ def _resolve_runtime_state_path(path: str) -> str:
     return str(project_root / state_path)
 
 
+def _walkforward_gate_path() -> str:
+    """解析双门 sidecar 路径：``AQSP_WALKFORWARD_GATE_PATH`` 优先。
+
+    定时任务的 CWD 是不可变 release 目录，其中没有 ``data/walkforward_gate.json``；
+    而 sidecar 由 ``run_production_walkforward_gate.py`` 写到运行时数据根
+    （``/opt/aqsp/data/walkforward_gate.json``）。此前通知门禁只用 CWD 相对的模块
+    默认值，于是每天误报 ``sidecar_missing``（2026-07-21 起持续），把真实的
+    DSR/PBO 判定挡在外面。其他消费方（web/data_provider、write_home_snapshot、
+    diagnose_runtime 等）都读该环境变量，这里补齐同一口径。
+    """
+    raw = str(os.getenv("AQSP_WALKFORWARD_GATE_PATH", "") or "").strip()
+    return _resolve_runtime_state_path(raw or WALKFORWARD_GATE_PATH)
+
+
 def _notify_via_config(markdown: str, *, mode: str) -> list:
     if notify_markdown is not _notify_markdown_default:
         return notify_markdown(markdown)
@@ -4297,7 +4311,7 @@ def _walkforward_runtime_rows(
 def _check_notification_gate(
     *,
     cold_start_days: int,
-    gate_path: str = WALKFORWARD_GATE_PATH,
+    gate_path: str = "",
     validation_date: date | None = None,
 ) -> tuple[bool, list[str]]:
     """宪法 §1.3 #12/#14：返回 (是否放行, 未达原因列表)。
@@ -4307,9 +4321,13 @@ def _check_notification_gate(
       2. DSR >1.0
       3. PBO <0.5
     sidecar 缺失/解析失败/过期 → fail-closed（不放行）。
+
+    ``gate_path`` 省略时按 ``_walkforward_gate_path()`` 解析（env 优先），
+    不得退回 CWD 相对路径 —— 定时任务的 CWD 是不可变 release 目录。
     """
     reasons: list[str] = []
     cold_start_min_days = _cold_start_min_days()
+    gate_path = gate_path or _walkforward_gate_path()
 
     if cold_start_days < cold_start_min_days:
         reasons.append(
