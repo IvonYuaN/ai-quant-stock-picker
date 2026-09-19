@@ -134,6 +134,7 @@ from aqsp.utils.jsonl_io import advisory_lock, atomic_write_text
 from aqsp.walkforward_gate import (
     MAX_GATE_AGE_DAYS,
     MIN_CSCV_VARIANTS,
+    MIN_PRODUCTION_GATE_COVERAGE_RATIO,
     WalkForwardGateValidation,
     build_walkforward_gate_payload,
     validate_walkforward_gate_payload,
@@ -4365,10 +4366,17 @@ def _notification_gate_market_coverage_reasons(gate: dict[str, Any]) -> list[str
     if validation.effective_symbols is None:
         return ["双门全市场覆盖缺失: effective_symbols missing"]
     if not validation.ok:
-        return [
-            "双门全市场覆盖不足: "
-            f"{validation.effective_symbols}/{validation.min_symbols} 个有效标的"
-        ]
+        # 真实门槛是 max(min_symbols, ceil(stock_symbols × ratio))，不是 min_symbols。
+        # 只打印 min_symbols 会出现「4404/3000 却判不足」这种自相矛盾的原因（issue #159），
+        # 让运维无法据此判断到底差多少，也会连累对整个判定链的信任。
+        required = validation.required_symbols or validation.min_symbols
+        detail = f"{validation.effective_symbols}/{required} 个有效标的"
+        if validation.coverage_ratio is not None:
+            detail += (
+                f"（占全市场 {validation.coverage_ratio:.1%}，"
+                f"需 ≥{MIN_PRODUCTION_GATE_COVERAGE_RATIO:.0%}）"
+            )
+        return [f"双门全市场覆盖不足: {detail}"]
     return []
 
 

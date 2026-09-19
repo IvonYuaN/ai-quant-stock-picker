@@ -409,3 +409,54 @@ def test_default_gate_path_missing_sidecar_fails_closed(tmp_path, monkeypatch):
     assert ok is False
     assert any("sidecar 不存在" in r for r in reasons)
     assert any("definitely-missing-gate.json" in r for r in reasons)
+
+
+# ---- 覆盖度不足的原因必须打印真实门槛（2026-09-19 回归 / issue #159）----
+#
+# 真实门槛是 max(min_symbols, ceil(stock_symbols × ratio))，而原因里曾只打印
+# min_symbols，于是生产上出现过「双门全市场覆盖不足: 4404/3000」这种自相矛盾
+# 的文案（4404 > 3000 却判不足），运维无法据此判断差多少。
+
+
+def test_coverage_reason_reports_real_threshold_not_min_symbols(tmp_path, monkeypatch):
+    """4404 有效标的 / 5553 全市场 → 门槛是 4998，原因里必须是 4404/4998。"""
+    import aqsp.cli as cli_mod
+    from datetime import date
+
+    monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 5))
+    ok, reasons = _check_notification_gate(
+        cold_start_days=30,
+        gate_path=_write_gate(
+            tmp_path,
+            effective_symbols=4404,
+            production_gate_coverage={"stock_symbols": 5553},
+        ),
+    )
+
+    assert ok is False
+    coverage = [r for r in reasons if "全市场覆盖不足" in r]
+    assert coverage, reasons
+    text = coverage[0]
+    assert "4404/4998" in text, text
+    assert "4404/3000" not in text, text
+    assert "79.3%" in text, text
+    assert "90%" in text, text
+
+
+def test_coverage_reason_falls_back_to_min_symbols_without_stock_symbols(
+    tmp_path, monkeypatch
+):
+    """sidecar 没有全市场基数时退回 min_symbols，不能因此崩或漏报。"""
+    import aqsp.cli as cli_mod
+    from datetime import date
+
+    monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 5))
+    ok, reasons = _check_notification_gate(
+        cold_start_days=30,
+        gate_path=_write_gate(tmp_path, effective_symbols=300),
+    )
+
+    assert ok is False
+    coverage = [r for r in reasons if "全市场覆盖不足" in r]
+    assert coverage, reasons
+    assert "300/3000" in coverage[0], coverage[0]
