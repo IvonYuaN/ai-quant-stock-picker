@@ -7,7 +7,10 @@
 #
 # 关键参数：
 #   BATCH_SIZE   prod 是 200（内存逼出来的），runner 有余量可开 500~1000 提速
-#   TIMEOUT_SEC  stable_plus = 8 variant × 19 期 = 152 期，必须 ≥ 36000（prod 曾因 14400 超时白跑）
+#   TIMEOUT_SEC  默认 57600（16h）。实测（2026-09-19，runner 独跑，3y/stable_plus/20 期）：
+#                10h 只跑到 18/20 期就被杀 → 单期约 33 min，跑满 20 期需约 11h。
+#                旧的 36000 默认值是**必失败**的（曾被误以为够用），故上调并留 44% 余量。
+#                cron 侧亦显式传 TIMEOUT_SEC=57600，两处保持一致。
 #   END_DATE     必须 ≤ 库内 MAX(trade_date)，否则父脚本 BLOCK
 set -euo pipefail
 
@@ -19,7 +22,7 @@ OUT="$RUNNER_ROOT/gate_run"
 
 GRID_PROFILE="${GRID_PROFILE:-stable_plus}"
 LOOKBACK_YEARS="${LOOKBACK_YEARS:-3}"
-TIMEOUT_SEC="${TIMEOUT_SEC:-36000}"
+TIMEOUT_SEC="${TIMEOUT_SEC:-57600}"
 BATCH_SIZE="${BATCH_SIZE:-500}"        # prod 只能 200（内存逼的），runner 8G 可开 500
 MIN_MEMORY_GIB="${MIN_MEMORY_GIB:-4}"  # 预检阈值，runner 8G 无压力；prod 只能 1.5
 END_DATE="${END_DATE:-}"
