@@ -134,6 +134,7 @@ from aqsp.utils.jsonl_io import advisory_lock, atomic_write_text
 from aqsp.walkforward_gate import (
     MAX_GATE_AGE_DAYS,
     MIN_CSCV_VARIANTS,
+    MIN_PRODUCTION_GATE_COVERAGE_RATIO,
     WalkForwardGateValidation,
     build_walkforward_gate_payload,
     validate_walkforward_gate_payload,
@@ -467,6 +468,20 @@ def _resolve_runtime_state_path(path: str) -> str:
         return str(state_path)
     project_root = Path(__file__).resolve().parents[2]
     return str(project_root / state_path)
+
+
+def _walkforward_gate_path() -> str:
+    """解析双门 sidecar 路径：``AQSP_WALKFORWARD_GATE_PATH`` 优先。
+
+    定时任务的 CWD 是不可变 release 目录，其中没有 ``data/walkforward_gate.json``；
+    而 sidecar 由 ``run_production_walkforward_gate.py`` 写到运行时数据根
+    （``/opt/aqsp/data/walkforward_gate.json``）。此前通知门禁只用 CWD 相对的模块
+    默认值，于是每天误报 ``sidecar_missing``（2026-07-21 起持续），把真实的
+    DSR/PBO 判定挡在外面。其他消费方（web/data_provider、write_home_snapshot、
+    diagnose_runtime 等）都读该环境变量，这里补齐同一口径。
+    """
+    raw = str(os.getenv("AQSP_WALKFORWARD_GATE_PATH", "") or "").strip()
+    return _resolve_runtime_state_path(raw or WALKFORWARD_GATE_PATH)
 
 
 def _notify_via_config(markdown: str, *, mode: str) -> list:
@@ -4297,7 +4312,7 @@ def _walkforward_runtime_rows(
 def _check_notification_gate(
     *,
     cold_start_days: int,
-    gate_path: str = WALKFORWARD_GATE_PATH,
+    gate_path: str = "",
     validation_date: date | None = None,
 ) -> tuple[bool, list[str]]:
     """宪法 §1.3 #12/#14：返回 (是否放行, 未达原因列表)。
@@ -4307,9 +4322,13 @@ def _check_notification_gate(
       2. DSR >1.0
       3. PBO <0.5
     sidecar 缺失/解析失败/过期 → fail-closed（不放行）。
+
+    ``gate_path`` 省略时按 ``_walkforward_gate_path()`` 解析（env 优先），
+    不得退回 CWD 相对路径 —— 定时任务的 CWD 是不可变 release 目录。
     """
     reasons: list[str] = []
     cold_start_min_days = _cold_start_min_days()
+    gate_path = gate_path or _walkforward_gate_path()
 
     if cold_start_days < cold_start_min_days:
         reasons.append(
@@ -4347,10 +4366,17 @@ def _notification_gate_market_coverage_reasons(gate: dict[str, Any]) -> list[str
     if validation.effective_symbols is None:
         return ["双门全市场覆盖缺失: effective_symbols missing"]
     if not validation.ok:
-        return [
-            "双门全市场覆盖不足: "
-            f"{validation.effective_symbols}/{validation.min_symbols} 个有效标的"
-        ]
+        # 真实门槛是 max(min_symbols, ceil(stock_symbols × ratio))，不是 min_symbols。
+        # 只打印 min_symbols 会出现「4404/3000 却判不足」这种自相矛盾的原因（issue #159），
+        # 让运维无法据此判断到底差多少，也会连累对整个判定链的信任。
+        required = validation.required_symbols or validation.min_symbols
+        detail = f"{validation.effective_symbols}/{required} 个有效标的"
+        if validation.coverage_ratio is not None:
+            detail += (
+                f"（占全市场 {validation.coverage_ratio:.1%}，"
+                f"需 ≥{MIN_PRODUCTION_GATE_COVERAGE_RATIO:.0%}）"
+            )
+        return [f"双门全市场覆盖不足: {detail}"]
     return []
 
 

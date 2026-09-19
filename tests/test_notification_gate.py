@@ -348,3 +348,115 @@ def test_dataend_malformed_fail_closed(tmp_path, monkeypatch):
     )
     assert ok is False
     assert any("格式异常" in r for r in reasons)
+
+
+# ---- 省略 gate_path 时的默认解析（2026-09-19 回归）----
+#
+# 定时任务（bt_task.sh）的 CWD 是不可变 release 目录，其中没有
+# data/walkforward_gate.json；sidecar 实际由 run_production_walkforward_gate.py
+# 写到运行时数据根，并经 AQSP_WALKFORWARD_GATE_PATH 注入。
+# 此前默认值直接是 CWD 相对的 "data/walkforward_gate.json"，于是 2026-07-21 起
+# 每天误报 sidecar_missing，真实的 DSR/PBO 判定从未被读到。
+# 既有的 30+ 个用例全部显式传 gate_path，所以这条路径一直无人覆盖。
+
+
+def test_default_gate_path_honours_env(tmp_path, monkeypatch):
+    """省略 gate_path 时必须走 AQSP_WALKFORWARD_GATE_PATH，而非 CWD 相对默认值。"""
+    import aqsp.cli as cli_mod
+    from datetime import date
+
+    monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 5))
+    monkeypatch.setenv("AQSP_WALKFORWARD_GATE_PATH", _write_gate(tmp_path))
+    # 切到一个没有 data/ 的目录，模拟 release 目录下运行的定时任务
+    monkeypatch.chdir(tmp_path)
+
+    ok, reasons = _check_notification_gate(cold_start_days=30)
+    assert ok is True, reasons
+    assert reasons == []
+
+
+def test_default_gate_path_is_not_cwd_relative(tmp_path, monkeypatch):
+    """env 里是相对路径时按项目根解析，绝不落到 CWD 上。"""
+    import aqsp.cli as cli_mod
+    from datetime import date
+    from pathlib import Path
+
+    monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 5))
+    monkeypatch.setenv("AQSP_WALKFORWARD_GATE_PATH", "data/no-such-gate-for-test.json")
+    monkeypatch.chdir(tmp_path)
+
+    ok, reasons = _check_notification_gate(cold_start_days=30)
+    assert ok is False
+    joined = "\n".join(reasons)
+    project_root = Path(cli_mod.__file__).resolve().parents[2]
+    assert str(project_root / "data" / "no-such-gate-for-test.json") in joined
+    assert str(tmp_path) not in joined
+
+
+def test_default_gate_path_missing_sidecar_fails_closed(tmp_path, monkeypatch):
+    """env 未设且文件真的不在 → 仍然 fail-closed，原因里带解析后的绝对路径。"""
+    import aqsp.cli as cli_mod
+    from datetime import date
+
+    monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 5))
+    monkeypatch.delenv("AQSP_WALKFORWARD_GATE_PATH", raising=False)
+    monkeypatch.setattr(
+        cli_mod, "WALKFORWARD_GATE_PATH", "data/definitely-missing-gate.json"
+    )
+    monkeypatch.chdir(tmp_path)
+
+    ok, reasons = _check_notification_gate(cold_start_days=30)
+    assert ok is False
+    assert any("sidecar 不存在" in r for r in reasons)
+    assert any("definitely-missing-gate.json" in r for r in reasons)
+
+
+# ---- 覆盖度不足的原因必须打印真实门槛（2026-09-19 回归 / issue #159）----
+#
+# 真实门槛是 max(min_symbols, ceil(stock_symbols × ratio))，而原因里曾只打印
+# min_symbols，于是生产上出现过「双门全市场覆盖不足: 4404/3000」这种自相矛盾
+# 的文案（4404 > 3000 却判不足），运维无法据此判断差多少。
+
+
+def test_coverage_reason_reports_real_threshold_not_min_symbols(tmp_path, monkeypatch):
+    """4404 有效标的 / 5553 全市场 → 门槛是 4998，原因里必须是 4404/4998。"""
+    import aqsp.cli as cli_mod
+    from datetime import date
+
+    monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 5))
+    ok, reasons = _check_notification_gate(
+        cold_start_days=30,
+        gate_path=_write_gate(
+            tmp_path,
+            effective_symbols=4404,
+            production_gate_coverage={"stock_symbols": 5553},
+        ),
+    )
+
+    assert ok is False
+    coverage = [r for r in reasons if "全市场覆盖不足" in r]
+    assert coverage, reasons
+    text = coverage[0]
+    assert "4404/4998" in text, text
+    assert "4404/3000" not in text, text
+    assert "79.3%" in text, text
+    assert "90%" in text, text
+
+
+def test_coverage_reason_falls_back_to_min_symbols_without_stock_symbols(
+    tmp_path, monkeypatch
+):
+    """sidecar 没有全市场基数时退回 min_symbols，不能因此崩或漏报。"""
+    import aqsp.cli as cli_mod
+    from datetime import date
+
+    monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 5))
+    ok, reasons = _check_notification_gate(
+        cold_start_days=30,
+        gate_path=_write_gate(tmp_path, effective_symbols=300),
+    )
+
+    assert ok is False
+    coverage = [r for r in reasons if "全市场覆盖不足" in r]
+    assert coverage, reasons
+    assert "300/3000" in coverage[0], coverage[0]
