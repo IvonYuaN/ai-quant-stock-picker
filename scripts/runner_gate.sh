@@ -7,12 +7,15 @@
 #
 # 关键参数：
 #   BATCH_SIZE   prod 是 200（内存逼出来的），runner 有余量可开 500~1000 提速
-#   TIMEOUT_SEC  默认 57600（16h）。实测（2026-09-19，3y/stable_plus/20 期，逐期时间戳可查）：
-#                回测两遍各约 1h12m / ≥70min（到第 18 期），合计约 2.5h；
-#                **之后约 7.5h 无任何期进度输出**（进程仍活，疑似 grid CSCV 聚合阶段），
-#                10h 的旧默认值因此在 pass 2 第 18 期被杀、无 gate 产物。
-#                ⇒ 瓶颈不在逐期回测，"降 batch / 减期数"对静默阶段基本无效；
-#                  16h 只是过渡值，**是否足够仍未验证**（待孪生样本跑完确认）。
+#   TIMEOUT_SEC  默认 57600（16h）。实测（2026-09-19，3y/stable_plus/20 期，逐次时间戳可查）：
+#                门禁跑的是 **9 次串行完整 walk-forward**（1 次 prelude + stable_plus 的 8 个
+#                变体；cli.py::_run_walkforward_grid_cscv 里是 `for variant in variants:`），
+#                每次约 1h16m（20 期，≈3.8 min/期），节奏全程平稳，合计约 11.5h。
+#                旧默认 36000（10h）在第 8 次 walkforward 的第 18 期被杀、无 gate 产物。
+#                ⇒ 瓶颈是「9 次串行回测」这个总量：降 batch 无效（每次的 20 期是固定的），
+#                  减变体不行（N=8 已是 MIN_CSCV_VARIANTS 下限），故只能加超时。
+#                  16h 对约 11.5h 的实际需求留约 40% 余量。
+#                （参考 2026-09-09：19 期/变体、约 49min/变体，9 次约 7h41m，旧预算内跑完。）
 #   END_DATE     必须 ≤ 库内 MAX(trade_date)，否则父脚本 BLOCK
 set -euo pipefail
 
