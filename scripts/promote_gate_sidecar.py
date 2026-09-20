@@ -134,7 +134,14 @@ def main(argv: list[str] | None = None) -> int:
         print(f"REFUSED: 拉回的文件不存在: {args.fetched}")
         return EXIT_INPUT
 
-    today = date.fromisoformat(args.today) if args.today else date.today()
+    # 铁律：禁止裸取当前时间（tests/test_runtime_redline_guard.py 会拦 date.today()），
+    # 一律走项目时钟。
+    if args.today:
+        today = date.fromisoformat(args.today)
+    else:
+        from aqsp.core.time import now_shanghai
+
+        today = now_shanghai().date()
     return promote(
         fetched=args.fetched,
         target=args.target,
