@@ -35,6 +35,12 @@ RUNNER_ROOT="${RUNNER_ROOT:-/opt/aqsp-runner}"
 GATE_DIR="${GATE_DIR:-/opt/aqsp/data/gate_run}"
 DRY_RUN="${DRY_RUN:-0}"
 MAX_AGE_HOURS="${MAX_AGE_HOURS:-36}"
+# 生效中的双门 sidecar（通知门禁经 AQSP_WALKFORWARD_GATE_PATH 读它）。与 gate_run/ 不同目录。
+GATE_TARGET="${AQSP_WALKFORWARD_GATE_PATH:-/opt/aqsp/data/walkforward_gate.json}"
+# 提升时的结构校验上限，与 MAX_GATE_AGE_DAYS 同口径（注意：不是上面的 MAX_AGE_HOURS）。
+GATE_MAX_AGE_DAYS="${GATE_MAX_AGE_DAYS:-35}"
+PROMOTE_PY="${PROMOTE_PY:-/opt/aqsp-vibe-venv/bin/python}"
+PROMOTE_ENABLED="${AQSP_FETCH_PROMOTE:-1}"
 
 EXIT_OK=0
 EXIT_ENV=1
@@ -227,6 +233,33 @@ if [ "$verdict" = "FRESH" ]; then
       --output "$GATE_DIR/runner_summary.md" || log "摘要生成失败（可忽略）"
     [ -f "$GATE_DIR/runner_summary.md" ] && log "摘要：$GATE_DIR/runner_summary.md"
   fi
+
+  # ── 3b) 提升：把拉回的 sidecar 变成 prod 生效的那一份 ──────────────────────────
+  # 三段式的最后一环此前是**手工**的：这里只落 runner.* 前缀，等人工改名。但 prod 侧
+  # 早已没有门禁（0 22 * * 6 已注释），**没有任何任务会写** $GATE_TARGET，于是 runner
+  # 每周算出的判定**永远不会生效**，通知门禁一直读着上一次人工留下的旧 sidecar
+  # （且那份是 stable/5 变体，结构上永远过不了 MIN_CSCV_VARIANTS=8）。
+  #
+  # 提升是**有约束的**，不是「未经验证就悄悄生效」：结构校验（新鲜度 / 字段 /
+  # held-out / 窗口一致性）通过才提升，且旧文件归档到 gate_run/archived/ 可回滚。
+  # **判定未过门不算失败** —— 门禁本来就该 fail，提升的是「一份真实完整的判定」。
+  # 详见 scripts/promote_gate_sidecar.py。AQSP_FETCH_PROMOTE=0 可关闭。
+  if [ "$PROMOTE_ENABLED" = "1" ] && [ -f "$GATE_DIR/runner.walkforward_gate.json" ]; then
+    LOCAL_RELEASE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+    set +e
+    PYTHONPATH="$LOCAL_RELEASE/src:$LOCAL_RELEASE" "$PROMOTE_PY" \
+      "$LOCAL_RELEASE/scripts/promote_gate_sidecar.py" \
+      --fetched "$GATE_DIR/runner.walkforward_gate.json" \
+      --target "$GATE_TARGET" \
+      --archive-dir "$GATE_DIR/archived" \
+      --max-age-days "$GATE_MAX_AGE_DAYS" > "$GATE_DIR/promote_result.txt" 2>&1
+    promote_rc=$?
+    set -e
+    log "提升 sidecar: $(cat "$GATE_DIR/promote_result.txt" 2>/dev/null || echo '(无输出)')"
+    if [ "$promote_rc" -ne 0 ]; then
+      log "⚠️ 未提升（rc=${promote_rc}）—— 生效的仍是上一份 sidecar；可人工核对后把 runner.walkforward_gate.json 覆盖到 $GATE_TARGET"
+    fi
+  fi
 else
   # 陈旧/无产物：隔离留证，绝不落成 runner.* 以免被误读为本周结果
   quarantine="$GATE_DIR/runner.stale/$(date -u '+%Y%m%dT%H%M%SZ')"
@@ -248,5 +281,5 @@ case "$exit_code" in
   *)                 write_result stale   "$EXIT_STALE"     "$verdict" "$reason" ;;
 esac
 
-log "完成（exit_code=${exit_code}）。⚠️ 文件带 runner. 前缀，核对无误后再决定是否覆盖 prod 自己的 gate 结果。"
+log "完成（exit_code=${exit_code}）。runner.* 为留证副本；sidecar 是否已生效见上面的「提升 sidecar」一行。"
 exit "$exit_code"
