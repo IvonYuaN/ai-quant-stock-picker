@@ -203,6 +203,39 @@ export function StatePanel({
 /* ---------------------------------------------------------------- 容器 */
 
 /**
+ * 整页级空/错状态（hero）：页面整体拿不到数据时用。
+ *
+ * 与 `EmptyState` / `ErrorState` 的区别：那两个是**区块内**的状态条（一条细缝即可）；
+ * 当整个页面没有内容时，用它们会在大片留白顶上留一条细缝，看起来像"页面坏了"。
+ * 这里居中铺开、给出原因与动作，让"为什么空"一眼可见。
+ */
+export function HeroState({
+  tone = "neutral",
+  title,
+  detail,
+  icon: Icon = CircleAlert,
+  action,
+}: {
+  tone?: Tone;
+  title: string;
+  detail?: ReactNode;
+  icon?: LucideIcon;
+  action?: ReactNode;
+}) {
+  return (
+    <div
+      className={cn("aq-hero-state", tone === "warn" ? "aq-tone-warn" : "aq-tone-neutral")}
+      role="status"
+    >
+      <Icon className="aq-hero-state-icon" aria-hidden="true" />
+      <strong>{title}</strong>
+      {detail ? <p>{detail}</p> : null}
+      {action ? <div className="aq-hero-state-action">{action}</div> : null}
+    </div>
+  );
+}
+
+/**
  * 可点击表格行的通用属性：鼠标与键盘都能触发。
  *
  * 只写 `onClick` 是常见的可访问性缺口 —— `<tr>` 天然不可聚焦、也不响应回车，
