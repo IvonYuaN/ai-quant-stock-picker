@@ -61,10 +61,28 @@ class DependencyMissing(RuntimeError):
 # ---------------------------------------------------------------------------
 
 
+def _ssl_context():
+    """urllib 的 SSL 上下文：优先用 certifi 的 CA 根证书。
+
+    背景：macOS 上 Python 默认上下文常常拿不到系统根证书，于是 `urllib` 直接报
+    `CERTIFICATE_VERIFY_FAILED: unable to get local issuer certificate` ——
+    表现为 /api/indices 等接口 502。`requests` 自带 certifi 所以没这问题；
+    这里给裸 urllib 也补上，缺 certifi 时退回默认上下文（Linux 生产上本就正常）。
+    """
+    try:
+        import ssl
+
+        import certifi
+
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        return None
+
+
 def _fetch_gtimg(prefixed_codes: list[str]) -> str:
     url = "https://qt.gtimg.cn/q=" + ",".join(prefixed_codes)
     req = urllib.request.Request(url, headers={"User-Agent": UA})
-    with urllib.request.urlopen(req, timeout=10) as resp:
+    with urllib.request.urlopen(req, timeout=10, context=_ssl_context()) as resp:
         return resp.read().decode("gbk")
 
 
