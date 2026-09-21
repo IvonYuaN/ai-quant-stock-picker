@@ -2746,11 +2746,13 @@
   }
 
   /* 页面级状态（加载/错误/空）：作为 .aq-page 的直接子元素时居中铺开。
-     否则整页只有顶部一条细缝，下面一大片空白，像"页面坏了"。
+     否则整页只有顶部一条细缝/小盒子，下面一大片空白，像"页面坏了"。
      也覆盖 `.aq-content` 直接子元素 —— 有些页在数据未就绪时提前 return
      `<LoadingState>`（挂在 .aq-content 下，不在 .aq-page 内）。 */
   .aq-page > .aq-state,
-  .aq-content > .aq-state {
+  .aq-page > .aq-empty,
+  .aq-content > .aq-state,
+  .aq-content > .aq-empty {
     flex-direction: column;
     align-items: center;
     justify-content: center;
@@ -2759,5 +2761,9 @@
     padding: 1.6rem 1.25rem;
     text-align: center;
     border-radius: 0.9rem;
+  }
+  .aq-page > .aq-empty .aq-empty-body,
+  .aq-content > .aq-empty .aq-empty-body {
+    align-items: center;
   }
 }
