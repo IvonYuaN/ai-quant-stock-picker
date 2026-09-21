@@ -2767,3 +2767,59 @@
     align-items: center;
   }
 }
+
+/* ============================================================
+   设计系统 v2（2026-09-21）：让"面"真正成面
+   ------------------------------------------------------------
+   旧版 .aq-card / .aq-section 用极低透明度背景（card/0.6、card/0.35），
+   于是卡片融进页面背景 —— 观感扁平、层次弱、发闷。
+   这里改成实底 + 明确边框 + 轻投影 + hover 抬起；并加强标题层级。
+   放在文件末尾，覆盖前面的重复定义（2615-2646 那套 compact 覆盖）。
+   ============================================================ */
+@layer components {
+  .aq-card {
+    background: hsl(var(--card) / 0.96);
+    border: 1px solid hsl(var(--border) / 0.9);
+    border-radius: 0.8rem;
+    box-shadow: 0 1px 0 hsl(0 0% 100% / 0.03) inset, 0 10px 30px -20px hsl(0 0% 0% / 0.95);
+    transition: border-color 160ms ease, transform 160ms ease, box-shadow 160ms ease;
+  }
+  .aq-card:hover {
+    border-color: hsl(var(--primary) / 0.5);
+    transform: translateY(-1px);
+    box-shadow: 0 1px 0 hsl(0 0% 100% / 0.04) inset, 0 16px 40px -22px hsl(0 0% 0% / 1);
+  }
+
+  .aq-section {
+    background: hsl(var(--card) / 0.9);
+    border: 1px solid hsl(var(--border) / 0.85);
+    border-radius: 0.8rem;
+    box-shadow: 0 1px 0 hsl(0 0% 100% / 0.025) inset, 0 8px 24px -20px hsl(0 0% 0% / 0.9);
+  }
+
+  .aq-total-card {
+    background: hsl(var(--card) / 0.96);
+    border: 1px solid hsl(var(--border) / 0.9);
+    border-radius: 0.75rem;
+    box-shadow: 0 1px 0 hsl(0 0% 100% / 0.03) inset;
+  }
+
+  /* 页面标题层级更强 */
+  .aq-page-head h1 {
+    font-size: 1.9rem;
+    letter-spacing: -0.02em;
+  }
+  .aq-section-head-main h2 {
+    font-size: 1.05rem;
+  }
+
+  /* 侧栏：与主区拉开一层 */
+  .aq-sidebar {
+    border-right: 1px solid hsl(var(--border) / 0.8);
+  }
+
+  /* 表格表头更清晰 */
+  .aq-table th {
+    background: hsl(var(--muted) / 0.5);
+  }
+}

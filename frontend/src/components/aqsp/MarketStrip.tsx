@@ -27,10 +27,10 @@ export function MarketStrip() {
       </StatePanel>
     ) : null;
 
-  if (!summary) return failureNote;
+  if (!summary) return <div className="aq-market-block">{failureNote}</div>;
 
   return (
-    <>
+    <div className="aq-market-block">
       {failureNote}
     <div className="aq-market-strip" aria-label="市场环境">
       <div className="aq-market-strip-main">
@@ -84,6 +84,6 @@ export function MarketStrip() {
         <ArrowRight aria-hidden="true" />
       </Link>
     </div>
-    </>
+    </div>
   );
 }
