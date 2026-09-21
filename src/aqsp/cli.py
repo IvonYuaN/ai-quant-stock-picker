@@ -6331,15 +6331,27 @@ def _apply_walkforward_grid_variant(
         MomentumThresholds,
     )
 
+    # 变体必须显式声明其完整因子集：先把所有因子权重清零，再按 strategy_mix 写入声明项。
+    # 否则会继承 config/thresholds.yaml 的默认权重（如 v1.1.19 起 htf/mr 默认 0.5），
+    # 导致 mom+tr 类变体静默带上 htf/mr，退化成「幽灵变体」、破坏因子族隔离契约
+    # （test_walkforward_grid_variant_factor_enable）。
     composite_updates = {
-        "momentum_weight": variant.momentum_weight,
-        "triple_rise_weight": variant.triple_rise_weight,
+        "momentum_weight": 0.0,
+        "triple_rise_weight": 0.0,
+        "high_tight_flag_weight": 0.0,
+        "mean_reversion_weight": 0.0,
+        "volume_weight": 0.0,
+        "quality_weight": 0.0,
+        "value_weight": 0.0,
     }
     strategy_mix = variant.strategy_mix or "momentum"
     enable_volume = False
     enable_mr = False
     enable_htf = False
-    if strategy_mix == "volume":
+    if strategy_mix == "momentum":
+        composite_updates["momentum_weight"] = variant.momentum_weight
+        composite_updates["triple_rise_weight"] = variant.triple_rise_weight
+    elif strategy_mix == "volume":
         composite_updates["volume_weight"] = 0.3
         composite_updates["momentum_weight"] = 0.2
         composite_updates["triple_rise_weight"] = 0.2
