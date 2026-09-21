@@ -1177,7 +1177,7 @@ def test_run_scheduled_sends_gate_block_alert_when_notify_is_disabled_by_gate(
     assert "冷启动未满 30 天" in seen[0]
     assert "## 阻塞" in seen[0]
     report_text = (tmp_path / "latest.md").read_text(encoding="utf-8")
-    assert "未通过 walk-forward 双门验证" in report_text
+    assert "双门验证未提供放行信号" in report_text
 
 
 def test_run_scheduled_uses_env_notify_when_cli_notify_is_false(
@@ -2444,7 +2444,7 @@ def test_run_scheduled_gate_block_adds_actionable_unlock_guidance(
     report = (tmp_path / "latest.md").read_text(encoding="utf-8")
 
     assert exit_code == 0
-    assert "未通过 walk-forward 双门验证" in report
+    assert "双门验证未提供放行信号" in report
     assert "当前还差 27 天" in report
     assert "walkforward" in report
     assert "。；" not in report

@@ -642,6 +642,83 @@ def test_finalize_scheduled_notification_skips_gate_push_without_task_id(
     assert "gate notify: skipped outside daily task" in seen
 
 
+def test_finalize_scheduled_notification_decoupled_keeps_main_notify_enabled(
+    monkeypatch,
+) -> None:
+    seen: list[str] = []
+    gate_calls: list[str] = []
+    state_calls: list[dict[str, object]] = []
+    monkeypatch.setenv("AQSP_RUN_TASK_ID", "daily")
+    monkeypatch.setenv("AQSP_NOTIFY", "true")
+    monkeypatch.setenv("AQSP_GATE_NOTIFY", "true")
+    monkeypatch.setenv("AQSP_GATE_DECOUPLE_NOTIFY", "1")
+
+    artifacts = finalize_scheduled_notification(
+        markdown="# 原始报告",
+        args_notify=True,
+        gate_ok=False,
+        gate_reasons=["DSR 未过门: -1.2696（需 >1.0）", "PBO 未过门: 5.71%（需 0 < PBO < 50%）"],
+        next_actions=["在双门过线前保留观察模式。"],
+        latest_iso="2026-06-17",
+        notify_mode="summary",
+        dispatch_gate_notification_fn=lambda **_kwargs: gate_calls.append("sent") or [],
+        should_send_gate_notification_fn=lambda **_kwargs: (
+            state_calls.append(_kwargs) or True
+        ),
+        format_notification_gate_block_fn=lambda reasons, actions: (
+            f"BLOCK:{reasons[0]}|{actions[0]}\n"
+        ),
+        legacy_notify_fn=None,
+        print_fn=seen.append,
+    )
+
+    # C（门↔通知解耦）：主日报照发，不再被门禁抑制；也不另发告警子通知。
+    assert artifacts.notify_enabled is True
+    assert artifacts.markdown.startswith(
+        "BLOCK:DSR 未过门: -1.2696（需 >1.0）|在双门过线前保留观察模式。"
+    )
+    assert gate_calls == []
+    assert state_calls == []
+
+
+def test_finalize_scheduled_notification_decoupled_does_not_mark_gate_state(
+    monkeypatch,
+) -> None:
+    marked: list[dict[str, object]] = []
+    failed: list[dict[str, object]] = []
+    suppressed: list[dict[str, object]] = []
+    monkeypatch.setenv("AQSP_RUN_TASK_ID", "daily")
+    monkeypatch.setenv("AQSP_NOTIFY", "true")
+    monkeypatch.setenv("AQSP_GATE_NOTIFY", "true")
+    monkeypatch.setenv("AQSP_GATE_DECOUPLE_NOTIFY", "1")
+
+    finalize_scheduled_notification(
+        markdown="# 原始报告",
+        args_notify=True,
+        gate_ok=False,
+        gate_reasons=["DSR 未过门: -1.2696（需 >1.0）"],
+        next_actions=["在双门过线前保留观察模式。"],
+        latest_iso="2026-06-17",
+        notify_mode="summary",
+        dispatch_gate_notification_fn=lambda **_kwargs: [],
+        should_send_gate_notification_fn=lambda **_kwargs: True,
+        format_notification_gate_block_fn=lambda reasons, actions: (
+            f"BLOCK:{reasons[0]}|{actions[0]}\n"
+        ),
+        legacy_notify_fn=None,
+        print_fn=lambda *_args: None,
+        gate_state_path="data/gate_notify_state.json",
+        mark_gate_notification_sent_fn=lambda **kwargs: marked.append(kwargs),
+        mark_gate_notification_failed_fn=lambda **kwargs: failed.append(kwargs),
+        mark_gate_notification_suppressed_fn=lambda **kwargs: suppressed.append(kwargs),
+    )
+
+    # 解耦模式下不写门禁通知状态（主日报已携带状态标签）。
+    assert marked == []
+    assert failed == []
+    assert suppressed == []
+
+
 def test_finalize_scheduled_outputs_writes_report_and_csv(tmp_path: Path) -> None:
     report_path = tmp_path / "latest.md"
     csv_path = tmp_path / "latest.csv"
