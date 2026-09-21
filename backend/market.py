@@ -16,17 +16,23 @@ import gstock
 BEIJING = timezone(timedelta(hours=8))
 _CACHE: dict = {}
 _TTL = 300  # 5 分钟；全站共享，省数据源压力
+# 空/失败结果的**负缓存**时长。原实现是"空结果不缓存、下次直接重试"，
+# 结果上游故障时**每个请求都去撞**（实测 /api/global/indices 单次 14–53s），
+# 把整页拖死。改成空结果也缓存 60s：既不再连环撞上游，又能较快自愈。
+_NEG_TTL = 60
 
 
 def _cached(key: str, fn, valid=bool):
-    """TTL 缓存。数据源故障的空结果不缓存（valid 判否），下次请求直接重试。"""
+    """TTL 缓存。有效结果缓存 _TTL；空/失败结果缓存 _NEG_TTL（负缓存）。"""
     now = time.time()
     hit = _CACHE.get(key)
-    if hit and now - hit[0] < _TTL:
-        return hit[1]
+    if hit:
+        ts, val = hit
+        ttl = _TTL if valid(val) else _NEG_TTL
+        if now - ts < ttl:
+            return val
     val = fn()
-    if valid(val):
-        _CACHE[key] = (now, val)
+    _CACHE[key] = (now, val)
     return val
 
 
@@ -213,3 +219,53 @@ def get_turnover_top() -> dict:
 def get_global_indices() -> list[dict]:
     """全球指数快照（美股 / 港股，含缓存 5 分钟）。空结果不缓存。"""
     return _cached("global_indices", gstock.global_indices, valid=bool)
+
+
+# ---------------------------------------------------------------------------
+# 后台预热：把缓存一直保持"热的"，用户首屏不再等上游
+# ---------------------------------------------------------------------------
+# 现状：_cached 是**懒加载** —— 缓存过期后第一个访问者要等上游 1.5–14s
+# （实测 /api/global/indices 首次 13.9s、emotion 4.1s、turnover-top 3.2s）。
+# 市场页首屏"一直转圈"的主因就在这里。这里起一个守护线程按 interval 主动刷新，
+# 把这段等待从**用户路径**移到后台。对上游的压力不增反降（固定节拍、不再被
+# 每个过期后的首访触发），符合"数据要即时、但别硬扛"的原则。
+_WARM_INTERVAL = 240  # 秒；略短于 _TTL(300)，保证缓存不过期
+_warmer_started = False
+
+
+def warm_cache() -> dict:
+    """主动预热各缓存段，返回 {段名: 结果摘要}。任何一段失败都不抛。"""
+    out: dict = {}
+    for name, fn in (
+        ("overview", get_overview),
+        ("emotion", get_short_term_emotion),
+        ("turnover_top", get_turnover_top),
+        ("global_indices", get_global_indices),
+    ):
+        t0 = time.time()
+        try:
+            fn()
+            out[name] = f"ok {time.time() - t0:.1f}s"
+        except Exception as exc:  # 预热失败绝不影响服务
+            out[name] = f"fail {type(exc).__name__}"
+    return out
+
+
+def start_warmer(interval: int = _WARM_INTERVAL) -> None:
+    """启动后台预热守护线程（幂等）。启动后立刻预热一次，随后每 interval 秒一次。"""
+    global _warmer_started
+    if _warmer_started:
+        return
+    _warmer_started = True
+
+    import threading
+
+    def _loop() -> None:
+        while True:
+            try:
+                warm_cache()
+            except Exception:
+                pass
+            time.sleep(interval)
+
+    threading.Thread(target=_loop, name="market-warmer", daemon=True).start()
