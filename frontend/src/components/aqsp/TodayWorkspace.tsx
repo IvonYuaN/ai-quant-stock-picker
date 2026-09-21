@@ -296,6 +296,11 @@ export function TodayWorkspace() {
 
       {data ? <DatePicker snapshot={data} /> : null}
 
+      {/* 本地研究快照缺失/读取中时，仍然展示**直接读公开源**的实时市场环境
+          （指数 / 涨跌家数 / 隔夜外围）。实时行情不该被本地重管线的产出卡住 ——
+          快照是本机算出来的，市场环境是别人网站上现成的，两者解耦。 */}
+      {!data ? <MarketStrip /> : null}
+
       {switching ? (
         <LoadingState label={`正在读取 ${selectedDate} 的研究数据…`} />
       ) : error && !data ? (
