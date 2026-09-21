@@ -2823,3 +2823,32 @@
     background: hsl(var(--muted) / 0.5);
   }
 }
+
+/* ============================================================
+   指标卡 v2（2026-09-21）：给纯文本指标以视觉重量
+   ------------------------------------------------------------
+   市场页 / 绩效页的指标原本是"小扁盒子 + 小字"，数字没有重量。
+   这里统一成实底卡 + 大号数字 + 清晰的标签。
+   ============================================================ */
+@layer components {
+  .aq-breadth-metrics > div,
+  .aq-metric-grid > div {
+    background: hsl(var(--card) / 0.96);
+    border: 1px solid hsl(var(--border) / 0.9);
+    border-radius: 0.6rem;
+    padding: 0.6rem 0.7rem;
+    box-shadow: 0 1px 0 hsl(0 0% 100% / 0.03) inset;
+  }
+  .aq-breadth-metrics span,
+  .aq-metric-grid span {
+    font-size: 0.78rem;
+    letter-spacing: 0.02em;
+  }
+  .aq-breadth-metrics b,
+  .aq-metric-grid b {
+    margin-top: 0.18rem;
+    font-size: 1.15rem;
+    font-weight: 600;
+    line-height: 1.25;
+  }
+}
