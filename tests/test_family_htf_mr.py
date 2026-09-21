@@ -41,9 +41,16 @@ def _htf_only_composite(base: Thresholds) -> Thresholds:
     return t
 
 
-def test_has_htf_gating_default_off():
-    """默认 composite.high_tight_flag_weight=0 → _has_htf() 为 False。"""
+def test_has_htf_gating_default_on():
+    """v1.1.19 起默认 composite.high_tight_flag_weight=0.5 且 enabled → _has_htf() 为 True。"""
     strat = CompositeStrategy(StrategyConfig(name="composite"))
+    assert strat._has_htf() is True
+
+
+def test_has_htf_gating_off_when_weight_zero():
+    """weight=0 时即便 enabled 也为 False（门控契约不变）。"""
+    t = Thresholds().with_overrides("composite", {"high_tight_flag_weight": 0.0})
+    strat = CompositeStrategy(StrategyConfig(name="composite"), thresholds=t)
     assert strat._has_htf() is False
 
 
@@ -80,8 +87,9 @@ def test_calculate_score_aggregates_htf_and_mr_only():
 
 
 def test_htf_disabled_does_not_call_candidate():
-    """htf 门控关闭时，candidate.calculate_score 不应被调用（零开销且零污染）。"""
-    strat = CompositeStrategy(StrategyConfig(name="composite"))
+    """htf 门控关闭（weight=0）时，candidate.calculate_score 不应被调用（零开销且零污染）。"""
+    t = Thresholds().with_overrides("composite", {"high_tight_flag_weight": 0.0})
+    strat = CompositeStrategy(StrategyConfig(name="composite"), thresholds=t)
     assert strat._has_htf() is False
     # 其它因子恒被调用或按默认门控调用，置空避免真实计算对列式数据的要求
     for factor in (
@@ -110,8 +118,8 @@ def test_apply_htf_mr_variant_enables_factors_and_remaps_weights():
         _apply_walkforward_grid_variant,
     )
 
-    base = load_thresholds()  # mean_reversion.enabled 由 yaml 覆盖为 False
-    assert base.mean_reversion.enabled is False  # 前置：确认触发 bug 的基线
+    base = load_thresholds()  # v1.1.19 起 mean_reversion.enabled 默认 True（方案 A 落地）
+    assert base.mean_reversion.enabled is True  # 前置：新默认基线（因子族替换已落地）
 
     variant = _WALKFORWARD_HTF_MR_GRID_VARIANTS[0]  # WF-H01
     applied = _apply_walkforward_grid_variant(base, variant)
@@ -151,3 +159,19 @@ def test_htf_selection_respects_symbol_tie_break():
 
     # 全部同分 → 并列按 symbol 升序（rank 契约不变）
     assert selected == symbols[:5]
+
+
+def test_regime_switch_htf_led_in_bull_mr_led_in_bear():
+    """regime 切换：牛/震 htf 有效权重 > mr（htf 主导），熊 mr > htf（mr 主导）。
+
+    与双窗口 IC 结论一致（ic_sweep_综合结论_2026-09-21.md）：htf 在牛/震正向显著，
+    mean_reversion 在熊市正向；反向四因子已归零，仅 htf/mr 参与。
+    """
+    t = load_thresholds()
+    strat = CompositeStrategy(StrategyConfig(name="composite"), thresholds=t)
+    for bull in ("stable_bull", "volatile_bull", "stable_sideways", "volatile_sideways"):
+        _, _, _, _, mrw, _, htfw = strat.get_regime_adjusted_weights(bull)
+        assert htfw > mrw, f"{bull} 应为 htf 主导"
+    for bear in ("stable_bear", "volatile_bear"):
+        _, _, _, _, mrw, _, htfw = strat.get_regime_adjusted_weights(bear)
+        assert mrw > htfw, f"{bear} 应为 mr 主导"
