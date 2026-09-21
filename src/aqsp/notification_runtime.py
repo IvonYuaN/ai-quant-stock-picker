@@ -441,6 +441,10 @@ def finalize_scheduled_notification(
     is_high_frequency = high_frequency_task(task_id)
     is_gate_task = gate_notification_task(task_id)
     is_manual_task = normalized_task_id == "manual"
+    decouple_notify = (
+        os.getenv("AQSP_GATE_DECOUPLE_NOTIFY", "0").strip().lower()
+        in {"1", "true", "yes", "on"}
+    )
 
     if not gate_ok:
         if is_high_frequency or (not is_gate_task and not is_manual_task):
@@ -464,42 +468,67 @@ def finalize_scheduled_notification(
             gate_reasons, next_actions
         )
         output_markdown = gate_block + markdown
-        should_send_gate = False
-        if notify_enabled and gate_allowed:
-            try:
-                should_send_gate = _call_gate_should_send(
-                    should_send_gate_notification_fn,
-                    gate_ok=gate_ok,
-                    gate_reasons=gate_reasons,
-                    gate_state_path=gate_state_path,
-                    run_date=latest_iso,
-                )
-            except Exception as exc:  # noqa: BLE001
-                print_fn(f"gate notify state failed: {exc}")
-        else:
-            print_fn("gate notify: notification disabled or skipped")
-        if not gate_allowed or not notify_enabled:
+        if decouple_notify:
+            # C（门↔通知解耦）：双门只作为「观察模式」标签附在日报上，
+            # 不再抑制主日报的发送，也不另发告警子通知（避免重复）。
+            # notify_enabled 保持请求值 —— 主日报照常发出，门禁状态仅作提示。
             should_send_gate = False
-        if should_send_gate:
-            try:
-                if legacy_notify_fn is not None:
-                    gate_markdown = build_gate_notification_markdown(
-                        run_date=latest_iso,
+        else:
+            # 旧行为（fail-closed）：抑制主日报，另发告警子通知并标记状态。
+            should_send_gate = False
+            if notify_enabled and gate_allowed:
+                try:
+                    should_send_gate = _call_gate_should_send(
+                        should_send_gate_notification_fn,
+                        gate_ok=gate_ok,
                         gate_reasons=gate_reasons,
-                        next_actions=next_actions,
-                    )
-                    results = legacy_notify_fn(gate_markdown + markdown)
-                else:
-                    results = dispatch_gate_notification_fn(
+                        gate_state_path=gate_state_path,
                         run_date=latest_iso,
-                        gate_reasons=gate_reasons,
-                        next_actions=next_actions,
-                        mode=notify_mode,
-                        state_path=gate_state_path,
-                        reserve_before_send=True,
-                        content_markdown=markdown,
                     )
-                if not _has_successful_notify_result(results):
+                except Exception as exc:  # noqa: BLE001
+                    print_fn(f"gate notify state failed: {exc}")
+            else:
+                print_fn("gate notify: notification disabled or skipped")
+            if not gate_allowed or not notify_enabled:
+                should_send_gate = False
+            if should_send_gate:
+                try:
+                    if legacy_notify_fn is not None:
+                        gate_markdown = build_gate_notification_markdown(
+                            run_date=latest_iso,
+                            gate_reasons=gate_reasons,
+                            next_actions=next_actions,
+                        )
+                        results = legacy_notify_fn(gate_markdown + markdown)
+                    else:
+                        results = dispatch_gate_notification_fn(
+                            run_date=latest_iso,
+                            gate_reasons=gate_reasons,
+                            next_actions=next_actions,
+                            mode=notify_mode,
+                            state_path=gate_state_path,
+                            reserve_before_send=True,
+                            content_markdown=markdown,
+                        )
+                    if not _has_successful_notify_result(results):
+                        if mark_gate_notification_failed_fn is not None:
+                            _call_gate_mark_failed(
+                                mark_gate_notification_failed_fn,
+                                gate_reasons=gate_reasons,
+                                gate_state_path=gate_state_path,
+                                run_date=latest_iso,
+                            )
+                        print_fn(
+                            "gate notify: delivery failed; suppressing duplicate retries today"
+                        )
+                    elif mark_gate_notification_sent_fn is not None:
+                        _call_gate_mark_sent(
+                            mark_gate_notification_sent_fn,
+                            gate_reasons=gate_reasons,
+                            gate_state_path=gate_state_path,
+                            run_date=latest_iso,
+                        )
+                except Exception as exc:  # noqa: BLE001
                     if mark_gate_notification_failed_fn is not None:
                         _call_gate_mark_failed(
                             mark_gate_notification_failed_fn,
@@ -507,33 +536,15 @@ def finalize_scheduled_notification(
                             gate_state_path=gate_state_path,
                             run_date=latest_iso,
                         )
-                    print_fn(
-                        "gate notify: delivery failed; suppressing duplicate retries today"
-                    )
-                elif mark_gate_notification_sent_fn is not None:
-                    _call_gate_mark_sent(
-                        mark_gate_notification_sent_fn,
-                        gate_reasons=gate_reasons,
-                        gate_state_path=gate_state_path,
-                        run_date=latest_iso,
-                    )
-            except Exception as exc:  # noqa: BLE001
-                if mark_gate_notification_failed_fn is not None:
-                    _call_gate_mark_failed(
-                        mark_gate_notification_failed_fn,
-                        gate_reasons=gate_reasons,
-                        gate_state_path=gate_state_path,
-                        run_date=latest_iso,
-                    )
-                print_fn(f"gate notify failed: {exc}")
-        elif mark_gate_notification_suppressed_fn is not None:
-            _call_gate_mark_suppressed(
-                mark_gate_notification_suppressed_fn,
-                gate_reasons=gate_reasons,
-                gate_state_path=gate_state_path,
-                run_date=latest_iso,
-            )
-        notify_enabled = False
+                    print_fn(f"gate notify failed: {exc}")
+            elif mark_gate_notification_suppressed_fn is not None:
+                _call_gate_mark_suppressed(
+                    mark_gate_notification_suppressed_fn,
+                    gate_reasons=gate_reasons,
+                    gate_state_path=gate_state_path,
+                    run_date=latest_iso,
+                )
+            notify_enabled = False
     elif is_high_frequency:
         notify_enabled = False
 

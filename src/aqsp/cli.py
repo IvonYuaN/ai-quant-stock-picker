@@ -4503,9 +4503,9 @@ def _format_notification_gate_block(
     next_actions: list[str],
 ) -> str:
     lines = [
-        "> ⚠️ **未通过 walk-forward 双门验证，仅供观察，请勿实盘使用**",
+        "> ℹ️ **双门验证未提供放行信号（观察模式）**",
         ">",
-        "> 未达原因：",
+        "> 以下为研究观察信息，非实盘建议。未达原因：",
     ]
     lines.extend(f"> - {reason}" for reason in gate_reasons)
     lines.append(">")
