@@ -2706,4 +2706,42 @@
   .aq-card:hover {
     border-color: hsl(var(--primary) / 0.45);
   }
+
+  /* 整页级空/错状态（hero）：页面拿不到数据时居中呈现，不留大片空白 */
+  .aq-hero-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.55rem;
+    min-height: 46vh;
+    border: 1px dashed hsl(var(--border) / 0.85);
+    border-radius: 0.9rem;
+    background: hsl(var(--card) / 0.32);
+    padding: 2.75rem 1.5rem;
+    text-align: center;
+  }
+  .aq-hero-state-icon {
+    height: 2.1rem;
+    width: 2.1rem;
+    color: hsl(var(--muted-foreground));
+  }
+  .aq-hero-state strong {
+    font-size: 1.05rem;
+  }
+  .aq-hero-state p {
+    max-width: 36rem;
+    font-size: 0.84rem;
+    line-height: 1.7;
+    color: hsl(var(--muted-foreground));
+  }
+  .aq-hero-state-action {
+    margin-top: 0.5rem;
+  }
+  .aq-hero-state.aq-tone-warn .aq-hero-state-icon {
+    color: hsl(var(--warning));
+  }
+  .aq-hero-state.aq-tone-neutral .aq-hero-state-icon {
+    color: hsl(var(--muted-foreground));
+  }
 }

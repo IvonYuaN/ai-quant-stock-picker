@@ -10,7 +10,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { CalendarDays, Compass, RefreshCw, Sparkles } from "lucide-react";
-import { Badge, ErrorState, LoadingState, ToneCallout } from "@/components/ui/primitives";
+import { Badge, HeroState, LoadingState, ToneCallout } from "@/components/ui/primitives";
 import { cn } from "@/lib/utils";
 import {
   buildDailyView,
@@ -299,7 +299,17 @@ export function TodayWorkspace() {
       {switching ? (
         <LoadingState label={`正在读取 ${selectedDate} 的研究数据…`} />
       ) : error && !data ? (
-        <ErrorState error={error} onRefresh={refresh} />
+        <HeroState
+          tone="warn"
+          title="读不到研究快照"
+          detail={`${error}。可点「重试」重新读取；若持续失败，通常是后端未启动，或当日快照（data/runtime/home_dashboard_snapshot.json）尚未产出。`}
+          action={
+            <button type="button" className="aq-btn aq-btn-primary" onClick={refresh}>
+              <RefreshCw aria-hidden="true" />
+              重试
+            </button>
+          }
+        />
       ) : !data ? (
         <LoadingState />
       ) : !view ? (
