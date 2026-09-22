@@ -20,7 +20,28 @@ from email.utils import parsedate_to_datetime
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SOURCES_FILE = os.path.join(HERE, "news_sources.json")
-CACHE_DIR = os.path.join(HERE, ".cache")
+
+
+def _resolve_cache_dir() -> str:
+    """雷达缓存目录：**绝不能落在 release 内**。
+
+    历史问题：CACHE_DIR 曾是 `HERE/.cache`（release 内），于是
+      1. API 以 `aqsp-vibe` 运行、对 release 无写权限 ⇒ 刷新直接
+         `Errno 13 Permission denied: .../backend/.cache`；
+      2. 即便写进去，每次部署换 release 也会被清空。
+    结果 `/api/radar` 永远返回空壳（`generated_at: None`），雷达页一直显示
+    "还没有抓取过资讯"。改为可配置、默认落在用户数据目录（与 `myreports` 同理）：
+    `VR_RADAR_CACHE_DIR` > `$VR_DATA_DIR/radar` > `~/.vibe-research/radar`。
+    """
+    env = os.environ.get("VR_RADAR_CACHE_DIR", "").strip()
+    if env:
+        return env
+    data_dir = os.environ.get("VR_DATA_DIR", "").strip()
+    base = data_dir if data_dir else os.path.join(os.path.expanduser("~"), ".vibe-research")
+    return os.path.join(base, "radar")
+
+
+CACHE_DIR = _resolve_cache_dir()
 CACHE_FILE = os.path.join(CACHE_DIR, "radar.json")
 
 UA = (
