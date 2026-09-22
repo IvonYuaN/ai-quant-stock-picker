@@ -13,18 +13,44 @@
 当前实现用「技术形态」作为事件代理信号：
 - 长期停牌后复牌 → 用「数据中断 + 复牌放量」识别
 - 业绩预增 → 用「突然放量大涨脱离均线」近似
-- 真实事件数据接入见文件末 TODO
+
+📅 事件日历标注（2026-09-22 接入）：
+`generate_signals` 可接受一个**已预取**的
+:class:`aqsp.features.event_calendar.EventCalendar`，用**真实已知事件**给信号
+加证据标注：
+- 前瞻预警：近期有**限售解禁** → 写进 `risks`；
+- 回溯佐证：近期**登上龙虎榜** → 写进 `reasons`，并**消解**对应的
+  `needs_external_data` 条目。
+
+🔴 接线纪律（不可违反）：
+1. 日历**只做标注，不改分**。`calculate_score` 是纯计算函数，**永不**调用日历，
+   也**永不**触网；日历只影响 `generate_signals` 的证据文本。
+2. 日历必须由调用方**显式注入**并**预先取好数**；`event_calendar=None`（默认）
+   时行为与接入前**逐字一致**。打分链路内禁止 `autoload=True`。
+3. 持仓决策权仍在本策略既有规则，日历只是证据，不构成 LLM 决策依据。
+
+仍未接入（见文件末 TODO）：停复牌 / 业绩预告 / 分红送转 的真实取数。
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import pandas as pd
 
+from aqsp.features.event_calendar import EventCalendar
 from aqsp.strategies.base import BaseStrategy, StrategyConfig
 from aqsp.strategies.thresholds import Thresholds, load_thresholds
+
+# 解禁严重度中文标签（仅用于证据文案；分档判定在
+# `aqsp.features.event_calendar.unlock_severity`）
+_SEVERITY_LABELS = {
+    "high": "高",
+    "medium": "中",
+    "low": "低",
+    "negligible": "可忽略",
+}
 
 
 @dataclass(frozen=True)
@@ -85,12 +111,25 @@ class EventDrivenStrategy(BaseStrategy):
     CONSOLIDATION_RANGE = 0.12  # 横盘振幅阈值
     MIN_SCORE = 0.55
 
+    # `needs_external_data` 文案常量：事件日历**消解**这些条目时要做精确匹配，
+    # 因此统一在此声明，禁止在其他地方重复字面量。
+    NEEDS_SUSPEND_REASON = "停牌原因（重组/违规）需公告数据确认"
+    NEEDS_EARNINGS_DATA = "实际财报数据需 tushare/akshare 接入"
+    NEEDS_LHB_CONFIRM = "龙虎榜/公告确认是否真有事件"
+
+    # 事件日历证据前缀：便于前端 / 日志一眼区分「技术形态推断」与「已知事件」
+    CALENDAR_TAG = "📅 事件日历"
+
     def __init__(
         self,
         config: StrategyConfig | None = None,
         thresholds: Thresholds | None = None,
+        event_calendar: Optional[EventCalendar] = None,
     ):
         self.thresholds = thresholds or load_thresholds()
+        # 日历可为 None（默认）：此时本策略行为与接入事件日历前逐字一致。
+        # 传入时必须已被调用方**预取完毕**（autoload=False），打分链路内禁止触网。
+        self.event_calendar = event_calendar
         # 默认 enabled=False：宪法红线，未经 walk-forward 双门验证不上线
         config = config or StrategyConfig(name="event_driven", enabled=False)
         super().__init__(
@@ -231,8 +270,23 @@ class EventDrivenStrategy(BaseStrategy):
             return 0.5
         return 0.0
 
-    def generate_signals(self, data: Dict[str, pd.DataFrame]) -> List[EventSignal]:
-        """生成事件驱动信号。"""
+    def generate_signals(
+        self,
+        data: Dict[str, pd.DataFrame],
+        as_of: Optional[str] = None,
+    ) -> List[EventSignal]:
+        """生成事件驱动信号。
+
+        Args:
+            data: symbol → OHLCV DataFrame（需含 ``date`` / ``close`` / ``volume``）。
+            as_of: 事件日历查询基准日（ISO ``YYYY-MM-DD``）。``None``（默认）时
+                从该 symbol 的**最后一根 K 线日期**推导 —— 回看历史数据时日历查询
+                自动锚定在同一时点，**不会引入未来信息**。
+
+        Returns:
+            按 ``score`` 降序的信号列表。``event_calendar`` 为 ``None``（默认）时，
+            返回内容与接入事件日历前逐字一致。
+        """
         signals: List[EventSignal] = []
 
         for symbol, df in data.items():
@@ -264,6 +318,12 @@ class EventDrivenStrategy(BaseStrategy):
             position = self._suggest_position(event_type, best_score)
 
             reasons, risks, needs_data = self._collect_info(df_sorted, event_type)
+
+            # 已知事件标注（best-effort）：只补证据文本，不改 best_score / 仓位 / 目标价
+            ref_date = as_of or self._as_of_from_df(df_sorted)
+            self._annotate_with_calendar(
+                symbol, ref_date, event_type, reasons, risks, needs_data
+            )
 
             signals.append(
                 EventSignal(
@@ -319,7 +379,7 @@ class EventDrivenStrategy(BaseStrategy):
         if event_type == "resume_trading":
             reasons.append("检测到停牌后复牌，放量异动")
             risks.append("复牌方向不确定，可能补跌")
-            needs_data.append("停牌原因（重组/违规）需公告数据确认")
+            needs_data.append(self.NEEDS_SUSPEND_REASON)
 
         elif event_type == "earnings_surge":
             last_change = (
@@ -328,15 +388,127 @@ class EventDrivenStrategy(BaseStrategy):
             reasons.append(f"放巨量大涨{last_change:.1%}，脱离均线")
             reasons.append("疑似业绩超预期/重大利好")
             risks.append("可能是消息兑现，追高风险")
-            needs_data.append("实际财报数据需 tushare/akshare 接入")
+            needs_data.append(self.NEEDS_EARNINGS_DATA)
 
         elif event_type == "sudden_breakout":
             reasons.append("长期横盘后放量突破")
             reasons.append("资金提前埋伏，疑似事件驱动")
             risks.append("无消息确认，可能是诱多")
-            needs_data.append("龙虎榜/公告确认是否真有事件")
+            needs_data.append(self.NEEDS_LHB_CONFIRM)
 
         return reasons, risks, needs_data
+
+    # ---------------------------------------------------------------
+    # 事件日历标注（只补证据，不改分）
+    # ---------------------------------------------------------------
+
+    @staticmethod
+    def _as_of_from_df(df: pd.DataFrame) -> Optional[str]:
+        """从 K 线最后一行 ``date`` 推导事件日历基准日（ISO 字符串）。
+
+        日历查询必须锚定在**信号当天**：若用 `date.today()`，回看历史数据时就会
+        把「当时还没发生」的解禁 / 龙虎榜当成已知信息（look-ahead）。
+        无法解析时返回 ``None``，调用方据此整体跳过标注（fail-soft）。
+        """
+        if "date" not in df.columns or df.empty:
+            return None
+        try:
+            ts = pd.to_datetime(df["date"].iloc[-1])
+        except (TypeError, ValueError):
+            return None
+        if pd.isna(ts):
+            return None
+        return ts.strftime("%Y-%m-%d")
+
+    def _annotate_with_calendar(
+        self,
+        symbol: str,
+        as_of: Optional[str],
+        event_type: str,
+        reasons: List[str],
+        risks: List[str],
+        needs_data: List[str],
+    ) -> None:
+        """用事件日历给单条信号补证据，**就地修改**三个列表。
+
+        - 近期解禁 → `risks`（前瞻预警）
+        - 近期上榜龙虎榜 → `reasons`（回溯佐证），并消解 `NEEDS_LHB_CONFIRM`
+        - 有龙虎榜数据面但该股未上榜 → `risks`，同样消解 `NEEDS_LHB_CONFIRM`
+
+        日历是 **best-effort 增强**：任何异常都静默跳过，绝不因为「附加证据」
+        失败而让整条选股链路失败。这与 `features/pit_enrichment.py` 的
+        fail-soft 约定一致。
+        """
+        calendar = self.event_calendar
+        if calendar is None or not as_of:
+            return
+        try:
+            if calendar.is_empty():
+                return
+            self._annotate_unlocks(calendar, symbol, as_of, risks)
+            self._annotate_longhubang(
+                calendar, symbol, as_of, event_type, reasons, risks, needs_data
+            )
+        except Exception:  # noqa: BLE001 - best-effort enrichment, never break screening
+            return
+
+    def _annotate_unlocks(
+        self,
+        calendar: EventCalendar,
+        symbol: str,
+        as_of: str,
+        risks: List[str],
+    ) -> None:
+        """前瞻预警：`as_of` 起 horizon 窗口内的限售解禁。
+
+        只有当日历**确实装载了解禁数据面**时才做「无解禁」之外的判断 ——
+        没数据 ≠ 没事件，绝不能在缺数据时下结论。
+        """
+        if not calendar.has_unlock_data():
+            return
+        for event in calendar.upcoming_unlocks(symbol, as_of):
+            label = _SEVERITY_LABELS.get(event.severity, event.severity)
+            risks.append(f"{self.CALENDAR_TAG}·解禁预警({label})：{event.detail}")
+
+    def _annotate_longhubang(
+        self,
+        calendar: EventCalendar,
+        symbol: str,
+        as_of: str,
+        event_type: str,
+        reasons: List[str],
+        risks: List[str],
+        needs_data: List[str],
+    ) -> None:
+        """回溯佐证：`as_of` 前 lookback 窗口内的龙虎榜记录。
+
+        上榜 → 把真实记录写进 `reasons`；未上榜 → **仅当**该信号的立论本身
+        就是「资金提前埋伏」（`sudden_breakout`）时才写进 `risks`。
+        两种情况都代表「龙虎榜已核实」，因此都能消解 `NEEDS_LHB_CONFIRM`。
+        """
+        if not calendar.has_longhubang_data():
+            return
+
+        records = calendar.recent_longhubang(symbol, as_of)
+        if records:
+            for record in records[:2]:
+                reasons.append(f"{self.CALENDAR_TAG}：{record.detail}")
+            self._resolve_needs(needs_data, self.NEEDS_LHB_CONFIRM)
+            return
+
+        if event_type == "sudden_breakout":
+            lookback = calendar.longhubang_lookback_days
+            risks.append(
+                f"{self.CALENDAR_TAG}：近 {lookback} 个自然日未上龙虎榜，"
+                "「资金提前埋伏」的推断未获确认"
+            )
+            self._resolve_needs(needs_data, self.NEEDS_LHB_CONFIRM)
+
+    @staticmethod
+    def _resolve_needs(needs_data: List[str], text: str) -> None:
+        """从 `needs_external_data` 中移除已被日历回答的条目（就地修改）。"""
+        if text in needs_data:
+            needs_data.remove(text)
 
 
 def format_event_signals(signals: List[EventSignal], top_n: int = 5) -> str:
@@ -391,17 +563,26 @@ def format_event_signals(signals: List[EventSignal], top_n: int = 5) -> str:
 
 
 # ============================================================
-# TODO: 真实事件数据接入（下一阶段）
+# 真实事件数据接入 —— 进度（2026-09-22 复核）
 # ============================================================
-# 当前用技术形态做事件代理。要做真正的事件驱动，需接入：
+# ✅ 已完成：事件日历标注层
+#    `aqsp.features.event_calendar.EventCalendar` + `generate_signals(as_of=...)`
+#    - 前瞻预警：限售解禁（数据面 = `aqsp.data.lockup`，已在 main）
+#    - 回溯佐证：龙虎榜（数据面 = `aqsp.data.longhubang`，已在 main），
+#      并消解 `needs_external_data` 中「龙虎榜/公告确认是否真有事件」
+#    - 点内安全：as_of 默认取 K 线最后一行日期，不引入未来信息
 #
-# 1. 停复牌数据：akshare ak.stock_tfp_em()（停复牌）
-# 2. 业绩预告：akshare ak.stock_yjyg_em()（业绩预告）
-# 3. 高送转：akshare ak.stock_fhps_em()（分红送转）
-# 4. 龙虎榜：akshare ak.stock_lhb_detail_em()
-# 5. 政策事件：需新闻/公告 NLP（可选 LLM，走 llm_call_or_fallback wrapper）
+# ⏳ 取数模块待落地（不影响上面标注层：日历对缺数据面自动降级）：
+# 1. 停复牌   → akshare `ak.stock_tfp_em()`   等价东财 datacenter 源
+# 2. 业绩预告 → akshare `ak.stock_yjyg_em()`  等价东财 datacenter 源
+# 3. 分红送转 → akshare `ak.stock_fhps_em()`  等价东财 datacenter 源
+#    （三者按 `aqsp/data/lockup.py` 的模板实现后，喂给 `EventCalendar` 即可）
+# 4. 政策事件 → 需新闻/公告 NLP（可选 LLM，走 `llm_call_or_fallback` wrapper）
 #
-# 接入后改造方向：
-# - calculate_score 增加事件数据加权
-# - generate_signals 用真实事件类型替代技术代理
-# - 事件日历：提前 N 天预警已知事件（如解禁、分红除权）
+# ⛔ 明确不做（做了会违反宪法红线，不是"待办"）：
+# - **`calculate_score` 增加「事件数据加权」**：事件权重属于策略参数，
+#   引入必须走 walk-forward 双门验证 + `thresholds.yaml` 注入，
+#   不能凭直觉写常量。当前事件只作**证据标注**，不进打分向量。
+# - **用真实事件类型整体替代技术代理**：技术代理是「价格行为」先验，
+#   与「已知事件」互补而非互斥；替代会改变策略基线。改基线须先过双门。
+# - 任何把日历结果写进 `ledger` 权重 / 交给 LLM 决策的用法。
