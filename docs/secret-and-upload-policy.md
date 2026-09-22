@@ -20,12 +20,13 @@
 
 ## 可以上传
 
-- `data/open_source_research.jsonl`
-- `docs/open_source_quant_research.md`
-- `docs/research_absorption.md`
-- `docs/research_absorption.json`
+- `docs/research/repo_radar.md`、`docs/research/repo_radar_raw.json`
+- `docs/research/*.md`（外部仓库复核 / 吸收记录）
+- `config/data_sources.yaml`、`config/strategy_sources.yaml`
 
 这些文件只保存公开仓库元数据和人工审阅队列，例如仓库 URL、stars、更新时间、描述、分类和入库门槛，不保存账户 token、私有数据或交易账本。
+
+已移除（仓库中已不存在，勿再引用）：`data/open_source_research.jsonl`、`docs/open_source_quant_research.md`、`docs/research_absorption.md`、`docs/research_absorption.json`。
 
 ## 本地使用 token
 

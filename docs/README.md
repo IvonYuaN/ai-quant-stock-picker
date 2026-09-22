@@ -25,28 +25,22 @@
 - `simple-server-mode.md`: GitHub -> 云服务器自动更新运行模式
 - `TROUBLESHOOTING.md`: 常见故障排查手册
 - `vibe-research-migration.md`: AQSP 对外（研究前台）最小只读桥接契约
-- `FETCHER_USAGE.md`: MultiSourceFetcher 使用指南
+- `DASHBOARD_GUIDE.md`: 研究工作台（React 入口 + 历史 Streamlit 回滚）使用指南
+- `STRATEGY_HEALTH_INTEGRATION.md`: 策略健康度监控（`aqsp.monitor.strategy_health`）集成指南
 - `walkforward-2026-05.md`: walk-forward 报告落点（**亦是 `aqsp walkforward --report` 默认路径，勿删**）
-
-## Superseded（保留但已被取代）
-
-- `model-handoff.md`: 2026-06-03 的模型接手快照 —— 已被 `CURRENT_STATE.md` 取代
-
-## Pending Review（仍在顶层，待判定去留）
-
-- `DASHBOARD_GUIDE.md`: 研究工作台使用指南（可能仍有效）
-- `STRATEGY_HEALTH_INTEGRATION.md`: 策略健康度监控集成指南（可能仍有效）
 
 ## Archive
 
 阶段性调试报告、试验记录、PR 过程文档已移动到：
 
 - `archive/experiments/`（walk-forward 试验、数据源验证、参数诊断）
-- `archive/process/`（PR 拆分、审查记录、排障过程、历史任务清单）
+- `archive/process/`（PR 拆分、审查记录、排障过程、历史任务清单、已被取代的接手/模块指南）
 - `archive/README.md`
+
+2026-09-22 归档：`model-handoff.md`（2026-06-03 接手快照，已被 `CURRENT_STATE.md` 取代）、`FETCHER_USAGE.md`（`MultiSourceFetcher` 非当前数据面）。
 
 这些归档文件保留追溯价值，但不再作为当前运行文档入口。
 
 ---
 
-_本次整理（2026-09-22）：新增 `CURRENT_STATE.md`；归档根目录 4 份历史任务清单与 `BEGINNER_DASHBOARD_INTEGRATION.md`；登记断链引用与待评估文档（详见 `CURRENT_STATE.md` §8）。_
+_本次整理（2026-09-22）：新增 `CURRENT_STATE.md`；归档根目录 4 份历史任务清单与 `BEGINNER_DASHBOARD_INTEGRATION.md`；判定 Pending Review 文档去留并归档 `model-handoff.md` / `FETCHER_USAGE.md`；修复断链引用（详见 `CURRENT_STATE.md` §8）。_

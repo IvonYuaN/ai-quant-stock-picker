@@ -64,26 +64,34 @@
 
 - **T3 双窗口门禁验证**（3y/5y 两臂对比；`compare_t3_dual_window.py` 已修）。进展看 `outputs/T3_接力进展_*.md`；运行时权威记忆在 `.workbuddy/memory/MEMORY.md`。
 
-## 8. 过期 / 断链登记（多 agent 漂移遗留，待逐步清理）
+## 8. 过期 / 断链登记（多 agent 漂移遗留，逐次清理）
 
-**已归档（2026-09-22 清理，本 PR）**
+**已归档（2026-09-22 清理）**
 - 根目录 4 份互相矛盾的任务清单 → `docs/archive/process/`：
   `CODEX任务清单.md` / `Codex深度问题修复清单.md` / `修正后的任务清单.md` / `最终修正版任务清单.md`
 - `docs/BEGINNER_DASHBOARD_INTEGRATION.md`（自述"已不再渲染旧新手看板"）→ `docs/archive/process/`
+- Pending Review 4 份的判定结果：
+  - **留 Active**：`DASHBOARD_GUIDE.md`（被 `src/aqsp/web/README.md` 引用，内容与 `deploy/nginx/aqsp-dashboard.conf` 的 302/5899/8900 一致）、`STRATEGY_HEALTH_INTEGRATION.md`（`src/aqsp/monitor/strategy_health.py` 存在，阈值与 API 同源码一致，有 `tests/test_strategy_health.py` 覆盖）
+  - **归档 → `docs/archive/process/`**：`model-handoff.md`（2026-06-03 接手快照，已被本文取代）、`FETCHER_USAGE.md`（描述非当前数据面 `MultiSourceFetcher`，且"Tushare 为主源"与 `create_default_fetcher()` 的占位实现不符）
 
-**断链引用**（文档里提到、但顶层 `docs/` 已不存在；多数指向已归档文件或历史 outputs）
-- `walkforward-variants-manifest.md`（**已在 `archive/experiments/`**）、`CONSTITUTION-IMPLEMENTATION.md`、`momentum-direction-2026-05-28.md`（**已在 `archive/process/`**）、`user_data_dir.md`、`research_absorption.md`、`open_source_quant_research.md`、`chromium_browser_vs_google_chrome.md`、`DOUBLE-GATE-DESIGN.md`
+**断链引用**（文档里提到、但 `docs/` 顶层已不存在的文件；已逐处修正）
+- **已归档文件**，引用改为归档路径：
+  - `walkforward-variants-manifest.md` → `docs/archive/experiments/walkforward-variants-manifest.md`
+  - `momentum-direction-2026-05-28.md` → `docs/archive/process/momentum-direction-2026-05-28.md`（原引用在 `docs/archive/experiments/walkforward-failures.md`）
+- **确认已移除**（全仓不存在，引用处标注"已移除"）：
+  - `CONSTITUTION-IMPLEMENTATION.md`、`user_data_dir.md`、`research_absorption.md`、`open_source_quant_research.md`、`chromium_browser_vs_google_chrome.md`、`DOUBLE-GATE-DESIGN.md`
+  - `research_absorption.md` / `open_source_quant_research.md` 由 `docs/open_source_research.md` 与 `docs/secret-and-upload-policy.md` 引用，已改为现状说明。同批失效的还有 `docs/research_pipeline.md`、`docs/source_level_absorption.md`、`docs/research_absorption.json`、`data/open_source_research.jsonl`，以及 `scripts/collect_open_source_research.py` / `absorb_research_findings.py` / `validate_research_registries.py` —— 整套旧「开源采集 → 吸收」流水线已被 `docs/research/repo_radar.md` + `scripts/collect_research_registry.py` 取代。
+  - ⚠️ 其余引用点集中在 `outputs/`（已被 `.gitignore`，不在仓库跟踪内），按「历史产物不改造」处理，**未改动**。
 
-**⚠️ 疑似过期但不得擅动（是代码路径）**
-- `docs/walkforward-2026-05.md`：`src/aqsp/cli.py:827` 的 `aqsp walkforward --report` **默认值**。改默认值是代码变更，须单独 PR。
-
-**待评估（疑似阶段文档，但可能仍被日常依赖）**
-- `model-handoff.md`（2026-06-03 快照，已被本文取代）、`DASHBOARD_GUIDE.md`、`STRATEGY_HEALTH_INTEGRATION.md`、`FETCHER_USAGE.md`
+**⚠️ 疑似过期但不得擅动（被代码当默认路径）**
+- `docs/walkforward-2026-05.md`：`src/aqsp/cli.py` 的 `aqsp walkforward --report` **默认值**。改默认值是代码变更，须单独 PR。
+- `scripts/diagnose_momentum.py` 的 `--output` 默认 `docs/momentum-direction-2026-05-28.md`，而该文件已归档到 `docs/archive/process/`；脚本未改（属代码变更）。
+- `src/aqsp/research/summary.py` 的 `absorption_path` 默认 `docs/research_absorption.json`（该文件已移除）；同上，须单独 PR 处理。
 
 **本地分支**
 - 35 个本地分支**全部未并入 `origin/main`**（多数对应仍开着的 PR，如 `fix/vibe-acl-covers-all-read-paths`）。**不可批量删除**；仅能逐个核对 PR 状态后清理。
 
-**`outputs/`（142 文件，多为阶段产物）**
+**`outputs/`（阶段产物）**
 - 属本地工作区产物，`outputs/` 已被 `.gitignore`；不在仓库历史中，按需本地清理即可。
 
 ---
