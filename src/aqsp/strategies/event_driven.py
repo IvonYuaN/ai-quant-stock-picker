@@ -25,15 +25,26 @@
 🔴 接线纪律（不可违反）：
 1. 日历**只做标注，不改分**。`calculate_score` 是纯计算函数，**永不**调用日历，
    也**永不**触网；日历只影响 `generate_signals` 的证据文本。
-2. 日历必须由调用方**显式注入**并**预先取好数**；`event_calendar=None`（默认）
-   时行为与接入前**逐字一致**。打分链路内禁止 `autoload=True`。
+2. 日历必须由调用方**显式注入**并**预先取好数**。打分链路的正解是
+   `EventCalendar.from_cache()`（只读 `pit_cache/*.csv`，无联网路径）；
+   **不要**在打分链路里用 `from_sources(autoload=True)`（缓存缺失时会联网）。
+   `event_calendar=None`（默认）时行为与接入前**逐字一致**。
 3. 持仓决策权仍在本策略既有规则，日历只是证据，不构成 LLM 决策依据。
+
+⚠️ 「不引入未来信息」的**准确边界**（别过度宣称）：
+`as_of` 默认取 K 线末日，且显式传入晚于末日会被拒绝，所以本策略**不会**把未来
+事件当证据。但**数据源本身**的 PIT 性有已知缺口 —— 东财解禁只给解禁日、
+**不给公告日**，无法证明「as_of 当天市场已知该计划」。详见
+`features/event_calendar.py` 模块 docstring 的「已知口径限制」段。
+因此日历证据**只可用于当日/近期研判，不可用于历史回测复现**。
 
 仍未接入（见文件末 TODO）：停复牌 / 业绩预告 / 分红送转 的真实取数。
 """
 
 from __future__ import annotations
 
+import logging
+import warnings
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
@@ -42,6 +53,8 @@ import pandas as pd
 from aqsp.features.event_calendar import EventCalendar
 from aqsp.strategies.base import BaseStrategy, StrategyConfig
 from aqsp.strategies.thresholds import Thresholds, load_thresholds
+
+_logger = logging.getLogger(__name__)
 
 # 解禁严重度中文标签（仅用于证据文案；分档判定在
 # `aqsp.features.event_calendar.unlock_severity`）
@@ -283,6 +296,10 @@ class EventDrivenStrategy(BaseStrategy):
                 从该 symbol 的**最后一根 K 线日期**推导 —— 回看历史数据时日历查询
                 自动锚定在同一时点，**不会引入未来信息**。
 
+                ⚠️ 显式传入时**不得晚于该 symbol 的 K 线末日**。传更晚的日期等于
+                用「当时还不知道」的解禁/上榜去解释「已经发生」的形态，属未来信息；
+                本方法会**拒绝**该值、退回推导值并发 ``UserWarning``。
+
         Returns:
             按 ``score`` 降序的信号列表。``event_calendar`` 为 ``None``（默认）时，
             返回内容与接入事件日历前逐字一致。
@@ -320,7 +337,7 @@ class EventDrivenStrategy(BaseStrategy):
             reasons, risks, needs_data = self._collect_info(df_sorted, event_type)
 
             # 已知事件标注（best-effort）：只补证据文本，不改 best_score / 仓位 / 目标价
-            ref_date = as_of or self._as_of_from_df(df_sorted)
+            ref_date = self._resolve_as_of(df_sorted, as_of)
             self._annotate_with_calendar(
                 symbol, ref_date, event_type, reasons, risks, needs_data
             )
@@ -420,6 +437,41 @@ class EventDrivenStrategy(BaseStrategy):
             return None
         return ts.strftime("%Y-%m-%d")
 
+    @classmethod
+    def _resolve_as_of(cls, df: pd.DataFrame, as_of: Optional[str]) -> Optional[str]:
+        """确定事件日历基准日，并**拒绝未来日期**（look-ahead 护栏）。
+
+        ``as_of=None``（默认）→ 取 K 线末日，永远安全。
+        显式传入时**不得晚于** K 线末日；晚于则发 ``UserWarning`` 并退回 K 线末日 ——
+        否则等于用「信号当天还不知道」的解禁/上榜去解释「已经发生」的价格形态，
+        即未来信息（`as_of` 是本 PR 新开的旋钮，没有护栏就迟早会被拧过头）。
+        """
+        derived = cls._as_of_from_df(df)
+        if as_of is None:
+            return derived
+
+        ts = pd.to_datetime(as_of, errors="coerce")
+        if pd.isna(ts):
+            warnings.warn(
+                f"event_driven: as_of={as_of!r} 无法解析为日期，"
+                f"已退回 K 线末日 {derived!r} 作为事件日历基准日。",
+                UserWarning,
+                stacklevel=3,
+            )
+            return derived
+
+        requested = ts.strftime("%Y-%m-%d")
+        if derived is not None and requested > derived:
+            warnings.warn(
+                f"event_driven: as_of={requested} 晚于 K 线末日 {derived}，"
+                "该值会让日历把「尚未发生」的事件当成已知证据（look-ahead），"
+                "已拒绝并退回 K 线末日。",
+                UserWarning,
+                stacklevel=3,
+            )
+            return derived
+        return requested
+
     def _annotate_with_calendar(
         self,
         symbol: str,
@@ -435,9 +487,11 @@ class EventDrivenStrategy(BaseStrategy):
         - 近期上榜龙虎榜 → `reasons`（回溯佐证），并消解 `NEEDS_LHB_CONFIRM`
         - 有龙虎榜数据面但该股未上榜 → `risks`，同样消解 `NEEDS_LHB_CONFIRM`
 
-        日历是 **best-effort 增强**：任何异常都静默跳过，绝不因为「附加证据」
-        失败而让整条选股链路失败。这与 `features/pit_enrichment.py` 的
-        fail-soft 约定一致。
+        日历是 **best-effort 增强**：任何异常都**停止后续标注并返回**，
+        **已追加的标注不回收**（本层没有回滚语义），也绝不因为「附加证据」失败
+        而让整条选股链路失败。这与 `features/pit_enrichment.py` 的 fail-soft 约定一致。
+        异常会记 `debug` 日志 —— 否则「没数据 / 出 bug / 真没事件」在输出上
+        无法区分（2026-09-22 对抗式复核 F5）。
         """
         calendar = self.event_calendar
         if calendar is None or not as_of:
@@ -450,6 +504,15 @@ class EventDrivenStrategy(BaseStrategy):
                 calendar, symbol, as_of, event_type, reasons, risks, needs_data
             )
         except Exception:  # noqa: BLE001 - best-effort enrichment, never break screening
+            # 绝不因「附加证据」失败而让选股链路失败；但**必须留痕** ——
+            # 否则「没数据 / 出 bug / 真没事件」在输出上完全无法区分
+            # （2026-09-22 对抗式复核 F5）。
+            _logger.debug(
+                "event_driven: 事件日历标注失败，已跳过（symbol=%s, as_of=%s）",
+                symbol,
+                as_of,
+                exc_info=True,
+            )
             return
 
     def _annotate_unlocks(
@@ -491,9 +554,28 @@ class EventDrivenStrategy(BaseStrategy):
 
         records = calendar.recent_longhubang(symbol, as_of)
         if records:
+            # 肯定结论（真查到记录）**不需要**覆盖证明 —— 一条真实上榜记录本身就是事实
             for record in records[:2]:
                 reasons.append(f"{self.CALENDAR_TAG}：{record.detail}")
             self._resolve_needs(needs_data, self.NEEDS_LHB_CONFIRM)
+            return
+
+        # 否定结论（「未上榜」）**必须**先证明数据真的覆盖了这段窗口。
+        # 原 `fetch_longhubang.py` 只抓最新 1 个交易日（单日区间 + 覆盖式写盘）
+        # ⇒ 用它去断言「近 5 个自然日未上榜」是拿 1 天的数据说 5 天的话，
+        # 而且还会顺手消解人工核验项 —— 那是「因数据不全而降低复核门槛」，
+        # 比「没有数据」更危险。覆盖不足时如实标注，并**保留**核验要求。
+        if not calendar.longhubang_covers(as_of):
+            if event_type == "sudden_breakout":
+                span = calendar.longhubang_span()
+                covered = (
+                    f"{span[0].isoformat()}~{span[1].isoformat()}" if span else "无"
+                )
+                needs_data.append(
+                    f"{self.CALENDAR_TAG}：龙虎榜缓存仅覆盖 {covered}，不足以核验"
+                    f"近 {calendar.longhubang_lookback_days} 个自然日是否上榜 —— "
+                    "该维度未核实（保留人工核验要求）"
+                )
             return
 
         if event_type == "sudden_breakout":
