@@ -36,18 +36,20 @@
 ## 4. 数据面（`src/aqsp/data/`）
 
 - **行情多源**：`source_factory` = mootdx / 腾讯 / 新浪 / akshare / baostock / efinance / sqlite_db / tdx_vipdoc。
-- **事件 / 风险面**（2026-09-08 起，均带测试 + `scripts/fetch_*.py` + 管线接入）：
+- **事件 / 风险面**（2026-09-08 起，均已实现取数 + 测试 + `scripts/fetch_*.py`）：
   - `longhubang.py` 龙虎榜 · `lockup.py` 限售解禁 · `cls_news.py` 财联社快讯 · `concept_board.py` 东财 slist 概念板块。
+  - ⚠️ **尚未接入运行链路**：四者只把结果写到 `$AQSP_RUNTIME_DATA_ROOT/pit_cache/*.csv`，**全仓无任何读取方**；4 个 `scripts/fetch_*.py` 也没有调度（`deploy/` 只有 2 个 FastAPI systemd service，无 crontab）。唯一潜在消费方 `filters_lethal/lockup_release.py` 读的是 `data/lockup_schedule.csv`（该文件不存在）且要求 `release_date` 列，与 `lockup.py` 产出的 `pit_cache/lockup.csv` + `plan_date` 在**目录 / 文件名 / 字段**三处都不一致。审计证据：本机审计报告 `outputs/后端审计_2026-09-22.md`（`outputs/` 未入库）。
 - **资讯雷达**：`backend/newsradar.py`（12 赛道 / 108 源 RSS）。
 - **PIT / 复权**：`industry_pit.py`、`macro_pit.py`、`pit_financial.py`、`pit_policy.py`、`adjust.py`。
 - **个股深度 API**（后端 `backend/app.py` + `astock.py`）：`/api/dragon-tiger`、`/api/lockup`、`/api/margin`、`/api/block-trade`、`/api/holders`、`/api/dividend`、`/api/fund-flow`、`/api/blocks`、`/api/hot-concepts`、`/api/investor-qa`。
+  - 其中 `/api/dragon-tiger`、`/api/lockup` 与 `src/aqsp/data/longhubang.py`、`lockup.py` 是**同一东财接口的两套实现**（`RPT_DAILYBILLBOARD_DETAILSNEW` / `RPT_LIFT_STAGE`）；`astock.py` 刻意不与 aqsp 解耦，**东财改列名时两侧需同步**。
 
 ## 5. LLM / 研报 / 复盘能力（`src/aqsp/briefing/` + `backend/chat.py`）
 
 | 能力 | 实现 |
 |---|---|
 | 多 Agent 讨论/辩论 | `agent_roles.py`（**9 个 A 股角色**）+ `debate.py` + `debate_tracker.py` + `conclusion.py` |
-| 简报 / 研报生成与渲染 | `generator.py` + `renderer.py` + `schema.py` + `templates/` |
+| 简报 / 研报生成与渲染 | `generator.py` + `schema.py` + `templates/`（`renderer.py` 仅测试引用，生产未接） |
 | 收盘复盘 | `closing_review.py`（`aqsp closing-review`） |
 | 研究引擎 / 报告 | `research_engine.py` + `report.py` |
 | AI 对话（合规） | `backend/chat.py` `/api/chat`（五维投研框架，system prompt 强制中立：不荐股/不预测/不给时机） |
@@ -87,6 +89,12 @@
 - `docs/walkforward-2026-05.md`：`src/aqsp/cli.py` 的 `aqsp walkforward --report` **默认值**。改默认值是代码变更，须单独 PR。
 - `scripts/diagnose_momentum.py` 的 `--output` 默认 `docs/momentum-direction-2026-05-28.md`，而该文件已归档到 `docs/archive/process/`；脚本未改（属代码变更）。
 - `src/aqsp/research/summary.py` 的 `absorption_path` 默认 `docs/research_absorption.json`（该文件已移除）；同上，须单独 PR 处理。
+
+**孤儿 / 死代码（2026-09-22 后端只读审计发现，证据见本机 `outputs/后端审计_2026-09-22.md`，未入库）**
+- `scripts/quick_start.py`（289 行）：导入**不存在**的 `aqsp.strategies.regime_adaptive`，且全仓无人调用（能力已迁到 `aqsp/regime/*`）。属孤儿脚本，**本次未删**，待单独 PR 处置。
+- `src/aqsp/strategies/param_version_manager.py`：**全仓 0 引用**（连测试都没有）。
+- 另有 12 个模块仅测试引用、生产不可达：`risk/unified_risk.py`（619 行三层风控，**生产无调用**，别把它当成"风控三层已生效"）、`risk/stop_loss.py`、`strategies/adaptive_evolution.py`、`briefing/renderer.py` 等。
+- 备注：`src/aqsp/core/`、`src/aqsp/runtime/` 缺 `__init__.py`（其余 23 个子包都有）；靠 PEP 420 隐式命名空间包目前可正常 import，属潜在脆弱点。
 
 **本地分支**
 - 35 个本地分支**全部未并入 `origin/main`**（多数对应仍开着的 PR，如 `fix/vibe-acl-covers-all-read-paths`）。**不可批量删除**；仅能逐个核对 PR 状态后清理。
