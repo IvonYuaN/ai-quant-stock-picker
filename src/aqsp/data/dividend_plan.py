@@ -6,13 +6,20 @@
 字段来源：2026-09-22 生产机实测。
 reportName=RPT_SHAREBONUS_DET（datacenter-web 通用接口）。
 filter 需带报告期等值：`(REPORT_DATE='YYYY-MM-DD')`。
+可选 `ex_dividend_from` 追加 `(EX_DIVIDEND_DATE>='YYYY-MM-DD')`，语义是「取尚未
+/ 刚除权除息的」—— 事件日历要的正是这个方向，也顺带规避 pageSize 截断。
 字段名：SECURITY_CODE / SECURITY_NAME_ABBR / REPORT_DATE / PLAN_NOTICE_DATE /
 EX_DIVIDEND_DATE（可能为未来日期）/ BONUS_IT_RATIO（每 10 股送转合计股数）/
 PRETAX_BONUS_RMB（每 10 股税前派息，元）/ ASSIGN_PROGRESS（方案进度）。
+
+截断守卫：单页取 `pageSize=500`，页满时置 `source.truncated=True` 并 warning
+（该报表单报告期实测约 3600 条，不加 `ex_dividend_from` 时**很可能触发**）。
+绝不静默少拿数据。
 """
 
 from __future__ import annotations
 
+import logging
 import os
 import tempfile
 from dataclasses import dataclass
@@ -34,6 +41,8 @@ _EM_HEADERS = {
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
     ),
 }
+_PAGE_SIZE = 500
+_logger = logging.getLogger("aqsp.data.dividend_plan")
 
 
 @dataclass(frozen=True)
@@ -76,6 +85,11 @@ def _default_report_period(today: date) -> str:
     if today.month >= 5:
         return f"{today.year}-03-31"
     return f"{today.year - 1}-12-31"
+
+
+def _is_truncated(parsed_count: int, page_size: int) -> bool:
+    """页满即可能被 pageSize 截断 —— 用于避免「静默少拿数据」。"""
+    return parsed_count >= page_size
 
 
 def _parse_items(payload: object) -> list[DividendPlanItem]:
@@ -136,6 +150,8 @@ class DividendPlanSource:
     def __init__(self, cache_path: Optional[str] = None) -> None:
         self._cache_path = cache_path
         self._items: list[DividendPlanItem] = []
+        # 上一次 _fetch 的结果是否疑似被 pageSize 截断（真截断时已 warning）
+        self.truncated = False
 
     def _default_cache_path(self) -> str:
         if self._cache_path:
@@ -150,23 +166,30 @@ class DividendPlanSource:
         self._items = list(items)
         return self
 
-    def _fetch(self, report_date: str = "") -> list[DividendPlanItem]:
+    def _fetch(
+        self, report_date: str = "", ex_dividend_from: str = ""
+    ) -> list[DividendPlanItem]:
         try:
             import requests
         except ImportError as e:  # pragma: no cover
             raise DataError(f"dividend_plan: 缺少依赖 requests（{e}）") from e
         period = report_date.strip() or _default_report_period(today_shanghai())
+        # 东财 filter 为 (A)(B) 拼接形式；ex_dividend_from 用来只取「尚未除权除息」
+        filters = [f"(REPORT_DATE='{period}')"]
+        ex_date = ex_dividend_from.strip()
+        if ex_date:
+            filters.append(f"(EX_DIVIDEND_DATE>='{ex_date}')")
         params: dict[str, str] = {
             "reportName": EM_DIVIDEND_REPORT,
             "columns": "ALL",
-            "pageSize": "500",
+            "pageSize": str(_PAGE_SIZE),
             "pageNumber": "1",
             "sortColumns": "PLAN_NOTICE_DATE",
             "sortTypes": "-1",
             "quoteColumns": "",
             "source": "WEB",
             "client": "WEB",
-            "filter": f"(REPORT_DATE='{period}')",
+            "filter": "".join(filters),
         }
         try:
             r = requests.get(
@@ -176,10 +199,19 @@ class DividendPlanSource:
             payload = r.json()
         except Exception as e:
             raise DataError(f"dividend_plan: 东财分红送转抓取失败（{e}）") from e
-        return _parse_items(payload)
+        items = _parse_items(payload)
+        self.truncated = _is_truncated(len(items), _PAGE_SIZE)
+        if self.truncated:
+            _logger.warning(
+                "dividend_plan: 结果可能被 pageSize=%d 截断（实得 %d 条），"
+                "请收窄 filter（如传 ex_dividend_from）或加分页",
+                _PAGE_SIZE,
+                len(items),
+            )
+        return items
 
     def load(
-        self, force: bool = False, report_date: str = ""
+        self, force: bool = False, report_date: str = "", ex_dividend_from: str = ""
     ) -> list[DividendPlanItem]:
         path = self._default_cache_path()
         if not force and not self._items and os.path.exists(path):
@@ -190,7 +222,9 @@ class DividendPlanSource:
                 return self._items
             except Exception:
                 self._items = []
-        self._items = self._fetch(report_date=report_date)
+        self._items = self._fetch(
+            report_date=report_date, ex_dividend_from=ex_dividend_from
+        )
         try:
             pd.DataFrame([i.__dict__ for i in self._items]).to_csv(path, index=False)
         except Exception:
@@ -198,8 +232,11 @@ class DividendPlanSource:
         return self._items
 
     def items(
-        self, autoload: bool = False, report_date: str = ""
+        self,
+        autoload: bool = False,
+        report_date: str = "",
+        ex_dividend_from: str = "",
     ) -> list[DividendPlanItem]:
         if not self._items and autoload:
-            self.load(report_date=report_date)
+            self.load(report_date=report_date, ex_dividend_from=ex_dividend_from)
         return list(self._items)

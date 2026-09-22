@@ -1,16 +1,20 @@
-"""分红送转 fetcher 测试（全离线：只喂合成 payload，不触网）。"""
+"""分红送转 fetcher 测试（全离线：只喂合成 payload / 假 requests，不触网）。"""
 
 from __future__ import annotations
 
+import sys
+import types
 from datetime import date
 
 import pandas as pd
 import pytest
 
 from aqsp.data.dividend_plan import (
+    _PAGE_SIZE,
     DividendPlanItem,
     DividendPlanSource,
     _default_report_period,
+    _is_truncated,
     _norm_date,
     _parse_items,
     _to_float,
@@ -32,6 +36,30 @@ _VALID_ROW = {
     "IMPL_PLAN_PROFILE": "10派1.30元(含税,扣税后1.17元)",
     "NOTICE_DATE": "2026-07-21 00:00:00",
 }
+
+
+class _FakeResponse:
+    def __init__(self, payload: object) -> None:
+        self._payload = payload
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def json(self) -> object:
+        return self._payload
+
+
+def _install_fake_requests(monkeypatch, payload, captured: dict) -> None:
+    """把假 requests 装进 sys.modules —— _fetch 内的 import 会拿到它（零网络）。"""
+    fake = types.ModuleType("requests")
+
+    def _get(url, params=None, headers=None, timeout=None):
+        captured["url"] = url
+        captured["params"] = params
+        return _FakeResponse(payload)
+
+    fake.get = _get  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "requests", fake)
 
 
 def test_parse_real_shape():
@@ -222,5 +250,79 @@ def test_load_with_corrupt_cache_falls_back_to_fetch(tmp_path, monkeypatch):
     cache = tmp_path / "dividend_plan.csv"
     cache.write_text("", encoding="utf-8")  # 空文件 → read_csv 抛错
     src = DividendPlanSource(cache_path=str(cache))
-    monkeypatch.setattr(src, "_fetch", lambda report_date="": [])
+    monkeypatch.setattr(src, "_fetch", lambda report_date="", ex_dividend_from="": [])
     assert src.load() == []
+
+
+@pytest.mark.parametrize(
+    "count,expected", [(0, False), (1, False), (499, False), (500, True), (501, True)]
+)
+def test_is_truncated_boundaries(count, expected):
+    assert _is_truncated(count, _PAGE_SIZE) is expected
+
+
+def test_fetch_appends_ex_dividend_from_to_filter(monkeypatch):
+    captured: dict = {}
+    _install_fake_requests(
+        monkeypatch, {"result": {"data": [dict(_VALID_ROW)]}}, captured
+    )
+    src = DividendPlanSource()
+    items = src._fetch(report_date="2025-12-31", ex_dividend_from="2026-09-22")
+    assert len(items) == 1
+    assert captured["params"]["filter"] == (
+        "(REPORT_DATE='2025-12-31')(EX_DIVIDEND_DATE>='2026-09-22')"
+    )
+    assert captured["params"]["pageSize"] == str(_PAGE_SIZE)
+    assert src.truncated is False
+
+
+def test_fetch_without_ex_dividend_from_keeps_single_clause_filter(monkeypatch):
+    captured: dict = {}
+    _install_fake_requests(
+        monkeypatch, {"result": {"data": [dict(_VALID_ROW)]}}, captured
+    )
+    DividendPlanSource()._fetch(report_date="2025-12-31")
+    assert captured["params"]["filter"] == "(REPORT_DATE='2025-12-31')"
+
+
+def test_fetch_sets_truncated_and_warns_on_full_page(monkeypatch, caplog):
+    full_page = [dict(_VALID_ROW, SECURITY_CODE=f"{i:06d}") for i in range(_PAGE_SIZE)]
+    captured: dict = {}
+    _install_fake_requests(monkeypatch, {"result": {"data": full_page}}, captured)
+    src = DividendPlanSource()
+    with caplog.at_level("WARNING", logger="aqsp.data.dividend_plan"):
+        items = src._fetch(report_date="2025-12-31")
+    assert len(items) == _PAGE_SIZE
+    assert src.truncated is True
+    assert any("截断" in r.message for r in caplog.records)
+
+
+def test_fetch_not_truncated_below_page_size(monkeypatch, caplog):
+    captured: dict = {}
+    _install_fake_requests(
+        monkeypatch,
+        {"result": {"data": [_VALID_ROW] * (_PAGE_SIZE - 1)}},
+        captured,
+    )
+    src = DividendPlanSource()
+    with caplog.at_level("WARNING", logger="aqsp.data.dividend_plan"):
+        src._fetch(report_date="2025-12-31")
+    assert src.truncated is False
+    assert not [r for r in caplog.records if "截断" in r.message]
+
+
+def test_truncated_resets_on_next_fetch(monkeypatch):
+    captured: dict = {}
+    _install_fake_requests(
+        monkeypatch,
+        {"result": {"data": [_VALID_ROW] * _PAGE_SIZE}},
+        captured,
+    )
+    src = DividendPlanSource()
+    src._fetch(report_date="2025-12-31")
+    assert src.truncated is True
+    _install_fake_requests(
+        monkeypatch, {"result": {"data": [dict(_VALID_ROW)]}}, captured
+    )
+    src._fetch(report_date="2025-12-31", ex_dividend_from="2026-09-22")
+    assert src.truncated is False
