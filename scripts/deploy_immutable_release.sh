@@ -226,6 +226,9 @@ stamp_manifest() {
         --branch "$BRANCH" \
         --remote "$REMOTE" \
         --remote-url "$remote_url"
+    # 落 RELEASE_SHA 到 release 根目录，供运行时 /api/version 自检
+    # 「是否加载了最新代码」（防 09-21『部署了但旧代码在跑』）。
+    printf '%s\n' "$commit" > "$root/RELEASE_SHA"
 }
 
 normalize_release_modes() {
@@ -410,6 +413,20 @@ restart_services() {
         echo "local API health did not become ready" >&2
         return 1
     }
+    # 部署自检：运行中 API 报告的 release_sha 必须 == 刚部署的 COMMIT，
+    # 否则就是「部署了但旧代码在跑」（09-21 曾因重启早于切链导致）。
+    # /api/health 已含 release_sha；最多重试 3 次等 API 热加载完成。
+    local want_sha="$COMMIT" got_sha=""
+    for _i in 1 2 3; do
+        got_sha="$(curl -s -m 10 "http://127.0.0.1:${API_PORT}/api/health" \
+            | grep -o '"release_sha":"[^"]*"' | sed 's/.*:"//;s/"//')"
+        [ "$got_sha" = "$want_sha" ] && break
+        sleep 3
+    done
+    if [ "$got_sha" != "$want_sha" ]; then
+        echo "release_sha mismatch: deployed=$want_sha running=${got_sha:-unknown}" >&2
+        return 1
+    fi
     wait_for_local_url "http://127.0.0.1:${FRONTEND_PORT}/" "AQSP" || {
         echo "local frontend health did not become ready" >&2
         return 1

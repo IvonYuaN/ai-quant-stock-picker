@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import bisect
 import inspect
+import json
+import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from collections.abc import Callable, Mapping, Sequence
 from typing import Dict, List, Optional
 
@@ -25,6 +27,8 @@ from aqsp.regime.strategy_mixer import canonicalize_regime
 from aqsp.strategies.composite import CompositeStrategy
 from aqsp.strategies.thresholds import RiskThresholds
 
+_LOGGER = logging.getLogger("aqsp.backtest.walk_forward")
+
 
 DEFAULT_STREAM_BATCH_SIZE = 200
 MIN_STREAM_FRAME_ROWS = 100
@@ -33,6 +37,67 @@ FrameBatchLoader = Callable[[list[str], str, str], Mapping[str, pd.DataFrame]]
 
 def _chunks(items: Sequence[str], size: int) -> list[list[str]]:
     return [list(items[index : index + size]) for index in range(0, len(items), size)]
+
+
+def _load_checkpoint(
+    path: str,
+) -> tuple[list["BacktestResult"], list["TradeResult"], set[str]]:
+    """读取断点续跑检查点。
+
+    返回 (已完成 periods, 已完成 trades, 已完成 window 集合)。任何损坏行都被跳过，
+    保证「半行截断」不会让整批已完成结果作废（截断的最后一行会在续跑时重算）。
+    """
+    periods: list[BacktestResult] = []
+    trades: list[TradeResult] = []
+    windows: set[str] = set()
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            for raw in fh:
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    rec = json.loads(raw)
+                    periods.append(BacktestResult(**rec["result"]))
+                    for t in rec.get("trades", []):
+                        trades.append(TradeResult(**t))
+                    windows.add(rec["window"])
+                except Exception:
+                    # 单行损坏（如进程在写该行时被杀）→ 丢弃这一行，续跑时重算。
+                    continue
+    except FileNotFoundError:
+        pass
+    except Exception:
+        # 整个文件读不了 → 视为无检查点，从头跑（安全降级）。
+        return [], [], set()
+    return periods, trades, windows
+
+
+def _append_checkpoint(
+    path: str,
+    window_key: str,
+    result: "BacktestResult",
+    trades: list["TradeResult"],
+) -> None:
+    """把一个已完成 period（含其 trades）增量追加到检查点文件。
+
+    逐行 jsonl：``{"window": key, "result": <asdict>, "trades": [<asdict>]}``。
+    写完 flush+fsync，并 chmod 640（与 #172 一致，避免 ACL 把 mask 压成 ---）。
+    """
+    record = {
+        "window": window_key,
+        "result": asdict(result),
+        "trades": [asdict(t) for t in trades],
+    }
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+        fh.flush()
+        os.fsync(fh.fileno())
+    try:
+        os.chmod(path, 0o640)
+    except OSError:
+        pass
 
 
 def _norm_cdf(x: float) -> float:
@@ -354,6 +419,7 @@ class WalkForwardTester:
         fixed_frames: Mapping[str, pd.DataFrame] | None = None,
         batch_size: int = DEFAULT_STREAM_BATCH_SIZE,
         min_frame_rows: int = MIN_STREAM_FRAME_ROWS,
+        resume_checkpoint: str | None = None,
     ) -> WalkForwardResult:
         """Run walk-forward without retaining the full market in memory.
 
@@ -398,6 +464,17 @@ class WalkForwardTester:
 
         periods: list[BacktestResult] = []
         all_trades: list[TradeResult] = []
+        # 断点续跑：若提供 resume_checkpoint 且文件存在，载入已完成 period + trades，
+        # 循环中对已完成的窗口跳过计算（见下方 window_key 跳过分支）。
+        completed_windows: set[str] = set()
+        checkpoint_path = resume_checkpoint
+        if checkpoint_path:
+            _loaded_periods, _loaded_trades, completed_windows = _load_checkpoint(
+                checkpoint_path
+            )
+            if _loaded_periods:
+                periods = _loaded_periods
+                all_trades = _loaded_trades
         step = self.test_period_days
         cursor = start_idx + self.train_period_days + self.purge_days
         total_periods = self._planned_period_count(start_idx, end_idx)
@@ -416,6 +493,12 @@ class WalkForwardTester:
             train_end = normalized_dates[train_end_idx]
             test_start = normalized_dates[cursor]
             test_end = normalized_dates[min(cursor + step - 1, end_idx)]
+            # 断点续跑：该窗口已在上次运行中完成 → 跳过计算。
+            # period_index 已在循环顶部统一 +1，这里不再重复（只跳过计算、推进 cursor）。
+            window_key = f"{test_start}..{test_end}"
+            if window_key in completed_windows:
+                cursor += step
+                continue
             if progress_enabled:
                 print(
                     f"walkforward streaming period {period_index}/{total_periods}: "
@@ -490,14 +573,16 @@ class WalkForwardTester:
 
             all_trades.extend(trades)
             executable = [trade for trade in trades if trade.executable]
-            periods.append(
-                _compute_backtest_metrics(
-                    [trade.return_pct for trade in executable],
-                    f"{test_start} to {test_end}",
-                    len(trades) - len(executable),
-                    skipped=bool(regime_is_bear_filter),
-                )
+            period_result = _compute_backtest_metrics(
+                [trade.return_pct for trade in executable],
+                f"{test_start} to {test_end}",
+                len(trades) - len(executable),
+                skipped=bool(regime_is_bear_filter),
             )
+            periods.append(period_result)
+            if checkpoint_path:
+                _append_checkpoint(checkpoint_path, window_key, period_result, trades)
+                completed_windows.add(window_key)
             cursor += step
 
         all_executable = [trade for trade in all_trades if trade.executable]
@@ -515,6 +600,15 @@ class WalkForwardTester:
         for trade in all_executable:
             regime_winrates.setdefault(trade.market_regime, []).append(
                 1.0 if trade.return_pct > 0 else 0.0
+            )
+        # 断点续跑一致性断言：续跑完成后 periods 数应等于总期数，否则说明检查点
+        # 与本次计算窗口不一致（可能检查点损坏/参数变化），打印告警以便人工核查。
+        if checkpoint_path and len(periods) != total_periods:
+            _LOGGER.warning(
+                "walkforward resume mismatch: loaded+computed periods=%d, "
+                "total_periods=%d; checkpoint may be stale or params changed",
+                len(periods),
+                total_periods,
             )
         return WalkForwardResult(
             periods=periods,

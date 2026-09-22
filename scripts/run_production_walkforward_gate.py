@@ -1397,6 +1397,15 @@ def build_walkforward_command(args: argparse.Namespace) -> list[str]:
             "--stream-batch-size",
             str(getattr(args, "stream_batch_size", DEFAULT_STREAM_BATCH_SIZE)),
         ]
+        # 断点续跑：检查点路径按收敛后的 start/end 派生 → 同一周重跑自动续跑，
+        # 新一周（窗口日期变了）自动用新文件，不会误跳上周已完成期。
+        # cli 内部再按 grid variant_id 加后缀，避免多变体跨窗口误跳。
+        if getattr(args, "start", "") and getattr(args, "end", ""):
+            resume_ckpt = (
+                os.path.splitext(args.gate_path)[0]
+                + f"_resume_{args.start}_{args.end}.jsonl"
+            )
+            command.extend(["--resume-checkpoint", resume_ckpt])
     return command
 
 
@@ -2314,6 +2323,9 @@ def main() -> int:
         delete=False,
     ) as tmp_symbols:
         tmp_symbols.write("\n".join(covered_symbols) + "\n")
+        # mkstemp/NamedTemporaryFile 默认 0600，会把 ACL mask 压成 ---。
+        # 统一抬到 0640，与 atomic_write_text / write_release_manifest 一致。
+        os.chmod(tmp_symbols.name, 0o640)
         tmp_symbols_path = Path(tmp_symbols.name)
     args.symbols_file = str(tmp_symbols_path)
     print(f"production gate selected symbols: {len(covered_symbols)}")

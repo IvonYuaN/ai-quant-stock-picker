@@ -93,6 +93,10 @@ class BuiltinWalkForwardEngine:
         config: WalkForwardEngineConfig,
         fixed_frames: Mapping[str, pd.DataFrame] | None = None,
         batch_size: int = DEFAULT_STREAM_BATCH_SIZE,
+        # 断点续跑：透传给 WalkForwardTester.run_streaming（None = 不续跑，向后兼容）。
+        # 必须在此显式转发：cli.py 无条件传该关键字参数，本层若不接受会在
+        # streaming 模式每次调用都 TypeError（不只是启用续跑时才坏）。
+        resume_checkpoint: str | None = None,
     ) -> WalkForwardResult:
         tester = _build_tester(strategy, config)
         return tester.run_streaming(
@@ -103,6 +107,7 @@ class BuiltinWalkForwardEngine:
             end_date=end_date,
             fixed_frames=fixed_frames,
             batch_size=batch_size,
+            resume_checkpoint=resume_checkpoint,
         )
 
 

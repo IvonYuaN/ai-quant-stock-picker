@@ -140,6 +140,9 @@ def write_manifest(manifest: dict[str, object], output: Path) -> None:
             handle.write("\n")
             handle.flush()
             os.fsync(handle.fileno())
+        # mkstemp 默认建 0600，会把 ACL mask 压成 ---，令靠 ACL 授权的读者
+        # （如 aqsp-vibe）读不到。统一抬到 0640，与 atomic_write_text 一致。
+        os.chmod(temporary, 0o640)
         os.replace(temporary, output)
     finally:
         try:
