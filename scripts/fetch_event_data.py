@@ -21,7 +21,8 @@ def _preload(name: str, source: object) -> bool:
         print(f"[{name}] 跳过（网络/解析失败）: {exc}", file=sys.stderr)
         return False
     path = source._default_cache_path()  # type: ignore[attr-defined]
-    print(f"[{name}] 已缓存 {len(items)} 条 -> {path}")
+    # 页满会被 pageSize 截断：必须显式打出来，避免「静默少拿数据」
+    print(f"[{name}] 已缓存 {len(items)} 条 -> {path} (truncated={source.truncated})")  # type: ignore[attr-defined]
     return True
 
 
