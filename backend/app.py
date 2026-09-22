@@ -38,10 +38,6 @@ app = FastAPI(title="AQSP API", version="0.1.3")
 if not os.environ.get("VR_API_KEY", "").strip():
     pf.start_scheduler(1800)
 
-# 市场数据后台预热：把 1.5–14s 的上游等待从**用户首屏**移到后台（守护线程，
-# 不阻塞启动、失败不影响服务）。市场页"一直转圈"的主因即上游首次取数慢。
-market.start_warmer()
-
 # 本地自托管默认开放；设置 VR_API_KEY 或 VR_PUBLIC_MODE=1 即进入公网模式。
 _API_KEY = os.environ.get("VR_API_KEY", "").strip()
 _PUBLIC_MODE = bool(_API_KEY) or os.environ.get(
