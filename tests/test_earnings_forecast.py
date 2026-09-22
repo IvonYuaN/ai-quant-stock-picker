@@ -1,16 +1,20 @@
-"""业绩预告 fetcher 测试（全离线：只喂合成 payload，不触网）。"""
+"""业绩预告 fetcher 测试（全离线：只喂合成 payload / 假 requests，不触网）。"""
 
 from __future__ import annotations
 
+import sys
+import types
 from datetime import date
 
 import pandas as pd
 import pytest
 
 from aqsp.data.earnings_forecast import (
+    _PAGE_SIZE,
     EarningsForecastItem,
     EarningsForecastSource,
     _default_report_period,
+    _is_truncated,
     _norm_date,
     _parse_items,
     _to_float,
@@ -35,6 +39,30 @@ _VALID_ROW = {
 }
 
 
+class _FakeResponse:
+    def __init__(self, payload: object) -> None:
+        self._payload = payload
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def json(self) -> object:
+        return self._payload
+
+
+def _install_fake_requests(monkeypatch, payload, captured: dict) -> None:
+    """把假 requests 装进 sys.modules —— _fetch 内的 import 会拿到它（零网络）。"""
+    fake = types.ModuleType("requests")
+
+    def _get(url, params=None, headers=None, timeout=None):
+        captured["url"] = url
+        captured["params"] = params
+        return _FakeResponse(payload)
+
+    fake.get = _get  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "requests", fake)
+
+
 def test_parse_real_shape_with_unit_conversion():
     items = _parse_items({"result": {"data": [dict(_VALID_ROW)]}})
     assert len(items) == 1
@@ -50,6 +78,34 @@ def test_parse_real_shape_with_unit_conversion():
     assert it.change_pct_lower == pytest.approx(114.47)
     assert it.change_pct_upper == pytest.approx(117.19)
     assert "投资收益" in it.reason
+    assert it.is_latest is True
+
+
+def test_parse_keeps_both_latest_and_stale_revisions():
+    payload = {
+        "result": {
+            "data": [
+                dict(_VALID_ROW, IS_LATEST="T"),
+                dict(_VALID_ROW, IS_LATEST="F", PREDICT_TYPE="预减"),
+            ]
+        }
+    }
+    items = _parse_items(payload)
+    # 数据层只打标记、不做去重：同 (symbol, report_date) 的修订记录都要留下
+    assert len(items) == 2
+    assert items[0].is_latest is True
+    assert items[1].is_latest is False
+
+
+def test_parse_is_latest_missing_or_abnormal_is_false():
+    for raw_value in (None, "", "F", "x", "false"):
+        row = dict(_VALID_ROW)
+        row["IS_LATEST"] = raw_value
+        items = _parse_items({"result": {"data": [row]}})
+        assert items[0].is_latest is False, raw_value
+    # 小写 t 也认
+    row = dict(_VALID_ROW, IS_LATEST="t")
+    assert _parse_items({"result": {"data": [row]}})[0].is_latest is True
 
 
 def test_parse_result_as_list():
@@ -182,6 +238,7 @@ def test_source_from_items_and_items_without_autoload():
                 change_pct_lower=114.47,
                 change_pct_upper=117.19,
                 reason="r",
+                is_latest=True,
             )
         ]
     )
@@ -224,6 +281,7 @@ def test_load_reads_existing_cache_without_network(tmp_path):
                 "change_pct_lower": 114.47,
                 "change_pct_upper": 117.19,
                 "reason": "投资收益影响。",
+                "is_latest": True,
             }
         ]
     ).to_csv(cache, index=False)
@@ -238,5 +296,79 @@ def test_load_with_corrupt_cache_falls_back_to_fetch(tmp_path, monkeypatch):
     cache = tmp_path / "earnings_forecast.csv"
     cache.write_text("", encoding="utf-8")  # 空文件 → read_csv 抛错
     src = EarningsForecastSource(cache_path=str(cache))
-    monkeypatch.setattr(src, "_fetch", lambda report_date="": [])
+    monkeypatch.setattr(src, "_fetch", lambda report_date="", notice_from="": [])
     assert src.load() == []
+
+
+@pytest.mark.parametrize(
+    "count,expected", [(0, False), (1, False), (499, False), (500, True), (501, True)]
+)
+def test_is_truncated_boundaries(count, expected):
+    assert _is_truncated(count, _PAGE_SIZE) is expected
+
+
+def test_fetch_appends_notice_from_to_filter(monkeypatch):
+    captured: dict = {}
+    _install_fake_requests(
+        monkeypatch, {"result": {"data": [dict(_VALID_ROW)]}}, captured
+    )
+    src = EarningsForecastSource()
+    items = src._fetch(report_date="2026-06-30", notice_from="2026-06-01")
+    assert len(items) == 1
+    assert captured["params"]["filter"] == (
+        "(REPORT_DATE='2026-06-30')(NOTICE_DATE>='2026-06-01')"
+    )
+    assert captured["params"]["pageSize"] == str(_PAGE_SIZE)
+    assert src.truncated is False
+
+
+def test_fetch_without_notice_from_keeps_single_clause_filter(monkeypatch):
+    captured: dict = {}
+    _install_fake_requests(
+        monkeypatch, {"result": {"data": [dict(_VALID_ROW)]}}, captured
+    )
+    EarningsForecastSource()._fetch(report_date="2026-06-30")
+    assert captured["params"]["filter"] == "(REPORT_DATE='2026-06-30')"
+
+
+def test_fetch_sets_truncated_and_warns_on_full_page(monkeypatch, caplog):
+    full_page = [dict(_VALID_ROW, SECURITY_CODE=f"{i:06d}") for i in range(_PAGE_SIZE)]
+    captured: dict = {}
+    _install_fake_requests(monkeypatch, {"result": {"data": full_page}}, captured)
+    src = EarningsForecastSource()
+    with caplog.at_level("WARNING", logger="aqsp.data.earnings_forecast"):
+        items = src._fetch(report_date="2026-06-30")
+    assert len(items) == _PAGE_SIZE
+    assert src.truncated is True
+    assert any("截断" in r.message for r in caplog.records)
+
+
+def test_fetch_not_truncated_below_page_size(monkeypatch, caplog):
+    captured: dict = {}
+    _install_fake_requests(
+        monkeypatch,
+        {"result": {"data": [_VALID_ROW] * (_PAGE_SIZE - 1)}},
+        captured,
+    )
+    src = EarningsForecastSource()
+    with caplog.at_level("WARNING", logger="aqsp.data.earnings_forecast"):
+        src._fetch(report_date="2026-06-30")
+    assert src.truncated is False
+    assert not [r for r in caplog.records if "截断" in r.message]
+
+
+def test_truncated_resets_on_next_fetch(monkeypatch):
+    captured: dict = {}
+    _install_fake_requests(
+        monkeypatch,
+        {"result": {"data": [_VALID_ROW] * _PAGE_SIZE}},
+        captured,
+    )
+    src = EarningsForecastSource()
+    src._fetch(report_date="2026-06-30")
+    assert src.truncated is True
+    _install_fake_requests(
+        monkeypatch, {"result": {"data": [dict(_VALID_ROW)]}}, captured
+    )
+    src._fetch(report_date="2026-06-30", notice_from="2026-06-01")
+    assert src.truncated is False

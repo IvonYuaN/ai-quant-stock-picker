@@ -8,14 +8,22 @@ reportName=RPT_PUBLIC_OP_NEWPREDICT，宿主为 securities 接口：
 `https://datacenter.eastmoney.com/securities/api/data/v1/get`
 （与 lockup/longhubang 的 datacenter-web 不是同一 host，akshare 亦如此）。
 filter 必须带报告期等值：`(REPORT_DATE='YYYY-MM-DD')`。
+可选 `notice_from` 追加 `(NOTICE_DATE>='YYYY-MM-DD')`，把结果集收窄到「最近发布」
+的小窗口（事件日历只需要这一片，也顺带规避 pageSize 截断）。
 字段名：SECURITY_CODE / SECURITY_NAME_ABBR / NOTICE_DATE / REPORT_DATE /
 PREDICT_TYPE（预告类型，如「扭亏」「预增」）/ PREDICT_AMT_LOWER /
 PREDICT_AMT_UPPER（预计净利润上下限，单位「元」）/ ADD_AMP_LOWER /
-ADD_AMP_UPPER（业绩变动幅度上下限，单位 %）/ CHANGE_REASON_EXPLAIN（变动原因）。
+ADD_AMP_UPPER（业绩变动幅度上下限，单位 %）/ CHANGE_REASON_EXPLAIN（变动原因）/
+IS_LATEST（是否该股该报告期的最新一条，东财原值为 "T"/"F"）。
+
+截断守卫：单页取 `pageSize=500`，页满时置 `source.truncated=True` 并 warning
+（该报表单报告期实测约 5000 条，不加 `notice_from` 时**很可能触发**，
+请务必用 `notice_from` 收窄窗口）。绝不静默少拿数据。
 """
 
 from __future__ import annotations
 
+import logging
 import os
 import tempfile
 from dataclasses import dataclass
@@ -37,6 +45,8 @@ _EM_HEADERS = {
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
     ),
 }
+_PAGE_SIZE = 500
+_logger = logging.getLogger("aqsp.data.earnings_forecast")
 
 
 @dataclass(frozen=True)
@@ -53,6 +63,7 @@ class EarningsForecastItem:
     change_pct_lower: float  # 业绩变动幅度下限（%）
     change_pct_upper: float  # 业绩变动幅度上限（%）
     reason: str  # 业绩变动原因
+    is_latest: bool  # 是否该股该报告期最新修订（东财 IS_LATEST=="T"）
 
 
 def _to_float(v: object) -> float:
@@ -81,6 +92,11 @@ def _default_report_period(today: date) -> str:
     if today.month >= 5:
         return f"{today.year}-03-31"
     return f"{today.year - 1}-12-31"
+
+
+def _is_truncated(parsed_count: int, page_size: int) -> bool:
+    """页满即可能被 pageSize 截断 —— 用于避免「静默少拿数据」。"""
+    return parsed_count >= page_size
 
 
 def _parse_items(payload: object) -> list[EarningsForecastItem]:
@@ -137,6 +153,8 @@ def _parse_items(payload: object) -> list[EarningsForecastItem]:
                     reason=str(
                         raw.get("CHANGE_REASON_EXPLAIN") or raw.get("reason") or ""
                     ).strip(),
+                    # 东财原值为 "T"/"F"；缺失/异常一律视为非最新
+                    is_latest=str(raw.get("IS_LATEST") or "").strip().upper() == "T",
                 )
             )
         except Exception:  # noqa: BLE001
@@ -150,6 +168,8 @@ class EarningsForecastSource:
     def __init__(self, cache_path: Optional[str] = None) -> None:
         self._cache_path = cache_path
         self._items: list[EarningsForecastItem] = []
+        # 上一次 _fetch 的结果是否疑似被 pageSize 截断（真截断时已 warning）
+        self.truncated = False
 
     def _default_cache_path(self) -> str:
         if self._cache_path:
@@ -164,20 +184,27 @@ class EarningsForecastSource:
         self._items = list(items)
         return self
 
-    def _fetch(self, report_date: str = "") -> list[EarningsForecastItem]:
+    def _fetch(
+        self, report_date: str = "", notice_from: str = ""
+    ) -> list[EarningsForecastItem]:
         try:
             import requests
         except ImportError as e:  # pragma: no cover
             raise DataError(f"earnings_forecast: 缺少依赖 requests（{e}）") from e
         period = report_date.strip() or _default_report_period(today_shanghai())
+        # 东财 filter 为 (A)(B) 拼接形式；notice_from 用来把窗口收窄到「最近发布」
+        filters = [f"(REPORT_DATE='{period}')"]
+        notice = notice_from.strip()
+        if notice:
+            filters.append(f"(NOTICE_DATE>='{notice}')")
         params: dict[str, str] = {
             "reportName": EM_EF_REPORT,
             "columns": "ALL",
-            "pageSize": "500",
+            "pageSize": str(_PAGE_SIZE),
             "pageNumber": "1",
             "sortColumns": "NOTICE_DATE,SECURITY_CODE",
             "sortTypes": "-1,-1",
-            "filter": f"(REPORT_DATE='{period}')",
+            "filter": "".join(filters),
         }
         try:
             r = requests.get(EM_EF_URL, params=params, headers=_EM_HEADERS, timeout=60)
@@ -185,10 +212,19 @@ class EarningsForecastSource:
             payload = r.json()
         except Exception as e:
             raise DataError(f"earnings_forecast: 东财业绩预告抓取失败（{e}）") from e
-        return _parse_items(payload)
+        items = _parse_items(payload)
+        self.truncated = _is_truncated(len(items), _PAGE_SIZE)
+        if self.truncated:
+            _logger.warning(
+                "earnings_forecast: 结果可能被 pageSize=%d 截断（实得 %d 条），"
+                "请收窄 filter（如传 notice_from）或加分页",
+                _PAGE_SIZE,
+                len(items),
+            )
+        return items
 
     def load(
-        self, force: bool = False, report_date: str = ""
+        self, force: bool = False, report_date: str = "", notice_from: str = ""
     ) -> list[EarningsForecastItem]:
         path = self._default_cache_path()
         if not force and not self._items and os.path.exists(path):
@@ -201,7 +237,7 @@ class EarningsForecastSource:
                 return self._items
             except Exception:
                 self._items = []
-        self._items = self._fetch(report_date=report_date)
+        self._items = self._fetch(report_date=report_date, notice_from=notice_from)
         try:
             pd.DataFrame([i.__dict__ for i in self._items]).to_csv(path, index=False)
         except Exception:
@@ -209,8 +245,8 @@ class EarningsForecastSource:
         return self._items
 
     def items(
-        self, autoload: bool = False, report_date: str = ""
+        self, autoload: bool = False, report_date: str = "", notice_from: str = ""
     ) -> list[EarningsForecastItem]:
         if not self._items and autoload:
-            self.load(report_date=report_date)
+            self.load(report_date=report_date, notice_from=notice_from)
         return list(self._items)
