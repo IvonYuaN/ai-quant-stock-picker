@@ -10,10 +10,14 @@ reportName=RPT_CUSTOM_SUSPEND_DATA_INTERFACE（datacenter-web 通用接口）。
 字段名：SECURITY_CODE / SECURITY_NAME_ABBR / SUSPEND_START_DATE /
 PREDICT_RESUME_DATE / SUSPEND_EXPIRE（停牌期限文本，如「连续停牌」）/
 SUSPEND_REASON。
+
+截断守卫：单页取 `pageSize=500`。页满时置 `source.truncated=True` 并 warning，
+避免「静默少拿数据」（该报表单日约 20 条，正常不会触发）。
 """
 
 from __future__ import annotations
 
+import logging
 import os
 import tempfile
 from dataclasses import dataclass
@@ -35,6 +39,8 @@ _EM_HEADERS = {
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
     ),
 }
+_PAGE_SIZE = 500
+_logger = logging.getLogger("aqsp.data.suspend_resume")
 
 
 @dataclass(frozen=True)
@@ -74,6 +80,11 @@ def _days_between(start: str, end: str) -> float:
     except (TypeError, ValueError):
         return 0.0
     return float(delta) if delta > 0 else 0.0
+
+
+def _is_truncated(parsed_count: int, page_size: int) -> bool:
+    """页满即可能被 pageSize 截断 —— 用于避免「静默少拿数据」。"""
+    return parsed_count >= page_size
 
 
 def _parse_items(payload: object) -> list[SuspendResumeItem]:
@@ -131,6 +142,8 @@ class SuspendResumeSource:
     def __init__(self, cache_path: Optional[str] = None) -> None:
         self._cache_path = cache_path
         self._items: list[SuspendResumeItem] = []
+        # 上一次 _fetch 的结果是否疑似被 pageSize 截断（真截断时已 warning）
+        self.truncated = False
 
     def _default_cache_path(self) -> str:
         if self._cache_path:
@@ -155,7 +168,7 @@ class SuspendResumeSource:
         params: dict[str, str] = {
             "reportName": EM_SUSPEND_REPORT,
             "columns": "ALL",
-            "pageSize": "500",
+            "pageSize": str(_PAGE_SIZE),
             "pageNumber": "1",
             "sortColumns": "SUSPEND_START_DATE",
             "sortTypes": "-1",
@@ -171,7 +184,16 @@ class SuspendResumeSource:
             payload = r.json()
         except Exception as e:
             raise DataError(f"suspend_resume: 东财停复牌抓取失败（{e}）") from e
-        return _parse_items(payload)
+        items = _parse_items(payload)
+        self.truncated = _is_truncated(len(items), _PAGE_SIZE)
+        if self.truncated:
+            _logger.warning(
+                "suspend_resume: 结果可能被 pageSize=%d 截断（实得 %d 条），"
+                "请收窄 filter 或加分页",
+                _PAGE_SIZE,
+                len(items),
+            )
+        return items
 
     def load(
         self, force: bool = False, query_date: str = ""

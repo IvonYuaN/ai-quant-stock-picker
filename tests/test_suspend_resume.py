@@ -1,14 +1,19 @@
-"""停复牌 fetcher 测试（全离线：只喂合成 payload，不触网）。"""
+"""停复牌 fetcher 测试（全离线：只喂合成 payload / 假 requests，不触网）。"""
 
 from __future__ import annotations
+
+import sys
+import types
 
 import pandas as pd
 import pytest
 
 from aqsp.data.suspend_resume import (
+    _PAGE_SIZE,
     SuspendResumeItem,
     SuspendResumeSource,
     _days_between,
+    _is_truncated,
     _norm_date,
     _parse_items,
     _to_float,
@@ -26,6 +31,30 @@ _VALID_ROW = {
     "PREDICT_RESUME_DATE": "2026-10-14 00:00:00",
     "SECUCODE": "002860.SZ",
 }
+
+
+class _FakeResponse:
+    def __init__(self, payload: object) -> None:
+        self._payload = payload
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def json(self) -> object:
+        return self._payload
+
+
+def _install_fake_requests(monkeypatch, payload, captured: dict) -> None:
+    """把假 requests 装进 sys.modules —— _fetch 内的 import 会拿到它（零网络）。"""
+    fake = types.ModuleType("requests")
+
+    def _get(url, params=None, headers=None, timeout=None):
+        captured["url"] = url
+        captured["params"] = params
+        return _FakeResponse(payload)
+
+    fake.get = _get  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "requests", fake)
 
 
 def test_parse_real_shape():
@@ -185,3 +214,35 @@ def test_load_with_corrupt_cache_falls_back_to_fetch(tmp_path, monkeypatch):
     src = SuspendResumeSource(cache_path=str(cache))
     monkeypatch.setattr(src, "_fetch", lambda query_date="": [])
     assert src.load() == []
+
+
+@pytest.mark.parametrize(
+    "count,expected", [(0, False), (1, False), (499, False), (500, True), (501, True)]
+)
+def test_is_truncated_boundaries(count, expected):
+    assert _is_truncated(count, _PAGE_SIZE) is expected
+
+
+def test_fetch_builds_datetime_equality_filter(monkeypatch):
+    captured: dict = {}
+    _install_fake_requests(
+        monkeypatch, {"result": {"data": [dict(_VALID_ROW)]}}, captured
+    )
+    src = SuspendResumeSource()
+    items = src._fetch(query_date="2026-09-22")
+    assert len(items) == 1
+    assert captured["params"]["filter"] == "(MARKET=\"全部\")(DATETIME='2026-09-22')"
+    assert captured["params"]["pageSize"] == str(_PAGE_SIZE)
+    assert src.truncated is False
+
+
+def test_fetch_sets_truncated_and_warns_on_full_page(monkeypatch, caplog):
+    # 单日约 20 条，页满属异常情况 —— 必须暴露而不是静默少拿
+    full_page = [dict(_VALID_ROW, SECURITY_CODE=f"{i:06d}") for i in range(_PAGE_SIZE)]
+    captured: dict = {}
+    _install_fake_requests(monkeypatch, {"result": {"data": full_page}}, captured)
+    src = SuspendResumeSource()
+    with caplog.at_level("WARNING", logger="aqsp.data.suspend_resume"):
+        src._fetch(query_date="2026-09-22")
+    assert src.truncated is True
+    assert any("截断" in r.message for r in caplog.records)
