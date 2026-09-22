@@ -34,6 +34,12 @@ def atomic_write_text(path: str | Path, text: str) -> None:
             handle.write(text)
             handle.flush()
             os.fsync(handle.fileno())
+        # mkstemp 默认建 0600：该模式会把文件的 **ACL mask 压成 `---`**，
+        # 于是所有靠 ACL 授权的读者（如以 aqsp-vibe 运行的 API）都读不到。
+        # 历史事故：/opt/aqsp/data 下 21 个文件（predictions.jsonl、walkforward_gate.json
+        # 等）因此对 API 不可读，绩效页直接报 Errno 13。统一抬到 0640
+        # （owner rw / group r / ACL mask r--），与 web/home_snapshot.py 的做法一致。
+        os.chmod(tmp_path, 0o640)
         os.replace(tmp_path, file_path)
     except Exception:
         tmp_path.unlink(missing_ok=True)
