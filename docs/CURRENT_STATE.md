@@ -67,6 +67,18 @@
 
 - **T3 双窗口门禁验证**（3y/5y 两臂对比；`compare_t3_dual_window.py` 已修）。进展看 `outputs/T3_接力进展_*.md`；运行时权威记忆在 `.workbuddy/memory/MEMORY.md`。
 
+### 7.1 策略启用决策：`event_driven`（事件驱动）— 暂不启用
+
+- **现状**：能力已完整 —— `strategies/event_driven.py` + `features/event_calendar.py`，事件数据由 `bt_task.sh event-data` 盘前刷入 `$AQSP_RUNTIME_DATA_ROOT/pit_cache/`（PR #183/#184/#185/#186，2026-09-23）。但 `StrategyConfig(enabled=False)`，且**不在 `config/strategy_sources.yaml` 策略来源清单**。
+- **决策（2026-09-23）：暂不启用，保持 `enabled=False`。**
+  - 依据：宪法红线（`strategies/__init__.py:69`、`event_driven.py:146` 均注明）——**未经 walk-forward 双门验证不上线**。T3 双窗口门禁验证仍在进行中。
+  - 事件面已通过 `GET /api/events` + 个股研究页「事件面」区块（PR #187）向用户展示；**数据有价值 ≠ 打分已验证**。
+- **启用前置条件（全部满足后才开，缺一不可）**：
+  1. T3 双窗口门禁通过且结果可复核；
+  2. 加入 `config/strategy_sources.yaml` 策略来源清单；
+  3. 若需独立阈值/权重段，按 AGENTS §3.5 更新 `thresholds.yaml` 并附验证报告、升 `version`；
+  4. `StrategyConfig(enabled=True)` 由单独 PR 提交并附依据。
+
 ## 8. 过期 / 断链登记（多 agent 漂移遗留，逐次清理）
 
 **已归档（2026-09-22 清理）**
