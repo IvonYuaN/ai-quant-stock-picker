@@ -223,7 +223,9 @@ class LongHubangSource:
         path = self._default_cache_path()
         if not force and not self._items and os.path.exists(path):
             try:
-                df = pd.read_csv(path)
+                # 同 `lockup.load()`：显式锁死 `symbol` 为字符串，避免
+                # `"000001"` 被推断成 `1` 而**静默丢失前导零**。
+                df = pd.read_csv(path, dtype={"symbol": str})
                 self._items = [LongHubangItem(**row) for row in df.to_dict("records")]
                 return self._items
             except Exception:

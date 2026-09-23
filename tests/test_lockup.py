@@ -219,3 +219,25 @@ def test_fetch_script_reports_real_covered_span():
     assert _span(["2026-09-15 00:00:00", "2026-01-05"]) == "2026-01-05 ~ 2026-09-15"
     assert _span([]) == "-"
     assert _span(["", None]) == "-"
+
+
+def test_load_preserves_leading_zeros_when_cache_read_back(tmp_path, monkeypatch):
+    """缓存回读必须保住股票代码的前导零。
+
+    裸 `pd.read_csv` 会把 `symbol` 整列推断成 **int**（`"000001"` → `1`）；
+    若列里还存在空值，则整列升格成 **float**（`1.0`）。两种都**静默**丢失前导零，
+    后果是消费方按 `"000001"` 恒查不到、甚至把记录错配到别的股票上。
+    这里锁死 `dtype={"symbol": str}`。
+    """
+    row = dict(_VALID_ROW)
+    row["SECURITY_CODE"] = "000001"
+    captured: dict = {}
+    _install_fake_requests(monkeypatch, [{"result": {"data": [row]}}], captured)
+    cache = tmp_path / "lockup.csv"
+    LockupSource(cache_path=str(cache)).load(force=True)
+    assert cache.exists()
+
+    # 全新实例（内存为空）⇒ 走缓存回读分支，而非重新联网
+    fresh = LockupSource(cache_path=str(cache))
+    items = fresh.load()
+    assert [it.symbol for it in items] == ["000001"]

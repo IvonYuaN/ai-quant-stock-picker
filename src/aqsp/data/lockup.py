@@ -205,7 +205,11 @@ class LockupSource:
         path = self._default_cache_path()
         if not force and not self._items and os.path.exists(path):
             try:
-                df = pd.read_csv(path)
+                # dtype 必须显式指定：`symbol` 列若被推断成 int/float，
+                # `"000001"` 会变成 `1` / `1.0` —— **前导零丢失**，且是静默的。
+                # 消费方（如 `features/event_calendar.py`）会因此把解禁记录挂到
+                # 另一只股票上，或让全市场 `00xxxx` 代码恒查不到。
+                df = pd.read_csv(path, dtype={"symbol": str})
                 self._items = [LockupItem(**row) for row in df.to_dict("records")]
                 return self._items
             except Exception:
