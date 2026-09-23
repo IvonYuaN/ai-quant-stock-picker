@@ -81,6 +81,9 @@ def _try_import_app() -> Any:
     try:
         import sys
 
+        # TestClient 依赖 httpx（不在 [api] extra 里）；缺失时路由集成测试应跳过而非报错。
+        from fastapi.testclient import TestClient  # noqa: F401
+
         sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
         from backend.app import app  # noqa: F401
 
