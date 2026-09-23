@@ -6206,8 +6206,9 @@ _WALKFORWARD_EXPLORATORY_GRID_VARIANTS: tuple[WalkForwardGridVariant, ...] = (
 
 # T3 方案 A：因子族替换验证网格（htf+mr 换 mom+tr）。全新 profile，不改动
 # stable / stable_plus 任何变体或权重。N=8 满足 MIN_CSCV_VARIANTS，CSCV 可靠。
-# momentum_weight / triple_rise_weight 传给构造器的值会被 htf_mr 分支清零覆盖，
-# 仅 lookback/horizon/top_n 参与网格分辨力。
+# momentum_weight / triple_rise_weight 传给构造器的值会被 htf_mr 分支清零覆盖；
+# 分辨力来自 lookback（接线到 **mean_reversion.lookback_days**，见该分支注释）、
+# horizon_days、top_n 三个活旋钮。
 _WALKFORWARD_HTF_MR_GRID_VARIANTS: tuple[WalkForwardGridVariant, ...] = (
     WalkForwardGridVariant("WF-H01", 0.0, 0.0, 60, 3, 10, "htf_mr"),
     WalkForwardGridVariant("WF-H02", 0.0, 0.0, 60, 3, 5, "htf_mr"),
@@ -6348,6 +6349,7 @@ def _apply_walkforward_grid_variant(
     enable_volume = False
     enable_mr = False
     enable_htf = False
+    mr_lookback_days: int | None = None
     if strategy_mix == "momentum":
         composite_updates["momentum_weight"] = variant.momentum_weight
         composite_updates["triple_rise_weight"] = variant.triple_rise_weight
@@ -6371,6 +6373,14 @@ def _apply_walkforward_grid_variant(
         composite_updates["min_total_score"] = 0.1
         enable_mr = True
         enable_htf = True
+        # lookback_days 必须是**活**旋钮。本分支把 momentum 权重清零 ⇒ 上面写进
+        # MomentumThresholds.lookback_days 的那份**不参与打分**，于是 WF-H04(lb=20) /
+        # WF-H05(lb=120) 与 WF-H01(lb=60) 的「打分 + top_n + horizon」完全相同 ——
+        # 8 列里只有 6 个互异策略（#175），MIN_CSCV_VARIANTS=8 这道 fail-closed 守卫
+        # 被重复列技术性凑过（与 #135 的 WF-V01/WF-MR1 同型）。
+        # 改接 mean_reversion.lookback_days：mr 打分同时用它做回看窗口与 ma_period，
+        # 故 lb 变化会真实改变打分向量。
+        mr_lookback_days = variant.lookback_days
 
     replace_kwargs: dict[str, Any] = {
         "composite": CompositeThresholds(
@@ -6397,8 +6407,11 @@ def _apply_walkforward_grid_variant(
     if enable_volume:
         replace_kwargs["volume"] = replace(thresholds.volume, enabled=True)
     if enable_mr:
+        mr_kwargs: dict[str, Any] = {"enabled": True}
+        if mr_lookback_days is not None:
+            mr_kwargs["lookback_days"] = mr_lookback_days
         replace_kwargs["mean_reversion"] = replace(
-            thresholds.mean_reversion, enabled=True
+            thresholds.mean_reversion, **mr_kwargs
         )
     if enable_htf:
         replace_kwargs["high_tight_flag"] = replace(
