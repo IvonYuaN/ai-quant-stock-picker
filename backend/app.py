@@ -299,6 +299,35 @@ def radar_refresh():
         raise HTTPException(502, f"资讯雷达刷新失败：{e}") from e
 
 
+# 新闻催化「事件中枢」：只读 runtime 产物（cli.py run_news_catalysts --json-output
+# 写入 data/runtime/news_catalysts_latest.json）。PR-X4 接入定时生产前该文件可能
+# 不存在，必须失败降级（返回空 events），不得抛 500。
+@app.get("/api/catalyst")
+def catalyst():
+    """新闻催化事件中枢（event hub）：读取最新催化报告，无数据则失败降级。"""
+    try:
+        from aqsp.news.catalysts import (
+            load_catalyst_report_artifact,
+            serialize_catalyst_report,
+        )
+
+        report = load_catalyst_report_artifact(
+            "data/runtime/news_catalysts_latest.json"
+        )
+        if report is None:
+            return {
+                "data": {
+                    "events": [],
+                    "generated_at": None,
+                    "source_status": "no_data",
+                    "warnings": ["新闻催化报告尚未生成，运行新闻催化采集后可见"],
+                }
+            }
+        return {"data": serialize_catalyst_report(report)}
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"新闻催化读取异常：{e}") from e
+
+
 @app.get("/api/market/overview")
 def market_overview():
     """市场情绪 + 板块资金流（板块/大盘级，全站共享缓存 5 分钟）。"""
