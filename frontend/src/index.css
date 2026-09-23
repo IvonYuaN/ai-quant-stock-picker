@@ -693,6 +693,11 @@
     color: hsl(var(--muted-foreground));
     background: hsl(var(--muted) / 0.6);
   }
+  /* 徽标红档（解禁 severity=high 等）；置于 ok/warn/neutral 之后，同权重下可覆盖其配色 */
+  .aq-badge-up {
+    color: hsl(var(--destructive));
+    background: hsl(var(--destructive) / 0.13);
+  }
 
   .aq-tag {
     display: inline-flex;
