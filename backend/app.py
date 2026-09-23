@@ -299,9 +299,11 @@ def radar_refresh():
         raise HTTPException(502, f"资讯雷达刷新失败：{e}") from e
 
 
-# 新闻催化「事件中枢」：只读 runtime 产物（cli.py run_news_catalysts --json-output
-# 写入 data/runtime/news_catalysts_latest.json）。PR-X4 接入定时生产前该文件可能
-# 不存在，必须失败降级（返回空 events），不得抛 500。
+# 新闻催化「事件中枢」：只读 runtime 产物。生产由定时任务
+# （scripts/bt_task.sh news → scripts/news_catalysts.sh）写入，消费端与生产端
+# 共用同一 env 覆盖点（AQSP_NEWS_JSON_OUTPUT），未配置时回落规范 runtime 路径
+# （经 AQSP_PROJECT_ROOT 解析）。报告尚未生成时必须失败降级（返回空 events），
+# 不得抛 500。
 @app.get("/api/catalyst")
 def catalyst():
     """新闻催化事件中枢（event hub）：读取最新催化报告，无数据则失败降级。"""
@@ -311,9 +313,13 @@ def catalyst():
             serialize_catalyst_report,
         )
 
-        report = load_catalyst_report_artifact(
-            "data/runtime/news_catalysts_latest.json"
-        )
+        # 与生产者 scripts/news_catalysts.sh 的 JSON_OUTPUT 使用同一 env 覆盖点，
+        # 保证「写哪就读哪」，避免生产/消费路径分叉。
+        artifact_path = str(
+            os.getenv("AQSP_NEWS_JSON_OUTPUT", "")
+            or "data/runtime/news_catalysts_latest.json"
+        ).strip()
+        report = load_catalyst_report_artifact(artifact_path)
         if report is None:
             return {
                 "data": {

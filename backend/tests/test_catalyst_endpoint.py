@@ -183,3 +183,37 @@ def test_catalyst_endpoint_failsoft_when_absent(tmp_path, monkeypatch):
     assert data["generated_at"] is None
     assert data["source_status"] == "no_data"
     assert data["warnings"]
+
+
+@pytest.mark.skipif(
+    not _ROUTE_AVAILABLE,
+    reason=f"backend.app 导入失败（{_APP}），可选依赖缺失，跳过完整路由集成测试",
+)
+def test_catalyst_endpoint_honors_news_json_output_env(tmp_path, monkeypatch):
+    """消费端与生产端共用 AQSP_NEWS_JSON_OUTPUT。
+
+    scripts/news_catalysts.sh 通过该 env 决定写到哪里；endpoint 必须读同一个 env，
+    否则当 operator 只覆盖 AQSP_NEWS_JSON_OUTPUT（而 AQSP_PROJECT_ROOT 指向别处）时，
+    生产/消费路径会分叉、事件中枢静默空数据。
+    """
+    from fastapi.testclient import TestClient
+
+    # artifact 写到与 AQSP_PROJECT_ROOT 无关的目录，只有 env 能定位它。
+    report = _make_report()
+    artifact = tmp_path / "custom" / "catalyst.json"
+    artifact.parent.mkdir(parents=True, exist_ok=True)
+    artifact.write_text(
+        json.dumps(serialize_catalyst_report(report), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    empty_root = tmp_path / "empty"
+    empty_root.mkdir()
+    monkeypatch.setenv("AQSP_PROJECT_ROOT", str(empty_root))
+    monkeypatch.setenv("AQSP_NEWS_JSON_OUTPUT", str(artifact))
+
+    client = TestClient(_APP)
+    resp = client.get("/api/catalyst")
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["events"], "应通过 AQSP_NEWS_JSON_OUTPUT 定位到 artifact"
+    assert data["events"][0]["affected_symbols"] == ["688981", "002049"]
