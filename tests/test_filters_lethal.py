@@ -99,6 +99,28 @@ class TestLockupReleaseFilter:
         result = flt.check("600000", _empty_df(), lockup_data=lockup_data)
         assert result.passed is True
 
+    def test_reads_producer_pit_cache_with_plan_date(self, monkeypatch, tmp_path):
+        """缺省应读生产者落盘的 pit_cache/lockup.csv（plan_date 列）。
+
+        旧默认 data/lockup_schedule.csv 全仓不存在 ⇒ 解禁排雷在生产空转。
+        """
+
+        from aqsp.core.time import today_shanghai
+
+        monkeypatch.setenv("AQSP_RUNTIME_DATA_ROOT", str(tmp_path))
+        near = (today_shanghai() + pd.Timedelta(days=7)).strftime("%Y-%m-%d")
+        cache = tmp_path / "pit_cache" / "lockup.csv"
+        cache.parent.mkdir(parents=True)
+        cache.write_text(
+            "symbol,name,plan_date,lockup_shares,ratio,lockup_type\n"
+            f"600000,浦发银行,{near},10000,1.2,定增\n",
+            encoding="utf-8",
+        )
+        flt = LockupReleaseFilter()
+        result = flt.check("600000", _empty_df())
+        assert result.passed is False
+        assert "解禁" in result.reason
+
 
 class TestHolderCountFilter:
     def test_pass_when_no_data_file(self):
