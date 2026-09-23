@@ -55,7 +55,7 @@ log() {
 
 usage() {
     cat <<'EOF'
-Usage: bt_task.sh <daily|intraday|midday|coldstart|walkforward-gate|monitor|news|status|data-refresh|variant-refresh>
+Usage: bt_task.sh <daily|intraday|midday|coldstart|walkforward-gate|monitor|news|event-data|status|data-refresh|variant-refresh>
 
 BT panel examples:
   /bin/bash /opt/aqsp/scripts/bt_task.sh intraday
@@ -577,6 +577,17 @@ case "$ACTION" in
         export AQSP_NOTIFY="false"
         export AQSP_GATE_NOTIFY="false"
         run_script "${PROJECT_ROOT}/scripts/news_catalysts.sh"
+        ;;
+    event-data)
+        skip_weekday_market_holiday
+        export AQSP_RUN_TASK_ID="event_data"
+        export AQSP_NOTIFY="false"
+        export AQSP_GATE_NOTIFY="false"
+        sync_code_only
+        # 盘前把「事件 / 风险面」数据源刷进 pit_cache/*.csv，供 EventCalendar.from_cache 消费。
+        # best-effort：单源失败不阻断其余源，故失败只记日志、不拖垮整个计划任务。
+        run_script "${PROJECT_ROOT}/scripts/preload_event_data.sh" \
+            || log "事件数据预加载未全部成功，将在下次 event-data 重试"
         ;;
     status)
         export AQSP_NOTIFY="false"

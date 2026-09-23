@@ -20,6 +20,7 @@ ENABLE_MIDDAY="${AQSP_ENABLE_MIDDAY_CRON:-true}"
 ENABLE_DAILY="${AQSP_ENABLE_DAILY_CRON:-true}"
 ENABLE_MONITOR="${AQSP_ENABLE_MONITOR_CRON:-true}"
 ENABLE_NEWS="${AQSP_ENABLE_NEWS_CRON:-true}"
+ENABLE_EVENT_DATA="${AQSP_ENABLE_EVENT_DATA_CRON:-true}"
 ENABLE_COLDSTART="${AQSP_ENABLE_COLDSTART_CRON:-true}"
 ENABLE_WALKFORWARD_GATE="${AQSP_ENABLE_WALKFORWARD_GATE_CRON:-true}"
 
@@ -61,6 +62,11 @@ emit_jobs() {
         echo '5 9 * * 6,0 /bin/bash '"${PROJECT_ROOT}"'/scripts/bt_task.sh news >> '"${CRON_LOG}"' 2>&1'
     fi
 
+    if [[ "${ENABLE_EVENT_DATA,,}" =~ ^(1|true|yes|on)$ ]]; then
+        # 盘前刷 pit_cache（EventCalendar 的数据来源）；先于 news(08:35)，给开盘留余量。
+        echo '20 8 * * 1-5 /bin/bash '"${PROJECT_ROOT}"'/scripts/bt_task.sh event-data >> '"${CRON_LOG}"' 2>&1'
+    fi
+
     if [[ "${ENABLE_MONITOR,,}" =~ ^(1|true|yes|on)$ ]]; then
         echo '*/15 * * * 1-5 /bin/bash '"${PROJECT_ROOT}"'/scripts/bt_task.sh monitor >> '"${CRON_LOG}"' 2>&1'
     fi
@@ -69,7 +75,7 @@ emit_jobs() {
 CURRENT_CRONTAB="$(crontab -l 2>/dev/null || true)"
 FILTERED_CRONTAB="$(
     printf '%s\n' "$CURRENT_CRONTAB" | grep -vE \
-        'AQSP_RUNNER_SCRIPT=scripts/intraday_refresh\.sh|AQSP_RUNNER_SCRIPT=scripts/midday_refresh\.sh|/scripts/server_sync_and_run\.sh|/scripts/server_monitor\.sh|/scripts/bt_task\.sh (daily|intraday|midday|coldstart|walkforward-gate|monitor|news)' || true
+        'AQSP_RUNNER_SCRIPT=scripts/intraday_refresh\.sh|AQSP_RUNNER_SCRIPT=scripts/midday_refresh\.sh|/scripts/server_sync_and_run\.sh|/scripts/server_monitor\.sh|/scripts/bt_task\.sh (daily|intraday|midday|coldstart|walkforward-gate|monitor|news|event-data)' || true
 )"
 
 {

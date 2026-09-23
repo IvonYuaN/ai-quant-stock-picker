@@ -36,9 +36,10 @@
 ## 4. 数据面（`src/aqsp/data/`）
 
 - **行情多源**：`source_factory` = mootdx / 腾讯 / 新浪 / akshare / baostock / efinance / sqlite_db / tdx_vipdoc。
-- **事件 / 风险面**（2026-09-08 起，均已实现取数 + 测试 + `scripts/fetch_*.py`）：
-  - `longhubang.py` 龙虎榜 · `lockup.py` 限售解禁 · `cls_news.py` 财联社快讯 · `concept_board.py` 东财 slist 概念板块。
-  - ⚠️ **尚未接入运行链路**：四者只把结果写到 `$AQSP_RUNTIME_DATA_ROOT/pit_cache/*.csv`，**全仓无任何读取方**；4 个 `scripts/fetch_*.py` 也没有调度（`deploy/` 只有 2 个 FastAPI systemd service，无 crontab）。唯一潜在消费方 `filters_lethal/lockup_release.py` 读的是 `data/lockup_schedule.csv`（该文件不存在）且要求 `release_date` 列，与 `lockup.py` 产出的 `pit_cache/lockup.csv` + `plan_date` 在**目录 / 文件名 / 字段**三处都不一致。审计证据：本机审计报告 `outputs/后端审计_2026-09-22.md`（`outputs/` 未入库）。
+- **事件 / 风险面**（已实现取数 + 测试 + `scripts/fetch_*.py`）：
+  - `longhubang.py` 龙虎榜 · `lockup.py` 限售解禁 · `cls_news.py` 财联社快讯 · `concept_board.py` 东财 slist 概念板块 · `dividend_plan.py` 分红送转 · `earnings_forecast.py` 业绩预告 · `suspend_resume.py` 停复牌。
+  - **消费方**：`aqsp.features.event_calendar.EventCalendar.from_cache()` **只读** `$AQSP_RUNTIME_DATA_ROOT/pit_cache/*.csv`（`lockup.csv` / `longhubang.csv`，与各 Source 的 `_default_cache_path()` 同规则，不联网）；`strategies/event_driven.py` 经它取真实事件（默认 `enabled=False`）。
+  - **调度（已接线）**：`scripts/preload_event_data.sh` 逐源预加载（best-effort）→ `bt_task.sh event-data` → 由 `install_server_cron.sh` 登记为**工作日 08:20 盘前**（`AQSP_ENABLE_EVENT_DATA_CRON`，`check_scheduler.py` 已纳入 `SCHEDULED_ACTIONS`）。
 - **资讯雷达**：`backend/newsradar.py`（12 赛道 / 108 源 RSS）。
 - **PIT / 复权**：`industry_pit.py`、`macro_pit.py`、`pit_financial.py`、`pit_policy.py`、`adjust.py`。
 - **个股深度 API**（后端 `backend/app.py` + `astock.py`）：`/api/dragon-tiger`、`/api/lockup`、`/api/margin`、`/api/block-trade`、`/api/holders`、`/api/dividend`、`/api/fund-flow`、`/api/blocks`、`/api/hot-concepts`、`/api/investor-qa`。
