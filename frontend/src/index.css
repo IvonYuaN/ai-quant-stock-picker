@@ -2852,3 +2852,14 @@
     line-height: 1.25;
   }
 }
+
+/* PR-X3：个股研究 / 题材传导（catalyst-client 驱动） */
+.aq-research-quote { margin-bottom: 12px; }
+.aq-research-quote-body { display: flex; flex-direction: column; gap: 6px; }
+.aq-event-row { padding: 10px 0; border-top: 1px solid rgba(128, 128, 128, 0.2); }
+.aq-event-row:first-of-type { border-top: none; }
+.aq-event-title { margin: 6px 0 4px; font-weight: 600; }
+.aq-transmission-path { margin: 4px 0; opacity: 0.85; }
+.aq-concept-card { margin-bottom: 14px; }
+.aq-concept-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 4px; }
+.aq-concept-head h3 { margin: 0; font-size: 1.05em; }

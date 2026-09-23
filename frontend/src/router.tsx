@@ -15,6 +15,8 @@ const WatchlistPage = lazy(() => import("@/pages/my/WatchlistPage").then((m) => 
 const HoldingsPage = lazy(() => import("@/pages/my/HoldingsPage").then((m) => ({ default: m.HoldingsPage })));
 const NotesPage = lazy(() => import("@/pages/my/NotesPage").then((m) => ({ default: m.NotesPage })));
 const ReportsPage = lazy(() => import("@/pages/my/ReportsPage").then((m) => ({ default: m.ReportsPage })));
+const StockResearchPage = lazy(() => import("@/pages/StockResearchPage").then((m) => ({ default: m.StockResearchPage })));
+const ConceptsPage = lazy(() => import("@/pages/ConceptsPage").then((m) => ({ default: m.ConceptsPage })));
 
 // 旧路由保留为纯重定向，书签与旧文档里的链接不会失效。
 const legacyRoutes = Object.entries(LEGACY_ROUTES).map(([from, to]) => ({
@@ -38,6 +40,8 @@ export const router = createBrowserRouter([
       { path: "/my/holdings", element: <HoldingsPage /> },
       { path: "/my/notes", element: <NotesPage /> },
       { path: "/my/reports", element: <ReportsPage /> },
+      { path: "/stock/:code", element: <StockResearchPage /> },
+      { path: "/concepts", element: <ConceptsPage /> },
       ...legacyRoutes,
       { path: "*", element: <Navigate to={DEFAULT_ROUTE} replace /> },
     ],
