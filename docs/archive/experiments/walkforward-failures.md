@@ -158,4 +158,4 @@ Q5 ≈ Q1 → 无效因子。
 
 ### 详细报告
 
-见 `docs/momentum-direction-2026-05-28.md`
+见 `docs/archive/process/momentum-direction-2026-05-28.md`

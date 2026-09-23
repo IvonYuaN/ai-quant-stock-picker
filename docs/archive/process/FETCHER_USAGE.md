@@ -1,3 +1,8 @@
+> 🗄️ **已归档（2026-09-22）**：本文描述的是 `aqsp.data.fetcher.MultiSourceFetcher`，属于**非当前数据面**的历史模块。
+> 当前生产数据面是 `src/aqsp/data/source_factory.py`（mootdx / 腾讯 / 新浪 / akshare / baostock / efinance / sqlite_db / tdx_vipdoc），见 `docs/CURRENT_STATE.md` §4。
+> 且 `create_default_fetcher()` 里的 Tushare 主源目前是**占位实现**（primary / fallback 实际都是 Akshare），本文「Tushare 为主数据源」的表述与代码不符。
+> 保留仅供 `MultiSourceFetcher` API 追溯参考，不再作为日常数据接入指引。
+
 # MultiSourceFetcher 使用指南
 
 集成 Tushare（主数据源）和 Akshare（备用数据源）的统一数据获取器。
