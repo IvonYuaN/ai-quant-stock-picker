@@ -92,10 +92,12 @@
 - `src/aqsp/research/summary.py` 的 `absorption_path` 默认 `docs/research_absorption.json`（该文件已移除）；同上，须单独 PR 处理。
 
 **孤儿 / 死代码（2026-09-22 后端只读审计发现，证据见本机 `outputs/后端审计_2026-09-22.md`，未入库）**
-- `scripts/quick_start.py`（289 行）：导入**不存在**的 `aqsp.strategies.regime_adaptive`，且全仓无人调用（能力已迁到 `aqsp/regime/*`）。属孤儿脚本，**本次未删**，待单独 PR 处置。
-- `src/aqsp/strategies/param_version_manager.py`：**全仓 0 引用**（连测试都没有）。
-- 另有 12 个模块仅测试引用、生产不可达：`risk/unified_risk.py`（619 行三层风控，**生产无调用**，别把它当成"风控三层已生效"）、`risk/stop_loss.py`、`strategies/adaptive_evolution.py`、`briefing/renderer.py` 等。
-- 备注：`src/aqsp/core/`、`src/aqsp/runtime/` 缺 `__init__.py`（其余 23 个子包都有）；靠 PEP 420 隐式命名空间包目前可正常 import，属潜在脆弱点。
+
+处置状态（2026-09-23，分支 `chore/prune-dead-modules`）：
+- ✅ **已删** `scripts/quick_start.py`（289 行）：导入**不存在**的 `aqsp.strategies.regime_adaptive`，且全仓无人调用（能力已迁到 `aqsp/regime/*`）。删前 grep 自查确认仅审计文档引用，无活引用。
+- ✅ **已删** `src/aqsp/strategies/param_version_manager.py`：**全仓 0 引用**（连测试都没有）。删前 grep 自查确认仅审计文档引用，无活引用。
+- ✅ **已修复** `src/aqsp/core/`、`src/aqsp/runtime/` 缺 `__init__.py` 的脆弱点：两包已补含 docstring 的 `__init__.py`，不再依赖 PEP 420 隐式命名空间包（其余 23 个子包均有）。
+- ⏸️ **保留** 12 个仅测试引用、生产不可达的模块：`risk/unified_risk.py`（619 行三层风控，**生产无调用**，别把它当成"风控三层已生效"）、`risk/stop_loss.py`、`strategies/adaptive_evolution.py`、`briefing/renderer.py` 等。这些是**能力未接线**，不是死代码，留待后续接线 PR 处置，本次一律不删。
 
 **本地分支**
 - 35 个本地分支**全部未并入 `origin/main`**（多数对应仍开着的 PR，如 `fix/vibe-acl-covers-all-read-paths`）。**不可批量删除**；仅能逐个核对 PR 状态后清理。
