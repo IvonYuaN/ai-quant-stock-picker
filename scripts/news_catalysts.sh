@@ -289,6 +289,25 @@ elif ! has_usable_current_news && restore_previous_current_news; then
 fi
 log "消息面雷达完成: ${OUTPUT}"
 
+# runtime JSON 会被 api 服务（以非 root 的 aqsp-vibe 身份）读取。本脚本以 root
+# 写出，atomic_write_text 落盘为 0600 会把所在目录默认 ACL 的 mask 清零 →
+# 非 root 用户读不到 → 消费端（如 /api/catalyst）静默降级为空数据。这里显式补
+# 「组读 + ACL」，幂等；与 #153「640 root:aqsp-vibe + setfacl」的约定一致。
+# （可覆盖读取用户：AQSP_RUNTIME_READ_USER）
+fix_news_artifact_permissions() {
+    local path="$1"
+    local reader="${AQSP_RUNTIME_READ_USER:-aqsp-vibe}"
+    [ -s "$path" ] || return 0
+    if id "$reader" >/dev/null 2>&1; then
+        chgrp "$reader" "$path" 2>/dev/null || true
+    fi
+    chmod 640 "$path" 2>/dev/null || true
+    if command -v setfacl >/dev/null 2>&1 && id "$reader" >/dev/null 2>&1; then
+        setfacl -m "u:${reader}:r" -m "m::r" "$path" 2>/dev/null || true
+    fi
+}
+fix_news_artifact_permissions "$JSON_OUTPUT"
+
 # Keep the complete run-day artifact, then write date-scoped artifacts whose
 # events are partitioned by their actual published_at date. The dashboard reads
 # the latter, so an older event fetched today cannot appear as today's news.
