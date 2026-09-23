@@ -87,9 +87,7 @@ async def _require_api_key(request: Request, call_next):
                 status_code=401,
             )
     # 解析租户（X-User-Id > API Key 哈希 > local），让不同用户的数据目录互相隔离
-    tid = _tenant.resolve_tenant_id(
-        request.headers.get("x-user-id", ""), _API_KEY
-    )
+    tid = _tenant.resolve_tenant_id(request.headers.get("x-user-id", ""), _API_KEY)
     token = _tenant.current_tenant.set(tid)
     try:
         return await call_next(request)
@@ -297,6 +295,41 @@ def radar_refresh():
         return {"data": newsradar.fetch_radar()}
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"资讯雷达刷新失败：{e}") from e
+
+
+# 新闻催化「事件中枢」：只读 runtime 产物。生产由定时任务
+# （scripts/bt_task.sh news → scripts/news_catalysts.sh）写入，消费端与生产端
+# 共用同一 env 覆盖点（AQSP_NEWS_JSON_OUTPUT），未配置时回落规范 runtime 路径
+# （经 AQSP_PROJECT_ROOT 解析）。报告尚未生成时必须失败降级（返回空 events），
+# 不得抛 500。
+@app.get("/api/catalyst")
+def catalyst():
+    """新闻催化事件中枢（event hub）：读取最新催化报告，无数据则失败降级。"""
+    try:
+        from aqsp.news.catalysts import (
+            load_catalyst_report_artifact,
+            serialize_catalyst_report,
+        )
+
+        # 与生产者 scripts/news_catalysts.sh 的 JSON_OUTPUT 使用同一 env 覆盖点，
+        # 保证「写哪就读哪」，避免生产/消费路径分叉。
+        artifact_path = str(
+            os.getenv("AQSP_NEWS_JSON_OUTPUT", "")
+            or "data/runtime/news_catalysts_latest.json"
+        ).strip()
+        report = load_catalyst_report_artifact(artifact_path)
+        if report is None:
+            return {
+                "data": {
+                    "events": [],
+                    "generated_at": None,
+                    "source_status": "no_data",
+                    "warnings": ["新闻催化报告尚未生成，运行新闻催化采集后可见"],
+                }
+            }
+        return {"data": serialize_catalyst_report(report)}
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"新闻催化读取异常：{e}") from e
 
 
 @app.get("/api/market/overview")
