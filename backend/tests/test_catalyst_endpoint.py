@@ -24,9 +24,9 @@ try:
         serialize_catalyst_report,
     )
 except Exception as exc:  # noqa: BLE001 — 环境缺依赖时优雅跳过直接单测
-    CatalystEvent = (
-        CatalystReport
-    ) = load_catalyst_report_artifact = serialize_catalyst_report = None
+    CatalystEvent = CatalystReport = load_catalyst_report_artifact = (
+        serialize_catalyst_report
+    ) = None
     _AQSP_IMPORT_ERROR = exc
 else:
     _AQSP_IMPORT_ERROR = None
@@ -72,9 +72,7 @@ def _write_artifact(tmp_root: Path, report: "CatalystReport") -> None:
     artifact = tmp_root / CATALYST_ARTIFACT
     artifact.parent.mkdir(parents=True, exist_ok=True)
     artifact.write_text(
-        json.dumps(
-            serialize_catalyst_report(report), ensure_ascii=False, indent=2
-        ),
+        json.dumps(serialize_catalyst_report(report), ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
 

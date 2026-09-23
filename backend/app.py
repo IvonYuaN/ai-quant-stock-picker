@@ -87,9 +87,7 @@ async def _require_api_key(request: Request, call_next):
                 status_code=401,
             )
     # 解析租户（X-User-Id > API Key 哈希 > local），让不同用户的数据目录互相隔离
-    tid = _tenant.resolve_tenant_id(
-        request.headers.get("x-user-id", ""), _API_KEY
-    )
+    tid = _tenant.resolve_tenant_id(request.headers.get("x-user-id", ""), _API_KEY)
     token = _tenant.current_tenant.set(tid)
     try:
         return await call_next(request)
