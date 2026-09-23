@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import json
 import os
@@ -20,6 +21,20 @@ GENERATED_RELEASE_DIRS = {
     ("frontend", "node_modules", ".vite"),
     ("frontend", "node_modules", ".vite-temp"),
 }
+
+# 核心循环（walkforward gate）依赖的模块。release 若缺失其中任何一个，
+# gate 会在起跑时 ImportError / 或（更隐蔽地）用错了窗口而整批失败 —— 就像
+# 2026-09-12 那样：部署的 release `9d735443` 缺 `aqsp.data.coverage_density`，
+# gate 用满 2021 起点、整批空数据、退出码 1，而状态文件停在 09-09，
+# 系统的「验证 + 学习」半边就此静默死亡 9 天。
+# 这些模块必须随 release 一起被发出来；边界处断言，缺一个就别切链。
+CRITICAL_MODULES_DEFAULT = (
+    "aqsp.core.time",
+    "aqsp.data.coverage_density",
+    "aqsp.data.sqlite_db_source",
+    "aqsp.utils.jsonl_io",
+    "aqsp.walkforward_gate",
+)
 
 
 @dataclass(frozen=True)
@@ -340,6 +355,61 @@ def _check_executable_entries(
         )
 
 
+def _check_critical_modules(
+    release_root: Path, modules: list[str], findings: list[Finding]
+) -> None:
+    """断言 release 的 src/ 里带着核心循环依赖的模块。
+
+    这是 2026-09-12 事故的边界护栏：部署的 release 缺 ``coverage_density`` 时，
+    gate 不是 ImportError 崩掉，而是**静默用错窗口、整批空数据、退出码 1**，
+    状态文件就此停在旧日期 —— 没人发现。
+
+    检查两件事：
+    1. 文件物理存在（``src/<dotted>.py`` 或 ``src/<dotted>/__init__.py``）；
+    2. 语法可编译（``ast.parse``，不触发第三方依赖 import、无副作用、与运行环境无关）。
+
+    用 ``ast.parse`` 而非 ``importlib.import_module``：release 检查器跑在另一个
+    venv 里，真 import 会因缺第三方依赖而误报，那不是 release 的错。文件在不在、
+    语法坏不坏，才是「构建有没有把正确文件发出来」该问的问题。
+    """
+    if not modules:
+        return
+    src_root = release_root / "src"
+    if not src_root.is_dir():
+        findings.append(
+            Finding(
+                "error",
+                "critical_module_src_missing",
+                f"release 没有 src/ 目录，无法校验核心模块: {src_root}",
+            )
+        )
+        return
+    for module in modules:
+        rel = module.replace(".", "/")
+        candidates = [src_root / f"{rel}.py", src_root / rel / "__init__.py"]
+        path = next((p for p in candidates if p.is_file()), None)
+        if path is None:
+            findings.append(
+                Finding(
+                    "error",
+                    "critical_module_missing",
+                    f"核心模块未随 release 发出: {module} "
+                    f"(期望 {src_root / (rel + '.py')})",
+                )
+            )
+            continue
+        try:
+            ast.parse(path.read_text(encoding="utf-8"))
+        except (SyntaxError, ValueError) as exc:
+            findings.append(
+                Finding(
+                    "error",
+                    "critical_module_broken",
+                    f"核心模块语法损坏，无法编译: {module}: {exc}",
+                )
+            )
+
+
 def audit(
     *,
     project_root: Path,
@@ -353,6 +423,7 @@ def audit(
     require_overlay: bool,
     executable_files: list[str] | None = None,
     immutable_release: bool = False,
+    critical_modules: list[str] | None = None,
 ) -> list[Finding]:
     findings: list[Finding] = []
     project_root = project_root.resolve()
@@ -488,6 +559,7 @@ def audit(
             _check_overlay(release_root, overlay_path, release_commit, findings)
     _check_old_entries(release_root, active_files, findings)
     _check_executable_entries(release_root, executable_files or [], findings)
+    _check_critical_modules(release_root, critical_modules or [], findings)
     return findings
 
 
@@ -503,6 +575,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--active-file", action="append", default=[])
     parser.add_argument("--executable-file", action="append", default=[])
     parser.add_argument("--require-overlay", action="store_true")
+    parser.add_argument(
+        "--critical-module",
+        action="append",
+        default=[],
+        help="核心循环依赖的模块（点分隔）。缺省为 gate 循环依赖的模块列表；"
+        "列表非空时，release 的 src/ 必须带着每一个，否则判定不一致。",
+    )
     parser.add_argument(
         "--immutable-release",
         action="store_true",
@@ -535,6 +614,7 @@ def main(argv: list[str] | None = None) -> int:
         require_overlay=args.require_overlay,
         executable_files=executable_files,
         immutable_release=args.immutable_release,
+        critical_modules=args.critical_module or list(CRITICAL_MODULES_DEFAULT),
     )
     if args.as_json:
         print(
