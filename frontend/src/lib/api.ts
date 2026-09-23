@@ -267,6 +267,27 @@ export interface RadarData {
   stats: { industries: number; total_sources: number; failed_sources?: number };
 }
 
+/** 单条解禁预警（后端 `GET /api/events` 的 `data.upcoming_unlocks` 元素）。 */
+export interface UpcomingUnlockEvent {
+  symbol: string; name: string; event_type: string; event_date: string;
+  days_until: number; severity: string; ratio: number | null; detail: string;
+}
+
+/** 单条龙虎榜佐证（`data.recent_longhubang` 元素）。net_amount 为 null = 净额未披露。 */
+export interface RecentLonghubangEvent {
+  symbol: string; name: string; event_type: string; event_date: string;
+  days_ago: number; net_amount: number | null; interpretation: string; detail: string;
+}
+
+/** 事件日历（pit_cache 只读）。缺缓存 ≠ 没事件，用 has_*_data 区分。 */
+export interface EventCalendarData {
+  symbol: string; as_of: string;
+  unlock_horizon_days: number; longhubang_lookback_days: number;
+  has_unlock_data: boolean; has_longhubang_data: boolean;
+  upcoming_unlocks: UpcomingUnlockEvent[];
+  recent_longhubang: RecentLonghubangEvent[];
+}
+
 /** 单条催化事件（后端 `GET /api/catalyst` 的 `data.events` 元素）。 */
 export interface CatalystEvent {
   title: string;
@@ -440,6 +461,7 @@ export const api = {
   globalIndices: () => get<GlobalIndex[]>("/global/indices"),
   globalStock: (symbol: string) => get<GlobalStock>(`/global/stock?symbol=${encodeURIComponent(symbol)}`),
   radar: () => get<RadarData>("/radar"),
+  events: (code: string) => get<EventCalendarData>(`/events?code=${code}`),
   radarRefresh: () => request<RadarData>("/radar/refresh", "POST"),
   catalyst: () => get<CatalystData>("/catalyst"),
   portfolio: () => get<PortfolioData>("/portfolio"),
