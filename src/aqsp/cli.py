@@ -7771,6 +7771,23 @@ def run_monitor(args: argparse.Namespace) -> int:
     return 1 if any(r.severity == "critical" for r in triggered) else 0
 
 
+def _should_preserve_existing_catalyst_artifact(
+    new_status: str, new_date: str, existing_status: str, existing_date: str
+) -> bool:
+    """新报告不可用、而磁盘上已有同日有效产物时返回 True。
+
+    目的是不让一次瞬时来源失败（failed/timeout）抹掉当天已落盘的有效产物——
+    否则一次网络抖动就会让下游（/api/catalyst、首页快照）长时间空数据。
+    """
+
+    usable = {"ok", "partial"}
+    return (
+        new_status not in usable
+        and existing_status in usable
+        and existing_date == new_date
+    )
+
+
 def run_news_catalysts(args: argparse.Namespace) -> int:
     from aqsp.news import (
         NewsCatalystConfig,
@@ -7778,6 +7795,7 @@ def run_news_catalysts(args: argparse.Namespace) -> int:
         format_catalyst_notification,
         serialize_catalyst_report,
     )
+    from aqsp.news.catalysts import load_catalyst_report_artifact
 
     symbols = tuple(
         item.strip() for item in str(args.symbols or "").split(",") if item.strip()
@@ -7801,20 +7819,37 @@ def run_news_catalysts(args: argparse.Namespace) -> int:
     )
     markdown = format_catalyst_notification(report)
     print(markdown)
-    if args.output:
-        output_path = Path(args.output)
-        atomic_write_text(output_path, markdown)
-    if args.json_output:
-        json_output_path = Path(args.json_output)
-        atomic_write_text(
-            json_output_path,
-            json.dumps(
-                serialize_catalyst_report(report),
-                ensure_ascii=False,
-                indent=2,
-            )
-            + "\n",
+    existing_artifact = (
+        load_catalyst_report_artifact(str(args.json_output))
+        if args.json_output
+        else None
+    )
+    if _should_preserve_existing_catalyst_artifact(
+        report.source_status,
+        report.date,
+        existing_artifact.source_status if existing_artifact else "",
+        existing_artifact.date if existing_artifact else "",
+    ):
+        # 写侧兜底：瞬时来源失败绝不覆盖当天已落盘的有效产物。
+        print(
+            "news catalysts: keep existing usable same-day artifact; "
+            "skip overwrite with failed result"
         )
+    else:
+        if args.output:
+            output_path = Path(args.output)
+            atomic_write_text(output_path, markdown)
+        if args.json_output:
+            json_output_path = Path(args.json_output)
+            atomic_write_text(
+                json_output_path,
+                json.dumps(
+                    serialize_catalyst_report(report),
+                    ensure_ascii=False,
+                    indent=2,
+                )
+                + "\n",
+            )
     if report.source_status == "failed":
         print("news catalysts: source failed; notification suppressed")
         return 1
