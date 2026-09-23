@@ -257,7 +257,14 @@ def test_emotion_dirty_amount(monkeypatch):
 # ── 缓存：数据源故障的空结果不缓存 5 分钟 ───────────────────────────
 
 
-def test_cached_skips_empty():
+def test_cached_negative_caches_empty():
+    """空结果进负缓存（_NEG_TTL）：不立刻重试；负缓存过期后重试并转正缓存。
+
+    2026-09-21（#170）起 `_cached` 对空/失败结果做负缓存（见 backend/market.py:26
+    的文档），本测试随之由「空结果不缓存」更新为「空结果负缓存」的语义。
+    在此之前（2026-08-31 引入本测试时）空结果确实不缓存，故旧断言已过期（测试漂移），
+    不是代码回归。
+    """
     market._CACHE.pop("k_test", None)
     calls = []
 
@@ -266,8 +273,13 @@ def test_cached_skips_empty():
         return {} if len(calls) == 1 else {"ok": 1}
 
     assert market._cached("k_test", flaky) == {}
-    assert market._cached("k_test", flaky) == {"ok": 1}  # 空结果没被缓存 → 下次重试成功
-    assert market._cached("k_test", flaky) == {"ok": 1}  # 非空已缓存，不再调用
+    assert market._cached("k_test", flaky) == {}  # 负缓存命中，不重试
+    assert len(calls) == 1
+    # 让负缓存过期 → 重试成功并转正缓存
+    ts, _ = market._CACHE["k_test"]
+    market._CACHE["k_test"] = (ts - market._NEG_TTL - 1, {})
+    assert market._cached("k_test", flaky) == {"ok": 1}
+    assert market._cached("k_test", flaky) == {"ok": 1}  # 正缓存命中，不再调用
     assert len(calls) == 2
     market._CACHE.pop("k_test", None)
 
