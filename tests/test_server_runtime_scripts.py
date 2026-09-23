@@ -662,11 +662,13 @@ def test_install_server_cron_script_defaults_to_noop_migration_guard() -> None:
     assert "AQSP_ENABLE_DAILY_CRON" in script
     assert "AQSP_ENABLE_MONITOR_CRON" in script
     assert "AQSP_ENABLE_NEWS_CRON" in script
+    assert "AQSP_ENABLE_EVENT_DATA_CRON" in script
     assert "AQSP_ENABLE_COLDSTART_CRON" in script
     assert "*/10 9-11 * * 1-5" in script
     assert "5 12 * * 1-5" in script
     assert "*/10 13-14 * * 1-5" in script
     assert "35 8 * * 1-5" in script
+    assert "20 8 * * 1-5" in script
     assert "5 9 * * 6,0" in script
     assert "0 18 * * 1-5" in script
     assert "40 19 * * 1-5" in script
@@ -676,6 +678,7 @@ def test_install_server_cron_script_defaults_to_noop_migration_guard() -> None:
     assert "bt_task.sh daily" in script
     assert "bt_task.sh coldstart" in script
     assert "bt_task.sh news" in script
+    assert "bt_task.sh event-data" in script
     assert "bt_task.sh monitor" in script
 
 
@@ -719,6 +722,7 @@ def test_scheduled_scripts_share_release_runtime_python_resolution() -> None:
         "intraday_refresh.sh",
         "midday_refresh.sh",
         "news_catalysts.sh",
+        "preload_event_data.sh",
     ):
         script = (PROJECT_ROOT / "scripts" / name).read_text(encoding="utf-8")
         assert 'source "$RUNTIME_PYTHON_HELPER"' in script, name
@@ -746,7 +750,8 @@ def test_bt_task_script_exposes_panel_safe_actions() -> None:
     assert 'ACTION="${1:-}"' in script
     assert 'if [ -z "$ACTION" ]' in script
     assert (
-        "daily|intraday|midday|coldstart|walkforward-gate|monitor|news|status" in script
+        "daily|intraday|midday|coldstart|walkforward-gate|monitor|news|event-data|status"
+        in script
     )
     assert "AQSP_RUNNER_TIMEOUT_SECONDS=5400" in script
     assert "AQSP_MONITOR_TIMEOUT_SECONDS=600" in script
@@ -1605,6 +1610,7 @@ def test_parallel_entry_scripts_pass_bash_syntax_check() -> None:
         PROJECT_ROOT / "scripts" / "launchd" / "aqsp_morning_wrapper.sh",
         PROJECT_ROOT / "scripts" / "launchd" / "aqsp_closing_wrapper.sh",
         PROJECT_ROOT / "scripts" / "daily_run.sh",
+        PROJECT_ROOT / "scripts" / "preload_event_data.sh",
     ]
 
     for path in scripts:
@@ -1615,3 +1621,34 @@ def test_parallel_entry_scripts_pass_bash_syntax_check() -> None:
             check=False,
         )
         assert result.returncode == 0, f"{path}: {result.stderr}"
+
+
+def test_preload_event_data_script_covers_all_event_sources() -> None:
+    """盘前预加载必须覆盖每个 pit_cache 事件源，且走统一的运行时 Python 解析。"""
+
+    script = (PROJECT_ROOT / "scripts" / "preload_event_data.sh").read_text(
+        encoding="utf-8"
+    )
+    assert 'source "$RUNTIME_PYTHON_HELPER"' in script
+    assert 'PYTHON_BIN="$(aqsp_runtime_python "$PROJECT_ROOT")"' in script
+    assert "export PYTHONPATH=" in script
+    for rel in (
+        "scripts/fetch_lockup.py",
+        "scripts/fetch_longhubang.py",
+        "scripts/fetch_cls_news.py",
+        "scripts/fetch_concept_board.py",
+        "scripts/fetch_event_data.py",
+    ):
+        assert rel in script, rel
+    # best-effort 语义：逐源计数，仅当「有尝试且全失败」才非 0
+    assert "ATTEMPTED" in script and "FAILED" in script
+    assert 'if [ "$ATTEMPTED" -gt 0 ] && [ "$FAILED" -eq "$ATTEMPTED" ]' in script
+
+
+def test_bt_task_event_data_action_wires_preload_script() -> None:
+    """event-data 计划任务必须真的调用预加载脚本（否则事件数据面仍是空转）。"""
+
+    script = (PROJECT_ROOT / "scripts" / "bt_task.sh").read_text(encoding="utf-8")
+    assert "event-data)" in script
+    assert "scripts/preload_event_data.sh" in script
+    assert 'AQSP_RUN_TASK_ID="event_data"' in script
