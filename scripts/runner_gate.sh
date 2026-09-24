@@ -37,6 +37,9 @@ TIMEOUT_SEC="${TIMEOUT_SEC:-57600}"
 BATCH_SIZE="${BATCH_SIZE:-500}"        # prod 只能 200（内存逼的），runner 8G 可开 500
 MIN_MEMORY_GIB="${MIN_MEMORY_GIB:-4}"  # 预检阈值，runner 8G 无压力；prod 只能 1.5
 END_DATE="${END_DATE:-}"
+# 成本口径：0=legacy（生产默认），1=透传 --net-fees（net）。**仅研究对照用**（#199），
+# 生产门禁不要开。走 runner_gate.sh 才能带上共享业务机负载守卫，别绕过它直调父脚本。
+NET_FEES="${NET_FEES:-0}"
 
 # 共享业务机守卫。runner 上同时跑着 ifidy/lanshe 三个线上业务（PM2），AQSP 只是租户，
 # 所以 load 高时必须让位。跳过 ≠ 失败，故 exit 0 并把原因写进 skip.log，
@@ -102,6 +105,11 @@ WINDOW_ARGS=()
 if [ -n "$END_DATE" ]; then
   WINDOW_ARGS=(--start "$START_DATE" --end "$END_DATE")
 fi
+NET_FEES_ARGS=()
+if [[ "$NET_FEES" == "1" ]]; then
+  NET_FEES_ARGS=(--net-fees)
+  log "成本口径=net（透传 --net-fees）—— 研究对照用途，非生产门禁口径"
+fi
 log "窗口=${WINDOW_ARGS[*]:-自动(lookback=${LOOKBACK_YEARS}y)} profile=$GRID_PROFILE batch=$BATCH_SIZE"
 
 # 3) 跑 gate（前台跑，cron 友好；要离线跑自己套 setsid nohup）
@@ -110,6 +118,7 @@ log "窗口=${WINDOW_ARGS[*]:-自动(lookback=${LOOKBACK_YEARS}y)} profile=$GRID
   --lookback-years "$LOOKBACK_YEARS" \
   --stream-batch-size "$BATCH_SIZE" \
   ${WINDOW_ARGS[@]+"${WINDOW_ARGS[@]}"} \
+  ${NET_FEES_ARGS[@]+"${NET_FEES_ARGS[@]}"} \
   --db "$DATA" \
   --min-memory-gib "$MIN_MEMORY_GIB" --min-symbols 3000 \
   --timeout-seconds "$TIMEOUT_SEC" \
