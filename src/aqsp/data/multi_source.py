@@ -5,6 +5,7 @@ from datetime import date
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
+import threading
 import time
 import pandas as pd
 
@@ -59,6 +60,11 @@ class MultiSource(DataSource):
         self._last_used_source: str | None = None
         self._last_used_sources: dict[str, str] = {}
         self._active_workload: WorkloadId | None = None
+        # Deferred live-short sources are often globally rate-limited (for
+        # example Eastmoney by client IP). Serialize their fallback calls
+        # across concurrent batches; racing these reserves defeats their
+        # provider-side throttle and makes every batch hit its deadline.
+        self._deferred_live_short_lock = threading.Lock()
 
     @property
     def last_used_source(self) -> str | None:
@@ -263,7 +269,15 @@ class MultiSource(DataSource):
             if remaining <= 0:
                 exceptions.append((source_name, "deferred fallback 超出时间预算"))
                 break
+            acquired = self._deferred_live_short_lock.acquire(timeout=remaining)
+            if not acquired:
+                exceptions.append((source_name, "deferred fallback 排队超出时间预算"))
+                break
             try:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    exceptions.append((source_name, "deferred fallback 超出时间预算"))
+                    break
                 future = pool.submit(self._fetch_live_source, source_ref, func)
                 result = future.result(timeout=remaining)
                 if not result:
@@ -279,6 +293,8 @@ class MultiSource(DataSource):
             except Exception as exc:
                 exceptions.append((source_name, exc))
                 continue
+            finally:
+                self._deferred_live_short_lock.release()
             self._set_last_used_provenance(result, source_name)
             return result
         return None
