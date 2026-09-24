@@ -304,8 +304,7 @@ def test_thresholds_load_mean_reversion_section() -> None:
 
     thresholds = load_thresholds()
 
-    # v1.1.19 起 mean_reversion 默认启用（T3 方案 A：熊市正向 IC，与 htf 替换反向 4 因子）
-    assert thresholds.mean_reversion.enabled is True
+    assert thresholds.mean_reversion.enabled is False
     assert thresholds.mean_reversion.lookback_days == 20
     assert thresholds.mean_reversion.rsi_period == 14
     assert thresholds.mean_reversion.oversold_threshold == 30
