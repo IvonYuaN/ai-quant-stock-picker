@@ -354,3 +354,97 @@ def test_write_release_manifest_refuses_dirty_git_source(tmp_path: Path) -> None
             raise AssertionError("dirty release source was stamped")
     finally:
         writer._git = original
+
+
+def test_release_consistency_flags_missing_critical_module(tmp_path: Path) -> None:
+    """复现 2026-09-12：release 有 src 但缺 coverage_density，必须判不一致。
+
+    那次部署的 release `9d735443` 缺 ``aqsp.data.coverage_density``，gate 不是
+    ImportError 崩，而是静默用错窗口、整批空数据、退出码 1，状态文件停在 09-09
+    —— 系统的「验证 + 学习」半边静默死亡 9 天。边界处必须拦下这种 release。
+    """
+    (tmp_path / "src" / "aqsp" / "data").mkdir(parents=True)
+    (tmp_path / "src" / "aqsp" / "__init__.py").write_text("", encoding="utf-8")
+    (tmp_path / "src" / "aqsp" / "data" / "__init__.py").write_text(
+        "", encoding="utf-8"
+    )
+    # sqlite_db_source 在，coverage_density 故意缺
+    (tmp_path / "src" / "aqsp" / "data" / "sqlite_db_source.py").write_text(
+        "X = 1\n", encoding="utf-8"
+    )
+    findings = checker.audit(
+        project_root=tmp_path,
+        runtime_root=tmp_path,
+        remote="origin",
+        branch="main",
+        canonical_link=None,
+        manifest_path=tmp_path / ".aqsp-release.json",
+        overlay_path=tmp_path / "missing-overlay.json",
+        active_files=[],
+        require_overlay=False,
+        immutable_release=True,
+        critical_modules=["aqsp.data.coverage_density", "aqsp.data.sqlite_db_source"],
+    )
+    codes = {item.code for item in findings}
+    assert "critical_module_missing" in codes
+    missing = [f for f in findings if f.code == "critical_module_missing"]
+    assert any("coverage_density" in f.message for f in missing)
+
+
+def test_release_consistency_passes_when_critical_modules_present(
+    tmp_path: Path,
+) -> None:
+    """关键模块都在且语法正确时，不应报 critical_module_*。"""
+    (tmp_path / "src" / "aqsp" / "data").mkdir(parents=True)
+    (tmp_path / "src" / "aqsp" / "__init__.py").write_text("", encoding="utf-8")
+    (tmp_path / "src" / "aqsp" / "data" / "__init__.py").write_text(
+        "", encoding="utf-8"
+    )
+    (tmp_path / "src" / "aqsp" / "data" / "coverage_density.py").write_text(
+        "def resolve_effective_window(*a, **k):\n    return ('2023-09-05', True)\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "aqsp" / "data" / "sqlite_db_source.py").write_text(
+        "X = 1\n", encoding="utf-8"
+    )
+    findings = checker.audit(
+        project_root=tmp_path,
+        runtime_root=tmp_path,
+        remote="origin",
+        branch="main",
+        canonical_link=None,
+        manifest_path=tmp_path / ".aqsp-release.json",
+        overlay_path=tmp_path / "missing-overlay.json",
+        active_files=[],
+        require_overlay=False,
+        immutable_release=True,
+        critical_modules=["aqsp.data.coverage_density", "aqsp.data.sqlite_db_source"],
+    )
+    assert not any(item.code.startswith("critical_module_") for item in findings)
+
+
+def test_release_consistency_flags_broken_critical_module(tmp_path: Path) -> None:
+    """模块在，但语法损坏（发布构建产物坏掉），也必须拦下。"""
+    (tmp_path / "src" / "aqsp" / "data").mkdir(parents=True)
+    (tmp_path / "src" / "aqsp" / "__init__.py").write_text("", encoding="utf-8")
+    (tmp_path / "src" / "aqsp" / "data" / "__init__.py").write_text(
+        "", encoding="utf-8"
+    )
+    (tmp_path / "src" / "aqsp" / "data" / "coverage_density.py").write_text(
+        "def broken(:\n    pass\n",  # 故意语法错误
+        encoding="utf-8",
+    )
+    findings = checker.audit(
+        project_root=tmp_path,
+        runtime_root=tmp_path,
+        remote="origin",
+        branch="main",
+        canonical_link=None,
+        manifest_path=tmp_path / ".aqsp-release.json",
+        overlay_path=tmp_path / "missing-overlay.json",
+        active_files=[],
+        require_overlay=False,
+        immutable_release=True,
+        critical_modules=["aqsp.data.coverage_density"],
+    )
+    assert any(item.code == "critical_module_broken" for item in findings)
