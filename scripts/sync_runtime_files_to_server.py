@@ -445,6 +445,8 @@ def _create_local_archive(project_root: Path, files: tuple[str, ...]) -> Path:
     )
     archive_path = Path(handle.name)
     handle.close()
+    # NamedTemporaryFile 默认 0600；统一抬到 0640，与 atomic_write_text 一致。
+    os.chmod(archive_path, 0o640)
     with tarfile.open(archive_path, "w:gz") as tar:
         for relative in files:
             tar.add(project_root / relative, arcname=relative)
