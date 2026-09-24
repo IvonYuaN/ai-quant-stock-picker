@@ -243,6 +243,26 @@ export function RadarPage() {
         </button>
       </nav>
 
+      {stats && stats.failedSources > 0 ? (
+        <Badge tone="warn">部分源不可用（{stats.failedSources} 个本次抓取失败）</Badge>
+      ) : null}
+
+      {radar && !radar.hasContent ? (
+        radar.generatedAt ? (
+          <EmptyState
+            title="近期无新资讯"
+            detail={`雷达已于 ${radar.generatedAt} 抓取，但近 ${radar.recentDays || "?"} 天无新条目。可点「抓取最新」强制重抓。`}
+            icon={Newspaper}
+          />
+        ) : (
+          <EmptyState
+            title="雷达数据尚未生成"
+            detail="后台定时抓取任务会定期拉取 RSS；若长时间为空，可点「抓取最新」手动触发。"
+            icon={Newspaper}
+          />
+        )
+      ) : null}
+
       {tab === "catalyst" ? (
         <CatalystPanel
           view={catalyst}
