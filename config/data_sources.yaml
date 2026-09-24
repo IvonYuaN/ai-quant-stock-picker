@@ -67,6 +67,9 @@ sources:
     markets: [a_share]
     access: http_api
     cost: free
+    # runtime_ready 保持 true 是刻意的：本条目仍在 data_sources.yaml 的 fallback_order 里，
+    # 而 source_catalog._validate_fallback_order 要求该链成员必须 runtime_ready。
+    # 它**不代表分时可用** —— 见下面的 risks 实测记录。
     runtime_ready: true
     research_status: fallback_runtime
     strengths:
@@ -75,6 +78,10 @@ sources:
     risks:
       - 需要 Referer；历史 K 线接口稳定性一般
       - 字段协议非正式文档化
+      - >-
+        ⚠️ 2026-09-18 生产实测：分时三条路径全部失效 —— hq.sinajs.cn 返回 403（带 Referer
+        也 403）、CN_MarketData.getKLineData 返回字面量 null、分时响应无法 JSON 解码。
+        分时当前不可用，排障时不要把它当可用备份（见 issue #144 / #149）。
     reference: "http://hq.sinajs.cn"
 
   - id: eastmoney

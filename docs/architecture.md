@@ -145,12 +145,27 @@ class DataSource(Protocol):
 
 ### 3.3 实时数据路线
 
-按优先级:
-1. **akshare**(`stock_zh_a_spot_em` / `stock_zh_a_minute` / `stock_bid_ask_em`)— 默认,3-5 秒延迟。
-2. **新浪 hq.sinajs.cn**— 备份。请求必须带 `Referer: http://finance.sina.com.cn`,否则 403。
-3. **东方财富 push2.eastmoney.com**— 备份。
-4. **券商 QMT** — 实盘升级路径(后续)。
-5. **屏幕截图 OCR** — 只在某个数据真的没接口时启用,默认不实现。
+盘中(`live_short`)的实际链路由 `source_factory.build_data_source("online_first")` 决定,
+当前是 `tencent → sina → akshare → eastmoney(deferred)`。**下面是 2026-09-18 生产实测后的现状,
+与旧版本文档差别很大 —— 排障前先看这里,别按老印象假设"备份是好的"。**
+
+1. **腾讯 `web.ifzq.gtimg.cn/appstock/app/day/query`** — 实际主源(分时)。
+   ⚠️ 不要改回同主机的 `appstock/app/minute/query`:该路径已被腾讯 WAF **按路径封禁**
+   (实测 http/https、sh/sz 一律 501 + 拦截页)。详见 `tencent_source.py` 的注释。
+2. **新浪 `hq.sinajs.cn`** — ⚠️ **实测已不可用,不要再当盘中备份**:`hq.sinajs.cn` 403
+   (带 `Referer` 也 403)、`CN_MarketData.getKLineData` 返回字面量 `null`、
+   分时响应无法 JSON 解码。它仍留在 `fallback_order` 里**只是因为**
+   `source_catalog` 要求该链成员 `runtime_ready`(见 `_validate_fallback_order`)。
+   见 issue #144 / #149。
+3. **akshare** — 生产机**未安装**;`_build_source_refs` 会静默跳过它。
+   因此它虽然在配置里,实际不参与盘中链路。
+4. **东方财富 `push2delay.eastmoney.com/api/qt/stock/trends2/get`** — 延迟兜底。
+   ⚠️ 有单 IP 配额与全局节流,实测**接不住完整批次**(256 只 0 覆盖)。见 #149。
+5. **券商 QMT** — 实盘升级路径(后续)。
+6. **屏幕截图 OCR** — 只在某个数据真的没接口时启用,默认不实现。
+
+⚠️ **兜底 ≠ 可用**:主源挂掉时兜底只覆盖单波次(60 只 100%),256 只真实批次覆盖 0。
+**目前 tencent 是事实上的单点**(见 #149)。
 
 ---
 
