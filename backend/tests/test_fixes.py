@@ -257,31 +257,44 @@ def test_emotion_dirty_amount(monkeypatch):
 # ── 缓存：数据源故障的空结果不缓存 5 分钟 ───────────────────────────
 
 
-def test_cached_negative_caches_empty():
+def test_cached_negative_caches_empty(tmp_path, monkeypatch):
     """空结果进负缓存（_NEG_TTL）：不立刻重试；负缓存过期后重试并转正缓存。
 
-    2026-09-21（#170）起 `_cached` 对空/失败结果做负缓存（见 backend/market.py:26
-    的文档），本测试随之由「空结果不缓存」更新为「空结果负缓存」的语义。
-    在此之前（2026-08-31 引入本测试时）空结果确实不缓存，故旧断言已过期（测试漂移），
-    不是代码回归。
+    2026-09-21（#170）起 `_cached` 对空/失败结果做负缓存。
+    2026-09-24 起缓存由内存 `_CACHE` 字典改为文件级 SWR 缓存（根治首访/过期后
+    同步打上游 14–53s 转圈），本测试随之改为读写 `_cache_path` 落盘文件，
+    不再直接操作已删除的 `_CACHE` 字典。空结果的负缓存语义本身不变。
     """
-    market._CACHE.pop("k_test", None)
+    import json
+    import time
+
+    monkeypatch.setattr(market, "_MARKET_CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(market, "_REFRESHING", set())
+    monkeypatch.setattr(market, "_refresh_in_background", lambda k, f, v: None)
+
+    cache_file = market._cache_path("k_test")
     calls = []
 
     def flaky():
         calls.append(1)
         return {} if len(calls) == 1 else {"ok": 1}
 
+    # 首次：无缓存 → 同步计算并落盘（空结果进负缓存）
     assert market._cached("k_test", flaky) == {}
-    assert market._cached("k_test", flaky) == {}  # 负缓存命中，不重试
     assert len(calls) == 1
-    # 让负缓存过期 → 重试成功并转正缓存
-    ts, _ = market._CACHE["k_test"]
-    market._CACHE["k_test"] = (ts - market._NEG_TTL - 1, {})
+    # 负缓存命中（age < _NEG_TTL）：直接返回，不重试
+    assert market._cached("k_test", flaky) == {}
+    assert len(calls) == 1
+
+    # 让负缓存远超 _STALE_TTL → 同步重算（不再服务过旧数据）
+    with open(cache_file, "w", encoding="utf-8") as fh:
+        json.dump({"ts": time.time() - market._STALE_TTL - 1, "val": {}}, fh)
+    # 重试成功并转正缓存
     assert market._cached("k_test", flaky) == {"ok": 1}
-    assert market._cached("k_test", flaky) == {"ok": 1}  # 正缓存命中，不再调用
     assert len(calls) == 2
-    market._CACHE.pop("k_test", None)
+    # 正缓存命中：不再调用
+    assert market._cached("k_test", flaky) == {"ok": 1}
+    assert len(calls) == 2
 
 
 # ── akshare 未安装：market 降级返回空，不挡服务 ─────────────────────
