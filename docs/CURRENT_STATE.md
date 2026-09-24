@@ -65,16 +65,22 @@
 
 ## 7. 当前进行中
 
-- **T3 双窗口门禁验证**（3y/5y 两臂对比；`compare_t3_dual_window.py` 已修）。进展看 `outputs/T3_接力进展_*.md`；运行时权威记忆在 `.workbuddy/memory/MEMORY.md`。
+- **T3 双窗口门禁验证 —— 已结案（2026-09-24）：判「方案 A 不成立」。**
+  3y 与 5y 两臂 8×8 变体全部跑完。**判据 = 同 `horizon` 层内的臂均值对比**（`compare_t3_dual_window.py`，
+  2026-09-24 修，见 issue #194）：3y 同层 **持平**（ΔSharpe=+0.039，落在噪声带内）、
+  5y **基线反超**（+1.01 vs +0.61）⇒ 方向不一致，不判成立。
+  ⚠️ 旧判据「最佳 htf_mr vs 单个基线」**跨了 `h` 轴**（`WF-H07` 是 h=10、基线是 h=3），
+  曾据此误判 3y「改善」；该口径在产物里保留但**显式标注为不可单独引用**。
+  进展看 `outputs/T3_接力进展_*.md` 与 `outputs/T3_双窗口对比结论_*.md`；运行时权威记忆在 `.workbuddy-ai/memory/MEMORY.md`。
 
 ### 7.1 策略启用决策：`event_driven`（事件驱动）— 暂不启用
 
 - **现状**：能力已完整 —— `strategies/event_driven.py` + `features/event_calendar.py`，事件数据由 `bt_task.sh event-data` 盘前刷入 `$AQSP_RUNTIME_DATA_ROOT/pit_cache/`（PR #183/#184/#185/#186，2026-09-23）。但 `StrategyConfig(enabled=False)`，且**不在 `config/strategy_sources.yaml` 策略来源清单**。
 - **决策（2026-09-23）：暂不启用，保持 `enabled=False`。**
-  - 依据：宪法红线（`strategies/__init__.py:69`、`event_driven.py:146` 均注明）——**未经 walk-forward 双门验证不上线**。T3 双窗口门禁验证仍在进行中。
+  - 依据：宪法红线（`strategies/__init__.py:69`、`event_driven.py:146` 均注明）——**未经 walk-forward 双门验证不上线**。T3 双窗口门禁验证已于 2026-09-24 结案（**不成立**，见 §7 首条），该路线关闭。
   - 事件面已通过 `GET /api/events` + 个股研究页「事件面」区块（PR #187）向用户展示；**数据有价值 ≠ 打分已验证**。
 - **启用前置条件（全部满足后才开，缺一不可）**：
-  1. T3 双窗口门禁通过且结果可复核；
+  1. 换一个因子族候选并通过双窗口门禁且结果可复核（原 T3 方案 A 已判否）；
   2. 加入 `config/strategy_sources.yaml` 策略来源清单；
   3. 若需独立阈值/权重段，按 AGENTS §3.5 更新 `thresholds.yaml` 并附验证报告、升 `version`；
   4. `StrategyConfig(enabled=True)` 由单独 PR 提交并附依据。
