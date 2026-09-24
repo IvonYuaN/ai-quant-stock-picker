@@ -21,6 +21,7 @@ GENERATED_RELEASE_DIRS = {
     ("frontend", "node_modules", ".vite"),
     ("frontend", "node_modules", ".vite-temp"),
 }
+GENERATED_RELEASE_FILES = {"RELEASE_SHA"}
 
 # 核心循环（walkforward gate）依赖的模块。release 若缺失其中任何一个，
 # gate 会在起跑时 ImportError / 或（更隐蔽地）用错了窗口而整批失败 —— 就像
@@ -167,7 +168,7 @@ def _release_files_for_digest(root: Path, manifest_path: Path) -> list[str]:
             or parts[:3] in GENERATED_RELEASE_DIRS
         ):
             continue
-        if path.name.endswith((".pyc", ".pyo")):
+        if path.name in GENERATED_RELEASE_FILES or path.name.endswith((".pyc", ".pyo")):
             continue
         files.append(relative)
     return sorted(files)
