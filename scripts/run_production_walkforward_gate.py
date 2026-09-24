@@ -1385,6 +1385,8 @@ def build_walkforward_command(args: argparse.Namespace) -> list[str]:
     ]
     if bool(getattr(args, "crash_protection", False)):
         command.append("--crash-protection")
+    if bool(getattr(args, "net_fees", False)):
+        command.append("--net-fees")
     if not bool(getattr(args, "no_streaming", False)):
         command[
             command.index("--skip-pit-financials") : command.index(
@@ -1928,6 +1930,13 @@ def main() -> int:
         "--crash-protection",
         action="store_true",
         help="透传 --crash-protection 给 aqsp walkforward：market_regime=crash 时 top_n 减半",
+    )
+    parser.add_argument(
+        "--net-fees",
+        action="store_true",
+        help="透传 --net-fees 给 aqsp walkforward：成本口径由 legacy 切到 net"
+        "（cost_mode=net）。仅用于研究对照（如 #199 的成本敏感性对照），"
+        "生产门禁默认仍是 legacy。",
     )
     parser.add_argument(
         "--report", default="reports/walkforward-grid-raw-production-latest.md"
