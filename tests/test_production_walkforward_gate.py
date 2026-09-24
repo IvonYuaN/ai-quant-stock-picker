@@ -1594,6 +1594,13 @@ def test_production_walkforward_gate_returns_timeout_code(
     assert "production walk-forward timed out" in capsys.readouterr().out
 
 
+def test_compact_day_accepts_iso_and_compact_dates() -> None:
+    from scripts import run_production_walkforward_gate as gate
+
+    assert gate._compact_day("2026-09-18") == "20260918"
+    assert gate._compact_day("20260918") == "20260918"
+
+
 def test_production_walkforward_gate_dry_run_writes_status(
     monkeypatch, tmp_path: Path
 ) -> None:

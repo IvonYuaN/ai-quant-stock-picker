@@ -694,7 +694,7 @@ def repair_stale_running_status(
 
 
 def _compact_day(raw: str) -> str:
-    return date.fromisoformat(raw).strftime("%Y%m%d")
+    return date.fromisoformat(_iso_day(raw)).strftime("%Y%m%d")
 
 
 def _calendar_gap_days(left: str, right: str) -> int:
