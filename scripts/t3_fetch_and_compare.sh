@@ -5,7 +5,8 @@
 # 口径：htf_mr 变体烘焙 min_total_score=0.1，基线 WF-001 的**生效值**为 0.4。
 #   该差异已实测定性为「不构成混杂」（两臂阈值均不咬合 → 选股为纯 top-n 排名）；
 #   本脚本仍在结论末尾补注该口径（含「不要用 0.6 做对照」的警告），见步骤 3。
-#   判据仍以 3y/5y 方向一致性为准。
+#   判据 = **同 horizon 层内的臂均值对比**（compare 脚本的 §三，2026-09-24 起），
+#   3y/5y 两窗口方向一致才判方案 A 成立；原「最佳 vs 基线」口径已标注为不可单独引用。
 set -u
 RUNNER_HOST=aqsp-runner
 RUNNER_BASE=/opt/aqsp-runner
@@ -37,9 +38,23 @@ echo "=== compare 写出: $OUT_MD ==="
 
 # 3) 自动补注口径说明：min_total_score 差异**已实测定性为不构成混杂**，补注只为留痕
 #    （避免后来者重复调查，并警告「不要用 0.6 做对照」——那会引入新的空仓期假象）。
+#
+# ⚠️ 补注的小节号必须**跟着 compare 脚本的产物走**，不能写死：
+#    产物小节是「一 门禁 / 二 逐变体 / 三 同 horizon 分层 / 四 朴素口径 / 五 判决」，
+#    「六 解析备注」**只在有解析告警时才输出** ⇒ 写死 `## 六、` 会在健康路径上撞号。
+#    这里数产物已有小节数，取下一个中文序号。
+_CN_NUM=(零 一 二 三 四 五 六 七 八 九 十)
+_existing_secs=$(grep -c '^## ' "$OUT_MD" || true)
+_next_sec=$((_existing_secs + 1))
+if (( _next_sec >= 1 && _next_sec < ${#_CN_NUM[@]} )); then
+  _sec_label="${_CN_NUM[$_next_sec]}"
+else
+  echo "⚠️ 产物已有 ${_existing_secs} 个小节，超出中文序号表 —— 补注改用「附」，请人工确认小节结构" >&2
+  _sec_label="附"
+fi
+printf '\n## %s、口径说明（自动补注：两臂 min_total_score 差异 = 已核查，无影响）\n' \
+  "$_sec_label" >> "$OUT_MD"
 cat >> "$OUT_MD" <<'NOTE'
-
-## 五、口径说明（自动补注：两臂 min_total_score 差异 = 已核查，无影响）
 
 - **实际取值**：基线 `WF-001`（`stable_plus`）**生效阈值 = 0.4**
   （`config/thresholds.yaml` 覆盖 `thresholds.py` 中的 dataclass 默认 0.6）；
