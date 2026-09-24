@@ -36,6 +36,13 @@ _SINA_SPOT_URL = (
 _logger = logging.getLogger("aqsp.data.sina")
 
 
+def _sina_market_prefix(symbol: str, *, is_index: bool) -> str:
+    """Return Sina's market prefix for stocks and Shanghai/Shenzhen indices."""
+    if is_index:
+        return "sz" if str(symbol).startswith("399") else "sh"
+    return "sh" if str(symbol).startswith("6") else "sz"
+
+
 class SinaSource(DataSource):
     name: str = "sina"
 
@@ -371,7 +378,7 @@ class SinaSource(DataSource):
         for attempt in range(_MAX_RETRIES):
             try:
                 self._throttle()
-                market = "sh" if is_index or symbol.startswith("6") else "sz"
+                market = _sina_market_prefix(symbol, is_index=is_index)
                 url = "http://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData"
                 scale_map = {
                     "1": "60",

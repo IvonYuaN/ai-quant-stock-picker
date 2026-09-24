@@ -41,6 +41,14 @@ _INTRADAY_PM_SESSION_HOUR = 13
 
 _logger = logging.getLogger("aqsp.data.eastmoney")
 
+
+def _eastmoney_market_prefix(symbol: str, *, is_index: bool) -> str:
+    """Return Eastmoney's secid market prefix for stocks and indices."""
+    if is_index:
+        return "0" if str(symbol).startswith("399") else "1"
+    return "1" if str(symbol).startswith("6") else "0"
+
+
 # 东财按生产机 IP 限流：trends2 端点密集请求后连接被 WAF 立即重置（curl HTTP=000）。
 # 所有 EastmoneySource 实例/线程共享同一请求节奏与熔断状态（限流按 IP 计），
 # 用全局节流串行化并发请求 + 熔断快速失败，避免被限流架空盘中新鲜度门。
@@ -401,7 +409,7 @@ class EastmoneySource(DataSource):
                 _logger.warning("eastmoney 熔断中，跳过 %s trends2 分时请求", symbol)
                 return None
             try:
-                market = "1" if is_index or symbol.startswith("6") else "0"
+                market = _eastmoney_market_prefix(symbol, is_index=is_index)
                 # 与 _SPOT_HOSTS 同样按重试轮转域名：优先 push2delay（生产机实测可用），
                 # 失败则回退 push2his，避免单域名被 IP 限流即判死整个东财兜底。
                 host = _TRENDS2_HOSTS[attempt % len(_TRENDS2_HOSTS)]
@@ -454,7 +462,7 @@ class EastmoneySource(DataSource):
                 _logger.warning("eastmoney 熔断中，跳过 %s 分时(kline)请求", symbol)
                 return None
             try:
-                market = "1" if is_index or symbol.startswith("6") else "0"
+                market = _eastmoney_market_prefix(symbol, is_index=is_index)
                 klt_map = {"1": "1", "5": "5", "15": "15", "30": "30", "60": "60"}
                 url = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
                 params = {
