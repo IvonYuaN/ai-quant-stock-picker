@@ -1,6 +1,6 @@
 # AGENTS.md — 协作与编码硬约束
 
-本项目由仓主(决策)+ 编码 agent(实现)+ 审查 agent(校验)协作。
+本项目由仓主(决策)+ 编码 agent(实现)+ 审查 agent(校验)协作。**校验通过的 PR 由 agent 直接合并（2026-09-24 修订，门槛见 §6.1），不再等待仓主。**
 
 **所有 agent 在动手前必须先读 `docs/architecture.md`,以那份文件为唯一规划来源。本文件只补编码层面的硬约束。**
 
@@ -8,9 +8,9 @@
 
 ## 1. 角色分工
 
-- **仓主(决策)**:确定优先级、合并 PR、定义业务边界。
-- **小米Pro(编码)**:按 `docs/architecture.md` 拆分的 PR 顺序提交。
-- **Claude(审查)**:逐 PR 按本文件第 4 节"审查清单"逐项检查;P0 级别风险性修复也直接动手。
+- **仓主(决策)**:确定优先级、定义业务边界;对 §5 红线争议与**线上变更**(部署 / cron / ACL / 重启)行使最终授权。
+- **小米Pro(编码)**:按 `docs/architecture.md` 拆分的 PR 顺序提交;**自审通过即自行合并**(§6.1)。
+- **Claude(审查)**:逐 PR 按本文件第 4 节"审查清单"逐项检查;P0 级别风险性修复也直接动手;审查通过即放行合并。
 
 ---
 
@@ -92,7 +92,7 @@
 
 ---
 
-## 4. Claude 审查清单(每个 PR 必过)
+## 4. PR 审查清单(每个 PR 必过;自审与 Claude 审查共用)
 
 ```
 [ ] 公共接口有完整 type hints,且符合 docs/architecture.md 中契约
@@ -130,9 +130,32 @@
 3. 写代码 + 单元测试
 4. 本地跑 ruff + pytest 全绿
 5. 提 PR,描述按 §3.9 模板
-6. Claude 按 §4 清单审查
-7. 仓主合并
+6. 按 §4 清单自审(或交 Claude 审查)
+7. 校验通过即由 agent 直接合并(squash),不等仓主 —— 门槛见 §6.1
+8. 合并后继续下一步开发
 ```
+
+### 6.1 合并授权(2026-09-24 修订)
+
+**默认:agent 有权直接合并自己提的 PR。** 必须**同时**满足:
+
+- §4 清单逐项通过,且 PR 描述含"做了什么 / 为什么 / 风险 / 怎么验证"
+- CI 全绿(`ruff check .` + pytest),GitHub `mergeable_state = clean`
+- **不触发 CI 的改动**(如纯 `docs/**` / `AGENTS.md` / `README.md` —— `ci.yml` 的 `paths` 不含它们):
+  以本地门禁替代,即 `scripts/preflight_upload.py` + `ruff check .` +
+  `pytest tests/test_runtime_redline_guard.py` 全绿,并把三条命令的实际输出写进 PR 描述
+- 变更 ≤ ~300 行(测试不计),未引入未讨论的新依赖
+- 合并方式统一 **squash**
+
+**以下情形 agent 不得自行合并,必须留 PR 并开 issue 交仓主:**
+
+- 触及 §5 红线任一条
+- 修改 `docs/architecture.md` 的"项目宪法"小节(§1)
+- 改动 `config/thresholds.yaml` 的策略阈值(需附 walk-forward 验证报告)
+- CI 红 / `mergeable_state != clean` / 存在未解决的 review comment
+- 变更 > 300 行且无法拆分
+
+**合并 ≠ 发布。** 合并进 main 只代表代码入库;任何**线上变更**(prod / runner 部署、cron 增删改、ACL 调整、服务重启)仍须仓主单独授权后执行。
 
 ---
 
