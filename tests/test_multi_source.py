@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 
 import pandas as pd
@@ -99,6 +101,47 @@ def test_multi_source_live_intraday_races_sources_under_shared_deadline() -> Non
     assert set(result) == {"600000"}
     assert result["600000"].attrs["source_name"] == "sina"
     assert elapsed < 0.15
+
+
+def test_multi_source_serializes_deferred_live_short_calls() -> None:
+    active = 0
+    max_active = 0
+    state_lock = threading.Lock()
+
+    class FailedPrimary(_Source):
+        name = "tencent"
+
+        def fetch_intraday(self, symbols: list[str], period: str = "5") -> dict:
+            raise DataError("primary unavailable")
+
+    class DeferredEastmoney(_Source):
+        name = "eastmoney"
+
+        def fetch_intraday(self, symbols: list[str], period: str = "5") -> dict:
+            nonlocal active, max_active
+            with state_lock:
+                active += 1
+                max_active = max(max_active, active)
+            try:
+                time.sleep(0.08)
+                return super().fetch_intraday(symbols, period)
+            finally:
+                with state_lock:
+                    active -= 1
+
+    source = MultiSource(
+        FailedPrimary(),
+        [DeferredEastmoney()],
+        validate_consistency=False,
+        live_fetch_deadline_seconds=1.0,
+        deferred_live_short_sources={"eastmoney"},
+    )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda _: source.fetch_intraday(["600000"]), range(2)))
+
+    assert len(results) == 2
+    assert max_active == 1
 
 
 def test_multi_source_live_intraday_rejects_historical_fallback() -> None:
