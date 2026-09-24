@@ -1,22 +1,21 @@
-version: "1.1.19"
-effective_from: '2026-09-08'
+version: "1.1.20"
+effective_from: '2026-09-24'
 composite:
   base_blend_weight: 0.7
   min_total_score: 0.4
-  # T3 方案 A 落地（2026-09-21）：双窗口 IC 实证（ic_sweep_综合结论_2026-09-21.md）
-  # momentum/triple_rise/composite/volume 系统性反向（IC -0.03~-0.06，t<-2.3），
-  # htf 双窗口正向显著（IC +0.025~+0.033，t>2.4），mean_reversion 熊市正向。
-  # 反向四因子权重归零，启用 htf + mean_reversion，按 regime 切换（牛/震 htf 主导、熊 mr 主导）。
-  # 仅改 gate 的 CompositeStrategy 权重；每日 screening（strategy.py / ScoringThresholds）不受影响。
-  momentum_weight: 0.0
+  momentum_weight: 0.3
   quality_weight: 0.0
   regime_blend_weight: 0.3
   value_weight: 0.0
   volume_weight: 0.0
-  mean_reversion_weight: 0.5
-  triple_rise_weight: 0.0
-  high_tight_flag_weight: 0.5
-  description: "v1.1.19：新增 stable_plus 网格（N=8，含因子族多样性），回测区间拉长至 2021 起（功效增强，参见 reports/pbo-attribution-2026-09-07.md §5 #2/#3）"
+  mean_reversion_weight: 0.0
+  triple_rise_weight: 0.3
+  # v1.1.20（2026-09-24）：回滚 #163（T3 方案 A 落地）。依据 = T3 双窗口 walk-forward 判决
+  # （outputs/T3_双窗口对比结论_2026-09-24.md）：同 horizon 分层主判据 3y=持平 / 5y=退步
+  # （Δ Sharpe -0.402 / 收益 -22.10pp；退步集中在 2021-09→2023-09，5y 独有段），
+  # 且 htf_mr 5y PBO=0.9405（过拟合概率极高）、四臂 both_pass 全 False ⇒ 按预注册标准回滚。
+  # 保留 #163 在 cli.py 的幽灵变体修复（变体显式声明完整因子集，与本文件默认值解耦）。
+  description: "v1.1.20：回滚 #163 复合权重（T3 双窗口判决方案 A 不成立），恢复 mom 0.3 / tr 0.3。证据 outputs/T3_双窗口对比结论_2026-09-24.md"
   min_sample_size: 30
 execution:
   commission_rate: 0.0003
@@ -88,7 +87,6 @@ regime:
       volume: 1.1
       mean_reversion: 0.7
       triple_rise: 1.1
-      high_tight_flag: 1.2
     volatile_bull:
       momentum: 1.1
       quality: 0.8
@@ -96,7 +94,6 @@ regime:
       volume: 1.2
       mean_reversion: 0.8
       triple_rise: 1.0
-      high_tight_flag: 1.1
     stable_bear:
       momentum: 0.7
       quality: 1.3
@@ -104,7 +101,6 @@ regime:
       volume: 0.8
       mean_reversion: 1.3
       triple_rise: 0.8
-      high_tight_flag: 0.7
     volatile_bear:
       momentum: 0.6
       quality: 1.2
@@ -112,23 +108,20 @@ regime:
       volume: 0.9
       mean_reversion: 1.4
       triple_rise: 0.7
-      high_tight_flag: 0.6
     stable_sideways:
       momentum: 0.9
       quality: 1.1
       value: 1.1
       volume: 1.0
-      mean_reversion: 0.9
+      mean_reversion: 1.1
       triple_rise: 0.9
-      high_tight_flag: 1.1
     volatile_sideways:
       momentum: 0.8
       quality: 1.0
       value: 1.0
       volume: 1.1
-      mean_reversion: 1.0
+      mean_reversion: 1.2
       triple_rise: 0.8
-      high_tight_flag: 1.1
   confidence_momentum: 0.05
   confidence_trend: 0.01
   confidence_volatility: 0.2
@@ -224,7 +217,7 @@ volume:
     breakout: 0.35
     correlation: 0.25
 mean_reversion:
-  enabled: true
+  enabled: false
   lookback_days: 20
   rsi_period: 14
   oversold_threshold: 30

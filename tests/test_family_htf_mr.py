@@ -41,10 +41,12 @@ def _htf_only_composite(base: Thresholds) -> Thresholds:
     return t
 
 
-def test_has_htf_gating_default_on():
-    """v1.1.19 起默认 composite.high_tight_flag_weight=0.5 且 enabled → _has_htf() 为 True。"""
+def test_has_htf_gating_default_off_after_rollback():
+    """v1.1.20 回滚 #163（T3 双窗口判决方案 A 不成立）后，默认 composite
+    .high_tight_flag_weight=0 ⇒ _has_htf() 为 False；htf/mr 仅在显式
+    walk-forward 变体中启用，不再作为全局默认。"""
     strat = CompositeStrategy(StrategyConfig(name="composite"))
-    assert strat._has_htf() is True
+    assert strat._has_htf() is False
 
 
 def test_has_htf_gating_off_when_weight_zero():
@@ -118,8 +120,8 @@ def test_apply_htf_mr_variant_enables_factors_and_remaps_weights():
         _apply_walkforward_grid_variant,
     )
 
-    base = load_thresholds()  # v1.1.19 起 mean_reversion.enabled 默认 True（方案 A 落地）
-    assert base.mean_reversion.enabled is True  # 前置：新默认基线（因子族替换已落地）
+    base = load_thresholds()  # v1.1.20 回滚 #163 后 mean_reversion.enabled 默认 False
+    assert base.mean_reversion.enabled is False  # 前置：回滚后的默认基线
 
     variant = _WALKFORWARD_HTF_MR_GRID_VARIANTS[0]  # WF-H01
     applied = _apply_walkforward_grid_variant(base, variant)
@@ -162,16 +164,29 @@ def test_htf_selection_respects_symbol_tie_break():
 
 
 def test_regime_switch_htf_led_in_bull_mr_led_in_bear():
-    """regime 切换：牛/震 htf 有效权重 > mr（htf 主导），熊 mr > htf（mr 主导）。
+    """regime 切换机制：htf_mr 变体配置下，牛/震 htf 有效权重 > mr，熊 mr > htf。
 
-    与双窗口 IC 结论一致（ic_sweep_综合结论_2026-09-21.md）：htf 在牛/震正向显著，
-    mean_reversion 在熊市正向；反向四因子已归零，仅 htf/mr 参与。
+    v1.1.20 回滚 #163 后全局默认不再携带 htf/mr（CURRENT_STATE §7.1），
+    因此改在 htf_mr walk-forward 变体配置上验证该机制（机制本身不变）。
     """
-    t = load_thresholds()
+    from aqsp.cli import (
+        _WALKFORWARD_HTF_MR_GRID_VARIANTS,
+        _apply_walkforward_grid_variant,
+    )
+
+    t = _apply_walkforward_grid_variant(
+        load_thresholds(), _WALKFORWARD_HTF_MR_GRID_VARIANTS[0]
+    )
     strat = CompositeStrategy(StrategyConfig(name="composite"), thresholds=t)
-    for bull in ("stable_bull", "volatile_bull", "stable_sideways", "volatile_sideways"):
+    for bull in ("stable_bull", "volatile_bull"):
         _, _, _, _, mrw, _, htfw = strat.get_regime_adjusted_weights(bull)
         assert htfw > mrw, f"{bull} 应为 htf 主导"
-    for bear in ("stable_bear", "volatile_bear"):
-        _, _, _, _, mrw, _, htfw = strat.get_regime_adjusted_weights(bear)
-        assert mrw > htfw, f"{bear} 应为 mr 主导"
+    # 回滚后的 regime 权重表：震荡段 mean_reversion(1.1/1.2) ≥ high_tight_flag(1.0)
+    for sideways_bear in (
+        "stable_sideways",
+        "volatile_sideways",
+        "stable_bear",
+        "volatile_bear",
+    ):
+        _, _, _, _, mrw, _, htfw = strat.get_regime_adjusted_weights(sideways_bear)
+        assert mrw > htfw, f"{sideways_bear} 应为 mr 主导"

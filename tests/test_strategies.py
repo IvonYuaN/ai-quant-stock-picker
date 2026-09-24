@@ -20,7 +20,7 @@ from aqsp.strategies.thresholds import load_thresholds
 
 def test_load_thresholds():
     thresholds = load_thresholds()
-    assert thresholds.version == "1.1.19"
+    assert thresholds.version == "1.1.20"
     assert thresholds.last_walkforward_run == "2026-05-30"
     assert thresholds.momentum.lookback_days == 60
     assert thresholds.momentum.weights.momentum == 0.4
@@ -28,15 +28,15 @@ def test_load_thresholds():
     assert thresholds.momentum.weights.rsi == 0.3
     assert thresholds.quality.enabled is False
     assert thresholds.value.enabled is False
-    assert thresholds.composite.momentum_weight == 0.0
+    assert thresholds.composite.momentum_weight == 0.3
     assert thresholds.composite.quality_weight == 0.0
     assert thresholds.composite.value_weight == 0.0
-    assert thresholds.composite.triple_rise_weight == 0.0
+    assert thresholds.composite.triple_rise_weight == 0.3
     assert thresholds.composite.base_blend_weight == 0.7
     assert thresholds.composite.regime_blend_weight == 0.3
-    assert thresholds.composite.high_tight_flag_weight == 0.5
-    assert thresholds.composite.mean_reversion_weight == 0.5
-    assert thresholds.mean_reversion.enabled is True
+    assert thresholds.composite.high_tight_flag_weight == 0.0
+    assert thresholds.composite.mean_reversion_weight == 0.0
+    assert thresholds.mean_reversion.enabled is False
     assert thresholds.high_tight_flag.enabled is True
     assert thresholds.triple_rise.enabled is True
     assert thresholds.triple_rise.lookback_days == 25
@@ -47,9 +47,9 @@ def test_load_thresholds():
     assert thresholds.regime.cooldown_hours == 24
     assert thresholds.regime.strategy_weights["stable_bull"].momentum == 1.2
     assert thresholds.regime.strategy_weights["volatile_bear"].triple_rise == 0.7
-    assert thresholds.regime.strategy_weights["stable_bull"].high_tight_flag == 1.2
-    assert thresholds.regime.strategy_weights["stable_sideways"].high_tight_flag == 1.1
-    assert thresholds.regime.strategy_weights["volatile_bear"].high_tight_flag == 0.6
+    assert thresholds.regime.strategy_weights["stable_bull"].high_tight_flag == 1.0
+    assert thresholds.regime.strategy_weights["stable_sideways"].high_tight_flag == 1.0
+    assert thresholds.regime.strategy_weights["volatile_bear"].high_tight_flag == 1.0
     assert thresholds.n_rebound.enabled is True
     assert thresholds.n_rebound.lookback_days == 30
     assert thresholds.internet_strategy.volume_breakout_score == 18.0
