@@ -6834,6 +6834,16 @@ def _append_walkforward_grid_rows(
     _append_walkforward_grid_diagnostics(report_lines, details)
 
 
+def _grid_report_metric_note(grid_cscv: bool) -> str:
+    """Explain the prelude-vs-grid metric split in CSCV reports."""
+    if not grid_cscv:
+        return ""
+    return (
+        "⚠️ 上述 Sharpe/TotalReturn 为基础策略 prelude（非 grid 变体指标）；"
+        "DSR/PBO/verdict 来自 grid CSCV，不能把两者当成同一策略口径。"
+    )
+
+
 def run_walkforward(args: argparse.Namespace) -> int:
     import logging
     import sys
@@ -7155,6 +7165,9 @@ def run_walkforward(args: argparse.Namespace) -> int:
         f"PBO={pbo_display}, Sharpe={result.overall.sharpe_ratio:.2f}, "
         f"TotalReturn={result.overall.total_return:.2%}"
     )
+    metric_note = _grid_report_metric_note(args.grid_cscv)
+    if metric_note:
+        tl_dr.append(metric_note)
 
     report_lines = [
         "# Walk-Forward 回测报告",
@@ -7193,6 +7206,11 @@ def run_walkforward(args: argparse.Namespace) -> int:
         "",
         "## 整体指标",
         "",
+        (
+            f"> {metric_note}"
+            if metric_note
+            else ""
+        ),
         "| 指标 | 值 |",
         "|------|-----|",
         f"| 总收益 | {result.overall.total_return:.2%} |",
