@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import hashlib
 import os
+import re
 import shutil
 import subprocess
 from datetime import date, timedelta
@@ -673,13 +674,21 @@ def test_install_server_cron_script_defaults_to_noop_migration_guard() -> None:
     assert "0 18 * * 1-5" in script
     assert "40 19 * * 1-5" in script
     assert "*/15 * * * 1-5" in script
-    assert "bt_task.sh intraday" in script
-    assert "bt_task.sh midday" in script
-    assert "bt_task.sh daily" in script
-    assert "bt_task.sh coldstart" in script
-    assert "bt_task.sh news" in script
-    assert "bt_task.sh event-data" in script
-    assert "bt_task.sh monitor" in script
+    # 调度器形态随运行模式切换（#191）：命令统一走 ${SCHEDULER_BIN}，
+    # simple 默认指向 bt_task.sh，immutable 指向 release_task_entrypoint.sh。
+    assert '"${SCHEDULER_BIN}"' in script
+    assert "bt_task.sh" in script
+    assert "release_task_entrypoint.sh" in script
+    for action in (
+        "intraday",
+        "midday",
+        "daily",
+        "coldstart",
+        "news",
+        "event-data",
+        "monitor",
+    ):
+        assert re.search(rf"SCHEDULER_BIN.*{re.escape(action)}", script), action
 
 
 def test_midday_refresh_reuses_intraday_chain_without_formal_ledger_pollution() -> None:
