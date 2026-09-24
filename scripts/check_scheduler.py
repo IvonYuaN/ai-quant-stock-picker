@@ -32,6 +32,7 @@ SCHEDULED_ACTIONS = frozenset(
         "walkforward-gate",
         "monitor",
         "news",
+        "event-data",
     }
 )
 LEGACY_CRON_TERMS = (

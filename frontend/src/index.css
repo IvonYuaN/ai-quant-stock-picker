@@ -129,7 +129,7 @@
     position: sticky;
     top: 0.75rem;
     display: flex;
-    width: 16rem;
+    width: 16.5rem;
     height: calc(100vh - 1.5rem);
     flex-shrink: 0;
     flex-direction: column;
@@ -184,12 +184,12 @@
     width: 1.1rem;
   }
   .aq-brand-name {
-    font-size: 1rem;
+    font-size: 1.2rem;
     font-weight: 700;
   }
   .aq-brand-sub {
     margin-top: 0.5rem;
-    font-size: 0.68rem;
+    font-size: 0.816rem;
     line-height: 1.5;
     color: hsl(var(--muted-foreground));
   }
@@ -201,7 +201,7 @@
     border-radius: 0.45rem;
     padding: 0.35rem 0.4rem;
     color: hsl(var(--muted-foreground));
-    font-size: 0.72rem;
+    font-size: 0.864rem;
     transition: color 140ms ease, background 140ms ease;
   }
   .aq-icon-btn:hover {
@@ -227,7 +227,7 @@
     justify-content: space-between;
     gap: 0.4rem;
     padding: 0 0.25rem 0.35rem;
-    font-size: 0.65rem;
+    font-size: 0.78rem;
     font-weight: 700;
     color: hsl(var(--muted-foreground) / 0.8);
   }
@@ -239,11 +239,11 @@
     display: flex;
     align-items: center;
     gap: 0.6rem;
-    min-height: 2.6rem;
-    padding: 0.5rem 0.7rem;
+    min-height: 2.75rem;
+    padding: 0.55rem 0.75rem;
     border-radius: 0.6rem;
     color: hsl(var(--muted-foreground));
-    font-size: 0.8rem;
+    font-size: 0.96rem;
     transition: background 140ms ease, color 140ms ease;
   }
   .aq-nav-item:hover {
@@ -276,7 +276,7 @@
   }
   .aq-nav-desc {
     overflow: hidden;
-    font-size: 0.65rem;
+    font-size: 0.78rem;
     color: hsl(var(--muted-foreground) / 0.85);
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -302,7 +302,7 @@
     display: inline-flex;
     align-items: center;
     gap: 0.4rem;
-    font-size: 0.68rem;
+    font-size: 0.816rem;
     color: hsl(var(--muted-foreground));
   }
   .aq-dot {
@@ -329,7 +329,7 @@
   }
   .aq-sidebar-note {
     margin-top: 0.6rem;
-    font-size: 0.65rem;
+    font-size: 0.78rem;
     color: hsl(var(--muted-foreground) / 0.6);
   }
 
@@ -339,7 +339,7 @@
     overflow: auto;
   }
   .aq-content {
-    width: min(100%, 78rem);
+    width: min(100%, 82rem);
     margin: 0 auto;
     padding: 1.25rem 1.25rem 2.5rem;
   }
@@ -361,7 +361,7 @@
     display: flex;
     align-items: center;
     gap: 0.35rem;
-    font-size: 0.66rem;
+    font-size: 0.792rem;
     font-weight: 700;
     color: hsl(var(--muted-foreground) / 0.85);
   }
@@ -377,18 +377,18 @@
     margin-top: 0.25rem;
   }
   .aq-title-row h1 {
-    font-size: 1.55rem;
+    font-size: 1.86rem;
     font-weight: 700;
   }
   .aq-title-row strong {
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 0.85rem;
+    font-size: 1.02rem;
     font-weight: 600;
     color: hsl(var(--primary));
   }
   .aq-page-sub {
     margin-top: 0.3rem;
-    font-size: 0.75rem;
+    font-size: 0.9rem;
     color: hsl(var(--muted-foreground));
   }
   .aq-meta-row {
@@ -397,7 +397,7 @@
     align-items: center;
     gap: 0.4rem 0.7rem;
     margin-top: 0.5rem;
-    font-size: 0.68rem;
+    font-size: 0.816rem;
     color: hsl(var(--muted-foreground));
   }
 
@@ -411,7 +411,7 @@
     border-radius: 0.5rem;
     padding: 0.42rem 0.75rem;
     color: hsl(var(--foreground));
-    font-size: 0.78rem;
+    font-size: 0.936rem;
     transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
   }
   .aq-btn svg {
@@ -449,7 +449,7 @@
     background: hsl(var(--background));
     padding: 0.45rem 0.6rem;
     color: hsl(var(--foreground));
-    font-size: 0.8rem;
+    font-size: 0.96rem;
   }
   .aq-input:focus {
     border-color: hsl(var(--primary) / 0.6);
@@ -490,7 +490,7 @@
     border: 1px solid hsl(var(--border) / 0.75);
     border-radius: 0.6rem;
     background: hsl(var(--card) / 0.6);
-    padding: 0.8rem;
+    padding: 0.95rem;
     transition: border-color 140ms ease;
   }
   .aq-card:hover {
@@ -519,7 +519,7 @@
   }
   .aq-card h3 {
     min-width: 0;
-    font-size: 0.84rem;
+    font-size: 1.008rem;
     font-weight: 700;
     line-height: 1.35;
   }
@@ -527,7 +527,7 @@
     display: block;
     margin-top: 0.18rem;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 0.65rem;
+    font-size: 0.78rem;
     color: hsl(var(--muted-foreground));
   }
   .aq-score {
@@ -537,16 +537,16 @@
   .aq-score b {
     display: block;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 1.2rem;
+    font-size: 1.44rem;
     color: hsl(var(--primary));
   }
   .aq-score span {
-    font-size: 0.62rem;
+    font-size: 0.744rem;
     color: hsl(var(--muted-foreground));
   }
   .aq-card-summary {
     margin-top: 0.55rem;
-    font-size: 0.73rem;
+    font-size: 0.876rem;
     line-height: 1.55;
     color: hsl(var(--foreground) / 0.8);
   }
@@ -564,7 +564,7 @@
     border: 1px solid hsl(var(--border) / 0.85);
     border-radius: 0.65rem;
     background: hsl(var(--card) / 0.35);
-    padding: 1rem;
+    padding: 1.15rem;
   }
   .aq-section-lab {
     border-style: dashed;
@@ -580,12 +580,12 @@
   }
   .aq-section-head-main h2 {
     margin-top: 0.2rem;
-    font-size: 1.05rem;
+    font-size: 1.26rem;
     font-weight: 700;
   }
   .aq-section-desc {
     margin-top: 0.2rem;
-    font-size: 0.7rem;
+    font-size: 0.84rem;
     color: hsl(var(--muted-foreground));
   }
   .aq-section-head-side {
@@ -596,7 +596,7 @@
   }
   .aq-section-count {
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 0.68rem;
+    font-size: 0.816rem;
     color: hsl(var(--muted-foreground));
   }
 
@@ -626,7 +626,7 @@
     border: 1px solid hsl(var(--border) / 0.7);
     border-radius: 0.5rem;
     padding: 0.65rem 0.75rem;
-    font-size: 0.73rem;
+    font-size: 0.876rem;
     line-height: 1.5;
   }
   .aq-callout-icon {
@@ -640,7 +640,7 @@
   }
   .aq-callout-body strong {
     display: block;
-    font-size: 0.78rem;
+    font-size: 0.936rem;
     color: hsl(var(--foreground));
   }
   .aq-callout-detail {
@@ -677,7 +677,7 @@
     width: fit-content;
     border-radius: 999px;
     padding: 0.18rem 0.5rem;
-    font-size: 0.63rem;
+    font-size: 0.756rem;
     line-height: 1.15;
     white-space: nowrap;
   }
@@ -693,6 +693,11 @@
     color: hsl(var(--muted-foreground));
     background: hsl(var(--muted) / 0.6);
   }
+  /* 徽标红档（解禁 severity=high 等）；置于 ok/warn/neutral 之后，同权重下可覆盖其配色 */
+  .aq-badge-up {
+    color: hsl(var(--destructive));
+    background: hsl(var(--destructive) / 0.13);
+  }
 
   .aq-tag {
     display: inline-flex;
@@ -700,7 +705,7 @@
     align-items: center;
     border-radius: 999px;
     padding: 0.18rem 0.45rem;
-    font-size: 0.63rem;
+    font-size: 0.756rem;
     line-height: 1.2;
     color: hsl(var(--muted-foreground));
     background: hsl(var(--muted) / 0.7);
@@ -735,7 +740,7 @@
     border: 1px solid hsl(var(--border) / 0.8);
     border-radius: 999px;
     padding: 0.15rem 0.5rem;
-    font-size: 0.68rem;
+    font-size: 0.816rem;
     color: hsl(var(--muted-foreground));
   }
   .aq-chip svg {
@@ -744,7 +749,7 @@
   }
   .aq-time {
     flex-shrink: 0;
-    font-size: 0.63rem;
+    font-size: 0.756rem;
     color: hsl(var(--muted-foreground));
   }
 
@@ -757,7 +762,7 @@
     border: 1px dashed hsl(var(--border) / 0.9);
     border-radius: 0.5rem;
     padding: 0.8rem;
-    font-size: 0.72rem;
+    font-size: 0.864rem;
     line-height: 1.5;
     color: hsl(var(--muted-foreground));
   }
@@ -786,7 +791,7 @@
     border: 1px solid hsl(var(--border) / 0.75);
     border-radius: 0.6rem;
     padding: 0.75rem;
-    font-size: 0.78rem;
+    font-size: 0.936rem;
     color: hsl(var(--muted-foreground));
   }
   .aq-state > svg {
@@ -829,13 +834,13 @@
   .aq-table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 0.78rem;
+    font-size: 0.936rem;
   }
   .aq-table th {
     padding: 0.5rem 0.65rem;
     border-bottom: 1px solid hsl(var(--border) / 0.75);
     background: hsl(var(--muted) / 0.35);
-    font-size: 0.68rem;
+    font-size: 0.816rem;
     font-weight: 600;
     color: hsl(var(--muted-foreground));
     text-align: left;
@@ -871,12 +876,12 @@
     display: flex;
     align-items: flex-start;
     gap: 0.3rem;
-    font-size: 0.68rem;
+    font-size: 0.816rem;
     line-height: 1.5;
     color: hsl(var(--muted-foreground));
   }
   .aq-hint {
-    font-size: 0.68rem;
+    font-size: 0.816rem;
     color: hsl(var(--muted-foreground));
   }
 
@@ -898,7 +903,7 @@
   }
   .aq-date-label {
     flex-shrink: 0;
-    font-size: 0.7rem;
+    font-size: 0.84rem;
     font-weight: 650;
     color: hsl(var(--muted-foreground));
   }
@@ -916,7 +921,7 @@
     border: 1px solid transparent;
     border-radius: 0.4rem;
     padding: 0.3rem 0.5rem;
-    font-size: 0.67rem;
+    font-size: 0.804rem;
     color: hsl(var(--muted-foreground));
     transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
   }
@@ -926,7 +931,7 @@
   }
   .aq-date b {
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 0.7rem;
+    font-size: 0.84rem;
   }
   .aq-date-active {
     border-color: hsl(var(--primary) / 0.42);
@@ -957,19 +962,19 @@
     padding: 0.5rem 0.6rem;
   }
   .aq-cm-label {
-    font-size: 0.6rem;
+    font-size: 0.72rem;
     letter-spacing: 0.04em;
     color: hsl(var(--muted-foreground));
   }
   .aq-cm-item b {
-    font-size: 0.73rem;
+    font-size: 0.876rem;
     font-weight: 600;
     line-height: 1.4;
     color: hsl(var(--foreground) / 0.92);
     overflow-wrap: anywhere;
   }
   .aq-cm-strength {
-    font-size: 0.6rem;
+    font-size: 0.72rem;
     color: hsl(var(--muted-foreground));
   }
   .aq-cm-main b {
@@ -992,11 +997,11 @@
     padding: 0.85rem 0.9rem;
   }
   .aq-conclusion > strong {
-    font-size: 0.98rem;
+    font-size: 1.176rem;
     line-height: 1.55;
   }
   .aq-conclusion-sub {
-    font-size: 0.72rem;
+    font-size: 0.864rem;
     line-height: 1.5;
     color: hsl(var(--muted-foreground));
   }
@@ -1042,12 +1047,12 @@
     gap: 0.35rem;
   }
   .aq-phase b {
-    font-size: 0.7rem;
+    font-size: 0.84rem;
     color: hsl(var(--foreground) / 0.9);
   }
   .aq-phase span {
     overflow: hidden;
-    font-size: 0.62rem;
+    font-size: 0.744rem;
     color: hsl(var(--muted-foreground));
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1056,7 +1061,7 @@
     display: block;
     overflow: hidden;
     margin-top: 0.25rem;
-    font-size: 0.6rem;
+    font-size: 0.72rem;
     line-height: 1.4;
     color: hsl(var(--muted-foreground) / 0.8);
     text-overflow: ellipsis;
@@ -1068,13 +1073,13 @@
     gap: 0.5rem 1.1rem;
     border-top: 1px solid hsl(var(--border) / 0.6);
     padding-top: 0.55rem;
-    font-size: 0.68rem;
+    font-size: 0.816rem;
     color: hsl(var(--muted-foreground));
   }
   .aq-status-line b {
     margin-right: 0.25rem;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 0.85rem;
+    font-size: 1.02rem;
     color: hsl(var(--foreground));
   }
   .aq-status-muted {
@@ -1104,11 +1109,11 @@
     background: hsl(var(--muted) / 0.45);
   }
   .aq-tab-label {
-    font-size: 0.82rem;
+    font-size: 0.984rem;
     font-weight: 600;
   }
   .aq-tab-desc {
-    font-size: 0.62rem;
+    font-size: 0.744rem;
     color: hsl(var(--muted-foreground) / 0.85);
   }
   .aq-tab-active {
@@ -1136,7 +1141,7 @@
   .aq-metric-grid span {
     display: block;
     overflow: hidden;
-    font-size: 0.6rem;
+    font-size: 0.72rem;
     color: hsl(var(--muted-foreground));
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1146,7 +1151,7 @@
     overflow: hidden;
     margin-top: 0.12rem;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 0.72rem;
+    font-size: 0.864rem;
     color: hsl(var(--foreground) / 0.9);
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1155,7 +1160,7 @@
     margin-top: 0.6rem;
     border-top: 1px solid hsl(var(--border) / 0.45);
     padding-top: 0.55rem;
-    font-size: 0.66rem;
+    font-size: 0.792rem;
     line-height: 1.5;
     color: hsl(var(--muted-foreground));
   }
@@ -1168,7 +1173,7 @@
     display: grid;
     gap: 0.25rem;
     margin-top: 0.6rem;
-    font-size: 0.69rem;
+    font-size: 0.828rem;
     line-height: 1.45;
     color: hsl(var(--foreground) / 0.82);
   }
@@ -1176,12 +1181,12 @@
     margin-top: 0.6rem;
     border-top: 1px solid hsl(var(--border) / 0.45);
     padding-top: 0.55rem;
-    font-size: 0.68rem;
+    font-size: 0.816rem;
     color: hsl(var(--warning));
   }
   .aq-provenance {
     margin-top: 0.5rem;
-    font-size: 0.61rem;
+    font-size: 0.732rem;
     color: hsl(var(--muted-foreground) / 0.8);
   }
 
@@ -1200,7 +1205,7 @@
   .aq-chain-candidate strong {
     min-width: 0;
     overflow: hidden;
-    font-size: 0.78rem;
+    font-size: 0.936rem;
     color: hsl(var(--foreground));
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1209,18 +1214,18 @@
     display: block;
     margin-top: 0.15rem;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 0.95rem;
+    font-size: 1.14rem;
     color: hsl(var(--primary));
   }
   .aq-chain-table td p {
     margin-top: 0.22rem;
-    font-size: 0.62rem;
+    font-size: 0.744rem;
     line-height: 1.45;
     color: hsl(var(--muted-foreground));
   }
   .aq-chain-cell b {
     display: block;
-    font-size: 0.68rem;
+    font-size: 0.816rem;
     line-height: 1.35;
     color: hsl(var(--foreground) / 0.9);
   }
@@ -1232,7 +1237,7 @@
   }
   .aq-chain-cell p {
     margin-top: 0.22rem;
-    font-size: 0.62rem;
+    font-size: 0.744rem;
     line-height: 1.45;
     color: hsl(var(--muted-foreground));
   }
@@ -1263,13 +1268,13 @@
   }
   .aq-chain-node span {
     display: block;
-    font-size: 0.6rem;
+    font-size: 0.72rem;
     color: hsl(var(--muted-foreground));
   }
   .aq-chain-node b {
     display: block;
     margin-top: 0.15rem;
-    font-size: 0.66rem;
+    font-size: 0.792rem;
     font-weight: 600;
     line-height: 1.5;
     color: hsl(var(--foreground) / 0.92);
@@ -1287,13 +1292,13 @@
     display: flex;
     align-items: flex-start;
     margin-top: 0.55rem;
-    font-size: 0.84rem;
+    font-size: 1.008rem;
     font-weight: 700;
     line-height: 1.45;
   }
   .aq-inline-field {
     margin-top: 0.5rem;
-    font-size: 0.69rem;
+    font-size: 0.828rem;
     line-height: 1.5;
     color: hsl(var(--foreground) / 0.8);
   }
@@ -1310,11 +1315,11 @@
     border-left: 2px solid hsl(var(--primary) / 0.55);
     background: hsl(var(--primary) / 0.06);
     padding: 0.5rem 0.6rem;
-    font-size: 0.69rem;
+    font-size: 0.828rem;
     line-height: 1.45;
   }
   .aq-transmission b {
-    font-size: 0.65rem;
+    font-size: 0.78rem;
     color: hsl(var(--primary));
   }
   .aq-transmission p {
@@ -1331,7 +1336,7 @@
     width: fit-content;
     align-items: center;
     margin-top: 0.6rem;
-    font-size: 0.66rem;
+    font-size: 0.792rem;
     color: hsl(var(--primary));
   }
   .aq-source-link:hover {
@@ -1343,7 +1348,7 @@
     align-items: flex-start;
     gap: 0.3rem;
     margin-top: 0.6rem;
-    font-size: 0.66rem;
+    font-size: 0.792rem;
     color: hsl(var(--warning));
   }
   .aq-coverage {
@@ -1354,11 +1359,11 @@
     border: 1px solid hsl(var(--border) / 0.62);
     border-radius: 0.45rem;
     padding: 0.5rem 0.6rem;
-    font-size: 0.63rem;
+    font-size: 0.756rem;
     color: hsl(var(--muted-foreground));
   }
   .aq-coverage strong {
-    font-size: 0.66rem;
+    font-size: 0.792rem;
     color: hsl(var(--foreground) / 0.88);
   }
   .aq-coverage span {
@@ -1377,18 +1382,18 @@
     gap: 0.75rem;
   }
   .aq-subhead h3 {
-    font-size: 0.8rem;
+    font-size: 0.96rem;
     font-weight: 700;
   }
   .aq-subhead span {
-    font-size: 0.63rem;
+    font-size: 0.756rem;
     color: hsl(var(--muted-foreground));
   }
   .aq-bullet-list {
     display: grid;
     gap: 0.2rem;
     margin-top: 0.5rem;
-    font-size: 0.69rem;
+    font-size: 0.828rem;
     line-height: 1.5;
     color: hsl(var(--muted-foreground));
   }
@@ -1407,7 +1412,7 @@
     gap: 0.12rem;
     border-left: 2px solid hsl(var(--primary) / 0.4);
     padding-left: 0.5rem;
-    font-size: 0.68rem;
+    font-size: 0.816rem;
     line-height: 1.45;
   }
   .aq-link-list span {
@@ -1447,14 +1452,14 @@
   .aq-conclusion-block strong {
     display: block;
     margin-top: 0.2rem;
-    font-size: 0.84rem;
+    font-size: 1.008rem;
     line-height: 1.5;
   }
   .aq-label {
     display: flex;
     align-items: center;
     gap: 0.3rem;
-    font-size: 0.64rem;
+    font-size: 0.768rem;
     font-weight: 700;
     color: hsl(var(--primary));
   }
@@ -1474,7 +1479,7 @@
     align-items: center;
     gap: 0.4rem;
     padding: 0.5rem 0.6rem;
-    font-size: 0.72rem;
+    font-size: 0.864rem;
     font-weight: 600;
     color: hsl(var(--foreground) / 0.88);
     cursor: pointer;
@@ -1505,7 +1510,7 @@
     border-radius: 0.45rem;
     background: hsl(var(--background) / 0.2);
     padding: 0.6rem;
-    font-size: 0.7rem;
+    font-size: 0.84rem;
     line-height: 1.55;
     color: hsl(var(--foreground) / 0.8);
   }
@@ -1518,7 +1523,7 @@
     margin-top: 0.45rem;
     border-top: 1px solid hsl(var(--border) / 0.45);
     padding-top: 0.4rem;
-    font-size: 0.65rem;
+    font-size: 0.78rem;
     color: hsl(var(--muted-foreground));
   }
   .aq-buckets {
@@ -1531,7 +1536,7 @@
     display: grid;
     grid-template-columns: 5.4rem minmax(0, 1fr);
     gap: 0.4rem;
-    font-size: 0.65rem;
+    font-size: 0.78rem;
     line-height: 1.45;
     color: hsl(var(--muted-foreground));
   }
@@ -1544,7 +1549,7 @@
     gap: 0.25rem;
     border-top: 1px solid hsl(var(--border) / 0.45);
     padding-top: 0.5rem;
-    font-size: 0.66rem;
+    font-size: 0.792rem;
     color: hsl(var(--muted-foreground));
   }
   .aq-disagreement span {
@@ -1570,7 +1575,7 @@
     gap: 0.3rem;
     border: 1px solid hsl(var(--border) / 0.55);
     padding: 0.35rem 0.45rem;
-    font-size: 0.63rem;
+    font-size: 0.756rem;
     color: hsl(var(--muted-foreground));
   }
   .aq-stat-row b {
@@ -1583,7 +1588,7 @@
     margin-top: 0.6rem;
     border-top: 1px solid hsl(var(--border) / 0.45);
     padding-top: 0.5rem;
-    font-size: 0.66rem;
+    font-size: 0.792rem;
     color: hsl(var(--muted-foreground));
   }
   .aq-foot-notes span {
@@ -1608,7 +1613,7 @@
     flex-wrap: wrap;
     align-items: center;
     gap: 0.4rem 0.85rem;
-    font-size: 0.67rem;
+    font-size: 0.804rem;
     color: hsl(var(--muted-foreground));
   }
   .aq-lab-summary span {
@@ -1630,13 +1635,13 @@
   .aq-variant-pnl {
     flex-shrink: 0;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 1rem;
+    font-size: 1.2rem;
   }
   .aq-variant-strategy {
     display: grid;
     gap: 0.28rem;
     margin-top: 0.45rem;
-    font-size: 0.66rem;
+    font-size: 0.792rem;
     line-height: 1.5;
     color: hsl(var(--foreground) / 0.82);
     overflow-wrap: anywhere;
@@ -1647,7 +1652,7 @@
     gap: 0.4rem;
   }
   .aq-variant-strategy b {
-    font-size: 0.6rem;
+    font-size: 0.72rem;
     font-weight: 650;
     color: hsl(var(--primary));
   }
@@ -1658,7 +1663,7 @@
     border-left: 2px solid hsl(var(--primary) / 0.65);
     background: hsl(var(--muted) / 0.22);
     padding: 0.35rem 0.5rem;
-    font-size: 0.63rem;
+    font-size: 0.756rem;
     line-height: 1.45;
   }
   .aq-variant-lifecycle b {
@@ -1677,27 +1682,27 @@
   }
   .aq-variant-account span {
     display: block;
-    font-size: 0.6rem;
+    font-size: 0.72rem;
     color: hsl(var(--muted-foreground));
   }
   .aq-variant-account b {
     display: block;
     margin-top: 0.12rem;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 0.7rem;
+    font-size: 0.84rem;
     overflow-wrap: anywhere;
   }
   .aq-variant-holdings {
     display: grid;
     gap: 0.2rem;
     margin-top: 0.55rem;
-    font-size: 0.63rem;
+    font-size: 0.756rem;
     line-height: 1.45;
     color: hsl(var(--foreground) / 0.8);
     overflow-wrap: anywhere;
   }
   .aq-variant-holdings > b {
-    font-size: 0.6rem;
+    font-size: 0.72rem;
     font-weight: 650;
     color: hsl(var(--primary));
   }
@@ -1715,7 +1720,7 @@
     display: block;
     margin-top: 0.12rem;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 0.6rem;
+    font-size: 0.72rem;
     font-weight: 400;
     color: hsl(var(--muted-foreground));
   }
@@ -1724,7 +1729,7 @@
   }
   .aq-variant-rules {
     margin-top: 0.6rem;
-    font-size: 0.61rem;
+    font-size: 0.732rem;
     line-height: 1.5;
     color: hsl(var(--muted-foreground));
   }
@@ -1736,7 +1741,7 @@
   }
   .aq-field-inline > span {
     flex-shrink: 0;
-    font-size: 0.68rem;
+    font-size: 0.816rem;
     color: hsl(var(--muted-foreground));
   }
   .aq-field-inline .aq-input {
@@ -1744,7 +1749,7 @@
     width: auto;
     flex: none;
     padding: 0.35rem 0.5rem;
-    font-size: 0.73rem;
+    font-size: 0.876rem;
   }
 
   /* ---------------------------------------------------------- 命令面板 */
@@ -1761,7 +1766,7 @@
     background: hsl(var(--background) / 0.4);
     padding: 0.4rem 0.55rem;
     color: hsl(var(--muted-foreground));
-    font-size: 0.73rem;
+    font-size: 0.876rem;
     transition: border-color 140ms ease, color 140ms ease;
   }
   .aq-search-trigger:hover {
@@ -1786,7 +1791,7 @@
     border: 1px solid hsl(var(--border));
     border-radius: 0.25rem;
     padding: 0.05rem 0.25rem;
-    font-size: 0.62rem;
+    font-size: 0.744rem;
   }
 
   .aq-palette-overlay {
@@ -1834,7 +1839,7 @@
     border: 0;
     background: transparent;
     color: hsl(var(--foreground));
-    font-size: 0.9rem;
+    font-size: 1.08rem;
     outline: none;
   }
   .aq-palette-list {
@@ -1852,7 +1857,7 @@
     background: transparent;
     padding: 0.45rem 0.5rem;
     color: hsl(var(--foreground) / 0.85);
-    font-size: 0.8rem;
+    font-size: 0.96rem;
     text-align: left;
   }
   .aq-palette-item-icon {
@@ -1869,7 +1874,7 @@
     min-width: 0;
     flex: 1;
     overflow: hidden;
-    font-size: 0.68rem;
+    font-size: 0.816rem;
     color: hsl(var(--muted-foreground));
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1889,7 +1894,7 @@
   }
   .aq-palette-empty {
     padding: 0.7rem 0.5rem;
-    font-size: 0.73rem;
+    font-size: 0.876rem;
     color: hsl(var(--muted-foreground));
   }
   .aq-palette-foot {
@@ -1898,7 +1903,7 @@
     gap: 0.3rem;
     border-top: 1px solid hsl(var(--border) / 0.6);
     padding: 0.45rem 0.4rem 0.1rem;
-    font-size: 0.65rem;
+    font-size: 0.78rem;
     color: hsl(var(--muted-foreground));
   }
   .aq-palette-foot kbd {
@@ -1931,7 +1936,7 @@
     border: 1px dashed hsl(var(--border) / 0.9);
     border-radius: 0.55rem;
     padding: 0.6rem 0.7rem;
-    font-size: 0.73rem;
+    font-size: 0.876rem;
     line-height: 1.65;
     color: hsl(var(--muted-foreground));
   }
@@ -1970,7 +1975,7 @@
     gap: 0.4rem;
   }
   .aq-note-body {
-    font-size: 0.77rem;
+    font-size: 0.924rem;
     line-height: 1.75;
     color: hsl(var(--muted-foreground));
     white-space: pre-wrap;
@@ -2001,7 +2006,7 @@
     border-radius: 0.5rem;
     padding: 0.4rem 0.65rem;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 0.76rem;
+    font-size: 0.912rem;
     color: hsl(var(--muted-foreground));
     transition: border-color 140ms ease, color 140ms ease, background 140ms ease;
   }
@@ -2052,11 +2057,11 @@
     border: 1px solid hsl(var(--border) / 0.6);
     border-radius: 0.4rem;
     padding: 0.22rem 0.45rem;
-    font-size: 0.7rem;
+    font-size: 0.84rem;
   }
   .aq-index-chip b,
   .aq-global-chip b {
-    font-size: 0.66rem;
+    font-size: 0.792rem;
     font-weight: 600;
     color: hsl(var(--muted-foreground));
   }
@@ -2066,7 +2071,7 @@
     color: hsl(var(--muted-foreground));
   }
   .aq-breadth-item {
-    font-size: 0.68rem;
+    font-size: 0.816rem;
     color: hsl(var(--muted-foreground));
   }
   .aq-breadth-item b {
@@ -2079,7 +2084,7 @@
     flex-shrink: 0;
     align-items: center;
     gap: 0.25rem;
-    font-size: 0.7rem;
+    font-size: 0.84rem;
     color: hsl(var(--primary));
   }
   .aq-strip-link:hover {
@@ -2110,21 +2115,21 @@
     display: flex;
     align-items: center;
     gap: 0.3rem;
-    font-size: 0.66rem;
+    font-size: 0.792rem;
     color: hsl(var(--muted-foreground));
   }
   .aq-index-card > b {
-    font-size: 1.05rem;
+    font-size: 1.26rem;
     color: hsl(var(--foreground));
   }
   .aq-index-change {
     display: flex;
     align-items: baseline;
     gap: 0.4rem;
-    font-size: 0.72rem;
+    font-size: 0.864rem;
   }
   .aq-index-change small {
-    font-size: 0.6rem;
+    font-size: 0.72rem;
     opacity: 0.8;
   }
 
@@ -2145,13 +2150,13 @@
   }
   .aq-breadth-metrics span {
     display: block;
-    font-size: 0.6rem;
+    font-size: 0.72rem;
     color: hsl(var(--muted-foreground));
   }
   .aq-breadth-metrics b {
     display: block;
     margin-top: 0.12rem;
-    font-size: 0.95rem;
+    font-size: 1.14rem;
   }
 
   .aq-flow-cols {
@@ -2170,7 +2175,7 @@
     gap: 0.4rem;
     border-bottom: 1px solid hsl(var(--border) / 0.35);
     padding: 0.28rem 0;
-    font-size: 0.7rem;
+    font-size: 0.84rem;
   }
   .aq-flow-name {
     overflow: hidden;
@@ -2196,12 +2201,12 @@
     border-radius: 0.4rem;
     background: hsl(var(--warning) / 0.08);
     padding: 0.25rem 0.5rem;
-    font-size: 0.68rem;
+    font-size: 0.816rem;
     color: hsl(var(--warning));
   }
   .aq-ladder-chip b {
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 0.8rem;
+    font-size: 0.96rem;
     color: hsl(var(--foreground));
   }
 
@@ -2257,7 +2262,7 @@
     padding: 0.9rem 1rem;
   }
   .aq-drawer-panel-head h2 {
-    font-size: 1.1rem;
+    font-size: 1.32rem;
     font-weight: 700;
   }
   .aq-drawer-panel-body {
@@ -2276,14 +2281,14 @@
     border-bottom: 0;
   }
   .aq-detail-muted {
-    font-size: 0.68rem;
+    font-size: 0.816rem;
     line-height: 1.5;
     color: hsl(var(--muted-foreground));
   }
   .aq-detail-list {
     display: grid;
     gap: 0.3rem;
-    font-size: 0.7rem;
+    font-size: 0.84rem;
   }
   .aq-detail-list li {
     display: flex;
@@ -2326,11 +2331,11 @@
     padding: 0.6rem 0.7rem;
   }
   .aq-total-card span {
-    font-size: 0.62rem;
+    font-size: 0.744rem;
     color: hsl(var(--muted-foreground));
   }
   .aq-total-card b {
-    font-size: 0.92rem;
+    font-size: 1.104rem;
   }
   .aq-closing-form {
     display: grid;
@@ -2358,7 +2363,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 0.68rem;
+    font-size: 0.816rem;
     color: hsl(var(--muted-foreground));
   }
   .aq-chart-fallback {
@@ -2368,7 +2373,7 @@
   /* ---------------------------------------------------------- Markdown */
 
   .aq-markdown {
-    font-size: 0.74rem;
+    font-size: 0.888rem;
     line-height: 1.7;
     color: hsl(var(--foreground) / 0.82);
     overflow-wrap: anywhere;
@@ -2386,13 +2391,13 @@
     color: hsl(var(--foreground));
   }
   .aq-markdown h1 {
-    font-size: 1rem;
+    font-size: 1.2rem;
   }
   .aq-markdown h2 {
-    font-size: 0.9rem;
+    font-size: 1.08rem;
   }
   .aq-markdown h3 {
-    font-size: 0.82rem;
+    font-size: 0.984rem;
   }
   .aq-markdown p {
     margin: 0.4rem 0;
@@ -2447,7 +2452,7 @@
     width: 100%;
     border-collapse: collapse;
     margin: 0.5rem 0;
-    font-size: 0.72rem;
+    font-size: 0.864rem;
   }
   .aq-markdown th,
   .aq-markdown td {
@@ -2509,14 +2514,14 @@
     gap: 0.4rem;
   }
   .aq-radar-time {
-    font-size: 0.62rem;
+    font-size: 0.744rem;
     color: hsl(var(--muted-foreground));
   }
   .aq-radar-title {
     display: flex;
     align-items: flex-start;
     gap: 0.25rem;
-    font-size: 0.76rem;
+    font-size: 0.912rem;
     line-height: 1.5;
     color: hsl(var(--foreground) / 0.92);
     overflow-wrap: anywhere;
@@ -2541,11 +2546,11 @@
     gap: 0.5rem 0.8rem;
   }
   .aq-intro-head .aq-score b {
-    font-size: 1.4rem;
+    font-size: 1.68rem;
   }
 
   .aq-radar-summary {
-    font-size: 0.66rem;
+    font-size: 0.792rem;
     line-height: 1.5;
     color: hsl(var(--muted-foreground));
   }
@@ -2604,7 +2609,7 @@
     gap: 0.2rem;
     padding: 0.4rem;
     text-align: center;
-    font-size: 0.68rem;
+    font-size: 0.816rem;
   }
   .aq-nav-desc {
     display: none;
@@ -2659,3 +2664,207 @@
     grid-template-columns: minmax(0, 1fr) 4rem 4.5rem;
   }
 }
+
+/* ============================================================
+   2026-09-21 视觉刷新（附加层，不动上面的既有规则）
+   - 空态/加载态更饱满，避免大片纯黑留白
+   - 键盘焦点可见（可访问性）
+   - 标题字重与分区间距更有层次
+   ============================================================ */
+@layer components {
+  /* 空态：给一个最小高度与居中，不再是一条细缝 */
+  .aq-empty {
+    align-items: center;
+    min-height: 5.5rem;
+    border-radius: 0.7rem;
+    padding: 1.1rem 1.15rem;
+  }
+
+  /* 状态行（加载中/失败）：更明显的块，而不是一条线 */
+  .aq-state {
+    min-height: 3.6rem;
+    border-radius: 0.7rem;
+    padding: 0.95rem 1.05rem;
+  }
+
+  /* 分区标题层级 */
+  .aq-section-head-main h2 {
+    letter-spacing: -0.01em;
+  }
+  .aq-page-sub {
+    line-height: 1.6;
+  }
+
+  /* 可访问性：键盘焦点可见 */
+  a:focus-visible,
+  button:focus-visible,
+  input:focus-visible,
+  textarea:focus-visible,
+  select:focus-visible,
+  [tabindex]:focus-visible {
+    outline: 2px solid hsl(var(--primary) / 0.75);
+    outline-offset: 2px;
+    border-radius: 0.4rem;
+  }
+
+  /* 卡片 hover 更克制（只提边框 + 极轻抬起） */
+  .aq-card:hover {
+    border-color: hsl(var(--primary) / 0.45);
+  }
+
+  /* 整页级空/错状态（hero）：页面拿不到数据时居中呈现，不留大片空白 */
+  .aq-hero-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.55rem;
+    min-height: 46vh;
+    border: 1px dashed hsl(var(--border) / 0.85);
+    border-radius: 0.9rem;
+    background: hsl(var(--card) / 0.32);
+    padding: 2.75rem 1.5rem;
+    text-align: center;
+  }
+  .aq-hero-state-icon {
+    height: 2.1rem;
+    width: 2.1rem;
+    color: hsl(var(--muted-foreground));
+  }
+  .aq-hero-state strong {
+    font-size: 1.05rem;
+  }
+  .aq-hero-state p {
+    max-width: 36rem;
+    font-size: 0.84rem;
+    line-height: 1.7;
+    color: hsl(var(--muted-foreground));
+  }
+  .aq-hero-state-action {
+    margin-top: 0.5rem;
+  }
+  .aq-hero-state.aq-tone-warn .aq-hero-state-icon {
+    color: hsl(var(--warning));
+  }
+  .aq-hero-state.aq-tone-neutral .aq-hero-state-icon {
+    color: hsl(var(--muted-foreground));
+  }
+
+  /* 页面级状态（加载/错误/空）：作为 .aq-page 的直接子元素时居中铺开。
+     否则整页只有顶部一条细缝/小盒子，下面一大片空白，像"页面坏了"。
+     也覆盖 `.aq-content` 直接子元素 —— 有些页在数据未就绪时提前 return
+     `<LoadingState>`（挂在 .aq-content 下，不在 .aq-page 内）。 */
+  .aq-page > .aq-state,
+  .aq-page > .aq-empty,
+  .aq-content > .aq-state,
+  .aq-content > .aq-empty {
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.6rem;
+    min-height: 38vh;
+    padding: 1.6rem 1.25rem;
+    text-align: center;
+    border-radius: 0.9rem;
+  }
+  .aq-page > .aq-empty .aq-empty-body,
+  .aq-content > .aq-empty .aq-empty-body {
+    align-items: center;
+  }
+}
+
+/* ============================================================
+   设计系统 v2（2026-09-21）：让"面"真正成面
+   ------------------------------------------------------------
+   旧版 .aq-card / .aq-section 用极低透明度背景（card/0.6、card/0.35），
+   于是卡片融进页面背景 —— 观感扁平、层次弱、发闷。
+   这里改成实底 + 明确边框 + 轻投影 + hover 抬起；并加强标题层级。
+   放在文件末尾，覆盖前面的重复定义（2615-2646 那套 compact 覆盖）。
+   ============================================================ */
+@layer components {
+  .aq-card {
+    background: hsl(var(--card) / 0.96);
+    border: 1px solid hsl(var(--border) / 0.9);
+    border-radius: 0.8rem;
+    box-shadow: 0 1px 0 hsl(0 0% 100% / 0.03) inset, 0 10px 30px -20px hsl(0 0% 0% / 0.95);
+    transition: border-color 160ms ease, transform 160ms ease, box-shadow 160ms ease;
+  }
+  .aq-card:hover {
+    border-color: hsl(var(--primary) / 0.5);
+    transform: translateY(-1px);
+    box-shadow: 0 1px 0 hsl(0 0% 100% / 0.04) inset, 0 16px 40px -22px hsl(0 0% 0% / 1);
+  }
+
+  .aq-section {
+    background: hsl(var(--card) / 0.9);
+    border: 1px solid hsl(var(--border) / 0.85);
+    border-radius: 0.8rem;
+    box-shadow: 0 1px 0 hsl(0 0% 100% / 0.025) inset, 0 8px 24px -20px hsl(0 0% 0% / 0.9);
+  }
+
+  .aq-total-card {
+    background: hsl(var(--card) / 0.96);
+    border: 1px solid hsl(var(--border) / 0.9);
+    border-radius: 0.75rem;
+    box-shadow: 0 1px 0 hsl(0 0% 100% / 0.03) inset;
+  }
+
+  /* 页面标题层级更强 */
+  .aq-page-head h1 {
+    font-size: 1.9rem;
+    letter-spacing: -0.02em;
+  }
+  .aq-section-head-main h2 {
+    font-size: 1.05rem;
+  }
+
+  /* 侧栏：与主区拉开一层 */
+  .aq-sidebar {
+    border-right: 1px solid hsl(var(--border) / 0.8);
+  }
+
+  /* 表格表头更清晰 */
+  .aq-table th {
+    background: hsl(var(--muted) / 0.5);
+  }
+}
+
+/* ============================================================
+   指标卡 v2（2026-09-21）：给纯文本指标以视觉重量
+   ------------------------------------------------------------
+   市场页 / 绩效页的指标原本是"小扁盒子 + 小字"，数字没有重量。
+   这里统一成实底卡 + 大号数字 + 清晰的标签。
+   ============================================================ */
+@layer components {
+  .aq-breadth-metrics > div,
+  .aq-metric-grid > div {
+    background: hsl(var(--card) / 0.96);
+    border: 1px solid hsl(var(--border) / 0.9);
+    border-radius: 0.6rem;
+    padding: 0.6rem 0.7rem;
+    box-shadow: 0 1px 0 hsl(0 0% 100% / 0.03) inset;
+  }
+  .aq-breadth-metrics span,
+  .aq-metric-grid span {
+    font-size: 0.78rem;
+    letter-spacing: 0.02em;
+  }
+  .aq-breadth-metrics b,
+  .aq-metric-grid b {
+    margin-top: 0.18rem;
+    font-size: 1.15rem;
+    font-weight: 600;
+    line-height: 1.25;
+  }
+}
+
+/* PR-X3：个股研究 / 题材传导（catalyst-client 驱动） */
+.aq-research-quote { margin-bottom: 12px; }
+.aq-research-quote-body { display: flex; flex-direction: column; gap: 6px; }
+.aq-event-row { padding: 10px 0; border-top: 1px solid rgba(128, 128, 128, 0.2); }
+.aq-event-row:first-of-type { border-top: none; }
+.aq-event-title { margin: 6px 0 4px; font-weight: 600; }
+.aq-transmission-path { margin: 4px 0; opacity: 0.85; }
+.aq-concept-card { margin-bottom: 14px; }
+.aq-concept-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 4px; }
+.aq-concept-head h3 { margin: 0; font-size: 1.05em; }

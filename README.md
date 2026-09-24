@@ -197,7 +197,7 @@ GitHub Actions 当前不上传 `data/predictions.jsonl`。如果需要跨运行�
 
 1. `docs/architecture.md`：项目宪法、边界和模块契约。
 2. `AGENTS.md`：编码硬约束、测试要求和红线。
-3. `docs/model-handoff.md`：截至 2026-06-03 的已实现内容、计划内容、已知 bug、服务器命令和接手路线。
+3. `docs/CURRENT_STATE.md`：项目现状的单一事实来源（拓扑 / 数据面 / 前端 IA / 进行中）。2026-06-03 的接手快照已归档到 `docs/archive/process/model-handoff.md`，仅供追溯。
 4. `docs/simple-server-mode.md`：云服务器自动更新、cron、doctor、monitor、LLM/通知配置。
 5. `tests/README.md`：测试分层和回归入口。
 

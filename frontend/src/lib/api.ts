@@ -267,6 +267,62 @@ export interface RadarData {
   stats: { industries: number; total_sources: number; failed_sources?: number };
 }
 
+/** 单条解禁预警（后端 `GET /api/events` 的 `data.upcoming_unlocks` 元素）。 */
+export interface UpcomingUnlockEvent {
+  symbol: string; name: string; event_type: string; event_date: string;
+  days_until: number; severity: string; ratio: number | null; detail: string;
+}
+
+/** 单条龙虎榜佐证（`data.recent_longhubang` 元素）。net_amount 为 null = 净额未披露。 */
+export interface RecentLonghubangEvent {
+  symbol: string; name: string; event_type: string; event_date: string;
+  days_ago: number; net_amount: number | null; interpretation: string; detail: string;
+}
+
+/** 事件日历（pit_cache 只读）。缺缓存 ≠ 没事件，用 has_*_data 区分。 */
+export interface EventCalendarData {
+  symbol: string; as_of: string;
+  unlock_horizon_days: number; longhubang_lookback_days: number;
+  has_unlock_data: boolean; has_longhubang_data: boolean;
+  upcoming_unlocks: UpcomingUnlockEvent[];
+  recent_longhubang: RecentLonghubangEvent[];
+}
+
+/** 单条催化事件（后端 `GET /api/catalyst` 的 `data.events` 元素）。 */
+export interface CatalystEvent {
+  title: string;
+  summary: string;
+  source: string;
+  published_at: string;
+  symbol: string;
+  name: string;
+  impact: "positive" | "negative" | "neutral";
+  category: string;
+  weight: number;
+  confidence: number;
+  verification: string;
+  url: string;
+  affected_sectors: string[];
+  affected_symbols: string[];
+  transmission_path: string[];
+  transmission_hypothesis: string;
+  time_horizon: string;
+}
+
+/** 催化事件中枢（`GET /api/catalyst` 的 `data` 部分）。失败降级时 events 可能为空。 */
+export interface CatalystData {
+  schema_version?: string;
+  date?: string;
+  generated_at: string | null;
+  source_status: string;
+  event_status?: string;
+  warnings: string[];
+  events: CatalystEvent[];
+  market_clues?: string[];
+  region_statuses?: Record<string, string>;
+  source_statuses?: Record<string, string>;
+}
+
 export interface Holding {
   code: string; name: string; price: number; shares: number; cost: number;
   market_value: number; pnl: number; pnl_pct: number;
@@ -405,7 +461,9 @@ export const api = {
   globalIndices: () => get<GlobalIndex[]>("/global/indices"),
   globalStock: (symbol: string) => get<GlobalStock>(`/global/stock?symbol=${encodeURIComponent(symbol)}`),
   radar: () => get<RadarData>("/radar"),
+  events: (code: string) => get<EventCalendarData>(`/events?code=${code}`),
   radarRefresh: () => request<RadarData>("/radar/refresh", "POST"),
+  catalyst: () => get<CatalystData>("/catalyst"),
   portfolio: () => get<PortfolioData>("/portfolio"),
   addHolding: (code: string, shares: number, cost: number) => request<PortfolioData>("/portfolio/holding", "POST", { code, shares, cost }),
   removeHolding: (code: string) => request<PortfolioData>(`/portfolio/holding?code=${code}`, "DELETE"),

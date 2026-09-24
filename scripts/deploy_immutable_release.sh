@@ -148,6 +148,35 @@ assert_idle_window() {
 }
 
 # ---------------------------------------------------------------------------
+# pre-switch guard — re-check busyness immediately before the atomic symlink
+# switch. assert_idle_window() only runs once at start-up, but staging builds
+# the frontend for minutes; a BaoTa task that starts during the build would
+# otherwise run across two releases. Refusing is safe: the staged release is
+# kept on disk, so a re-run reuses it instead of rebuilding.
+# ---------------------------------------------------------------------------
+release_busy() {
+    pgrep -f "[a]qsp walkforward" >/dev/null 2>&1 && return 0
+    pgrep -f "[b]t_task[.]sh" >/dev/null 2>&1 && return 0
+    return 1
+}
+
+assert_idle_before_switch() {
+    if [ "$FORCE" = "true" ]; then
+        log "pre-switch guard skipped: --force"
+        return 0
+    fi
+    local grace="${AQSP_DEPLOY_SWITCH_GRACE_SECONDS:-120}"
+    local deadline=$(( $(date +%s) + grace ))
+    while :; do
+        release_busy || { log "pre-switch idle ok"; return 0; }
+        if [ "$(date +%s)" -ge "$deadline" ]; then
+            fail "pre-switch idle guard: a gate/BaoTa task is still running after ${grace}s; refusing to cut over. A task spanning two releases is worse than a failed deploy — the built release is kept, re-run to switch."
+        fi
+        sleep 5
+    done
+}
+
+# ---------------------------------------------------------------------------
 # dry-run plan — print intended actions, touch nothing
 # ---------------------------------------------------------------------------
 dry_run_plan() {
@@ -608,6 +637,7 @@ check_release "$RELEASE_DIR"
 # The BaoTa wrappers are external state. Reject schedule drift before the
 # symlink/service switch so a failed acceptance never leaves a half deployment.
 run_scheduler_check "$RELEASE_DIR"
+assert_idle_before_switch
 switch_links "$RELEASE_DIR"
 check_current_release "$RELEASE_DIR"
 

@@ -9,6 +9,11 @@
 
 后果：``stable_plus``（生产默认 N=8）声称的「含因子族多样性」不成立，
 且 ``MIN_CSCV_VARIANTS=8`` 这道 fail-closed 守卫被一个**重复列**凑数通过。
+
+同一型缺陷在 ``htf_mr`` 档位（T3 方案 A，由 #163 加入 main）**复发**：
+``lookback_days`` 被写进 momentum 而该档位把 momentum 权重清零 ⇒ ``lb`` 是死旋钮，
+``WF-H04`` / ``WF-H05`` 与 ``WF-H01`` 完全同列（见 #175）。故本文件的档位清单已
+扩到 ``htf_mr``，并把「互异列数 >= MIN_CSCV_VARIANTS」按档位参数化。
 """
 
 from __future__ import annotations
@@ -28,7 +33,11 @@ from aqsp.strategies.composite import CompositeStrategy
 from aqsp.strategies.thresholds import load_thresholds
 from aqsp.walkforward_gate import MIN_CSCV_VARIANTS
 
-PROFILES = ("stable", "stable_plus", "exploratory")
+PROFILES = ("stable", "stable_plus", "exploratory", "htf_mr")
+
+#: 变体数 >= MIN_CSCV_VARIANTS 的档位 —— 只有这些档位才受「互异列数必须真正够数」
+#: 这条守卫约束（``stable`` N=5 天然不足，不在此列）。
+PROFILES_MEETING_MIN_CSCV = ("stable_plus", "exploratory", "htf_mr")
 
 BARS = 220
 SYMBOL_COUNT = 40
@@ -133,14 +142,15 @@ def _profile_signature(
 
 @pytest.mark.parametrize("profile", PROFILES)
 def test_profile_has_no_duplicate_variant_columns(profile: str) -> None:
-    """门禁网格里不得出现「打分 + top_n 完全相同」的重复列（三个档位全覆盖）。
+    """门禁网格里不得出现「打分 + top_n 完全相同」的重复列（全部档位覆盖）。
 
     这是 ``MIN_CSCV_VARIANTS`` / PBO 统计有效性的前提：CSCV 假设 N 个**互异**策略，
     重复列会让参数被幻觉地"凑够"，并使 PBO 失真。
 
     ``exploratory`` = 全部已验证变体（含 WF-V01/WF-MR1），此前未被覆盖；
-    ``_apply_walkforward_grid_variant`` 的因子 enable 逻辑对三个档位是同一份代码，
-    故必须三档同验。
+    ``htf_mr`` = T3 方案 A 档位（#175 复发点），此前未被覆盖；
+    ``_apply_walkforward_grid_variant`` 的因子 enable 逻辑对所有档位是同一份代码，
+    故必须全档同验。
     """
     data = _data()
     seen: dict[tuple[tuple[float, ...], int, int], str] = {}
@@ -164,5 +174,30 @@ def test_stable_plus_meets_min_cscv_variants_with_distinct_columns() -> None:
     distinct = set(_profile_signature(variants, data).values())
     assert len(distinct) >= MIN_CSCV_VARIANTS, (
         f"stable_plus 有 {len(variants)} 列但仅 {len(distinct)} 个互异列；"
+        f"MIN_CSCV_VARIANTS={MIN_CSCV_VARIANTS} 会被重复列凑数满足"
+    )
+
+
+@pytest.mark.parametrize("profile", PROFILES_MEETING_MIN_CSCV)
+def test_profile_meets_min_cscv_variants_with_distinct_columns(profile: str) -> None:
+    """所有「声称 N>=MIN_CSCV_VARIANTS」的档位，互异列数必须真的够。
+
+    #175 回归点：``htf_mr``（T3 方案 A）此前把 ``lookback_days`` 只写进
+    ``MomentumThresholds``，而该档位把 momentum 权重清零 ⇒ ``lb`` 是**死旋钮**，
+    8 列里只有 6 个互异策略（``WF-H04`` / ``WF-H05`` 与 ``WF-H01`` 打分+top_n+horizon
+    完全相同）。这正是 ``stable_plus`` 在 #135 修过的同一型缺陷，只是当时
+    ``PROFILES`` 未含 ``htf_mr``（该档位由 #163 后加入 main），守卫覆盖不到。
+
+    故此处按**档位**参数化而非只钉 ``stable_plus``：任何新增档位只要声称 N>=8
+    就自动被这条守卫覆盖，不会再有「新档位漏网」。
+    """
+    data = _data()
+    variants = _walkforward_grid_variants(profile)
+    assert len(variants) >= MIN_CSCV_VARIANTS, (
+        f"[{profile}] 只有 {len(variants)} 列，本用例只约束声称够数的档位"
+    )
+    distinct = set(_profile_signature(variants, data).values())
+    assert len(distinct) >= MIN_CSCV_VARIANTS, (
+        f"[{profile}] 有 {len(variants)} 列但仅 {len(distinct)} 个互异列；"
         f"MIN_CSCV_VARIANTS={MIN_CSCV_VARIANTS} 会被重复列凑数满足"
     )
