@@ -298,6 +298,13 @@ def test_release_consistency_immutable_release_ignores_remote_and_overlay(
     assert findings == []
 
 
+def test_release_digest_excludes_runtime_release_sha(tmp_path: Path) -> None:
+    manifest = _manifest(tmp_path)
+    files = checker._release_files_for_digest(tmp_path, manifest)
+
+    assert "RELEASE_SHA" not in files
+
+
 def test_release_consistency_immutable_release_allows_release_generated_files(
     monkeypatch, tmp_path: Path
 ) -> None:
