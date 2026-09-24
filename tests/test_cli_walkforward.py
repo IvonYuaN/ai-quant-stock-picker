@@ -1729,6 +1729,14 @@ class TestCLIRegimeDescription:
         assert "未知" in _regime_description("foobar")
 
 
+def test_grid_report_metric_note_labels_prelude_metrics() -> None:
+    from aqsp import cli as cli_mod
+
+    assert "prelude" in cli_mod._grid_report_metric_note(True)
+    assert "DSR/PBO" in cli_mod._grid_report_metric_note(True)
+    assert cli_mod._grid_report_metric_note(False) == ""
+
+
 def test_walkforward_grid_uses_stable_gate_variants_by_default() -> None:
     import aqsp.cli as cli_mod
 
