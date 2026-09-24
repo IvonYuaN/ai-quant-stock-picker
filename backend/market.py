@@ -16,17 +16,23 @@ import gstock
 BEIJING = timezone(timedelta(hours=8))
 _CACHE: dict = {}
 _TTL = 300  # 5 分钟；全站共享，省数据源压力
+# 空/失败结果的**负缓存**时长。原实现是"空结果不缓存、下次直接重试"，
+# 结果上游故障时**每个请求都去撞**（实测 /api/global/indices 单次 14–53s），
+# 把整页拖死。改成空结果也缓存 60s：既不再连环撞上游，又能较快自愈。
+_NEG_TTL = 60
 
 
 def _cached(key: str, fn, valid=bool):
-    """TTL 缓存。数据源故障的空结果不缓存（valid 判否），下次请求直接重试。"""
+    """TTL 缓存。有效结果缓存 _TTL；空/失败结果缓存 _NEG_TTL（负缓存）。"""
     now = time.time()
     hit = _CACHE.get(key)
-    if hit and now - hit[0] < _TTL:
-        return hit[1]
+    if hit:
+        ts, val = hit
+        ttl = _TTL if valid(val) else _NEG_TTL
+        if now - ts < ttl:
+            return val
     val = fn()
-    if valid(val):
-        _CACHE[key] = (now, val)
+    _CACHE[key] = (now, val)
     return val
 
 

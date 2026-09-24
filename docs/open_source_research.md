@@ -76,19 +76,19 @@
   - 任何实盘交易、算法执行、接口接入能力都不进本仓库。
   - 机器学习模型不能直接覆盖 deterministic score，只能先走 shadow mode / report-only。
 
-当前可维护清单见：
+当前可维护入口（2026-09-22 核对）：
 
 - `config/data_sources.yaml`: A股数据源候选与运行状态。
 - `config/strategy_sources.yaml`: 策略家族、理论假设、验证要求。
 - `scripts/collect_research_registry.py`: 输出本地 registry，供后续人工/自动搜集结果归档。
-- `scripts/collect_open_source_research.py`: GitHub 开源项目采集器，默认要求至少 100 个真实仓库。
-- `docs/open_source_quant_research.md`: 最近一次开源项目采集报告。
+- `docs/research/repo_radar.md`: 外部仓库雷达（当前开源项目采集与吸收的主入口）。
+- `docs/research/`: `repo_intake_backlog_*.md`、`*_absorption_*.md` 等按次归档的吸收记录（见 `docs/CURRENT_STATE.md` §9）。
 - `docs/secret-and-upload-policy.md`: token、本地数据和 GitHub 上传边界。
-- `docs/research_pipeline.md`: 开源项目如何进入数据源/策略/验证待办的研究流水线。
-- `scripts/absorb_research_findings.py`: 把公开仓库元数据吸收为 data/strategy/timing/risk/AI 五条队列。
-- `scripts/validate_research_registries.py`: 防止吸收结果退化成无假设、无验证门槛的链接列表。
-- `docs/research_absorption.md`: 当前吸收后的人工审阅队列。
-- `docs/source_level_absorption.md`: 已 clone 外部源码后的正向/负面吸收记录。
+
+已移除（仓库中已不存在，勿再引用）：
+
+- `docs/open_source_quant_research.md`、`docs/research_pipeline.md`、`docs/research_absorption.md`、`docs/research_absorption.json`、`docs/source_level_absorption.md`、`data/open_source_research.jsonl`
+- `scripts/collect_open_source_research.py`、`scripts/absorb_research_findings.py`、`scripts/validate_research_registries.py`
 
 ## 上游复核（2026-07-02）
 

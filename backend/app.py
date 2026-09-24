@@ -87,9 +87,7 @@ async def _require_api_key(request: Request, call_next):
                 status_code=401,
             )
     # 解析租户（X-User-Id > API Key 哈希 > local），让不同用户的数据目录互相隔离
-    tid = _tenant.resolve_tenant_id(
-        request.headers.get("x-user-id", ""), _API_KEY
-    )
+    tid = _tenant.resolve_tenant_id(request.headers.get("x-user-id", ""), _API_KEY)
     token = _tenant.current_tenant.set(tid)
     try:
         return await call_next(request)
@@ -297,6 +295,109 @@ def radar_refresh():
         return {"data": newsradar.fetch_radar()}
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"资讯雷达刷新失败：{e}") from e
+
+
+# 新闻催化「事件中枢」：只读 runtime 产物。生产由定时任务
+# （scripts/bt_task.sh news → scripts/news_catalysts.sh）写入，消费端与生产端
+# 共用同一 env 覆盖点（AQSP_NEWS_JSON_OUTPUT），未配置时回落规范 runtime 路径
+# （经 AQSP_PROJECT_ROOT 解析）。报告尚未生成时必须失败降级（返回空 events），
+# 不得抛 500。
+@app.get("/api/catalyst")
+def catalyst():
+    """新闻催化事件中枢（event hub）：读取最新催化报告，无数据则失败降级。"""
+    try:
+        from aqsp.news.catalysts import (
+            load_catalyst_report_artifact,
+            serialize_catalyst_report,
+        )
+
+        # 与生产者 scripts/news_catalysts.sh 的 JSON_OUTPUT 使用同一 env 覆盖点，
+        # 保证「写哪就读哪」，避免生产/消费路径分叉。
+        artifact_path = str(
+            os.getenv("AQSP_NEWS_JSON_OUTPUT", "")
+            or "data/runtime/news_catalysts_latest.json"
+        ).strip()
+        report = load_catalyst_report_artifact(artifact_path)
+        if report is None:
+            return {
+                "data": {
+                    "events": [],
+                    "generated_at": None,
+                    "source_status": "no_data",
+                    "warnings": ["新闻催化报告尚未生成，运行新闻催化采集后可见"],
+                }
+            }
+        return {"data": serialize_catalyst_report(report)}
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"新闻催化读取异常：{e}") from e
+
+
+def _events_empty_payload(symbol: str) -> dict:
+    """事件日历的 fail-soft 空结构（与正常响应字段一一对应）。"""
+    return {
+        "symbol": symbol,
+        "as_of": "",
+        "unlock_horizon_days": 30,
+        "longhubang_lookback_days": 5,
+        "has_unlock_data": False,
+        "has_longhubang_data": False,
+        "upcoming_unlocks": [],
+        "recent_longhubang": [],
+    }
+
+
+def _events_jsonable(event_map: dict) -> dict:
+    """dataclass asdict 里可能混入 NaN（缓存行数值列缺失时特意保留的语义）。
+
+    starlette JSONResponse 用 ``allow_nan=False`` 序列化，NaN 会直接抛 ValueError
+    把整个响应打挂 —— 这里把非有限浮点收敛成 ``null``，语义是「未披露」。
+    """
+    for key, value in event_map.items():
+        if isinstance(value, float) and value != value:
+            event_map[key] = None
+    return event_map
+
+
+@app.get("/api/events")
+def events(code: str = Query(...)):
+    """事件日历（解禁预警 + 近 5 日龙虎榜）：只读 pit_cache，绝不联网。
+
+    数据由 scripts/preload_event_data.sh 预加载到
+    $AQSP_RUNTIME_DATA_ROOT/pit_cache/{lockup,longhubang}.csv；
+    缺缓存 ≠ 没事件，用 has_unlock_data / has_longhubang_data 区分。
+    fail-soft：任何异常（含 aqsp 未装、缓存损坏）→ 200 + 空结构，绝不 500。
+    """
+    code = _validate(code)
+    try:
+        from dataclasses import asdict
+
+        from aqsp.core.time import today_shanghai
+        from aqsp.features.event_calendar import EventCalendar
+
+        cal = EventCalendar.from_cache(
+            runtime_data_root=os.environ.get("AQSP_RUNTIME_DATA_ROOT")
+        )
+        as_of = today_shanghai().isoformat()
+        return {
+            "data": {
+                "symbol": code,
+                "as_of": as_of,
+                "unlock_horizon_days": cal.unlock_horizon_days,
+                "longhubang_lookback_days": cal.longhubang_lookback_days,
+                "has_unlock_data": cal.has_unlock_data(),
+                "has_longhubang_data": cal.has_longhubang_data(),
+                "upcoming_unlocks": [
+                    _events_jsonable(asdict(ev))
+                    for ev in cal.upcoming_unlocks(code, as_of)
+                ],
+                "recent_longhubang": [
+                    _events_jsonable(asdict(ev))
+                    for ev in cal.recent_longhubang(code, as_of)
+                ],
+            }
+        }
+    except Exception:  # noqa: BLE001 — 事件面缺数据不报错，降级为空结构
+        return {"data": _events_empty_payload(code)}
 
 
 @app.get("/api/market/overview")

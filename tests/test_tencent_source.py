@@ -6,9 +6,12 @@ import pandas as pd
 
 from aqsp.core.errors import DataError
 from aqsp.data.tencent_source import (
+    TENCENT_INTRADAY_URL,
     TencentSource,
     _get_market_prefix,
     _normalize_tencent_intraday_volume_to_shares,
+    _tencent_intraday_rows,
+    _tencent_intraday_today_minutes,
 )
 
 
@@ -271,7 +274,14 @@ def test_tencent_fetch_index_uses_market_prefixed_symbol(monkeypatch, tencent_so
                 "data": {
                     "sh000300": {
                         "day": [
-                            ["2026-07-20", "4972.69", "4958.98", "5017.38", "4925.63", "342934747"]
+                            [
+                                "2026-07-20",
+                                "4972.69",
+                                "4958.98",
+                                "5017.38",
+                                "4925.63",
+                                "342934747",
+                            ]
                         ]
                     }
                 }
@@ -346,36 +356,70 @@ def test_tencent_daily_request_keeps_beijing_board_raw_suffix(
     assert "qfq" not in captured["params"]["param"]
 
 
-def test_tencent_intraday_reads_market_prefixed_payload_key(monkeypatch):
+def _tencent_intraday_source(
+    monkeypatch, payload, *, today=date(2026, 7, 10), captured=None
+):
+    """Build a TencentSource whose only network call returns ``payload``."""
+
     class FakeResponse:
         def json(self):
-            return {
-                "data": {
-                    "sh600519": {
-                        "data": {
-                            "data": [
-                                "0930 1182.20 100 118220.00",
-                                "0931 1181.00 140 165460.00",
-                            ]
-                        }
-                    }
-                }
-            }
+            return payload
 
     class FakeSession:
-        def get(self, url, **_kwargs):
-            assert "code=sh600519" in url
+        def get(self, url, params=None, **_kwargs):
+            assert url == TENCENT_INTRADAY_URL
+            if captured is not None:
+                captured["url"] = url
+                captured["params"] = params
             return FakeResponse()
 
     class FixedNow:
         def date(self):
-            return date(2026, 7, 10)
+            return today
 
     source = TencentSource.__new__(TencentSource)
     source._session = FakeSession()
     source._last_request_ts = 0.0
     monkeypatch.setattr(source, "_throttle", lambda: None)
     monkeypatch.setattr("aqsp.data.tencent_source.now_shanghai", lambda: FixedNow())
+    return source
+
+
+def test_tencent_intraday_uses_day_query_endpoint_not_blocked_minute_path(monkeypatch):
+    """minute/query 被 WAF 按路径封禁；分时必须走 day/query。"""
+    captured: dict = {}
+    source = _tencent_intraday_source(
+        monkeypatch,
+        {"data": {"sh600519": {"data": [{"date": "20260710", "data": []}]}}},
+        captured=captured,
+    )
+
+    source._fetch_tencent_intraday("600519", "5")
+
+    assert captured["url"] == TENCENT_INTRADAY_URL
+    assert "minute/query" not in captured["url"]
+    assert captured["params"] == {"code": "sh600519"}
+
+
+def test_tencent_intraday_reads_market_prefixed_payload_key(monkeypatch):
+    source = _tencent_intraday_source(
+        monkeypatch,
+        {
+            "data": {
+                "sh600519": {
+                    "data": [
+                        {
+                            "date": "20260710",
+                            "data": [
+                                "0930 1182.20 100 118220.00",
+                                "0931 1181.00 140 165460.00",
+                            ],
+                        }
+                    ]
+                }
+            }
+        },
+    )
 
     frame = source._fetch_tencent_intraday("600519", "5")
 
@@ -385,6 +429,185 @@ def test_tencent_intraday_reads_market_prefixed_payload_key(monkeypatch):
     assert frame["close"].tolist() == [1182.20, 1181.00]
     assert frame["volume"].tolist() == [100.0, 40.0]
     assert frame["amount"].tolist() == [118220.0, 47240.0]
+
+
+def test_tencent_intraday_picks_today_session_and_ignores_older_days(monkeypatch):
+    """day/query 固定回多日且 n 参数不生效，只能取当日场次。"""
+    source = _tencent_intraday_source(
+        monkeypatch,
+        {
+            "data": {
+                "sh600519": {
+                    "data": [
+                        {"date": "20260709", "data": ["0930 9.00 10 9000.00"]},
+                        {
+                            "date": "20260710",
+                            "data": [
+                                "0930 1182.20 100 118220.00",
+                                "0931 1181.00 140 165460.00",
+                            ],
+                        },
+                        {"date": "20260708", "data": ["0930 8.00 10 8000.00"]},
+                    ]
+                }
+            }
+        },
+    )
+
+    frame = source._fetch_tencent_intraday("600519", "5")
+
+    assert frame is not None
+    assert frame["date"].tolist() == ["2026-07-10 09:30", "2026-07-10 09:31"]
+
+
+def test_tencent_intraday_fails_closed_when_today_session_is_absent(monkeypatch):
+    """当日无场次时不得把上一交易日冒充当日实时（禁止张冠李戴）。"""
+    source = _tencent_intraday_source(
+        monkeypatch,
+        {
+            "data": {
+                "sh600519": {
+                    "data": [{"date": "20260709", "data": ["0930 9.00 10 9000.00"]}]
+                }
+            }
+        },
+    )
+
+    assert source._fetch_tencent_intraday("600519", "5") is None
+
+
+def test_tencent_intraday_row_date_comes_from_payload_not_clock(monkeypatch):
+    """行时间戳必须用响应自带交易日，不能用本机日期回填。"""
+    source = _tencent_intraday_source(
+        monkeypatch,
+        {
+            "data": {
+                "sz000001": {
+                    "data": [
+                        {"date": "20260710", "data": ["0930 11.59 3739 4333501.0"]}
+                    ]
+                }
+            }
+        },
+        today=date(2026, 7, 10),
+    )
+
+    frame = source._fetch_tencent_intraday("000001", "5")
+
+    assert frame is not None
+    assert frame["date"].tolist() == ["2026-07-10 09:30"]
+    assert frame["symbol"].tolist() == ["000001"]
+
+
+def test_tencent_intraday_skips_malformed_lines_without_losing_the_symbol(monkeypatch):
+    source = _tencent_intraday_source(
+        monkeypatch,
+        {
+            "data": {
+                "sh600519": {
+                    "data": [
+                        {
+                            "date": "20260710",
+                            "data": [
+                                "0930 1182.20 100 118220.00",
+                                "bad-line",
+                                "0931 notanumber 140 165460.00",
+                                "0932 1180.00 200 236000.00",
+                            ],
+                        }
+                    ]
+                }
+            }
+        },
+    )
+
+    frame = source._fetch_tencent_intraday("600519", "5")
+
+    assert frame is not None
+    assert frame["date"].tolist() == ["2026-07-10 09:30", "2026-07-10 09:32"]
+
+
+def test_tencent_intraday_supports_index_codes(monkeypatch):
+    source = _tencent_intraday_source(
+        monkeypatch,
+        {
+            "data": {
+                "sh000300": {
+                    "data": [
+                        {
+                            "date": "20260710",
+                            "data": ["0930 4511.21 128752948 394787757726"],
+                        }
+                    ]
+                }
+            }
+        },
+    )
+
+    frame = source._fetch_tencent_intraday("000300", "5", is_index=True)
+
+    assert frame is not None
+    assert frame["close"].tolist() == [4511.21]
+
+
+def test_tencent_intraday_returns_none_for_waf_html_body(monkeypatch):
+    """WAF 拦截页不是 JSON；必须判空返回而不是抛出不可读错误。"""
+
+    class FakeResponse:
+        def json(self):
+            raise ValueError("Expecting value: line 1 column 1 (char 0)")
+
+    class FakeSession:
+        def get(self, url, params=None, **_kwargs):
+            return FakeResponse()
+
+    source = TencentSource.__new__(TencentSource)
+    source._session = FakeSession()
+    source._last_request_ts = 0.0
+    monkeypatch.setattr(source, "_throttle", lambda: None)
+    monkeypatch.setattr("aqsp.data.tencent_source.time.sleep", lambda _s: None)
+
+    with pytest.raises(DataError):
+        source._fetch_tencent_intraday("600519", "5")
+
+
+def test_tencent_intraday_today_minutes_reports_empty_for_missing_session() -> None:
+    trade_date, minutes = _tencent_intraday_today_minutes(
+        {"data": [{"date": "20260709", "data": ["0930 9.00 10 9000.00"]}]},
+        today=date(2026, 7, 10),
+    )
+
+    assert trade_date == ""
+    assert minutes == []
+
+
+def test_tencent_intraday_today_minutes_tolerates_unexpected_shapes() -> None:
+    for stock_data in ({"data": None}, {"data": "oops"}, {}):
+        assert _tencent_intraday_today_minutes(stock_data, today=date(2026, 7, 10)) == (
+            "",
+            [],
+        )
+
+
+def test_tencent_intraday_rows_converts_cumulative_to_per_minute_deltas() -> None:
+    rows = _tencent_intraday_rows(
+        "20260710",
+        ["0930 10.00 100 100000.00", "0931 10.10 250 252500.00"],
+    )
+
+    assert [row["date"] for row in rows] == [
+        "2026-07-10 09:30",
+        "2026-07-10 09:31",
+    ]
+    assert [row["volume"] for row in rows] == [100.0, 150.0]
+    assert [row["amount"] for row in rows] == [100000.0, 152500.0]
+    assert rows[1]["open"] == 10.00
+    assert rows[1]["high"] == 10.10
+    assert rows[1]["low"] == 10.00
+
+
+def test_tencent_intraday_rows_returns_empty_without_a_trade_date() -> None:
+    assert _tencent_intraday_rows("", ["0930 10.00 100 100000.00"]) == []
 
 
 def test_tencent_intraday_volume_normalizes_lots_row_by_row() -> None:

@@ -57,4 +57,4 @@ streamlit run src/aqsp/web/dashboard.py --server.port 8501
 - 开 HTTPS
 - 加 Basic Auth 或统一登录
 
-具体见 `/Users/ivon/Documents/AI量化选股/docs/DASHBOARD_GUIDE.md`。
+具体见仓库内 `docs/DASHBOARD_GUIDE.md`。

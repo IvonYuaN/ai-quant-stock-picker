@@ -8,7 +8,7 @@ walk-forward 试验、数据源切换验证、参数诊断、阶段性失败记�
 
 ## `process/`
 
-PR 拆分、审查记录、排障过程、临时执行说明。
+PR 拆分、审查记录、排障过程、临时执行说明、历史任务清单，以及**已被取代的接手/模块指南**（如 `model-handoff.md`、`FETCHER_USAGE.md`、`BEGINNER_DASHBOARD_INTEGRATION.md`）。
 
 归档原则：
 

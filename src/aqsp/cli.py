@@ -134,6 +134,7 @@ from aqsp.utils.jsonl_io import advisory_lock, atomic_write_text
 from aqsp.walkforward_gate import (
     MAX_GATE_AGE_DAYS,
     MIN_CSCV_VARIANTS,
+    MIN_PRODUCTION_GATE_COVERAGE_RATIO,
     WalkForwardGateValidation,
     build_walkforward_gate_payload,
     validate_walkforward_gate_payload,
@@ -467,6 +468,20 @@ def _resolve_runtime_state_path(path: str) -> str:
         return str(state_path)
     project_root = Path(__file__).resolve().parents[2]
     return str(project_root / state_path)
+
+
+def _walkforward_gate_path() -> str:
+    """解析双门 sidecar 路径：``AQSP_WALKFORWARD_GATE_PATH`` 优先。
+
+    定时任务的 CWD 是不可变 release 目录，其中没有 ``data/walkforward_gate.json``；
+    而 sidecar 由 ``run_production_walkforward_gate.py`` 写到运行时数据根
+    （``/opt/aqsp/data/walkforward_gate.json``）。此前通知门禁只用 CWD 相对的模块
+    默认值，于是每天误报 ``sidecar_missing``（2026-07-21 起持续），把真实的
+    DSR/PBO 判定挡在外面。其他消费方（web/data_provider、write_home_snapshot、
+    diagnose_runtime 等）都读该环境变量，这里补齐同一口径。
+    """
+    raw = str(os.getenv("AQSP_WALKFORWARD_GATE_PATH", "") or "").strip()
+    return _resolve_runtime_state_path(raw or WALKFORWARD_GATE_PATH)
 
 
 def _notify_via_config(markdown: str, *, mode: str) -> list:
@@ -4297,7 +4312,7 @@ def _walkforward_runtime_rows(
 def _check_notification_gate(
     *,
     cold_start_days: int,
-    gate_path: str = WALKFORWARD_GATE_PATH,
+    gate_path: str = "",
     validation_date: date | None = None,
 ) -> tuple[bool, list[str]]:
     """宪法 §1.3 #12/#14：返回 (是否放行, 未达原因列表)。
@@ -4307,9 +4322,13 @@ def _check_notification_gate(
       2. DSR >1.0
       3. PBO <0.5
     sidecar 缺失/解析失败/过期 → fail-closed（不放行）。
+
+    ``gate_path`` 省略时按 ``_walkforward_gate_path()`` 解析（env 优先），
+    不得退回 CWD 相对路径 —— 定时任务的 CWD 是不可变 release 目录。
     """
     reasons: list[str] = []
     cold_start_min_days = _cold_start_min_days()
+    gate_path = gate_path or _walkforward_gate_path()
 
     if cold_start_days < cold_start_min_days:
         reasons.append(
@@ -4347,10 +4366,17 @@ def _notification_gate_market_coverage_reasons(gate: dict[str, Any]) -> list[str
     if validation.effective_symbols is None:
         return ["双门全市场覆盖缺失: effective_symbols missing"]
     if not validation.ok:
-        return [
-            "双门全市场覆盖不足: "
-            f"{validation.effective_symbols}/{validation.min_symbols} 个有效标的"
-        ]
+        # 真实门槛是 max(min_symbols, ceil(stock_symbols × ratio))，不是 min_symbols。
+        # 只打印 min_symbols 会出现「4404/3000 却判不足」这种自相矛盾的原因（issue #159），
+        # 让运维无法据此判断到底差多少，也会连累对整个判定链的信任。
+        required = validation.required_symbols or validation.min_symbols
+        detail = f"{validation.effective_symbols}/{required} 个有效标的"
+        if validation.coverage_ratio is not None:
+            detail += (
+                f"（占全市场 {validation.coverage_ratio:.1%}，"
+                f"需 ≥{MIN_PRODUCTION_GATE_COVERAGE_RATIO:.0%}）"
+            )
+        return [f"双门全市场覆盖不足: {detail}"]
     return []
 
 
@@ -4477,9 +4503,9 @@ def _format_notification_gate_block(
     next_actions: list[str],
 ) -> str:
     lines = [
-        "> ⚠️ **未通过 walk-forward 双门验证，仅供观察，请勿实盘使用**",
+        "> ℹ️ **双门验证未提供放行信号（观察模式）**",
         ">",
-        "> 未达原因：",
+        "> 以下为研究观察信息，非实盘建议。未达原因：",
     ]
     lines.extend(f"> - {reason}" for reason in gate_reasons)
     lines.append(">")
@@ -6180,8 +6206,9 @@ _WALKFORWARD_EXPLORATORY_GRID_VARIANTS: tuple[WalkForwardGridVariant, ...] = (
 
 # T3 方案 A：因子族替换验证网格（htf+mr 换 mom+tr）。全新 profile，不改动
 # stable / stable_plus 任何变体或权重。N=8 满足 MIN_CSCV_VARIANTS，CSCV 可靠。
-# momentum_weight / triple_rise_weight 传给构造器的值会被 htf_mr 分支清零覆盖，
-# 仅 lookback/horizon/top_n 参与网格分辨力。
+# momentum_weight / triple_rise_weight 传给构造器的值会被 htf_mr 分支清零覆盖；
+# 分辨力来自 lookback（接线到 **mean_reversion.lookback_days**，见该分支注释）、
+# horizon_days、top_n 三个活旋钮。
 _WALKFORWARD_HTF_MR_GRID_VARIANTS: tuple[WalkForwardGridVariant, ...] = (
     WalkForwardGridVariant("WF-H01", 0.0, 0.0, 60, 3, 10, "htf_mr"),
     WalkForwardGridVariant("WF-H02", 0.0, 0.0, 60, 3, 5, "htf_mr"),
@@ -6305,15 +6332,28 @@ def _apply_walkforward_grid_variant(
         MomentumThresholds,
     )
 
+    # 变体必须显式声明其完整因子集：先把所有因子权重清零，再按 strategy_mix 写入声明项。
+    # 否则会继承 config/thresholds.yaml 的默认权重（如 v1.1.19 起 htf/mr 默认 0.5），
+    # 导致 mom+tr 类变体静默带上 htf/mr，退化成「幽灵变体」、破坏因子族隔离契约
+    # （test_walkforward_grid_variant_factor_enable）。
     composite_updates = {
-        "momentum_weight": variant.momentum_weight,
-        "triple_rise_weight": variant.triple_rise_weight,
+        "momentum_weight": 0.0,
+        "triple_rise_weight": 0.0,
+        "high_tight_flag_weight": 0.0,
+        "mean_reversion_weight": 0.0,
+        "volume_weight": 0.0,
+        "quality_weight": 0.0,
+        "value_weight": 0.0,
     }
     strategy_mix = variant.strategy_mix or "momentum"
     enable_volume = False
     enable_mr = False
     enable_htf = False
-    if strategy_mix == "volume":
+    mr_lookback_days: int | None = None
+    if strategy_mix == "momentum":
+        composite_updates["momentum_weight"] = variant.momentum_weight
+        composite_updates["triple_rise_weight"] = variant.triple_rise_weight
+    elif strategy_mix == "volume":
         composite_updates["volume_weight"] = 0.3
         composite_updates["momentum_weight"] = 0.2
         composite_updates["triple_rise_weight"] = 0.2
@@ -6333,6 +6373,14 @@ def _apply_walkforward_grid_variant(
         composite_updates["min_total_score"] = 0.1
         enable_mr = True
         enable_htf = True
+        # lookback_days 必须是**活**旋钮。本分支把 momentum 权重清零 ⇒ 上面写进
+        # MomentumThresholds.lookback_days 的那份**不参与打分**，于是 WF-H04(lb=20) /
+        # WF-H05(lb=120) 与 WF-H01(lb=60) 的「打分 + top_n + horizon」完全相同 ——
+        # 8 列里只有 6 个互异策略（#175），MIN_CSCV_VARIANTS=8 这道 fail-closed 守卫
+        # 被重复列技术性凑过（与 #135 的 WF-V01/WF-MR1 同型）。
+        # 改接 mean_reversion.lookback_days：mr 打分同时用它做回看窗口与 ma_period，
+        # 故 lb 变化会真实改变打分向量。
+        mr_lookback_days = variant.lookback_days
 
     replace_kwargs: dict[str, Any] = {
         "composite": CompositeThresholds(
@@ -6359,8 +6407,11 @@ def _apply_walkforward_grid_variant(
     if enable_volume:
         replace_kwargs["volume"] = replace(thresholds.volume, enabled=True)
     if enable_mr:
+        mr_kwargs: dict[str, Any] = {"enabled": True}
+        if mr_lookback_days is not None:
+            mr_kwargs["lookback_days"] = mr_lookback_days
         replace_kwargs["mean_reversion"] = replace(
-            thresholds.mean_reversion, enabled=True
+            thresholds.mean_reversion, **mr_kwargs
         )
     if enable_htf:
         replace_kwargs["high_tight_flag"] = replace(
@@ -7733,6 +7784,23 @@ def run_monitor(args: argparse.Namespace) -> int:
     return 1 if any(r.severity == "critical" for r in triggered) else 0
 
 
+def _should_preserve_existing_catalyst_artifact(
+    new_status: str, new_date: str, existing_status: str, existing_date: str
+) -> bool:
+    """新报告不可用、而磁盘上已有同日有效产物时返回 True。
+
+    目的是不让一次瞬时来源失败（failed/timeout）抹掉当天已落盘的有效产物——
+    否则一次网络抖动就会让下游（/api/catalyst、首页快照）长时间空数据。
+    """
+
+    usable = {"ok", "partial"}
+    return (
+        new_status not in usable
+        and existing_status in usable
+        and existing_date == new_date
+    )
+
+
 def run_news_catalysts(args: argparse.Namespace) -> int:
     from aqsp.news import (
         NewsCatalystConfig,
@@ -7740,6 +7808,7 @@ def run_news_catalysts(args: argparse.Namespace) -> int:
         format_catalyst_notification,
         serialize_catalyst_report,
     )
+    from aqsp.news.catalysts import load_catalyst_report_artifact
 
     symbols = tuple(
         item.strip() for item in str(args.symbols or "").split(",") if item.strip()
@@ -7763,20 +7832,37 @@ def run_news_catalysts(args: argparse.Namespace) -> int:
     )
     markdown = format_catalyst_notification(report)
     print(markdown)
-    if args.output:
-        output_path = Path(args.output)
-        atomic_write_text(output_path, markdown)
-    if args.json_output:
-        json_output_path = Path(args.json_output)
-        atomic_write_text(
-            json_output_path,
-            json.dumps(
-                serialize_catalyst_report(report),
-                ensure_ascii=False,
-                indent=2,
-            )
-            + "\n",
+    existing_artifact = (
+        load_catalyst_report_artifact(str(args.json_output))
+        if args.json_output
+        else None
+    )
+    if _should_preserve_existing_catalyst_artifact(
+        report.source_status,
+        report.date,
+        existing_artifact.source_status if existing_artifact else "",
+        existing_artifact.date if existing_artifact else "",
+    ):
+        # 写侧兜底：瞬时来源失败绝不覆盖当天已落盘的有效产物。
+        print(
+            "news catalysts: keep existing usable same-day artifact; "
+            "skip overwrite with failed result"
         )
+    else:
+        if args.output:
+            output_path = Path(args.output)
+            atomic_write_text(output_path, markdown)
+        if args.json_output:
+            json_output_path = Path(args.json_output)
+            atomic_write_text(
+                json_output_path,
+                json.dumps(
+                    serialize_catalyst_report(report),
+                    ensure_ascii=False,
+                    indent=2,
+                )
+                + "\n",
+            )
     if report.source_status == "failed":
         print("news catalysts: source failed; notification suppressed")
         return 1

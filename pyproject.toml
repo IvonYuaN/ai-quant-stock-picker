@@ -34,6 +34,8 @@ llm = [
 dev = [
     "pytest>=8.0,<10.0",
     "ruff>=0.8,<1.0",
+    # FastAPI TestClient 依赖 httpx；CI 若只装 [api] 会在路由集成测试处 ImportError。
+    "httpx>=0.27,<1.0",
 ]
 
 [project.scripts]

@@ -1706,7 +1706,7 @@ class TestGenerateSmartSummary:
         assert "策略偏向: 进攻牛市" in main_chain_sec.content
         assert "稳定上涨期，重仓动量+涨停板" in main_chain_sec.content
         assert (
-            "更偏好这些方向: 低波趋势、均线回踩、N 字反弹、RPS 动量"
+            "更偏好这些方向: 碗形反弹、低波趋势、均线回踩、RPS 动量"
             in main_chain_sec.content
         )
 

@@ -31,6 +31,12 @@ TENCENT_SIMPLE_QUOTE_URL = "http://qt.gtimg.cn/q=s_{symbol}"
 TENCENT_FULL_QUOTE_URL = "http://qt.gtimg.cn/q={market}{symbol}"
 TENCENT_BATCH_QUOTE_URL = "http://qt.gtimg.cn/q={symbols}"
 TENCENT_KLINE_URL = "https://web.ifzq.gtimg.cn/appstock/app/kline/kline"
+# 分时（当日分钟线）。不要改回 `appstock/app/minute/query`：该路径已被腾讯 WAF
+# 按路径封禁（生产机实测 http/https、sh/sz 一律 501，返回 WAF 拦截页而非 JSON），
+# 而同一主机的 `appstock/app/day/query` 路径正常返回 200 与当日逐分钟数据。
+# day/query 固定回多个交易日（`n` 参数不生效），故必须按日期挑当日场次，
+# 见 _tencent_intraday_today_minutes。
+TENCENT_INTRADAY_URL = "https://web.ifzq.gtimg.cn/appstock/app/day/query"
 
 TENCENT_QUOTE_FIELD_LIMIT_UP = 47
 TENCENT_QUOTE_FIELD_LIMIT_DOWN = 48
@@ -345,7 +351,9 @@ class TencentSource(DataSource):
         for attempt in range(_MAX_RETRIES):
             try:
                 self._throttle()
-                market_symbol = f"{_get_market_prefix(symbol, is_index=is_index)}{symbol}"
+                market_symbol = (
+                    f"{_get_market_prefix(symbol, is_index=is_index)}{symbol}"
+                )
                 params = {
                     "param": (
                         f"{market_symbol},day,{start.strftime('%Y-%m-%d')},"
@@ -400,54 +408,20 @@ class TencentSource(DataSource):
                 self._throttle()
                 market = _get_market_prefix(symbol, is_index=is_index)
                 market_symbol = f"{market}{symbol}"
-                url = f"http://web.ifzq.gtimg.cn/appstock/app/minute/query?code={market_symbol}"
-                response = self._session.get(url, timeout=10)
-                data = response.json()
-                if not data.get("data"):
-                    return None
-                stock_data = data["data"].get(market_symbol) or data["data"].get(
-                    symbol, {}
+                response = self._session.get(
+                    TENCENT_INTRADAY_URL,
+                    params={"code": market_symbol},
+                    timeout=10,
+                )
+                stock_data = _tencent_intraday_stock_data(
+                    response.json(), market_symbol, symbol
                 )
                 if not stock_data:
                     return None
-                minute_payload = stock_data.get("data", {})
-                minutes = (
-                    minute_payload.get("data", [])
-                    if isinstance(minute_payload, dict)
-                    else minute_payload
+                trade_date, minutes = _tencent_intraday_today_minutes(
+                    stock_data, today=now_shanghai().date()
                 )
-                if not minutes:
-                    return None
-                trade_date = now_shanghai().date().isoformat()
-                rows = []
-                previous_price: float | None = None
-                previous_volume = 0.0
-                previous_amount = 0.0
-                for minute in minutes:
-                    parts = str(minute).split()
-                    if len(parts) < 4:
-                        continue
-                    minute_time = parts[0]
-                    price = float(parts[1])
-                    cumulative_volume = float(parts[2])
-                    cumulative_amount = float(parts[3])
-                    bar_open = price if previous_price is None else previous_price
-                    volume = max(cumulative_volume - previous_volume, 0.0)
-                    amount = max(cumulative_amount - previous_amount, 0.0)
-                    rows.append(
-                        {
-                            "date": f"{trade_date} {minute_time[:2]}:{minute_time[2:]}",
-                            "open": bar_open,
-                            "close": price,
-                            "high": max(bar_open, price),
-                            "low": min(bar_open, price),
-                            "volume": volume,
-                            "amount": amount,
-                        }
-                    )
-                    previous_price = price
-                    previous_volume = cumulative_volume
-                    previous_amount = cumulative_amount
+                rows = _tencent_intraday_rows(trade_date, minutes)
                 if not rows:
                     return None
                 df = pd.DataFrame(rows)
@@ -496,6 +470,93 @@ class TencentSource(DataSource):
         df["amount"] = df["volume"] * df["close"]
         df = apply_limit_suspended_adj(df, symbol, cache=self.cache)
         return df
+
+
+def _tencent_intraday_stock_data(
+    payload: object, market_symbol: str, symbol: str
+) -> dict | None:
+    """Locate one symbol's node inside a Tencent ``day/query`` payload."""
+    node = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(node, dict):
+        return None
+    value = node.get(market_symbol)
+    if not isinstance(value, dict):
+        value = node.get(symbol)
+    return value if isinstance(value, dict) else None
+
+
+def _tencent_intraday_today_minutes(
+    stock_data: dict, *, today: date
+) -> tuple[str, list[str]]:
+    """Return ``(trade_date, minute_lines)`` for ``today``'s session only.
+
+    ``day/query`` always answers with several sessions and ignores the ``n``
+    parameter, so its first entry is merely the most recent trading day. Only a
+    session whose own ``date`` equals ``today`` may be used: relabelling an
+    older session with today's date would fabricate intraday freshness, exactly
+    what the live_short freshness gate exists to prevent. A missing session for
+    ``today`` therefore yields ``("", [])`` and the caller fails closed instead
+    of degrading to stale bars.
+    """
+    sessions = stock_data.get("data")
+    if not isinstance(sessions, list):
+        return "", []
+    wanted = today.strftime("%Y%m%d")
+    for session in sessions:
+        if not isinstance(session, dict):
+            continue
+        session_date = str(session.get("date") or "").strip()
+        if session_date != wanted:
+            continue
+        lines = session.get("data")
+        if not isinstance(lines, list):
+            return session_date, []
+        return session_date, [str(line) for line in lines]
+    return "", []
+
+
+def _tencent_intraday_rows(trade_date: str, minutes: list[str]) -> list[dict]:
+    """Turn cumulative Tencent minute lines into per-minute OHLCV rows.
+
+    Each line is ``"HHMM price cumulative_volume cumulative_amount"``; volume
+    and amount are converted to per-minute deltas. Malformed lines are skipped
+    rather than aborting the symbol, so one bad row in a 240-row session cannot
+    cost the whole batch — a wholesale format change still yields no rows and
+    surfaces as an empty result upstream.
+    """
+    if not trade_date:
+        return []
+    day_label = f"{trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:]}"
+    rows: list[dict] = []
+    previous_price: float | None = None
+    previous_volume = 0.0
+    previous_amount = 0.0
+    for minute in minutes:
+        parts = minute.split()
+        if len(parts) < 4:
+            continue
+        try:
+            price = float(parts[1])
+            cumulative_volume = float(parts[2])
+            cumulative_amount = float(parts[3])
+        except (TypeError, ValueError):
+            continue
+        bar_open = price if previous_price is None else previous_price
+        rows.append(
+            {
+                "date": f"{day_label} {parts[0][:2]}:{parts[0][2:]}",
+                "open": bar_open,
+                "close": price,
+                "high": max(bar_open, price),
+                "low": min(bar_open, price),
+                "volume": max(cumulative_volume - previous_volume, 0.0),
+                "amount": max(cumulative_amount - previous_amount, 0.0),
+            }
+        )
+        previous_price = price
+        previous_volume = cumulative_volume
+        previous_amount = cumulative_amount
+    return rows
 
 
 def _normalize_tencent_intraday_volume_to_shares(df: pd.DataFrame) -> pd.DataFrame:

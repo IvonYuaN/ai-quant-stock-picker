@@ -10,7 +10,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { CalendarDays, Compass, RefreshCw, Sparkles } from "lucide-react";
-import { Badge, ErrorState, LoadingState, ToneCallout } from "@/components/ui/primitives";
+import { Badge, HeroState, LoadingState, ToneCallout } from "@/components/ui/primitives";
 import { cn } from "@/lib/utils";
 import {
   buildDailyView,
@@ -296,10 +296,25 @@ export function TodayWorkspace() {
 
       {data ? <DatePicker snapshot={data} /> : null}
 
+      {/* 本地研究快照缺失/读取中时，仍然展示**直接读公开源**的实时市场环境
+          （指数 / 涨跌家数 / 隔夜外围）。实时行情不该被本地重管线的产出卡住 ——
+          快照是本机算出来的，市场环境是别人网站上现成的，两者解耦。 */}
+      {!data ? <MarketStrip /> : null}
+
       {switching ? (
         <LoadingState label={`正在读取 ${selectedDate} 的研究数据…`} />
       ) : error && !data ? (
-        <ErrorState error={error} onRefresh={refresh} />
+        <HeroState
+          tone="warn"
+          title="读不到研究快照"
+          detail={`${error}。可点「重试」重新读取；若持续失败，通常是后端未启动，或当日快照（data/runtime/home_dashboard_snapshot.json）尚未产出。`}
+          action={
+            <button type="button" className="aq-btn aq-btn-primary" onClick={refresh}>
+              <RefreshCw aria-hidden="true" />
+              重试
+            </button>
+          }
+        />
       ) : !data ? (
         <LoadingState />
       ) : !view ? (
