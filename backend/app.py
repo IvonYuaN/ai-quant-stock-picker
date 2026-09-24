@@ -105,9 +105,86 @@ def _validate(code: str) -> str:
     return code
 
 
+def _release_sha() -> str:
+    """部署时由 runner_sync.sh 在 release 根目录写入 RELEASE_SHA。
+
+    用于部署自检：运行中 API 返回的 SHA 应 == 刚部署的 commit，否则就是
+    『部署了但旧代码在跑』的静默事故（09-21 曾因重启早于切链导致）。缺失时
+    返回 "unknown"（不报错，避免影响 health 探测）。
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    sha_file = os.path.join(os.path.dirname(here), "RELEASE_SHA")
+    try:
+        with open(sha_file, encoding="utf-8") as fh:
+            return fh.read().strip() or "unknown"
+    except OSError:
+        return "unknown"
+
+
+def _radar_cache_dir() -> str:
+    """与 backend/newsradar._resolve_cache_dir 保持一致（避免 import 重依赖）。"""
+    env = os.environ.get("VR_RADAR_CACHE_DIR", "").strip()
+    if env:
+        return env
+    data_dir = os.environ.get("VR_DATA_DIR", "").strip()
+    if data_dir:
+        return os.path.join(data_dir, "radar")
+    return os.path.expanduser("~/.vibe-research/radar")
+
+
+def _radar_freshness() -> dict:
+    """雷达缓存新鲜度（防御式，失败返回 present=false 不影响 health）。"""
+    try:
+        cache_file = os.path.join(_radar_cache_dir(), "radar.json")
+        with open(cache_file, encoding="utf-8") as fh:
+            data = json.load(fh)
+        return {
+            "present": True,
+            "generated_at": data.get("generated_at"),
+            "industries": len(data.get("industries") or []),
+        }
+    except Exception:
+        return {"present": False, "generated_at": None, "industries": 0}
+
+
+def _gate_freshness() -> dict:
+    """生产 gate 判定新鲜度（防御式，找不到文件返回 present=false）。"""
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    candidates = [
+        os.path.join(repo_root, "data", "walkforward_gate.json"),
+        "/opt/aqsp/data/walkforward_gate.json",
+        os.path.expanduser("~/.vibe-research/walkforward_gate.json"),
+    ]
+    for path in candidates:
+        try:
+            with open(path, encoding="utf-8") as fh:
+                data = json.load(fh)
+            return {
+                "present": True,
+                "verdict": data.get("verdict"),
+                "generated_at": data.get("generated_at"),
+                "updated": data.get("updated"),
+            }
+        except Exception:
+            continue
+    return {"present": False, "verdict": None, "generated_at": None, "updated": None}
+
+
 @app.get("/api/health")
 def health():
-    return {"ok": True, "service": "aqsp-api", "version": "0.1.3"}
+    return {
+        "ok": True,
+        "service": "aqsp-api",
+        "version": "0.1.3",
+        "release_sha": _release_sha(),
+        "radar": _radar_freshness(),
+        "gate": _gate_freshness(),
+    }
+
+
+@app.get("/api/version")
+def api_version():
+    return {"service": "aqsp-api", "release_sha": _release_sha(), "app_version": "0.1.3"}
 
 
 class LLMConfig(BaseModel):
