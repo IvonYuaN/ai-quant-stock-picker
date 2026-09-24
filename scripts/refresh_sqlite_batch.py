@@ -170,10 +170,20 @@ def _write_cursor(
 
 
 def _has_no_target_day_coverage(summary: UpdateSummary) -> bool:
-    """Return whether an upstream outage left a processed batch entirely uncovered."""
+    """Return whether an upstream outage left a processed batch without progress.
+
+    ``target_day_symbol_count`` is measured from the database after the batch, so
+    it can be non-zero because an older run already covered that day.  It must
+    not hide a provider outage: a batch with no inserted rows and no
+    ``already_current`` symbols made no progress and must retain the cursor.
+    """
+    no_progress = (
+        summary.updated_rows == 0
+        and summary.already_current_symbols < summary.processed_symbols
+    )
     return (
         summary.processed_symbols > 0
-        and summary.target_day_symbol_count == 0
+        and no_progress
         and (summary.empty_response_symbols > 0 or summary.failed_symbols > 0)
     )
 
