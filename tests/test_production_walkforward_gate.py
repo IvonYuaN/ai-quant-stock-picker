@@ -520,6 +520,30 @@ def test_build_walkforward_command_uses_full_market_raw_gate() -> None:
     assert "/tmp/symbols.txt" in command
 
 
+def test_build_walkforward_command_passes_net_fees_only_when_requested() -> None:
+    """--net-fees 仅在显式要求时透传（#199 成本口径对照；默认仍是 legacy）。"""
+
+    class Args:
+        start = "2018-01-01"
+        end = "2024-12-31"
+        grid_profile = "stable_plus"
+        report = "reports/prod.md"
+        gate_path = "data/prod_gate.json"
+        cache_path = "data/prod.db"
+        log = "logs/prod.log"
+        symbols_file = ""
+        crash_protection = False
+        net_fees = False
+
+    assert "--net-fees" not in build_walkforward_command(Args())
+    assert "--crash-protection" not in build_walkforward_command(Args())
+
+    class ArgsNet(Args):
+        net_fees = True
+
+    assert "--net-fees" in build_walkforward_command(ArgsNet())
+
+
 def test_production_walkforward_gate_sets_prefiltered_symbols_env(
     monkeypatch, tmp_path: Path
 ) -> None:
