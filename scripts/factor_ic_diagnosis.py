@@ -8,6 +8,8 @@
 做什么：
   - 在与 gate 完全相同的样本（同一库、同一标的池、同一窗口）上，逐横截面计算
     momentum / triple_rise / composite 三个打分与"未来 horizon 日收益"的 Spearman IC。
+  - 价格诊断明确使用数据库的 **raw 不复权 OHLC**；`daily_qfq` 是历史表名，不代表
+    `*_qfq` 列一定是真复权数据。本库的 `*_qfq` 列遵循 raw-only 约定，不能静默冒充复权价。
   - 输出 IC 均值、IC 标准差、ICIR、t 值、IC 为正的比例，以及逐截面 IC 明细。
 
 判读口径（业界通用）：
@@ -75,7 +77,7 @@ def load_prices(
     con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
     try:
         sql = (
-            "SELECT ts_code, trade_date, open_qfq, high_qfq, low_qfq, close_qfq, volume "
+            "SELECT ts_code, trade_date, open, high, low, close, volume "
             "FROM daily_qfq WHERE trade_date BETWEEN ? AND ?"
         )
         df = pd.read_sql_query(sql, con, params=(s, e))
@@ -83,6 +85,7 @@ def load_prices(
         con.close()
 
     df.columns = ["ts_code", "trade_date", "open", "high", "low", "close", "volume"]
+    print("[info] price_basis=raw (daily_qfq table raw OHLC columns)")
     df["symbol"] = df["ts_code"].map(_norm_symbol)
     if symbols is not None:
         keep = set(symbols)
