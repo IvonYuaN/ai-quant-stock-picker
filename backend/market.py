@@ -6,6 +6,9 @@
 
 from __future__ import annotations
 
+import json
+import os
+import threading
 import time
 from collections import Counter
 from datetime import datetime, timezone, timedelta
@@ -14,25 +17,110 @@ import astock
 import gstock
 
 BEIJING = timezone(timedelta(hours=8))
-_CACHE: dict = {}
+
+# 文件级共享缓存目录（刻意离开 release 目录，跨部署/重启持久，且多 worker 共享同一份）。
+# 默认 ~/.vibe-research/market_cache；可用 AQSP_MARKET_CACHE_DIR 覆盖。
+# 注意：os.path.join("", "market_cache") == "market_cache" 是**真值**，
+# 直接写 `or os.path.join(os.environ.get("VR_DATA_DIR",""), ...)` 会让兜底永不生效，
+# 退化成相对当前工作目录的 "market_cache"（多 worker 各写各的、且可能污染 release 目录）。
+_VR_DATA_DIR = (os.environ.get("VR_DATA_DIR") or "").strip()
+_MARKET_CACHE_DIR = (
+    (os.environ.get("AQSP_MARKET_CACHE_DIR") or "").strip()
+    or (os.path.join(_VR_DATA_DIR, "market_cache") if _VR_DATA_DIR else "")
+    or os.path.expanduser("~/.vibe-research/market_cache")
+)
 _TTL = 300  # 5 分钟；全站共享，省数据源压力
 # 空/失败结果的**负缓存**时长。原实现是"空结果不缓存、下次直接重试"，
 # 结果上游故障时**每个请求都去撞**（实测 /api/global/indices 单次 14–53s），
 # 把整页拖死。改成空结果也缓存 60s：既不再连环撞上游，又能较快自愈。
 _NEG_TTL = 60
+# stale-while-revalidate 窗口：超过 _TTL 但在该窗口内，返回旧值并后台刷新，
+# 不阻塞请求（根治「首访/缓存过期后同步打上游 14–53s 转圈」）。默认 30 分钟，
+# 可用 AQSP_MARKET_STALE_TTL 覆盖。
+_STALE_TTL = int(os.environ.get("AQSP_MARKET_STALE_TTL", "1800"))
+
+
+def _cache_path(key: str) -> str:
+    """key 落盘路径（ASCII 化，避免非法文件名）。"""
+    safe = "".join(c if c.isalnum() else "_" for c in key)
+    return os.path.join(_MARKET_CACHE_DIR, f"{safe}.json")
+
+
+_REFRESH_LOCK = threading.Lock()
+_REFRESHING: set[str] = set()
+
+
+def _write_cache(key: str, val) -> None:
+    """原子写缓存（临时文件 + os.replace + chmod 640）。失败不抛，交由调用方兜底。"""
+    now = time.time()
+    path = _cache_path(key)
+    entry = {"ts": now, "val": val}
+    try:
+        os.makedirs(_MARKET_CACHE_DIR, exist_ok=True)
+        tmp = f"{path}.tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(entry, fh, ensure_ascii=False, default=str)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.chmod(tmp, 0o640)
+        os.replace(tmp, path)
+    except Exception:
+        pass
+
+
+def _refresh_in_background(key: str, fn, valid) -> None:
+    """SWR 后台刷新：计算成功后写盘；失败则保留旧值（不阻塞请求、不污染好数据）。"""
+
+    def _run() -> None:
+        try:
+            val = fn()
+            if valid(val):
+                _write_cache(key, val)
+        except Exception:
+            pass
+        finally:
+            with _REFRESH_LOCK:
+                _REFRESHING.discard(key)
+
+    threading.Thread(target=_run, daemon=True).start()
 
 
 def _cached(key: str, fn, valid=bool):
-    """TTL 缓存。有效结果缓存 _TTL；空/失败结果缓存 _NEG_TTL（负缓存）。"""
+    """TTL + stale-while-revalidate 文件级缓存。
+
+    - 未过期（< _TTL）：直接返回，不刷新。
+    - 过期但在 _STALE_TTL 内：立即返回旧值（即时），后台异步刷新（不阻塞请求）。
+    - 超过 _STALE_TTL 或无缓存：同步计算（首次 / 极旧数据不应再服务）。
+    - 空/失败结果仍走负缓存 _NEG_TTL（与之前一致）。
+
+    这样市场页在「缓存过期那一刻」也永远即时返回，后台悄悄补数，
+    彻底消除 #170 那种「首访/过期后同步打上游 14–53s 转圈」。
+    """
     now = time.time()
-    hit = _CACHE.get(key)
-    if hit:
-        ts, val = hit
+    path = _cache_path(key)
+    entry = None
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            entry = json.load(fh)
+    except Exception:
+        entry = None
+
+    if entry is not None:
+        ts, val = entry["ts"], entry["val"]
         ttl = _TTL if valid(val) else _NEG_TTL
-        if now - ts < ttl:
+        age = now - ts
+        if age < ttl:
+            return val  # 新鲜，直接返回
+        if age < _STALE_TTL:
+            # 过期但可服务旧值：后台刷新，立即返回旧值（不阻塞）。
+            with _REFRESH_LOCK:
+                if key not in _REFRESHING:
+                    _REFRESHING.add(key)
+                    _refresh_in_background(key, fn, valid)
             return val
+        # 超过 STALE 窗口：同步重算（数据过旧不应再服务）。
     val = fn()
-    _CACHE[key] = (now, val)
+    _write_cache(key, val)
     return val
 
 
