@@ -356,6 +356,54 @@ def test_write_release_manifest_refuses_dirty_git_source(tmp_path: Path) -> None
         writer._git = original
 
 
+def test_install_script_acl_covers_every_env_declared_read_path() -> None:
+    """ACL 必须覆盖环境文件里声明的**所有**运行时读取路径，而不是只覆盖快照那两个。
+
+    2026-09-18 生产事故：provision 只给 `SNAPSHOT_PATH` / `SNAPSHOT_INDEX_PATH` 加 ACL，
+    而环境文件其实声明了 8 条读取路径。`predictions.jsonl`、`debate_results.jsonl`、
+    `paper_trades.jsonl`、`news_catalysts_latest.json` 都是 600，隔离用户读不到 ——
+    **选股绩效、讨论、纸面交易、消息面雷达四个功能静默降级成空数据**，
+    而 provision 的验证只查那两个文件，所以一直报成功、没人发现。
+
+    这条测试守住两件事：读取路径必须**从环境文件派生**（新增路径只改环境文件），
+    以及 ACL 应用与逐条验证必须遍历同一个列表。
+    """
+    script = (
+        PROJECT_ROOT / "scripts" / "install_vibe_research_systemd.sh"
+    ).read_text(encoding="utf-8")
+    env_example = (
+        PROJECT_ROOT / "deploy" / "systemd" / "aqsp-vibe-research.env.example"
+    ).read_text(encoding="utf-8")
+
+    # 1) 从环境文件派生读取路径（绝对路径型的 AQSP_* 变量），不硬编码
+    assert "grep -oE '^AQSP_[A-Z0-9_]+='" in script, (
+        "应从环境文件派生读取路径，而不是硬编码文件名"
+    )
+
+    # 2) ACL 应用与逐条验证都必须遍历 READ_PATHS。
+    #    少一处就会重现「加了 ACL 但没验证」或「验证了但没加 ACL」。
+    assert script.count('for read_path in "${READ_PATHS[@]}"') == 2, (
+        "ACL 应用与验证必须各遍历一次 READ_PATHS"
+    )
+
+    # 3) 曾经静默失效的那几条读取路径必须仍被声明 —— 去掉声明等于让它们失去 ACL
+    declared = {
+        line.split("=", 1)[0]
+        for line in env_example.splitlines()
+        if line.startswith("AQSP_") and line.split("=", 1)[-1].startswith("/")
+    }
+    for required in (
+        "AQSP_LEDGER",
+        "AQSP_DEBATE_RESULTS",
+        "AQSP_PAPER_LEDGER",
+        "AQSP_NEWS_JSON_OUTPUT",
+    ):
+        assert required in declared, (
+            f"{required} 必须作为绝对路径读取路径声明在环境示例里 —— "
+            "它曾因缺少 ACL 而静默失效（2026-09-18）"
+        )
+
+
 def test_release_consistency_flags_missing_critical_module(tmp_path: Path) -> None:
     """复现 2026-09-12：release 有 src 但缺 coverage_density，必须判不一致。
 
