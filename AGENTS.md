@@ -141,6 +141,9 @@
 
 - §4 清单逐项通过,且 PR 描述含"做了什么 / 为什么 / 风险 / 怎么验证"
 - CI 全绿(`ruff check .` + pytest),GitHub `mergeable_state = clean`
+- **不触发 CI 的改动**(如纯 `docs/**` / `AGENTS.md` / `README.md` —— `ci.yml` 的 `paths` 不含它们):
+  以本地门禁替代,即 `scripts/preflight_upload.py` + `ruff check .` +
+  `pytest tests/test_runtime_redline_guard.py` 全绿,并把三条命令的实际输出写进 PR 描述
 - 变更 ≤ ~300 行(测试不计),未引入未讨论的新依赖
 - 合并方式统一 **squash**
 
