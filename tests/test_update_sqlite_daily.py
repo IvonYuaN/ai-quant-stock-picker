@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts import update_sqlite_daily
+from scripts import refresh_sqlite_batch, update_sqlite_daily
 
 
 def test_update_sqlite_daily_cli_exposes_historical_backfill_flags() -> None:
@@ -636,4 +636,38 @@ def test_aborts_after_max_consecutive_failures(monkeypatch, tmp_path: Path) -> N
     assert summary.budget_exhausted is True
     assert summary.processed_symbols == 3
     assert summary.total_symbols == 5
+
+
+def test_refresh_batch_guard_detects_outage_when_existing_coverage_hides_it() -> None:
+    summary = update_sqlite_daily.UpdateSummary(
+        updated_rows=0,
+        skipped_symbols=120,
+        failed_symbols=0,
+        target_day=date(2026, 6, 18),
+        price_mode="raw",
+        target_day_symbol_count=4402,
+        total_symbols=120,
+        processed_symbols=120,
+        already_current_symbols=0,
+        empty_response_symbols=120,
+    )
+
+    assert refresh_sqlite_batch._has_no_target_day_coverage(summary) is True
+
+
+def test_refresh_batch_guard_allows_fully_current_batch() -> None:
+    summary = update_sqlite_daily.UpdateSummary(
+        updated_rows=0,
+        skipped_symbols=120,
+        failed_symbols=0,
+        target_day=date(2026, 6, 18),
+        price_mode="raw",
+        target_day_symbol_count=4402,
+        total_symbols=120,
+        processed_symbols=120,
+        already_current_symbols=120,
+        empty_response_symbols=0,
+    )
+
+    assert refresh_sqlite_batch._has_no_target_day_coverage(summary) is False
 
