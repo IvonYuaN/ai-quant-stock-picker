@@ -911,6 +911,13 @@ def main(argv: list[str] | None = None) -> int:
         default=200,
         help="低内存 walk-forward 每批标的数；不改变市场覆盖和统计门槛",
     )
+    wf.add_argument(
+        "--resume-checkpoint",
+        default=None,
+        help="断点续跑检查点路径（jsonl）。提供后：若该文件已存在则跳过其中已完成的 period "
+        "窗口、续跑剩余；每次完成一个 period 增量落盘。被外部关机/超时打断后重跑同一命令即可 "
+        "从断点继续，而非从 period 1 重来。默认不启用（完全向后兼容）。",
+    )
 
     dash_cmd = sub.add_parser(
         "dashboard", help="start or reuse the current AQSP React + FastAPI dashboard"
@@ -6482,7 +6489,9 @@ def _run_walkforward_grid_cscv(
                 config=variant_cfg,
             )
         else:
-            variant_result = streaming_runner(variant_strategy, variant_cfg)
+            variant_result = streaming_runner(
+                variant_strategy, variant_cfg, variant.variant_id
+            )
         returns = [period.total_return for period in variant_result.periods]
         if not returns:
             print(f"grid variant {variant.variant_id}: no usable periods")
@@ -7055,7 +7064,13 @@ def run_walkforward(args: argparse.Namespace) -> int:
     def run_engine_for_strategy(
         current_strategy: Any,
         current_config: WalkForwardEngineConfig,
+        variant_id: str | None = None,
     ):
+        # 断点续跑：grid 多个 variant 的 period 窗口日期相同，必须按 variant_id 分段，
+        # 否则会跨 variant 误跳已完成的窗口。非 grid 的基础 run 不加后缀。
+        checkpoint = getattr(args, "resume_checkpoint", None)
+        if checkpoint and variant_id is not None:
+            checkpoint = f"{checkpoint}.{variant_id}"
         if streaming_context is None:
             return engine.run(
                 current_strategy,
@@ -7074,6 +7089,7 @@ def run_walkforward(args: argparse.Namespace) -> int:
             config=current_config,
             fixed_frames=streaming_context["fixed_frames"],
             batch_size=int(args.stream_batch_size),
+            resume_checkpoint=checkpoint,
         )
 
     result = run_engine_for_strategy(strategy, engine_cfg)
