@@ -613,19 +613,21 @@ def test_adaptive_learning_skips_decay_alerts_during_cold_start(
 def test_auto_evolution_step_reads_output_when_success(
     monkeypatch, tmp_path: Path
 ) -> None:
+    import subprocess
+
     daily_pipeline = _load_daily_pipeline_module()
     monkeypatch.setenv("AQSP_SYMBOLS", "600000,600519")
 
-    def fake_main(argv: list[str]) -> int:
+    def fake_run(argv: list[str], **kwargs):
         output = Path(argv[argv.index("--output") + 1])
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(
             '{"strategy_name":"composite","confidence":0.82,"performance_improvement":0.11,"reason":"regime adaptation"}',
             encoding="utf-8",
         )
-        return 0
+        return SimpleNamespace(returncode=0, stdout="进化完成", stderr="")
 
-    monkeypatch.setattr("aqsp.cli.main", fake_main)
+    monkeypatch.setattr(subprocess, "run", fake_run)
 
     config = daily_pipeline.PipelineConfig(
         project_root=tmp_path,
@@ -660,11 +662,20 @@ def test_auto_evolution_step_reads_output_when_success(
     assert result["confidence"] == 0.82
 
 
-def test_auto_evolution_step_raises_when_cli_fails(monkeypatch, tmp_path: Path) -> None:
+def test_auto_evolution_step_raises_when_cli_fails(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """子进程改造后自进化失败不再 raise，而是优雅跳过（可丢弃步）。"""
+    import subprocess
+
     daily_pipeline = _load_daily_pipeline_module()
     monkeypatch.setenv("AQSP_SYMBOLS", "600000,600519")
 
-    monkeypatch.setattr("aqsp.cli.main", lambda _argv: 1)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda argv, **kwargs: SimpleNamespace(returncode=1, stdout="", stderr="boom"),
+    )
 
     config = daily_pipeline.PipelineConfig(
         project_root=tmp_path,
@@ -692,8 +703,9 @@ def test_auto_evolution_step_raises_when_cli_fails(monkeypatch, tmp_path: Path) 
         enable_auto_evolution=True,
     )
 
-    with pytest.raises(Exception, match="策略自进化失败"):
-        daily_pipeline._step_auto_evolution(config, logging.getLogger("test"))
+    result = daily_pipeline._step_auto_evolution(config, logging.getLogger("test"))
+
+    assert result == {"skipped": True, "exit_code": 1, "reason": "evolve_failed"}
 
 
 def test_auto_evolution_step_skips_when_prerequisites_missing(
@@ -737,16 +749,23 @@ def test_auto_evolution_step_skips_when_prerequisites_missing(
 def test_auto_evolution_step_skips_when_pool_constituents_unavailable(
     monkeypatch, tmp_path: Path
 ) -> None:
+    """成分股不可用时子进程 evolve 非零退出 → 优雅跳过（不再进程内 raise）。"""
+    import subprocess
+
     daily_pipeline = _load_daily_pipeline_module()
     monkeypatch.setenv("TUSHARE_TOKEN", "configured-but-unavailable")
 
-    def fake_main(_argv: list[str]) -> int:
-        print(
-            "配置错误: Pool sh300 requires TUSHARE_TOKEN or explicit --symbols for point-in-time constituents"
+    def fake_run(argv: list[str], **kwargs):
+        return SimpleNamespace(
+            returncode=1,
+            stdout=(
+                "配置错误: Pool sh300 requires TUSHARE_TOKEN or explicit "
+                "--symbols for point-in-time constituents"
+            ),
+            stderr="",
         )
-        return 1
 
-    monkeypatch.setattr("aqsp.cli.main", fake_main)
+    monkeypatch.setattr(subprocess, "run", fake_run)
 
     config = daily_pipeline.PipelineConfig(
         project_root=tmp_path,
@@ -776,7 +795,7 @@ def test_auto_evolution_step_skips_when_pool_constituents_unavailable(
 
     result = daily_pipeline._step_auto_evolution(config, logging.getLogger("test"))
 
-    assert result == {"skipped": True, "reason": "missing_pool_constituents"}
+    assert result == {"skipped": True, "exit_code": 1, "reason": "evolve_failed"}
 
 
 def test_closing_review_step_writes_output_and_skips_fanout_notify_in_summary_mode(
