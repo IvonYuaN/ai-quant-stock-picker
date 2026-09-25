@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from collections import Counter
 from dataclasses import dataclass
 
@@ -19,6 +20,46 @@ from aqsp.ratings import is_tradable_rating
 from aqsp.strategies.thresholds import Thresholds, load_thresholds
 
 _logger = logging.getLogger(__name__)
+
+# debate 阻断门默认阻断语：debate 结论（research_verdict / primary_risk_gate）
+# 命中任一关键词时，候选不得上仓（仅观察）。可通过
+# 阻断信号使用结构化字段（debate_risk_veto_applied / disagreement_score），
+# 不做散文关键词匹配：规则化 debate 会对每个候选生成「失效检验…」样板句
+# （2026-09-25 test_run_scheduled_persists_decision_audit_log 实证），
+# 关键词匹配会把整条管道打成 observation_only，再造一个空壳。
+
+_PM_DEBATE_GATE_OFF_VALUES = {"0", "false", "no", "off"}
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = str(os.getenv(name, "") or "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    return value if value >= 0 else default
+
+
+def _pm_debate_gate_settings() -> tuple[bool, float, float]:
+    enabled = (
+        str(os.getenv("AQSP_PM_DEBATE_GATE", "1") or "").strip().lower()
+        not in _PM_DEBATE_GATE_OFF_VALUES
+    )
+    high = _env_float("AQSP_PM_DEBATE_HIGH_DISAGREEMENT", 0.75)
+    mid = _env_float("AQSP_PM_DEBATE_MID_DISAGREEMENT", 0.5)
+    return enabled, high, mid
+
+
+def _parse_debate_disagreement(metrics: dict[str, object]) -> float | None:
+    raw = metrics.get("debate_disagreement_score")
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
 
 
 @dataclass(frozen=True)
@@ -625,6 +666,11 @@ def apply_portfolio_manager(
     industry_map = industry_map or {}
     decisions: list[PortfolioDecision] = []
     updated: list[PickResult] = []
+    (
+        debate_gate_enabled,
+        high_disagreement,
+        mid_disagreement,
+    ) = _pm_debate_gate_settings()
     # 当前主链没有持仓快照输入，止损/T+1 只能由上游显式过滤后再进入 PM。
     # 在没有真实持仓上下文前，不在这里做假集成，避免输出看似已接管但实际未生效的裁决。
 
@@ -681,6 +727,78 @@ def apply_portfolio_manager(
         if str(pick.metrics.get("cross_market_primary_theme", "") or "").strip():
             reasons.append("跨市证据仅进入复核，不改写候选评分")
 
+        # debate 阻断门：在集中度/相关性/质量门之后兜底裁决。
+        # 只把 keep 提级（blocked -> observation_only / downgraded -> downgrade），
+        # 不覆盖已有 observation_only / downgrade 标签。
+        # ⚠️ 仅当 debate 由 LLM 实际驱动（debate_llm_enabled）时才生效：
+        # 规则化 debate 的共识/分歧/风险提示是每票皆有的样板输出，不构成裁决证据。
+        debate_action_influence = "none"
+        if debate_gate_enabled:
+            debate_consensus = str(
+                pick.debate_consensus
+                or pick.metrics.get("debate_consensus", "")
+                or ""
+            ).strip().lower()
+            debate_disagreement = _parse_debate_disagreement(pick.metrics)
+            debate_veto = (
+                str(pick.metrics.get("debate_risk_veto_applied", "") or "").lower()
+                in ("1", "true", "yes")
+            )
+            debate_llm_enabled = (
+                str(pick.metrics.get("debate_llm_enabled", "") or "").strip().lower()
+                in ("1", "true", "yes")
+            )
+            has_debate_data = bool(debate_consensus) or (
+                debate_disagreement is not None
+            )
+            if not has_debate_data:
+                debate_action_influence = "no_debate"
+            elif not debate_llm_enabled:
+                debate_action_influence = "rules_only"
+            elif action == "keep":
+                veto_reason = str(
+                    pick.metrics.get("debate_risk_veto_reason", "") or ""
+                ).strip()
+                if (
+                    debate_disagreement is not None
+                    and debate_disagreement >= high_disagreement
+                ):
+                    debate_action_influence = "blocked"
+                    action = "observation_only"
+                    reasons.append(
+                        "debate 阻断门: "
+                        f"分歧度 {debate_disagreement:.2f} ≥ 阈值 "
+                        f"{high_disagreement:.2f}，高分歧不可上仓，仅观察"
+                    )
+                elif debate_veto:
+                    debate_action_influence = "blocked"
+                    action = "observation_only"
+                    reasons.append(
+                        "debate 阻断门: 风控角色结构化否决"
+                        + (f"（{veto_reason}）" if veto_reason else "")
+                        + "，暂缓上仓，仅观察"
+                    )
+                elif debate_consensus == "bearish" or (
+                    debate_disagreement is not None
+                    and debate_disagreement >= mid_disagreement
+                ):
+                    debate_action_influence = "downgraded"
+                    action = "downgrade"
+                    bases: list[str] = []
+                    if debate_consensus == "bearish":
+                        bases.append("委员会共识 bearish")
+                    if (
+                        debate_disagreement is not None
+                        and debate_disagreement >= mid_disagreement
+                    ):
+                        bases.append(
+                            f"分歧度 {debate_disagreement:.2f} ≥ 阈值 "
+                            f"{mid_disagreement:.2f}"
+                        )
+                    reasons.append(
+                        f"debate 阻断门: {'；'.join(bases)}，降级为复核"
+                    )
+
         # The runtime scorer owns score, rating, position, and candidate order.
         # Portfolio management only labels constraints for later allocation/review.
         context_priority_score = round(float(pick.score), 2)
@@ -704,6 +822,7 @@ def apply_portfolio_manager(
                 metrics={
                     **pick.metrics,
                     "portfolio_action": action,
+                    "debate_action_influence": debate_action_influence,
                     "context_priority_score": context_priority_score,
                     "context_priority_delta": 0.0,
                     "context_priority_reason": "",
