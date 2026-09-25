@@ -9,6 +9,8 @@
 # 5. 北京时间 18:00 运行收盘同步 + 全量跑批
 # 6. 北京时间 19:40 运行冷启动补样本，避开收盘主链路
 # 7. 北京时间每 15 分钟运行一次监控
+# 8. 北京时间周六 09:20 运行 prod→runner 数据同步（自带新鲜度探针；
+#    避开生产 gate 窗口 07:30-17:30 UTC=北京 15:30-01:30，赶在周六 22:00 gate 前）
 
 set -euo pipefail
 
@@ -23,6 +25,7 @@ ENABLE_NEWS="${AQSP_ENABLE_NEWS_CRON:-true}"
 ENABLE_EVENT_DATA="${AQSP_ENABLE_EVENT_DATA_CRON:-true}"
 ENABLE_COLDSTART="${AQSP_ENABLE_COLDSTART_CRON:-true}"
 ENABLE_WALKFORWARD_GATE="${AQSP_ENABLE_WALKFORWARD_GATE_CRON:-true}"
+ENABLE_RUNNER_SYNC="${AQSP_ENABLE_RUNNER_SYNC_CRON:-true}"
 
 # 调度器二进制：simple 模式（旧 simple-server，`/opt/aqsp` 是活代码目录、有 .venv）
 # 走 `bt_task.sh`；immutable 模式（prod 实际形态，按发布软链定位）必须走
@@ -72,6 +75,13 @@ emit_jobs() {
         echo '0 22 * * 6 /bin/bash '"${SCHEDULER_BIN}"' walkforward-gate >> '"${CRON_LOG}"' 2>&1'
     fi
 
+    if [[ "${ENABLE_RUNNER_SYNC,,}" =~ ^(1|true|yes|on)$ ]]; then
+        # prod→runner 单向同步：周六 09:20（北京时间）。此时周五 18:00 daily 已落库
+        # 完毕、周末无写入（满足 runner_sync.sh 的「无写入时执行」前提），且
+        # 01:20 UTC 不在生产 gate 窗口 07:30-17:30 UTC 内，赶在周六 22:00 gate 之前。
+        echo '20 9 * * 6 /bin/bash '"${SCHEDULER_BIN}"' runner-sync >> '"${CRON_LOG}"' 2>&1'
+    fi
+
     if [[ "${ENABLE_NEWS,,}" =~ ^(1|true|yes|on)$ ]]; then
         echo '35 8 * * 1-5 /bin/bash '"${SCHEDULER_BIN}"' news >> '"${CRON_LOG}"' 2>&1'
         echo '5 9 * * 6,0 /bin/bash '"${SCHEDULER_BIN}"' news >> '"${CRON_LOG}"' 2>&1'
@@ -90,7 +100,7 @@ emit_jobs() {
 CURRENT_CRONTAB="$(crontab -l 2>/dev/null || true)"
 FILTERED_CRONTAB="$(
     printf '%s\n' "$CURRENT_CRONTAB" | grep -vE \
-        'AQSP_RUNNER_SCRIPT=scripts/intraday_refresh\.sh|AQSP_RUNNER_SCRIPT=scripts/midday_refresh\.sh|/scripts/server_sync_and_run\.sh|/scripts/server_monitor\.sh|/scripts/(bt_task|release_task_entrypoint)\.sh (daily|intraday|midday|coldstart|walkforward-gate|monitor|news|event-data)' || true
+        'AQSP_RUNNER_SCRIPT=scripts/intraday_refresh\.sh|AQSP_RUNNER_SCRIPT=scripts/midday_refresh\.sh|/scripts/server_sync_and_run\.sh|/scripts/server_monitor\.sh|/scripts/(bt_task|release_task_entrypoint)\.sh (daily|intraday|midday|coldstart|walkforward-gate|runner-sync|monitor|news|event-data)' || true
 )"
 
 {

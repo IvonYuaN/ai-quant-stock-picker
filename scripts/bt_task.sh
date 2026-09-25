@@ -6,6 +6,7 @@
 #   /bin/bash /opt/aqsp/scripts/bt_task.sh midday
 #   /bin/bash /opt/aqsp/scripts/bt_task.sh coldstart
 #   /bin/bash /opt/aqsp/scripts/bt_task.sh walkforward-gate
+#   /bin/bash /opt/aqsp/scripts/bt_task.sh runner-sync
 #   /bin/bash /opt/aqsp/scripts/bt_task.sh monitor
 #   /bin/bash /opt/aqsp/scripts/bt_task.sh news
 #   /bin/bash /opt/aqsp/scripts/bt_task.sh status
@@ -55,7 +56,7 @@ log() {
 
 usage() {
     cat <<'EOF'
-Usage: bt_task.sh <daily|intraday|midday|coldstart|walkforward-gate|monitor|news|event-data|status|data-refresh|variant-refresh>
+Usage: bt_task.sh <daily|intraday|midday|coldstart|walkforward-gate|runner-sync|monitor|news|event-data|status|data-refresh|variant-refresh>
 
 BT panel examples:
   /bin/bash /opt/aqsp/scripts/bt_task.sh intraday
@@ -77,6 +78,7 @@ Recommended BT schedule (Asia/Shanghai):
   data-refresh 15:35 Mon-Fri; bounded raw daily data refresh
   variant-refresh 22:30 Mon-Fri; bounded isolated experiment refresh
   walkforward-gate 22:00 Sat; controlled production evidence only, no threshold apply
+  runner-sync 09:20 Sat; push prod code+data to compute node (before Sat gate)
   monitor   every 15 min
   status    manual only
 
@@ -562,6 +564,18 @@ case "$ACTION" in
         run_python_script "${PROJECT_ROOT}/scripts/run_production_walkforward_gate.py" \
             --status-path "${AQSP_WALKFORWARD_PRODUCTION_STATUS:-${RUNTIME_DATA_ROOT}/walkforward_production_status.json}" \
             "${@:2}"
+        ;;
+    runner-sync)
+        # prod→runner 单向同步（代码 + raw sqlite + gate 快照），周六盘后运行。
+        # 此前该脚本纯手动、无任何调度方，runner 3y 库停在 20260918，
+        # 生产 gate 被 blocked_cutoff 守卫秒退（整改路线图 P0 #2）。
+        # 脚本自带新鲜度探针：落后超过 AQSP_SYNC_STALE_DAYS（默认 7 天）时
+        # 输出 [ALERT][runner_sync] 告警行供 monitors 捕捉。
+        export AQSP_RUN_TASK_ID="runner_sync"
+        export AQSP_NOTIFY="false"
+        export AQSP_GATE_NOTIFY="false"
+        sync_code_only
+        run_script "${PROJECT_ROOT}/scripts/runner_sync.sh"
         ;;
     monitor)
         skip_weekday_market_holiday
