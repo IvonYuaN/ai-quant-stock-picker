@@ -849,6 +849,23 @@ def _step_adaptive_learning(
     return result
 
 
+def _resolve_evolution_timeout_budget() -> int:
+    """策略自进化子进程超时预算（秒）。
+
+    由 env AQSP_EVOLUTION_TIMEOUT_SECONDS 覆盖，默认 600，clamp 到 [60, 3600]；
+    非法值（非整数）回退默认 600。
+    """
+    default = 600
+    raw = str(os.getenv("AQSP_EVOLUTION_TIMEOUT_SECONDS", "") or "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return min(max(value, 60), 3600)
+
+
 def _step_auto_evolution(
     config: PipelineConfig, logger: logging.Logger
 ) -> dict[str, Any]:
@@ -858,7 +875,7 @@ def _step_auto_evolution(
         logger.info("  自进化已禁用，跳过")
         return {"skipped": True, "reason": "disabled"}
 
-    import os
+    import subprocess
 
     explicit_symbols = os.getenv("AQSP_SYMBOLS", "").strip()
     tushare_token = os.getenv("TUSHARE_TOKEN", "").strip()
@@ -866,41 +883,59 @@ def _step_auto_evolution(
         logger.info("  缺少 TUSHARE_TOKEN 且未显式配置 AQSP_SYMBOLS，跳过策略自进化")
         return {"skipped": True, "reason": "missing_tushare_or_symbols"}
 
-    output_path = config.project_root / "data" / "evolution_result.json"
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path_abs = (config.project_root / "data" / "evolution_result.json").resolve()
+    output_path_abs.parent.mkdir(parents=True, exist_ok=True)
 
     argv = [
+        sys.executable,
+        "-m",
+        "aqsp",
         "evolve",
         "--source",
         config.source,
         "--output",
-        str(output_path),
+        str(output_path_abs),
     ]
+    timeout_budget = _resolve_evolution_timeout_budget()
 
-    import contextlib
-    import io
+    # 子进程隔离：策略自进化是「仅研究观察」步，挂死/失败不得拖死主链路。
+    # 主进程不再 import aqsp.cli 进程内执行 —— ThreadPool socket 阻塞时
+    # 工作线程 join 无界等待，曾导致 prod 外层 timeout 强杀整棵进程树。
+    try:
+        proc = subprocess.run(
+            argv,
+            cwd=str(config.project_root),
+            timeout=timeout_budget,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.TimeoutExpired:
+        logger.warning(
+            "  策略自进化超时（预算 %ss），优雅跳过",
+            timeout_budget,
+        )
+        return {"skipped": True, "exit_code": None, "reason": "timeout_budget_exceeded"}
 
-    from aqsp.cli import main
-
-    output_buffer = io.StringIO()
-    with (
-        contextlib.redirect_stdout(output_buffer),
-        contextlib.redirect_stderr(output_buffer),
-    ):
-        exit_code = main(argv)
-    cli_output = output_buffer.getvalue().strip()
-    for line in cli_output.splitlines():
+    output_text = ((proc.stdout or "") + (proc.stderr or "")).strip()
+    lines = [line for line in output_text.splitlines() if line.strip()]
+    if len(lines) > 40:
+        logger.info("  自进化子进程输出超长，仅保留最后 40 行")
+        lines = lines[-40:]
+    for line in lines:
         logger.info("  %s", line)
+
+    exit_code = proc.returncode
     if exit_code != 0:
-        if "requires TUSHARE_TOKEN or explicit --symbols" in cli_output:
-            logger.info("  缺少可用成分股数据，跳过策略自进化")
-            return {"skipped": True, "reason": "missing_pool_constituents"}
-        raise DataError(f"策略自进化失败, exit_code={exit_code}")
+        logger.warning(
+            "  策略自进化失败 exit_code=%s，优雅跳过（不影响后续步骤）",
+            exit_code,
+        )
+        return {"skipped": True, "exit_code": exit_code, "reason": "evolve_failed"}
 
     payload: dict[str, Any] = {}
-    if output_path.exists():
+    if output_path_abs.exists():
         try:
-            payload = json.loads(output_path.read_text(encoding="utf-8"))
+            payload = json.loads(output_path_abs.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
             payload = {}
 
