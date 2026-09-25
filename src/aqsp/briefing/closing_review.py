@@ -1420,8 +1420,14 @@ def build_ai_review_section(
     """
     from aqsp.utils.llm_safe import llm_call_or_fallback
 
-    base = f"日期 {review.date}：纸面验证 {review.executed_signals}/{review.total_signals}，"
-    base += f"胜率 {review.win_rate:.1%}，累计收益 {review.total_return:.2f}%。"
+    # 数值字段全部 getattr 兜底：本函数是「可选增强」层，必须对残缺
+    # review（缺字段/mock 简化对象）健壮，绝不因缺字段抛 AttributeError。
+    executed = int(getattr(review, "executed_signals", 0) or 0)
+    total = int(getattr(review, "total_signals", 0) or 0)
+    win_rate = float(getattr(review, "win_rate", 0.0) or 0.0)
+    total_return = float(getattr(review, "total_return", 0.0) or 0.0)
+    base = f"日期 {getattr(review, 'date', '')}：纸面验证 {executed}/{total}，"
+    base += f"胜率 {win_rate:.1%}，累计收益 {total_return:.2f}%。"
     prompt = (
         "你是 A 股短线复盘助手。基于以下数据写 3~5 句复盘要点，"
         "只复述与归纳，不得虚构数字，不得给出买卖指令：\n"
@@ -1430,7 +1436,7 @@ def build_ai_review_section(
         "输出要求：纯文本，不要标题，不要 markdown 列表。"
     )
     rule_text = (
-        f"胜率 {review.win_rate:.1%}、累计收益 {review.total_return:.2f}%。"
+        f"胜率 {win_rate:.1%}、累计收益 {total_return:.2f}%。"
         "详见上方失败模式与策略表现统计。"
     )
     result = llm_call_or_fallback(

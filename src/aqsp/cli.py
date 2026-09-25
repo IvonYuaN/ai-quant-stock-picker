@@ -8726,7 +8726,8 @@ def run_closing_review(args: argparse.Namespace) -> int:
         )
         if ai_section_enabled:
             llm_text, _degraded = build_ai_review_section(
-                review, review.failure_patterns_section
+                review,
+                getattr(review, "failure_patterns_section", ""),
             )
             if llm_text:
                 review = replace(review, llm_review_text=llm_text)
