@@ -520,7 +520,10 @@ class ClosingReviewer:
         try:
             today_dt = datetime.strptime(today, "%Y-%m-%d")
         except ValueError:
-            today_dt = datetime.now()
+            # 非标准日期串兜底：必须用项目时钟 now_shanghai，禁用 datetime.now()
+            # （红线守卫 test_runtime_redline_guard 静态扫描禁止裸 datetime.now）。
+            # replace(tzinfo=None) 去掉时区，使其与 exit_date 解析出的 naive 日期可比。
+            today_dt = now_shanghai().replace(tzinfo=None)
 
         closed = [row for row in all_paper if row.get("status") == "closed"]
 
