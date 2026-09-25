@@ -46,6 +46,7 @@ class LockupReleaseFilter(LethalFilter):
                 passed=True,
                 reason="无解禁数据，跳过",
                 filter_name=self.name,
+                data_missing=True,
             )
 
         # 生产者（aqsp.data.lockup）写的是 plan_date；保留 release_date 兼容旧格式。

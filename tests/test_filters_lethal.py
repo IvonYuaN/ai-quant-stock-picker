@@ -253,13 +253,16 @@ class TestLethalFilterPipeline:
         assert isinstance(pipeline.filters[1], HolderCountFilter)
         assert isinstance(pipeline.filters[2], AnnouncementKeywordFilter)
 
-    def test_pipeline_pass_when_no_data(self):
+    def test_pipeline_pass_when_no_data(self, monkeypatch, tmp_path):
+        # 隔离：默认数据路径指向空 runtime root，确保真「无数据」
+        monkeypatch.setenv("AQSP_RUNTIME_DATA_ROOT", str(tmp_path))
         pipeline = LethalFilterPipeline()
         passed, rejected = pipeline.run("600000", _empty_df())
         assert passed is True
         assert rejected == []
 
-    def test_pipeline_rejects_on_announcement(self):
+    def test_pipeline_rejects_on_announcement(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("AQSP_RUNTIME_DATA_ROOT", str(tmp_path))
         pipeline = LethalFilterPipeline()
         passed, rejected = pipeline.run(
             "600000",
@@ -308,7 +311,8 @@ class TestLethalFilterPipeline:
         assert "lockup_release" in rejected
         assert "announcement_keyword" in rejected
 
-    def test_pipeline_custom_filters(self):
+    def test_pipeline_custom_filters(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("AQSP_RUNTIME_DATA_ROOT", str(tmp_path))
         flt = AnnouncementKeywordFilter()
         pipeline = LethalFilterPipeline(filters=[flt])
         assert len(pipeline.filters) == 1
@@ -326,3 +330,138 @@ class TestLethalFilterPipeline:
         passed, rejected = pipeline.run("600000", _empty_df())
         assert passed is True
         assert rejected == []
+
+
+class TestDataMissingObservability:
+    """#161 静默失效链根治：数据缺失必须可观测，不可当健康放行。"""
+
+    def test_lockup_data_missing_flag(self, tmp_path):
+        flt = LockupReleaseFilter(data_path=str(tmp_path / "nope.csv"))
+        result = flt.check("600000", _empty_df())
+        assert result.passed is True
+        assert result.data_missing is True
+
+    def test_holder_data_missing_flag(self, tmp_path):
+        flt = HolderCountFilter(data_path=str(tmp_path / "nope.csv"))
+        result = flt.check("600000", _empty_df())
+        assert result.passed is True
+        assert result.data_missing is True
+
+    def test_holder_symbol_absent_is_not_data_missing(self):
+        """数据面存在但该股无记录 = 正常缺失（非数据缺失），不打标记。"""
+        holder_data = pd.DataFrame(
+            {"symbol": ["000001"], "quarter": ["2025Q4"], "holder_count": [5]}
+        )
+        flt = HolderCountFilter()
+        result = flt.check("600000", _empty_df(), holder_data=holder_data)
+        assert result.passed is True
+        assert result.data_missing is False
+
+    def test_announcement_data_missing_flag(self, tmp_path):
+        flt = AnnouncementKeywordFilter(data_path=str(tmp_path / "nope.csv"))
+        result = flt.check("600000", _empty_df())
+        assert result.passed is True
+        assert result.data_missing is True
+
+    def test_announcement_symbol_absent_is_not_data_missing(self):
+        ann_data = pd.DataFrame(
+            {"symbol": ["000001"], "text": ["公司因违规被处罚"]}
+        )
+        flt = AnnouncementKeywordFilter()
+        result = flt.check("600000", _empty_df(), announcement_data=ann_data)
+        assert result.passed is True
+        assert result.data_missing is False
+
+    def test_pipeline_run_collects_missing_in_place(self, tmp_path):
+        pipeline = LethalFilterPipeline(
+            filters=[
+                LockupReleaseFilter(data_path=str(tmp_path / "a.csv")),
+                HolderCountFilter(data_path=str(tmp_path / "b.csv")),
+                AnnouncementKeywordFilter(data_path=str(tmp_path / "c.csv")),
+            ]
+        )
+        missing: list[str] = []
+        passed, rejected = pipeline.run(
+            "600000", _empty_df(), missing_filters=missing
+        )
+        assert passed is True
+        assert rejected == []
+        assert sorted(missing) == [
+            "announcement_keyword",
+            "holder_count",
+            "lockup_release",
+        ]
+
+    def test_run_with_observability_returns_triple(self, tmp_path):
+        pipeline = LethalFilterPipeline(
+            filters=[
+                LockupReleaseFilter(data_path=str(tmp_path / "a.csv")),
+                HolderCountFilter(data_path=str(tmp_path / "b.csv")),
+                AnnouncementKeywordFilter(data_path=str(tmp_path / "c.csv")),
+            ]
+        )
+        passed, rejected, missing = pipeline.run_with_observability(
+            "600000", _empty_df()
+        )
+        assert passed is True
+        assert rejected == []
+        assert sorted(missing) == [
+            "announcement_keyword",
+            "holder_count",
+            "lockup_release",
+        ]
+
+    def test_defaults_read_pit_cache_runtime_root(
+        self, monkeypatch, tmp_path
+    ):
+        """缺省数据路径 = $AQSP_RUNTIME_DATA_ROOT/pit_cache（写读同源）。"""
+        monkeypatch.setenv("AQSP_RUNTIME_DATA_ROOT", str(tmp_path))
+        near = (
+            __import__("aqsp.core.time", fromlist=["today_shanghai"])
+            .today_shanghai()
+            + pd.Timedelta(days=3)
+        ).strftime("%Y-%m-%d")
+        cache = tmp_path / "pit_cache"
+        cache.mkdir(parents=True)
+        (cache / "lockup.csv").write_text(
+            "symbol,plan_date\n600000," + near + "\n", encoding="utf-8"
+        )
+        flt = LockupReleaseFilter()
+        assert flt.data_path == str(cache / "lockup.csv")
+        result = flt.check("600000", _empty_df())
+        assert result.passed is False  # 从 pit_cache 读到数据并真生效
+
+
+class TestDefaultsReadPitCache:
+    def test_holder_default_path(
+        self, monkeypatch, tmp_path
+    ):
+        monkeypatch.setenv("AQSP_RUNTIME_DATA_ROOT", str(tmp_path))
+        assert HolderCountFilter().data_path == str(
+            tmp_path / "pit_cache" / "holder_count.csv"
+        )
+
+    def test_announcement_default_path(
+        self, monkeypatch, tmp_path
+    ):
+        monkeypatch.setenv("AQSP_RUNTIME_DATA_ROOT", str(tmp_path))
+        assert AnnouncementKeywordFilter().data_path == str(
+            tmp_path / "pit_cache" / "announcements.csv"
+        )
+
+    def test_holder_default_loads_pit_cache_and_rejects(
+        self, monkeypatch, tmp_path
+    ):
+        monkeypatch.setenv("AQSP_RUNTIME_DATA_ROOT", str(tmp_path))
+        cache = tmp_path / "pit_cache" / "holder_count.csv"
+        cache.parent.mkdir(parents=True)
+        cache.write_text(
+            "symbol,quarter,holder_count\n"
+            "600000,2026-03-31,100000\n"
+            "600000,2026-06-30,80000\n",
+            encoding="utf-8",
+        )
+        result = HolderCountFilter().check("600000", _empty_df())
+        assert result.passed is False
+        assert "股东户数" in result.reason
+        assert result.data_missing is False

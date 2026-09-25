@@ -5240,14 +5240,28 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
 
     lethal_pipeline = LethalFilterPipeline()
     filtered_picks = []
+    missing_filter_names: set[str] = set()
     for pick in picks:
         df = screen_frames.get(pick.symbol, pd.DataFrame())
-        passed, rejected_by = lethal_pipeline.run(pick.symbol, df)
+        # 单遍收集「数据缺失静默放行」的排雷器名单（run 可选参数，与测试替身兼容）。
+        missing: list[str] = []
+        passed, _rejected_by = lethal_pipeline.run(
+            pick.symbol, df, missing_filters=missing
+        )
+        missing_filter_names.update(missing)
         if passed:
             filtered_picks.append(pick)
     if len(filtered_picks) < len(picks):
         print(
             f"排雷过滤: {len(picks)} → {len(filtered_picks)} (过滤 {len(picks) - len(filtered_picks)} 只)"
+        )
+    if missing_filter_names:
+        # 响亮告警：排雷层数据缺失 ⇒ 对应保护层实际未生效（静默放行），
+        # 必须让操作员看到（#161 静默失效链根治：缺数据不是健康状态）。
+        print(
+            "⚠️ 排雷数据缺失告警: 以下排雷器因数据缺失处于「未生效」状态: "
+            + ", ".join(sorted(missing_filter_names))
+            + " | 补齐: 生产机跑 scripts/fetch_event_data.py 与 scripts/fetch_lockup.py"
         )
     picks = filtered_picks
 
