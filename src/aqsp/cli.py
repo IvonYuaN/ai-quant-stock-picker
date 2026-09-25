@@ -228,6 +228,8 @@ def _debate_execution_enabled(args: Any, debate_runtime: Any) -> bool:
 def _apply_debate_results_to_picks(
     picks: list[PickResult],
     debate_results: list[DebateResult],
+    *,
+    llm_enabled: bool = False,
 ) -> tuple[list[PickResult], int]:
     debate_by_symbol = {result.symbol: result for result in debate_results}
     if not debate_by_symbol:
@@ -242,6 +244,12 @@ def _apply_debate_results_to_picks(
             continue
 
         metrics = dict(pick.metrics)
+        # 结构化裁决信号：供 PM debate 阻断门使用（不做散文关键词匹配——
+        # 规则化 debate 的「失效检验…」是每票皆有的样板句，见 manager.py 注释）。
+        metrics["debate_risk_veto_applied"] = bool(result.risk_veto_applied)
+        if result.risk_veto_reason:
+            metrics["debate_risk_veto_reason"] = result.risk_veto_reason
+        metrics["debate_llm_enabled"] = bool(llm_enabled)
         deterministic_baseline = (
             result.deterministic_score
             if result.deterministic_score
@@ -5655,7 +5663,11 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         print("多 Agent 委员会复核完成")
 
         if debate_results:
-            picks, rewritten = _apply_debate_results_to_picks(picks, debate_results)
+            picks, rewritten = _apply_debate_results_to_picks(
+                picks,
+                debate_results,
+                llm_enabled=bool(getattr(debate_runtime, "enable_llm", False)),
+            )
             print("   复核结论仅写入解释层，未直接改写 runtime 排序")
 
     if validation and validation.checked and debate_results:

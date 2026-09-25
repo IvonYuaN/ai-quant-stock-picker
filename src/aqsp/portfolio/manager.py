@@ -23,15 +23,10 @@ _logger = logging.getLogger(__name__)
 
 # debate 阻断门默认阻断语：debate 结论（research_verdict / primary_risk_gate）
 # 命中任一关键词时，候选不得上仓（仅观察）。可通过
-# AQSP_PM_DEBATE_BLOCK_WORDS（逗号分隔）整体覆盖。
-PM_DEBATE_BLOCK_WORDS_DEFAULT: tuple[str, ...] = (
-    "失效检验",
-    "假设失效",
-    "风险否决",
-    "结论阻断",
-    "不建议",
-    "暂不进入",
-)
+# 阻断信号使用结构化字段（debate_risk_veto_applied / disagreement_score），
+# 不做散文关键词匹配：规则化 debate 会对每个候选生成「失效检验…」样板句
+# （2026-09-25 test_run_scheduled_persists_decision_audit_log 实证），
+# 关键词匹配会把整条管道打成 observation_only，再造一个空壳。
 
 _PM_DEBATE_GATE_OFF_VALUES = {"0", "false", "no", "off"}
 
@@ -47,19 +42,14 @@ def _env_float(name: str, default: float) -> float:
     return value if value >= 0 else default
 
 
-def _pm_debate_gate_settings() -> tuple[bool, float, float, tuple[str, ...]]:
+def _pm_debate_gate_settings() -> tuple[bool, float, float]:
     enabled = (
         str(os.getenv("AQSP_PM_DEBATE_GATE", "1") or "").strip().lower()
         not in _PM_DEBATE_GATE_OFF_VALUES
     )
     high = _env_float("AQSP_PM_DEBATE_HIGH_DISAGREEMENT", 0.75)
     mid = _env_float("AQSP_PM_DEBATE_MID_DISAGREEMENT", 0.5)
-    raw_words = str(os.getenv("AQSP_PM_DEBATE_BLOCK_WORDS", "") or "").strip()
-    if raw_words:
-        words = tuple(word.strip() for word in raw_words.split(",") if word.strip())
-    else:
-        words = PM_DEBATE_BLOCK_WORDS_DEFAULT
-    return enabled, high, mid, words
+    return enabled, high, mid
 
 
 def _parse_debate_disagreement(metrics: dict[str, object]) -> float | None:
@@ -680,7 +670,6 @@ def apply_portfolio_manager(
         debate_gate_enabled,
         high_disagreement,
         mid_disagreement,
-        debate_block_words,
     ) = _pm_debate_gate_settings()
     # 当前主链没有持仓快照输入，止损/T+1 只能由上游显式过滤后再进入 PM。
     # 在没有真实持仓上下文前，不在这里做假集成，避免输出看似已接管但实际未生效的裁决。
@@ -741,6 +730,8 @@ def apply_portfolio_manager(
         # debate 阻断门：在集中度/相关性/质量门之后兜底裁决。
         # 只把 keep 提级（blocked -> observation_only / downgraded -> downgrade），
         # 不覆盖已有 observation_only / downgrade 标签。
+        # ⚠️ 仅当 debate 由 LLM 实际驱动（debate_llm_enabled）时才生效：
+        # 规则化 debate 的共识/分歧/风险提示是每票皆有的样板输出，不构成裁决证据。
         debate_action_influence = "none"
         if debate_gate_enabled:
             debate_consensus = str(
@@ -748,29 +739,26 @@ def apply_portfolio_manager(
                 or pick.metrics.get("debate_consensus", "")
                 or ""
             ).strip().lower()
-            debate_verdict = str(
-                pick.metrics.get("debate_research_verdict", "") or ""
-            ).strip()
-            debate_risk_gate = str(
-                pick.metrics.get("debate_primary_risk_gate", "") or ""
-            ).strip()
             debate_disagreement = _parse_debate_disagreement(pick.metrics)
-            has_debate_data = bool(
-                debate_consensus or debate_verdict or debate_risk_gate
-            ) or debate_disagreement is not None
+            debate_veto = (
+                str(pick.metrics.get("debate_risk_veto_applied", "") or "").lower()
+                in ("1", "true", "yes")
+            )
+            debate_llm_enabled = (
+                str(pick.metrics.get("debate_llm_enabled", "") or "").strip().lower()
+                in ("1", "true", "yes")
+            )
+            has_debate_data = bool(debate_consensus) or (
+                debate_disagreement is not None
+            )
             if not has_debate_data:
                 debate_action_influence = "no_debate"
+            elif not debate_llm_enabled:
+                debate_action_influence = "rules_only"
             elif action == "keep":
-                hit_block_word = next(
-                    (
-                        word
-                        for word in debate_block_words
-                        if word
-                        and word.lower()
-                        in f"{debate_verdict}\n{debate_risk_gate}".lower()
-                    ),
-                    "",
-                )
+                veto_reason = str(
+                    pick.metrics.get("debate_risk_veto_reason", "") or ""
+                ).strip()
                 if (
                     debate_disagreement is not None
                     and debate_disagreement >= high_disagreement
@@ -782,11 +770,13 @@ def apply_portfolio_manager(
                         f"分歧度 {debate_disagreement:.2f} ≥ 阈值 "
                         f"{high_disagreement:.2f}，高分歧不可上仓，仅观察"
                     )
-                elif hit_block_word:
+                elif debate_veto:
                     debate_action_influence = "blocked"
                     action = "observation_only"
                     reasons.append(
-                        f"debate 阻断门: 阻断语「{hit_block_word}」命中，暂缓上仓，仅观察"
+                        "debate 阻断门: 风控角色结构化否决"
+                        + (f"（{veto_reason}）" if veto_reason else "")
+                        + "，暂缓上仓，仅观察"
                     )
                 elif debate_consensus == "bearish" or (
                     debate_disagreement is not None

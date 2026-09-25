@@ -264,6 +264,12 @@ def append_predictions(
                 "debate_action_influence": str(
                     pick.metrics.get("debate_action_influence", "") or ""
                 ),
+                "debate_risk_veto_applied": bool(
+                    pick.metrics.get("debate_risk_veto_applied", False)
+                ),
+                "debate_llm_enabled": bool(
+                    pick.metrics.get("debate_llm_enabled", False)
+                ),
                 "debate_id": str(pick.metrics.get("debate_id", "") or ""),
                 "debate_disagreement_score": float(
                     pick.metrics.get("debate_disagreement_score", 0.0) or 0.0
