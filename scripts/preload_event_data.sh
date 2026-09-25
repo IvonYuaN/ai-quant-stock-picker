@@ -42,6 +42,11 @@ aqsp_require_runtime_python "$PYTHON_BIN"
 export PYTHONPATH="${PROJECT_ROOT}/src:${PROJECT_ROOT}:${PYTHONPATH:-}"
 export TZ="${TZ:-Asia/Shanghai}"
 export AQSP_RUN_TASK_ID="${AQSP_RUN_TASK_ID:-event_data}"
+# 关键：把 runtime data root 显式传给 Python 子进程（#161 写读同源）。
+# 消费者 release_task_entrypoint.sh 以 ${AQSP_RUNTIME_DATA_ROOT:-/opt/aqsp}/data 读
+# pit_cache/*.csv；若不在此 export，生产者 fetch_* 里的 os.environ.get 会回落系统
+# tempdir，写到 /tmp 而非 /opt/aqsp/data ⇒ 过滤器读不到，排雷链继续空转。
+export AQSP_RUNTIME_DATA_ROOT="$RUNTIME_DATA_ROOT"
 
 # name:relative-script —— 名称仅用于日志；失败不阻断兄弟源。
 SOURCES=(
