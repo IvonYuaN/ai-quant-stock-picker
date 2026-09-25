@@ -130,6 +130,8 @@ class MonitorChecker:
                     result = self._check_data_freshness(monitor.params)
                 elif monitor.check == "circuit_breaker":
                     result = self._check_circuit_breaker(monitor.params)
+                elif monitor.check == "llm_available":
+                    result = self._check_llm_available(monitor.params)
                 elif monitor.check == "win_rate":
                     result = self._check_win_rate(monitor.params)
                 elif monitor.check == "source_health":
@@ -255,6 +257,67 @@ class MonitorChecker:
                 message=f"检查数据新鲜度失败: {e}",
                 details={"error": str(e)},
             )
+
+    def _check_llm_available(self, params: dict[str, Any]) -> MonitorResult:
+        """LLM 证据层可用性守卫。
+
+        背景：2026-09-25 prod 事故——env 开关与 API key 全部配置正确，但 venv
+        漏装 openai SDK，debate 的 LLM 调用静默降级两个月无人察觉（降级记录
+        埋在 llm_calls.jsonl 里）。本检查让「配置说要用 AI 但 AI 用不了」变成
+        响亮的 critical 告警，而不是静默降级。
+        """
+        briefing_on = str(os.getenv("ENABLE_LLM_BRIEFING", "")).strip().lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        debate_on = str(
+            os.getenv("AQSP_DEBATE_ENABLE_LLM", "")
+        ).strip().lower() in ("1", "true", "yes")
+        if not (briefing_on or debate_on):
+            return MonitorResult(
+                name="llm_available",
+                triggered=False,
+                severity="warning",
+                message="LLM 证据层未启用（env 开关关闭），跳过可用性检查",
+                details={"enabled": False},
+            )
+
+        try:
+            import openai  # noqa: F401
+        except Exception as exc:  # pragma: no cover - 依赖安装问题
+            return MonitorResult(
+                name="llm_available",
+                triggered=True,
+                severity="critical",
+                message=f"LLM 证据层已启用但 openai SDK 不可导入: {exc}",
+                details={
+                    "enabled": True,
+                    "import_error": str(exc),
+                    "fix_hint": "在运行 venv 执行 pip install 'openai>=1.0,<4.0'",
+                },
+            )
+
+        provider = str(os.getenv("LLM_PROVIDER", "glm")).strip().lower()
+        key_var = f"{provider.upper()}_API_KEY"
+        if not str(os.getenv(key_var, "")).strip() and not str(
+            os.getenv("OPENAI_API_KEY", "")
+        ).strip():
+            return MonitorResult(
+                name="llm_available",
+                triggered=True,
+                severity="critical",
+                message=f"LLM provider={provider} 但缺少 {key_var}（且无 OPENAI_API_KEY 兜底）",
+                details={"enabled": True, "provider": provider, "missing_key_var": key_var},
+            )
+
+        return MonitorResult(
+            name="llm_available",
+            triggered=False,
+            severity="warning",
+            message="LLM 证据层可用",
+            details={"enabled": True, "provider": provider},
+        )
 
     def _check_circuit_breaker(self, params: dict[str, Any]) -> MonitorResult:
         try:

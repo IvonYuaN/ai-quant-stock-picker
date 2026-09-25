@@ -227,6 +227,74 @@ class TestMonitorChecker:
             assert result.details["cooldown_until"] == "2026-07-01"
             assert mock_breaker.call_args.kwargs["config"].daily_loss_pct > 0
 
+    def test_check_llm_available_skips_when_disabled(
+        self, sample_config: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        checker = MonitorChecker(config_path=str(sample_config))
+        monkeypatch.setenv("ENABLE_LLM_BRIEFING", "")
+        monkeypatch.setenv("AQSP_DEBATE_ENABLE_LLM", "")
+
+        result = checker._check_llm_available({})
+
+        assert result.triggered is False
+        assert "未启用" in result.message
+
+    def test_check_llm_available_fails_loud_on_missing_sdk(
+        self, sample_config: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """回归：2026-09-25 prod 事故——openai SDK 缺失，LLM 静默降级两个月。"""
+        import sys
+
+        checker = MonitorChecker(config_path=str(sample_config))
+        monkeypatch.setenv("ENABLE_LLM_BRIEFING", "1")
+        monkeypatch.setenv("AQSP_DEBATE_ENABLE_LLM", "true")
+        monkeypatch.setenv("LLM_PROVIDER", "agnes")
+        monkeypatch.setenv("AGNES_API_KEY", "sk-test")
+        monkeypatch.setitem(sys.modules, "openai", None)  # import 时抛 ImportError
+
+        result = checker._check_llm_available({})
+
+        assert result.triggered is True
+        assert result.severity == "critical"
+        assert "openai" in result.message
+        assert "fix_hint" in result.details
+
+    def test_check_llm_available_fails_loud_on_missing_key(
+        self, sample_config: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import sys
+
+        checker = MonitorChecker(config_path=str(sample_config))
+        monkeypatch.setenv("ENABLE_LLM_BRIEFING", "1")
+        monkeypatch.setenv("AQSP_DEBATE_ENABLE_LLM", "true")
+        monkeypatch.setenv("LLM_PROVIDER", "agnes")
+        monkeypatch.delenv("AGNES_API_KEY", raising=False)
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.setitem(sys.modules, "openai", MagicMock())
+
+        result = checker._check_llm_available({})
+
+        assert result.triggered is True
+        assert result.severity == "critical"
+        assert "AGNES_API_KEY" in result.message
+
+    def test_check_llm_available_ok_when_configured(
+        self, sample_config: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import sys
+
+        checker = MonitorChecker(config_path=str(sample_config))
+        monkeypatch.setenv("ENABLE_LLM_BRIEFING", "1")
+        monkeypatch.setenv("AQSP_DEBATE_ENABLE_LLM", "true")
+        monkeypatch.setenv("LLM_PROVIDER", "agnes")
+        monkeypatch.setenv("AGNES_API_KEY", "sk-test")
+        monkeypatch.setitem(sys.modules, "openai", MagicMock())
+
+        result = checker._check_llm_available({})
+
+        assert result.triggered is False
+        assert result.details["provider"] == "agnes"
+
     def test_check_win_rate(self, sample_config: Path) -> None:
         checker = MonitorChecker(config_path=str(sample_config))
 

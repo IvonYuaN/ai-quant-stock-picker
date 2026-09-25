@@ -44,6 +44,13 @@ monitors:
     params: {}
     severity: "critical"
 
+  - name: "llm_available"
+    description: "LLM 证据层可用性（env 已启用但 SDK/密钥缺失时响亮告警，根除静默降级）"
+    enabled: true
+    check: "llm_available"
+    params: {}
+    severity: "critical"
+
   - name: "win_rate_drop"
     description: "胜率异常下降"
     enabled: true

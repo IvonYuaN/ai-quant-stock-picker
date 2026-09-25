@@ -10,6 +10,10 @@ dependencies = [
     "scipy>=1.10,<2.0",
     "jinja2>=3.1,<4.0",
     "pyyaml>=6.0,<7.0",
+    # openai SDK 是 debate/LLM 证据层的硬依赖：放 base 防止 venv 构建时
+    # 漏装 [llm] extra 导致 LLM 全链静默降级（2026-09-25 prod 事故：
+    # ModuleNotFoundError 让 debate 的 LLM 调用降级了两个月无人察觉）。
+    "openai>=1.0,<4.0",
 ]
 
 [project.optional-dependencies]
@@ -28,7 +32,8 @@ api = [
     "uvicorn>=0.29,<1.0",
 ]
 llm = [
-    "openai>=1.0,<3.0",
+    # openai 已提升至 base dependencies（见 dependencies 内注释）；此处保留
+    # anthropic 备选 provider。
     "anthropic>=0.30,<1.0",
 ]
 dev = [
