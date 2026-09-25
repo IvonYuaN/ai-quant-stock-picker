@@ -36,6 +36,9 @@ DEFAULT_COLD_START_MIN_DAYS = 30
 MIN_EXECUTABILITY_FEEDBACK_ATTEMPTS = 5
 MAX_EXECUTABILITY_BLOCK_RATE = 0.35
 EXECUTABILITY_WEIGHT_MULTIPLIER = 0.5
+# 单日盈亏口径的新鲜度上限（自然日）：账本断流超过该天数后 daily_pnl 归零，
+# 防止陈旧「最新信号日」收益反复武装熔断器（见 compute_real_pnl 内注释）。
+DAILY_PNL_MAX_AGE_DAYS = 7
 
 
 def cold_start_min_days() -> int:
@@ -212,11 +215,20 @@ def compute_real_pnl(ledger_path: str) -> tuple[float, float, float]:
     validated.sort(key=lambda x: x[0])
 
     latest_signal_date = validated[-1][0]
-    same_day_returns = [r for d, r in validated if d == latest_signal_date]
-    daily_cum = 1.0
-    for value in same_day_returns:
-        daily_cum *= 1 + value / 100
-    daily_pnl = (daily_cum - 1) * 100
+    # 单日口径必须新鲜：weekly/monthly 各有 7/30 天窗会自然归零，daily 原本
+    # 无时间窗 —— 账本断流（管道停跑/熔断冷却）后，「最新信号日」的陈旧收益
+    # 会永远武装熔断器：每次冷却到期即被幽灵日亏损再触发，滚动续期永不解除
+    # （2026-09 prod 事故：07-13 的 -13.91% 把熔断续期到 09-26，validated 归零）。
+    # 7 天窗覆盖周末与常规节假日的正常验证滞后；断流超过 7 天即归零，
+    # 管道恢复产出后风控自然恢复。
+    if (today - latest_signal_date).days <= DAILY_PNL_MAX_AGE_DAYS:
+        same_day_returns = [r for d, r in validated if d == latest_signal_date]
+        daily_cum = 1.0
+        for value in same_day_returns:
+            daily_cum *= 1 + value / 100
+        daily_pnl = (daily_cum - 1) * 100
+    else:
+        daily_pnl = 0.0
 
     weekly_returns = [r for d, r in validated if (today - d).days <= 7]
     weekly_cum = 1.0
