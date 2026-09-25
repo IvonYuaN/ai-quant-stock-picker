@@ -13,6 +13,7 @@ from aqsp.briefing.closing_review import (
     ClosingReviewer,
     DailyReview,
     MarketEnvironmentBands,
+    TradeReview,
 )
 
 HARDCODED_ENV = "震荡市"
@@ -402,3 +403,278 @@ class TestSelectReviewClosedTrades:
         assert len(rows) == 1
         assert "兜底" in scope
 
+
+
+def _prediction_row(
+    signal_id: str,
+    *,
+    symbol: str = "002686",
+    signal_date: str = "2025-05-01",
+    reasons: list[str] | None = None,
+    risks: list[str] | None = None,
+    score: float = 82.5,
+    entry_type: str = "volume_breakout",
+    signal_close: float = 10.0,
+) -> dict:
+    """构造一条带归因字段的预测行（字段对齐主链写入口径）。"""
+    return {
+        "id": signal_id,
+        "symbol": symbol,
+        "name": "测试股",
+        "strategies": ["volume_breakout"],
+        "signal_date": signal_date,
+        "status": "validated",
+        "rating": "strong_buy_candidate",
+        "reasons": reasons if reasons is not None else ["20日相对强势"],
+        "risks": risks if risks is not None else ["短期涨幅偏大"],
+        "score": score,
+        "entry_type": entry_type,
+        "signal_close": signal_close,
+    }
+
+
+def _closed_trade_row(
+    signal_id: str,
+    *,
+    symbol: str = "002686",
+    return_pct: float = -6.88,
+    stop_loss: float = 8.64,
+    take_profit: float = 0.0,
+) -> dict:
+    """构造一条已平仓纸面交易行（stop_loss=8.64 相对 signal_close=10.0 约 -13.6%）。"""
+    return {
+        "id": f"pt-{signal_id}",
+        "signal_id": signal_id,
+        "symbol": symbol,
+        "name": "测试股",
+        "strategies": ["volume_breakout"],
+        "signal_date": "2025-05-01",
+        "entry_date": "2025-05-02",
+        "exit_date": "2025-06-01",
+        "status": "closed",
+        "return_pct": return_pct,
+        "exit_reason": "horizon_close",
+        "stop_loss": stop_loss,
+        "take_profit": take_profit,
+    }
+
+
+class TestDataDrivenAttribution:
+    def test_trade_review_carries_reasons_and_stop_loss(self, tmp_path) -> None:
+        reviewer = _make_reviewer(
+            tmp_path,
+            ledger_rows=[_prediction_row("sig-a")],
+            paper_rows=[_closed_trade_row("sig-a")],
+        )
+        paper_row = _closed_trade_row("sig-a")
+        pred = _prediction_row("sig-a")
+
+        trade = reviewer._review_single_trade(
+            paper_row=paper_row, matched_prediction=pred
+        )
+
+        assert isinstance(trade, TradeReview)
+        assert trade.reasons == ("20日相对强势",)
+        assert trade.risks == ("短期涨幅偏大",)
+        assert trade.stop_loss == 8.64
+        assert trade.entry_type == "volume_breakout"
+        assert trade.score == 82.5
+        assert trade.signal_close == 10.0
+
+    def test_trade_review_tolerates_missing_attribution_fields(self) -> None:
+        reviewer = ClosingReviewer()
+
+        trade = reviewer._review_single_trade(
+            paper_row={"symbol": "600000", "status": "closed", "return_pct": 1.0},
+            matched_prediction={},
+        )
+
+        assert trade.reasons == ()
+        assert trade.risks == ()
+        assert trade.stop_loss == 0.0
+        assert trade.entry_type == ""
+        assert trade.score == 0.0
+
+    def test_key_lessons_cite_concrete_symbol_and_numbers(self, tmp_path) -> None:
+        reviewer = _make_reviewer(
+            tmp_path,
+            ledger_rows=[_prediction_row("sig-a")],
+            paper_rows=[_closed_trade_row("sig-a")],
+        )
+        trade = reviewer._review_single_trade(
+            paper_row=_closed_trade_row("sig-a"),
+            matched_prediction=_prediction_row("sig-a"),
+        )
+
+        lessons = reviewer._extract_key_lessons([trade], total_signals=1)
+
+        joined = "；".join(lessons)
+        assert "002686" in joined
+        assert "-6.88" in joined
+        assert "20日相对强势" in joined
+        # 旧模板句式必须消失
+        assert "需复核最多亏到规则" not in joined
+        assert "打板成功率偏低" not in joined
+        assert "今日亏损较多" not in joined
+
+    def test_key_lessons_stop_checkup_flags_non_stop_exit(self, tmp_path) -> None:
+        """亏 6.88% 未达止损幅度 13.6% → 必须标注非止损退出。"""
+        reviewer = _make_reviewer(
+            tmp_path,
+            ledger_rows=[_prediction_row("sig-a")],
+            paper_rows=[_closed_trade_row("sig-a")],
+        )
+        trade = reviewer._review_single_trade(
+            paper_row=_closed_trade_row("sig-a"),
+            matched_prediction=_prediction_row("sig-a"),
+        )
+
+        lessons = reviewer._extract_key_lessons([trade])
+
+        assert any("非止损退出" in lesson for lesson in lessons)
+
+    def test_key_lessons_stop_checkup_counts_triggered(self, tmp_path) -> None:
+        """亏 14% 已超过止损幅度 13.6% → 计入触发止损。"""
+        reviewer = ClosingReviewer()
+        trade = reviewer._review_single_trade(
+            paper_row=_closed_trade_row("sig-a", return_pct=-14.0),
+            matched_prediction=_prediction_row("sig-a"),
+        )
+
+        lessons = reviewer._extract_key_lessons([trade])
+
+        assert any("止损体检" in lesson and "1/1" in lesson for lesson in lessons)
+
+    def test_key_lessons_max_consecutive_losses(self) -> None:
+        reviewer = ClosingReviewer()
+
+        def _trade(symbol: str, return_pct: float, day: str) -> TradeReview:
+            return TradeReview(
+                symbol=symbol,
+                name=symbol,
+                strategy_type="测试",
+                signal_date=day,
+                entry_price=10.0,
+                exit_price=9.0,
+                return_pct=return_pct,
+                is_win=return_pct > 0,
+                holding_days=3,
+                exit_reason="horizon_close",
+                lessons=(),
+            )
+
+        reviews = [
+            _trade("000001", -1.0, "2025-05-01"),
+            _trade("000002", -2.0, "2025-05-02"),
+            _trade("000003", -3.0, "2025-05-03"),
+            _trade("000004", 1.0, "2025-05-04"),
+        ]
+
+        lessons = reviewer._extract_key_lessons(reviews)
+
+        assert any("连亏 3 笔" in lesson for lesson in lessons)
+
+    def test_key_lessons_empty_reviews_keeps_context_without_template(self) -> None:
+        reviewer = ClosingReviewer()
+
+        lessons = reviewer._extract_key_lessons([], total_signals=2)
+
+        joined = "；".join(lessons)
+        assert "暂无 closed 虚拟盘结果" in joined
+        assert "今日亏损较多" not in joined
+        assert "需复核最多亏到规则" not in joined
+
+    def test_improvement_suggestions_cite_numbers(self) -> None:
+        reviewer = ClosingReviewer()
+
+        def _trade(symbol: str, return_pct: float, day: str) -> TradeReview:
+            return TradeReview(
+                symbol=symbol,
+                name=symbol,
+                strategy_type="测试",
+                signal_date=day,
+                entry_price=10.0,
+                exit_price=9.0,
+                return_pct=return_pct,
+                is_win=return_pct > 0,
+                holding_days=3,
+                exit_reason="horizon_close",
+                lessons=(),
+                entry_type="volume_breakout",
+            )
+
+        reviews = [
+            _trade("000001", -2.0, "2025-05-01"),
+            _trade("000002", -3.0, "2025-05-02"),
+            _trade("000003", 1.0, "2025-05-03"),
+        ]
+
+        suggestions = reviewer._generate_improvement_suggestions(
+            reviews, win_rate=1 / 3
+        )
+
+        joined = "；".join(suggestions)
+        assert "33.3%" in joined
+        assert "volume_breakout 2笔" in joined
+
+    def test_improvement_suggestions_empty_reviews_falls_back(self) -> None:
+        reviewer = ClosingReviewer()
+
+        suggestions = reviewer._generate_improvement_suggestions(
+            [], 0.0, pending_count=1, blocked_count=2
+        )
+
+        joined = "；".join(suggestions)
+        assert "保留跟踪" in joined
+        assert "不可成交" in joined
+
+    def test_single_trade_lessons_reference_own_reason_and_stop(self, tmp_path) -> None:
+        reviewer = _make_reviewer(
+            tmp_path,
+            ledger_rows=[_prediction_row("sig-a")],
+            paper_rows=[_closed_trade_row("sig-a")],
+        )
+        merged = {
+            **_prediction_row("sig-a"),
+            **_closed_trade_row("sig-a"),
+        }
+
+        lessons = reviewer._extract_lessons(merged, -6.88, False)
+
+        joined = "；".join(lessons)
+        assert "20日相对强势" in joined
+        assert "未达止损幅度" in joined
+        assert "非止损退出" in joined
+        # 旧收益分桶模板必须消失
+        assert "纸面大亏" not in joined
+
+    def test_format_daily_review_contains_trade_highlights(self, tmp_path) -> None:
+        reviewer = _make_reviewer(
+            tmp_path,
+            ledger_rows=[_prediction_row("sig-a", signal_date="2025-06-01")],
+            paper_rows=[_closed_trade_row("sig-a")],
+        )
+
+        review = reviewer.review_today("2025-06-01")
+        report = _format_daily_review(review)
+
+        assert "单笔透视" in report
+        assert "002686" in report
+        assert "-6.88%" in report
+        assert "非止损退出" in report
+
+    def test_format_daily_review_skips_highlights_when_no_trades(
+        self, tmp_path
+    ) -> None:
+        reviewer = _make_reviewer(tmp_path, ledger_rows=[], paper_rows=[])
+
+        review = reviewer.review_today("2025-06-01")
+        report = _format_daily_review(review)
+
+        assert "单笔透视" not in report
+
+
+def _format_daily_review(review: DailyReview) -> str:
+    from aqsp.briefing.closing_review import format_daily_review
+
+    return format_daily_review(review)
