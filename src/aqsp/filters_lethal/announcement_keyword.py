@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import tempfile
 from pathlib import Path
 
 import pandas as pd
@@ -17,16 +19,29 @@ DEFAULT_BLACKLIST = [
 ]
 
 
+def _default_announcement_cache_path() -> str:
+    """与 aqsp.data.announcement.AnnouncementSource._default_cache_path 同一规则（写读同源）。
+
+    生产者把近期公告标题写到 ``$AQSP_RUNTIME_DATA_ROOT/pit_cache/announcements.csv``；
+    未配置 runtime root 时回落系统临时目录（与生产者一致，避免污染源码树）。
+    旧默认 data/announcements.csv 全仓无产出方 ⇒ 排雷层一直在空转。
+    """
+
+    root = os.environ.get("AQSP_RUNTIME_DATA_ROOT") or tempfile.gettempdir()
+    return os.path.join(root, "pit_cache", "announcements.csv")
+
+
 class AnnouncementKeywordFilter(LethalFilter):
     name = "announcement_keyword"
     hypothesis = "公告中出现'立案调查''违规''退市风险'等关键词的股票，后续大跌概率显著高于市场均值"
 
     def __init__(
         self,
-        data_path: str = "data/announcements.csv",
+        data_path: str | None = None,
         keywords: list[str] | None = None,
     ):
-        self.data_path = data_path
+        # 缺省读生产者（aqsp.data.announcement）落盘的 pit_cache/announcements.csv。
+        self.data_path = data_path or _default_announcement_cache_path()
         self.keywords = keywords or list(DEFAULT_BLACKLIST)
 
     def _load_announcement_data(self) -> pd.DataFrame | None:
@@ -47,6 +62,7 @@ class AnnouncementKeywordFilter(LethalFilter):
                     passed=True,
                     reason="无公告数据，跳过",
                     filter_name=self.name,
+                    data_missing=True,
                 )
             symbol_rows = announcement_data[announcement_data["symbol"] == symbol]
             if symbol_rows.empty:

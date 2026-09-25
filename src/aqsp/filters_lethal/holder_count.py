@@ -1,10 +1,24 @@
 from __future__ import annotations
 
+import os
+import tempfile
 from pathlib import Path
 
 import pandas as pd
 
 from aqsp.filters_lethal.base import FilterResult, LethalFilter
+
+
+def _default_holder_cache_path() -> str:
+    """与 aqsp.data.holder_num.HolderNumSource._default_cache_path 同一规则（写读同源）。
+
+    生产者把股东户数写到 ``$AQSP_RUNTIME_DATA_ROOT/pit_cache/holder_count.csv``；
+    未配置 runtime root 时回落系统临时目录（与生产者一致，避免污染源码树）。
+    旧默认 data/holder_count.csv 全仓无产出方 ⇒ 排雷层一直在空转。
+    """
+
+    root = os.environ.get("AQSP_RUNTIME_DATA_ROOT") or tempfile.gettempdir()
+    return os.path.join(root, "pit_cache", "holder_count.csv")
 
 
 class HolderCountFilter(LethalFilter):
@@ -13,11 +27,12 @@ class HolderCountFilter(LethalFilter):
 
     def __init__(
         self,
-        data_path: str = "data/holder_count.csv",
+        data_path: str | None = None,
         decline_threshold: float = 0.15,
         min_quarters: int = 2,
     ):
-        self.data_path = data_path
+        # 缺省读生产者（aqsp.data.holder_num）落盘的 pit_cache/holder_count.csv。
+        self.data_path = data_path or _default_holder_cache_path()
         self.decline_threshold = decline_threshold
         self.min_quarters = min_quarters
 
@@ -37,6 +52,7 @@ class HolderCountFilter(LethalFilter):
                 passed=True,
                 reason="无股东户数数据，跳过",
                 filter_name=self.name,
+                data_missing=True,
             )
 
         symbol_rows = holder_data[holder_data["symbol"] == symbol].sort_values(
