@@ -1543,11 +1543,24 @@ try:
 except TimeoutError:
     pass
 """
+    # 子进程是全新解释器：CI 里 aqsp 为 editable 安装可 import，本机 src 布局的
+    # venv 未装 aqsp ⇒ 必须显式注入 PYTHONPATH（含 repo_root/src），否则
+    # ModuleNotFoundError 让本测试在本机/非 editable 环境恒挂（与改动无关的环境泄漏）。
+    import os
+
+    repo_root = Path(__file__).resolve().parent.parent
+    src_dir = repo_root / "src"
+    env = os.environ.copy()
+    existing = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = (
+        f"{src_dir}{os.pathsep}{existing}" if existing else str(src_dir)
+    )
     result = subprocess.run(
         [sys.executable, "-c", code],
         capture_output=True,
         text=True,
         timeout=2,
+        env=env,
     )
 
     assert result.returncode == 0, result.stderr
