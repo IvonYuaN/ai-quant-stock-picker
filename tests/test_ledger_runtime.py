@@ -314,6 +314,91 @@ def test_compute_real_pnl_aggregates_latest_day_week_and_month(
     assert round(monthly_pnl, 2) == 13.19
 
 
+def test_compute_real_pnl_zeroes_stale_daily_bucket_after_ledger_stall(
+    monkeypatch, tmp_path
+) -> None:
+    """回归：账本断流后，陈旧「最新信号日」收益不得继续武装熔断器。
+
+    2026-09 prod 事故：最后 validated=2026-07-13（当日复合 -13.91%），
+    daily 原本无时间窗 → 熔断每次 5 天冷却到期即被该幽灵日亏损再触发，
+    滚动续期至 09-26 永不解除 → 全部候选 observation_only → validated 归零。
+    修复后：最新信号日距今天超过 DAILY_PNL_MAX_AGE_DAYS 时 daily 归零。
+    """
+    from datetime import datetime
+
+    monkeypatch.setattr(
+        "aqsp.ledger.runtime.now_shanghai",
+        lambda: datetime.fromisoformat("2026-09-25T18:00:00+08:00"),
+    )
+    ledger = tmp_path / "predictions.jsonl"
+    rows = [
+        # 70+ 天前最后一批 validated：当日大亏（事故原样）
+        {"status": "validated", "signal_date": "2026-07-13", "return_pct": -10.0},
+        {"status": "validated", "signal_date": "2026-07-13", "return_pct": -4.34},
+        # 更早的历史行，monthly 窗外
+        {"status": "validated", "signal_date": "2026-04-01", "return_pct": 3.0},
+    ]
+    ledger.write_text(
+        "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+
+    daily_pnl, weekly_pnl, monthly_pnl = compute_real_pnl(str(ledger))
+
+    assert daily_pnl == 0.0
+    assert weekly_pnl == 0.0
+    assert monthly_pnl == 0.0
+
+
+def test_compute_real_pnl_keeps_daily_bucket_within_freshness_window(
+    monkeypatch, tmp_path
+) -> None:
+    """新鲜窗口内（含周一回补周五信号的常规滞后）daily 仍正常计算。"""
+    from datetime import datetime
+
+    monkeypatch.setattr(
+        "aqsp.ledger.runtime.now_shanghai",
+        lambda: datetime.fromisoformat("2026-06-17T18:00:00+08:00"),
+    )
+    ledger = tmp_path / "predictions.jsonl"
+    # 最新信号日 = 今天 - 7 天，恰在窗口边界内
+    rows = [
+        {"status": "validated", "signal_date": "2026-06-10", "return_pct": -5.0},
+    ]
+    ledger.write_text(
+        "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+
+    daily_pnl, _, _ = compute_real_pnl(str(ledger))
+
+    assert round(daily_pnl, 2) == -5.0
+
+
+def test_compute_real_pnl_zeroes_daily_bucket_beyond_freshness_window(
+    monkeypatch, tmp_path
+) -> None:
+    from datetime import datetime
+
+    monkeypatch.setattr(
+        "aqsp.ledger.runtime.now_shanghai",
+        lambda: datetime.fromisoformat("2026-06-17T18:00:00+08:00"),
+    )
+    ledger = tmp_path / "predictions.jsonl"
+    # 最新信号日 = 今天 - 8 天，超出窗口 → daily 归零
+    rows = [
+        {"status": "validated", "signal_date": "2026-06-09", "return_pct": -5.0},
+    ]
+    ledger.write_text(
+        "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+
+    daily_pnl, _, _ = compute_real_pnl(str(ledger))
+
+    assert daily_pnl == 0.0
+
+
 def test_compute_paper_mark_to_market_pnl_uses_open_positions(
     monkeypatch, tmp_path
 ) -> None:
