@@ -67,6 +67,62 @@ for f in evidence_symbols.txt extract_gate_summary.py stop_loss_exit_evidence.py
   fi
 done
 
+# 5) 新鲜度探针：对比 prod / runner 两边 raw 库的 MAX(trade_date)。
+#    runner 库一旦滞后，生产 gate 会立刻被 blocked_cutoff 守卫秒退（requested end
+#    不得超库内 MAX(trade_date)），所以同步刚完成就要验证「数据真的过去了」，
+#    落后超过阈值（AQSP_SYNC_STALE_DAYS，默认 7 天＝每周一次同步的周期余量）
+#    时输出 [ALERT][runner_sync] 告警行供 monitors 捕捉。
+PROBE_PY='import sqlite3, sys
+try:
+    with sqlite3.connect(sys.argv[1]) as conn:
+        row = conn.execute("SELECT MAX(trade_date) FROM daily_qfq").fetchone()
+except sqlite3.Error:
+    print("")
+else:
+    print(str(row[0] or "").strip().replace("-", "")[:8])'
+
+read_max_day_local() {
+  # $1 = sqlite 路径；打印 YYYYMMDD（读不到/表缺失时打印空串）
+  python3 - "$1" <<<"$PROBE_PY"
+}
+
+read_max_day_runner() {
+  # 远端同样用 python3 标准库读库（不依赖 runner 装没装 sqlite3 CLI）
+  $RSYNC_SSH "$RUNNER_HOST" "python3 - '$RUNNER_ROOT/data/astocks_raw.db'" <<<"$PROBE_PY"
+}
+
+STALE_DAYS="${AQSP_SYNC_STALE_DAYS:-7}"
+PROD_DAY="$(read_max_day_local "$RAW_DB")"
+if RUNNER_DAY="$(read_max_day_runner)"; then :; else RUNNER_DAY=""; fi
+
+if [ -z "$PROD_DAY" ]; then
+  log "[ALERT][runner_sync] 新鲜度探针失败：prod 库 MAX(trade_date) 不可读（$RAW_DB），请人工检查"
+elif [ -z "$RUNNER_DAY" ]; then
+  log "[ALERT][runner_sync] 新鲜度探针失败：无法从 $RUNNER_HOST 读取 runner 库 MAX(trade_date)，请人工检查 runner"
+else
+  LAG="$(python3 -c 'import sys
+from datetime import datetime
+
+
+def _day(raw):
+    try:
+        return datetime.strptime(raw.strip().replace("-", "")[:8], "%Y%m%d").date()
+    except ValueError:
+        return None
+
+
+prod_day, runner_day = _day(sys.argv[1]), _day(sys.argv[2])
+print("" if prod_day is None or runner_day is None else (prod_day - runner_day).days)' \
+    "$PROD_DAY" "$RUNNER_DAY")"
+  if [ -z "$LAG" ]; then
+    log "[ALERT][runner_sync] 新鲜度探针异常：MAX(trade_date) 无法解析 prod=$PROD_DAY runner=$RUNNER_DAY"
+  elif [ "$LAG" -gt "$STALE_DAYS" ]; then
+    log "[ALERT][runner_sync] runner 数据不新鲜：runner=$RUNNER_DAY prod=$PROD_DAY 落后 ${LAG} 天（阈值 ${STALE_DAYS} 天）——gate 将被 blocked_cutoff 秒退，请检查 runner 同步链路"
+  else
+    log "新鲜度探针通过：runner=$RUNNER_DAY prod=$PROD_DAY 落后 ${LAG} 天（阈值 ${STALE_DAYS} 天）"
+  fi
+fi
+
 log "完成：代码 sha=$SHA，数据 $(basename "$RAW_DB")，cache=$SYNC_CACHE"
 # 注意：runner_gate.sh 随 release 代码同步（位于 releases/$SHA/scripts/ 下），
 # $RUNNER_ROOT/scripts/ 不是本脚本的同步目标（历史上该目录从未被填充过）。

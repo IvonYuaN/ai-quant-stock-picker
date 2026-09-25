@@ -759,7 +759,7 @@ def test_bt_task_script_exposes_panel_safe_actions() -> None:
     assert 'ACTION="${1:-}"' in script
     assert 'if [ -z "$ACTION" ]' in script
     assert (
-        "daily|intraday|midday|coldstart|walkforward-gate|monitor|news|event-data|status"
+        "daily|intraday|midday|coldstart|walkforward-gate|runner-sync|monitor|news|event-data|status"
         in script
     )
     assert "AQSP_RUNNER_TIMEOUT_SECONDS=5400" in script
