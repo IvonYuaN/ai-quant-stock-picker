@@ -247,3 +247,158 @@ class TestWeeklySummaryIsDataDriven:
 
         assert "样本不足" in outlook
         assert outlook != HARDCODED_OUTLOOK
+
+
+def _closed_paper_row(
+    signal_id: str,
+    *,
+    symbol: str = "600000",
+    signal_date: str,
+    entry_date: str,
+    exit_date: str,
+    return_pct: float = 3.0,
+    exit_reason: str = "target",
+) -> dict:
+    """构造一条已平仓纸面交易行（字段对齐 paper.py 写入口径）。"""
+    return {
+        "id": f"pt-{signal_id}",
+        "signal_id": signal_id,
+        "symbol": symbol,
+        "name": "测试",
+        "strategies": ["morning_breakout"],
+        "signal_date": signal_date,
+        "entry_date": entry_date,
+        "exit_date": exit_date,
+        "status": "closed",
+        "return_pct": return_pct,
+        "exit_reason": exit_reason,
+    }
+
+
+class TestReviewTodayAggregatesByExitDate:
+    def test_trade_closed_today_with_old_signal_date_is_reviewed(self, tmp_path) -> None:
+        """核心回归：今天平仓、但 signal_date 在数日前的交易，原逻辑被漏。"""
+        paper = [
+            _closed_paper_row(
+                "sig-a",
+                signal_date="2025-05-01",
+                entry_date="2025-05-02",
+                exit_date="2025-06-01",
+            )
+        ]
+        reviewer = _make_reviewer(tmp_path, ledger_rows=[], paper_rows=paper)
+
+        review = reviewer.review_today("2025-06-01")
+
+        assert review.executed_signals == 1
+        assert review.review_scope.startswith("近")
+        assert "平仓" in review.review_scope
+
+    def test_window_fallback_reports_recent_history_when_no_recent_close(
+        self, tmp_path
+    ) -> None:
+        """今天无平仓、但历史有平仓 → 兜底口径 + 仍须有复盘内容，且注明口径。"""
+        paper = [
+            _closed_paper_row(
+                "sig-a",
+                signal_date="2025-01-02",
+                entry_date="2025-01-03",
+                exit_date="2025-01-10",
+            )
+        ]
+        reviewer = _make_reviewer(tmp_path, ledger_rows=[], paper_rows=paper)
+
+        review = reviewer.review_today("2025-06-01")
+
+        assert review.executed_signals == 1
+        assert "兜底" in review.review_scope
+
+    def test_review_does_not_short_circuit_on_empty_today_paper(self, tmp_path) -> None:
+        """历史平仓存在时，不应因今日 signal_date 行缺失而走空复盘。"""
+        paper = [
+            _closed_paper_row(
+                "sig-a",
+                signal_date="2025-03-01",
+                entry_date="2025-03-02",
+                exit_date="2025-05-20",
+            )
+        ]
+        reviewer = _make_reviewer(tmp_path, ledger_rows=[], paper_rows=paper)
+
+        review = reviewer.review_today("2025-06-01")
+
+        assert isinstance(review, DailyReview)
+        assert review.date == "2025-06-01"
+        assert review.executed_signals == 1
+
+
+class TestWeeklySummaryAggregatesByExitDate:
+    def test_weekly_counts_trade_closed_in_week_with_old_signal(self, tmp_path) -> None:
+        paper = [
+            _closed_paper_row(
+                "sig-a",
+                signal_date="2024-12-01",
+                entry_date="2024-12-02",
+                exit_date="2025-06-01",  # 当周平仓，signal_date 远早于此
+            )
+        ]
+        reviewer = _make_reviewer(tmp_path, ledger_rows=[], paper_rows=paper)
+
+        summary = reviewer.generate_weekly_summary(end_date="2025-06-01")
+
+        assert summary.total_trades == 1
+
+
+class TestSelectReviewClosedTrades:
+    def test_returns_windowed_rows_sorted_desc(self, tmp_path) -> None:
+        paper = [
+            _closed_paper_row(
+                "a", signal_date="2025-05-01", entry_date="2025-05-02",
+                exit_date="2025-06-01",
+            ),
+            _closed_paper_row(
+                "b", signal_date="2025-04-01", entry_date="2025-04-02",
+                exit_date="2025-05-20",
+            ),
+        ]
+        reviewer = _make_reviewer(tmp_path, ledger_rows=[], paper_rows=paper)
+
+        rows, scope = reviewer._select_review_closed_trades(paper, "2025-06-01")
+
+        assert [r["signal_id"] for r in rows] == ["a", "b"]
+        assert "近" in scope
+
+    def test_window_has_priority_over_fallback(self, tmp_path) -> None:
+        paper = [
+            _closed_paper_row(
+                "a", signal_date="2025-05-01", entry_date="2025-05-02",
+                exit_date="2025-06-01",
+            ),
+            _closed_paper_row(
+                "old", signal_date="2024-01-01", entry_date="2024-01-02",
+                exit_date="2024-01-10",
+            ),
+        ]
+        reviewer = _make_reviewer(tmp_path, ledger_rows=[], paper_rows=paper)
+
+        rows, scope = reviewer._select_review_closed_trades(paper, "2025-06-01")
+
+        assert len(rows) == 1
+        assert rows[0]["signal_id"] == "a"
+        assert "近" in scope
+        assert "兜底" not in scope
+
+    def test_fallback_when_no_windowed_rows(self, tmp_path) -> None:
+        paper = [
+            _closed_paper_row(
+                "old", signal_date="2024-01-01", entry_date="2024-01-02",
+                exit_date="2024-01-10",
+            )
+        ]
+        reviewer = _make_reviewer(tmp_path, ledger_rows=[], paper_rows=paper)
+
+        rows, scope = reviewer._select_review_closed_trades(paper, "2025-06-01")
+
+        assert len(rows) == 1
+        assert "兜底" in scope
+
