@@ -141,8 +141,16 @@ def _detect_gap_down(losses: list[dict]) -> FailurePattern | None:
 def analyze_failures(
     ledger_df: pd.DataFrame,
     min_occurrences: int = 3,
+    *,
+    since_date: str | None = None,
 ) -> list[FailurePattern]:
     ledger_rows = ledger_df.to_dict("records") if not ledger_df.empty else []
+    if since_date:
+        ledger_rows = [
+            row
+            for row in ledger_rows
+            if str(row.get("signal_date", "") or "") >= since_date
+        ]
     losses = _collect_losses(ledger_rows)
     if not losses:
         return []
@@ -168,10 +176,12 @@ def analyze_failures(
 def analyze_failures_from_file(
     ledger_path: str,
     min_occurrences: int = 3,
+    *,
+    since_date: str | None = None,
 ) -> list[FailurePattern]:
     rows = read_ledger(ledger_path)
     df = pd.DataFrame(rows) if rows else pd.DataFrame()
-    return analyze_failures(df, min_occurrences=min_occurrences)
+    return analyze_failures(df, min_occurrences=min_occurrences, since_date=since_date)
 
 
 def format_failure_patterns(patterns: list[FailurePattern]) -> str:

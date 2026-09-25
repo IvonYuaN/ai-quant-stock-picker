@@ -8702,6 +8702,7 @@ def run_closing_premium(args: argparse.Namespace) -> int:
 def run_closing_review(args: argparse.Namespace) -> int:
     from aqsp.briefing.closing_review import (
         ClosingReviewer,
+        build_ai_review_section,
         format_daily_review,
         format_weekly_summary,
     )
@@ -8714,6 +8715,22 @@ def run_closing_review(args: argparse.Namespace) -> int:
         report = format_weekly_summary(summary)
     else:
         review = reviewer.review_today(args.date or None)
+        # LLM 解读层（可选增强，降级安全）：仅当 env 未显式关闭时尝试；
+        # LLM 未启用/失败时 build_ai_review_section 返回空文本，报告不渲染
+        # AI 小节，数值字段零改动。总开关 AQSP_REVIEW_AI_SECTION（默认 on）。
+        ai_section_enabled = (
+            str(os.getenv("AQSP_REVIEW_AI_SECTION", "1") or "1")
+            .strip()
+            .lower()
+            not in ("0", "false", "no", "off")
+        )
+        if ai_section_enabled:
+            llm_text, _degraded = build_ai_review_section(
+                review,
+                getattr(review, "failure_patterns_section", ""),
+            )
+            if llm_text:
+                review = replace(review, llm_review_text=llm_text)
         report = format_daily_review(review)
 
     print(report)
