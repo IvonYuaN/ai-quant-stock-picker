@@ -12,6 +12,42 @@ from aqsp.presentation import format_symbol_name
 from aqsp.ratings import is_tradable_rating, rating_label
 
 
+def _as_str_tuple(value: object) -> tuple[str, ...]:
+    """把账本里的 reasons/risks（list[str] 或单个字符串）规整为 tuple[str, ...]。
+
+    None/缺失/空串兜底为空 tuple，非列表非字符串的脏数据同样安全回落。
+    """
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        value = value.strip()
+        return (value,) if value else ()
+    if isinstance(value, (list, tuple)):
+        items = [str(item).strip() for item in value if str(item).strip()]
+        return tuple(items)
+    return ()
+
+
+def _as_float(value: object) -> float:
+    """把账本数值字段安全转为 float；None/缺失/非法值兜底为 0.0。"""
+    if value is None:
+        return 0.0
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _stop_distance_pct(stop_loss: float, signal_close: float) -> float:
+    """止损幅度（百分点，正数）：|stop_loss/signal_close - 1| * 100。
+
+    stop_loss/signal_close 任一缺失或非正时返回 0.0 表示无法评估。
+    """
+    if stop_loss <= 0 or signal_close <= 0:
+        return 0.0
+    return abs(stop_loss / signal_close - 1) * 100
+
+
 @dataclass(frozen=True)
 class TradeReview:
     """纸面验证复盘"""
@@ -27,6 +63,17 @@ class TradeReview:
     holding_days: int
     exit_reason: str
     lessons: tuple[str, ...]
+    # 以下为归因字段（来自 predictions 行的 reasons/risks/score/entry_type
+    # 与 paper 行的 stop_loss/take_profit），供数据驱动复盘使用；
+    # 缺失时兜底为空值，不阻塞原有展示。
+    reasons: tuple[str, ...] = ()
+    risks: tuple[str, ...] = ()
+    stop_loss: float = 0.0
+    take_profit: float = 0.0
+    entry_type: str = ""
+    score: float = 0.0
+    # 信号日收盘价，用于止损幅度归一化（|stop_loss/signal_close-1|）
+    signal_close: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -73,6 +120,9 @@ class DailyReview:
     # 复盘聚合口径说明（如「近60日平仓 N 笔」/「最近 N 笔历史平仓（兜底）」），
     # 用于报告透明标注，避免因选股管道暂停导致复盘展示陈旧战绩却无说明。
     review_scope: str = ""
+    # 单笔透视（按 |return_pct| 降序前 5 笔的预格式化行），供报告直出；
+    # 空tuple表示无平仓样本，报告不渲染该节。
+    trade_highlights: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -148,7 +198,26 @@ class ClosingReviewer:
         if not predictions and not all_paper:
             return self._empty_review(today)
 
-        predictions_by_id, predictions_by_symbol = self._prediction_indexes(predictions)
+        # 归因匹配池：closed 交易的 signal_date 多数早于今日，
+        # 仅用当日 predictions 会导致 reasons/risks/score/signal_close 全部落空。
+        # 这里把匹配池扩展到覆盖全部 closed 行 signal_date 的区间（含今日），
+        # 主链总览仍用当日 predictions，口径互不影响。
+        closed_signal_dates = [
+            d
+            for d in (
+                str(row.get("signal_date", "") or "").strip() for row in closed_rows
+            )
+            if d
+        ]
+        if closed_signal_dates:
+            match_predictions = self._load_predictions_between(
+                min(closed_signal_dates), today
+            )
+        else:
+            match_predictions = list(predictions)
+        predictions_by_id, predictions_by_symbol = self._prediction_indexes(
+            match_predictions
+        )
         reviews = [
             self._review_single_trade(
                 paper_row=row,
@@ -228,6 +297,7 @@ class ClosingReviewer:
             pending_count=len(pending_rows),
             blocked_count=len(blocked_rows),
         )
+        trade_highlights = self._build_trade_highlights(reviews)
 
         return DailyReview(
             date=today,
@@ -250,6 +320,7 @@ class ClosingReviewer:
             ledger_avg_return=ledger_avg_return,
             ledger_avg_excess_return=ledger_avg_excess_return,
             review_scope=review_scope,
+            trade_highlights=trade_highlights,
         )
 
     def _latest_review_date(self) -> str:
@@ -649,6 +720,13 @@ class ClosingReviewer:
         if not exit_reason:
             exit_reason = self._determine_exit_reason(return_pct)
         lessons = self._extract_lessons(merged_row, return_pct, is_win)
+        reasons = _as_str_tuple(merged_row.get("reasons"))
+        risks = _as_str_tuple(merged_row.get("risks"))
+        stop_loss = _as_float(merged_row.get("stop_loss"))
+        take_profit = _as_float(merged_row.get("take_profit"))
+        entry_type = str(merged_row.get("entry_type", "") or "").strip()
+        score = _as_float(merged_row.get("score"))
+        signal_close = _as_float(merged_row.get("signal_close"))
 
         return TradeReview(
             symbol=symbol,
@@ -662,6 +740,13 @@ class ClosingReviewer:
             holding_days=holding_days,
             exit_reason=exit_reason,
             lessons=lessons,
+            reasons=reasons,
+            risks=risks,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+            entry_type=entry_type,
+            score=score,
+            signal_close=signal_close,
         )
 
     def _resolve_holding_days(self, row: dict) -> int:
@@ -761,25 +846,41 @@ class ClosingReviewer:
     def _extract_lessons(
         self, pred: dict, return_pct: float, is_win: bool
     ) -> tuple[str, ...]:
-        """提取经验教训"""
-        lessons = []
+        """提取单笔经验教训（数据驱动）。
 
+        引用该笔交易自身的入场理由/风险提示/止损关系，替代原收益分桶模板；
+        归因字段缺失时回落为简短的中性描述，不编造结论。
+        """
+        symbol = str(pred.get("symbol", "") or "")
+        reasons = _as_str_tuple(pred.get("reasons"))
+        risks = _as_str_tuple(pred.get("risks"))
+        stop_loss = _as_float(pred.get("stop_loss"))
+        signal_close = _as_float(pred.get("signal_close"))
+        stop_pct = _stop_distance_pct(stop_loss, signal_close)
+
+        lessons: list[str] = []
+        reason_text = reasons[0] if reasons else ""
         if is_win:
-            if return_pct > 5:
-                lessons.append("纸面大赚：策略判断准确，可提高复核优先级")
-            else:
-                lessons.append("纸面小赚：符合预期，继续跟踪同类样本")
+            head = f"{symbol} 盈利 {return_pct:+.2f}%".strip()
+            if reason_text:
+                head += f"：入场理由「{reason_text}」有效"
+            lessons.append(head)
+            if risks:
+                lessons.append(f"留意既有风险提示「{risks[0]}」是否仍在累积")
         else:
-            if return_pct < -3:
-                lessons.append("纸面大亏：需复核最多亏到规则是否及时")
-            else:
-                lessons.append("纸面小亏：正常波动，保持复核纪律")
-
-        strategy_type = self._resolve_strategy_type(pred)
-        if strategy_type.startswith("早盘打板") and not is_win:
-            lessons.append("打板失败：需关注市场整体环境")
-        elif strategy_type.startswith("尾盘溢价") and not is_win:
-            lessons.append("溢价失败：需检查量价配合")
+            head = f"{symbol} 亏损 {return_pct:.2f}%".strip()
+            if reason_text:
+                head += f"：入场理由「{reason_text}」未兑现"
+            lessons.append(head)
+            if stop_pct > 0:
+                if return_pct <= -stop_pct:
+                    lessons.append(
+                        f"亏损已达止损幅度 -{stop_pct:.1f}%（stop_loss={stop_loss:.3f}），按规则退出"
+                    )
+                else:
+                    lessons.append(
+                        f"未达止损幅度 -{stop_pct:.1f}%，属非止损退出，需复盘退出时机"
+                    )
 
         return tuple(lessons)
 
@@ -897,7 +998,11 @@ class ClosingReviewer:
         pending_count: int = 0,
         total_signals: int = 0,
     ) -> tuple[str, ...]:
-        """提取关键经验教训"""
+        """提取关键经验教训（数据驱动）。
+
+        每条 lesson 引用具体交易与数字：最大亏损/盈利笔、止损体检、最大连亏；
+        reviews 为空时保持原有空数据路径（仅上下文提示，不编造归因）。
+        """
         lessons = []
 
         if total_signals > 0 and not reviews:
@@ -909,25 +1014,66 @@ class ClosingReviewer:
         if pending_count > 0:
             lessons.append("部分信号仍在等待纸面入场或纸面结束，后续需继续复核。")
 
-        win_count = len([r for r in reviews if r.is_win])
-        loss_count = len([r for r in reviews if not r.is_win and r.return_pct != 0])
+        if not reviews:
+            return tuple(lessons)
 
-        if loss_count > win_count:
-            lessons.append("今日亏损较多，需反思策略是否适应当前市场")
+        loss_reviews = [r for r in reviews if not r.is_win and r.return_pct != 0]
+        win_reviews = [r for r in reviews if r.is_win]
 
-        big_losses = [r for r in reviews if r.return_pct < -3]
-        if big_losses:
-            lessons.append("存在大亏纸面样本，需严格复核最多亏到规则")
-
-        breakout_reviews = [
-            r for r in reviews if r.strategy_type.startswith("早盘打板")
-        ]
-        if breakout_reviews:
-            breakout_win_rate = len([r for r in breakout_reviews if r.is_win]) / len(
-                breakout_reviews
+        # 最大亏损笔：symbol + return_pct + 入场理由
+        if loss_reviews:
+            worst = min(loss_reviews, key=lambda r: r.return_pct)
+            reason = worst.reasons[0] if worst.reasons else "无入场理由记录"
+            lessons.append(
+                f"最大亏损 {worst.symbol} {worst.return_pct:.2f}%："
+                f"入场理由「{reason}」失效"
             )
-            if breakout_win_rate < 0.5:
-                lessons.append("打板成功率偏低，需关注市场情绪")
+
+        # 最大盈利笔
+        if win_reviews:
+            best = max(win_reviews, key=lambda r: r.return_pct)
+            reason = best.reasons[0] if best.reasons else "无入场理由记录"
+            lessons.append(
+                f"最大盈利 {best.symbol} {best.return_pct:+.2f}%："
+                f"入场理由「{reason}」兑现"
+            )
+
+        # 止损体检：亏损幅度达到止损幅度的笔数 vs 非止损退出笔数
+        stop_checked = [
+            (r, _stop_distance_pct(r.stop_loss, _as_float(r.signal_close)))
+            for r in reviews
+        ]
+        stop_checked = [(r, pct) for r, pct in stop_checked if pct > 0]
+        if stop_checked:
+            triggered = [
+                (r, pct) for r, pct in stop_checked if r.return_pct <= -pct
+            ]
+            non_stop = [(r, pct) for r, pct in stop_checked if r.return_pct > -pct]
+            if triggered:
+                worst_stop = min(triggered, key=lambda x: x[0].return_pct)[0]
+                lessons.append(
+                    f"止损体检：{len(triggered)}/{len(stop_checked)} 笔亏损已达止损幅度"
+                    f"（最深 {worst_stop.symbol} {worst_stop.return_pct:.2f}%），"
+                    "确认是否按规则退出"
+                )
+            elif loss_reviews:
+                lessons.append(
+                    f"止损体检：{len(non_stop)}/{len(stop_checked)} 笔亏损"
+                    "均未达止损幅度，属非止损退出，需复盘退出时机"
+                )
+
+        # 最大连亏笔数（按 signal_date 排序）
+        ordered = sorted(reviews, key=lambda r: r.signal_date)
+        max_streak = 0
+        streak = 0
+        for r in ordered:
+            if not r.is_win and r.return_pct != 0:
+                streak += 1
+                max_streak = max(max_streak, streak)
+            else:
+                streak = 0
+        if max_streak >= 3:
+            lessons.append(f"最大连亏 {max_streak} 笔，注意策略是否与当前市场失配")
 
         return tuple(lessons)
 
@@ -939,7 +1085,12 @@ class ClosingReviewer:
         pending_count: int = 0,
         blocked_count: int = 0,
     ) -> tuple[str, ...]:
-        """生成改进建议"""
+        """生成改进建议（数据驱动）。
+
+        基于本次复盘样本统计：亏损笔的入场类型占比、连亏长度、
+        blocked/pending 占比，每条建议必须引用具体数字；
+        无 reviews 时回落到原有的 blocked/pending 提示文案。
+        """
         suggestions = []
 
         if pending_count > 0:
@@ -948,19 +1099,105 @@ class ClosingReviewer:
         if blocked_count > 0:
             suggestions.append("复核不可成交原因，确认是否属于流动性或涨停限制。")
 
-        if reviews and win_rate < 0.5:
-            suggestions.append("胜率偏低，建议减少纸面复核频率，提高选股标准")
+        if not reviews:
+            return tuple(suggestions)
 
-        recent_reviews = sorted(reviews, key=lambda x: x.signal_date)[-5:]
-        recent_losses = len([r for r in recent_reviews if not r.is_win])
-        if recent_reviews and recent_losses >= 3:
-            suggestions.append("连续亏损，建议暂停新增纸面验证，观察市场")
+        total = len(reviews)
+        win_count = len([r for r in reviews if r.is_win])
+        loss_reviews = [r for r in reviews if not r.is_win and r.return_pct != 0]
 
-        big_losses = [r for r in reviews if r.return_pct < -5]
-        if big_losses:
-            suggestions.append("存在大亏纸面样本，建议降低单笔纸面仓位")
+        if win_rate < 0.5:
+            suggestions.append(
+                f"胜率 {win_rate:.1%}（{win_count}/{total}）偏低，"
+                "建议提高选股标准、减少低分样本参与"
+            )
+
+        # 亏损笔中各 entry_type 占比
+        if loss_reviews:
+            entry_type_counts: dict[str, int] = {}
+            for r in loss_reviews:
+                label = r.entry_type.strip() or "未记录入场类型"
+                entry_type_counts[label] = entry_type_counts.get(label, 0) + 1
+            top_types = sorted(
+                entry_type_counts.items(), key=lambda kv: kv[1], reverse=True
+            )
+            parts = [f"{label} {count}笔" for label, count in top_types[:2]]
+            suggestions.append(
+                f"亏损集中于 {len(loss_reviews)}/{total} 笔："
+                + "、".join(parts)
+                + "，优先复核该入场类型的有效性"
+            )
+
+        # 连亏（按 signal_date 排序）
+        ordered = sorted(reviews, key=lambda r: r.signal_date)
+        max_streak = 0
+        streak = 0
+        for r in ordered:
+            if not r.is_win and r.return_pct != 0:
+                streak += 1
+                max_streak = max(max_streak, streak)
+            else:
+                streak = 0
+        if max_streak >= 3:
+            suggestions.append(
+                f"已连亏 {max_streak} 笔，建议暂停新增纸面验证，观察市场后再恢复"
+            )
+
+        # blocked/pending 占比（相对本次复盘全部样本）
+        denom = total + pending_count + blocked_count
+        if denom > 0 and (pending_count + blocked_count) > 0:
+            share = (pending_count + blocked_count) / denom * 100
+            suggestions.append(
+                f"阻塞/待验证 {pending_count + blocked_count} 笔（占样本 {share:.0f}%），"
+                "确认执行链路是否顺畅"
+            )
 
         return tuple(suggestions)
+
+    def _build_trade_highlights(
+        self, reviews: list[TradeReview]
+    ) -> tuple[str, ...]:
+        """单笔透视：按 |return_pct| 降序前 5 笔的预格式化明细行。
+
+        每行含：symbol 名字 / 收益% / 持有天数 / 入场理由（截断40字）/
+        止损状态（亏损但未达止损幅度时标注「非止损退出」）。
+        """
+        if not reviews:
+            return ()
+
+        def _reason_text(review: TradeReview) -> str:
+            text = review.reasons[0] if review.reasons else ""
+            return text[:40] + ("…" if len(text) > 40 else "")
+
+        def _stop_status(review: TradeReview) -> str:
+            stop_pct = _stop_distance_pct(
+                review.stop_loss, _as_float(review.signal_close)
+            )
+            if stop_pct <= 0:
+                return ""
+            if review.return_pct <= -stop_pct:
+                return f"触发止损（幅度-{stop_pct:.1f}%）"
+            if not review.is_win and review.return_pct > -stop_pct:
+                return f"非止损退出（止损幅度-{stop_pct:.1f}%）"
+            return ""
+
+        top = sorted(reviews, key=lambda r: abs(r.return_pct), reverse=True)[:5]
+        lines = []
+        for r in top:
+            display = format_symbol_name(r.symbol, r.name)
+            parts = [
+                display,
+                f"{r.return_pct:+.2f}%",
+                f"持有{r.holding_days}天",
+            ]
+            reason_text = _reason_text(r)
+            if reason_text:
+                parts.append(f"入场理由: {reason_text}")
+            stop_status = _stop_status(r)
+            if stop_status:
+                parts.append(stop_status)
+            lines.append(" | ".join(parts))
+        return tuple(lines)
 
     def _empty_review(self, date: str) -> DailyReview:
         """生成空复盘"""
@@ -1144,6 +1381,13 @@ def format_daily_review(review: DailyReview) -> str:
     report.append("-" * 40)
     report.append(f"  {review.market_environment}")
     report.append("")
+
+    if review.trade_highlights:
+        report.append("🔍 单笔透视")
+        report.append("-" * 40)
+        for line in review.trade_highlights:
+            report.append(f"  · {line}")
+        report.append("")
 
     if review.key_lessons:
         report.append("关键经验教训")
