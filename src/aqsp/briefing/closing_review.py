@@ -70,6 +70,9 @@ class DailyReview:
     ledger_win_rate: float = 0.0
     ledger_avg_return: float = 0.0
     ledger_avg_excess_return: float = 0.0
+    # 复盘聚合口径说明（如「近60日平仓 N 笔」/「最近 N 笔历史平仓（兜底）」），
+    # 用于报告透明标注，避免因选股管道暂停导致复盘展示陈旧战绩却无说明。
+    review_scope: str = ""
 
 
 @dataclass(frozen=True)
@@ -104,9 +107,15 @@ class ClosingReviewer:
         self,
         ledger_path: str = "data/predictions.jsonl",
         paper_ledger_path: str = "data/paper_trades.jsonl",
+        review_window_days: int = 60,
+        max_review_trades: int = 30,
     ) -> None:
         self.ledger_path = ledger_path
         self.paper_ledger_path = paper_ledger_path
+        # 收盘复盘按「平仓日期」回看窗口；窗口内无平仓时兜底取最近 N 笔历史战绩，
+        # 避免选股管道暂停期间复盘真空（见 2026-09-25 根因修复）。
+        self.review_window_days = review_window_days
+        self.max_review_trades = max_review_trades
 
     def review_today(self, today: str | None = None) -> DailyReview:
         """复盘今日交易
@@ -122,7 +131,11 @@ class ClosingReviewer:
 
         predictions = self._load_predictions(today)
         paper_rows = self._load_paper_rows(signal_date=today)
-        closed_rows = [row for row in paper_rows if row.get("status") == "closed"]
+        # 收盘复盘应聚合「近期平仓」的纸面交易，而非按 signal_date==today 过滤：
+        # 一笔交易今天平仓时其 signal_date 在数日前，原逻辑永远漏掉 → 复盘常年空壳。
+        # 见 2026-09-25 根因修复。
+        all_paper = self._load_paper_rows()
+        closed_rows, review_scope = self._select_review_closed_trades(all_paper, today)
         pending_rows = [
             row for row in paper_rows if row.get("status") == "pending_entry"
         ]
@@ -130,7 +143,9 @@ class ClosingReviewer:
             row for row in paper_rows if row.get("status") == "not_executable"
         ]
 
-        if not predictions and not paper_rows:
+        # 注意：按平仓日期聚合的复盘不再依赖 signal_date==today 的纸面行，
+        # 故「是否为空」判定须看全量纸面账本 all_paper，而非仅 today 信号行。
+        if not predictions and not all_paper:
             return self._empty_review(today)
 
         predictions_by_id, predictions_by_symbol = self._prediction_indexes(predictions)
@@ -234,6 +249,7 @@ class ClosingReviewer:
             ledger_win_rate=ledger_win_rate,
             ledger_avg_return=ledger_avg_return,
             ledger_avg_excess_return=ledger_avg_excess_return,
+            review_scope=review_scope,
         )
 
     def _latest_review_date(self) -> str:
@@ -490,6 +506,60 @@ class ClosingReviewer:
                 if low <= str(row.get("signal_date", "")).strip() <= high
             ]
         return rows
+
+    def _select_review_closed_trades(
+        self, all_paper: list[dict], today: str
+    ) -> tuple[list[dict], str]:
+        """按「平仓日期」聚合近期已平仓的纸面交易。
+
+        - 优先取 exit_date 落在 [today - review_window_days, today] 窗口内的 closed 行；
+        - 若窗口内无平仓（选股管道暂停期间常见），兜底取最近 max_review_trades 笔
+          历史 closed 行，并在 scope 文案中透明标注，避免复盘真空却无说明。
+        返回 (closed_rows, scope_text)。
+        """
+        try:
+            today_dt = datetime.strptime(today, "%Y-%m-%d")
+        except ValueError:
+            today_dt = datetime.now()
+
+        closed = [row for row in all_paper if row.get("status") == "closed"]
+
+        def _exit_dt(row: dict):
+            exit_date = str(row.get("exit_date", "") or "").strip()
+            if not exit_date:
+                return None
+            try:
+                return datetime.strptime(exit_date, "%Y-%m-%d")
+            except ValueError:
+                return None
+
+        window_lo = today_dt - timedelta(days=self.review_window_days)
+        windowed = [
+            row
+            for row in closed
+            if (ed := _exit_dt(row)) is not None and window_lo <= ed <= today_dt
+        ]
+        if windowed:
+            windowed.sort(
+                key=lambda r: str(r.get("exit_date", "") or ""),
+                reverse=True,
+            )
+            scope = f"近{self.review_window_days}日平仓 {len(windowed)} 笔"
+            return windowed, scope
+
+        # 兜底：窗口内无平仓，取最近 N 笔历史平仓（按 exit_date 降序）
+        dated = [row for row in closed if _exit_dt(row) is not None]
+        dated.sort(key=lambda r: str(r.get("exit_date", "") or ""), reverse=True)
+        fallback = dated[: self.max_review_trades]
+        if fallback:
+            latest_exit = str(fallback[0].get("exit_date", "") or "")
+            scope = (
+                f"最近 {len(fallback)} 笔历史平仓（兜底；最近平仓 {latest_exit}，"
+                f"其后选股管道无新平仓）"
+            )
+            return fallback, scope
+
+        return [], "近期无已平仓记录"
 
     def _prediction_indexes(
         self,
@@ -927,10 +997,14 @@ class ClosingReviewer:
 
         predictions = self._load_predictions_between(week_start, end_date)
         predictions_by_id, predictions_by_symbol = self._prediction_indexes(predictions)
+        # 周度总结同样按「平仓日期」聚合（exit_date 落在当周窗口内），
+        # 与 review_today 口径一致；原逻辑按 signal_date 过滤会漏掉当周平仓、
+        # 但 signal_date 在更早的交易。见 2026-09-25 根因修复。
         closed_rows = [
             row
-            for row in self._load_paper_rows(start_date=week_start, end_date=end_date)
+            for row in self._load_paper_rows()
             if row.get("status") == "closed"
+            and week_start <= str(row.get("exit_date", "") or "").strip() <= end_date
         ]
         all_reviews = [
             self._review_single_trade(
@@ -1029,6 +1103,8 @@ def format_daily_review(review: DailyReview) -> str:
     report.append("📊 每日纸面验证复盘")
     report.append("=" * 60)
     report.append(f"📅 日期: {review.date}")
+    if review.review_scope:
+        report.append(f"🔎 复盘口径: {review.review_scope}")
     report.append("")
 
     if review.main_chain_summary:
