@@ -123,6 +123,15 @@ class DailyReview:
     # 单笔透视（按 |return_pct| 降序前 5 笔的预格式化行），供报告直出；
     # 空tuple表示无平仓样本，报告不渲染该节。
     trade_highlights: tuple[str, ...] = ()
+    # 数据驱动失败模式段（failure_analysis 5 检测器近 N 天命中结果），
+    # 预格式化的多行文本；空串表示无显著失败模式（报告显式标注而非空壳）。
+    failure_patterns_section: str = ""
+    # LLM 解读层（降级安全）：AI 复盘解读小节 + 降级标记。
+    # llm_review_text 为空串时报告不渲染 AI 小节；degraded=True 表示走了
+    # fallback 规则文本（不显示该小节）。红线：LLM 只进该独立小节，
+    # 不触碰任何既有数值字段/胜率/收益。
+    llm_review_text: str = ""
+    llm_degraded: bool = False
 
 
 @dataclass(frozen=True)
@@ -298,6 +307,9 @@ class ClosingReviewer:
             blocked_count=len(blocked_rows),
         )
         trade_highlights = self._build_trade_highlights(reviews)
+        failure_patterns_section = build_failure_patterns_section(
+            self.ledger_path
+        )
 
         return DailyReview(
             date=today,
@@ -321,6 +333,7 @@ class ClosingReviewer:
             ledger_avg_excess_return=ledger_avg_excess_return,
             review_scope=review_scope,
             trade_highlights=trade_highlights,
+            failure_patterns_section=failure_patterns_section,
         )
 
     def _latest_review_date(self) -> str:
@@ -1337,6 +1350,109 @@ class ClosingReviewer:
         return max_dd
 
 
+def _resolve_review_failure_window_days() -> int:
+    """失败模式分析窗口（天），env AQSP_REVIEW_FAILURE_WINDOW_DAYS 覆盖，默认 30，clamp [7, 180]。"""
+    import os
+
+    raw = str(os.getenv("AQSP_REVIEW_FAILURE_WINDOW_DAYS", "") or "").strip()
+    if not raw:
+        return 30
+    try:
+        value = int(raw)
+    except ValueError:
+        return 30
+    return min(max(value, 7), 180)
+
+
+def build_failure_patterns_section(
+    ledger_path: str | Path,
+    window_days: int | None = None,
+) -> str:
+    """跑 5 个失败检测器（近 N 天窗口），返回可直插报告的 markdown 段落。
+
+    无命中时显式输出「无显著失败模式」而非空壳；检测器异常时降级为空串
+    （不阻断报告生成）。
+    """
+    from aqsp.ledger.failure_analysis import (
+        analyze_failures_from_file,
+        format_failure_patterns,
+    )
+
+    if window_days is None:
+        window_days = _resolve_review_failure_window_days()
+    try:
+        since_date = (
+            now_shanghai() - timedelta(days=window_days)
+        ).date().isoformat()
+        patterns = analyze_failures_from_file(
+            str(ledger_path), since_date=since_date
+        )
+    except Exception:
+        return ""
+    if not patterns:
+        return (
+            f"## 失败模式分析（近 {window_days} 天窗口）\n\n"
+            f"近 {window_days} 天窗口内无显著失败模式（5 类检测器均未命中，"
+            "或亏损样本不足）。"
+        )
+    section = format_failure_patterns(patterns)
+    # format_failure_patterns 的首行标题是「## 失败模式分析」，替换为带窗口口径版
+    section = section.replace(
+        "## 失败模式分析",
+        f"## 失败模式分析（近 {window_days} 天窗口）",
+        1,
+    )
+    return section
+
+
+def build_ai_review_section(
+    review: DailyReview,
+    failure_patterns_section: str,
+    *,
+    enable_llm: bool = True,
+) -> tuple[str, bool]:
+    """AI 复盘解读层（降级安全）：返回 (section_text, degraded)。
+
+    - LLM 可用时：喂统计数字 + 命中模式，让 LLM 写 3~5 句要点；
+    - 降级时：degraded=True、text=""（报告不渲染该节，绝不阻断）；
+    - 红线：LLM 输出只进独立小节「AI 复盘解读（仅供参考）」，
+      不触碰任何既有数值字段/胜率/收益。
+    """
+    from aqsp.utils.llm_safe import llm_call_or_fallback
+
+    base = f"日期 {review.date}：纸面验证 {review.executed_signals}/{review.total_signals}，"
+    base += f"胜率 {review.win_rate:.1%}，累计收益 {review.total_return:.2f}%。"
+    prompt = (
+        "你是 A 股短线复盘助手。基于以下数据写 3~5 句复盘要点，"
+        "只复述与归纳，不得虚构数字，不得给出买卖指令：\n"
+        f"{base}\n"
+        f"{failure_patterns_section or '（近 30 天窗口无显著失败模式）'}\n\n"
+        "输出要求：纯文本，不要标题，不要 markdown 列表。"
+    )
+    rule_text = (
+        f"胜率 {review.win_rate:.1%}、累计收益 {review.total_return:.2f}%。"
+        "详见上方失败模式与策略表现统计。"
+    )
+    result = llm_call_or_fallback(
+        prompt,
+        rule_text,
+        enable_llm=enable_llm,
+        caller="closing-review-ai",
+        timeout_s=60,
+    )
+    if result.degraded:
+        return "", True
+    text = (result.text or "").strip()
+    if not text:
+        return "", True
+    return (
+        "## AI 复盘解读（仅供参考，不构成决策依据）\n\n"
+        + text
+        + ("\n" if text.endswith("\n") else ""),
+        False,
+    )
+
+
 def format_daily_review(review: DailyReview) -> str:
     """格式化每日复盘为报告"""
     report = []
@@ -1382,11 +1498,21 @@ def format_daily_review(review: DailyReview) -> str:
     report.append(f"  {review.market_environment}")
     report.append("")
 
+    if review.failure_patterns_section:
+        for line in review.failure_patterns_section.splitlines():
+            report.append(line)
+        report.append("")
+
     if review.trade_highlights:
         report.append("🔍 单笔透视")
         report.append("-" * 40)
         for line in review.trade_highlights:
             report.append(f"  · {line}")
+        report.append("")
+
+    if review.llm_review_text and not review.llm_degraded:
+        for line in review.llm_review_text.splitlines():
+            report.append(line)
         report.append("")
 
     if review.key_lessons:

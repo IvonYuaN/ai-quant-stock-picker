@@ -1462,6 +1462,32 @@ def build_closing_review_notification(
                 f"- {strategy}: {stats['wins']}/{stats['total']} | "
                 f"胜率 {stats['win_rate']:.1%} | 收益 {stats['total_return']:.2f}%"
             )
+
+    # 失败模式精简版（最多 3 行）：复用数据驱动段的固定文案，不脆弱解析。
+    # AI 解读层（llm_review_text）按设计只进 markdown 完整报告，不进通知。
+    if review.failure_patterns_section:
+        fps = review.failure_patterns_section
+        header = next(
+            (ln for ln in fps.splitlines() if ln.startswith("## ")), ""
+        )
+        if header:
+            lines.extend(["", header, ""])
+        if "无显著失败模式" in fps:
+            lines.append("- 窗口内无显著失败模式")
+        else:
+            hit = next(
+                (
+                    ln.strip().strip("*").strip()
+                    for ln in fps.splitlines()
+                    if "共发现" in ln
+                ),
+                "",
+            )
+            if hit:
+                lines.append(f"- {hit}，规避建议详见完整报告")
+            else:
+                lines.append("- 检测到失败模式，详见完整报告")
+
     return _notification_research_tone("\n".join(lines))
 
 
