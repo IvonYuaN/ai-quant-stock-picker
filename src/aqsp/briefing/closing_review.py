@@ -126,6 +126,10 @@ class DailyReview:
     # 数据驱动失败模式段（failure_analysis 5 检测器近 N 天命中结果），
     # 预格式化的多行文本；空串表示无显著失败模式（报告显式标注而非空壳）。
     failure_patterns_section: str = ""
+    # debate ↔ 实盘战绩对账段（只读，按 debate_action_influence 分桶算胜率/收益），
+    # 量化 debate 层「在帮忙还是添乱」；空串 = 无已实现样本，报告显式标注。
+    # 红线：本字段只读展示，绝不写回打分/排序/下单。
+    debate_reconciliation_section: str = ""
     # LLM 解读层（降级安全）：AI 复盘解读小节 + 降级标记。
     # llm_review_text 为空串时报告不渲染 AI 小节；degraded=True 表示走了
     # fallback 规则文本（不显示该小节）。红线：LLM 只进该独立小节，
@@ -310,6 +314,9 @@ class ClosingReviewer:
         failure_patterns_section = build_failure_patterns_section(
             self.ledger_path
         )
+        debate_reconciliation_section = build_debate_reconciliation_section(
+            self.ledger_path
+        )
 
         return DailyReview(
             date=today,
@@ -334,6 +341,7 @@ class ClosingReviewer:
             review_scope=review_scope,
             trade_highlights=trade_highlights,
             failure_patterns_section=failure_patterns_section,
+            debate_reconciliation_section=debate_reconciliation_section,
         )
 
     def _latest_review_date(self) -> str:
@@ -1405,6 +1413,35 @@ def build_failure_patterns_section(
     return section
 
 
+def build_debate_reconciliation_section(
+    ledger_path: str | Path,
+    window_days: int | None = None,
+) -> str:
+    """debate ↔ 实盘战绩对账（只读）：按 debate_action_influence 分桶算胜率/收益。
+
+    量化「debate 层到底在帮忙还是添乱」。无已实现样本 / 无 debate 字段时
+    显式输出「无可度量样本」而非空壳；对账异常时降级为空串（不阻断报告生成）。
+    红线：纯只读展示，绝不写回打分/排序/下单。
+    """
+    from aqsp.ledger.debate_reconciliation import (
+        format_debate_reconciliation,
+        reconcile_debate_from_file,
+    )
+
+    if window_days is None:
+        window_days = _resolve_review_failure_window_days()
+    try:
+        since_date = (
+            now_shanghai() - timedelta(days=window_days)
+        ).date().isoformat()
+        rec = reconcile_debate_from_file(
+            str(ledger_path), since_date=since_date
+        )
+    except Exception:
+        return ""
+    return format_debate_reconciliation(rec, window_days=window_days)
+
+
 def build_ai_review_section(
     review: DailyReview,
     failure_patterns_section: str,
@@ -1506,6 +1543,11 @@ def format_daily_review(review: DailyReview) -> str:
 
     if review.failure_patterns_section:
         for line in review.failure_patterns_section.splitlines():
+            report.append(line)
+        report.append("")
+
+    if review.debate_reconciliation_section:
+        for line in review.debate_reconciliation_section.splitlines():
             report.append(line)
         report.append("")
 
