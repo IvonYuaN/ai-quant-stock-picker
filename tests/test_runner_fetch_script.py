@@ -77,6 +77,8 @@ def _fake_bin(
     status_age_min: int = 0,
     skip_tail: str = "",
     ssh_fail: bool = False,
+    promote_py: str = "",
+    gate_target: str = "",
 ) -> tuple[Path, dict[str, str]]:
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir(parents=True, exist_ok=True)
@@ -100,11 +102,17 @@ def _fake_bin(
         "FAKE_SKIP_TAIL": skip_tail,
         "FAKE_SSH_FAIL": "1" if ssh_fail else "0",
     }
+    if promote_py:
+        env["PROMOTE_PY"] = promote_py
+    if gate_target:
+        env["AQSP_WALKFORWARD_GATE_PATH"] = gate_target
     return fake_bin, env
 
 
-def _run(tmp_path: Path, **kwargs) -> tuple[subprocess.CompletedProcess[str], Path]:
-    _, env = _fake_bin(tmp_path, **kwargs)
+def _run(tmp_path: Path, *, promote_py: str = "", gate_target: str = "", **kwargs) -> tuple[subprocess.CompletedProcess[str], Path]:
+    _, env = _fake_bin(
+        tmp_path, promote_py=promote_py, gate_target=gate_target, **kwargs
+    )
     result = subprocess.run(
         ["bash", str(SCRIPT)],
         capture_output=True,
@@ -235,3 +243,68 @@ def test_runner_fetch_fails_closed_when_runner_unreachable(tmp_path: Path) -> No
 
     assert result.returncode == 1, result.stderr
     assert not (gate_dir / "runner_fetch_result.env").exists()
+
+
+def _write_fake_promote(tmp_path: Path, *, exit_code: int) -> Path:
+    """造一个假的 promote_gate_sidecar.py：直接以给定退出码返回，便于控制 promote_rc。"""
+    fake = tmp_path / "fake_promote"
+    fake.write_text(
+        f"#!/usr/bin/env bash\necho 'fake promote rc={exit_code}'\nexit {exit_code}\n",
+        encoding="utf-8",
+    )
+    fake.chmod(0o755)
+    return fake
+
+
+def test_runner_fetch_promotes_status_file_when_gate_promoted(tmp_path: Path) -> None:
+    """gate 提升成功时，runner 回传的 status 必须同步提升到监控 status_path，避免冻结。"""
+    prod_dir = tmp_path / "prod"
+    gate_target = str(prod_dir / "walkforward_gate.json")
+    status_target = prod_dir / "walkforward_production_status.json"
+    fake_promote = _write_fake_promote(tmp_path, exit_code=0)
+
+    result, gate_dir = _run(
+        tmp_path,
+        ready_present=1,
+        ready_age_h=2,
+        gate_present=1,
+        gate_age_h=2,
+        status_present=1,
+        status_value="completed",
+        promote_py=str(fake_promote),
+        gate_target=gate_target,
+    )
+
+    assert result.returncode == 0, result.stderr
+    # 回传的 runner.* 状态文件必须存在
+    assert (gate_dir / "runner.walkforward_production_status.json").exists()
+    # 关键：状态文件必须与 gate 一起被提升到监控 status_path
+    assert status_target.exists(), "gate 提升成功后 status 必须同步提升，否则监控会读冻结的旧值"
+    pulled = (gate_dir / "runner.walkforward_production_status.json").read_text(encoding="utf-8")
+    promoted = status_target.read_text(encoding="utf-8")
+    assert promoted == pulled, "提升后的 status 内容应与 runner 回传的一致"
+
+
+def test_runner_fetch_keeps_stale_status_when_gate_refused(tmp_path: Path) -> None:
+    """gate 未过门（promote 拒绝）时不更动 status，避免 「status 说完成、gate 却是旧版」 的错位。"""
+    prod_dir = tmp_path / "prod"
+    gate_target = str(prod_dir / "walkforward_gate.json")
+    status_target = prod_dir / "walkforward_production_status.json"
+    fake_promote = _write_fake_promote(tmp_path, exit_code=3)
+
+    result, gate_dir = _run(
+        tmp_path,
+        ready_present=1,
+        ready_age_h=2,
+        gate_present=1,
+        gate_age_h=2,
+        status_present=1,
+        status_value="completed",
+        promote_py=str(fake_promote),
+        gate_target=gate_target,
+    )
+
+    assert result.returncode == 0, result.stderr
+    # 回传的副本仍在（留证），但监控 status_path 不得被写成这一跑的状态
+    assert (gate_dir / "runner.walkforward_production_status.json").exists()
+    assert not status_target.exists(), "gate 未过门时不应提升 status，否则与旧 gate 错位"

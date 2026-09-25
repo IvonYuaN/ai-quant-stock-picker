@@ -244,6 +244,7 @@ if [ "$verdict" = "FRESH" ]; then
   # held-out / 窗口一致性）通过才提升，且旧文件归档到 gate_run/archived/ 可回滚。
   # **判定未过门不算失败** —— 门禁本来就该 fail，提升的是「一份真实完整的判定」。
   # 详见 scripts/promote_gate_sidecar.py。AQSP_FETCH_PROMOTE=0 可关闭。
+  promote_rc=1  # 默认「未提升」；gate 提升成功才置 0（供下面状态文件同步判断）
   if [ "$PROMOTE_ENABLED" = "1" ] && [ -f "$GATE_DIR/runner.walkforward_gate.json" ]; then
     LOCAL_RELEASE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
     set +e
@@ -259,6 +260,25 @@ if [ "$verdict" = "FRESH" ]; then
     if [ "$promote_rc" -ne 0 ]; then
       log "⚠️ 未提升（rc=${promote_rc}）—— 生效的仍是上一份 sidecar；可人工核对后把 runner.walkforward_gate.json 覆盖到 $GATE_TARGET"
     fi
+  fi
+
+  # ── 3c) 同步生产状态文件：与 gate sidecar 同跑、必须一起提升 ──────────────────
+  # 历史缺陷（2026-09-25 复盘确认）：runner_fetch.sh 只提升 gate sidecar
+  #（$GATE_TARGET，即监控 gate_path 读的那份），却从不提升
+  # walkforward_production_status.json（监控 status_path 读的那份）。二者是同一跑
+  # 的两视图——于是即便 gate 每周都成功提升，监控仍读着上一次人工留下的旧 status
+  #（曾冻结在 09-12 的 failed），造成「gate 真实有效、监控却持续假告警/旧结论」。
+  # 修复：gate 提升成功（promote_rc==0）即代表这一跑真实有效，把 runner 回传的
+  # status 一起提升到监控 status_path；gate 未过门（promote_rc!=0）则不更动 status，
+  # 避免「status 说本周完成、gate 却仍是旧版」的错位。
+  STATUS_TARGET="${AQSP_WALKFORWARD_STATUS_TARGET:-${GATE_TARGET%/*}/walkforward_production_status.json}"
+  if [ "$promote_rc" -eq 0 ] && [ -f "$GATE_DIR/runner.walkforward_production_status.json" ]; then
+    mkdir -p "$(dirname "$STATUS_TARGET")"
+    tmp_status="${STATUS_TARGET}.tmp.$$"
+    cp "$GATE_DIR/runner.walkforward_production_status.json" "$tmp_status"
+    mv "$tmp_status" "$STATUS_TARGET"
+    sync_msg="已同步生产状态文件 → ${STATUS_TARGET}（与 gate sidecar 同跑，避免监控读冻结的旧 status）"
+    log "$sync_msg"
   fi
 else
   # 陈旧/无产物：隔离留证，绝不落成 runner.* 以免被误读为本周结果

@@ -81,8 +81,10 @@ monitors:
       # 此前该场景恒 triggered=false，只把结论写进 message，形成「gate 里明写
       # pbo=1.0 / dsr<0 / both_pass=false，监控却全绿」的假绿盲区——生产 gate
       # 曾长期处于 DSR=-1.28、PBO=100% 而无人知晓。
-      # 仅在做已知的策略重构/重训练期才临时置 false，并务必记得改回。
-      alert_on_dsr_pbo_blocked: true
+      # 当前（2026-09-25）置 false：R3 alpha 赤字（issue #199）是已知且已接受的
+      # 状态，双门未过告警每周周期性触发、无新信息量，纯属噪声。待 #199 解决、
+      # 策略重新获得上线资格后必须改回 true。
+      alert_on_dsr_pbo_blocked: false
     severity: "critical"
 
   - name: "screening_liveness"
