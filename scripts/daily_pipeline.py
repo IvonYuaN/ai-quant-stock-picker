@@ -605,6 +605,72 @@ def _step_closing_premium(
     return {"exit_code": exit_code}
 
 
+def _step_pull_ic_diagnosis(
+    config: PipelineConfig, logger: logging.Logger
+) -> dict[str, Any]:
+    """best-effort：单向 pull runner 的因子 IC 诊断产物，供收评日报消费。
+
+    红线：本步骤绝不阻断跑批。fetch 的退出码语义（0 拉取 / 1 连不上 / 2 无新结果
+    / 3 陈旧）都只记录、不视为失败——无新结果或陈旧时保留本地旧产物，收评日报
+    的「因子 IC 健康」段读不到就自动降级不渲染（build_factor_ic_section 已保证）。
+    """
+    import subprocess
+
+    logger.info("  拉取 runner 因子 IC 诊断（best-effort，不阻断）")
+    script = config.project_root / "scripts" / "fetch_ic_diagnosis.sh"
+    if not script.exists():
+        logger.info("  fetch_ic_diagnosis.sh 不存在（%s），跳过 IC 回流", script)
+        return {
+            "exit_code": 0,
+            "pulled": False,
+            "reason": "script_missing",
+            "fetch_exit_code": None,
+        }
+
+    data_root = _runtime_data_root(config.project_root)
+    env = dict(os.environ)
+    # 与 build_factor_ic_section 写读同源：统一落到 runtime data root
+    env["DEST_DIR"] = str(data_root / "pit_cache" / "factor_ic")
+    env["LOG_FILE"] = str(data_root / "logs" / "ic_diagnosis" / "fetch.log")
+
+    def _ok(reason: str, fetch_rc: int | None, pulled: bool) -> dict[str, Any]:
+        # best-effort：exit_code 恒 0，pull 步骤永不判失败、不影响 overall_success；
+        # fetch 的真实退出码（0/1/2/3）保留在 fetch_exit_code 供观测。
+        logger.info("  IC 回流判定 %s（fetch_exit_code=%s），不阻断", reason, fetch_rc)
+        return {
+            "exit_code": 0,
+            "pulled": pulled,
+            "reason": reason,
+            "fetch_exit_code": fetch_rc,
+        }
+
+    try:
+        proc = subprocess.run(
+            ["bash", str(script)],
+            capture_output=True,
+            text=True,
+            errors="replace",
+            env=env,
+            cwd=str(config.project_root),
+            timeout=300,
+        )
+        rc = proc.returncode
+    except subprocess.TimeoutExpired:
+        logger.warning("  IC 回流超时（>300s），保留本地旧产物，不阻断")
+        return _ok("timeout", None, False)
+    except Exception as exc:
+        logger.warning("  IC 回流异常：%s（保留本地旧产物，不阻断）", exc)
+        return _ok("exception", None, False)
+
+    verdict = {
+        0: "PULLED",
+        1: "RUNNER_UNREACHABLE",
+        2: "NO_RESULT",
+        3: "STALE",
+    }.get(rc, f"UNKNOWN_{rc}")
+    return _ok(verdict, rc, rc == 0)
+
+
 def _step_closing_review(
     config: PipelineConfig, logger: logging.Logger
 ) -> dict[str, Any]:
@@ -1193,6 +1259,9 @@ def run_pipeline(config: PipelineConfig) -> PipelineResult:
         ("策略运行", lambda: _step_run_strategy(config, logger)),
         ("预测验证", lambda: _step_validate_predictions(config, logger)),
         ("虚拟盘同步", lambda: _step_sync_paper_trades(config, logger)),
+        # 收评日报的「因子 IC 健康」段读 runner 诊断产物 ⇒ 必须放在收盘复盘之前拉取；
+        # best-effort：pull 失败/无新结果/陈旧都保留本地旧产物、不阻断（步骤恒 success）。
+        ("因子IC回流", lambda: _step_pull_ic_diagnosis(config, logger)),
         ("收盘复盘", lambda: _step_closing_review(config, logger)),
         ("自适应学习", lambda: _step_adaptive_learning(config, logger)),
         ("策略自进化", lambda: _step_auto_evolution(config, logger)),

@@ -1802,6 +1802,7 @@ def test_run_pipeline_excludes_intraday_sub_strategies(monkeypatch) -> None:
         "策略运行",
         "预测验证",
         "虚拟盘同步",
+        "因子IC回流",
         "收盘复盘",
         "自适应学习",
         "策略自进化",
@@ -2988,3 +2989,171 @@ def test_resolve_symbols_rejects_default_large_cap_pool_when_live_universe_missi
 
     with pytest.raises(daily_pipeline.DataError, match="拒绝退回默认大盘池"):
         daily_pipeline._resolve_symbols(config, logging.getLogger("test"))
+
+
+# ── 因子 IC 回流（best-effort，pull 步骤恒不判失败）────────────────────────
+def _pull_config(tmp_path: Path, daily_pipeline) -> object:
+    return daily_pipeline.PipelineConfig(
+        project_root=tmp_path,
+        source="eastmoney",
+        mode="close",
+        limit=10,
+        max_universe=50,
+        min_avg_amount=50_000_000,
+        max_data_lag_days=3,
+        enable_online_factors=False,
+        allow_online_fallback=True,
+        ledger_path="data/predictions.jsonl",
+        report_path="reports/latest.md",
+        csv_path="reports/latest.csv",
+        briefing_path="reports/briefing.md",
+        paper_report_path="reports/paper.md",
+        dashboard_html="dist/dashboard/index.html",
+        dashboard_db="dist/dashboard/aqsp.db",
+        paper_ledger="data/paper_trades.jsonl",
+        closing_review_path="reports/closing_review.md",
+        notify=False,
+        notify_mode="summary",
+        dry_run=False,
+        enable_debate=False,
+        enable_auto_evolution=False,
+    )
+
+
+def _write_fetch_script(tmp_path: Path) -> None:
+    (tmp_path / "scripts").mkdir(exist_ok=True)
+    (tmp_path / "scripts" / "fetch_ic_diagnosis.sh").write_text(
+        "#!/usr/bin/env bash\nexit 0\n", encoding="utf-8"
+    )
+
+
+def test_pull_ic_step_success_marks_pulled_not_failed(
+    monkeypatch, tmp_path: Path
+) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+    _write_fetch_script(tmp_path)
+    config = _pull_config(tmp_path, daily_pipeline)
+
+    class _FakeProc:
+        returncode = 0
+
+    monkeypatch.setattr(
+        "subprocess.run", lambda *a, **k: _FakeProc(), raising=False
+    )
+
+    details = daily_pipeline._step_pull_ic_diagnosis(config, logging.getLogger("t"))
+    assert details["exit_code"] == 0, "best-effort 步骤恒 success（exit_code=0）"
+    assert details["pulled"] is True
+    assert details["fetch_exit_code"] == 0
+    assert details["reason"] == "PULLED"
+
+
+def test_pull_ic_step_no_result_is_not_a_failure(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """fetch 判 NO_RESULT（exit 2）：无新结果、保留旧产物，但步骤不得判失败。"""
+    daily_pipeline = _load_daily_pipeline_module()
+    _write_fetch_script(tmp_path)
+    config = _pull_config(tmp_path, daily_pipeline)
+
+    class _FakeProc:
+        returncode = 2
+
+    monkeypatch.setattr("subprocess.run", lambda *a, **k: _FakeProc(), raising=False)
+
+    details = daily_pipeline._step_pull_ic_diagnosis(config, logging.getLogger("t"))
+    assert details["exit_code"] == 0, "NO_RESULT 不得让 pull 步骤失败"
+    assert details["pulled"] is False
+    assert details["fetch_exit_code"] == 2
+    assert details["reason"] == "NO_RESULT"
+
+
+def test_pull_ic_step_runner_unreachable_is_not_a_failure(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """连不上 runner（exit 1）：保留本地旧产物，不阻断跑批。"""
+    daily_pipeline = _load_daily_pipeline_module()
+    _write_fetch_script(tmp_path)
+    config = _pull_config(tmp_path, daily_pipeline)
+
+    class _FakeProc:
+        returncode = 1
+
+    monkeypatch.setattr("subprocess.run", lambda *a, **k: _FakeProc(), raising=False)
+
+    details = daily_pipeline._step_pull_ic_diagnosis(config, logging.getLogger("t"))
+    assert details["exit_code"] == 0
+    assert details["pulled"] is False
+    assert details["fetch_exit_code"] == 1
+    assert details["reason"] == "RUNNER_UNREACHABLE"
+
+
+def test_pull_ic_step_stale_is_not_a_failure(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """IC_READY 陈旧（exit 3）：绝不冒充本周结果，保留旧产物，不阻断。"""
+    daily_pipeline = _load_daily_pipeline_module()
+    _write_fetch_script(tmp_path)
+    config = _pull_config(tmp_path, daily_pipeline)
+
+    class _FakeProc:
+        returncode = 3
+
+    monkeypatch.setattr("subprocess.run", lambda *a, **k: _FakeProc(), raising=False)
+
+    details = daily_pipeline._step_pull_ic_diagnosis(config, logging.getLogger("t"))
+    assert details["exit_code"] == 0
+    assert details["pulled"] is False
+    assert details["fetch_exit_code"] == 3
+    assert details["reason"] == "STALE"
+
+
+def test_pull_ic_step_missing_script_skips_gracefully(
+    tmp_path: Path,
+) -> None:
+    """fetch 脚本缺失（如旧 release 未带）：跳过，不报错、不阻断。"""
+    daily_pipeline = _load_daily_pipeline_module()
+    config = _pull_config(tmp_path, daily_pipeline)  # 不写 fetch 脚本
+
+    details = daily_pipeline._step_pull_ic_diagnosis(config, logging.getLogger("t"))
+    assert details["exit_code"] == 0
+    assert details["pulled"] is False
+    assert details["reason"] == "script_missing"
+    assert details["fetch_exit_code"] is None
+
+
+def test_pull_ic_step_timeout_is_not_a_failure(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """fetch 卡住超时：保留旧产物、不阻断（避免拖垮 18:00 主链路）。"""
+    import subprocess as _sp
+
+    daily_pipeline = _load_daily_pipeline_module()
+    _write_fetch_script(tmp_path)
+    config = _pull_config(tmp_path, daily_pipeline)
+
+    def _raise_timeout(*a, **k):
+        raise _sp.TimeoutExpired(cmd="bash", timeout=300)
+
+    monkeypatch.setattr(
+        "subprocess.run", _raise_timeout, raising=False
+    )
+
+    details = daily_pipeline._step_pull_ic_diagnosis(config, logging.getLogger("t"))
+    assert details["exit_code"] == 0
+    assert details["pulled"] is False
+    assert details["reason"] == "timeout"
+    assert details["fetch_exit_code"] is None
+
+
+def test_pipeline_includes_pull_step_before_closing_review() -> None:
+    """pull 必须排在收盘复盘之前（收评日报读 freshly-pulled 的 JSON）。"""
+    daily_pipeline = _load_daily_pipeline_module()
+    src = (
+        Path(daily_pipeline.__file__).read_text(encoding="utf-8")
+    )
+    idx_pull = src.find('("因子IC回流"')
+    idx_review = src.find('("收盘复盘"')
+    assert idx_pull > 0, "交易日管线缺少「因子IC回流」步骤"
+    assert idx_review > idx_pull, "pull 步骤必须排在收盘复盘之前"
+
