@@ -189,7 +189,6 @@ def _make_urlopen(monkeypatch, payload: dict, code: str = "600519") -> None:
 
 def _tencent_payload(rows: list) -> dict:
     """构造 web.ifzq.gtimg.cn fqkline 返回结构（单根 K 线 = 6 元组 [date,o,c,h,l,v]）。"""
-    prefixed = "sh" if rows else "sh600519"
     code_key = "600519"
     return {"data": {f"sh{code_key}": {"qfqday": rows, "qt": {}, "version": "1"}}}
 
