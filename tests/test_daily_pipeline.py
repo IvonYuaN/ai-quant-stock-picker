@@ -1799,6 +1799,7 @@ def test_run_pipeline_excludes_intraday_sub_strategies(monkeypatch) -> None:
     assert result.overall_success is True
     assert executed == [
         "数据更新",
+        "排雷/事件数据预载",
         "策略运行",
         "预测验证",
         "虚拟盘同步",
@@ -3156,4 +3157,119 @@ def test_pipeline_includes_pull_step_before_closing_review() -> None:
     idx_review = src.find('("收盘复盘"')
     assert idx_pull > 0, "交易日管线缺少「因子IC回流」步骤"
     assert idx_review > idx_pull, "pull 步骤必须排在收盘复盘之前"
+
+
+def _patch_risk_producers(monkeypatch, returns: dict) -> None:
+    """把 4 个排雷/事件数据源的 load() mock 成给定返回值。
+
+    returns 值：list（含数据 / 空表）/ Exception 子类（注入异常）。
+    """
+    mapping = {
+        "holder_count": "aqsp.data.holder_num.HolderNumSource.load",
+        "announcements": "aqsp.data.announcement.AnnouncementSource.load",
+        "lockup": "aqsp.data.lockup.LockupSource.load",
+        "longhubang": "aqsp.data.longhubang.LongHubangSource.load",
+    }
+
+    def _make_loader(value):
+        if isinstance(value, type) and issubclass(value, Exception):
+            def _loader(self, *a, **k):
+                raise value("injected-failure")
+
+            return _loader
+
+        def _loader(self, *a, **k):
+            return value
+
+        return _loader
+
+    for name, path in mapping.items():
+        monkeypatch.setattr(path, _make_loader(returns.get(name, [1, 2, 3])), raising=True)
+
+
+def test_risk_refresh_step_runs_after_data_update_before_closing_review() -> None:
+    """排雷/事件预载必须排在「数据更新」之后、「收盘复盘」之前（同源 data root）。"""
+    daily_pipeline = _load_daily_pipeline_module()
+    src = Path(daily_pipeline.__file__).read_text(encoding="utf-8")
+    idx_data = src.find('("数据更新"')
+    idx_risk = src.find('("排雷/事件数据预载"')
+    idx_review = src.find('("收盘复盘"')
+    assert idx_data > 0 and idx_risk > idx_data, "排雷/事件预载须在数据更新之后"
+    assert idx_review > idx_risk, "排雷/事件预载须排在收盘复盘之前"
+
+
+def test_risk_refresh_step_all_sources_ok(monkeypatch, tmp_path: Path) -> None:
+    """4 源全部产出：exit_code 恒 0、ok_count=4、各源标记 OK。"""
+    daily_pipeline = _load_daily_pipeline_module()
+    config = _pull_config(tmp_path, daily_pipeline)
+    _patch_risk_producers(
+        monkeypatch,
+        {
+            "holder_count": [1, 2],
+            "announcements": [3],
+            "lockup": [4, 5],
+            "longhubang": [6],
+        },
+    )
+
+    details = daily_pipeline._step_refresh_risk_datasources(
+        config, logging.getLogger("t")
+    )
+    assert details["exit_code"] == 0
+    assert details["total"] == 4
+    assert details["ok_count"] == 4
+    assert details["sources"] == {
+        "holder_count": "OK",
+        "announcements": "OK",
+        "lockup": "OK",
+        "longhubang": "OK",
+    }
+
+
+def test_risk_refresh_step_empty_source_counts_as_ok(monkeypatch, tmp_path: Path) -> None:
+    """空表仍算成功（不阻断）；对应过滤器/事件日历会自行降级为 data_missing。"""
+    daily_pipeline = _load_daily_pipeline_module()
+    config = _pull_config(tmp_path, daily_pipeline)
+    _patch_risk_producers(
+        monkeypatch,
+        {
+            "holder_count": [],
+            "announcements": [1],
+            "lockup": [],
+            "longhubang": [1],
+        },
+    )
+
+    details = daily_pipeline._step_refresh_risk_datasources(
+        config, logging.getLogger("t")
+    )
+    assert details["exit_code"] == 0
+    assert details["ok_count"] == 4, "EMPTY 仍计入成功（不阻断跑批）"
+    assert details["sources"]["holder_count"] == "EMPTY"
+    assert details["sources"]["lockup"] == "EMPTY"
+
+
+def test_risk_refresh_step_source_error_is_not_a_failure(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """单源异常：仅记录、不阻断，exit_code 仍 0、ok_count 减一。"""
+    daily_pipeline = _load_daily_pipeline_module()
+    config = _pull_config(tmp_path, daily_pipeline)
+    _patch_risk_producers(
+        monkeypatch,
+        {
+            "holder_count": [1],
+            "announcements": ValueError,
+            "lockup": [1],
+            "longhubang": [1],
+        },
+    )
+
+    details = daily_pipeline._step_refresh_risk_datasources(
+        config, logging.getLogger("t")
+    )
+    assert details["exit_code"] == 0, "单源失败不得让本步骤判失败"
+    assert details["ok_count"] == 3
+    assert details["sources"]["announcements"].startswith("ERROR:")
+    assert details["sources"]["holder_count"] == "OK"
 
