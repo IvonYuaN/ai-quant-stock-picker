@@ -268,3 +268,107 @@ def test_notes_declare_staleness_rule(tmp_path, monkeypatch):
 
 
 # --------------------------------------------------------------------------
+# 票级复盘明细（recent_picks）：回答"上次具体选了哪只票、事后如何"
+# --------------------------------------------------------------------------
+
+
+def _pick_row(signal_date, symbol="600000", name="浦发银行", ret=3.2, excess=1.1,
+              win=True, exit_reason="horizon_close", strategies=("rps_momentum", "ma_pullback")):
+    return {
+        "signal_date": signal_date,
+        "status": "validated",
+        "symbol": symbol,
+        "name": name,
+        "return_pct": ret,
+        "excess_return_pct": excess,
+        "win": win,
+        "exit_reason": exit_reason,
+        "strategies": list(strategies),
+        "horizon_days": 3,
+        "entry_date": signal_date,
+        "exit_date": "2026-01-09",
+    }
+
+
+def test_recent_picks_returns_validated_rows_new_first(tmp_path, monkeypatch):
+    """按 signal_date 新→旧；字段与台账原值一一对应，不做二次计算。"""
+    rows = [
+        _pick_row("2026-01-05", symbol="600000", name="浦发银行", ret=3.2, excess=1.1, win=True),
+        _pick_row("2026-01-06", symbol="000001", name="平安银行", ret=-1.4, excess=-0.8,
+                  win=False, exit_reason="stop_loss"),
+        _pick_row("2026-01-07", symbol="600519", name="贵州茅台", ret=0.5, excess=0.0,
+                  win=True, exit_reason="take_profit"),
+    ]
+    payload = _payload(tmp_path, rows, monkeypatch)
+    picks = payload["recent_picks"]
+    assert [p["signal_date"] for p in picks] == ["2026-01-07", "2026-01-06", "2026-01-05"]
+    newest = picks[0]
+    assert newest["symbol"] == "600519"
+    assert newest["name"] == "贵州茅台"
+    assert newest["return_pct"] == 0.5
+    assert newest["excess_return_pct"] == 0.0
+    assert newest["win"] is True
+    assert newest["exit_reason"] == "take_profit"
+    assert newest["strategies"] == ["rps_momentum", "ma_pullback"]
+
+
+def test_recent_picks_excludes_non_validated(tmp_path, monkeypatch):
+    """pending / not_executable / 模拟行不得进复盘表。"""
+    rows = [
+        _pick_row("2026-01-05"),
+        {**_pick_row("2026-01-06"), "status": "pending"},
+        {**_pick_row("2026-01-07"), "status": "not_executable"},
+        {**_pick_row("2026-01-08"), "is_simulated": True},
+    ]
+    payload = _payload(tmp_path, rows, monkeypatch)
+    assert [p["signal_date"] for p in payload["recent_picks"]] == ["2026-01-05"]
+
+
+def test_recent_picks_capped_at_limit(tmp_path, monkeypatch):
+    """展示侧截断：超过上限只回最近 N 笔，不影响聚合口径。"""
+    rows = [_pick_row(f"2026-01-{d:02d}", symbol=f"{600000 + d}") for d in range(1, 31)]  # 30 天
+    payload = _payload(tmp_path, rows, monkeypatch)
+    assert len(payload["recent_picks"]) == pb.RECENT_PICKS_LIMIT
+    # 截断必须是"最新的 N 笔"：首条应是最大 signal_date
+    assert payload["recent_picks"][0]["signal_date"] == "2026-01-30"
+
+
+def test_recent_picks_missing_excess_is_none_not_zero(tmp_path, monkeypatch):
+    """excess_return_pct 缺失时如实给 None，不回填 0 冒充"没跑赢基准"。"""
+    rows = [
+        {
+            "signal_date": "2026-01-05",
+            "status": "validated",
+            "symbol": "600000",
+            "name": "浦发银行",
+            "return_pct": 2.0,
+            "win": True,
+            "exit_reason": "horizon_close",
+            "strategies": ["rps_momentum"],
+            "horizon_days": 3,
+        }
+    ]
+    payload = _payload(tmp_path, rows, monkeypatch)
+    assert payload["recent_picks"][0]["excess_return_pct"] is None
+
+
+def test_recent_picks_unavailable_branch_has_same_key(tmp_path, monkeypatch):
+    """不可用分支与正常分支字段名一致（recent_picks 键必须存在且为空）。"""
+    monkeypatch.setattr(pb, "_ledger_path", lambda: tmp_path / "nope.jsonl")
+    payload = pb.performance_payload()
+    assert "recent_picks" in payload
+    assert payload["recent_picks"] == []
+
+
+def test_recent_picks_empty_when_no_validated(tmp_path, monkeypatch):
+    """只有 pending 行时复盘表为空，但 available 仍为真（台账读到了）。"""
+    rows = [
+        {**_pick_row("2026-01-05"), "status": "pending"},
+        {**_pick_row("2026-01-06"), "status": "pending"},
+    ]
+    payload = _payload(tmp_path, rows, monkeypatch)
+    assert payload["available"] is True
+    assert payload["recent_picks"] == []
+
+
+# --------------------------------------------------------------------------
