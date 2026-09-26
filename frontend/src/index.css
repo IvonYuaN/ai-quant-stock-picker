@@ -946,6 +946,70 @@
     gap: 0.7rem;
   }
 
+  /* 今日决策面板（DecisionPanel） */
+  .aq-decision {
+    display: grid;
+    gap: 0.6rem;
+    padding-top: 0.2rem;
+  }
+  .aq-decision-blockers {
+    display: grid;
+    gap: 0.4rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .aq-decision-blocker {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    flex-wrap: wrap;
+    border: 1px solid hsl(var(--border) / 0.6);
+    border-radius: 0.5rem;
+    background: hsl(var(--card) / 0.5);
+    padding: 0.5rem 0.65rem;
+  }
+  .aq-decision-blocker-warn {
+    border-color: hsl(var(--destructive, 0 70% 50%) / 0.3);
+  }
+  .aq-decision-blocker-detail {
+    flex: 1 1 12rem;
+    font-size: 0.84rem;
+    color: hsl(var(--muted-foreground));
+    overflow-wrap: anywhere;
+  }
+  .aq-decision-cand-name {
+    display: block;
+    font-size: 0.74rem;
+    color: hsl(var(--muted-foreground));
+  }
+  .aq-decision-strategies {
+    display: grid;
+    gap: 0.45rem;
+  }
+  .aq-decision-strategy {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    flex-wrap: wrap;
+    border: 1px solid hsl(var(--border) / 0.5);
+    border-radius: 0.5rem;
+    background: hsl(var(--card) / 0.4);
+    padding: 0.5rem 0.65rem;
+  }
+  .aq-decision-strategy-name {
+    font-weight: 600;
+    font-size: 0.87rem;
+  }
+  .aq-decision-strategy-note {
+    flex-basis: 100%;
+    font-size: 0.8rem;
+    color: hsl(var(--muted-foreground));
+  }
+  .aq-decision-progress {
+    margin-top: 0.15rem;
+  }
+
   .aq-cm-strip {
     display: grid;
     grid-template-columns: 1.7fr 1fr 1fr 1fr;
