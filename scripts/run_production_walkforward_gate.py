@@ -14,6 +14,7 @@ import ctypes
 import json
 import os
 import socket
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -1221,6 +1222,62 @@ def validate_production_cutoff_consistency(
     return ""
 
 
+def _rotate_stale_gate_evidence(
+    *,
+    gate_path: Path,
+    requested_end: str,
+) -> str:
+    """Rotate a *stale* gate evidence sidecar into an archive dir.
+
+    The production gate self-locks when the raw database has advanced past a
+    previously-verified window: the previous ``walkforward_gate.json`` still
+    carries its old ``data_end`` (e.g. 2026-09-18) while the freshly-derived
+    ``requested_end`` now points at the new db cutoff (e.g. 2026-09-24). The
+    cutoff validator then demands ``evidence.data_end == requested_end``, fails
+    on the mismatch, blocks the child walk-forward from running, and therefore
+    the stale evidence is never refreshed — a permanent block that never
+    heals on its own as the db keeps advancing.
+
+    Archiving the stale sidecar here makes the validator's "gate_path does not
+    exist → pass" branch fire, so the child re-runs and writes a fresh sidecar
+    this cycle.
+
+    Safety invariant (preserves the §5 "no future data" red line): only a
+    sidecar whose ``data_end`` is *strictly older* than the requested end is
+    rotated. Evidence that claims a date at-or-beyond the requested end is left
+    untouched — clearing it would defeat the future-data guard, and a
+    genuinely-mismatched/over-future sidecar must still surface as a block.
+
+    Returns a human-readable note describing the rotation, or "" when nothing
+    was rotated (file absent, unparseable, or not stale).
+    """
+    if not gate_path.exists():
+        return ""
+    payload = _read_json_object(gate_path)
+    if payload is None:
+        # unreadable sidecar: leave it; the validator surfaces its own error
+        return ""
+    raw_sidecar_end = payload.get("data_end")
+    if raw_sidecar_end in (None, ""):
+        # no verified window recorded; nothing to rotate
+        return ""
+    sidecar_day = _parse_db_day(str(raw_sidecar_end))
+    requested_day = _parse_db_day(requested_end)
+    if sidecar_day is None or requested_day is None:
+        # cannot compare; let the validator report the malformed value
+        return ""
+    if sidecar_day >= requested_day:
+        # current-or-future evidence: keep for the validator's future-data guard
+        return ""
+    day_tag = requested_day.isoformat()
+    archive_dir = gate_path.parent / "archive"
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    ts = now_shanghai().strftime("%Y%m%dT%H%M%S")
+    dest = archive_dir / f"walkforward_gate.{ts}-{day_tag}.json"
+    shutil.move(str(gate_path), str(dest))
+    return f"rotated stale gate evidence (data_end={sidecar_day.isoformat()}) to {dest}"
+
+
 def load_cached_coverage_symbols(
     cache_path: Path,
     *,
@@ -2142,6 +2199,14 @@ def main() -> int:
     raw_max_trade_date = None
     if _raw_sqlite_has_daily_table(args.db):
         raw_max_trade_date = _raw_sqlite_max_trade_date(args.db)
+        rotation_note = ""
+        if not args.repair_only and not args.dry_run:
+            rotation_note = _rotate_stale_gate_evidence(
+                gate_path=Path(args.gate_path),
+                requested_end=args.end,
+            )
+            if rotation_note:
+                print(f"INFO: {rotation_note}")
         cutoff_blocker = validate_production_cutoff_consistency(
             db_path=args.db,
             requested_end=args.end,
