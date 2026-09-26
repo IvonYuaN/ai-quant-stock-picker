@@ -1010,6 +1010,42 @@
     margin-top: 0.15rem;
   }
 
+  /* 票级复盘表（RecentPicksTable）：上次选了哪些票、事后如何 */
+  .aq-decision-review {
+    border: 1px solid hsl(var(--border) / 0.5);
+    border-radius: 0.5rem;
+    background: hsl(var(--card) / 0.4);
+    padding: 0.55rem 0.7rem;
+  }
+  .aq-decision-review-title {
+    margin: 0 0 0.5rem;
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: hsl(var(--muted-foreground));
+  }
+  .aq-decision-review-table th,
+  .aq-decision-review-table td {
+    padding: 0.35rem 0.5rem;
+  }
+  .aq-decision-review-strat {
+    display: block;
+    margin-top: 0.15rem;
+    font-size: 0.72rem;
+    color: hsl(var(--muted-foreground));
+  }
+  /* A 股"红涨绿跌"：正收益/超额显红，负显绿；缺失为中性 */
+  .aq-pick-return-pos {
+    color: hsl(var(--destructive, 0 72% 51%));
+    font-weight: 600;
+  }
+  .aq-pick-return-neg {
+    color: hsl(var(--success, 152 60% 40%));
+    font-weight: 600;
+  }
+  .aq-pick-return-mid {
+    color: hsl(var(--muted-foreground));
+  }
+
   .aq-cm-strip {
     display: grid;
     grid-template-columns: 1.7fr 1fr 1fr 1fr;

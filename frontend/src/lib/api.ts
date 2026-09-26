@@ -410,6 +410,30 @@ export interface PerformanceDecayAlert {
   recommendation: string;
 }
 
+/**
+ * 票级复盘明细（`recent_picks`）：最近 N 笔已结算（validated）信号。
+ * 回答"上次具体选了哪只票、事后结果如何"——策略级聚合给不出的颗粒度。
+ * 字段均为台账原值直读，不做二次计算。
+ */
+export interface PerformanceRecentPick {
+  symbol: string;
+  name: string;
+  /** 信号日 YYYY-MM-DD（复盘按此新→旧排序） */
+  signal_date: string;
+  /** 了结日 YYYY-MM-DD（可能为空） */
+  exit_date: string;
+  /** 绝对收益 %（相对入场价）；缺失为 null */
+  return_pct: number | null;
+  /** 超额收益 %（相对基准）；缺失为 null —— 与"真的是 0"区分开 */
+  excess_return_pct: number | null;
+  /** 是否命中（观测收益为正） */
+  win: boolean;
+  /** 了结原因：horizon_close / take_profit / stop_loss */
+  exit_reason: string;
+  /** 关联策略列表 */
+  strategies: string[];
+}
+
 export interface PerformanceFreshness {
   latest_signal_date: string;
   ledger_updated_at: string;
@@ -440,6 +464,11 @@ export interface PerformancePayload {
   } | null;
   strategies: PerformanceStrategy[];
   decay_alerts: PerformanceDecayAlert[];
+  /**
+   * 票级复盘明细（最近 N 笔 validated 信号）。可选：旧版后端 payload 没有此键，
+   * 前端归一化时落到空数组，复盘表如实显示"暂无"，不白屏。
+   */
+  recent_picks?: PerformanceRecentPick[];
   status_counts: Record<string, number>;
   notes: string[];
 }
