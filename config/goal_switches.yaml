@@ -40,6 +40,9 @@ switches:
   pit_enrichment_runtime_required:
     enabled: false
     purpose: "PIT 默认不阻塞盘中短线任务，只进入历史验证链路"
+  event_driven_signals:
+    enabled: false
+    purpose: "事件驱动信号默认关；未经 walk-forward 双门验证不上线，启用需附验证报告"
 
 tracks:
   - id: realtime_data_guardrails

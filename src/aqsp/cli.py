@@ -1171,6 +1171,19 @@ def main(argv: list[str] | None = None) -> int:
     review_cmd.add_argument("--output", default="")
     review_cmd.add_argument("--report", default="")
 
+    event_cmd = sub.add_parser(
+        "event-signals", help="run event-driven signals (report-only, gated)"
+    )
+    event_cmd.add_argument("--source", choices=SOURCE_CHOICES, default="auto")
+    event_cmd.add_argument("--symbols", default="")
+    event_cmd.add_argument("--pool", default="all")
+    event_cmd.add_argument("--max-universe", type=int, default=0)
+    event_cmd.add_argument("--max-data-lag-days", type=int, default=1)
+    event_cmd.add_argument("--benchmark-symbol", default="000300")
+    event_cmd.add_argument("--top", type=int, default=5)
+    event_cmd.add_argument("--output", default="")
+    event_cmd.add_argument("--ledger", default="data/predictions.jsonl")
+
     args = parser.parse_args(argv)
     # 宪法启动门：检查不变量，任一失败会直接 SystemExit
     from aqsp._constitution_check import assert_constitution_invariants
@@ -1221,6 +1234,8 @@ def main(argv: list[str] | None = None) -> int:
             return run_morning_breakout(args)
         if args.command == "closing-premium":
             return run_closing_premium(args)
+        if args.command == "event-signals":
+            return run_event_signals(args)
         if args.command == "closing-review":
             return run_closing_review(args)
     except DataError as exc:
@@ -3558,9 +3573,10 @@ def _resolve_walkforward_cost_bps(
     execution = execution_config_from_thresholds(thresholds)
     sell_fee_bps = execution.sell_fee_bps
     if net_fees and sell_fee_bps is None:
-        sell_fee_bps = fee_bps + float(
-            getattr(thresholds.execution, "stamp_tax_rate", 0.001)
-        ) * 10000.0
+        sell_fee_bps = (
+            fee_bps
+            + float(getattr(thresholds.execution, "stamp_tax_rate", 0.001)) * 10000.0
+        )
     return fee_bps, slippage_bps, sell_fee_bps
 
 
@@ -6227,9 +6243,16 @@ _WALKFORWARD_STABLE_GRID_VARIANTS: tuple[WalkForwardGridVariant, ...] = tuple(
 _WALKFORWARD_STABLE_PLUS_GRID_VARIANTS: tuple[WalkForwardGridVariant, ...] = tuple(
     variant
     for variant in _WALKFORWARD_VALIDATED_GRID_VARIANTS
-    if variant.variant_id in {
-        "WF-001", "WF-B01", "WF-B02", "WF-B04", "WF-B08",
-        "WF-B07", "WF-V01", "WF-MR1",
+    if variant.variant_id
+    in {
+        "WF-001",
+        "WF-B01",
+        "WF-B02",
+        "WF-B04",
+        "WF-B08",
+        "WF-B07",
+        "WF-V01",
+        "WF-MR1",
     }
 )
 
@@ -6586,9 +6609,7 @@ def _run_walkforward_grid_cscv(
                 _summarize_walkforward_market_window(filtered, start, end, hold_days)
             )
         else:
-            worst_market_windows.append(
-                market_window_summary(start, end, hold_days)
-            )
+            worst_market_windows.append(market_window_summary(start, end, hold_days))
     details.update(
         {
             "variant_dispersion_sharpe": float(
@@ -7232,11 +7253,7 @@ def run_walkforward(args: argparse.Namespace) -> int:
         "",
         "## 整体指标",
         "",
-        (
-            f"> {metric_note}"
-            if metric_note
-            else ""
-        ),
+        (f"> {metric_note}" if metric_note else ""),
         "| 指标 | 值 |",
         "|------|-----|",
         f"| 总收益 | {result.overall.total_return:.2%} |",
@@ -7266,10 +7283,7 @@ def run_walkforward(args: argparse.Namespace) -> int:
                     f"| Sharpe Ratio（仅活跃期） | "
                     f"{result.overall.sharpe_ratio_active:.2f} |"
                 ),
-                (
-                    f"| 胜率（仅活跃期） | "
-                    f"{result.overall.win_rate_active:.2%} |"
-                ),
+                (f"| 胜率（仅活跃期） | {result.overall.win_rate_active:.2%} |"),
             ]
         )
     report_lines.extend(
@@ -7284,7 +7298,9 @@ def run_walkforward(args: argparse.Namespace) -> int:
     )
     if skipped_periods > 0:
         dsr_active = getattr(result, "deflated_sharpe_active", None)
-        active_text = "N/A（活跃期不足或未计算）" if dsr_active is None else f"{dsr_active:.4f}"
+        active_text = (
+            "N/A（活跃期不足或未计算）" if dsr_active is None else f"{dsr_active:.4f}"
+        )
         report_lines.append(
             f"| DSR（仅活跃期） | {active_text} | 跳过期剔除后重算（实测近似不敏感） |"
         )
@@ -8713,6 +8729,173 @@ def run_closing_premium(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_event_signals(args: argparse.Namespace) -> int:
+    """事件驱动信号（report-only），gated by ``event_driven_signals`` switch（默认关）。
+
+    开关关 → 只打印提示并安全返回 0；开关开 → 正常跑信号、写 ledger、可存 JSON。
+    事件日历走 ``EventCalendar.from_cache()``（只读 ``pit_cache/*.csv``，绝不联网）。
+    """
+    from aqsp.strategies.event_driven import (
+        EventDrivenStrategy,
+        format_event_signals,
+    )
+    from aqsp.core.time import is_trading_day
+    from aqsp.features.event_calendar import EventCalendar
+
+    today = today_shanghai()
+    if not is_trading_day(today):
+        print(f"今日非交易日，跳过事件信号: {today.isoformat()}")
+        return 0
+
+    from aqsp.goal_switches import goal_switch_enabled
+
+    if not goal_switch_enabled("event_driven_signals", default=False):
+        print(
+            "event-signals: goal_switch `event_driven_signals` 未启用（默认关），"
+            "跳过。启用需先通过 walk-forward 双门验证（见 docs/architecture.md §1）。"
+        )
+        return 0
+
+    print("📰 运行事件驱动信号...")
+    calendar = EventCalendar.from_cache()
+    strategy = EventDrivenStrategy(event_calendar=calendar)
+
+    symbols = [s.strip() for s in args.symbols.split(",") if s.strip()]
+    if symbols:
+        symbols = list(dict.fromkeys(symbols))
+    else:
+        symbols = _resolve_run_symbols(
+            args.source,
+            "",
+            pool_name=args.pool,
+            max_universe=_runtime_max_universe(getattr(args, "max_universe", 0)),
+            min_avg_amount=10_000_000,
+        )
+    if not symbols:
+        print("无法解析股票池")
+        return 1
+
+    print(f"正在获取 {len(symbols)} 只股票数据...")
+    try:
+        frames, actual_source = _fetch_special_strategy_frames(
+            args.source,
+            symbols,
+            benchmark_symbol=getattr(args, "benchmark_symbol", "000300"),
+            days=250,
+        )
+    except Exception as exc:
+        print(f"无法获取可用数据: {exc}")
+        frames = {}
+
+    if not frames:
+        print("无法获取数据")
+        return 1
+
+    usable_frames = _drop_benchmark_frame(
+        frames, getattr(args, "benchmark_symbol", "000300")
+    )
+    runtime_ready, regime, runtime_reason = _special_strategy_runtime_ready(
+        strategy=strategy,
+        frames=usable_frames,
+        benchmark_symbol=getattr(args, "benchmark_symbol", "000300"),
+    )
+    if not runtime_ready:
+        print(f"跳过事件信号: {runtime_reason}")
+        return 0
+
+    print(f"数据获取完成，{len(usable_frames)} 只股票可用")
+    signals = strategy.generate_signals(usable_frames)
+    selected_signals = signals[: args.top]
+
+    report = format_event_signals(selected_signals, top_n=args.top)
+    print(report)
+
+    if args.output:
+        output_path = Path(args.output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "signals": [
+                {
+                    "symbol": s.symbol,
+                    "name": s.name,
+                    "event_type": s.event_type,
+                    "score": s.score,
+                    "current_price": s.current_price,
+                    "entry_price": s.entry_price,
+                    "stop_loss": s.stop_loss,
+                    "take_profit": s.take_profit,
+                    "position_pct": s.position_pct,
+                    "holding_period": s.holding_period,
+                    "confidence": s.confidence,
+                    "reasons": list(s.reasons),
+                    "risks": list(s.risks),
+                    "needs_external_data": list(s.needs_external_data),
+                }
+                for s in selected_signals
+            ],
+            "timestamp": now_shanghai().isoformat(),
+        }
+        atomic_write_text(
+            output_path, json.dumps(payload, ensure_ascii=False, indent=2)
+        )
+        print(f"\n结果已保存到: {output_path}")
+
+    if not selected_signals:
+        print("今日无事件驱动信号")
+        return 0
+
+    from aqsp.ledger.special_signals import (
+        SpecialSignalLedgerRow,
+        append_special_strategy_signals,
+    )
+
+    ledger_path = getattr(args, "ledger", "data/predictions.jsonl")
+    thresholds_version = strategy.thresholds.version
+    now = now_shanghai()
+    ledger_allowed, ledger_reason = _special_strategy_ledger_write_allowed(
+        frames,
+        max_data_lag_days=int(getattr(args, "max_data_lag_days", 1) or 1),
+    )
+    if not ledger_allowed:
+        print(f"事件信号 ledger 写入跳过: {ledger_reason}")
+        return 0
+    append_special_strategy_signals(
+        ledger_path,
+        [
+            SpecialSignalLedgerRow(
+                symbol=signal.symbol,
+                name=signal.name,
+                signal_close=signal.current_price,
+                score=signal.score,
+                strategy_id="event_driven",
+                sub_strategy=signal.event_type,
+                reasons=tuple(signal.reasons),
+                risks=tuple(signal.risks),
+                stop_loss=signal.stop_loss,
+                confidence=signal.confidence,
+                take_profit=signal.take_profit,
+                position=f"{signal.position_pct:.0%}",
+                ideal_buy=signal.entry_price,
+            )
+            for signal in selected_signals
+        ],
+        signal_date=now.date().isoformat(),
+        created_at=now.isoformat(timespec="seconds"),
+        thresholds_version=thresholds_version,
+        regime=regime,
+        execution=execution_config_from_thresholds(strategy.thresholds),
+        workload="live_short",
+        run_metadata=_special_strategy_run_metadata(
+            requested_source=args.source,
+            actual_source=actual_source,
+            frames=frames,
+            thresholds_version=thresholds_version,
+            task_id="event_driven",
+        ),
+    )
+    return 0
+
+
 def run_closing_review(args: argparse.Namespace) -> int:
     from aqsp.briefing.closing_review import (
         ClosingReviewer,
@@ -8732,12 +8915,9 @@ def run_closing_review(args: argparse.Namespace) -> int:
         # LLM 解读层（可选增强，降级安全）：仅当 env 未显式关闭时尝试；
         # LLM 未启用/失败时 build_ai_review_section 返回空文本，报告不渲染
         # AI 小节，数值字段零改动。总开关 AQSP_REVIEW_AI_SECTION（默认 on）。
-        ai_section_enabled = (
-            str(os.getenv("AQSP_REVIEW_AI_SECTION", "1") or "1")
-            .strip()
-            .lower()
-            not in ("0", "false", "no", "off")
-        )
+        ai_section_enabled = str(
+            os.getenv("AQSP_REVIEW_AI_SECTION", "1") or "1"
+        ).strip().lower() not in ("0", "false", "no", "off")
         if ai_section_enabled:
             llm_text, _degraded = build_ai_review_section(
                 review,
