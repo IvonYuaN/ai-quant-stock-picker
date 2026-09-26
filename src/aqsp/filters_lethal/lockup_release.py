@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-import tempfile
+from aqsp.core.runtime import runtime_data_root
 from pathlib import Path
 
 import pandas as pd
@@ -16,7 +16,7 @@ def _default_lockup_cache_path() -> str:
     未配置 runtime root 时回落系统临时目录（与生产者一致，避免污染源码树）。
     """
 
-    root = os.environ.get("AQSP_RUNTIME_DATA_ROOT") or tempfile.gettempdir()
+    root = runtime_data_root()
     return os.path.join(root, "pit_cache", "lockup.csv")
 
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-import tempfile
+from aqsp.core.runtime import runtime_data_root
 from pathlib import Path
 
 import pandas as pd
@@ -27,7 +27,7 @@ def _default_announcement_cache_path() -> str:
     旧默认 data/announcements.csv 全仓无产出方 ⇒ 排雷层一直在空转。
     """
 
-    root = os.environ.get("AQSP_RUNTIME_DATA_ROOT") or tempfile.gettempdir()
+    root = runtime_data_root()
     return os.path.join(root, "pit_cache", "announcements.csv")
 
 

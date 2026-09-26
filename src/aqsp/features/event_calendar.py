@@ -40,7 +40,7 @@ from __future__ import annotations
 import logging
 import os
 import re
-import tempfile
+from aqsp.core.runtime import runtime_data_root as resolve_runtime_data_root
 from dataclasses import dataclass, fields
 from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING, Optional, Sequence
@@ -83,11 +83,7 @@ def _pit_cache_path(filename: str, runtime_data_root: Optional[str] = None) -> s
     与 `lockup.py:101-108` 的 `_default_cache_path()` 同一规则，
     保证读写双方指向同一个文件。
     """
-    root = (
-        runtime_data_root
-        or os.environ.get("AQSP_RUNTIME_DATA_ROOT")
-        or tempfile.gettempdir()
-    )
+    root = runtime_data_root or str(resolve_runtime_data_root())
     return os.path.join(root, PIT_CACHE_DIRNAME, filename)
 
 
