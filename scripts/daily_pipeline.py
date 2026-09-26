@@ -671,6 +671,65 @@ def _step_pull_ic_diagnosis(
     return _ok(verdict, rc, rc == 0)
 
 
+def _step_refresh_risk_datasources(
+    config: PipelineConfig, logger: logging.Logger
+) -> dict[str, Any]:
+    """best-effort：预载排雷层 / 事件日历依赖的 pit_cache 数据源。
+
+    红线：本步骤绝不阻断跑批。各数据源独立 try/except，单源失败只记录、不视为
+    失败——未产出时对应过滤器 / 事件日历自动降级为 data_missing（已在
+    filters_lethal 与 event_calendar 内保证），不影响 overall_success。
+
+    修复 09-22 审计发现的「静默失效」：
+      (A) filters_lethal 三过滤器此前因 pit_cache/*.csv 从无产出方而恒
+          passed=True、零日志（整层保护从未生效）；
+      (B) event_calendar 只读 pit_cache/lockup.csv + longhubang.csv，同名
+          产出方此前未被任何调度方调用。
+    本步把 aqsp.data.* 四个生产者接入每日管线，使这两类产物真正落盘
+    （缓存优先：CSV 存在时只读缓存不联网，缺失时才 fetch 一次）。
+    """
+    from aqsp.data.announcement import AnnouncementSource
+    from aqsp.data.holder_num import HolderNumSource
+    from aqsp.data.lockup import LockupSource
+    from aqsp.data.longhubang import LongHubangSource
+
+    logger.info("  预载排雷/事件 pit_cache 数据源（best-effort，不阻断）")
+
+    producers = [
+        ("holder_count", lambda: HolderNumSource().load()),
+        ("announcements", lambda: AnnouncementSource().load()),
+        ("lockup", lambda: LockupSource().load()),
+        ("longhubang", lambda: LongHubangSource().load()),
+    ]
+
+    results: dict[str, str] = {}
+    for name, loader in producers:
+        try:
+            items = loader()
+            results[name] = "OK" if items else "EMPTY"
+            logger.info(
+                "  排雷数据源 %s：%s（%d 条）",
+                name,
+                results[name],
+                len(items) if items else 0,
+            )
+        except Exception as exc:  # noqa: BLE001 - best-effort，单源失败不阻断
+            results[name] = f"ERROR:{type(exc).__name__}"
+            logger.warning("  排雷数据源 %s 预载异常：%s（不阻断）", name, exc)
+
+    ok_count = sum(1 for v in results.values() if v in ("OK", "EMPTY"))
+    logger.info(
+        "  排雷/事件数据源预载完成：%d/%d 源成功", ok_count, len(producers)
+    )
+    # best-effort：exit_code 恒 0，永不判失败、不影响 overall_success
+    return {
+        "exit_code": 0,
+        "sources": results,
+        "ok_count": ok_count,
+        "total": len(producers),
+    }
+
+
 def _step_closing_review(
     config: PipelineConfig, logger: logging.Logger
 ) -> dict[str, Any]:
@@ -1256,6 +1315,7 @@ def run_pipeline(config: PipelineConfig) -> PipelineResult:
 
     pipeline_steps: list[tuple[str, Any]] = [
         ("数据更新", lambda: _step_update_data(config, logger)),
+        ("排雷/事件数据预载", lambda: _step_refresh_risk_datasources(config, logger)),
         ("策略运行", lambda: _step_run_strategy(config, logger)),
         ("预测验证", lambda: _step_validate_predictions(config, logger)),
         ("虚拟盘同步", lambda: _step_sync_paper_trades(config, logger)),

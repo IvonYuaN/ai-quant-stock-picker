@@ -143,7 +143,7 @@ class LockupSource:
     def _default_cache_path(self) -> str:
         if self._cache_path:
             return self._cache_path
-        # 遵循项目 runtime data root 约定；未配置时落系统临时目录，避免污染源码树
+        # 遵循项目统一 runtime data root 约定（PR #232：恒返回发布根/项目根，绝不落 /tmp）
         root = runtime_data_root()
         base = os.path.join(root, "pit_cache")
         os.makedirs(base, exist_ok=True)
