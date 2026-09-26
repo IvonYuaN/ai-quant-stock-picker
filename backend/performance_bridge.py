@@ -52,6 +52,12 @@ STALE_AFTER_TRADING_DAYS = 5
 # 与 LearnerConfig 保持一致；这里显式写出，避免前端拿不到常量时无法解释"为什么是 30"
 MIN_INDEPENDENT_SIGNAL_DAYS = LearnerConfig().min_independent_signal_days
 
+# 票级复盘明细（recent_picks）的返回上限。
+# 这是**展示侧**截断，与任何统计口径无关：台账里 248+ 笔全量推给前端只为渲染一张
+# "上次选了哪只票、事后如何"的表格，没必要。截断不影响 overall / strategies 的
+# 聚合口径（它们直接消费整份 settled frame，与这里无关）。
+RECENT_PICKS_LIMIT = 12
+
 
 # 与 aqsp_bridge 同源：项目根 = backend/ 的上一级。
 # 官方部署是 `cd backend && uvicorn app:app`（见 deploy/systemd 的 WorkingDirectory），
@@ -158,6 +164,8 @@ def _unavailable(reason: str) -> dict[str, Any]:
         "freshness": _freshness_unavailable(),
         "overall": None,
         "strategies": [],
+        # 字段名必须与正常分支一致（与 cold_start 字段同理），前端按同一套键读取。
+        "recent_picks": _recent_picks_unavailable(),
         "decay_alerts": [],
         "status_counts": {},
         "notes": [],
@@ -192,6 +200,67 @@ def _settled_frame(rows: list[dict]) -> pd.DataFrame:
             )
         keep &= ~simulated.astype(bool)
     return df.loc[keep].copy()
+
+
+def _recent_picks(settled: pd.DataFrame, limit: int = RECENT_PICKS_LIMIT) -> list[dict[str, Any]]:
+    """票级复盘明细：最近 N 笔已结算（validated）信号，按 signal_date 新→旧。
+
+    回答的是"上次我具体选了哪只票、事后结果如何"——这是策略级聚合回答不了的
+    颗粒度。字段与台账行一一对应，不做任何二次计算（return_pct 直接取台账值）。
+
+    §8 诚实边界：
+    - 只读 validated 行（_settled_frame 已过滤 pending / not_executable / 模拟行），
+      复盘表里看到的每一笔都是真实结算过的观测。
+    - excess_return_pct 缺失时如实给 None，不回填 0 冒充"没跑赢基准"。
+    - exit_reason 原样透传（horizon_close / take_profit / stop_loss），前端据此
+      区分"到期了结"与"止盈止损触发"。
+    """
+    if settled.empty or "signal_date" not in settled.columns:
+        return []
+    work = settled.copy()
+    work["signal_date"] = pd.to_datetime(work["signal_date"], errors="coerce")
+    work = work.dropna(subset=["signal_date"])
+    if work.empty:
+        return []
+    work = work.sort_values("signal_date", ascending=False).head(limit)
+
+    picks: list[dict[str, Any]] = []
+    for row in work.itertuples(index=False):
+        excess = getattr(row, "excess_return_pct", None)
+        return_pct = getattr(row, "return_pct", None)
+        try:
+            excess_val = None if pd.isna(excess) else round(float(excess), 4)
+        except (TypeError, ValueError):
+            excess_val = None
+        try:
+            return_val = None if pd.isna(return_pct) else round(float(return_pct), 4)
+        except (TypeError, ValueError):
+            return_val = None
+        strategies_raw = getattr(row, "strategies", None)
+        if strategies_raw is None:
+            strategies: list[str] = []
+        elif isinstance(strategies_raw, str):
+            strategies = [s for s in strategies_raw.split(",") if s]
+        else:
+            strategies = [str(s) for s in strategies_raw]
+        picks.append(
+            {
+                "symbol": str(getattr(row, "symbol", "") or ""),
+                "name": str(getattr(row, "name", "") or ""),
+                "signal_date": row.signal_date.strftime("%Y-%m-%d"),
+                "exit_date": str(getattr(row, "exit_date", "") or "")[:10],
+                "return_pct": return_val,
+                "excess_return_pct": excess_val,
+                "win": bool(getattr(row, "win", False)),
+                "exit_reason": str(getattr(row, "exit_reason", "") or ""),
+                "strategies": strategies,
+            }
+        )
+    return picks
+
+
+def _recent_picks_unavailable() -> list[dict[str, Any]]:
+    return []
 
 
 def _overall(df: pd.DataFrame) -> dict[str, Any] | None:
@@ -318,6 +387,8 @@ def performance_payload() -> dict[str, Any]:
         "not_executable 记录不计入胜率（§5.3）。",
         f"独立信号日 < {MIN_INDEPENDENT_SIGNAL_DAYS} 时不展示胜率（§5.4 冷启动期）。",
         "avg_return / sharpe / max_drawdown 为 PnL 派生指标，仅作观测与告警，不作为主指标（§8）。",
+        f"recent_picks 为最近 {RECENT_PICKS_LIMIT} 笔已结算（validated）信号的票级复盘明细，"
+        "仅展示台账原值，不参与任何统计口径。",
     ]
     notes.extend(degraded)
 
@@ -335,6 +406,9 @@ def performance_payload() -> dict[str, Any]:
         "freshness": _freshness(rows, path),
         "overall": overall,
         "strategies": strategies,
+        # 票级复盘明细：回答"上次具体选了哪只票、事后如何"，与策略级聚合并列。
+        # 数据全部取自 settled（validated 且非模拟行），只读、不落任何计算。
+        "recent_picks": _recent_picks(settled),
         "decay_alerts": decay_alerts,
         "status_counts": status_counts,
         "notes": notes,
