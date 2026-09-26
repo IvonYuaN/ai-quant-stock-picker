@@ -6,8 +6,12 @@
 //
 // 后端已经给了 displayable，但前端仍要独立守一道 ——
 // 显示层的诚实不能只依赖上游，否则后端一改口径这里就会悄悄违规。
-import type { PerformanceDecayAlert, PerformancePayload } from "./api";
-import { asArray, asNumber, asRecord, asString } from "./safe";
+import type {
+  PerformanceDecayAlert,
+  PerformancePayload,
+  PerformanceRecentPick,
+} from "./api";
+import { asArray, asNumber, asNullableNumber, asRecord, asString } from "./safe";
 
 export type Tone = "ok" | "warn" | "neutral";
 
@@ -34,6 +38,21 @@ export interface DecayAlertView {
   recommendation: string;
 }
 
+/** 票级复盘的一行：上次选了哪只票、事后如何（红涨绿跌由调用方上色）。 */
+export interface RecentPickView {
+  symbol: string;
+  name: string;
+  signalDate: string;
+  exitDate: string;
+  /** 绝对收益 %；缺失为 null，区分"未记录"与"真的是 0" */
+  returnPct: number | null;
+  /** 超额收益 %；缺失为 null */
+  excessReturnPct: number | null;
+  win: boolean;
+  exitReason: string;
+  strategies: readonly string[];
+}
+
 export interface PerformanceView {
   available: boolean;
   reason: string;
@@ -48,6 +67,8 @@ export interface PerformanceView {
   canShowOverallHitRate: boolean;
   strategies: readonly StrategyView[];
   decayAlerts: readonly DecayAlertView[];
+  /** 票级复盘明细（最近 N 笔 validated 信号）；旧后端缺失时为 [] */
+  recentPicks: readonly RecentPickView[];
   statusCounts: readonly [string, number][];
   notes: readonly string[];
   /** 台账新鲜度 */
@@ -95,6 +116,22 @@ function toAlert(raw: unknown): DecayAlertView {
   };
 }
 
+function toRecentPick(raw: unknown): RecentPickView {
+  const record = asRecord(raw) as Partial<PerformanceRecentPick>;
+  const strategies = asArray<unknown>(record.strategies).map((s) => asString(s)).filter(Boolean);
+  return {
+    symbol: asString(record.symbol),
+    name: asString(record.name, asString(record.symbol)),
+    signalDate: asString(record.signal_date),
+    exitDate: asString(record.exit_date),
+    returnPct: asNullableNumber(record.return_pct),
+    excessReturnPct: asNullableNumber(record.excess_return_pct),
+    win: Boolean(record.win),
+    exitReason: asString(record.exit_reason),
+    strategies,
+  };
+}
+
 export function normalizePerformance(raw: unknown): PerformanceView {
   const record = asRecord(raw) as Partial<PerformancePayload>;
   const cold = asRecord(record.cold_start);
@@ -108,6 +145,8 @@ export function normalizePerformance(raw: unknown): PerformanceView {
 
   const strategies = asArray<unknown>(record.strategies).map((item) => toStrategy(item, minDays));
   const alerts = asArray<unknown>(record.decay_alerts).map(toAlert);
+  // 票级复盘明细：旧后端 payload 没有 recent_picks 键 → asArray 落 [] → 复盘表显示"暂无"，不白屏
+  const recentPicks = asArray<unknown>(record.recent_picks).map(toRecentPick);
 
   const overallHitRate = record.overall ? asNumber(overall.hit_rate) : null;
   const canShowOverallHitRate =
@@ -125,6 +164,7 @@ export function normalizePerformance(raw: unknown): PerformanceView {
     canShowOverallHitRate,
     strategies,
     decayAlerts: alerts,
+    recentPicks,
     statusCounts: Object.entries(asRecord(record.status_counts) ?? {}).map(
       ([key, value]) => [key, asNumber(value)] as [string, number],
     ),
@@ -161,4 +201,28 @@ export function performanceHeadline(view: PerformanceView): string {
     return `整体命中率 ${(view.overallHitRate * 100).toFixed(1)}%（${view.independentSignalDays} 个独立信号日）`;
   }
   return "暂无可统计的观测";
+}
+
+/**
+ * 收益百分比的展示格式：带正负号，缺失显示 "—"（区分"未记录"与"真的是 0"）。
+ * 色值由调用方按 A 股"红涨绿跌"约定决定（正=红/ok，负=绿），这里只管数值。
+ */
+export function formatReturnPct(value: number | null): string {
+  if (value === null) return "—";
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${value.toFixed(2)}%`;
+}
+
+/** 了结原因的人话映射；未知值原样透传，不吞。 */
+export function exitReasonLabel(reason: string): string {
+  switch (reason.trim()) {
+    case "horizon_close":
+      return "到期了结";
+    case "take_profit":
+      return "止盈触发";
+    case "stop_loss":
+      return "止损触发";
+    default:
+      return reason || "未记录";
+  }
 }

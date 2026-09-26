@@ -10,7 +10,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ClipboardCheck, OctagonPause } from "lucide-react";
 import { api, type PerformancePayload } from "@/lib/api";
-import { normalizePerformance, stalenessMessage } from "@/lib/performance-view";
+import {
+  exitReasonLabel,
+  formatReturnPct,
+  normalizePerformance,
+  stalenessMessage,
+  type RecentPickView,
+} from "@/lib/performance-view";
 import {
   buildDecision,
   formatHitRate,
@@ -172,6 +178,9 @@ export function DecisionPanel({ snapshot }: { snapshot: AqspSnapshot }) {
         </div>
       ) : null}
 
+      {/* 票级复盘：上次选了哪只票、事后如何（红涨绿跌，缺失显 "—"）。 */}
+      {perf ? <RecentPicksTable picks={perf.recentPicks} /> : null}
+
       {/* 冷启动进度：只报进度，不报胜率。 */}
       {decision && decision.coldStart ? (
         <div className="aq-progress aq-decision-progress" aria-label="信号日积累进度">
@@ -182,5 +191,66 @@ export function DecisionPanel({ snapshot }: { snapshot: AqspSnapshot }) {
         </div>
       ) : null}
     </section>
+  );
+}
+
+/**
+ * 票级复盘表：把"上次具体选了哪只票、事后结果如何"落成一张可扫读表。
+ *
+ * 诚实边界：
+ *   - 数据只来自 performance.recent_picks（已过滤 validated 且非模拟行），
+ *     读不到（旧后端）时 recentPicks 为空 → 整块不渲染，不编数字。
+ *   - 收益缺失（returnPct / excessReturnPct 为 null）显示 "—"，与"真的是 0"区分开。
+ *   - 红涨绿跌：A 股约定，正收益着色 ok(红)、负收益着色 warn 侧——
+ *     这里用 class 前缀 aq-pick-return-pos / -neg，色值在 index.css 定，遵循"涨红跌绿"。
+ */
+function RecentPicksTable({ picks }: { picks: readonly RecentPickView[] }) {
+  if (picks.length === 0) return null;
+  return (
+    <div className="aq-decision-review" aria-label="最近复盘">
+      <p className="aq-decision-review-title">最近复盘 · 上次选了哪些票、事后如何</p>
+      <div className="aq-table-wrap">
+        <table className="aq-table aq-decision-review-table">
+          <thead>
+            <tr>
+              <th>代码 / 名称</th>
+              <th>信号日</th>
+              <th>了结</th>
+              <th className="aq-num">收益</th>
+              <th className="aq-num">超额</th>
+              <th>结果</th>
+            </tr>
+          </thead>
+          <tbody>
+            {picks.map((row) => {
+              const retClass =
+                row.returnPct === null ? "aq-pick-return-mid" : row.returnPct > 0 ? "aq-pick-return-pos" : row.returnPct < 0 ? "aq-pick-return-neg" : "aq-pick-return-mid";
+              const excessClass =
+                row.excessReturnPct === null ? "aq-pick-return-mid" : row.excessReturnPct > 0 ? "aq-pick-return-pos" : row.excessReturnPct < 0 ? "aq-pick-return-neg" : "aq-pick-return-mid";
+              return (
+                <tr key={`${row.symbol}-${row.signalDate}`}>
+                  <td>
+                    <b>{row.symbol}</b>
+                    <span className="aq-decision-cand-name">{row.name}</span>
+                  </td>
+                  <td className="aq-num">{row.signalDate || "—"}</td>
+                  <td className="aq-num">{exitReasonLabel(row.exitReason)}</td>
+                  <td className={cn("aq-num", retClass)}>{formatReturnPct(row.returnPct)}</td>
+                  <td className={cn("aq-num", excessClass)}>
+                    {row.excessReturnPct === null ? "—" : formatReturnPct(row.excessReturnPct)}
+                  </td>
+                  <td>
+                    <Tag tone={row.win ? "ok" : "neutral"}>{row.win ? "命中" : "未中"}</Tag>
+                    {row.strategies.length ? (
+                      <span className="aq-decision-review-strat">{row.strategies.join(" · ")}</span>
+                    ) : null}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }

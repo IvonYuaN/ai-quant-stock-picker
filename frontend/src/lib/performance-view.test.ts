@@ -4,6 +4,8 @@
 // 这条如果在前端失守，用户会看到一个"看起来很准/很不准"的数字，
 // 而它其实没有统计意义。所以这里既验证后端 displayable 的传递，也验证前端的独立门控。
 import {
+  exitReasonLabel,
+  formatReturnPct,
   normalizePerformance,
   performanceHeadline,
   severityTone,
@@ -47,6 +49,30 @@ const warm = {
     },
   ],
   status_counts: { validated: 248, pending: 32 },
+  recent_picks: [
+    {
+      symbol: "601326",
+      name: "秦港股份",
+      signal_date: "2026-04-07",
+      exit_date: "2026-04-10",
+      return_pct: -2.5484,
+      excess_return_pct: -5.1878,
+      win: false,
+      exit_reason: "horizon_close",
+      strategies: ["ma_pullback", "bowl_rebound"],
+    },
+    {
+      symbol: "000001",
+      name: "平安银行",
+      signal_date: "2026-04-08",
+      exit_date: "2026-04-10",
+      return_pct: 1.2,
+      excess_return_pct: null,
+      win: true,
+      exit_reason: "take_profit",
+      strategies: ["rps_momentum"],
+    },
+  ],
   notes: ["命中率为主指标"],
 };
 
@@ -132,6 +158,24 @@ export const performanceViewContract = {
   warningIsWarnTone: severityTone("warning") === "warn",
   unknownIsNeutral: severityTone("something") === "neutral",
   emptySeverityIsNeutral: severityTone("") === "neutral",
+
+  /* ---- 票级复盘（recent_picks）：上次选了哪只票、事后如何 ---- */
+  warmPicksCount: warmView.recentPicks.length === 2,
+  warmPicksSymbol: warmView.recentPicks[0].symbol === "601326",
+  warmPicksReturnIsNumber: warmView.recentPicks[0].returnPct === -2.5484,
+  // 超额缺失必须落到 null，不是 0（区分"未记录"与"真的是 0"）
+  warmPicksExcessNullable: warmView.recentPicks[1].excessReturnPct === null,
+  warmPicksWinFlag: warmView.recentPicks[1].win === true,
+  warmPicksStrategiesJoined: warmView.recentPicks[0].strategies.join(" · ") === "ma_pullback · bowl_rebound",
+  // 旧后端无 recent_picks 键 → 归一化落空数组，不白屏
+  missingPicksIsEmpty: normalizePerformance({ available: true }).recentPicks.length === 0,
+  // 收益格式化：缺失显 —，正带 +
+  formatReturnNull: formatReturnPct(null) === "—",
+  formatReturnPos: formatReturnPct(1.2) === "+1.20%",
+  formatReturnNeg: formatReturnPct(-2.5484) === "-2.55%",
+  exitReasonHorizon: exitReasonLabel("horizon_close") === "到期了结",
+  exitReasonTakeProfit: exitReasonLabel("take_profit") === "止盈触发",
+  exitReasonUnknownPassthrough: exitReasonLabel("weird_reason") === "weird_reason",
 
   /* ---- 台账新鲜度：必须能区分"在积累"与"已停止" ---- */
   staleIsFlagged: staleView.stale,
