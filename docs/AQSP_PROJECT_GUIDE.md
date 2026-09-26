@@ -220,7 +220,7 @@ RPS 相对强度、放量突破、均线缩量回踩、碗口反弹、低波趋�
 | R1 未来数据（shift(-N)/中心化 rolling/全期归一化） | **无** | 全 src grep `shift(-N)`/中心化滚动 = 0 |
 | R2 裸 `datetime.now()` | **仅注释，无真实调用** | 全 src 仅 `closing_review.py:621` 注释提及；合法时钟唯一 = `core/time.py::now_shanghai` |
 | R3 策略阈值字面量 | 受控 | 阈值走 `thresholds.yaml`，`load_thresholds` 解析 release 内 config |
-| R4 静默失效 | **存在（见 11.3）** | filters_lethal 历史空转已部分治理 |
+| R4 静默失效 | **数据链已收敛（见 11.3）** | 数据半边经 PR #234 接入调度 + PR #236 连通性 CI 闸防回归；策略半边（`EventDrivenStrategy`）仍 `enabled=False`（walk-forward 门控，产品决策，未擅翻） |
 | R5 读/写 fallback 不同源 | **已全部收敛（PR #232，commit 785c3210）：13 处 + closing_review 统一走 `aqsp.core.runtime.runtime_data_root`，绝不回落 /tmp** | 见 11.2 |
 | R6 异常吞没 | **存在（见 11.4）** | 优化/自进化模块 `except: score=-inf` |
 | R7 交易/下单逻辑 | **无** | 全 src 无下单代码 |
@@ -239,7 +239,7 @@ RPS 相对强度、放量突破、均线缩量回踩、碗口反弹、低波趋�
 - **性质**：多数成对（生产方=消费方）本就同源，不属真实不对称；真正的单点读侧不对称（closing_review）与全部 latent 债已一并消除，全代码库不再有任何 `tempfile.gettempdir()` 作为运行时数据根回落。
 
 ### 11.3 R4 静默失效（「有产出方但无读取方 / 过滤器空转」）
-- **(A) 排雷过滤器**（filters_lethal）：历史因 `pit_cache` 数据产出方缺位 → 过滤器从未生效。PR #225/#226 接入产出链路 + `FilterResult.data_missing` 响亮告警（单遍收集 + pit_cache 缺省）。**✅ 已收口（PR #234，2026-09-26 合并+发版 prod）**：`daily_pipeline` 新增 best-effort 步骤 `_step_refresh_risk_datasources`，在「数据更新」后调度 `aqsp.data.{holder_num,announcement,lockup}.load()` 落盘 `pit_cache/{holder_count,announcements,lockup}.csv`；过滤器读不到时降级为 `data_missing=True`（响亮）而非静默过。prod 实测落盘 holder_count 4095 / announcements 10819 / lockup 463 行。**仍建议**：日后补「产出方 → 消费方」连通性 CI 断言，防再静默。
+- **(A) 排雷过滤器**（filters_lethal）：历史因 `pit_cache` 数据产出方缺位 → 过滤器从未生效。PR #225/#226 接入产出链路 + `FilterResult.data_missing` 响亮告警（单遍收集 + pit_cache 缺省）。**✅ 已收口（PR #234，2026-09-26 合并+发版 prod）**：`daily_pipeline` 新增 best-effort 步骤 `_step_refresh_risk_datasources`，在「数据更新」后调度 `aqsp.data.{holder_num,announcement,lockup}.load()` 落盘 `pit_cache/{holder_count,announcements,lockup}.csv`；过滤器读不到时降级为 `data_missing=True`（响亮）而非静默过。prod 实测落盘 holder_count 4095 / announcements 10819 / lockup 463 行。**✅ 防回归 CI 闸已落地（PR #236，2026-09-26）**：`tests/test_pit_cache_connectivity.py`（9 用例）钉死 4 源「写读同源」——生产者 `aqsp.data.*._default_cache_path()` 写路径 == 消费者 `filters_lethal._default_*_cache_path()` / `event_calendar._pit_cache_path()` 读路径 + 列 schema 往返（非 `data_missing` / 前导零锁死）；任何一端将来改 CSV 名/目录/env 规则，CI 立刻红。
 - **(B) pit_cache 事件/风险源**：`fetch_*.py` 产出方无调度方；PR-E 是首个读取方但 `enabled=False` 且无调度 → **整条链仍未激活**（待办）。
   - **✅ 数据半边已收口（PR #234）**：同一步骤调度 `aqsp.data.longhubang.load()` 落盘 `pit_cache/longhubang.csv`，与 `lockup.csv` 一起供 `event_calendar.from_cache()` 只读消费（prod 实测 longhubang 299 / lockup 463 行）。
   - 🔴 **策略半边未激活**：`EventDrivenStrategy` 仍 `enabled=False`（walk-forward 门控，不在 `config/*.yaml`）⇒ 即便数据就绪，事件日历也未被任何策略消费。**启用属产品决策，本次未擅翻**；启用即生效（数据已就绪）。
@@ -260,9 +260,9 @@ RPS 相对强度、放量突破、均线缩量回踩、碗口反弹、低波趋�
 
 **待处理分支**：`chore/docs-cleanup`、`feat/event-driven-real-events`、`feat/event-data-fetchers`。
 
-**静默失效待办**（§11.3）：排雷链「产出方→消费方」CI 连通性断言（防再静默）；`pit_cache` 事件/风险源**策略半边**激活（PR-E `EventDrivenStrategy` 启用 + 调度，数据半边已于 PR #234 收口）。
+**静默失效待办**（§11.3）：~~排雷链「产出方→消费方」CI 连通性断言~~ ✅ 已落地（**PR #236** `tests/test_pit_cache_connectivity.py`，4 源写读同源 + 列 schema 往返，CI 防回归）；**仅余** `pit_cache` 事件/风险源**策略半边**激活（PR-E `EventDrivenStrategy` 启用 + 调度，数据半边 + 连通性闸均已收口）。
 
-**最高价值项（记忆标记）**：一组「静默失效」建议一个 PR 切 4 commit（filters_lethal 读取方 + pit_cache 调度方）。**✅ 已于 PR #234（2026-09-26 合并+发版）收口数据产出方调度**；仅余 CI 连通性断言（建议项）与 PR-E 策略启用（产品决策，未擅翻）。
+**最高价值项（记忆标记）**：一组「静默失效」建议一个 PR 切 4 commit（filters_lethal 读取方 + pit_cache 调度方）。**✅ 数据半边 + 连通性闸均已收口**：数据产出方调度 PR #234（2026-09-26 合并+发版）；「产出方→消费方」写读同源 CI 闸 PR #236。仅余 PR-E 策略启用（产品决策，未擅翻）。
 
 ---
 
