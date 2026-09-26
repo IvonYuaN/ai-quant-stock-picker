@@ -58,6 +58,26 @@ class Suspend(_Fake):
         return str(_TMP / "suspend_resume.csv")
 
 
+class Holder(_Fake):
+    """股东户数源：main() 会带 quarters= 调 load，必须也 mock 掉，否则走真实东财抓取。"""
+
+    def __init__(self) -> None:
+        super().__init__("holder_num")
+
+    def _default_cache_path(self):  # noqa: ANN202
+        return str(_TMP / "holder_num.csv")
+
+
+class Announcement(_Fake):
+    """公告源：main() 会带 begin_time/end_time 调 load，必须也 mock 掉。"""
+
+    def __init__(self) -> None:
+        super().__init__("announcement")
+
+    def _default_cache_path(self):  # noqa: ANN202
+        return str(_TMP / "announcement.csv")
+
+
 _TMP = None
 
 
@@ -97,6 +117,10 @@ def test_fetch_passes_window_and_writes_meta(tmp_path, monkeypatch):
     monkeypatch.setattr(mod, "EarningsForecastSource", E)
     monkeypatch.setattr(mod, "DividendPlanSource", D)
     monkeypatch.setattr(mod, "SuspendResumeSource", S)
+    # 这两个源没被 mock 时，CI（连不上东财）会真实抓取超时 → main() 返回 1。
+    # 注释声称"零网络"，mock 必须覆盖 main() 里的全部 5 个源，缺一个就会破功。
+    monkeypatch.setattr(mod, "HolderNumSource", Holder)
+    monkeypatch.setattr(mod, "AnnouncementSource", Announcement)
 
     assert mod.main() == 0
 
