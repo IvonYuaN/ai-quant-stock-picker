@@ -99,7 +99,7 @@ RPS 相对强度、放量突破、均线缩量回踩、碗口反弹、低波趋�
 - **`monitor/`** (1.6k, 4 文件)：`checker.py` 监控（数据源登录/Tushare/GLM/通知通道），产出 gate_run_status；776 行 `except` 为单项检查容错。
 - **`risk/`** (1.5k, 5 文件)：熔断、动态止损、集中度上限。
 - **`regime/`** (973, 6 文件)：市场状态分类（`hmm_detector.py` 等）。
-- **`features/`** (946, 4 文件)：特征（含 `event_calendar.py`，其 89 行 `/tmp` 回落、325 行 `except`）。
+- **`features/`** (946, 4 文件)：特征（含 `event_calendar.py`，其运行时数据根经 `aqsp.core.runtime.runtime_data_root` 回落 release 根、325 行 `except`）。
 - **`execution/`** (851, 4 文件)：虚拟盘执行（**非真实下单**）。
 - **`universe/`** (1.1k, 5 文件)：选股池构建（top-300 流动性池等）。
 - **`filters_lethal/`** (397, 3-6 文件)：排雷过滤器（跌停保护/公告关键词/股东户数/解禁等）。**历史「从未生效」根因：数据产出方缺位 → 一直空转；PR #225/#226 接入产出链路 + 响亮告警（data_missing 而非静默放行）。仍属 §11「静默失效」观察项。**
@@ -221,18 +221,22 @@ RPS 相对强度、放量突破、均线缩量回踩、碗口反弹、低波趋�
 | R2 裸 `datetime.now()` | **仅注释，无真实调用** | 全 src 仅 `closing_review.py:621` 注释提及；合法时钟唯一 = `core/time.py::now_shanghai` |
 | R3 策略阈值字面量 | 受控 | 阈值走 `thresholds.yaml`，`load_thresholds` 解析 release 内 config |
 | R4 静默失效 | **存在（见 11.3）** | filters_lethal 历史空转已部分治理 |
-| R5 读/写 fallback 不同源 | **closing_review 已修（PR #230）；其余 latent** | 见 11.2 |
+| R5 读/写 fallback 不同源 | **已全部收敛（PR #232，commit 785c3210）：13 处 + closing_review 统一走 `aqsp.core.runtime.runtime_data_root`，绝不回落 /tmp** | 见 11.2 |
 | R6 异常吞没 | **存在（见 11.4）** | 优化/自进化模块 `except: score=-inf` |
 | R7 交易/下单逻辑 | **无** | 全 src 无下单代码 |
 | R8 硬编码 secrets | **无** | grep 无 token/password 硬编码 |
 
-### 11.2 R5 `/tmp` 回落不对称（13 处 + closing_review 已修）
-模式 `os.environ.get("AQSP_RUNTIME_DATA_ROOT") or tempfile.gettempdir()`：
-- **已修（PR #230）**：`briefing/closing_review.py` 读侧回落仓库根（同源写侧 `daily_pipeline._runtime_data_root`），不再 /tmp。^
-- **仍存（prod 自动链路恒设 env，行为不受影响；仅裸 CLI 非 entrypoint 入口潜在不一致，未修）**：
-  - data 生产方（写侧，与对应消费方同源回落 /tmp）：`data/dividend_plan.py:160`、`data/announcement.py:133`、`data/cls_news.py:123`、`data/earnings_forecast.py:178`、`data/lockup.py:147`、`data/holder_num.py:139`、`data/longhubang.py:131`、`data/concept_board.py:117`、`data/suspend_resume.py:152`。
-  - 消费方：`filters_lethal/holder_count.py:20`、`filters_lethal/announcement_keyword.py:30`、`filters_lethal/lockup_release.py:19`、`features/event_calendar.py:89`。
-  - **性质**：这些多为「生产方=消费方」成对使用同一 /tmp 回落（如 `holder_num` 写、`holder_count` 读），二者同源，**不算真实不对称**；真正的单点读侧不对称仅 closing_review 一处，已修。余下是 latent 一致性债，优先级低，按你「先不处理其他隐患」的指示未修。
+### 11.2 R5 `/tmp` 回落不对称（已全部收敛，PR #232 / commit 785c3210）
+
+原模式 `os.environ.get("AQSP_RUNTIME_DATA_ROOT") or tempfile.gettempdir()` 在未设 env 时回落 `/tmp`，而自动链路 entrypoint 恒设 env 走 `/opt/aqsp/data`，导致裸 CLI / 非 entrypoint 入口「写 /tmp、读 repo 根」的静默失效。
+
+- **已全部修复（PR #232，squash commit `785c3210b66f469749e88b60c6032164ab5bed3e`，已发版 prod）**：新增单一来源 `aqsp.core.runtime.runtime_data_root`（设 env 绝对路径用它，否则回落 repo/release 根，**绝不 /tmp**），全库收敛至该 helper：
+  - `briefing/closing_review.py` 读侧（委托 helper）；
+  - 9 个 data 生产方：`data/dividend_plan.py`、`data/announcement.py`、`data/cls_news.py`、`data/earnings_forecast.py`、`data/lockup.py`、`data/holder_num.py`、`data/longhubang.py`、`data/concept_board.py`、`data/suspend_resume.py`；
+  - 3 个 filters_lethal 消费方：`holder_count.py`、`announcement_keyword.py`、`lockup_release.py`；
+  - `features/event_calendar.py:89`。
+- **实测证据（prod，release 785c3210）**：`runtime_data_root()` 未设 env → 返回 release 根（`/opt/aqsp-releases/785c3210...`），`is /tmp? → False`；设 env=`/opt/aqsp/data` → 返回 `/opt/aqsp/data`；`closing_review._factor_ic_runtime_root()` 未设 env → 返回 release 根。新增 `tests/test_runtime_data_root.py`（5 例）覆盖 env 设/未设/相对路径回落。
+- **性质**：多数成对（生产方=消费方）本就同源，不属真实不对称；真正的单点读侧不对称（closing_review）与全部 latent 债已一并消除，全代码库不再有任何 `tempfile.gettempdir()` 作为运行时数据根回落。
 
 ### 11.3 R4 静默失效（「有产出方但无读取方 / 过滤器空转」）
 - **(A) 排雷过滤器**（filters_lethal）：历史因 `pit_cache` 数据产出方缺位 → 过滤器从未生效。PR #225/#226 接入产出链路 + `FilterResult.data_missing` 响亮告警（单遍收集 + pit_cache 缺省）。**仍建议**：日后补「产出方 → 消费方」连通性 CI 断言，防再静默。
