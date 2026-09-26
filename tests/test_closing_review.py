@@ -618,3 +618,29 @@ class TestFactorICSection:
         section = build_factor_ic_section(str(path))
         assert "正向有效" in section
         assert "短期翻向" in section
+
+    def test_default_fallback_is_repo_root_not_tmp(self, monkeypatch) -> None:
+        """回归（09-26 读/写同源排查）：未设 AQSP_RUNTIME_DATA_ROOT 时，读侧须回落
+        到仓库根（= closing_review.py 上溯 3 层，与写侧 daily_pipeline 的 project_root
+        同源），**而非 /tmp**。若回落 /tmp，pull 到 <根>/pit_cache/ 的产物读不到，
+        IC 段会在非 entrypoint 入口静默消失。"""
+        from pathlib import Path
+
+        from aqsp.briefing import closing_review
+        from aqsp.briefing.closing_review import _factor_ic_runtime_root
+
+        monkeypatch.delenv("AQSP_RUNTIME_DATA_ROOT", raising=False)
+        repo_root = Path(closing_review.__file__).resolve().parents[3]
+        # 核心断言：回落基准 == 仓库根，且不是系统临时目录
+        assert _factor_ic_runtime_root() == str(repo_root)
+        assert str(repo_root) != Path("/tmp").as_posix()
+        # 由此推出的默认 json 路径相对布局正确
+        default = Path(_factor_ic_runtime_root(), "pit_cache", "factor_ic", "factor_ic_latest.json")
+        assert default.parts[-3:] == ("pit_cache", "factor_ic", "factor_ic_latest.json")
+
+    def test_env_var_wins_over_fallback(self, monkeypatch, tmp_path) -> None:
+        """设了 AQSP_RUNTIME_DATA_ROOT 时，读侧严格走该 env（写读同源的核心路径）。"""
+        from aqsp.briefing.closing_review import _factor_ic_runtime_root
+
+        monkeypatch.setenv("AQSP_RUNTIME_DATA_ROOT", str(tmp_path))
+        assert _factor_ic_runtime_root() == str(tmp_path)

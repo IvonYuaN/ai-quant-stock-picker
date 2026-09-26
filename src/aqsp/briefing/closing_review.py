@@ -1451,6 +1451,23 @@ def build_debate_reconciliation_section(
     return format_debate_reconciliation(rec, window_days=window_days)
 
 
+def _factor_ic_runtime_root() -> str:
+    """IC 段默认读取基准目录（与写侧 daily_pipeline._runtime_data_root 同源）。
+
+    设了 ``AQSP_RUNTIME_DATA_ROOT`` ⇒ 用它；未设 ⇒ 回落「当前 repo/release 根」
+    （= ``Path(__file__).resolve().parents[3]``，即 src/aqsp/briefing/closing_review.py
+    上溯 3 层到仓库根）。**不得回落 ``/tmp``**——否则裸 CLI / 未设 env 时，收评读不到
+    已 pull 到 ``<根>/pit_cache/factor_ic/`` 的产物，IC 段会静默消失（09-26 排查实锤）。
+    prod 自动链路 entrypoint 恒设该 env（走 env 分支），此回落只约束非 entrypoint 入口。
+    """
+    import os
+
+    root = os.environ.get("AQSP_RUNTIME_DATA_ROOT")
+    if root:
+        return root
+    return str(Path(__file__).resolve().parents[3])
+
+
 def build_factor_ic_section(
     json_path: str | Path | None = None,
 ) -> str:
@@ -1461,15 +1478,18 @@ def build_factor_ic_section(
     降级安全：
       - 产物缺失（调度未回流）/ 读失败 / 字段残缺 ⇒ 返回空串，报告不渲染该节；
       - 绝不写回打分 / 排序 / 下单（红线）。
-    路径缺省遵循写读同源：``$AQSP_RUNTIME_DATA_ROOT/pit_cache/factor_ic/factor_ic_latest.json``，
-    未配置 runtime root 时回落系统临时目录（与生产者一致）。
+    路径缺省遵循写读同源（见 ``_factor_ic_runtime_root``）：``<根>/pit_cache/
+    factor_ic/factor_ic_latest.json``，``<根>`` = ``AQSP_RUNTIME_DATA_ROOT`` 或 repo/release 根。
     """
     if json_path is None:
         import os
-        import tempfile
 
-        root = os.environ.get("AQSP_RUNTIME_DATA_ROOT") or tempfile.gettempdir()
-        json_path = os.path.join(root, "pit_cache", "factor_ic", "factor_ic_latest.json")
+        json_path = os.path.join(
+            _factor_ic_runtime_root(),
+            "pit_cache",
+            "factor_ic",
+            "factor_ic_latest.json",
+        )
     path = Path(json_path)
     if not path.exists():
         return ""
