@@ -102,7 +102,7 @@ RPS 相对强度、放量突破、均线缩量回踩、碗口反弹、低波趋�
 - **`features/`** (946, 4 文件)：特征（含 `event_calendar.py`，其运行时数据根经 `aqsp.core.runtime.runtime_data_root` 回落 release 根、325 行 `except`）。
 - **`execution/`** (851, 4 文件)：虚拟盘执行（**非真实下单**）。
 - **`universe/`** (1.1k, 5 文件)：选股池构建（top-300 流动性池等）。
-- **`filters_lethal/`** (397, 3-6 文件)：排雷过滤器（跌停保护/公告关键词/股东户数/解禁等）。**历史「从未生效」根因：数据产出方缺位 → 一直空转；PR #225/#226 接入产出链路 + 响亮告警（data_missing 而非静默放行）。仍属 §11「静默失效」观察项。**
+- **`filters_lethal/`** (397, 3-6 文件)：排雷过滤器（跌停保护/公告关键词/股东户数/解禁等）。**历史「从未生效」根因：数据产出方缺位 → 一直空转；PR #225/#226 接入产出链路 + 响亮告警（data_missing 而非静默放行）。**✅ **数据产出方调度缺口已于 PR #234（2026-09-26 合并+发版）收口**：`daily_pipeline._step_refresh_risk_datasources` 每日调度落盘 `pit_cache/{holder_count,announcements,lockup}.csv`，过滤器从此读真实数据（缺数据显 `data_missing`）。
 - **`audit/`** (755, 4 文件)：审计工具（红线自检查）。
 - **`core/`** (535, 5 文件)：基础件。**`core/time.py::now_shanghai()` 是全项目唯一合法时钟**（AGENTS.md §3.4）；全局裸 `datetime.now()` 已确认仅 `closing_review.py:621` 的注释提及，**无任何真实调用**。
 - **`research/`** (1.1k) / **`research_engine.py`**：研究/因子探索。
@@ -239,8 +239,10 @@ RPS 相对强度、放量突破、均线缩量回踩、碗口反弹、低波趋�
 - **性质**：多数成对（生产方=消费方）本就同源，不属真实不对称；真正的单点读侧不对称（closing_review）与全部 latent 债已一并消除，全代码库不再有任何 `tempfile.gettempdir()` 作为运行时数据根回落。
 
 ### 11.3 R4 静默失效（「有产出方但无读取方 / 过滤器空转」）
-- **(A) 排雷过滤器**（filters_lethal）：历史因 `pit_cache` 数据产出方缺位 → 过滤器从未生效。PR #225/#226 接入产出链路 + `FilterResult.data_missing` 响亮告警（单遍收集 + pit_cache 缺省）。**仍建议**：日后补「产出方 → 消费方」连通性 CI 断言，防再静默。
+- **(A) 排雷过滤器**（filters_lethal）：历史因 `pit_cache` 数据产出方缺位 → 过滤器从未生效。PR #225/#226 接入产出链路 + `FilterResult.data_missing` 响亮告警（单遍收集 + pit_cache 缺省）。**✅ 已收口（PR #234，2026-09-26 合并+发版 prod）**：`daily_pipeline` 新增 best-effort 步骤 `_step_refresh_risk_datasources`，在「数据更新」后调度 `aqsp.data.{holder_num,announcement,lockup}.load()` 落盘 `pit_cache/{holder_count,announcements,lockup}.csv`；过滤器读不到时降级为 `data_missing=True`（响亮）而非静默过。prod 实测落盘 holder_count 4095 / announcements 10819 / lockup 463 行。**仍建议**：日后补「产出方 → 消费方」连通性 CI 断言，防再静默。
 - **(B) pit_cache 事件/风险源**：`fetch_*.py` 产出方无调度方；PR-E 是首个读取方但 `enabled=False` 且无调度 → **整条链仍未激活**（待办）。
+  - **✅ 数据半边已收口（PR #234）**：同一步骤调度 `aqsp.data.longhubang.load()` 落盘 `pit_cache/longhubang.csv`，与 `lockup.csv` 一起供 `event_calendar.from_cache()` 只读消费（prod 实测 longhubang 299 / lockup 463 行）。
+  - 🔴 **策略半边未激活**：`EventDrivenStrategy` 仍 `enabled=False`（walk-forward 门控，不在 `config/*.yaml`）⇒ 即便数据就绪，事件日历也未被任何策略消费。**启用属产品决策，本次未擅翻**；启用即生效（数据已就绪）。
 
 ### 11.4 R6 异常吞没（仅记录，未修）
 `optimizer/param_optimizer.py:80/200/251/261`（`except Exception: score = -inf` 掩真实评估失败）、`strategies/auto_evolution.py:808/834`、`strategies/adaptive_evolution.py:345/456/477`、`strategies/auto_factor_mining.py:419/451`、`web/data_provider.py:212/1301`、`monitor/checker.py:776`、`ledger/base.py:659`、`features/event_calendar.py:325`、`strategies/event_driven.py:189`。
@@ -258,9 +260,9 @@ RPS 相对强度、放量突破、均线缩量回踩、碗口反弹、低波趋�
 
 **待处理分支**：`chore/docs-cleanup`、`feat/event-driven-real-events`、`feat/event-data-fetchers`。
 
-**静默失效待办**（§11.3）：排雷链 CI 连通性断言、pit_cache 事件/风险源激活（PR-E 启用 + 调度）。
+**静默失效待办**（§11.3）：排雷链「产出方→消费方」CI 连通性断言（防再静默）；`pit_cache` 事件/风险源**策略半边**激活（PR-E `EventDrivenStrategy` 启用 + 调度，数据半边已于 PR #234 收口）。
 
-**未开工最高价值（记忆标记）**：一组「静默失效」建议一个 PR 切 4 commit（filters_lethal 读取方 + pit_cache 调度方）。
+**最高价值项（记忆标记）**：一组「静默失效」建议一个 PR 切 4 commit（filters_lethal 读取方 + pit_cache 调度方）。**✅ 已于 PR #234（2026-09-26 合并+发版）收口数据产出方调度**；仅余 CI 连通性断言（建议项）与 PR-E 策略启用（产品决策，未擅翻）。
 
 ---
 
