@@ -276,24 +276,57 @@ def stock_news(code: str, limit: int = 20) -> list[dict]:
 
 
 def individual_info(code: str) -> dict:
-    """个股基本面（东财）：行业 / 总股本 / 上市时间等。"""
+    """个股基本面：行业 / 总股本 / 上市时间等。
+
+    主源走东财 ``stock_individual_info_em``（push2）；生产环境 push2 该端点会被
+    按出口 IP 反爬拒（实测 TLS 成功后对端秒断），故主源失败时降级到巨潮
+    ``stock_profile_cninfo``（prod 实测可达）。两源均返回「中文键 → 值」的扁平字典，
+    前端 StockInfo 直接原样列出，无需键名映射。
+    """
     ak = _akshare()
-    df = ak.stock_individual_info_em(symbol=code)
-    if df is None or df.empty:
-        return {}
-    return {str(row["item"]): row["value"] for _, row in df.iterrows()}
+    try:
+        df = ak.stock_individual_info_em(symbol=code)
+        if df is not None and not df.empty:
+            return {str(row["item"]): row["value"] for _, row in df.iterrows()}
+    except DependencyMissing:
+        raise
+    except Exception:
+        # 主源（push2）不可达 / 被拒 → 走备源
+        pass
+    # 备源：巨潮公司画像（单行记录 → 扁平 dict）
+    try:
+        pdf = ak.stock_profile_cninfo(symbol=code)
+        if pdf is not None and not pdf.empty:
+            return pdf.iloc[0].to_dict()
+    except DependencyMissing:
+        raise
+    except Exception:
+        pass
+    return {}
 
 
 def disclosure(code: str) -> list[dict]:
-    """巨潮公告全文列表（akshare cninfo，本环境不稳，保留作备用）。"""
+    """巨潮公告全文列表（akshare cninfo，本环境不稳，保留作备用）。
+
+    上游 akshare 的 cninfo 源偶发自身解析 bug（实测 ``stock_id_map[symbol]`` 把
+    str 当 dict 索引 → ``string indices must be integers``）。这是**上游库**的缺陷、
+    我们 wrapper 层修不了，故这里捕获并降级为空列表（不抛 502），前端拿到「暂无」
+    而非报红；真正的公告列表仍由稳定的 ``/api/announcements``（东财公开接口）承担。
+    """
     ak = _akshare()
     market = (
         "沪市"
         if code.startswith("6")
         else ("北交所" if code.startswith("8") else "深市")
     )
-    df = ak.stock_zh_a_disclosure_report_cninfo(symbol=code, market=market)
-    return df.head(30).to_dict("records") if df is not None and not df.empty else []
+    try:
+        df = ak.stock_zh_a_disclosure_report_cninfo(symbol=code, market=market)
+        return df.head(30).to_dict("records") if df is not None and not df.empty else []
+    except DependencyMissing:
+        raise
+    except Exception:
+        # 上游 cninfo 源 / 解析异常 → 降级空列表（备源定位，非主公告流）
+        return []
 
 
 def announcements(code: str, limit: int = 15) -> list[dict]:
@@ -351,11 +384,66 @@ def _mootdx_client():
         raise DependencyMissing("mootdx 未安装：pip install mootdx") from e
 
 
+def _kline_hist_fallback(code: str, category: int, offset: int) -> list[dict]:
+    """东财日/周/月 K 线备源（prod 实测可达）：mootdx TDX 取不到数时的降级。
+
+    键名归一化到前端 ``KlineRow``（date/open/high/low/close/vol/amount）。
+    60 分钟线（category=11）无东财日/周/月备源，保持主源结果（此处返回空）。
+    价格口径用不复权（``adjust=""``），与 mootdx TDX 原始 bar 口径一致。
+    """
+    ak = _akshare()
+    period = {4: "daily", 5: "weekly", 6: "monthly"}.get(category)
+    if period is None:
+        return []
+    end = _now_shanghai().date()
+    start = end - timedelta(days=max(offset * 3, 60))  # 含停牌/节假日缓冲
+    try:
+        df = ak.stock_zh_a_hist(
+            symbol=code,
+            period=period,
+            start_date=start.strftime("%Y%m%d"),
+            end_date=end.strftime("%Y%m%d"),
+            adjust="",
+        )
+    except DependencyMissing:
+        raise
+    except Exception:
+        return []
+    if df is None or df.empty:
+        return []
+    out = []
+    for _, r in df.tail(offset).iterrows():
+        out.append(
+            {
+                "date": str(r.get("日期", "")),
+                "open": float(r.get("开盘", 0) or 0),
+                "high": float(r.get("最高", 0) or 0),
+                "low": float(r.get("最低", 0) or 0),
+                "close": float(r.get("收盘", 0) or 0),
+                "vol": float(r.get("成交量", 0) or 0),
+                "amount": float(r.get("成交额", 0) or 0),
+            }
+        )
+    return out
+
+
 def kline(code: str, category: int = 4, offset: int = 60) -> list[dict]:
-    """K线：category 4=日 5=周 6=月 11=60分钟。"""
-    client = _mootdx_client()
-    df = client.bars(symbol=code, category=category, offset=offset)
-    return df.to_dict("records") if df is not None and not df.empty else []
+    """K线：category 4=日 5=周 6=月 11=60分钟。
+
+    主源 mootdx TDX；生产网络环境 TDX 节点常不可达（bars 恒返回空），此时日/周/月
+    线降级到东财 ``stock_zh_a_hist``（prod 可达）。主源依赖缺失仍向上传 ``DependencyMissing``
+    （上层 501）。
+    """
+    client = _mootdx_client()  # 可能抛 DependencyMissing → 上层 501，保留原语义
+    try:
+        df = client.bars(symbol=code, category=category, offset=offset)
+        if df is not None and not df.empty:
+            return df.to_dict("records")
+    except DependencyMissing:
+        raise
+    except Exception:
+        pass
+    return _kline_hist_fallback(code, category, offset)
 
 
 def finance(code: str) -> dict:
