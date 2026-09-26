@@ -460,3 +460,95 @@ class TestFormatReviewOutput:
         assert "周度纸面验证总结" in result
         assert "早盘打板" in result
         assert "尾盘溢价" in result
+
+
+def _ic_payload(factors: dict, as_of: str = "2026-09-18") -> dict:
+    return {"as_of": as_of, "window_days": 90, "factors": factors}
+
+
+class TestFactorICSection:
+    def test_render_when_present(self, tmp_path) -> None:
+        from aqsp.briefing.closing_review import build_factor_ic_section
+
+        path = tmp_path / "factor_ic_latest.json"
+        path.write_text(
+            json.dumps(
+                _ic_payload(
+                    {
+                        "momentum": {
+                            "mean": -0.018,
+                            "std": 0.05,
+                            "icir": -0.36,
+                            "t": -1.9,
+                            "pos_rate": 0.31,
+                            "n": 9,
+                            "recent": {"mean": 0.011, "span": 20},
+                        },
+                        "composite": {
+                            "mean": 0.003,
+                            "std": 0.02,
+                            "icir": 0.15,
+                            "t": 0.4,
+                            "pos_rate": 0.5,
+                            "n": 9,
+                            "recent": {"mean": 0.002, "span": 20},
+                        },
+                    }
+                ),
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        section = build_factor_ic_section(str(path))
+        assert "因子 IC 健康" in section
+        assert "as-of 2026-09-18" in section
+        # momentum：mean 负 + 短期为正 ⇒ 判读含「短期翻向」
+        assert "反向有效" in section or "无预测力" in section
+        # composite：|mean|<0.02 且 |t|<2 ⇒ 无预测力（噪音）
+        assert "无预测力（噪音）" in section
+
+    def test_missing_file_returns_empty(self, tmp_path) -> None:
+        from aqsp.briefing.closing_review import build_factor_ic_section
+
+        assert build_factor_ic_section(str(tmp_path / "nope.json")) == ""
+
+    def test_corrupt_json_returns_empty(self, tmp_path) -> None:
+        from aqsp.briefing.closing_review import build_factor_ic_section
+
+        path = tmp_path / "factor_ic_latest.json"
+        path.write_text("{not valid json", encoding="utf-8")
+        assert build_factor_ic_section(str(path)) == ""
+
+    def test_empty_factors_returns_empty(self, tmp_path) -> None:
+        from aqsp.briefing.closing_review import build_factor_ic_section
+
+        path = tmp_path / "factor_ic_latest.json"
+        path.write_text(json.dumps({"as_of": "2026-09-18", "factors": {}}), encoding="utf-8")
+        assert build_factor_ic_section(str(path)) == ""
+
+    def test_flip_verdict_when_recent_opposite(self, tmp_path) -> None:
+        from aqsp.briefing.closing_review import build_factor_ic_section
+
+        path = tmp_path / "factor_ic_latest.json"
+        path.write_text(
+            json.dumps(
+                _ic_payload(
+                    {
+                        "momentum": {
+                            "mean": 0.04,
+                            "std": 0.02,
+                            "icir": 2.0,
+                            "t": 4.0,
+                            "pos_rate": 0.8,
+                            "n": 12,
+                            "recent": {"mean": -0.03, "span": 20},
+                        }
+                    }
+                ),
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        section = build_factor_ic_section(str(path))
+        assert "正向有效" in section
+        assert "短期翻向" in section

@@ -130,6 +130,10 @@ class DailyReview:
     # 量化 debate 层「在帮忙还是添乱」；空串 = 无已实现样本，报告显式标注。
     # 红线：本字段只读展示，绝不写回打分/排序/下单。
     debate_reconciliation_section: str = ""
+    # 因子 IC 健康段（只读）：读 pit_cache/factor_ic/factor_ic_latest.json
+    # （runner 滚动诊断回流产物），展示各因子 IC/ICIR/短期翻向侦测。
+    # 空串 = 产物缺失（调度未回流），报告不渲染该节；绝不写回打分/排序。
+    factor_ic_section: str = ""
     # LLM 解读层（降级安全）：AI 复盘解读小节 + 降级标记。
     # llm_review_text 为空串时报告不渲染 AI 小节；degraded=True 表示走了
     # fallback 规则文本（不显示该小节）。红线：LLM 只进该独立小节，
@@ -317,6 +321,7 @@ class ClosingReviewer:
         debate_reconciliation_section = build_debate_reconciliation_section(
             self.ledger_path
         )
+        factor_ic_section = build_factor_ic_section()
 
         return DailyReview(
             date=today,
@@ -342,6 +347,7 @@ class ClosingReviewer:
             trade_highlights=trade_highlights,
             failure_patterns_section=failure_patterns_section,
             debate_reconciliation_section=debate_reconciliation_section,
+            factor_ic_section=factor_ic_section,
         )
 
     def _latest_review_date(self) -> str:
@@ -1442,6 +1448,94 @@ def build_debate_reconciliation_section(
     return format_debate_reconciliation(rec, window_days=window_days)
 
 
+def build_factor_ic_section(
+    json_path: str | Path | None = None,
+) -> str:
+    """因子 IC 健康段（只读）：读 runner 滚动诊断回流的 factor_ic_latest.json。
+
+    展示各因子 IC 均值 / ICIR / t / 短期口径（近 20 截面）翻向侦测，
+    帮助收盘复盘一眼看出「当前主力因子是否失效 / 反向 / 噪音」。
+    降级安全：
+      - 产物缺失（调度未回流）/ 读失败 / 字段残缺 ⇒ 返回空串，报告不渲染该节；
+      - 绝不写回打分 / 排序 / 下单（红线）。
+    路径缺省遵循写读同源：``$AQSP_RUNTIME_DATA_ROOT/pit_cache/factor_ic/factor_ic_latest.json``，
+    未配置 runtime root 时回落系统临时目录（与生产者一致）。
+    """
+    if json_path is None:
+        import os
+        import tempfile
+
+        root = os.environ.get("AQSP_RUNTIME_DATA_ROOT") or tempfile.gettempdir()
+        json_path = os.path.join(root, "pit_cache", "factor_ic", "factor_ic_latest.json")
+    path = Path(json_path)
+    if not path.exists():
+        return ""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return ""
+    factors = data.get("factors")
+    if not isinstance(factors, dict) or not factors:
+        return ""
+
+    def _fmt(x: object, nd: int = 4) -> str:
+        try:
+            f = float(x)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return "N/A"
+        if f != f:  # NaN
+            return "N/A"
+        return f"{f:+.{nd}f}"
+
+    as_of = str(data.get("as_of", "") or "（未知）")
+    lines: list[str] = [
+        f"## 因子 IC 健康（as-of {as_of}，runner 滚动诊断回流）",
+        "",
+        "| 因子 | IC 均值 | ICIR | t | IC>0 占比 | 近 20 截面 | 判读 |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    for name in ("momentum", "triple_rise", "composite", "htf", "mr", "volume", "rps"):
+        s = factors.get(name)
+        if not isinstance(s, dict):
+            continue
+        mean = s.get("mean")
+        icir = s.get("icir")
+        t = s.get("t")
+        pos = s.get("pos_rate")
+        rec = s.get("recent")
+        rec_mean = rec.get("mean") if isinstance(rec, dict) else None
+        # 判读（与 factor_ic_diagnosis 同口径）
+        m = _to_finite(mean)
+        tt = _to_finite(t)
+        if m is not None and abs(m) < 0.02 and tt is not None and abs(tt) < 2:
+            verdict = "无预测力（噪音）"
+        elif m is not None and m < 0 and (tt or 0) <= -2:
+            verdict = "反向有效"
+        elif m is not None and m > 0 and (tt or 0) >= 2:
+            verdict = "正向有效"
+        else:
+            verdict = "弱信号/不显著"
+        if m is not None and _to_finite(rec_mean) is not None and m * _to_finite(rec_mean) < 0:
+            verdict += " + 短期翻向"
+        lines.append(
+            f"| {name} | {_fmt(mean)} | {_fmt(icir, 3)} | {_fmt(t, 2)} "
+            f"| {_fmt(pos, 2)} | {_fmt(rec_mean)} | {verdict} |"
+        )
+    lines.append("")
+    lines.append("⚠️ 只读健康度：因子失效/反向提示仅作研究参考，不改变打分/排序/下单。")
+    return "\n".join(lines)
+
+
+def _to_finite(value: object) -> float | None:
+    try:
+        f = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    if f != f or f in (float("inf"), float("-inf")):
+        return None
+    return f
+
+
 def build_ai_review_section(
     review: DailyReview,
     failure_patterns_section: str,
@@ -1548,6 +1642,11 @@ def format_daily_review(review: DailyReview) -> str:
 
     if review.debate_reconciliation_section:
         for line in review.debate_reconciliation_section.splitlines():
+            report.append(line)
+        report.append("")
+
+    if review.factor_ic_section:
+        for line in review.factor_ic_section.splitlines():
             report.append(line)
         report.append("")
 
