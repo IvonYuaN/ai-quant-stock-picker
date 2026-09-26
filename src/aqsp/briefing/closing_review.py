@@ -1244,6 +1244,9 @@ class ClosingReviewer:
             main_chain_summary=(),
             key_lessons=("今日无交易信号",),
             improvement_suggestions=("继续观察市场",),
+            # IC 健康诊断独立于「有无信号」：只要有 runner 回流产物就展示。
+            # 无信号走本早退分支时若漏塞，会导致 IC 段被静默丢弃（09-26 实锤）。
+            factor_ic_section=build_factor_ic_section(),
         )
 
     def generate_weekly_summary(self, end_date: str | None = None) -> WeeklySummary:

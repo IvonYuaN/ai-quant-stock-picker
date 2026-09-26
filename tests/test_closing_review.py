@@ -304,6 +304,72 @@ class TestReviewToday:
         assert review.market_environment == "无数据"
         assert "今日无交易信号" in review.key_lessons
 
+    def test_empty_review_still_carries_factor_ic_section(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """回归：无信号/无纸面交易走 _empty_review 早退时，IC 健康段不得被丢弃。
+
+        09-26 实锤：收评 CLI 因当日无信号走早退分支，factor_ic_section 未被塞入
+        DailyReview ⇒ 落盘报告里 IC 段静默消失（单独调 build_factor_ic_section 却能
+        拿到内容）。IC 是健康诊断、独立于有无信号，只要有回流产物就必须渲染。
+        """
+        from aqsp.briefing.closing_review import build_factor_ic_section
+
+        ledger = tmp_path / "predictions.jsonl"
+        paper = tmp_path / "paper_trades.jsonl"
+        ledger.write_text("", encoding="utf-8")
+        paper.write_text("", encoding="utf-8")
+
+        ic_dir = tmp_path / "pit_cache" / "factor_ic"
+        ic_dir.mkdir(parents=True)
+        ic_dir.joinpath("factor_ic_latest.json").write_text(
+            json.dumps(
+                _ic_payload(
+                    {
+                        "momentum": {
+                            "mean": -0.0604,
+                            "std": 0.28,
+                            "icir": -0.216,
+                            "t": -0.65,
+                            "pos_rate": 0.56,
+                            "n": 9,
+                            "recent": {"mean": -0.0604, "span": 20},
+                        },
+                        "composite": {
+                            "mean": -0.0204,
+                            "std": 0.27,
+                            "icir": -0.076,
+                            "t": -0.23,
+                            "pos_rate": 0.56,
+                            "n": 9,
+                            "recent": {"mean": -0.0204, "span": 20},
+                        },
+                    },
+                    as_of="2026-09-24",
+                ),
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("AQSP_RUNTIME_DATA_ROOT", str(tmp_path))
+
+        review = ClosingReviewer(
+            ledger_path=str(ledger),
+            paper_ledger_path=str(paper),
+        ).review_today("2025-06-01")
+
+        # 早退空复盘路径也必须带上 IC 段（非空串）
+        assert "因子 IC 健康" in review.factor_ic_section, (
+            "无信号早退分支不得丢弃 IC 段"
+        )
+        # 全链路：format_daily_review 渲染后的落盘文本里必须有 IC 段
+        assert "因子 IC 健康" in format_daily_review(review)
+        # 交叉一致性：与直接调 build_factor_ic_section 的结果一致
+        assert review.factor_ic_section == build_factor_ic_section(
+            str(ic_dir / "factor_ic_latest.json")
+        )
+
+
 
 class TestGenerateWeeklySummary:
     def test_weekly_summary_uses_closed_paper_trades(self, tmp_path) -> None:
