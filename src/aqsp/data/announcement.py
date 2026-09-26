@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import logging
 import os
-import tempfile
+from aqsp.core.runtime import runtime_data_root
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Optional
@@ -130,7 +130,7 @@ class AnnouncementSource:
         if self._cache_path:
             return self._cache_path
         # 遵循项目 runtime data root 约定；未配置时落系统临时目录，避免污染源码树
-        root = os.environ.get("AQSP_RUNTIME_DATA_ROOT") or tempfile.gettempdir()
+        root = runtime_data_root()
         base = os.path.join(root, "pit_cache")
         os.makedirs(base, exist_ok=True)
         return os.path.join(base, "announcements.csv")

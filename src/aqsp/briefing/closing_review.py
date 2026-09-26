@@ -1452,20 +1452,18 @@ def build_debate_reconciliation_section(
 
 
 def _factor_ic_runtime_root() -> str:
-    """IC 段默认读取基准目录（与写侧 daily_pipeline._runtime_data_root 同源）。
+    """IC 段默认读取基准目录（收敛到单一来源 ``aqsp.core.runtime.runtime_data_root``）。
 
     设了 ``AQSP_RUNTIME_DATA_ROOT`` ⇒ 用它；未设 ⇒ 回落「当前 repo/release 根」
-    （= ``Path(__file__).resolve().parents[3]``，即 src/aqsp/briefing/closing_review.py
-    上溯 3 层到仓库根）。**不得回落 ``/tmp``**——否则裸 CLI / 未设 env 时，收评读不到
-    已 pull 到 ``<根>/pit_cache/factor_ic/`` 的产物，IC 段会静默消失（09-26 排查实锤）。
-    prod 自动链路 entrypoint 恒设该 env（走 env 分支），此回落只约束非 entrypoint 入口。
+    （= ``Path(__file__).resolve().parents[3]``）。**不得回落 ``/tmp``**——否则裸 CLI /
+    未设 env 时，收评读不到已 pull 到 ``<根>/pit_cache/factor_ic/`` 的产物，IC 段会静默消失
+    （09-26 排查实锤）。prod 自动链路 entrypoint 恒设该 env（走 env 分支），此回落只约束
+    非 entrypoint 入口。实现委托给 ``core.runtime.runtime_data_root``，避免与 13 处同类
+    读/写 fallback 出现第三套解析逻辑。
     """
-    import os
+    from aqsp.core.runtime import runtime_data_root
 
-    root = os.environ.get("AQSP_RUNTIME_DATA_ROOT")
-    if root:
-        return root
-    return str(Path(__file__).resolve().parents[3])
+    return str(runtime_data_root())
 
 
 def build_factor_ic_section(
