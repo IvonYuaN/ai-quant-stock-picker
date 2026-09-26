@@ -145,7 +145,7 @@ def test_disclosure_raises_dependency_missing(monkeypatch):
         pass
 
 
-# ── kline：mootdx TDX 取不到数 → 降级东财 hist（键名归一化）──────────
+# ── kline：mootdx TDX 取不到数 → 降级腾讯 K 线（键名归一化，离线 mock urllib）────
 
 
 class _FakeMootdxClient:
@@ -160,48 +160,107 @@ def _make_mootdx(monkeypatch, client) -> None:
     monkeypatch.setattr(astock, "_mootdx_client", lambda: client)
 
 
-def _hist_df() -> pd.DataFrame:
-    return pd.DataFrame(
-        [
-            {
-                "日期": "2025-09-22",
-                "开盘": 1465.09,
-                "最高": 1470.11,
-                "最低": 1448.00,
-                "收盘": 1453.35,
-                "成交量": 34947,
-                "成交额": 5085057536.0,
-            },
-            {
-                "日期": "2025-09-23",
-                "开盘": 1450.50,
-                "最高": 1460.00,
-                "最低": 1442.01,
-                "收盘": 1447.42,
-                "成交量": 29800,
-                "成交额": 4310000000.0,
-            },
-        ]
-    )
+class _FakeResp:
+    """模拟 urllib urlopen 上下文管理器的响应体。"""
+
+    def __init__(self, payload: dict) -> None:
+        import json as _json
+
+        self._body = _json.dumps(payload, ensure_ascii=False).encode("utf-8")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def read(self):
+        return self._body
 
 
-def test_kline_falls_back_to_eastmoney_hist_when_mootdx_empty(monkeypatch):
+def _make_urlopen(monkeypatch, payload: dict, code: str = "600519") -> None:
+    """把 astock.urllib.request.urlopen 替身为返回固定 payload 的 fake。"""
+
+    def _fake_open(req, *a, **kw):
+        return _FakeResp(payload)
+
+    monkeypatch.setattr(astock.urllib.request, "urlopen", _fake_open)
+
+
+def _tencent_payload(rows: list) -> dict:
+    """构造 web.ifzq.gtimg.cn fqkline 返回结构（单根 K 线 = 6 元组 [date,o,c,h,l,v]）。"""
+    prefixed = "sh" if rows else "sh600519"
+    code_key = "600519"
+    return {"data": {f"sh{code_key}": {"qfqday": rows, "qt": {}, "version": "1"}}}
+
+
+def test_kline_falls_back_to_tencent_when_mootdx_empty(monkeypatch):
+    """mootdx 空 → 腾讯备源命中，键名归一化到 KlineRow，字段顺序正确（close 在 high/low 前）。"""
     _make_mootdx(monkeypatch, _FakeMootdxClient(bars_result=pd.DataFrame()))
-    _make_akshare(_FakeAk(stock_zh_a_hist=lambda **kw: _hist_df()))
-    rows = astock.kline("600519", category=4, offset=60)
-    assert len(rows) == 2
-    r0 = rows[0]
-    # 键名已归一化到前端 KlineRow（英文键）
+    rows = [
+        ["2025-09-22", "1465.090", "1453.350", "1470.110", "1448.000", "34947.000"],
+        ["2025-09-23", "1450.500", "1447.420", "1460.000", "1442.010", "29800.000"],
+    ]
+    _make_urlopen(monkeypatch, _tencent_payload(rows))
+    out = astock.kline("600519", category=4, offset=60)
+    assert len(out) == 2
+    r0 = out[0]
     assert r0["date"] == "2025-09-22"
     assert r0["open"] == 1465.09
     assert r0["close"] == 1453.35
     assert r0["high"] == 1470.11
     assert r0["low"] == 1448.00
-    assert r0["vol"] == 34947
-    assert r0["amount"] == 5085057536.0
+    assert r0["vol"] == 34947.0
+    assert r0["amount"] == 0.0  # 腾讯 K 线不提供成交额，归一化为 0
+
+
+def test_kline_fallback_handles_missing_amount_position(monkeypatch):
+    """腾讯 6 元组只有 6 位时 amount 安全归零，不 IndexError。"""
+    _make_mootdx(monkeypatch, _FakeMootdxClient(bars_result=pd.DataFrame()))
+    rows = [["2025-09-22", "1.0", "2.0", "3.0", "0.5", "100"]]
+    _make_urlopen(monkeypatch, _tencent_payload(rows))
+    out = astock.kline("600519", category=4, offset=60)
+    assert out[0]["amount"] == 0.0
+
+
+def test_kline_fallback_truncates_to_offset(monkeypatch):
+    """offset 截断：接口返回全量，kline() 只取最后 offset 根。"""
+    _make_mootdx(monkeypatch, _FakeMootdxClient(bars_result=pd.DataFrame()))
+    rows = [[f"2025-09-{i:02d}", "1", "2", "3", "0.5", "10"] for i in range(1, 21)]
+    _make_urlopen(monkeypatch, _tencent_payload(rows))
+    out = astock.kline("600519", category=4, offset=5)
+    assert len(out) == 5
+    assert out[-1]["date"] == "2025-09-20"
+
+
+def test_kline_fallback_returns_empty_on_network_error(monkeypatch):
+    """网络错误（urlopen 抛异常）→ 备源安全返回空列表，不向上传 502。"""
+    _make_mootdx(monkeypatch, _FakeMootdxClient(bars_result=pd.DataFrame()))
+
+    import urllib.request
+
+    def _raise(req, *a, **kw):
+        raise urllib.error.URLError("prod egress refused")
+
+    monkeypatch.setattr(astock.urllib.request, "urlopen", _raise)
+    assert astock.kline("600519", category=4, offset=60) == []
+
+
+def test_kline_fallback_handles_malformed_row(monkeypatch):
+    """单根 K 线行数不足 6 位或类型错 → 跳过该行不崩。"""
+    _make_mootdx(monkeypatch, _FakeMootdxClient(bars_result=pd.DataFrame()))
+    rows = [
+        ["2025-09-22", "1.0", "2.0"],  # 短行，跳过
+        ["2025-09-23", "1.0", "2.0", "3.0", "0.5", "100"],  # 正常
+    ]
+    _make_urlopen(monkeypatch, _tencent_payload(rows))
+    out = astock.kline("600519", category=4, offset=60)
+    assert len(out) == 1
+    assert out[0]["date"] == "2025-09-23"
 
 
 def test_kline_prefers_mootdx_when_nonempty(monkeypatch):
+    """mootdx 有数 → 不走备源（备源函数体不该被执行到，mock urlopen 若被调就 AssertionError）。"""
     mootdx_df = pd.DataFrame(
         [
             {
@@ -217,20 +276,37 @@ def test_kline_prefers_mootdx_when_nonempty(monkeypatch):
     )
     _make_mootdx(monkeypatch, _FakeMootdxClient(bars_result=mootdx_df))
 
-    # 主源有数：备源不该被调用
-    def hist_should_not_run(**kw):
-        raise AssertionError("主源有数时不应走东财备源")
+    def urlopen_should_not_run(req, *a, **kw):
+        raise AssertionError("主源有数时不应调用腾讯备源")
 
-    _make_akshare(_FakeAk(stock_zh_a_hist=hist_should_not_run))
+    monkeypatch.setattr(astock.urllib.request, "urlopen", urlopen_should_not_run)
     rows = astock.kline("600519", category=4, offset=60)
     assert rows[0]["close"] == 1.2  # 来自 mootdx 主源
 
 
-def test_kline_minute_category_has_no_eastmoney_fallback(monkeypatch):
-    # 60 分钟线（category=11）东财日/周/月备源不覆盖 → mootdx 空时安全返回空
+def test_kline_minute_category_has_no_fallback(monkeypatch):
+    """60 分钟线（category=11）腾讯日/周/月备源不覆盖 → mootdx 空时返回空。"""
     _make_mootdx(monkeypatch, _FakeMootdxClient(bars_result=pd.DataFrame()))
-    _make_akshare(_FakeAk(stock_zh_a_hist=lambda **kw: _hist_df()))
+    _make_urlopen(monkeypatch, _tencent_payload([]))
     assert astock.kline("600519", category=11, offset=60) == []
+
+
+def test_kline_fallback_survives_mootdx_factory_failure(monkeypatch):
+    """mootdx 主源 bars 抛任意异常（如重启后首选调服 ValueError）→ 仍走备源，不 502。"""
+    _fake_mootdx = _FakeMootdxClient(bars_result=pd.DataFrame())
+
+    def _boom_bars(symbol, category=4, offset=60):
+        raise ValueError("Quotes.factory server-selection exploded")
+
+    _fake_mootdx.bars = _boom_bars
+    _make_mootdx(monkeypatch, _fake_mootdx)
+
+    rows = [
+        ["2025-09-22", "1.0", "2.0", "3.0", "0.5", "100"],
+    ]
+    _make_urlopen(monkeypatch, _tencent_payload(rows))
+    out = astock.kline("600519", category=4, offset=60)
+    assert out and out[0]["date"] == "2025-09-22"
 
 
 def test_kline_raises_dependency_missing_when_mootdx_absent(monkeypatch):
@@ -240,6 +316,8 @@ def test_kline_raises_dependency_missing_when_mootdx_absent(monkeypatch):
     monkeypatch.setattr(astock, "_mootdx_client", boom)
     try:
         astock.kline("600519")
-        raise AssertionError("应抛 DependencyMissing")
+        raise AssertionError(
+            "DependencyMissing 应继续向上抛（上层据此 501），不被备源吞"
+        )
     except astock.DependencyMissing:
         pass

@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 import os
 import random
@@ -384,44 +385,57 @@ def _mootdx_client():
         raise DependencyMissing("mootdx 未安装：pip install mootdx") from e
 
 
-def _kline_hist_fallback(code: str, category: int, offset: int) -> list[dict]:
-    """东财日/周/月 K 线备源（prod 实测可达）：mootdx TDX 取不到数时的降级。
+def _kline_tencent_fallback(code: str, category: int, offset: int) -> list[dict]:
+    """腾讯日/周/月 K 线备源（Layer 1 标准库源）：mootdx TDX 取不到数时的降级。
 
-    键名归一化到前端 ``KlineRow``（date/open/high/low/close/vol/amount）。
-    60 分钟线（category=11）无东财日/周/月备源，保持主源结果（此处返回空）。
-    价格口径用不复权（``adjust=""``），与 mootdx TDX 原始 bar 口径一致。
+    选腾讯而非东财 ``stock_zh_a_hist``：东财历史 K 线源与 push2 一样被 prod 出口 IP
+    间歇反爬拒（实测 ConnectionError），而腾讯 K 线与本项目大盘行情同源（``qt.gtimg.cn``
+    一直正常出数的 Layer 1 通道）、纯标准库零依赖、不受东财 WAF 影响。
+    prod 实测：日/周/月各 60 行、OHLC 完整、最新 bar 正确。
+
+    单根 K 线 = ``[date, open, close, high, low, volume, ...]``（注意 close 在 high/low 前，
+    为腾讯接口固有顺序）。键名归一化到前端 ``KlineRow``；腾讯不提供成交额，amount 置 0.0。
+    价格口径前复权（qfq）——K 线属展示层，符合 §3.6「前复权只用于展示」。
+    60 分钟线（category=11）不在日/周/月备源覆盖内，返回空。
     """
-    ak = _akshare()
-    period = {4: "daily", 5: "weekly", 6: "monthly"}.get(category)
-    if period is None:
+    freq = {4: "day", 5: "week", 6: "month"}.get(category)
+    if freq is None:
         return []
-    end = _now_shanghai().date()
-    start = end - timedelta(days=max(offset * 3, 60))  # 含停牌/节假日缓冲
+    prefixed = f"{get_prefix(code)}{code}"
+    url = (
+        "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
+        f"?param={prefixed},{freq},,,{max(1, min(offset, 800))},qfq"
+    )
+    req = urllib.request.Request(url, headers={"User-Agent": UA})
     try:
-        df = ak.stock_zh_a_hist(
-            symbol=code,
-            period=period,
-            start_date=start.strftime("%Y%m%d"),
-            end_date=end.strftime("%Y%m%d"),
-            adjust="",
-        )
-    except DependencyMissing:
-        raise
+        with urllib.request.urlopen(req, timeout=15, context=_ssl_context()) as resp:
+            d = json.loads(resp.read().decode("utf-8"))
     except Exception:
         return []
-    if df is None or df.empty:
-        return []
-    out = []
-    for _, r in df.tail(offset).iterrows():
+    node = (d.get("data") or {}).get(prefixed) or {}
+
+    def _fnum(v) -> float:
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return 0.0
+
+    rows = node.get(f"qfq{freq}") or []
+    out: list[dict] = []
+    for r in rows[-offset:] if offset else rows:
+        if not isinstance(r, (list, tuple)) or len(r) < 6:
+            continue
         out.append(
             {
-                "date": str(r.get("日期", "")),
-                "open": float(r.get("开盘", 0) or 0),
-                "high": float(r.get("最高", 0) or 0),
-                "low": float(r.get("最低", 0) or 0),
-                "close": float(r.get("收盘", 0) or 0),
-                "vol": float(r.get("成交量", 0) or 0),
-                "amount": float(r.get("成交额", 0) or 0),
+                "date": str(r[0]),
+                "open": _fnum(r[1]),
+                "close": _fnum(r[2]),
+                "high": _fnum(r[3]),
+                "low": _fnum(r[4]),
+                "vol": _fnum(r[5]),
+                "amount": _fnum(r[6])
+                if len(r) > 6 and isinstance(r[6], (int, float, str))
+                else 0.0,
             }
         )
     return out
@@ -430,20 +444,21 @@ def _kline_hist_fallback(code: str, category: int, offset: int) -> list[dict]:
 def kline(code: str, category: int = 4, offset: int = 60) -> list[dict]:
     """K线：category 4=日 5=周 6=月 11=60分钟。
 
-    主源 mootdx TDX；生产网络环境 TDX 节点常不可达（bars 恒返回空），此时日/周/月
-    线降级到东财 ``stock_zh_a_hist``（prod 可达）。主源依赖缺失仍向上传 ``DependencyMissing``
-    （上层 501）。
+    主源 mootdx TDX；生产网络环境 TDX 节点常不可达（bars 恒空，或服务重启后首次
+    选服时 ``Quotes.factory`` 抛瞬态 ValueError），此时日/周/月线降级到腾讯 K 线
+    （prod 实测可达）。主源依赖缺失仍向上传 ``DependencyMissing``（上层 501）。
     """
-    client = _mootdx_client()  # 可能抛 DependencyMissing → 上层 501，保留原语义
     try:
+        client = _mootdx_client()
         df = client.bars(symbol=code, category=category, offset=offset)
         if df is not None and not df.empty:
             return df.to_dict("records")
     except DependencyMissing:
         raise
     except Exception:
+        # mootdx 选服/取数任何异常（含重启后首次 factory 选服失败）→ 走腾讯备源
         pass
-    return _kline_hist_fallback(code, category, offset)
+    return _kline_tencent_fallback(code, category, offset)
 
 
 def finance(code: str) -> dict:
