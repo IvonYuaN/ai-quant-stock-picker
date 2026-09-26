@@ -22,6 +22,7 @@ import { formatResearchDate } from "@/lib/research-view";
 import { formatAqspTime, isAqspSnapshotStale, useWorkspaceSnapshot } from "./useAqspSnapshot";
 import { MarketStrip } from "./MarketStrip";
 import { ReviewExportButton } from "./ReviewExportButton";
+import { DecisionPanel } from "./DecisionPanel";
 import { StockDetailDrawer, type StockIntro } from "./StockDetailDrawer";
 import { CandidateSection } from "./sections/CandidateSection";
 import { MessageSection } from "./sections/MessageSection";
@@ -321,6 +322,7 @@ export function TodayWorkspace() {
         <LoadingState />
       ) : (
         <>
+          <DecisionPanel snapshot={data} />
           <PersistentBlock view={view} />
           <SectionTabs active={active} />
           <main className="aq-active-section" aria-live="polite">
