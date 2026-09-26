@@ -245,6 +245,122 @@ def test_production_cutoff_guard_rejects_sidecar_beyond_raw_database(
     assert "exceeds raw sqlite MAX(trade_date)=2024-01-30" in detail
 
 
+def test_rotate_stale_gate_evidence_archives_when_db_advanced_past_window(
+    tmp_path: Path,
+) -> None:
+    import scripts.run_production_walkforward_gate as gate
+
+    gate_path = tmp_path / "walkforward_gate.json"
+    gate_path.write_text(
+        json.dumps(
+            {
+                "data_end": "2026-09-18",
+                "data_start": "2023-09-05",
+                "sqlite_db_path": str(tmp_path / "raw.db"),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    note = gate._rotate_stale_gate_evidence(
+        gate_path=gate_path,
+        requested_end="2026-09-24",
+    )
+
+    assert "2026-09-18" in note
+    assert not gate_path.exists()
+    archived = list((tmp_path / "archive").glob("walkforward_gate.*-2026-09-24.json"))
+    assert len(archived) == 1
+    assert (
+        json.loads(archived[0].read_text(encoding="utf-8"))["data_end"] == "2026-09-18"
+    )
+
+
+def test_rotate_stale_gate_evidence_preserves_current_or_future_sidecar(
+    tmp_path: Path,
+) -> None:
+    import scripts.run_production_walkforward_gate as gate
+
+    # current: data_end == requested_end -> not stale, must NOT rotate
+    gate_path = tmp_path / "walkforward_gate.json"
+    gate_path.write_text(json.dumps({"data_end": "2026-09-24"}), encoding="utf-8")
+    assert (
+        gate._rotate_stale_gate_evidence(
+            gate_path=gate_path, requested_end="2026-09-24"
+        )
+        == ""
+    )
+    assert gate_path.exists()
+
+    # future: data_end > requested_end -> guarded, must NOT rotate (§5 red line)
+    gate_path.write_text(json.dumps({"data_end": "2026-09-30"}), encoding="utf-8")
+    assert (
+        gate._rotate_stale_gate_evidence(
+            gate_path=gate_path, requested_end="2026-09-24"
+        )
+        == ""
+    )
+    assert gate_path.exists()
+
+
+def test_rotate_stale_gate_evidence_is_noop_for_absent_or_malformed(
+    tmp_path: Path,
+) -> None:
+    import scripts.run_production_walkforward_gate as gate
+
+    absent = tmp_path / "nope.json"
+    assert (
+        gate._rotate_stale_gate_evidence(gate_path=absent, requested_end="2026-09-24")
+        == ""
+    )
+
+    malformed = tmp_path / "walkforward_gate.json"
+    malformed.write_text("not json", encoding="utf-8")
+    assert (
+        gate._rotate_stale_gate_evidence(
+            gate_path=malformed, requested_end="2026-09-24"
+        )
+        == ""
+    )
+    assert malformed.exists()
+
+    missing_field = tmp_path / "walkforward_gate.json"
+    missing_field.write_text(json.dumps({"foo": "bar"}), encoding="utf-8")
+    assert (
+        gate._rotate_stale_gate_evidence(
+            gate_path=missing_field, requested_end="2026-09-24"
+        )
+        == ""
+    )
+    assert missing_field.exists()
+
+
+def test_stale_rotation_unblocks_cutoff_validator(tmp_path: Path) -> None:
+    """After rotating a stale sidecar, the cutoff validator passes so the
+    child walk-forward can run and refresh the evidence."""
+    import scripts.run_production_walkforward_gate as gate
+
+    db = tmp_path / "raw.db"
+    _make_raw_db(db, symbols=1)
+    gate_path = tmp_path / "walkforward_gate.json"
+    # _make_raw_db's MAX(trade_date) is 2024-01-30; a stale sidecar lags behind
+    gate_path.write_text(json.dumps({"data_end": "2024-01-01"}), encoding="utf-8")
+
+    # requested_end == raw db MAX; stale sidecar (01-01) lags -> would block
+    note = gate._rotate_stale_gate_evidence(
+        gate_path=gate_path, requested_end="2024-01-30"
+    )
+    assert "2024-01-01" in note
+    assert not gate_path.exists()
+
+    detail = gate.validate_production_cutoff_consistency(
+        db_path=db,
+        requested_end="2024-01-30",
+        gate_path=gate_path,
+    )
+    assert detail == ""
+
+
 def test_cached_symbols_require_the_configured_cache_path(tmp_path: Path) -> None:
     import scripts.run_production_walkforward_gate as gate
 
