@@ -12,8 +12,11 @@ from datetime import date
 
 import pytest
 
+from aqsp.data.dividend_plan import DividendPlanItem
+from aqsp.data.earnings_forecast import EarningsForecastItem
 from aqsp.data.lockup import LockupItem, LockupSource
 from aqsp.data.longhubang import LongHubangItem, LongHubangSource
+from aqsp.data.suspend_resume import SuspendResumeItem
 from aqsp.features.event_calendar import (
     UNLOCK_RATIO_HIGH,
     UNLOCK_RATIO_LOW,
@@ -60,6 +63,65 @@ def _lhb(
         sell_amount=2000.0,
         net_amount=net,
         interpretation=interpretation,
+    )
+
+
+def _suspend(
+    symbol: str = "600000",
+    suspend_date: str = "2026-09-15",
+    resume_date: str = "2026-09-30",
+    name: str = "测试股",
+) -> SuspendResumeItem:
+    return SuspendResumeItem(
+        symbol=symbol,
+        name=name,
+        suspend_date=suspend_date,
+        resume_date=resume_date,
+        suspend_days=15.0,
+        suspend_type="连续停牌",
+        reason="重大资产重组",
+    )
+
+
+def _earnings(
+    symbol: str = "600000",
+    notice_date: str = "2026-09-18",
+    report_date: str = "2026-06-30",
+    ftype: str = "预增",
+    name: str = "测试股",
+) -> EarningsForecastItem:
+    return EarningsForecastItem(
+        symbol=symbol,
+        name=name,
+        notice_date=notice_date,
+        report_date=report_date,
+        forecast_type=ftype,
+        forecast_amt_lower=1e8,
+        forecast_amt_upper=2e8,
+        change_pct_lower=50.0,
+        change_pct_upper=80.0,
+        reason="下游需求旺盛",
+        is_latest=True,
+    )
+
+
+def _dividend(
+    symbol: str = "600000",
+    ex_dividend_date: str = "2026-10-01",
+    cash: float = 10.0,
+    bonus: float = 0.0,
+    progress: str = "实施分配",
+    name: str = "测试股",
+) -> DividendPlanItem:
+    return DividendPlanItem(
+        symbol=symbol,
+        name=name,
+        report_date="2025-12-31",
+        plan_notice_date="2026-05-20",
+        ex_dividend_date=ex_dividend_date,
+        bonus_ratio=bonus,
+        cash_per_10=cash,
+        progress=progress,
     )
 
 
@@ -599,3 +661,348 @@ def test_default_windows_stay_within_data_layer_bounds():
     cal = EventCalendar()
     assert 0 < cal.unlock_horizon_days <= 60, "预警窗口不得超出数据面覆盖范围的数量级"
     assert 0 < cal.longhubang_lookback_days <= 10, "佐证窗口不得超过数据面默认 lookback"
+
+
+# ============================================================
+# 停复牌面（suspend_resume）—— no-look-ahead + 三态归类
+# ============================================================
+
+
+def test_suspend_resumes_flags_upcoming_resume_when_within_horizon():
+    cal = EventCalendar(suspend_resume=[_suspend(resume_date="2026-09-30")])
+    events = cal.suspend_resumes("600000", "2026-09-22")
+    assert len(events) == 1
+    assert events[0].state == "resuming_soon"
+    assert events[0].resume_date == "2026-09-30"
+    assert "预计复牌" in events[0].detail
+
+
+def test_suspend_resumes_flags_recent_resume_when_just_resumed():
+    """复牌日刚过（`as_of - horizon ~ as_of`）→ recently_resumed（回溯，允许）。"""
+    cal = EventCalendar(suspend_resume=[_suspend(resume_date="2026-09-20")])
+    events = cal.suspend_resumes("600000", "2026-09-22")
+    assert len(events) == 1
+    assert events[0].state == "recently_resumed"
+
+
+def test_suspend_resumes_excludes_far_future_resume_when_no_look_ahead():
+    """复牌日远超前瞻窗（2027）→ 不进结果，避免「太远的将来」污染本日研判。"""
+    cal = EventCalendar(
+        suspend_resume=[_suspend(suspend_date="2026-09-15", resume_date="2027-05-01")]
+    )
+    assert cal.suspend_resumes("600000", "2026-09-22") == []
+
+
+def test_suspend_resumes_flags_current_suspension_when_no_resume_date():
+    """无预计复牌日、停牌日在回溯窗内 → suspended（当前停牌中）。"""
+    cal = EventCalendar(suspend_resume=[_suspend(suspend_date="2026-09-18", resume_date="")])
+    events = cal.suspend_resumes("600000", "2026-09-22")
+    assert len(events) == 1
+    assert events[0].state == "suspended"
+    assert "停牌" in events[0].detail
+    assert events[0].resume_date == ""
+
+
+def test_suspend_resumes_excludes_stale_suspension_out_of_lookback():
+    """停牌日早于回溯窗 ⇒ 不是「当前停牌中」，剔除。"""
+    cal = EventCalendar(
+        suspend_resume=[_suspend(suspend_date="2026-01-05", resume_date="")],
+        suspend_resume_horizon_days=30,
+    )
+    assert cal.suspend_resumes("600000", "2026-09-22") == []
+
+
+def test_suspend_resumes_returns_empty_when_as_of_unparsable():
+    cal = EventCalendar(suspend_resume=[_suspend()])
+    assert cal.suspend_resumes("600000", "garbage") == []
+
+
+def test_has_suspend_resume_data_flags_per_face():
+    assert EventCalendar().has_suspend_resume_data() is False
+    assert EventCalendar(suspend_resume=[_suspend()]).has_suspend_resume_data() is True
+
+
+def test_suspend_resumes_matches_when_symbol_read_as_float(tmp_path):
+    """前导零 + float 形态端到端：缓存里 symbol 读成 int/float 仍按 '000001' 查得到。"""
+    _write_cache(
+        tmp_path,
+        "suspend_resume.csv",
+        [
+            {
+                "symbol": "000001",
+                "name": "平安银行",
+                "suspend_date": "2026-09-15",
+                "resume_date": "2026-09-30",
+                "suspend_days": 15.0,
+                "suspend_type": "连续停牌",
+                "reason": "重组",
+            }
+        ],
+    )
+    cal = EventCalendar.from_cache(runtime_data_root=str(tmp_path))
+    assert len(cal.suspend_resumes("000001", "2026-09-22")) == 1
+    assert cal.suspend_resumes("000010", "2026-09-22") == []
+
+
+def test_suspend_resumes_dedupes_identical_records():
+    item = _suspend()
+    cal = EventCalendar(suspend_resume=[item, item])
+    assert len(cal.suspend_resumes("600000", "2026-09-22")) == 1
+
+
+# ============================================================
+# 业绩预告面（earnings_forecast）—— 以公告日做 no-look-ahead
+# ============================================================
+
+
+def test_recent_earnings_includes_notice_within_lookback():
+    cal = EventCalendar(earnings_forecasts=[_earnings(notice_date="2026-09-18")])
+    events = cal.recent_earnings_forecasts("600000", "2026-09-22")
+    assert len(events) == 1
+    assert events[0].days_ago == 4
+    assert events[0].forecast_type == "预增"
+    assert "业绩预告" in events[0].detail
+    assert "下游需求旺盛" in events[0].detail
+
+
+def test_recent_earnings_excludes_future_notice_when_no_look_ahead():
+    """公告日晚于 as_of 的预告，as_of 当天市场还不知道 ⇒ 必须排除（最关键红线用例）。"""
+    cal = EventCalendar(earnings_forecasts=[_earnings(notice_date="2026-09-25")])
+    assert cal.recent_earnings_forecasts("600000", "2026-09-22") == []
+
+
+def test_recent_earnings_excludes_notice_older_than_lookback():
+    cal = EventCalendar(
+        earnings_forecasts=[_earnings(notice_date="2026-01-05")],
+        earnings_lookback_days=30,
+    )
+    assert cal.recent_earnings_forecasts("600000", "2026-09-22") == []
+
+
+def test_recent_earnings_reports_missing_magnitude_as_undisclosed():
+    """幅度全缺失（NaN）⇒ 文案「变动幅度未披露」，绝不臆测方向。"""
+    from dataclasses import replace
+
+    item = replace(_earnings(), change_pct_lower=float("nan"), change_pct_upper=float("nan"))
+    cal = EventCalendar(earnings_forecasts=[item])
+    detail = cal.recent_earnings_forecasts("600000", "2026-09-22")[0].detail
+    assert "变动幅度未披露" in detail
+    assert "%" not in detail
+
+
+def test_has_earnings_forecast_data_flags_per_face():
+    assert EventCalendar().has_earnings_forecast_data() is False
+    assert EventCalendar(earnings_forecasts=[_earnings()]).has_earnings_forecast_data() is True
+
+
+def test_recent_earnings_matches_when_symbol_read_as_float(tmp_path):
+    _write_cache(
+        tmp_path,
+        "earnings_forecast.csv",
+        [
+            {
+                "symbol": "000001",
+                "name": "平安银行",
+                "notice_date": "2026-09-18",
+                "report_date": "2026-06-30",
+                "forecast_type": "预增",
+                "forecast_amt_lower": 1e8,
+                "forecast_amt_upper": 2e8,
+                "change_pct_lower": 50.0,
+                "change_pct_upper": 80.0,
+                "reason": "需求旺盛",
+                "is_latest": True,
+            }
+        ],
+    )
+    cal = EventCalendar.from_cache(runtime_data_root=str(tmp_path))
+    assert len(cal.recent_earnings_forecasts("000001", "2026-09-22")) == 1
+    assert cal.recent_earnings_forecasts("000010", "2026-09-22") == []
+
+
+def test_recent_earnings_dedupes_identical_records():
+    item = _earnings()
+    cal = EventCalendar(earnings_forecasts=[item, item])
+    assert len(cal.recent_earnings_forecasts("600000", "2026-09-22")) == 1
+
+
+# ============================================================
+# 分红送转面（dividend_plan）—— 除权除息日做 no-look-ahead 前瞻
+# ============================================================
+
+
+def test_upcoming_dividends_includes_ex_date_within_horizon():
+    cal = EventCalendar(dividend_plans=[_dividend(ex_dividend_date="2026-10-01")])
+    events = cal.upcoming_dividends("600000", "2026-09-22")
+    assert len(events) == 1
+    assert events[0].days_until == 9
+    assert "除权除息" in events[0].detail
+    assert "每10股派 10.00 元" in events[0].detail
+
+
+def test_upcoming_dividends_excludes_past_ex_date_when_no_look_ahead():
+    """已除权（除权日 < as_of）⇒ 属已发生事实，不进前瞻预警。"""
+    cal = EventCalendar(dividend_plans=[_dividend(ex_dividend_date="2026-09-10")])
+    assert cal.upcoming_dividends("600000", "2026-09-22") == []
+
+
+def test_upcoming_dividends_excludes_ex_date_beyond_horizon():
+    cal = EventCalendar(
+        dividend_plans=[_dividend(ex_dividend_date="2026-12-31")],
+        dividend_horizon_days=30,
+    )
+    assert cal.upcoming_dividends("600000", "2026-09-22") == []
+
+
+def test_upcoming_dividends_omits_rows_without_ex_date():
+    """无除权除息日（仍在预案阶段）的记录在索引阶段被丢弃，不出现。"""
+    cal = EventCalendar(dividend_plans=[_dividend(ex_dividend_date="")])
+    assert cal.has_dividend_plan_data() is False
+    assert cal.upcoming_dividends("600000", "2026-09-22") == []
+
+
+def test_upcoming_dividends_reports_blank_plan_as_pending():
+    """现金/送转都为 0 ⇒ 「派息方案待明确」，不臆断成「0 派息」。"""
+    cal = EventCalendar(dividend_plans=[_dividend(cash=0.0, bonus=0.0)])
+    detail = cal.upcoming_dividends("600000", "2026-09-22")[0].detail
+    assert "派息方案待明确" in detail
+
+
+def test_has_dividend_plan_data_flags_per_face():
+    assert EventCalendar().has_dividend_plan_data() is False
+    assert EventCalendar(dividend_plans=[_dividend()]).has_dividend_plan_data() is True
+
+
+def test_upcoming_dividends_matches_when_symbol_read_as_float(tmp_path):
+    _write_cache(
+        tmp_path,
+        "dividend_plan.csv",
+        [
+            {
+                "symbol": "000001",
+                "name": "平安银行",
+                "report_date": "2025-12-31",
+                "plan_notice_date": "2026-05-20",
+                "ex_dividend_date": "2026-10-01",
+                "bonus_ratio": 0.0,
+                "cash_per_10": 10.0,
+                "progress": "实施分配",
+            }
+        ],
+    )
+    cal = EventCalendar.from_cache(runtime_data_root=str(tmp_path))
+    assert len(cal.upcoming_dividends("000001", "2026-09-22")) == 1
+    assert cal.upcoming_dividends("000010", "2026-09-22") == []
+
+
+def test_upcoming_dividends_dedupes_identical_records():
+    item = _dividend()
+    cal = EventCalendar(dividend_plans=[item, item])
+    assert len(cal.upcoming_dividends("600000", "2026-09-22")) == 1
+
+
+# ============================================================
+# from_cache 三面联合 + 缺缓存降级
+# ============================================================
+
+
+def test_from_cache_populates_all_three_new_faces(tmp_path):
+    _write_cache(
+        tmp_path,
+        "suspend_resume.csv",
+        [
+            {
+                "symbol": "600000",
+                "name": "浦发银行",
+                "suspend_date": "2026-09-15",
+                "resume_date": "2026-09-30",
+                "suspend_days": 15.0,
+                "suspend_type": "连续停牌",
+                "reason": "重组",
+            }
+        ],
+    )
+    _write_cache(
+        tmp_path,
+        "earnings_forecast.csv",
+        [
+            {
+                "symbol": "600000",
+                "name": "浦发银行",
+                "notice_date": "2026-09-18",
+                "report_date": "2026-06-30",
+                "forecast_type": "预增",
+                "forecast_amt_lower": 1e8,
+                "forecast_amt_upper": 2e8,
+                "change_pct_lower": 50.0,
+                "change_pct_upper": 80.0,
+                "reason": "需求旺盛",
+                "is_latest": True,
+            }
+        ],
+    )
+    _write_cache(
+        tmp_path,
+        "dividend_plan.csv",
+        [
+            {
+                "symbol": "600000",
+                "name": "浦发银行",
+                "report_date": "2025-12-31",
+                "plan_notice_date": "2026-05-20",
+                "ex_dividend_date": "2026-10-01",
+                "bonus_ratio": 0.0,
+                "cash_per_10": 10.0,
+                "progress": "实施分配",
+            }
+        ],
+    )
+    cal = EventCalendar.from_cache(runtime_data_root=str(tmp_path))
+    assert cal.has_suspend_resume_data() is True
+    assert cal.has_earnings_forecast_data() is True
+    assert cal.has_dividend_plan_data() is True
+    assert len(cal.suspend_resumes("600000", "2026-09-22")) == 1
+    assert len(cal.recent_earnings_forecasts("600000", "2026-09-22")) == 1
+    assert len(cal.upcoming_dividends("600000", "2026-09-22")) == 1
+
+
+def test_from_cache_empty_when_new_faces_missing(tmp_path):
+    """只写 lockup/longhubang，不写三面 ⇒ 三面如实报 False，不抛错。"""
+    _write_cache(
+        tmp_path,
+        "lockup.csv",
+        [
+            {
+                "symbol": "600000",
+                "name": "浦发银行",
+                "plan_date": "2026-10-15",
+                "lockup_shares": 1.0,
+                "ratio": 0.02,
+                "lockup_type": "首发",
+            }
+        ],
+    )
+    cal = EventCalendar.from_cache(runtime_data_root=str(tmp_path))
+    assert cal.has_unlock_data() is True
+    assert cal.has_suspend_resume_data() is False
+    assert cal.has_earnings_forecast_data() is False
+    assert cal.has_dividend_plan_data() is False
+    assert cal.suspend_resumes("600000", "2026-09-22") == []
+
+
+def test_tracked_symbols_counts_all_five_faces():
+    cal = EventCalendar(
+        unlocks=[_unlock(symbol="600000")],
+        longhubang=[_lhb(symbol="000001")],
+        suspend_resume=[_suspend(symbol="300750")],
+        earnings_forecasts=[_earnings(symbol="600000")],
+        dividend_plans=[_dividend(symbol="000001")],
+    )
+    assert cal.tracked_symbols() == 3  # 600000 / 000001 / 300750
+
+
+def test_is_empty_false_when_any_of_new_faces_loaded():
+    assert EventCalendar().is_empty() is True
+    assert EventCalendar(suspend_resume=[_suspend()]).is_empty() is False
+    assert EventCalendar(earnings_forecasts=[_earnings()]).is_empty() is False
+    assert EventCalendar(dividend_plans=[_dividend()]).is_empty() is False

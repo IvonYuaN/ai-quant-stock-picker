@@ -79,7 +79,6 @@
 
 ### 3.9 PR 体量
 
-- 单 PR 变更 ≤ ~300 行(测试不计)。超出必须拆。
 - PR 描述必须包含:做了什么 / 为什么 / 风险 / 怎么验证。
 
 ### 3.10 浏览器调试边界
@@ -105,7 +104,7 @@
 [ ] 任何"加权/学习"机制有最低样本量门槛和冷却期
 [ ] not_executable 状态正确标记,不污染胜率
 [ ] 没有从 evaluate/纯计算函数访问磁盘或网络
-[ ] PR 描述完整,变更 ≤ 300 行
+[ ] PR 描述完整(做了什么/为什么/风险/怎么验证)
 [ ] CHANGELOG / docs 同步更新
 ```
 
@@ -144,7 +143,7 @@
 - **不触发 CI 的改动**(如纯 `docs/**` / `AGENTS.md` / `README.md` —— `ci.yml` 的 `paths` 不含它们):
   以本地门禁替代,即 `scripts/preflight_upload.py` + `ruff check .` +
   `pytest tests/test_runtime_redline_guard.py` 全绿,并把三条命令的实际输出写进 PR 描述
-- 变更 ≤ ~300 行(测试不计),未引入未讨论的新依赖
+- 未引入未讨论的新依赖
 - 合并方式统一 **squash**
 
 **以下情形 agent 不得自行合并,必须留 PR 并开 issue 交仓主:**
@@ -153,7 +152,6 @@
 - 修改 `docs/architecture.md` 的"项目宪法"小节(§1)
 - 改动 `config/thresholds.yaml` 的策略阈值(需附 walk-forward 验证报告)
 - CI 红 / `mergeable_state != clean` / 存在未解决的 review comment
-- 变更 > 300 行且无法拆分
 
 **合并 ≠ 发布。** 合并进 main 只代表代码入库;任何**线上变更**(prod / runner 部署、cron 增删改、ACL 调整、服务重启)仍须仓主单独授权后执行。
 

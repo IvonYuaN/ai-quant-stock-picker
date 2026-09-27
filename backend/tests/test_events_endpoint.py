@@ -26,6 +26,18 @@ LONGHUBANG_CSV_HEADER = (
     "trade_date,symbol,name,close_price,change_rate,"
     "buy_amount,sell_amount,net_amount,interpretation"
 )
+# 三类新面（与 aqsp.data.* Item 字段一致，经 fetch_event_data.py 盘前预加载）
+SUSPEND_CSV_HEADER = (
+    "symbol,name,suspend_date,resume_date,suspend_days,suspend_type,reason"
+)
+EARNINGS_CSV_HEADER = (
+    "symbol,name,notice_date,report_date,forecast_type,"
+    "forecast_amt_lower,forecast_amt_upper,change_pct_lower,change_pct_upper,reason,is_latest"
+)
+DIVIDEND_CSV_HEADER = (
+    "symbol,name,report_date,plan_notice_date,ex_dividend_date,"
+    "bonus_ratio,cash_per_10,progress"
+)
 
 
 def _write_pit_cache(tmp_root: Path, lockup_rows: list[str], lhb_rows: list[str]) -> None:
@@ -36,6 +48,25 @@ def _write_pit_cache(tmp_root: Path, lockup_rows: list[str], lhb_rows: list[str]
     )
     (pit / "longhubang.csv").write_text(
         "\n".join([LONGHUBANG_CSV_HEADER, *lhb_rows]) + "\n", encoding="utf-8"
+    )
+
+
+def _write_new_faces(
+    tmp_root: Path,
+    suspend_rows: list[str],
+    earnings_rows: list[str],
+    dividend_rows: list[str],
+) -> None:
+    pit = tmp_root / "pit_cache"
+    pit.mkdir(parents=True, exist_ok=True)
+    (pit / "suspend_resume.csv").write_text(
+        "\n".join([SUSPEND_CSV_HEADER, *suspend_rows]) + "\n", encoding="utf-8"
+    )
+    (pit / "earnings_forecast.csv").write_text(
+        "\n".join([EARNINGS_CSV_HEADER, *earnings_rows]) + "\n", encoding="utf-8"
+    )
+    (pit / "dividend_plan.csv").write_text(
+        "\n".join([DIVIDEND_CSV_HEADER, *dividend_rows]) + "\n", encoding="utf-8"
     )
 
 
@@ -102,6 +133,68 @@ def test_events_endpoint_serves_events(tmp_path, monkeypatch):
     assert lhb["event_type"] == "longhubang"
     assert lhb["days_ago"] == 2
     assert lhb["net_amount"] == 5000.0
+
+
+@pytest.mark.skipif(
+    not _ROUTE_AVAILABLE,
+    reason=f"backend.app 导入失败（{_APP}），可选依赖缺失，跳过路由集成测试",
+)
+def test_events_endpoint_serves_three_new_faces(tmp_path, monkeypatch):
+    """停复牌 / 业绩预告 / 分红送转三类已预加载事件面接进端点。"""
+    lockup_rows, lhb_rows = _default_rows()
+    _write_pit_cache(tmp_path, lockup_rows, lhb_rows)
+
+    suspend_start = _TODAY - timedelta(days=10)
+    suspend_resume = _TODAY + timedelta(days=5)
+    earnings_notice = _TODAY - timedelta(days=2)
+    dividend_ex = _TODAY + timedelta(days=6)
+    _write_new_faces(
+        tmp_path,
+        suspend_rows=[
+            f"600000,某公司,{suspend_start.isoformat()},{suspend_resume.isoformat()},"
+            "999,连续停牌,重组"
+        ],
+        earnings_rows=[
+            f"600000,某公司,{earnings_notice.isoformat()},2026-06-30,预增,"
+            "1e8,2e8,50.0,80.0,需求旺盛,True"
+        ],
+        dividend_rows=[
+            f"600000,某公司,2025-12-31,{(_TODAY - timedelta(days=30)).isoformat()},"
+            f"{dividend_ex.isoformat()},0.0,10.0,实施分配"
+        ],
+    )
+    monkeypatch.setenv("AQSP_RUNTIME_DATA_ROOT", str(tmp_path))
+
+    resp = _client().get("/api/events?code=600000")
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["has_suspend_resume_data"] is True
+    assert data["has_earnings_forecast_data"] is True
+    assert data["has_dividend_plan_data"] is True
+    assert len(data["suspend_resumes"]) == 1
+    assert len(data["recent_earnings_forecasts"]) == 1
+    assert len(data["upcoming_dividends"]) == 1
+
+
+@pytest.mark.skipif(
+    not _ROUTE_AVAILABLE,
+    reason=f"backend.app 导入失败（{_APP}），可选依赖缺失，跳过路由集成测试",
+)
+def test_events_endpoint_new_faces_failsoft_when_missing(tmp_path, monkeypatch):
+    """只写 lockup/longhubang，三类新面缺缓存 ⇒ 三面如实报 False + 空数组，不 500。"""
+    lockup_rows, lhb_rows = _default_rows()
+    _write_pit_cache(tmp_path, lockup_rows, lhb_rows)
+    monkeypatch.setenv("AQSP_RUNTIME_DATA_ROOT", str(tmp_path))
+
+    resp = _client().get("/api/events?code=600000")
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["has_suspend_resume_data"] is False
+    assert data["has_earnings_forecast_data"] is False
+    assert data["has_dividend_plan_data"] is False
+    assert data["suspend_resumes"] == []
+    assert data["recent_earnings_forecasts"] == []
+    assert data["upcoming_dividends"] == []
 
 
 @pytest.mark.skipif(

@@ -418,8 +418,14 @@ def _events_empty_payload(symbol: str) -> dict:
         "longhubang_lookback_days": 5,
         "has_unlock_data": False,
         "has_longhubang_data": False,
+        "has_suspend_resume_data": False,
+        "has_earnings_forecast_data": False,
+        "has_dividend_plan_data": False,
         "upcoming_unlocks": [],
         "recent_longhubang": [],
+        "suspend_resumes": [],
+        "recent_earnings_forecasts": [],
+        "upcoming_dividends": [],
     }
 
 
@@ -463,6 +469,9 @@ def events(code: str = Query(...)):
                 "longhubang_lookback_days": cal.longhubang_lookback_days,
                 "has_unlock_data": cal.has_unlock_data(),
                 "has_longhubang_data": cal.has_longhubang_data(),
+                "has_suspend_resume_data": cal.has_suspend_resume_data(),
+                "has_earnings_forecast_data": cal.has_earnings_forecast_data(),
+                "has_dividend_plan_data": cal.has_dividend_plan_data(),
                 "upcoming_unlocks": [
                     _events_jsonable(asdict(ev))
                     for ev in cal.upcoming_unlocks(code, as_of)
@@ -470,6 +479,18 @@ def events(code: str = Query(...)):
                 "recent_longhubang": [
                     _events_jsonable(asdict(ev))
                     for ev in cal.recent_longhubang(code, as_of)
+                ],
+                "suspend_resumes": [
+                    _events_jsonable(asdict(ev))
+                    for ev in cal.suspend_resumes(code, as_of)
+                ],
+                "recent_earnings_forecasts": [
+                    _events_jsonable(asdict(ev))
+                    for ev in cal.recent_earnings_forecasts(code, as_of)
+                ],
+                "upcoming_dividends": [
+                    _events_jsonable(asdict(ev))
+                    for ev in cal.upcoming_dividends(code, as_of)
                 ],
             }
         }

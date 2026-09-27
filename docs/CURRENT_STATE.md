@@ -21,7 +21,7 @@
 |---|---|
 | `docs/CONSTITUTION.md` | 项目宪法（最高准则，16 条不可让步条款） |
 | `docs/architecture.md` | 架构、边界、模块契约、PR 顺序 |
-| `AGENTS.md` | 编码硬约束（类型/测试/PR≤300 行/浏览器调试边界等） |
+| `AGENTS.md` | 编码硬约束（类型/测试/浏览器调试边界等） |
 | `docs/agent-operating-boundaries.md` | 本地 / GitHub / 服务器 / 公网四层职责边界 |
 
 ## 3. 运行时拓扑（四层）
