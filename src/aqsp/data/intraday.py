@@ -319,6 +319,33 @@ class IntradayService:
         self.fetch_max_workers = int(fetch_max_workers)
         self.fetch_batch_size = int(fetch_batch_size)
 
+    def _effective_wait_deadline(self, n_jobs: int, n_symbols: int) -> float:
+        """Shared wait deadline, scaled for a symbol-serial deferred fallback.
+
+        When the source keeps a rate-limited deferred reserve (Eastmoney), the
+        failed race is drained by that reserve serially — one symbol at a time
+        under a global throttle, so wall-clock scales with the symbol count,
+        not with a fixed batch budget. A flat ``fetch_deadline_seconds`` then
+        lets queued batches time out and get skipped 13/13. Scale the outer
+        wait by the reserve's per-symbol cost so the whole drain completes;
+        when the source has no deferred reserves this is a no-op.
+        """
+        base = self.fetch_deadline_seconds
+        per_symbol = float(
+            getattr(
+                self.source, "deferred_fetch_deadline_per_symbol_seconds", 0.5
+            )
+        )
+        has_deferred = bool(
+            getattr(self.source, "deferred_live_short_sources", None)
+        )
+        if not has_deferred or per_symbol <= 0:
+            return base
+        # Batches run on `fetch_max_workers` lanes; a serial reserve drains
+        # n_symbols in ~ (n_symbols / workers) x per-symbol cost on wall-clock.
+        # Add that to the base budget instead of a second, flat round.
+        return base + (max(1, n_symbols) / max(1, self.fetch_max_workers)) * per_symbol
+
     def get_intraday_bars(
         self,
         symbols: list[str],
@@ -463,6 +490,7 @@ class IntradayService:
             max_workers=min(self.fetch_max_workers, len(jobs)),
             thread_name_prefix="aqsp-intraday",
         )
+        wait_deadline = self._effective_wait_deadline(len(jobs), len(requested))
         futures = {
             pool.submit(
                 self._fetch_intraday_batch, batch, period, method_name
@@ -470,7 +498,7 @@ class IntradayService:
             for batch, method_name in jobs
         }
         try:
-            done, pending = wait(futures, timeout=self.fetch_deadline_seconds)
+            done, pending = wait(futures, timeout=wait_deadline)
             for future in pending:
                 future.cancel()
             result: dict[str, OhlcvFrame] = {}
@@ -493,7 +521,7 @@ class IntradayService:
                 _logger.warning(
                     "数据源 %s 分时共享 deadline %.1fs 到期，跳过 %d/%d 个批次",
                     self.source.name,
-                    self.fetch_deadline_seconds,
+                    wait_deadline,
                     len(pending),
                     len(futures),
                 )

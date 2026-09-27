@@ -20,6 +20,7 @@ import pandas as pd
 import pytest
 
 from aqsp.core.errors import DataError
+from aqsp.data.intraday import IntradayService
 from aqsp.data.multi_source import MultiSource
 from aqsp.data.tencent_source import TencentSource, _ENDPOINT_DOWN_THRESHOLD
 
@@ -199,3 +200,72 @@ def test_dead_tencent_endpoint_frees_deadline_for_deferred_source(monkeypatch) -
     assert source.last_used_sources == {symbol: "eastmoney" for symbol in symbols}
     # 且端点只被试探到阈值，不是 5 只 × 3 次重试 = 15 次
     assert len(calls) == _ENDPOINT_DOWN_THRESHOLD
+
+
+# --- #149：delayed 兜底独立预算 —— 兜底阶段不再被 fast-race 的 30s 吃满 ---
+
+def test_effective_deferred_deadline_scales_with_symbol_count() -> None:
+    """兜底阶段预算 = base + n_symbols × per-symbol，随标的数线性增长。
+
+    2026-09 生产实测：腾讯 WAF 全挂时 256 只标的走东财兜底，东财全局节流
+    ~0.347s/标的 ⇒ 串行 ~89s，旧的 flat 30s deadline 在收尾前就到期，
+    0 覆盖。修复后兜底阶段拿到独立预算（默认 0.5s/标的），256 只 = 158s。
+    """
+    source, *_ = _build(tencent_fails=True)
+    assert source.deferred_fetch_deadline_per_symbol_seconds == 0.5
+    # _build 用 live_fetch_deadline_seconds=5.0：base 5s + 256 × 0.5s = 133s
+    assert source._effective_deferred_deadline(256) == pytest.approx(133.0)
+    # 1 只 = 5.5s；空列表按 1 只兜底
+    assert source._effective_deferred_deadline(1) == pytest.approx(5.5)
+    assert source._effective_deferred_deadline(0) == pytest.approx(5.5)
+
+
+def test_explicit_deferred_deadline_overrides_scaling() -> None:
+    """显式给定 deferred_live_short_deadline_seconds 时固定使用该值，不叠加。"""
+    tencent = _StubSource("tencent", fails=True)
+    eastmoney = _StubSource("eastmoney")
+    source = MultiSource(
+        tencent,
+        [eastmoney],
+        validate_consistency=False,
+        live_fetch_deadline_seconds=30.0,
+        deferred_live_short_deadline_seconds=90.0,
+        deferred_live_short_sources=frozenset({"eastmoney"}),
+    )
+    # 无论标的数多少，都取固定 90s 上限
+    assert source._effective_deferred_deadline(256) == 90.0
+    assert source._effective_deferred_deadline(1) == 90.0
+
+
+# --- #149：IntradayService 外层共享 deadline 感知兜底排水 ---
+
+def test_intraday_wait_deadline_scales_only_with_deferred_reserve() -> None:
+    """有 deferred 兜底源时，外层 wait 按 (n_symbols/workers) × per-symbol 加预算，
+    使 13 个批次串行排水不被 13/13 跳过；无兜底源时是纯 no-op。
+
+    2026-09 生产日志：13 批 × 20 只 = 256 只，东财串行排水 ~77s，flat 90s
+    里后段批次排队等锁就超时 ⇒ “跳过 13/13 个批次”。修复后外层 = 90 +
+    (256/4) × 0.5 = 122s，覆盖排水。
+    """
+    with_reserve, *_ = _build(tencent_fails=True)
+    service = IntradayService(
+        with_reserve,
+        fetch_deadline_seconds=90.0,
+        fetch_max_workers=4,
+    )
+    # 有兜底：90 + (256/4) × 0.5 = 122.0
+    assert service._effective_wait_deadline(13, 256) == pytest.approx(122.0)
+
+    # 无兜底源 ⇒ 保持 flat base，不膨胀预算（健康路径不受影响）
+    plain = MultiSource(
+        _StubSource("tencent", fails=True),
+        [_StubSource("sina")],
+        validate_consistency=False,
+    )
+    plain_service = IntradayService(
+        plain,
+        fetch_deadline_seconds=90.0,
+        fetch_max_workers=4,
+    )
+    assert plain_service._effective_wait_deadline(13, 256) == 90.0
+

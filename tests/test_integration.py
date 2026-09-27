@@ -27,7 +27,12 @@ def _n_trade_days_ago(base: date, n: int) -> date:
 
 class TestFreshnessIntegration:
     def _make_frames(self, latest_date: str) -> dict[str, pd.DataFrame]:
-        dates = pd.date_range(end=latest_date, periods=30, freq="B")
+        # freq="D"（而非 "B"）：末根 K 线必须精确落在 latest_date。周末补班交易日
+        # （如 2026-09-27，见 config/trading_holidays.json 的 makeup_workdays）用
+        # "B" 无法表示——freq="B" 只会静默回退到上一个周一~周五日（09-25），
+        # 导致帧 max 比期望市场日小 1 天、断言恒失败。assert_fresh_data 只读取帧内
+        # 最大 date，故这里用连续日历日对合成数据是安全的。
+        dates = pd.date_range(end=latest_date, periods=30, freq="D")
         df = pd.DataFrame(
             {
                 "date": dates.strftime("%Y-%m-%d"),
