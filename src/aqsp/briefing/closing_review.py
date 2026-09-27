@@ -134,6 +134,11 @@ class DailyReview:
     # （runner 滚动诊断回流产物），展示各因子 IC/ICIR/短期翻向侦测。
     # 空串 = 产物缺失（调度未回流），报告不渲染该节；绝不写回打分/排序。
     factor_ic_section: str = ""
+    # 板块资金面（只读）：读 pit_cache/concept_board.csv（东财概念板块主力资金，
+    # preload_event_data.sh 盘后预载落盘）。展示主力净流入/净流出 TopN + 板块涨跌
+    # 家数汇总，作为收盘时的市场资金环境证据。空串 = 数据缺失/陈旧标注，
+    # 报告不渲染该节；绝不写回打分/排序/下单（红线，与 IC 段同级别）。
+    board_fund_section: str = ""
     # LLM 解读层（降级安全）：AI 复盘解读小节 + 降级标记。
     # llm_review_text 为空串时报告不渲染 AI 小节；degraded=True 表示走了
     # fallback 规则文本（不显示该小节）。红线：LLM 只进该独立小节，
@@ -322,6 +327,7 @@ class ClosingReviewer:
             self.ledger_path
         )
         factor_ic_section = build_factor_ic_section()
+        board_fund_section = build_board_fund_section()
 
         return DailyReview(
             date=today,
@@ -348,6 +354,7 @@ class ClosingReviewer:
             failure_patterns_section=failure_patterns_section,
             debate_reconciliation_section=debate_reconciliation_section,
             factor_ic_section=factor_ic_section,
+            board_fund_section=board_fund_section,
         )
 
     def _latest_review_date(self) -> str:
@@ -1247,6 +1254,9 @@ class ClosingReviewer:
             # IC 健康诊断独立于「有无信号」：只要有 runner 回流产物就展示。
             # 无信号走本早退分支时若漏塞，会导致 IC 段被静默丢弃（09-26 实锤）。
             factor_ic_section=build_factor_ic_section(),
+            # 板块资金面与 IC 段同理：独立于「有无信号」，只要盘后预载落盘就展示，
+            # 早退分支漏塞会静默丢弃（与 09-26 IC 段同类缺陷）。
+            board_fund_section=build_board_fund_section(),
         )
 
     def generate_weekly_summary(self, end_date: str | None = None) -> WeeklySummary:
@@ -1547,6 +1557,140 @@ def build_factor_ic_section(
     return "\n".join(lines)
 
 
+def build_board_fund_section(
+    csv_path: str | Path | None = None,
+    top_in: int = 5,
+    top_out: int = 3,
+    *,
+    stale_hours: int = 48,
+) -> str:
+    """板块资金面段（只读）：读 ``pit_cache/concept_board.csv``（东财概念板块主力资金）。
+
+    展示收盘时点市场资金环境：主力净流入 / 净流出 TopN + 板块内涨跌家数 +
+    板块涨跌计数，作为收评「大盘资金面」证据。数据源 = ``preload_event_data.sh``
+    盘后预载落盘的 ``concept_board.csv``（与 EventCalendar 同一 ``pit_cache`` 根、
+    写读同源，见 ``_factor_ic_runtime_root``）。
+
+    降级安全（与 ``factor_ic_section`` 同级别，红线）：
+      - 文件缺失 / 读失败 / 表头残缺 / 全部行坏 ⇒ 返回空串，报告不渲染该节；
+      - 单行字段坏只剔除该行、不拖垮整段；
+      - 绝不写回打分 / 排序 / 下单；
+      - 数据陈旧（本体 mtime 超 ``stale_hours``）⇒ 段尾标注「非实时」，不作实时信号。
+    """
+    import csv
+    import os
+    import time
+
+    if csv_path is None:
+        csv_path = os.path.join(
+            _factor_ic_runtime_root(),
+            "pit_cache",
+            "concept_board.csv",
+        )
+    path = Path(csv_path)
+    if not path.exists():
+        return ""
+
+    rows: list[dict[str, str]] = []
+    try:
+        with path.open(encoding="utf-8") as fh:
+            reader = csv.DictReader(fh)
+            required = {"board_code", "board_name", "main_net_inflow"}
+            if not required.issubset(set(reader.fieldnames or [])):
+                return ""
+            rows = list(reader)
+    except Exception:
+        return ""
+
+    def _f(v: object) -> float | None:
+        try:
+            f = float(str(v).strip())  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return None
+        if f != f or f in (float("inf"), float("-inf")):
+            return None
+        return f
+
+    # 结构化解析：code/name/inflow 任一缺失即剔除该行（坏行不拖垮整段）。
+    parsed: list[dict[str, object]] = []
+    for r in rows:
+        code = str(r.get("board_code") or "").strip()
+        name = str(r.get("board_name") or "").strip()
+        inflow = _f(r.get("main_net_inflow"))
+        if not code or not name or inflow is None:
+            continue
+        parsed.append(
+            {
+                "code": code,
+                "name": name,
+                "inflow_wan": inflow,  # 万元（fetch 侧 f62 元→万元）
+                "up": int(_f(r.get("up_count")) or 0),
+                "down": int(_f(r.get("down_count")) or 0),
+                "chg": _f(r.get("change_pct")) or 0.0,
+            }
+        )
+    if not parsed:
+        return ""
+
+    up_boards = sum(1 for p in parsed if p["chg"] > 0)  # type: ignore[operator]
+    down_boards = sum(1 for p in parsed if p["chg"] < 0)  # type: ignore[operator]
+    total_net = sum(float(p["inflow_wan"]) for p in parsed)
+
+    top_inflow = sorted(
+        (p for p in parsed if float(p["inflow_wan"]) > 0),  # type: ignore[arg-type]
+        key=lambda p: float(p["inflow_wan"]),  # type: ignore[arg-type]
+        reverse=True,
+    )[:top_in]
+    top_outflow = sorted(
+        (p for p in parsed if float(p["inflow_wan"]) < 0),  # type: ignore[arg-type]
+        key=lambda p: float(p["inflow_wan"]),  # type: ignore[arg-type]
+    )[:top_out]
+
+    def _row(p: dict[str, object], arrow: str) -> str:
+        chg = float(p["chg"])
+        return (
+            f"  {arrow} {p['name']}：主力净流入 {float(p['inflow_wan']):+.0f} 万"
+            f"｜板块内 {int(p['up'])}涨/{int(p['down'])}跌｜板块 {chg:+.2f}%"
+        )
+
+    lines: list[str] = [
+        "## 板块资金面（东财概念板块 · 主力资金）",
+        "",
+        (
+            f"共 {len(parsed)} 板块｜上涨板块 {up_boards} / 下跌板块 {down_boards}"
+            f"｜全板块主力净流入合计 {total_net:+.0f} 万"
+        ),
+    ]
+    if top_inflow:
+        lines.append("")
+        lines.append(f"主力净流入 Top{len(top_inflow)}：")
+        lines.extend(_row(p, "▲") for p in top_inflow)
+    if top_outflow:
+        lines.append("")
+        lines.append(f"主力净流出 Top{len(top_outflow)}：")
+        lines.extend(_row(p, "▼") for p in top_outflow)
+    if not top_inflow and not top_outflow:
+        lines.append("")
+        lines.append("  （本批次无主力净流入/流出板块样本）")
+
+    # 新鲜度：以 CSV 本体 mtime 判陈旧（不依赖 meta 时区，最稳）。
+    try:
+        age_h = (time.time() - path.stat().st_mtime) / 3600
+        if age_h > stale_hours:
+            mdate = time.strftime("%Y-%m-%d", time.localtime(path.stat().st_mtime))
+            lines.append("")
+            lines.append(
+                f"⏳ 数据更新于 {mdate}（{age_h:.0f}h 前，超 {stale_hours}h 阈值），"
+                "作陈旧参考、非实时。"
+            )
+    except (OSError, ValueError):
+        pass
+
+    lines.append("")
+    lines.append("⚠️ 只读资金面：板块主力资金仅作市场环境参考，不改变打分/排序/下单。")
+    return "\n".join(lines)
+
+
 def _to_finite(value: object) -> float | None:
     try:
         f = float(value)  # type: ignore[arg-type]
@@ -1668,6 +1812,11 @@ def format_daily_review(review: DailyReview) -> str:
 
     if review.factor_ic_section:
         for line in review.factor_ic_section.splitlines():
+            report.append(line)
+        report.append("")
+
+    if review.board_fund_section:
+        for line in review.board_fund_section.splitlines():
             report.append(line)
         report.append("")
 

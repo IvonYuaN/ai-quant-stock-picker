@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+from pathlib import Path
+
 from aqsp.briefing.closing_review import (
     ClosingReviewer,
     DailyReview,
@@ -644,3 +646,176 @@ class TestFactorICSection:
 
         monkeypatch.setenv("AQSP_RUNTIME_DATA_ROOT", str(tmp_path))
         assert _factor_ic_runtime_root() == str(tmp_path)
+
+
+# ---- 板块资金面段（pit_cache/concept_board.csv，0 消费者断链打通）----
+
+_CB_HEADER = "board_code,board_name,up_count,down_count,change_pct,main_net_inflow,main_net_ratio"
+
+_CB_BODY_LINES = [
+    "BK0001,人工智能,120,30,1.23,56789.0,2.5",
+    "BK0002,机器人,95,20,2.10,32000.0,3.1",
+    "BK0003,低空经济,60,10,0.80,15000.0,1.9",
+    "BK0004,数据要素,40,12,-0.30,-8000.0,-1.2",
+    "BK0005,房地产,5,40,-2.10,-26000.0,-4.0",
+    "BK0006,白酒,3,35,-1.50,-19000.0,-3.3",
+    "BK0007,银行,80,40,-0.20,-6000.0,-0.8",
+]
+
+
+def _write_cb(tmp_path, mtime_offset_days: float = 0.0) -> Path:
+    """写 concept_board.csv 夹具（7 板块：3 正流入 / 3 负流入 / 1 零流入）。"""
+    p = tmp_path / "concept_board.csv"
+    p.write_text(_CB_HEADER + "\n" + "\n".join(_CB_BODY_LINES) + "\n", encoding="utf-8")
+    if mtime_offset_days:
+        import os as _os
+        import time as _t
+
+        old = _t.time() - mtime_offset_days * 86400
+        _os.utime(p, (old, old))
+    return p
+
+
+class TestBoardFundSection:
+    def test_render_when_present(self, tmp_path) -> None:
+        from aqsp.briefing.closing_review import build_board_fund_section
+
+        path = _write_cb(tmp_path)
+        section = build_board_fund_section(str(path))
+        assert "板块资金面" in section
+        assert "共 7 板块" in section
+        # 上涨板块 = change_pct>0：BK0001/2/3
+        assert "上涨板块 3" in section
+        # 主力净流入：正流入板块 = BK0001/2/3 共 3 个，默认 top_in=5 只取到 3
+        assert "主力净流入 Top3" in section
+        # 最大流入板块居首
+        assert "人工智能：主力净流入 +56789 万" in section
+        assert "机器人：主力净流入 +32000 万" in section
+        # 主力净流出 Top3（负流入中 3 个）
+        assert "主力净流出 Top3" in section
+        assert "房地产：主力净流入 -26000 万" in section
+        # 全板块合计：56789+32000+15000-8000-26000-19000-6000 ≈ 86889 万
+        assert "全板块主力净流入合计" in section
+        # 红线条款
+        assert "不改变打分/排序/下单" in section
+
+    def test_top_in_out_count_params(self, tmp_path) -> None:
+        from aqsp.briefing.closing_review import build_board_fund_section
+
+        path = _write_cb(tmp_path)
+        section = build_board_fund_section(str(path), top_in=1, top_out=1)
+        assert "主力净流入 Top1" in section
+        assert "主力净流出 Top1" in section
+        # Top1 时只有最大流入/最大流出入选
+        assert "人工智能" in section and "房地产" in section
+        assert "机器人" not in section
+
+    def test_missing_file_returns_empty(self, tmp_path) -> None:
+        from aqsp.briefing.closing_review import build_board_fund_section
+
+        assert build_board_fund_section(str(tmp_path / "nope.csv")) == ""
+
+    def test_wrong_header_returns_empty(self, tmp_path) -> None:
+        from aqsp.briefing.closing_review import build_board_fund_section
+
+        path = tmp_path / "concept_board.csv"
+        path.write_text("a,b\n1,2\n", encoding="utf-8")
+        assert build_board_fund_section(str(path)) == ""
+
+    def test_empty_body_returns_empty(self, tmp_path) -> None:
+        from aqsp.briefing.closing_review import build_board_fund_section
+
+        path = tmp_path / "concept_board.csv"
+        path.write_text(_CB_HEADER + "\n", encoding="utf-8")
+        assert build_board_fund_section(str(path)) == ""
+
+    def test_malformed_rows_dropped_not_fatally(self, tmp_path) -> None:
+        """坏行（缺 code/坏数值）只剔除该行，不拖垮整段。"""
+        from aqsp.briefing.closing_review import build_board_fund_section
+
+        path = tmp_path / "concept_board.csv"
+        path.write_text(
+            "\n".join(
+                [
+                    _CB_HEADER,
+                    ",无名板,1,1,0.1,100.0,0.1",       # code 空 ⇒ 剔除
+                    "BK1,坏数值板,1,1,0.1,not-a-number,0.1",  # inflow 坏 ⇒ 剔除
+                    "BK2,正常板,10,2,1.0,5000000.0,0.5",
+                    "BK3,零流入板,5,5,0.0,0.0,0.0",      # 0 不进 Top（两侧均不入）
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        section = build_board_fund_section(str(path))
+        assert "共 2 板块" in section  # 只有 BK2/BK3 存活
+        assert "正常板" in section
+        assert "无名板" not in section and "坏数值板" not in section
+        assert "只读资金面" in section
+
+    def test_stale_data_annotated(self, tmp_path) -> None:
+        """CSV mtime 超 stale_hours ⇒ 段尾标「非实时」。"""
+        from aqsp.briefing.closing_review import build_board_fund_section
+
+        path = _write_cb(tmp_path, mtime_offset_days=10.0)
+        section = build_board_fund_section(str(path))
+        assert "非实时" in section
+        # 未陈旧（默认 48h 内）时不标注
+        fresh = _write_cb(tmp_path)
+        assert "非实时" not in build_board_fund_section(str(fresh))
+
+    def test_empty_review_still_carries_board_fund_section(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """回归（与 09-26 IC 段同类缺陷防回归）：无信号走 _empty_review 早退时，
+        板块资金段不得被静默丢弃。"""
+        from aqsp.briefing.closing_review import (
+            ClosingReviewer,
+            build_board_fund_section,
+            format_daily_review,
+        )
+
+        ledger = tmp_path / "predictions.jsonl"
+        paper = tmp_path / "paper_trades.jsonl"
+        ledger.write_text("", encoding="utf-8")
+        paper.write_text("", encoding="utf-8")
+        monkeypatch.setenv("AQSP_RUNTIME_DATA_ROOT", str(tmp_path))
+        (tmp_path / "pit_cache").mkdir()
+        _write_cb(tmp_path / "pit_cache")
+
+        review = ClosingReviewer(
+            ledger_path=str(ledger), paper_ledger_path=str(paper)
+        ).review_today("2025-06-01")
+        assert "板块资金面" in review.board_fund_section
+        assert "板块资金面" in format_daily_review(review)
+        # 交叉一致性：与直接调 build_board_fund_section 一致
+        assert review.board_fund_section == build_board_fund_section(
+            str(tmp_path / "pit_cache" / "concept_board.csv")
+        )
+
+    def test_review_today_path_carries_board_fund_section(self, tmp_path, monkeypatch) -> None:
+        """正常 review_today 路径（有信号）也塞资金段。"""
+        from aqsp.briefing.closing_review import ClosingReviewer
+
+        ledger = tmp_path / "predictions.jsonl"
+        paper = tmp_path / "paper_trades.jsonl"
+        ledger.write_text("", encoding="utf-8")
+        paper.write_text("", encoding="utf-8")
+        monkeypatch.setenv("AQSP_RUNTIME_DATA_ROOT", str(tmp_path))
+        (tmp_path / "pit_cache").mkdir()
+        _write_cb(tmp_path / "pit_cache")
+
+        review = ClosingReviewer(
+            ledger_path=str(ledger), paper_ledger_path=str(paper)
+        ).review_today("2025-06-01")
+        assert "板块资金面" in review.board_fund_section
+
+    def test_default_path_resolves_via_runtime_root(self, tmp_path, monkeypatch) -> None:
+        """csv_path=None ⇒ 走 <runtime>/pit_cache/concept_board.csv（写读同源）。"""
+        from aqsp.briefing.closing_review import build_board_fund_section
+
+        monkeypatch.setenv("AQSP_RUNTIME_DATA_ROOT", str(tmp_path))
+        (tmp_path / "pit_cache").mkdir()
+        _write_cb(tmp_path / "pit_cache")
+        assert "板块资金面" in build_board_fund_section()
+        monkeypatch.delenv("AQSP_RUNTIME_DATA_ROOT", raising=False)
