@@ -145,6 +145,11 @@ class DailyReview:
     # 空串 = 数据缺失/陈旧标注，报告不渲染该节；绝不写回打分/排序/下单
     # （红线，与板块资金面段同级别）。
     longhubang_section: str = ""
+    # 财经快讯（只读）：读 pit_cache/cls_news.csv（财联社快讯，
+    # preload_event_data.sh 盘后预载落盘）。按发布时间近到远取 TopN + A/B/C 重要度
+    # 分级计数，作为收盘时「市场资讯环境」证据。空串 = 数据缺失/陈旧标注，
+    # 报告不渲染该节；绝不写回打分/排序/下单（红线，与板块资金面段同级别）。
+    news_section: str = ""
     # LLM 解读层（降级安全）：AI 复盘解读小节 + 降级标记。
     # llm_review_text 为空串时报告不渲染 AI 小节；degraded=True 表示走了
     # fallback 规则文本（不显示该小节）。红线：LLM 只进该独立小节，
@@ -335,6 +340,7 @@ class ClosingReviewer:
         factor_ic_section = build_factor_ic_section()
         board_fund_section = build_board_fund_section()
         longhubang_section = build_longhubang_section()
+        news_section = build_news_section()
 
         return DailyReview(
             date=today,
@@ -363,6 +369,7 @@ class ClosingReviewer:
             factor_ic_section=factor_ic_section,
             board_fund_section=board_fund_section,
             longhubang_section=longhubang_section,
+            news_section=news_section,
         )
 
     def _latest_review_date(self) -> str:
@@ -1268,6 +1275,9 @@ class ClosingReviewer:
             # 龙虎榜关注与板块资金面/IC 段同理：独立于「有无信号」，只要盘后预载落盘就展示，
             # 早退分支漏塞会静默丢弃（与 09-26 IC 段同类缺陷）。
             longhubang_section=build_longhubang_section(),
+            # 财经快讯与龙虎榜/板块资金面同理：独立于「有无信号」，盘后预载落盘即展示，
+            # 早退分支漏塞会静默丢弃（与 09-26 IC 段同类缺陷）。
+            news_section=build_news_section(),
         )
 
     def generate_weekly_summary(self, end_date: str | None = None) -> WeeklySummary:
@@ -1862,6 +1872,138 @@ def build_longhubang_section(
     return "\n".join(lines)
 
 
+def build_news_section(
+    csv_path: str | Path | None = None,
+    top_n: int = 10,
+    *,
+    stale_hours: int = 48,
+) -> str:
+    """财经快讯段（只读）：读 ``pit_cache/cls_news.csv``（财联社快讯）。
+
+    按发布时间近到远取 TopN 头条 + A/B/C 重要度分级计数，作为收评「市场资讯环境」
+    证据。数据源 = ``preload_event_data.sh`` 盘后预载落盘的 ``cls_news.csv``（与板块
+    资金面、龙虎榜同一 ``pit_cache`` 根、写读同源，见 ``_factor_ic_runtime_root``）。
+
+    降级安全（与 ``longhubang_section`` 同级别，红线）：
+      - 文件缺失 / 读失败 / 表头残缺 / 全部行坏 ⇒ 返回空串，报告不渲染该节；
+      - 单行字段坏只剔除该行、不拖垮整段；
+      - 绝不写回打分 / 排序 / 下单；
+      - 数据陈旧（本体 mtime 超 ``stale_hours``）⇒ 段尾标注「非实时」，不作实时信号。
+    """
+    import csv
+    import os
+    import time
+
+    if csv_path is None:
+        csv_path = os.path.join(
+            _factor_ic_runtime_root(),
+            "pit_cache",
+            "cls_news.csv",
+        )
+    path = Path(csv_path)
+    if not path.exists():
+        return ""
+
+    rows: list[dict[str, str]] = []
+    try:
+        with path.open(encoding="utf-8") as fh:
+            reader = csv.DictReader(fh)
+            required = {"title", "ctime"}
+            if not required.issubset(set(reader.fieldnames or [])):
+                return ""
+            rows = list(reader)
+    except Exception:
+        return ""
+
+    def _clean_subjects(raw: object) -> str:
+        s = str(raw or "").strip()
+        if not s or s in ("()", "[]", "None"):
+            return ""
+        # pandas to_csv 把 tuple 序列化成 "('a', 'b')" / "['a', 'b']"
+        if s and s[0] in "([" and s[-1] in ")]":
+            inner = s[1:-1]
+            parts = [p.strip().strip("'\"") for p in inner.split(",") if p.strip()]
+            return "、".join(parts)
+        return s
+
+    parsed: list[dict[str, str]] = []
+    for r in rows:
+        title = str(r.get("title") or "").strip()
+        ctime = str(r.get("ctime") or "").strip()
+        if not title or not ctime:
+            continue
+        level = str(r.get("level") or "").strip().upper()
+        summary = str(r.get("summary") or "").strip()
+        subjects = _clean_subjects(r.get("subjects"))
+        parsed.append(
+            {
+                "title": title,
+                "ctime": ctime,
+                "level": level,
+                "summary": summary,
+                "subjects": subjects,
+            }
+        )
+    if not parsed:
+        return ""
+
+    # 近到远排序（ctime 为 ISO 串，字典序即时间序）
+    parsed.sort(key=lambda p: p["ctime"], reverse=True)
+    top = parsed[:top_n]
+    level_counts = {"A": 0, "B": 0, "C": 0}
+    for p in parsed:
+        if p["level"] in level_counts:
+            level_counts[p["level"]] += 1
+
+    def _time_label(ct: str) -> str:
+        # 2026-09-27T14:30:00[+08:00] -> 09-27 14:30
+        core = ct.replace("T", " ").split("+")[0].split("Z")[0].strip()
+        parts = core.split(" ")
+        if len(parts) == 2:
+            date_part, time_part = parts
+            return f"{date_part[5:]} {time_part[:5]}"
+        return core[:16]
+
+    def _row(p: dict[str, str]) -> str:
+        lvl = p["level"] or "-"
+        badge = f"[{lvl}]" if lvl in ("A", "B", "C") else ""
+        subj = f"（{p['subjects']}）" if p["subjects"] else ""
+        return f"  {badge} {_time_label(p['ctime'])} {p['title']}{subj}"
+
+    lines: list[str] = [
+        "## 财经快讯（财联社 · 近窗口）",
+        "",
+        (
+            f"共 {len(parsed)} 条｜A 级 {level_counts['A']} / B 级 {level_counts['B']}"
+            f" / C 级 {level_counts['C']}"
+        ),
+    ]
+    if top:
+        lines.append("")
+        lines.append("最新快讯：")
+        lines.extend(_row(p) for p in top)
+    else:
+        lines.append("")
+        lines.append("  （本批次无快讯样本）")
+
+    # 新鲜度：以 CSV 本体 mtime 判陈旧（新闻时效性强，默认 48h）。
+    try:
+        age_h = (time.time() - path.stat().st_mtime) / 3600
+        if age_h > stale_hours:
+            mdate = time.strftime("%Y-%m-%d", time.localtime(path.stat().st_mtime))
+            lines.append("")
+            lines.append(
+                f"⏳ 数据更新于 {mdate}（{age_h:.0f}h 前，超 {stale_hours}h 阈值），"
+                "作陈旧参考、非实时。"
+            )
+    except (OSError, ValueError):
+        pass
+
+    lines.append("")
+    lines.append("⚠️ 只读参考：财经快讯仅作市场环境参考，不改变打分/排序/下单。")
+    return "\n".join(lines)
+
+
 def _to_finite(value: object) -> float | None:
     try:
         f = float(value)  # type: ignore[arg-type]
@@ -1993,6 +2135,11 @@ def format_daily_review(review: DailyReview) -> str:
 
     if review.longhubang_section:
         for line in review.longhubang_section.splitlines():
+            report.append(line)
+        report.append("")
+
+    if review.news_section:
+        for line in review.news_section.splitlines():
             report.append(line)
         report.append("")
 

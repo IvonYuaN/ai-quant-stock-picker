@@ -989,3 +989,169 @@ class TestLonghubangSection:
         (tmp_path / "pit_cache").mkdir()
         _write_lhb(tmp_path / "pit_cache")
         assert "龙虎榜关注" in build_longhubang_section()
+
+
+# ---- 财经快讯段（pit_cache/cls_news.csv，0 读者断链打通）----
+
+_NEWS_HEADER = "item_id,title,summary,ctime,level,subjects"
+
+_NEWS_BODY_LINES = [
+    "n1,央行宣布降准0.5个百分点,释放长期资金约1万亿元,2026-09-27T09:30:00+08:00,A,\"('货币政策', '降准')\"",
+    "n2,某新能源龙头获大单海外订单,订单金额创新高,2026-09-27T10:15:00+08:00,B,\"('新能源', '出口')\"",
+    "n3,半导体板块盘中异动拉升,多股涨停,2026-09-27T11:00:00+08:00,C,\"('半导体',)\"",
+    "n4,证监会发文规范量化交易,明确高频交易限制,2026-09-26T18:45:00+08:00,A,()",
+    "n5,北向资金今日净买入,外资加仓核心资产,2026-09-27T14:20:00+08:00,B,\"('北向资金', '核心资产')\"",
+]
+
+
+def _write_news(tmp_path, mtime_offset_days: float = 0.0) -> Path:
+    """写 cls_news.csv 夹具（5 条：A×2 / B×2 / C×1，ctime 跨 09-26~09-27）。"""
+    p = tmp_path / "cls_news.csv"
+    p.write_text(_NEWS_HEADER + "\n" + "\n".join(_NEWS_BODY_LINES) + "\n", encoding="utf-8")
+    if mtime_offset_days:
+        import os as _os
+        import time as _t
+
+        old = _t.time() - mtime_offset_days * 86400
+        _os.utime(p, (old, old))
+    return p
+
+
+class TestNewsSection:
+    def test_render_when_present(self, tmp_path) -> None:
+        from aqsp.briefing.closing_review import build_news_section
+
+        path = _write_news(tmp_path)
+        section = build_news_section(str(path))
+        assert "财经快讯" in section
+        # 共 5 条，A 级 2 / B 级 2 / C 级 1
+        assert "共 5 条｜A 级 2 / B 级 2 / C 级 1" in section
+        assert "最新快讯：" in section
+        # 近到远：n5(14:20) 居首
+        assert "[A] 09-27 09:30 央行宣布降准0.5个百分点（货币政策、降准）" in section
+        assert "[A] 09-26 18:45 证监会发文规范量化交易" in section
+        #  subjects 元组串被正确展开（去引号、转顿号）
+        assert "（货币政策、降准）" in section
+        # 红线条款
+        assert "不改变打分/排序/下单" in section
+
+    def test_top_n_param(self, tmp_path) -> None:
+        from aqsp.briefing.closing_review import build_news_section
+
+        path = _write_news(tmp_path)
+        section = build_news_section(str(path), top_n=3)
+        # 最新 3 条 = n5 / n3 / n2（按 ctime desc）
+        assert "[B] 09-27 14:20 北向资金今日净买入" in section
+        assert "[C] 09-27 11:00 半导体板块盘中异动拉升" in section
+        assert "[B] 09-27 10:15 某新能源龙头获大单海外订单" in section
+        # 较旧的不进 Top3
+        assert "央行宣布降准" not in section
+        assert "证监会发文规范量化交易" not in section
+
+    def test_missing_file_returns_empty(self, tmp_path) -> None:
+        from aqsp.briefing.closing_review import build_news_section
+
+        assert build_news_section(str(tmp_path / "nope.csv")) == ""
+
+    def test_wrong_header_returns_empty(self, tmp_path) -> None:
+        from aqsp.briefing.closing_review import build_news_section
+
+        path = tmp_path / "cls_news.csv"
+        path.write_text("a,b\n1,2\n", encoding="utf-8")
+        assert build_news_section(str(path)) == ""
+
+    def test_empty_body_returns_empty(self, tmp_path) -> None:
+        from aqsp.briefing.closing_review import build_news_section
+
+        path = tmp_path / "cls_news.csv"
+        path.write_text(_NEWS_HEADER + "\n", encoding="utf-8")
+        assert build_news_section(str(path)) == ""
+
+    def test_malformed_rows_dropped_not_fatally(self, tmp_path) -> None:
+        """坏行（缺 title / 缺 ctime）只剔除该行，不拖垮整段。"""
+        from aqsp.briefing.closing_review import build_news_section
+
+        path = tmp_path / "cls_news.csv"
+        path.write_text(
+            "\n".join(
+                [
+                    _NEWS_HEADER,
+                    "x1,,摘要,2026-09-27T10:00:00+08:00,B,()",          # title 空 ⇒ 剔除
+                    "x2,标题坏ctime,,,B,()",                              # ctime 空 ⇒ 剔除
+                    "x3,正常标题,摘要,2026-09-27T10:00:00+08:00,A,('主题',)",  # 有效
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        section = build_news_section(str(path))
+        assert "共 1 条" in section
+        assert "正常标题" in section
+        assert "标题坏ctime" not in section
+        assert "只读参考" in section
+
+    def test_stale_data_annotated(self, tmp_path) -> None:
+        """CSV mtime 超 stale_hours ⇒ 段尾标「非实时」。"""
+        from aqsp.briefing.closing_review import build_news_section
+
+        path = _write_news(tmp_path, mtime_offset_days=10.0)
+        section = build_news_section(str(path))
+        assert "非实时" in section
+        # 未陈旧（默认 48h 内）时不标注
+        fresh = _write_news(tmp_path)
+        assert "非实时" not in build_news_section(str(fresh))
+
+    def test_empty_review_still_carries_news_section(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """回归（与 09-26 IC 段同类缺陷防回归）：无信号走 _empty_review 早退时，
+        财经快讯段不得被静默丢弃。"""
+        from aqsp.briefing.closing_review import (
+            ClosingReviewer,
+            build_news_section,
+            format_daily_review,
+        )
+
+        ledger = tmp_path / "predictions.jsonl"
+        paper = tmp_path / "paper_trades.jsonl"
+        ledger.write_text("", encoding="utf-8")
+        paper.write_text("", encoding="utf-8")
+        monkeypatch.setenv("AQSP_RUNTIME_DATA_ROOT", str(tmp_path))
+        (tmp_path / "pit_cache").mkdir()
+        _write_news(tmp_path / "pit_cache")
+
+        review = ClosingReviewer(
+            ledger_path=str(ledger), paper_ledger_path=str(paper)
+        ).review_today("2025-06-01")
+        assert "财经快讯" in review.news_section
+        assert "财经快讯" in format_daily_review(review)
+        # 交叉一致性：与直接调 build_news_section 一致
+        assert review.news_section == build_news_section(
+            str(tmp_path / "pit_cache" / "cls_news.csv")
+        )
+
+    def test_review_today_path_carries_news_section(self, tmp_path, monkeypatch) -> None:
+        """正常 review_today 路径（有信号）也塞财经快讯段。"""
+        from aqsp.briefing.closing_review import ClosingReviewer
+
+        ledger = tmp_path / "predictions.jsonl"
+        paper = tmp_path / "paper_trades.jsonl"
+        ledger.write_text("", encoding="utf-8")
+        paper.write_text("", encoding="utf-8")
+        monkeypatch.setenv("AQSP_RUNTIME_DATA_ROOT", str(tmp_path))
+        (tmp_path / "pit_cache").mkdir()
+        _write_news(tmp_path / "pit_cache")
+
+        review = ClosingReviewer(
+            ledger_path=str(ledger), paper_ledger_path=str(paper)
+        ).review_today("2025-06-01")
+        assert "财经快讯" in review.news_section
+
+    def test_default_path_resolves_via_runtime_root(self, tmp_path, monkeypatch) -> None:
+        """csv_path=None ⇒ 走 <runtime>/pit_cache/cls_news.csv（写读同源）。"""
+        from aqsp.briefing.closing_review import build_news_section
+
+        monkeypatch.setenv("AQSP_RUNTIME_DATA_ROOT", str(tmp_path))
+        (tmp_path / "pit_cache").mkdir()
+        _write_news(tmp_path / "pit_cache")
+        assert "财经快讯" in build_news_section()
