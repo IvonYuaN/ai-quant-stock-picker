@@ -1155,3 +1155,198 @@ class TestNewsSection:
         (tmp_path / "pit_cache").mkdir()
         _write_news(tmp_path / "pit_cache")
         assert "财经快讯" in build_news_section()
+
+
+# ===========================================================================
+# 重大公告动态段（PR #253，打通 announcements.csv「被排雷层吃掉、未呈现」断链）
+# ===========================================================================
+_ANNOUNCE_HEADER = "symbol,name,notice_date,text"
+
+# 6 条近窗口内（2026-09-21~09-27）+ 1 条超窗口（2026-09-01），覆盖各分类。
+_ANNOUNCE_BODY_LINES = [
+    "600095,湘财股份,2026-09-25,湘财股份:关于子公司收到中国证券监督管理委员会行政处罚事先告知书的公告",
+    "000001,平安银行,2026-09-26,平安银行:关于以集中竞价方式回购公司股份的公告",
+    "300750,宁德时代,2026-09-25,宁德时代:关于筹划重大资产重组暨停牌的公告",
+    "600519,贵州茅台,2026-09-27,贵州茅台:2026年半年度利润分配及现金分红派息实施公告",
+    "002594,比亚迪,2026-09-24,比亚迪:关于持股5%以上股东减持计划期限届满暨实施情况的公告",
+    "601318,中国平安,2026-09-22,中国平安:关于中标某重大项目合同的公告",
+    "600036,招商银行,2026-09-01,招商银行:2026年半年度业绩快报（营收同比正增长）",  # 超 7 日窗口 ⇒ 过滤
+]
+
+
+def _write_announcements(tmp_path, mtime_offset_days: float = 0.0) -> Path:
+    """写 announcements.csv 夹具（6 近窗 + 1 超窗，覆盖监管处罚/回购/重组/分红/减持/中标）。"""
+    p = tmp_path / "announcements.csv"
+    p.write_text(
+        _ANNOUNCE_HEADER + "\n" + "\n".join(_ANNOUNCE_BODY_LINES) + "\n",
+        encoding="utf-8",
+    )
+    if mtime_offset_days:
+        import os as _os
+        import time as _t
+
+        old = _t.time() - mtime_offset_days * 86400
+        _os.utime(p, (old, old))
+    return p
+
+
+def _fixed_now(monkeypatch):
+    """把 now_shanghai 钉到 2026-09-27，使 recent_days=7 窗 = 2026-09-20~09-27。"""
+    from datetime import datetime
+
+    from aqsp.briefing import closing_review
+
+    monkeypatch.setattr(
+        closing_review, "now_shanghai", lambda: datetime(2026, 9, 27, 16, 0, 0)
+    )
+
+
+class TestAnnouncementsSection:
+    def test_render_when_present(self, tmp_path, monkeypatch) -> None:
+        from aqsp.briefing.closing_review import build_announcements_section
+
+        _fixed_now(monkeypatch)
+        path = _write_announcements(tmp_path)
+        section = build_announcements_section(str(path))
+        assert "重大公告动态" in section
+        # 超窗的 600036(09-01) 被过滤 ⇒ 仅 6 条
+        assert "近 7 日共 6 条公告" in section
+        # 分类计数（按关注度顺序）
+        assert "监管处罚 1" in section
+        assert "重组/并购 1" in section
+        assert "减持 1" in section
+        assert "增持/回购 1" in section
+        assert "业绩" not in section  # 09-01 那条业绩被窗口过滤
+        # 样本行含 symbol + 分类徽标
+        assert "[监管处罚] 09-25 湘财股份（600095）" in section
+        # 红线条款
+        assert "不改变打分/排序/下单" in section
+
+    def test_category_priority_regulatory_first(self, tmp_path, monkeypatch) -> None:
+        """监管处罚类排在最前展示（关注度优先）。"""
+        from aqsp.briefing.closing_review import build_announcements_section
+
+        _fixed_now(monkeypatch)
+        path = _write_announcements(tmp_path)
+        section = build_announcements_section(str(path))
+        reg_idx = section.find("监管处罚")
+        div_idx = section.find("分红/送转")
+        assert reg_idx != -1 and div_idx != -1
+        assert reg_idx < div_idx
+
+    def test_recent_days_filter(self, tmp_path, monkeypatch) -> None:
+        """recent_days=2 ⇒ cutoff=09-25，含 09-25/26/27（湘财/宁德/平安/茅台=4 条），
+        09-24/09-22 被过滤。"""
+        from aqsp.briefing.closing_review import build_announcements_section
+
+        _fixed_now(monkeypatch)
+        path = _write_announcements(tmp_path)
+        section = build_announcements_section(str(path), recent_days=2)
+        assert "近 2 日共 4 条公告" in section
+        assert "比亚迪" not in section  # 09-24 被过滤
+        assert "中国平安" not in section  # 09-22 被过滤
+        assert "湘财股份" in section  # 09-25 在窗内
+        assert "平安银行" in section
+        assert "贵州茅台" in section
+
+    def test_top_n_param(self, tmp_path, monkeypatch) -> None:
+        from aqsp.briefing.closing_review import build_announcements_section
+
+        _fixed_now(monkeypatch)
+        path = _write_announcements(tmp_path)
+        section = build_announcements_section(str(path), top_n=3)
+        # 每类最多 top_n//3=1 条，6 类各 1 条共 6 条样本，但顶部提示仅展示重点 3 条
+        assert "仅展示重点 3 条" in section
+
+    def test_missing_file_returns_empty(self, tmp_path) -> None:
+        from aqsp.briefing.closing_review import build_announcements_section
+
+        assert build_announcements_section(str(tmp_path / "nope.csv")) == ""
+
+    def test_wrong_header_returns_empty(self, tmp_path) -> None:
+        from aqsp.briefing.closing_review import build_announcements_section
+
+        path = tmp_path / "announcements.csv"
+        path.write_text("a,b,c\n1,2,3\n", encoding="utf-8")
+        assert build_announcements_section(str(path)) == ""
+
+    def test_empty_body_returns_empty(self, tmp_path) -> None:
+        from aqsp.briefing.closing_review import build_announcements_section
+
+        path = tmp_path / "announcements.csv"
+        path.write_text(_ANNOUNCE_HEADER + "\n", encoding="utf-8")
+        assert build_announcements_section(str(path)) == ""
+
+    def test_malformed_rows_dropped_not_fatally(self, tmp_path, monkeypatch) -> None:
+        """坏行（缺 text / 缺 notice_date）只剔除该行，不拖垮整段。"""
+        from aqsp.briefing.closing_review import build_announcements_section
+
+        _fixed_now(monkeypatch)
+        path = tmp_path / "announcements.csv"
+        path.write_text(
+            "\n".join(
+                [
+                    _ANNOUNCE_HEADER,
+                    "600001,坏公司,,标题但缺披露日",            # notice_date 空 ⇒ 剔除
+                    "600002,,2026-09-25,有日缺名字",           # name 空但 symbol/text/notice 全 ⇒ 仍收录
+                    "600003,好公司,2026-09-25,好公司:收到行政处罚事先告知书",  # 有效
+                    ",空代码,2026-09-25,无代码公告",           # symbol 空 ⇒ 剔除
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        section = build_announcements_section(str(path))
+        assert "近 7 日共 2 条公告" in section
+        assert "好公司" in section
+        assert "有日缺名字" in section
+        assert "无代码公告" not in section
+        assert "只读参考" in section
+
+    def test_stale_data_annotated(self, tmp_path, monkeypatch) -> None:
+        """CSV mtime 超 stale_hours ⇒ 段尾标「非实时」。"""
+        from aqsp.briefing.closing_review import build_announcements_section
+
+        _fixed_now(monkeypatch)
+        path = _write_announcements(tmp_path, mtime_offset_days=10.0)
+        section = build_announcements_section(str(path))
+        assert "非实时" in section
+        # 未陈旧（默认 72h 内）时不标注
+        fresh = _write_announcements(tmp_path)
+        assert "非实时" not in build_announcements_section(str(fresh))
+
+    def test_empty_review_still_carries_announcements_section(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """回归（与 09-26 IC 段同类缺陷防回归）：无信号走 _empty_review 早退时，
+        重大公告段不得被静默丢弃。"""
+        from aqsp.briefing.closing_review import (
+            ClosingReviewer,
+            format_daily_review,
+        )
+
+        _fixed_now(monkeypatch)
+        ledger = tmp_path / "predictions.jsonl"
+        paper = tmp_path / "paper_trades.jsonl"
+        ledger.write_text("", encoding="utf-8")
+        paper.write_text("", encoding="utf-8")
+        monkeypatch.setenv("AQSP_RUNTIME_DATA_ROOT", str(tmp_path))
+        (tmp_path / "pit_cache").mkdir()
+        _write_announcements(tmp_path / "pit_cache")
+
+        review = ClosingReviewer(
+            ledger_path=str(ledger), paper_ledger_path=str(paper)
+        ).review_today("2025-06-01")
+        assert "重大公告动态" in review.announcements_section
+        rendered = format_daily_review(review)
+        assert "重大公告动态" in rendered
+
+    def test_default_path_resolves_via_runtime_root(self, tmp_path, monkeypatch) -> None:
+        """csv_path=None ⇒ 走 <runtime>/pit_cache/announcements.csv（写读同源）。"""
+        from aqsp.briefing.closing_review import build_announcements_section
+
+        _fixed_now(monkeypatch)
+        monkeypatch.setenv("AQSP_RUNTIME_DATA_ROOT", str(tmp_path))
+        (tmp_path / "pit_cache").mkdir()
+        _write_announcements(tmp_path / "pit_cache")
+        assert "重大公告动态" in build_announcements_section()
