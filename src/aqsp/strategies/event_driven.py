@@ -38,7 +38,11 @@
 `features/event_calendar.py` 模块 docstring 的「已知口径限制」段。
 因此日历证据**只可用于当日/近期研判，不可用于历史回测复现**。
 
-仍未接入（见文件末 TODO）：停复牌 / 业绩预告 / 分红送转 的真实取数。
+✅ 已接入（2026-09-27）：停复牌 / 业绩预告 / 分红送转 的真实事件标注，
+由 `EventCalendar.from_cache()` 读 `pit_cache/{suspend_resume,earnings_forecast,dividend_plan}.csv`
+（数据模块 `aqsp.data.suspend_resume/earnings_forecast/dividend_plan`，
+由 `scripts/fetch_event_data.py` 盘前预加载），`_annotate_*` 只补证据文本、不改分。
+未接的只有「政策事件」一类（需新闻/公告 NLP，见文件末进度段）。
 """
 
 from __future__ import annotations
@@ -503,6 +507,13 @@ class EventDrivenStrategy(BaseStrategy):
             self._annotate_longhubang(
                 calendar, symbol, as_of, event_type, reasons, risks, needs_data
             )
+            self._annotate_suspends(
+                calendar, symbol, as_of, event_type, reasons, risks, needs_data
+            )
+            self._annotate_earnings(
+                calendar, symbol, as_of, event_type, reasons, risks, needs_data
+            )
+            self._annotate_dividends(calendar, symbol, as_of, event_type, risks)
         except Exception:  # noqa: BLE001 - best-effort enrichment, never break screening
             # 绝不因「附加证据」失败而让选股链路失败；但**必须留痕** ——
             # 否则「没数据 / 出 bug / 真没事件」在输出上完全无法区分
@@ -586,6 +597,81 @@ class EventDrivenStrategy(BaseStrategy):
             )
             self._resolve_needs(needs_data, self.NEEDS_LHB_CONFIRM)
 
+    def _annotate_suspends(
+        self,
+        calendar: EventCalendar,
+        symbol: str,
+        as_of: str,
+        event_type: str,
+        reasons: List[str],
+        risks: List[str],
+        needs_data: List[str],
+    ) -> None:
+        """停复牌佐证：把真实停复牌记录写进证据，并按事件类型消解对应占位。
+
+        只有日历**确实装载了停复牌数据面**时才做判断（缺数据 ≠ 没事件）。
+        - `resume_trading`：真实停复牌记录可消解 `NEEDS_SUSPEND_REASON`（停牌原因已核实）。
+        - 当前停牌中（`suspended`）→ 写进 `risks`；即将复牌（`resuming_soon`）→ 写进 `reasons`。
+        """
+        if not calendar.has_suspend_resume_data():
+            return
+        events = calendar.suspend_resumes(symbol, as_of)
+        for event in events[:2]:
+            if event.state == "suspended":
+                risks.append(event.detail)
+            else:
+                reasons.append(event.detail)
+        # 有真实停复牌记录 ⇒ 停牌原因/期限已核实，消解对应人工核验项
+        if events and event_type == "resume_trading":
+            self._resolve_needs(needs_data, self.NEEDS_SUSPEND_REASON)
+
+    def _annotate_earnings(
+        self,
+        calendar: EventCalendar,
+        symbol: str,
+        as_of: str,
+        event_type: str,
+        reasons: List[str],
+        risks: List[str],
+        needs_data: List[str],
+    ) -> None:
+        """业绩预告佐证：把近期披露的真实预告写进证据。
+
+        - `earnings_surge`：真有业绩预告 ⇒ 消解 `NEEDS_EARNINGS_DATA`（业绩数据已核实）。
+        - 预减 / 首亏类 → 写进 `risks`；预增 / 扭亏类 → 写进 `reasons`。
+        """
+        if not calendar.has_earnings_forecast_data():
+            return
+        events = calendar.recent_earnings_forecasts(symbol, as_of)
+        for event in events[:2]:
+            ftype = (event.forecast_type or "").strip()
+            # 明确利好 / 利空分类（其余类型按中性写进 reasons）
+            bearish = any(k in ftype for k in ("预减", "首亏", "续亏", "略减"))
+            if bearish:
+                risks.append(event.detail)
+            else:
+                reasons.append(event.detail)
+        if events and event_type == "earnings_surge":
+            self._resolve_needs(needs_data, self.NEEDS_EARNINGS_DATA)
+
+    def _annotate_dividends(
+        self,
+        calendar: EventCalendar,
+        symbol: str,
+        as_of: str,
+        event_type: str,
+        risks: List[str],
+    ) -> None:
+        """分红除权预警：`as_of` 起 horizon 窗口内即将除权除息的分红方案。
+
+        除权除息会造成价格跳空（技术性下移），属**前瞻风险提示**，写进 `risks`。
+        只补证据文本，不改 score / 仓位 / 目标价。
+        """
+        if not calendar.has_dividend_plan_data():
+            return
+        for event in calendar.upcoming_dividends(symbol, as_of)[:2]:
+            risks.append(event.detail)
+
     @staticmethod
     def _resolve_needs(needs_data: List[str], text: str) -> None:
         """从 `needs_external_data` 中移除已被日历回答的条目（就地修改）。"""
@@ -654,12 +740,20 @@ def format_event_signals(signals: List[EventSignal], top_n: int = 5) -> str:
 #      并消解 `needs_external_data` 中「龙虎榜/公告确认是否真有事件」
 #    - 点内安全：as_of 默认取 K 线最后一行日期，不引入未来信息
 #
-# ⏳ 取数模块待落地（不影响上面标注层：日历对缺数据面自动降级）：
-# 1. 停复牌   → akshare `ak.stock_tfp_em()`   等价东财 datacenter 源
-# 2. 业绩预告 → akshare `ak.stock_yjyg_em()`  等价东财 datacenter 源
-# 3. 分红送转 → akshare `ak.stock_fhps_em()`  等价东财 datacenter 源
-#    （三者按 `aqsp/data/lockup.py` 的模板实现后，喂给 `EventCalendar` 即可）
-# 4. 政策事件 → 需新闻/公告 NLP（可选 LLM，走 `llm_call_or_fallback` wrapper）
+# ✅ 已完成（2026-09-27）：三类真实事件取数接入日历
+# 1. 停复牌   → `aqsp.data.suspend_resume`（等价东财 datacenter 源），
+#    `fetch_event_data.py` 盘前预加载 → `pit_cache/suspend_resume.csv` →
+#    `EventCalendar.suspend_resumes()` → `_annotate_suspends`（消解 NEEDS_SUSPEND_REASON）
+# 2. 业绩预告 → `aqsp.data.earnings_forecast`（等价东财 datacenter 源），
+#    → `pit_cache/earnings_forecast.csv` → `EventCalendar.recent_earnings_forecasts()`
+#    → `_annotate_earnings`（消解 NEEDS_EARNINGS_DATA）
+# 3. 分红送转 → `aqsp.data.dividend_plan`（等价东财 datacenter 源），
+#    → `pit_cache/dividend_plan.csv` → `EventCalendar.upcoming_dividends()`
+#    → `_annotate_dividends`（除权除息前瞻风险提示）
+#    三者均只补证据文本、不改 score / 仓位 / 目标价（宪法红线不变）。
+#
+# ⏳ 未接入（需新闻/公告 NLP，可选 LLM，走 `llm_call_or_fallback` wrapper）：
+# 4. 政策事件
 #
 # ⛔ 明确不做（做了会违反宪法红线，不是"待办"）：
 # - **`calculate_score` 增加「事件数据加权」**：事件权重属于策略参数，

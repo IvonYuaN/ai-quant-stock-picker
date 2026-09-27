@@ -15,8 +15,11 @@ import warnings
 import pandas as pd
 import pytest
 
+from aqsp.data.dividend_plan import DividendPlanItem
+from aqsp.data.earnings_forecast import EarningsForecastItem
 from aqsp.data.lockup import LockupItem
 from aqsp.data.longhubang import LongHubangItem
+from aqsp.data.suspend_resume import SuspendResumeItem
 from aqsp.features.event_calendar import EventCalendar
 from aqsp.strategies import EventDrivenStrategy, format_event_signals
 
@@ -78,6 +81,58 @@ def _lhb(symbol: str = "600000", trade_date: str = "2024-01-29") -> LongHubangIt
         sell_amount=2000.0,
         net_amount=8000.0,
         interpretation="机构专用席位买入",
+    )
+
+
+def _suspend(
+    symbol: str = "600000",
+    suspend_date: str = "2024-01-28",
+    resume_date: str = "2024-02-05",
+) -> SuspendResumeItem:
+    return SuspendResumeItem(
+        symbol=symbol,
+        name="测试股",
+        suspend_date=suspend_date,
+        resume_date=resume_date,
+        suspend_days=8.0,
+        suspend_type="连续停牌",
+        reason="重大资产重组",
+    )
+
+
+def _earn(
+    symbol: str = "600000",
+    notice_date: str = "2024-01-29",
+    ftype: str = "预增",
+) -> EarningsForecastItem:
+    return EarningsForecastItem(
+        symbol=symbol,
+        name="测试股",
+        notice_date=notice_date,
+        report_date="2023-09-30",
+        forecast_type=ftype,
+        forecast_amt_lower=1e8,
+        forecast_amt_upper=2e8,
+        change_pct_lower=50.0,
+        change_pct_upper=80.0,
+        reason="需求旺盛",
+        is_latest=True,
+    )
+
+
+def _div(
+    symbol: str = "600000",
+    ex_dividend_date: str = "2024-02-05",
+) -> DividendPlanItem:
+    return DividendPlanItem(
+        symbol=symbol,
+        name="测试股",
+        report_date="2023-12-31",
+        plan_notice_date="2024-01-20",
+        ex_dividend_date=ex_dividend_date,
+        bonus_ratio=0.0,
+        cash_per_10=10.0,
+        progress="实施分配",
     )
 
 
@@ -362,3 +417,139 @@ def test_partial_annotation_persists_when_later_step_raises():
     assert [r for r in sig.risks if "解禁预警" in r]  # 先执行的保留
     assert not [r for r in sig.reasons if "龙虎榜" in r]  # 后执行的失败，未污染
     assert sig.score > 0  # 信号照常产出
+
+
+# ============================================================
+# 4. 停复牌面（_annotate_suspends）
+# ============================================================
+
+
+def test_suspend_resume_record_appended_and_resolves_needs_when_resume_trading():
+    """resume_trading 信号 + 真实停复牌记录 → 消解 NEEDS_SUSPEND_REASON。"""
+    cal = EventCalendar(suspend_resume=[_suspend(resume_date="2024-02-05")])
+    sig = _only_signal(EventDrivenStrategy(event_calendar=cal), _resume_df())
+    assert sig.event_type == "resume_trading"
+    assert EventDrivenStrategy.NEEDS_SUSPEND_REASON not in sig.needs_external_data
+    # 即将复牌（resuming_soon）写进 reasons
+    assert any("停复牌" in r for r in sig.reasons)
+
+
+def test_suspend_record_no_look_ahead_when_resume_after_as_of_horizon():
+    """复牌日远超前瞻窗（2025）→ 不进证据，也不消解占位。"""
+    cal = EventCalendar(suspend_resume=[_suspend(resume_date="2025-01-01")])
+    sig = _only_signal(EventDrivenStrategy(event_calendar=cal), _resume_df())
+    assert not [r for r in sig.reasons + sig.risks if "停复牌" in r]
+    assert EventDrivenStrategy.NEEDS_SUSPEND_REASON in sig.needs_external_data
+
+
+def test_no_suspend_annotation_when_calendar_lacks_face():
+    """缺停复牌面 ⇒ 不得臆断，占位保留。"""
+    cal = EventCalendar(longhubang=[_lhb()])
+    sig = _only_signal(EventDrivenStrategy(event_calendar=cal), _resume_df())
+    assert EventDrivenStrategy.NEEDS_SUSPEND_REASON in sig.needs_external_data
+
+
+# ============================================================
+# 5. 业绩预告面（_annotate_earnings）
+# ============================================================
+
+
+def test_earnings_forecast_appended_and_resolves_needs_when_surge():
+    """earnings_surge + 近期真实业绩预告 → 消解 NEEDS_EARNINGS_DATA。"""
+    cal = EventCalendar(earnings_forecasts=[_earn(notice_date="2024-01-29")])
+    sig = _only_signal(EventDrivenStrategy(event_calendar=cal), _surge_df())
+    assert sig.event_type == "earnings_surge"
+    assert EventDrivenStrategy.NEEDS_EARNINGS_DATA not in sig.needs_external_data
+    assert any("业绩预告" in r for r in sig.reasons)
+
+
+def test_bearish_forecast_goes_to_risks_when_surge():
+    """预减类业绩预告在 earnings_surge 下属风险（放量大涨但预告利空）。"""
+    cal = EventCalendar(earnings_forecasts=[_earn(notice_date="2024-01-29", ftype="预减")])
+    sig = _only_signal(EventDrivenStrategy(event_calendar=cal), _surge_df())
+    assert any("业绩预告" in r for r in sig.risks)
+
+
+def test_earnings_forecast_no_look_ahead_when_notice_after_as_of():
+    """公告日晚于 as_of 的预告不能用（as_of 当天市场未知）。"""
+    cal = EventCalendar(earnings_forecasts=[_earn(notice_date="2024-02-05")])
+    sig = _only_signal(EventDrivenStrategy(event_calendar=cal), _surge_df())
+    assert not [r for r in sig.reasons + sig.risks if "业绩预告" in r]
+    assert EventDrivenStrategy.NEEDS_EARNINGS_DATA in sig.needs_external_data
+
+
+def test_no_earnings_annotation_when_calendar_lacks_face():
+    cal = EventCalendar(longhubang=[_lhb()])
+    sig = _only_signal(EventDrivenStrategy(event_calendar=cal), _surge_df())
+    assert EventDrivenStrategy.NEEDS_EARNINGS_DATA in sig.needs_external_data
+
+
+# ============================================================
+# 6. 分红送转面（_annotate_dividends）
+# ============================================================
+
+
+def test_upcoming_dividend_appended_to_risks():
+    """即将除权除息 → 前瞻性风险（价格跳空）写进 risks，不改分。"""
+    cal = EventCalendar(dividend_plans=[_div(ex_dividend_date="2024-02-05")])
+    sig = _only_signal(EventDrivenStrategy(event_calendar=cal), _breakout_df())
+    div_risks = [r for r in sig.risks if "分红送转" in r]
+    assert len(div_risks) == 1
+    assert "除权除息" in div_risks[0]
+
+
+def test_dividend_no_look_ahead_when_ex_date_before_or_far():
+    """已除权（< as_of）或远超 horizon 的分红不产生预警。"""
+    cal = EventCalendar(dividend_plans=[_div(ex_dividend_date="2024-01-15")])
+    sig = _only_signal(EventDrivenStrategy(event_calendar=cal), _breakout_df())
+    assert not [r for r in sig.risks if "分红送转" in r]
+
+
+def test_no_dividend_annotation_when_calendar_lacks_face():
+    cal = EventCalendar(longhubang=[_lhb()])
+    sig = _only_signal(EventDrivenStrategy(event_calendar=cal), _breakout_df())
+    assert not [r for r in sig.risks if "分红送转" in r]
+
+
+def test_new_faces_do_not_change_score_or_targets():
+    """三面证据只补文本，score / 目标价 / 仓位必须与无日历时完全一致。"""
+    base = _only_signal(EventDrivenStrategy(), _breakout_df())
+    cal = EventCalendar(
+        suspend_resume=[_suspend(resume_date="2024-02-05")],
+        earnings_forecasts=[_earn(notice_date="2024-01-29")],
+        dividend_plans=[_div(ex_dividend_date="2024-02-05")],
+    )
+    enriched = _only_signal(EventDrivenStrategy(event_calendar=cal), _breakout_df())
+    assert enriched.score == base.score
+    assert enriched.entry_price == base.entry_price
+    assert enriched.stop_loss == base.stop_loss
+    assert enriched.take_profit == base.take_profit
+    assert enriched.position_pct == base.position_pct
+
+
+# ============================================================
+# 夹具补充
+# ============================================================
+
+
+def _resume_df() -> pd.DataFrame:
+    """20 正常日 + 停牌断层 6 天 + 复牌放量涨停 → 触发 `resume_trading`（as_of=2024-01-26）。"""
+    dates = list(pd.date_range("2024-01-01", periods=20, freq="D"))
+    dates.append(pd.Timestamp("2024-01-26"))  # 01-20 → 01-26，断层 6 天
+    n = len(dates)
+    prices = [10.0] * (n - 1) + [10.8]  # 复牌放量涨停
+    volumes = [1_000_000] * n
+    volumes[-1] = 2_500_000
+    return pd.DataFrame(
+        {
+            "date": [d.strftime("%Y-%m-%d") for d in dates],
+            "symbol": ["600000"] * n,
+            "name": ["测试股"] * n,
+            "open": prices,
+            "high": [p * 1.02 for p in prices],
+            "low": [p * 0.98 for p in prices],
+            "close": prices,
+            "volume": volumes,
+            "amount": [p * v for p, v in zip(prices, volumes)],
+        }
+    )

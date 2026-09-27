@@ -334,7 +334,7 @@ class CircuitBreakerConfig:
 
 ## 7. 任务拆分(PR 顺序)
 
-每个 PR 不超过 ~300 行变更。小米Pro 按下面顺序提,Claude 逐个审查。
+小米Pro 按下面顺序提,Claude 逐个审查。
 
 | # | PR 标题 | 依赖 | 验收 | 状态 |
 |---|---|---|---|---|

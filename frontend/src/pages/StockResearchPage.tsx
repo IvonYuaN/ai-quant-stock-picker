@@ -9,9 +9,12 @@ import { useParams } from "react-router-dom";
 import { CalendarClock, ExternalLink } from "lucide-react";
 import {
   api,
+  type DividendPlanEvent,
+  type EarningsForecastEvent,
   type EventCalendarData,
   type Quote,
   type RecentLonghubangEvent,
+  type SuspendResumeEvent,
   type UpcomingUnlockEvent,
 } from "@/lib/api";
 import {
@@ -96,6 +99,9 @@ export function StockResearchPage() {
   const events = catalyst ? filterEventsForSymbol(catalyst.events, code) : [];
   const upcomingUnlocks = eventCalendar ? sortUnlocksByDaysUntil(eventCalendar.upcoming_unlocks ?? []) : [];
   const recentLonghubang = eventCalendar?.recent_longhubang ?? [];
+  const suspendResumes = eventCalendar?.suspend_resumes ?? [];
+  const recentEarnings = eventCalendar?.recent_earnings_forecasts ?? [];
+  const upcomingDividends = eventCalendar?.upcoming_dividends ?? [];
 
   return (
     <>
@@ -145,12 +151,24 @@ export function StockResearchPage() {
         <SectionHeader
           number="03"
           title="事件面"
-          description="解禁预警 + 近期龙虎榜（pit_cache 只读，缺数据 ≠ 没事件）。"
+          description="解禁 / 龙虎榜 / 停复牌 / 业绩预告 / 分红（pit_cache 只读，缺数据 ≠ 没事件）。"
           icon={CalendarClock}
-          count={upcomingUnlocks.length + recentLonghubang.length}
+          count={
+            upcomingUnlocks.length +
+            recentLonghubang.length +
+            suspendResumes.length +
+            recentEarnings.length +
+            upcomingDividends.length
+          }
         />
         {eventsError ? <StatePanel tone="warn">{eventsError}，事件面降级。</StatePanel> : null}
-        {!eventsError && !loading && upcomingUnlocks.length === 0 && recentLonghubang.length === 0 ? (
+        {!eventsError &&
+        !loading &&
+        upcomingUnlocks.length === 0 &&
+        recentLonghubang.length === 0 &&
+        suspendResumes.length === 0 &&
+        recentEarnings.length === 0 &&
+        upcomingDividends.length === 0 ? (
           <EmptyState title="暂无事件数据（pit_cache 未生成）" detail="由 scripts/preload_event_data.sh 预加载后可见。" />
         ) : null}
         {upcomingUnlocks.length > 0 ? (
@@ -166,6 +184,30 @@ export function StockResearchPage() {
             <p className="aq-eyebrow">近 {eventCalendar?.longhubang_lookback_days ?? 5} 日龙虎榜</p>
             {recentLonghubang.map((event, index) => (
               <LonghubangRow key={index} event={event} />
+            ))}
+          </>
+        ) : null}
+        {suspendResumes.length > 0 ? (
+          <>
+            <p className="aq-eyebrow">停复牌动态</p>
+            {suspendResumes.map((event, index) => (
+              <SuspendRow key={index} event={event} />
+            ))}
+          </>
+        ) : null}
+        {recentEarnings.length > 0 ? (
+          <>
+            <p className="aq-eyebrow">业绩预告</p>
+            {recentEarnings.map((event, index) => (
+              <EarningsRow key={index} event={event} />
+            ))}
+          </>
+        ) : null}
+        {upcomingDividends.length > 0 ? (
+          <>
+            <p className="aq-eyebrow">分红送转（即将除权除息）</p>
+            {upcomingDividends.map((event, index) => (
+              <DividendRow key={index} event={event} />
             ))}
           </>
         ) : null}
@@ -222,6 +264,57 @@ function LonghubangRow({ event }: { event: RecentLonghubangEvent }) {
         <b className={cn("aq-num", net.cls)}>{net.text}</b>
       </div>
       {event.interpretation ? <p className="aq-detail-muted">{event.interpretation}</p> : null}
+    </article>
+  );
+}
+
+const SUSPEND_STATE_LABEL: Record<string, string> = {
+  resuming_soon: "即将复牌",
+  recently_resumed: "已复牌",
+  suspended: "停牌中",
+};
+
+function SuspendRow({ event }: { event: SuspendResumeEvent }) {
+  return (
+    <article className="aq-event-row">
+      <div className="aq-tag-row">
+        <Badge className="aq-badge-warn">{SUSPEND_STATE_LABEL[event.state] ?? "停复牌"}</Badge>
+        <span className="aq-detail-muted">
+          停牌 {event.suspend_date}
+          {event.resume_date ? ` · 预计复牌 ${event.resume_date}` : ""}
+        </span>
+      </div>
+      <p className="aq-event-title">{event.name || event.symbol}</p>
+      <p className="aq-detail-muted">{event.detail}</p>
+    </article>
+  );
+}
+
+function EarningsRow({ event }: { event: EarningsForecastEvent }) {
+  return (
+    <article className="aq-event-row">
+      <div className="aq-tag-row">
+        <Badge className="aq-badge-up">{event.forecast_type || "业绩预告"}</Badge>
+        <span className="aq-detail-muted">
+          {event.notice_date} 披露 · {event.days_ago} 天前
+        </span>
+      </div>
+      <p className="aq-event-title">{event.name || event.symbol}</p>
+      <p className="aq-detail-muted">{event.detail}</p>
+    </article>
+  );
+}
+
+function DividendRow({ event }: { event: DividendPlanEvent }) {
+  return (
+    <article className="aq-event-row">
+      <div className="aq-tag-row">
+        <Tag>{event.ex_dividend_date} 除权除息</Tag>
+        <span className="aq-detail-muted">{event.days_until} 天后</span>
+        {event.progress ? <span className="aq-detail-muted">{event.progress}</span> : null}
+      </div>
+      <p className="aq-event-title">{event.name || event.symbol}</p>
+      <p className="aq-detail-muted">{event.detail}</p>
     </article>
   );
 }

@@ -279,13 +279,37 @@ export interface RecentLonghubangEvent {
   days_ago: number; net_amount: number | null; interpretation: string; detail: string;
 }
 
+/** 单条停复牌（`data.suspend_resumes` 元素）。state ∈ resuming_soon | recently_resumed | suspended。 */
+export interface SuspendResumeEvent {
+  symbol: string; name: string; suspend_date: string; resume_date: string;
+  state: string; suspend_type: string; reason: string; detail: string;
+}
+
+/** 单条业绩预告（`data.recent_earnings_forecasts` 元素，以公告日做 no-look-ahead）。 */
+export interface EarningsForecastEvent {
+  symbol: string; name: string; notice_date: string; report_date: string;
+  forecast_type: string; days_ago: number; detail: string;
+}
+
+/** 单条分红送转（`data.upcoming_dividends` 元素，即将除权除息）。 */
+export interface DividendPlanEvent {
+  symbol: string; name: string; ex_dividend_date: string;
+  days_until: number; progress: string; detail: string;
+}
+
 /** 事件日历（pit_cache 只读）。缺缓存 ≠ 没事件，用 has_*_data 区分。 */
 export interface EventCalendarData {
   symbol: string; as_of: string;
   unlock_horizon_days: number; longhubang_lookback_days: number;
   has_unlock_data: boolean; has_longhubang_data: boolean;
+  has_suspend_resume_data?: boolean;
+  has_earnings_forecast_data?: boolean;
+  has_dividend_plan_data?: boolean;
   upcoming_unlocks: UpcomingUnlockEvent[];
   recent_longhubang: RecentLonghubangEvent[];
+  suspend_resumes?: SuspendResumeEvent[];
+  recent_earnings_forecasts?: EarningsForecastEvent[];
+  upcoming_dividends?: DividendPlanEvent[];
 }
 
 /** 单条催化事件（后端 `GET /api/catalyst` 的 `data.events` 元素）。 */

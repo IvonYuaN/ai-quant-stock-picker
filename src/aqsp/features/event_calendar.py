@@ -45,12 +45,15 @@ from dataclasses import dataclass, fields
 from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING, Optional, Sequence
 
-# ⚠️ 只在类型标注下导入 `aqsp.data.*`：本模块被 `strategies/event_driven.py` 导入，
+# 只在类型标注下导入 `aqsp.data.*`：本模块被 `strategies/event_driven.py` 导入，
 # 若在此做运行时导入会把整个 `aqsp.data` 拉进**打分链路的 import 图**
-# （实测 0.245s → 0.327s）。两个 Item 类仅用于类型标注，故用 TYPE_CHECKING 解耦。
+# （实测 0.245s → 0.327s）。各 Item 类仅用于类型标注，故用 TYPE_CHECKING 解耦。
 if TYPE_CHECKING:
+    from aqsp.data.dividend_plan import DividendPlanItem
+    from aqsp.data.earnings_forecast import EarningsForecastItem
     from aqsp.data.lockup import LockupItem, LockupSource
     from aqsp.data.longhubang import LongHubangItem, LongHubangSource
+    from aqsp.data.suspend_resume import SuspendResumeItem
 
 _logger = logging.getLogger(__name__)
 
@@ -65,10 +68,16 @@ UNLOCK_RATIO_LOW = 0.01  # ≥1% → 轻微冲击
 # 龙虎榜净买入（万元）显著额锚点，仅用于证据文案强弱，不参与打分
 LHB_NET_AMOUNT_STRONG = 5000.0  # ≥5000 万元净买入
 
-# pit_cache 约定（与 `aqsp.data.lockup` / `aqsp.data.longhubang` 的写侧路径一致）
+# pit_cache 约定（与各数据面 Source 的写侧 `_default_cache_path()` 一致）
 PIT_CACHE_DIRNAME = "pit_cache"
 LOCKUP_CACHE_FILENAME = "lockup.csv"
 LONGHUBANG_CACHE_FILENAME = "longhubang.csv"
+# 三类「已实现 + 已由 scripts/fetch_event_data.py 盘前预加载进 pit_cache/」的事件面。
+# 此前 EventCalendar 只读 lockup / longhubang 两个面 —— 这三类数据虽已落盘，
+# 但**没有接进日历证据链**（`event_driven.py` 末 TODO「取数模块待落地」正是此缺口）。
+SUSPEND_RESUME_CACHE_FILENAME = "suspend_resume.csv"
+EARNINGS_FORECAST_CACHE_FILENAME = "earnings_forecast.csv"
+DIVIDEND_PLAN_CACHE_FILENAME = "dividend_plan.csv"
 
 # 非交易日补偿：前瞻窗口的起点常落在周末/节假日，那些日子**不存在任何数据行**，
 # 若严格要求「数据最早日 <= 窗口起点」，正常取数也会被误判成「覆盖不足」。
@@ -209,14 +218,65 @@ class RecentEvent:
     detail: str  # 人类可读证据行
 
 
+@dataclass(frozen=True)
+class SuspendResumeEvent:
+    """停复牌记录（含停牌日 + 预计复牌日，按 `as_of` 归到三态）。
+
+    `state` 取值：
+    - ``resuming_soon``：预计复牌日落在 ``[as_of, as_of + horizon]``（前瞻）；
+    - ``recently_resumed``：近期已复牌（回溯）；
+    - ``suspended``：当前处于停牌中、暂无明确复牌预期（回溯）。
+    """
+
+    symbol: str
+    name: str
+    suspend_date: str  # 停牌日 YYYY-MM-DD
+    resume_date: str  # 预计复牌日 YYYY-MM-DD（东财未给则空串）
+    state: str
+    suspend_type: str  # 停牌期限类型
+    reason: str  # 停牌原因
+    detail: str  # 人类可读证据行
+
+
+@dataclass(frozen=True)
+class EarningsForecastEvent:
+    """近期业绩预告（回溯佐证，`as_of - lookback` 内公告）。"""
+
+    symbol: str
+    name: str
+    notice_date: str  # 公告日 YYYY-MM-DD
+    report_date: str  # 报告期 YYYY-MM-DD
+    forecast_type: str  # 预增/预减/扭亏/首亏…
+    days_ago: int  # 距 as_of 的自然日数（>= 0）
+    detail: str  # 人类可读证据行
+
+
+@dataclass(frozen=True)
+class DividendPlanEvent:
+    """即将除权除息的分红送转方案（前瞻预警，`as_of ~ as_of + horizon` 内）。"""
+
+    symbol: str
+    name: str
+    ex_dividend_date: str  # 除权除息日 YYYY-MM-DD
+    days_until: int  # 距 as_of 的自然日数（>= 0）
+    progress: str  # 方案进度（预案/股东大会通过/实施分配…）
+    detail: str  # 人类可读证据行
+
+
 class EventCalendar:
     """点内安全的已知事件日历（纯内存查询，永不触网）。
 
     Args:
         unlocks: 限售解禁记录（已取数）。
         longhubang: 龙虎榜记录（已取数）。
+        suspend_resume: 停复牌记录（已取数）。
+        earnings_forecasts: 业绩预告记录（已取数）。
+        dividend_plans: 分红送转方案（已取数）。
         unlock_horizon_days: 解禁前瞻窗口默认值（自然日）。
         longhubang_lookback_days: 龙虎榜回溯窗口默认值（自然日）。
+        suspend_resume_horizon_days: 停复牌前瞻窗口（预计复牌日落在该窗口 → 预警）。
+        earnings_lookback_days: 业绩预告回溯窗口（公告日在该窗口 → 佐证）。
+        dividend_horizon_days: 分红除权除息前瞻窗口（除权日落在该窗口 → 预警）。
 
     不可变的：内部索引按 symbol 分组并按日期排好序。
     """
@@ -226,11 +286,20 @@ class EventCalendar:
         *,
         unlocks: Sequence[LockupItem] = (),
         longhubang: Sequence[LongHubangItem] = (),
+        suspend_resume: Sequence[SuspendResumeItem] = (),
+        earnings_forecasts: Sequence[EarningsForecastItem] = (),
+        dividend_plans: Sequence[DividendPlanItem] = (),
         unlock_horizon_days: int = 30,
         longhubang_lookback_days: int = 5,
+        suspend_resume_horizon_days: int = 30,
+        earnings_lookback_days: int = 30,
+        dividend_horizon_days: int = 30,
     ) -> None:
         self._unlock_horizon_days = max(0, int(unlock_horizon_days))
         self._lhb_lookback_days = max(0, int(longhubang_lookback_days))
+        self._suspend_resume_horizon_days = max(0, int(suspend_resume_horizon_days))
+        self._earnings_lookback_days = max(0, int(earnings_lookback_days))
+        self._dividend_horizon_days = max(0, int(dividend_horizon_days))
 
         # 去重：同一份记录若被重复喂入（分页重叠、缓存与实时叠加），
         # **不能让同一条预警/佐证报两遍**。键取「业务身份」而非对象相等。
@@ -275,6 +344,74 @@ class EventCalendar:
         # 倒序：最近的排前面，便于取「最近一次上榜」
         for bucket in self._lhb.values():
             bucket.sort(key=lambda pair: pair[0], reverse=True)
+
+        # 停复牌：按 symbol 分组，日期升序（停牌日或复牌日做键均可，取停牌日）。
+        self._suspend_resume: dict[str, list[tuple[date, SuspendResumeItem]]] = {}
+        seen_sr: set[tuple[object, ...]] = set()
+        for item in suspend_resume:
+            day = _parse_iso(item.suspend_date)
+            symbol = _norm_symbol(item.symbol)
+            if day is None or not symbol:
+                continue
+            key = (
+                symbol,
+                day,
+                str(item.resume_date or ""),
+                str(item.suspend_type or ""),
+                str(item.reason or ""),
+            )
+            if key in seen_sr:
+                continue
+            seen_sr.add(key)
+            self._suspend_resume.setdefault(symbol, []).append((day, item))
+        for bucket in self._suspend_resume.values():
+            bucket.sort(key=lambda pair: pair[0])
+
+        # 业绩预告：按 symbol 分组，按公告日倒序（最近的在前）。
+        self._earnings_forecasts: dict[str, list[tuple[date, EarningsForecastItem]]] = {}
+        seen_earnings: set[tuple[object, ...]] = set()
+        for item in earnings_forecasts:
+            day = _parse_iso(item.notice_date)
+            symbol = _norm_symbol(item.symbol)
+            if day is None or not symbol:
+                continue
+            key = (
+                symbol,
+                day,
+                str(item.report_date or ""),
+                str(item.forecast_type or ""),
+                round(_to_float(item.change_pct_lower), 2),
+                round(_to_float(item.change_pct_upper), 2),
+            )
+            if key in seen_earnings:
+                continue
+            seen_earnings.add(key)
+            self._earnings_forecasts.setdefault(symbol, []).append((day, item))
+        for bucket in self._earnings_forecasts.values():
+            bucket.sort(key=lambda pair: pair[0], reverse=True)
+
+        # 分红送转：按 symbol 分组，按除权除息日升序（便于取「最早一次待除权」）。
+        self._dividend_plans: dict[str, list[tuple[date, DividendPlanItem]]] = {}
+        seen_dividend: set[tuple[object, ...]] = set()
+        for item in dividend_plans:
+            day = _parse_iso(item.ex_dividend_date)
+            symbol = _norm_symbol(item.symbol)
+            if day is None or not symbol:
+                continue  # 无除权除息日（仍停留在预案阶段）⇒ 不进入前瞻索引
+            key = (
+                symbol,
+                day,
+                str(item.report_date or ""),
+                str(item.progress or ""),
+                round(_to_float(item.cash_per_10), 4),
+                round(_to_float(item.bonus_ratio), 4),
+            )
+            if key in seen_dividend:
+                continue
+            seen_dividend.add(key)
+            self._dividend_plans.setdefault(symbol, []).append((day, item))
+        for bucket in self._dividend_plans.values():
+            bucket.sort(key=lambda pair: pair[0])
 
     # -----------------------------------------------------------
     # 构造
@@ -372,6 +509,18 @@ class EventCalendar:
                 _pit_cache_path(LONGHUBANG_CACHE_FILENAME, runtime_data_root),
                 "longhubang",
             ),
+            suspend_resume=cls._read_cache_items(
+                _pit_cache_path(SUSPEND_RESUME_CACHE_FILENAME, runtime_data_root),
+                "suspend_resume",
+            ),
+            earnings_forecasts=cls._read_cache_items(
+                _pit_cache_path(EARNINGS_FORECAST_CACHE_FILENAME, runtime_data_root),
+                "earnings_forecast",
+            ),
+            dividend_plans=cls._read_cache_items(
+                _pit_cache_path(DIVIDEND_PLAN_CACHE_FILENAME, runtime_data_root),
+                "dividend_plan",
+            ),
             unlock_horizon_days=unlock_horizon_days,
             longhubang_lookback_days=longhubang_lookback_days,
         )
@@ -398,8 +547,14 @@ class EventCalendar:
         # 延迟导入：本模块在「不读缓存」的路径上保持 `aqsp.data` 不在 import 图里
         if kind == "lockup":
             from aqsp.data.lockup import LockupItem as _Item
-        else:
+        elif kind == "longhubang":
             from aqsp.data.longhubang import LongHubangItem as _Item
+        elif kind == "suspend_resume":
+            from aqsp.data.suspend_resume import SuspendResumeItem as _Item
+        elif kind == "earnings_forecast":
+            from aqsp.data.earnings_forecast import EarningsForecastItem as _Item
+        else:  # "dividend_plan"
+            from aqsp.data.dividend_plan import DividendPlanItem as _Item
 
         names = [(f.name, str(f.type)) for f in fields(_Item)]
         out: list = []
@@ -434,9 +589,30 @@ class EventCalendar:
         """龙虎榜回溯窗口默认值（自然日）。"""
         return self._lhb_lookback_days
 
+    @property
+    def suspend_resume_horizon_days(self) -> int:
+        """停复牌前瞻窗口默认值（自然日，预计复牌日落在该窗口 → 预警）。"""
+        return self._suspend_resume_horizon_days
+
+    @property
+    def earnings_lookback_days(self) -> int:
+        """业绩预告回溯窗口默认值（自然日，公告日在该窗口 → 佐证）。"""
+        return self._earnings_lookback_days
+
+    @property
+    def dividend_horizon_days(self) -> int:
+        """分红除权除息前瞻窗口默认值（自然日，除权日落在该窗口 → 预警）。"""
+        return self._dividend_horizon_days
+
     def is_empty(self) -> bool:
-        """两个数据面都没有内容时为 True（调用方据此整体跳过标注）。"""
-        return not self._unlocks and not self._lhb
+        """所有数据面都没有内容时为 True（调用方据此整体跳过标注）。"""
+        return (
+            not self._unlocks
+            and not self._lhb
+            and not self._suspend_resume
+            and not self._earnings_forecasts
+            and not self._dividend_plans
+        )
 
     def has_unlock_data(self) -> bool:
         """是否装载了解禁数据面。
@@ -449,6 +625,18 @@ class EventCalendar:
     def has_longhubang_data(self) -> bool:
         """是否装载了龙虎榜数据面（语义同上）。"""
         return bool(self._lhb)
+
+    def has_suspend_resume_data(self) -> bool:
+        """是否装载了停复牌数据面（语义同 `has_unlock_data`）。"""
+        return bool(self._suspend_resume)
+
+    def has_earnings_forecast_data(self) -> bool:
+        """是否装载了业绩预告数据面（语义同上）。"""
+        return bool(self._earnings_forecasts)
+
+    def has_dividend_plan_data(self) -> bool:
+        """是否装载了分红送转数据面（语义同上）。"""
+        return bool(self._dividend_plans)
 
     def longhubang_span(self) -> Optional[tuple[date, date]]:
         """龙虎榜数据面的实际日期覆盖区间 ``(最早, 最晚)``；无数据返回 ``None``。
@@ -503,8 +691,14 @@ class EventCalendar:
         return (min(days), max(days))
 
     def tracked_symbols(self) -> int:
-        """已索引的股票数（两个数据面去重后的并集大小）。"""
-        return len(set(self._unlocks) | set(self._lhb))
+        """已索引的股票数（五个数据面去重后的并集大小）。"""
+        return len(
+            set(self._unlocks)
+            | set(self._lhb)
+            | set(self._suspend_resume)
+            | set(self._earnings_forecasts)
+            | set(self._dividend_plans)
+        )
 
     # -----------------------------------------------------------
     # 查询
@@ -618,4 +812,205 @@ class EventCalendar:
                 )
             )
         out.sort(key=lambda ev: ev.days_ago)
+        return out
+
+    def suspend_resumes(
+        self,
+        symbol: str,
+        as_of: str,
+        horizon_days: Optional[int] = None,
+    ) -> list[SuspendResumeEvent]:
+        """返回 ``symbol`` 相对 ``as_of`` 的停复牌状态（**只读该股的停复牌记录**）。
+
+        数据源按「查询日」抓取当日处于停牌/复牌流程的记录（形态类似龙虎榜的
+        单日缓存），因此这里不做「否定覆盖」判断 —— 查到就是事实。按 ``as_of``
+        把每条记录归到三态之一：
+
+        - ``resuming_soon``：有预计复牌日且落在 ``[as_of, as_of + horizon]``（前瞻）；
+        - ``recently_resumed``：有预计复牌日且落在 ``[as_of - horizon, as_of)``（已复牌）；
+        - ``suspended``：无预计复牌日、停牌日在 ``[as_of - horizon, as_of]``（仍停牌）。
+
+        no-look-ahead：复牌日**晚于** ``as_of + horizon`` 的记录不进结果
+        （太远的「将来」对本日研判无意义）；停牌/复牌日**早于** ``as_of``
+        的「已发生」记录才允许作为回溯佐证。``as_of`` 无法解析时返回空列表。
+
+        ⚠️ 同 :meth:`upcoming_unlocks`，返回 ``[]`` 可能是「该股当日确实无停复牌
+        流程」也可能是「没抓到这股」—— 二者都合法，调用方不必强分。
+        """
+        ref = _parse_iso(as_of)
+        if ref is None:
+            return []
+        horizon = (
+            self._suspend_resume_horizon_days
+            if horizon_days is None
+            else max(0, int(horizon_days))
+        )
+        out: list[SuspendResumeEvent] = []
+        for day, item in self._suspend_resume.get(_norm_symbol(symbol), []):
+            sym = _norm_symbol(item.symbol)
+            resume = _parse_iso(item.resume_date)
+            suspend = _parse_iso(item.suspend_date) or day
+
+            if resume is not None:
+                if 0 <= (resume - ref).days <= horizon:
+                    state = "resuming_soon"
+                elif -(horizon) <= (resume - ref).days < 0:
+                    state = "recently_resumed"
+                else:
+                    continue  # 太远的将来，或已远超回溯窗的旧复牌 ⇒ 不纳入本日研判
+                anchor = resume
+                anchor_label = "预计复牌"
+            else:
+                # 无预计复牌日：停牌日须落在回溯窗内才算「当前停牌中」
+                if not (-(horizon) <= (suspend - ref).days <= 0):
+                    continue
+                state = "suspended"
+                anchor = suspend
+                anchor_label = "停牌"
+
+            days = (anchor - ref).days  # >=0 前瞻 / <=0 回溯
+            kind = item.suspend_type or "停牌"
+            reason = item.reason or "原因未披露"
+            if state == "resuming_soon":
+                detail = (
+                    f"📅 事件日历·停复牌：预计 {days} 个自然日后"
+                    f"（{anchor.isoformat()}）{anchor_label}，{kind}，{reason}"
+                )
+            elif state == "recently_resumed":
+                detail = (
+                    f"📅 事件日历·停复牌：{abs(days)} 个自然日前"
+                    f"（{anchor.isoformat()}）已{anchor_label}，{kind}，{reason}"
+                )
+            else:  # suspended
+                detail = (
+                    f"📅 事件日历·停复牌：自 {suspend.isoformat()} 起停牌"
+                    f"（{kind}），{reason}"
+                )
+            out.append(
+                SuspendResumeEvent(
+                    symbol=sym,
+                    name=item.name,
+                    suspend_date=suspend.isoformat(),
+                    resume_date=resume.isoformat() if resume else "",
+                    state=state,
+                    suspend_type=item.suspend_type,
+                    reason=item.reason,
+                    detail=detail,
+                )
+            )
+        out.sort(key=lambda ev: ev.suspend_date)
+        return out
+
+    def recent_earnings_forecasts(
+        self,
+        symbol: str,
+        as_of: str,
+        lookback_days: Optional[int] = None,
+    ) -> list[EarningsForecastEvent]:
+        """返回 ``symbol`` 在 ``[as_of - lookback, as_of]`` 内的近期业绩预告（新的在前）。
+
+        业绩预告的**公告日**才是市场可知的时点（`notice_date`），不是报告期
+        （`report_date` 可能是数月前的季度末）。以公告日做 no-look-ahead 过滤：
+        公告日晚于 ``as_of`` 的预告，``as_of`` 当天市场还不知道，**一律排除**。
+        ``as_of`` 无法解析时返回空列表。
+        """
+        ref = _parse_iso(as_of)
+        if ref is None:
+            return []
+        lookback = (
+            self._earnings_lookback_days
+            if lookback_days is None
+            else max(0, int(lookback_days))
+        )
+        out: list[EarningsForecastEvent] = []
+        for day, item in self._earnings_forecasts.get(_norm_symbol(symbol), []):
+            days_ago = (ref - day).days
+            if days_ago < 0 or days_ago > lookback:
+                continue
+            ftype = item.forecast_type or "业绩预告"
+            lower = _to_float(item.change_pct_lower)
+            upper = _to_float(item.change_pct_upper)
+            # NaN 语义保持：任一幅度缺失即「幅度未披露」，不臆测方向
+            if lower != lower or upper != upper:
+                magnitude = "变动幅度未披露"
+            else:
+                magnitude = f"预计同比 {lower:+.0f}%~{upper:+.0f}%"
+            detail = (
+                f"📅 事件日历·业绩预告：{days_ago} 个自然日前"
+                f"（{day.isoformat()}）披露，{ftype}，{magnitude}"
+            )
+            if item.reason:
+                detail = f"{detail}（{item.reason}）"
+            out.append(
+                EarningsForecastEvent(
+                    symbol=_norm_symbol(item.symbol),
+                    name=item.name,
+                    notice_date=day.isoformat(),
+                    report_date=item.report_date,
+                    forecast_type=item.forecast_type,
+                    days_ago=days_ago,
+                    detail=detail,
+                )
+            )
+        out.sort(key=lambda ev: ev.days_ago)
+        return out
+
+    def upcoming_dividends(
+        self,
+        symbol: str,
+        as_of: str,
+        horizon_days: Optional[int] = None,
+    ) -> list[DividendPlanEvent]:
+        """返回 ``symbol`` 在 ``[as_of, as_of + horizon]`` 内即将除权除息的分红方案（升序）。
+
+        前瞻预警（同 :meth:`upcoming_unlocks`）：除权除息日**早于** ``as_of``
+        的（已除权，属已发生事实）被排除；晚于 ``as_of + horizon`` 的太远，
+        也不纳入。无除权除息日（仍在预案阶段）的记录在索引阶段已被丢弃，
+        不会出现在结果里。``as_of`` 无法解析时返回空列表。
+        """
+        ref = _parse_iso(as_of)
+        if ref is None:
+            return []
+        horizon = (
+            self._dividend_horizon_days
+            if horizon_days is None
+            else max(0, int(horizon_days))
+        )
+        out: list[DividendPlanEvent] = []
+        for day, item in self._dividend_plans.get(_norm_symbol(symbol), []):
+            days_until = (day - ref).days
+            if days_until < 0 or days_until > horizon:
+                continue
+            cash = _to_float(item.cash_per_10)
+            bonus = _to_float(item.bonus_ratio)
+            # 两个都为 0 ⇒ 方案不含现金/送转实质，标注「方案待明确」而非「0 派息」
+            if cash != cash or bonus != bonus:
+                plan_text = "派息方案未披露"
+            elif cash == 0 and bonus == 0:
+                plan_text = "派息方案待明确"
+            else:
+                parts = []
+                if cash == cash and cash > 0:
+                    parts.append(f"每10股派 {cash:.2f} 元")
+                if bonus == bonus and bonus > 0:
+                    parts.append(f"每10股送转 {bonus:.2f} 股")
+                plan_text = "、".join(parts) or "派息方案未披露"
+            progress = item.progress or ""
+            detail = (
+                f"📅 事件日历·分红送转：预计 {days_until} 个自然日后"
+                f"（{day.isoformat()}）除权除息，{plan_text}"
+            )
+            if progress:
+                detail = f"{detail}（{progress}）"
+            out.append(
+                DividendPlanEvent(
+                    symbol=_norm_symbol(item.symbol),
+                    name=item.name,
+                    ex_dividend_date=day.isoformat(),
+                    days_until=days_until,
+                    progress=item.progress,
+                    detail=detail,
+                )
+            )
+        out.sort(key=lambda ev: ev.days_until)
         return out

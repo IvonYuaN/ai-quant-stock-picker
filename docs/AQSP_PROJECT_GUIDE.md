@@ -282,7 +282,7 @@ aqsp run --mode close --source auto --max-universe 100 --notify
 #   1) 读 architecture.md + 本文件 §4 对应子包
 #   2) 拉分支 feat/<x> / fix/<x>，写代码+测试
 #   3) ruff check . + pytest 全绿（CI 本地门禁等价）
-#   4) 提 PR（描述含 做了什么/为什么/风险/怎么验证，≤300 行）
+#   4) 提 PR（描述含 做了什么/为什么/风险/怎么验证）
 #   5) §4 清单自审 → agent 直接 squash 合（CI 绿 + mergeable_state=clean + 未触红线）
 #   6) 合并 ≠ 发布；上线 prod/runner 改动须老大授权
 
