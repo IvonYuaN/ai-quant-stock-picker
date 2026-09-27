@@ -1,22 +1,23 @@
 """股东户数（东财）—— 排雷层「股东户数」数据源（生产 pit_cache/holder_count.csv）。
 
-移植自 backend/astock.py `holder_num_change`（东财数据中心 RPT_HOLDERNUMLATEST）。
-按 AQSP 改造：纯解析 + lazy 网络 + 单条容错 + **分页取全**（单季全市场约 4000+ 条）。
+移植自 backend/astock.py `holder_num_change`（东财数据中心报表）。
+按 AQSP 改造：纯解析 + lazy 网络 + 单条容错 + **分页取全**。
 
-报表名（2026-09-25 本机实测）：
-- `RPT_HOLDERNUMLATEST` 可用（END_DATE 为季度末，如 '2026-06-30'，单季 count≈4076，
-  需按 SECURITY_CODE 升序分页）；
-- `RPT_HOLDERNUMCHANGE` **不存在**（报表配置不存在, code 9501），勿用。
-
-字段（实测）：SECURITY_CODE / SECURITY_NAME_ABBR / HOLDER_NUM /
-HOLD_NOTICE_DATE / END_DATE。
+报表名（2026-09-27 生产机实测复核）：
+- `RPT_HOLDERNUM_DET` **可用且含完整历史**（每票×每期一行，~44 万行；
+  `filter=(END_DATE='<季度末>')` 返回该季全量：2026-06-30 → 5408 条、
+  2026-03-31 → 5343 条，远超 LATEST；字段含 SECURITY_CODE / SECURITY_NAME_ABBR /
+  HOLDER_NUM / HOLD_NOTICE_DATE / END_DATE，与 LATEST 解析兼容）；
+- `RPT_HOLDERNUMLATEST` 也可用但**结构性只含每票最新一期**（旧季度仅剩停更票 ~19 行）
+  ⇒ 曾致 holder_count.csv 只落 1 个季度、筹码集中度 QoQ 信号无法计算（09-27 根治）；
+- `RPT_HOLDERNUMCHANGE` / `RPT_HOLDERNUM_HIST` 不存在（code 9501），勿用。
 
 落盘列：symbol, name, quarter, holder_count, notice_date
 （HolderCountFilter 读 symbol/quarter/holder_count，quarter=END_DATE 截 10 位）。
 
 默认取「最近 4 个已完成披露窗口的季度」：季度数据在季末后 ~30–62 天内才基本披露完，
-45 天窗判定季度「已完成」（见 _recent_quarter_ends）。覆盖 HolderCountFilter 的
-min_quarters=2 需求并留足趋势余量。
+45 天窗判定季度「已完成」（见 _recent_quarter_ends）。切到 DET 后每季均为全量，
+4 个季度历史每次跑批都完整落盘（QoQ 需 ≥2 连续季度）。
 """
 
 from __future__ import annotations
@@ -35,7 +36,9 @@ from aqsp.core.time import today_shanghai
 
 # 东财数据中心通用接口（与 lockup/dividend 同源 host）
 EM_HOLDER_URL = "https://datacenter-web.eastmoney.com/api/data/v1/get"
-EM_HOLDER_REPORT = "RPT_HOLDERNUMLATEST"
+# DET = 每票×每期完整历史表（按 END_DATE 过滤即得该季全量）；LATEST 只含每票最新一期。
+# 2026-09-27 生产机实测切换，详见模块 docstring。
+EM_HOLDER_REPORT = "RPT_HOLDERNUM_DET"
 _EM_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "

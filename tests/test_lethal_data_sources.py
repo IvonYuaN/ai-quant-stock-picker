@@ -191,6 +191,35 @@ class TestHolderNumSourceFetch:
         with pytest.raises(DataError):
             HolderNumSource()._fetch(quarters=["2026-06-30"])
 
+    def test_fetch_uses_history_report_with_quarter_filter(self, fake_requests):
+        """回归（2026-09-27 根治）：必须用 RPT_HOLDERNUM_DET（每票×每期完整历史）
+        且按季度末 END_DATE 过滤。旧报表 RPT_HOLDERNUMLATEST 结构性只含每票最新
+        一期（旧季度仅剩停更票 ~19 行），曾致 holder_count.csv 只落 1 个季度、
+        筹码集中度 QoQ 信号无法计算。"""
+        src = HolderNumSource()
+        payload = {
+            "result": {
+                "count": 1,
+                "data": [
+                    {
+                        "SECURITY_CODE": "000001",
+                        "SECURITY_NAME_ABBR": "平安银行",
+                        "HOLDER_NUM": 450712,
+                        "END_DATE": "2026-06-30 00:00:00",
+                        "HOLD_NOTICE_DATE": "2026-08-15 00:00:00",
+                    }
+                ],
+            }
+        }
+        fake_requests.get.side_effect = [_resp(payload)]
+        items = src._fetch(quarters=["2026-06-30"])
+        assert len(items) == 1
+        assert items[0].quarter == "2026-06-30"  # "…00:00:00" 截 10 位
+        assert items[0].holder_count == 450712.0
+        call = fake_requests.get.call_args
+        assert call.kwargs["params"]["reportName"] == "RPT_HOLDERNUM_DET"
+        assert "2026-06-30" in call.kwargs["params"]["filter"]
+
     def test_cache_roundtrip_symbol_zfill(self, fake_requests, tmp_path, monkeypatch):
         monkeypatch.setenv("AQSP_RUNTIME_DATA_ROOT", str(tmp_path))
         src = HolderNumSource()
