@@ -157,6 +157,11 @@ class DailyReview:
     # 「事件风险环境」证据。空串 = 数据缺失/陈旧标注，报告不渲染该节；
     # 绝不写回打分/排序/下单（红线，与板块资金面段同级别）。
     announcements_section: str = ""
+    # 筹码集中度异动（只读）：读 pit_cache/holder_count.csv（股东户数，
+    # holder_num 源盘后落盘，2026-09-27 切 RPT_HOLDERNUM_DET 历史报表后每季全量）。
+    # 按 symbol 聚合连续两季算 QoQ：户数降=集中（吸筹）/户数升=分散。空串 =
+    # 数据缺失/陈旧标注，报告不渲染该节；绝不写回打分/排序/下单（红线）。
+    holder_concentration_section: str = ""
     # LLM 解读层（降级安全）：AI 复盘解读小节 + 降级标记。
     # llm_review_text 为空串时报告不渲染 AI 小节；degraded=True 表示走了
     # fallback 规则文本（不显示该小节）。红线：LLM 只进该独立小节，
@@ -350,6 +355,7 @@ class ClosingReviewer:
         news_section = build_news_section()
         # 防 09-26 IC 段同类「早退静默丢弃」缺陷：新只读段在两条路径都显式构造
         announcements_section = build_announcements_section()
+        holder_concentration_section = build_holder_concentration_section()
 
         return DailyReview(
             date=today,
@@ -380,6 +386,7 @@ class ClosingReviewer:
             longhubang_section=longhubang_section,
             news_section=news_section,
             announcements_section=announcements_section,
+            holder_concentration_section=holder_concentration_section,
         )
 
     def _latest_review_date(self) -> str:
@@ -1291,6 +1298,7 @@ class ClosingReviewer:
             # 重大公告动态与财经快讯/龙虎榜同理：独立于「有无信号」，盘后落盘即展示，
             # 早退分支漏塞会静默丢弃（与 09-26 IC 段同类缺陷）。
             announcements_section=build_announcements_section(),
+            holder_concentration_section=build_holder_concentration_section(),
         )
 
     def generate_weekly_summary(self, end_date: str | None = None) -> WeeklySummary:
@@ -2172,6 +2180,147 @@ def build_announcements_section(
     return "\n".join(lines)
 
 
+def build_holder_concentration_section(
+    csv_path: str | Path | None = None,
+    top_n: int = 8,
+    *,
+    stale_hours: int = 72,
+) -> str:
+    """筹码集中度异动段（只读）：读 ``pit_cache/holder_count.csv``（股东户数）。
+
+    按 symbol 聚合连续两季户数，算 QoQ 变化率：户数降 = 筹码集中（吸筹迹象）、
+    户数升 = 筹码分散。只统计「最新记录 = 数据集最新季度」的票（剔除退市/停更票），
+    上一季户数为 0 或缺失的票跳过。数据源 = ``holder_num`` 源盘后落盘
+    （2026-09-27 切换 RPT_HOLDERNUM_DET 历史报表后每季全量，4 季 ~2.1 万行）。
+
+    降级安全（与 ``news_section`` 同级别，红线）：
+      - 文件缺失 / 读失败 / 表头残缺 / 无可比样本 ⇒ 返回空串，报告不渲染该节；
+      - 单行字段坏只剔除该行、不拖垮整段；
+      - 绝不写回打分 / 排序 / 下单；
+      - 数据陈旧（本体 mtime 超 ``stale_hours``）⇒ 段尾标注「非实时」。
+    """
+    import csv
+    import os
+    import time
+
+    if csv_path is None:
+        csv_path = os.path.join(
+            _factor_ic_runtime_root(),
+            "pit_cache",
+            "holder_count.csv",
+        )
+    path = Path(csv_path)
+    if not path.exists():
+        return ""
+
+    rows: list[dict[str, str]] = []
+    try:
+        with path.open(encoding="utf-8") as fh:
+            reader = csv.DictReader(fh)
+            required = {"symbol", "quarter", "holder_count"}
+            if not required.issubset(set(reader.fieldnames or [])):
+                return ""
+            rows = list(reader)
+    except Exception:
+        return ""
+
+    # symbol -> {quarter: count}；name 取最新一期
+    by_symbol: dict[str, dict[str, float]] = {}
+    names: dict[str, str] = {}
+    for r in rows:
+        symbol = str(r.get("symbol") or "").strip()
+        quarter = str(r.get("quarter") or "").strip()[:10]
+        count = _to_finite(r.get("holder_count"))
+        if not symbol or not quarter or count is None:
+            continue
+        by_symbol.setdefault(symbol, {})[quarter] = count
+        name = str(r.get("name") or "").strip()
+        if name:
+            names.setdefault(symbol, name)
+    if not by_symbol:
+        return ""
+
+    # 最新季度 = 数据集最大季度；只统计最新记录落在该季的票（剔除停更/退市）
+    latest_quarter = max(q for qs in by_symbol.values() for q in qs)
+    computed: list[dict[str, object]] = []
+    for symbol, qs in by_symbol.items():
+        if latest_quarter not in qs:
+            continue
+        older = sorted(q for q in qs if q < latest_quarter)
+        if not older:
+            continue
+        prev_q = older[-1]
+        prev = qs[prev_q]
+        cur = qs[latest_quarter]
+        if prev <= 0:
+            continue
+        pct = (cur - prev) / prev * 100
+        computed.append(
+            {
+                "symbol": symbol,
+                "name": names.get(symbol, symbol),
+                "pct": pct,
+                "prev": prev,
+                "cur": cur,
+                "prev_q": prev_q,
+            }
+        )
+    if not computed:
+        return ""
+
+    concentrated = [c for c in computed if c["pct"] < 0]
+    dispersed = [c for c in computed if c["pct"] > 0]
+    concentrated.sort(key=lambda c: float(c["pct"]))  # 降幅最大在前
+    dispersed.sort(key=lambda c: float(c["pct"]), reverse=True)
+
+    def _row(c: dict[str, object]) -> str:
+        pct = float(c["pct"])
+        prev = float(c["prev"])
+        cur = float(c["cur"])
+        arrow = "▼" if pct < 0 else "▲"
+        return (
+            f"  {arrow} {c['name']}（{c['symbol']}）｜{pct:+.1f}%｜"
+            f"{prev:,.0f} → {cur:,.0f} 户"
+        )
+
+    top_in = concentrated[:top_n]
+    top_out = dispersed[: max(1, top_n // 3)]
+    lines: list[str] = [
+        "## 股东户数异动（筹码集中度 · 近披露窗口）",
+        "",
+        (
+            f"可比 {len(computed)} 只（连续 2 季）｜"
+            f"筹码集中（户数降）{len(concentrated)} / "
+            f"筹码分散（户数升）{len(dispersed)}｜最新季度 {latest_quarter}"
+        ),
+    ]
+    if top_in:
+        lines.append("")
+        lines.append("筹码集中 Top（户数降幅）：")
+        lines.extend(_row(c) for c in top_in)
+    if top_out:
+        lines.append("")
+        lines.append("筹码分散 Top（户数增幅）：")
+        lines.extend(_row(c) for c in top_out)
+
+    # 新鲜度：以 CSV 本体 mtime 判陈旧。
+    try:
+        age_h = (time.time() - path.stat().st_mtime) / 3600
+        if age_h > stale_hours:
+            mdate = time.strftime("%Y-%m-%d", time.localtime(path.stat().st_mtime))
+            lines.append("")
+            lines.append(
+                f"⏳ 数据更新于 {mdate}（{age_h:.0f}h 前，超 {stale_hours}h 阈值），"
+                "作陈旧参考、非实时。"
+            )
+    except (OSError, ValueError):
+        pass
+
+    lines.append("")
+    lines.append("⚠️ 只读参考：筹码集中度仅作市场环境参考，不改变打分/排序/下单。")
+    return "\n".join(lines)
+
+
 def _to_finite(value: object) -> float | None:
     try:
         f = float(value)  # type: ignore[arg-type]
@@ -2313,6 +2462,11 @@ def format_daily_review(review: DailyReview) -> str:
 
     if review.announcements_section:
         for line in review.announcements_section.splitlines():
+            report.append(line)
+        report.append("")
+
+    if review.holder_concentration_section:
+        for line in review.holder_concentration_section.splitlines():
             report.append(line)
         report.append("")
 

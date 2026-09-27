@@ -1350,3 +1350,168 @@ class TestAnnouncementsSection:
         (tmp_path / "pit_cache").mkdir()
         _write_announcements(tmp_path / "pit_cache")
         assert "重大公告动态" in build_announcements_section()
+
+
+# ===========================================================================
+# 筹码集中度异动段（PR #257，holder_count 切历史报表后数据已具备 ≥2 连续季度）
+# ===========================================================================
+_HOLDER_HEADER = "symbol,name,quarter,holder_count,notice_date"
+
+# 2 季样本：集中×2（茅台 -20%/宁德 -10%）、分散×2（平安 +20%/中芯 +10%）、
+# 仅最新季×1（招行，无环比 → 跳过）、仅旧季×1（万科，停更 → 剔除）、
+# 旧季 0 户×1（工行，除零 → 跳过）。
+_HOLDER_BODY_LINES = [
+    "600519,贵州茅台,2026-03-31,100000,2026-04-25",
+    "600519,贵州茅台,2026-06-30,80000,2026-08-20",
+    "000001,平安银行,2026-03-31,50000,2026-04-20",
+    "000001,平安银行,2026-06-30,60000,2026-08-18",
+    "300750,宁德时代,2026-03-31,40000,2026-04-26",
+    "300750,宁德时代,2026-06-30,36000,2026-08-22",
+    "688981,中芯国际,2026-03-31,30000,2026-04-28",
+    "688981,中芯国际,2026-06-30,33000,2026-08-15",
+    "600036,招商银行,2026-06-30,45000,2026-08-19",
+    "000002,万科A,2026-03-31,99999,2026-04-22",
+    "601398,工商银行,2026-03-31,0,2026-04-24",
+    "601398,工商银行,2026-06-30,50000,2026-08-16",
+]
+
+
+def _write_holder(tmp_path, mtime_offset_days: float = 0.0) -> Path:
+    p = tmp_path / "holder_count.csv"
+    p.write_text(
+        _HOLDER_HEADER + "\n" + "\n".join(_HOLDER_BODY_LINES) + "\n",
+        encoding="utf-8",
+    )
+    if mtime_offset_days:
+        import os as _os
+        import time as _t
+
+        old = _t.time() - mtime_offset_days * 86400
+        _os.utime(p, (old, old))
+    return p
+
+
+class TestHolderConcentrationSection:
+    def test_render_when_present(self, tmp_path) -> None:
+        from aqsp.briefing.closing_review import build_holder_concentration_section
+
+        path = _write_holder(tmp_path)
+        section = build_holder_concentration_section(str(path))
+        assert "股东户数异动（筹码集中度 · 近披露窗口）" in section
+        assert (
+            "可比 4 只（连续 2 季）｜筹码集中（户数降）2 / 筹码分散（户数升）2"
+            "｜最新季度 2026-06-30" in section
+        )
+        assert "▼ 贵州茅台（600519）｜-20.0%｜100,000 → 80,000 户" in section
+        assert "▼ 宁德时代（300750）｜-10.0%" in section
+        assert "▲ 平安银行（000001）｜+20.0%" in section
+        assert "筹码集中 Top（户数降幅）：" in section
+        assert "筹码分散 Top（户数增幅）：" in section
+        assert "不改变打分/排序/下单" in section
+
+    def test_stale_and_edge_symbols_excluded(self, tmp_path) -> None:
+        from aqsp.briefing.closing_review import build_holder_concentration_section
+
+        path = _write_holder(tmp_path)
+        section = build_holder_concentration_section(str(path))
+        # 招行仅最新季（无环比）、万科停更（最新季 ≠ 数据集最新季）、
+        # 工行上一季 0 户（除零）均不进可比样本
+        assert "招商银行" not in section
+        assert "万科A" not in section
+        assert "工商银行" not in section
+
+    def test_top_n_param(self, tmp_path) -> None:
+        from aqsp.briefing.closing_review import build_holder_concentration_section
+
+        path = _write_holder(tmp_path)
+        section = build_holder_concentration_section(str(path), top_n=1)
+        # 集中 Top 只剩降幅最大的茅台；分散 Top = max(1, 1//3)=1 只（平安）
+        assert "贵州茅台" in section
+        assert "宁德时代" not in section
+        assert "平安银行" in section
+        assert "中芯国际" not in section
+
+    def test_missing_file_returns_empty(self, tmp_path) -> None:
+        from aqsp.briefing.closing_review import build_holder_concentration_section
+
+        assert build_holder_concentration_section(str(tmp_path / "nope.csv")) == ""
+
+    def test_wrong_header_returns_empty(self, tmp_path) -> None:
+        from aqsp.briefing.closing_review import build_holder_concentration_section
+
+        path = tmp_path / "holder_count.csv"
+        path.write_text("a,b\n1,2\n", encoding="utf-8")
+        assert build_holder_concentration_section(str(path)) == ""
+
+    def test_empty_body_returns_empty(self, tmp_path) -> None:
+        from aqsp.briefing.closing_review import build_holder_concentration_section
+
+        path = tmp_path / "holder_count.csv"
+        path.write_text(_HOLDER_HEADER + "\n", encoding="utf-8")
+        assert build_holder_concentration_section(str(path)) == ""
+
+    def test_malformed_rows_dropped_not_fatally(self, tmp_path) -> None:
+        """坏行（缺 symbol / quarter / count 非数）只剔除该行，不拖垮整段。"""
+        from aqsp.briefing.closing_review import build_holder_concentration_section
+
+        path = tmp_path / "holder_count.csv"
+        path.write_text(
+            "\n".join(
+                [
+                    _HOLDER_HEADER,
+                    ",坏行缺代码,2026-06-30,100,2026-08-01",          # symbol 空 ⇒ 剔除
+                    "600001,坏行缺季度,,100,2026-08-01",               # quarter 空 ⇒ 剔除
+                    "600002,坏行count非数,2026-06-30,abc,2026-08-01",  # count 坏 ⇒ 剔除
+                    "600003,好公司,2026-03-31,1000,2026-04-01",
+                    "600003,好公司,2026-06-30,900,2026-08-01",         # 有效：-10.0%
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        section = build_holder_concentration_section(str(path))
+        assert "可比 1 只" in section
+        assert "▼ 好公司（600003）｜-10.0%｜1,000 → 900 户" in section
+        assert "只读参考" in section
+
+    def test_stale_data_annotated(self, tmp_path) -> None:
+        from aqsp.briefing.closing_review import build_holder_concentration_section
+
+        path = _write_holder(tmp_path, mtime_offset_days=10.0)
+        section = build_holder_concentration_section(str(path))
+        assert "非实时" in section
+        fresh = _write_holder(tmp_path)
+        assert "非实时" not in build_holder_concentration_section(str(fresh))
+
+    def test_empty_review_still_carries_holder_section(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """回归：无信号走 _empty_review 早退时，筹码段不得被静默丢弃。"""
+        from aqsp.briefing.closing_review import (
+            ClosingReviewer,
+            format_daily_review,
+        )
+
+        ledger = tmp_path / "predictions.jsonl"
+        paper = tmp_path / "paper_trades.jsonl"
+        ledger.write_text("", encoding="utf-8")
+        paper.write_text("", encoding="utf-8")
+        monkeypatch.setenv("AQSP_RUNTIME_DATA_ROOT", str(tmp_path))
+        (tmp_path / "pit_cache").mkdir()
+        _write_holder(tmp_path / "pit_cache")
+
+        review = ClosingReviewer(
+            ledger_path=str(ledger), paper_ledger_path=str(paper)
+        ).review_today("2025-06-01")
+        assert "股东户数异动" in review.holder_concentration_section
+        rendered = format_daily_review(review)
+        assert "股东户数异动" in rendered
+
+    def test_default_path_resolves_via_runtime_root(self, tmp_path, monkeypatch) -> None:
+        """csv_path=None ⇒ 走 <runtime>/pit_cache/holder_count.csv（写读同源）。"""
+        from aqsp.briefing.closing_review import build_holder_concentration_section
+
+        monkeypatch.setenv("AQSP_RUNTIME_DATA_ROOT", str(tmp_path))
+        (tmp_path / "pit_cache").mkdir()
+        _write_holder(tmp_path / "pit_cache")
+        assert "股东户数异动" in build_holder_concentration_section()
