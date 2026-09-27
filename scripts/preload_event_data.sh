@@ -73,15 +73,24 @@ RELAY_TIMEOUT="${CONCEPT_BOARD_RELAY_TIMEOUT:-120}"
 
 fetch_concept_board_via_runner() {
     local relay_ssh="ssh -p ${RELAY_PORT} -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=accept-new"
-    # 1) runner 代抓（runner 用自己的 release + venv + runtime root，写 runner pit_cache）
-    if ! $relay_ssh "$RELAY_HOST" \
-        "PYTHONPATH=${RELAY_ROOT}/aqsp-scheduler-current/src AQSP_RUNTIME_DATA_ROOT=${RELAY_ROOT} timeout ${RELAY_TIMEOUT} ${RELAY_ROOT}/venv/bin/python ${RELAY_ROOT}/aqsp-scheduler-current/scripts/fetch_concept_board.py"; then
-        return 1
-    fi
-    # 2) 回流：runner pit_cache -> 本机 pit_cache（写读同源，消费方只读本机文件）
-    rsync -a -e "$relay_ssh" \
-        "${RELAY_HOST}:${RELAY_ROOT}/pit_cache/concept_board.csv" \
-        "${RUNTIME_DATA_ROOT}/pit_cache/concept_board.csv"
+    local relay_cmd="PYTHONPATH=${RELAY_ROOT}/aqsp-scheduler-current/src AQSP_RUNTIME_DATA_ROOT=${RELAY_ROOT} timeout ${RELAY_TIMEOUT} ${RELAY_ROOT}/venv/bin/python ${RELAY_ROOT}/aqsp-scheduler-current/scripts/fetch_concept_board.py"
+    local attempt=1
+    local max_attempts="${CONCEPT_BOARD_RELAY_ATTEMPTS:-4}"
+    # runner 对 push2 族为间歇性 502（EM 边缘对非 CN IP 间歇放行，实测单次尝试
+    # 常败、间隔重试可过）⇒ 带退避重试显著提高成功率；全败才回落本地直连。
+    while [ "$attempt" -le "$max_attempts" ]; do
+        if $relay_ssh "$RELAY_HOST" "$relay_cmd"; then
+            rsync -a -e "$relay_ssh" \
+                "${RELAY_HOST}:${RELAY_ROOT}/pit_cache/concept_board.csv" \
+                "${RUNTIME_DATA_ROOT}/pit_cache/concept_board.csv" && return 0
+        fi
+        log "[WARN] concept_board runner 中继第 ${attempt}/${max_attempts} 次失败"
+        if [ "$attempt" -lt "$max_attempts" ]; then
+            sleep "${RELAY_RETRY_SLEEP:-20}"
+        fi
+        attempt=$((attempt + 1))
+    done
+    return 1
 }
 
 log "开始事件数据预加载"
