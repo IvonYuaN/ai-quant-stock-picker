@@ -139,6 +139,12 @@ class DailyReview:
     # 家数汇总，作为收盘时的市场资金环境证据。空串 = 数据缺失/陈旧标注，
     # 报告不渲染该节；绝不写回打分/排序/下单（红线，与 IC 段同级别）。
     board_fund_section: str = ""
+    # 龙虎榜关注（只读）：读 pit_cache/longhubang.csv（东财龙虎榜，
+    # preload_event_data.sh 盘后预载落盘）。聚合近预载窗口内个股的上榜次数 /
+    # 净买入合计（万元）/ 机构·游资解读提及，作为收盘时「聪明钱活跃度」市场证据。
+    # 空串 = 数据缺失/陈旧标注，报告不渲染该节；绝不写回打分/排序/下单
+    # （红线，与板块资金面段同级别）。
+    longhubang_section: str = ""
     # LLM 解读层（降级安全）：AI 复盘解读小节 + 降级标记。
     # llm_review_text 为空串时报告不渲染 AI 小节；degraded=True 表示走了
     # fallback 规则文本（不显示该小节）。红线：LLM 只进该独立小节，
@@ -328,6 +334,7 @@ class ClosingReviewer:
         )
         factor_ic_section = build_factor_ic_section()
         board_fund_section = build_board_fund_section()
+        longhubang_section = build_longhubang_section()
 
         return DailyReview(
             date=today,
@@ -355,6 +362,7 @@ class ClosingReviewer:
             debate_reconciliation_section=debate_reconciliation_section,
             factor_ic_section=factor_ic_section,
             board_fund_section=board_fund_section,
+            longhubang_section=longhubang_section,
         )
 
     def _latest_review_date(self) -> str:
@@ -1257,6 +1265,9 @@ class ClosingReviewer:
             # 板块资金面与 IC 段同理：独立于「有无信号」，只要盘后预载落盘就展示，
             # 早退分支漏塞会静默丢弃（与 09-26 IC 段同类缺陷）。
             board_fund_section=build_board_fund_section(),
+            # 龙虎榜关注与板块资金面/IC 段同理：独立于「有无信号」，只要盘后预载落盘就展示，
+            # 早退分支漏塞会静默丢弃（与 09-26 IC 段同类缺陷）。
+            longhubang_section=build_longhubang_section(),
         )
 
     def generate_weekly_summary(self, end_date: str | None = None) -> WeeklySummary:
@@ -1691,6 +1702,166 @@ def build_board_fund_section(
     return "\n".join(lines)
 
 
+def build_longhubang_section(
+    csv_path: str | Path | None = None,
+    top_n: int = 8,
+    *,
+    stale_hours: int = 72,
+) -> str:
+    """龙虎榜关注段（只读）：读 ``pit_cache/longhubang.csv``（东财龙虎榜）。
+
+    聚合近预载窗口内个股的上榜次数 / 净买入合计（万元）/ 机构·游资解读提及，
+    作为收评「聪明钱活跃度」市场证据。数据源 = ``preload_event_data.sh`` 盘后
+    预载落盘的 ``longhubang.csv``（与板块资金面、EventCalendar 同一 ``pit_cache`` 根、
+    写读同源，见 ``_factor_ic_runtime_root``）。
+
+    降级安全（与 ``board_fund_section`` 同级别，红线）：
+      - 文件缺失 / 读失败 / 表头残缺 / 全部行坏 ⇒ 返回空串，报告不渲染该节；
+      - 单行字段坏只剔除该行、不拖垮整段；
+      - 绝不写回打分 / 排序 / 下单；
+      - 数据陈旧（本体 mtime 超 ``stale_hours``）⇒ 段尾标注「非实时」，不作实时信号。
+    """
+    import csv
+    import os
+    import time
+
+    if csv_path is None:
+        csv_path = os.path.join(
+            _factor_ic_runtime_root(),
+            "pit_cache",
+            "longhubang.csv",
+        )
+    path = Path(csv_path)
+    if not path.exists():
+        return ""
+
+    rows: list[dict[str, str]] = []
+    try:
+        with path.open(encoding="utf-8") as fh:
+            reader = csv.DictReader(fh)
+            required = {"symbol", "name", "net_amount"}
+            if not required.issubset(set(reader.fieldnames or [])):
+                return ""
+            rows = list(reader)
+    except Exception:
+        return ""
+
+    def _f(v: object) -> float | None:
+        try:
+            f = float(str(v).strip())  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return None
+        if f != f or f in (float("inf"), float("-inf")):
+            return None
+        return f
+
+    # 聚合：按 symbol 累加净买入/上榜次数，收集机构·游资·主力解读提及。
+    agg: dict[str, dict[str, object]] = {}
+    for r in rows:
+        symbol = str(r.get("symbol") or "").strip()
+        name = str(r.get("name") or "").strip()
+        net = _f(r.get("net_amount"))
+        if not symbol or not name or net is None:
+            continue
+        buy = _f(r.get("buy_amount")) or 0.0
+        sell = _f(r.get("sell_amount")) or 0.0
+        chg = _f(r.get("change_rate")) or 0.0
+        interp = str(r.get("interpretation") or "")
+        td = str(r.get("trade_date") or "")
+        rec = agg.get(symbol)
+        if rec is None:
+            rec = {
+                "symbol": symbol,
+                "name": name,
+                "count": 0,
+                "net": 0.0,
+                "buy": 0.0,
+                "sell": 0.0,
+                "latest_td": "",
+                "latest_chg": 0.0,
+                "inst": False,
+                "speculator": False,
+                "main": False,
+            }
+            agg[symbol] = rec
+        rec["count"] = int(rec["count"]) + 1
+        rec["net"] = float(rec["net"]) + net
+        rec["buy"] = float(rec["buy"]) + buy
+        rec["sell"] = float(rec["sell"]) + sell
+        if td > str(rec["latest_td"]):
+            rec["latest_td"] = td
+            rec["latest_chg"] = chg
+        if "机构" in interp:
+            rec["inst"] = True
+        if "游资" in interp:
+            rec["speculator"] = True
+        if "主力" in interp:
+            rec["main"] = True
+
+    if not agg:
+        return ""
+
+    items = list(agg.values())
+    total_stocks = len(items)
+    total_net = sum(float(p["net"]) for p in items)
+    inst_mentions = sum(1 for p in items if p["inst"])
+    spec_mentions = sum(1 for p in items if p["speculator"])
+
+    top = sorted(items, key=lambda p: float(p["net"]), reverse=True)[:top_n]
+
+    def _tag(p: dict[str, object]) -> str:
+        tags = []
+        if p["inst"]:
+            tags.append("机构")
+        if p["speculator"]:
+            tags.append("游资")
+        if p["main"]:
+            tags.append("主力")
+        return "/".join(tags) if tags else "—"
+
+    def _row(p: dict[str, object]) -> str:
+        net = float(p["net"])
+        arrow = "▲" if net >= 0 else "▼"
+        chg = float(p["latest_chg"])
+        return (
+            f"  {arrow} {p['name']}({p['symbol']})：净买入 {net:+.0f} 万"
+            f"｜上榜 {int(p['count'])} 次｜最新 {chg:+.2f}%｜解读：{_tag(p)}"
+        )
+
+    lines: list[str] = [
+        "## 龙虎榜关注（机构/游资活跃度 · 近预载窗口）",
+        "",
+        (
+            f"共 {total_stocks} 只个股上榜｜净买入合计 {total_net:+.0f} 万"
+            f"｜机构解读出现 {inst_mentions} 次 / 游资提及 {spec_mentions} 次"
+        ),
+    ]
+    if top:
+        lines.append("")
+        lines.append(f"净买入 Top{len(top)}：")
+        lines.extend(_row(p) for p in top)
+    else:
+        lines.append("")
+        lines.append("  （本批次无净买入样本）")
+
+    # 新鲜度：以 CSV 本体 mtime 判陈旧（不依赖 meta 时区，最稳）。
+    try:
+        age_h = (time.time() - path.stat().st_mtime) / 3600
+        if age_h > stale_hours:
+            mdate = time.strftime("%Y-%m-%d", time.localtime(path.stat().st_mtime))
+            lines.append("")
+            lines.append(
+                f"⏳ 数据更新于 {mdate}（{age_h:.0f}h 前，超 {stale_hours}h 阈值），"
+                "作陈旧参考、非实时。"
+            )
+    except (OSError, ValueError):
+        pass
+
+    lines.append("")
+    lines.append("⚠️ 只读参考：龙虎榜活跃度仅作市场环境参考，不改变打分/排序/下单。")
+    return "\n".join(lines)
+
+
 def _to_finite(value: object) -> float | None:
     try:
         f = float(value)  # type: ignore[arg-type]
@@ -1817,6 +1988,11 @@ def format_daily_review(review: DailyReview) -> str:
 
     if review.board_fund_section:
         for line in review.board_fund_section.splitlines():
+            report.append(line)
+        report.append("")
+
+    if review.longhubang_section:
+        for line in review.longhubang_section.splitlines():
             report.append(line)
         report.append("")
 

@@ -819,3 +819,173 @@ class TestBoardFundSection:
         _write_cb(tmp_path / "pit_cache")
         assert "板块资金面" in build_board_fund_section()
         monkeypatch.delenv("AQSP_RUNTIME_DATA_ROOT", raising=False)
+
+
+# ---- 龙虎榜关注段（pit_cache/longhubang.csv，0 读者段打通）----
+
+_LHB_HEADER = "trade_date,symbol,name,close_price,change_rate,buy_amount,sell_amount,net_amount,interpretation"
+
+_LHB_BODY_LINES = [
+    "2026-09-25,600000,浦发银行,10.50,1.20,50000.0,30000.0,20000.0,机构买入",
+    "2026-09-24,600000,浦发银行,10.40,0.50,40000.0,25000.0,15000.0,机构持续买入",
+    "2026-09-25,000001,平安银行,12.30,-2.10,30000.0,50000.0,-20000.0,游资出逃",
+    "2026-09-25,300750,宁德时代,250.00,3.50,120000.0,80000.0,40000.0,主力净流入，机构席位买入",
+    "2026-09-24,300750,宁德时代,242.00,2.00,90000.0,60000.0,30000.0,机构加仓",
+]
+
+
+def _write_lhb(tmp_path, mtime_offset_days: float = 0.0) -> Path:
+    """写 longhubang.csv 夹具（3 个股：600000 2 次/净额+35000/机构；
+    000001 1 次/净额-20000/游资；300750 2 次/净额+70000/机构+主力）。"""
+    p = tmp_path / "longhubang.csv"
+    p.write_text(_LHB_HEADER + "\n" + "\n".join(_LHB_BODY_LINES) + "\n", encoding="utf-8")
+    if mtime_offset_days:
+        import os as _os
+        import time as _t
+
+        old = _t.time() - mtime_offset_days * 86400
+        _os.utime(p, (old, old))
+    return p
+
+
+class TestLonghubangSection:
+    def test_render_when_present(self, tmp_path) -> None:
+        from aqsp.briefing.closing_review import build_longhubang_section
+
+        path = _write_lhb(tmp_path)
+        section = build_longhubang_section(str(path))
+        assert "龙虎榜关注" in section
+        # 共 3 个股，净买入合计 = 20000+15000-20000+40000+30000 = 85000 万
+        assert "共 3 只个股上榜" in section
+        assert "净买入合计 +85000 万" in section
+        assert "机构解读出现 2 次 / 游资提及 1 次" in section
+        # 净买入 Top（按净额降序）：宁德时代 70000 > 浦发银行 35000 > 平安银行 -20000
+        assert "净买入 Top3" in section
+        assert (
+            "宁德时代(300750)：净买入 +70000 万｜上榜 2 次｜最新 +3.50%｜解读：机构/主力"
+            in section
+        )
+        assert "浦发银行(600000)：净买入 +35000 万" in section
+        assert (
+            "平安银行(000001)：净买入 -20000 万｜上榜 1 次｜最新 -2.10%｜解读：游资"
+            in section
+        )
+        # 红线条款
+        assert "不改变打分/排序/下单" in section
+
+    def test_top_n_param(self, tmp_path) -> None:
+        from aqsp.briefing.closing_review import build_longhubang_section
+
+        path = _write_lhb(tmp_path)
+        section = build_longhubang_section(str(path), top_n=1)
+        assert "净买入 Top1" in section
+        assert "宁德时代" in section
+        assert "浦发银行" not in section
+
+    def test_missing_file_returns_empty(self, tmp_path) -> None:
+        from aqsp.briefing.closing_review import build_longhubang_section
+
+        assert build_longhubang_section(str(tmp_path / "nope.csv")) == ""
+
+    def test_wrong_header_returns_empty(self, tmp_path) -> None:
+        from aqsp.briefing.closing_review import build_longhubang_section
+
+        path = tmp_path / "longhubang.csv"
+        path.write_text("a,b\n1,2\n", encoding="utf-8")
+        assert build_longhubang_section(str(path)) == ""
+
+    def test_empty_body_returns_empty(self, tmp_path) -> None:
+        from aqsp.briefing.closing_review import build_longhubang_section
+
+        path = tmp_path / "longhubang.csv"
+        path.write_text(_LHB_HEADER + "\n", encoding="utf-8")
+        assert build_longhubang_section(str(path)) == ""
+
+    def test_malformed_rows_dropped_not_fatally(self, tmp_path) -> None:
+        """坏行（缺 symbol / net 坏数值）只剔除该行，不拖垮整段。"""
+        from aqsp.briefing.closing_review import build_longhubang_section
+
+        path = tmp_path / "longhubang.csv"
+        path.write_text(
+            "\n".join(
+                [
+                    _LHB_HEADER,
+                    "2026-09-25,,无名股,10.0,1.0,100.0,50.0,50.0,机构",            # symbol 空 ⇒ 剔除
+                    "2026-09-25,600111,坏数值股,10.0,1.0,100.0,50.0,not-a-number,游资",  # net 坏 ⇒ 剔除
+                    "2026-09-25,600222,正常股,10.0,1.0,100.0,50.0,50000.0,机构买入",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        section = build_longhubang_section(str(path))
+        assert "共 1 只个股上榜" in section
+        assert "正常股" in section
+        assert "无名股" not in section and "坏数值股" not in section
+        assert "只读参考" in section
+
+    def test_stale_data_annotated(self, tmp_path) -> None:
+        """CSV mtime 超 stale_hours ⇒ 段尾标「非实时」。"""
+        from aqsp.briefing.closing_review import build_longhubang_section
+
+        path = _write_lhb(tmp_path, mtime_offset_days=10.0)
+        section = build_longhubang_section(str(path))
+        assert "非实时" in section
+        # 未陈旧（默认 72h 内）时不标注
+        fresh = _write_lhb(tmp_path)
+        assert "非实时" not in build_longhubang_section(str(fresh))
+
+    def test_empty_review_still_carries_longhubang_section(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """回归（与 09-26 IC 段同类缺陷防回归）：无信号走 _empty_review 早退时，
+        龙虎榜段不得被静默丢弃。"""
+        from aqsp.briefing.closing_review import (
+            ClosingReviewer,
+            build_longhubang_section,
+            format_daily_review,
+        )
+
+        ledger = tmp_path / "predictions.jsonl"
+        paper = tmp_path / "paper_trades.jsonl"
+        ledger.write_text("", encoding="utf-8")
+        paper.write_text("", encoding="utf-8")
+        monkeypatch.setenv("AQSP_RUNTIME_DATA_ROOT", str(tmp_path))
+        (tmp_path / "pit_cache").mkdir()
+        _write_lhb(tmp_path / "pit_cache")
+
+        review = ClosingReviewer(
+            ledger_path=str(ledger), paper_ledger_path=str(paper)
+        ).review_today("2025-06-01")
+        assert "龙虎榜关注" in review.longhubang_section
+        assert "龙虎榜关注" in format_daily_review(review)
+        # 交叉一致性：与直接调 build_longhubang_section 一致
+        assert review.longhubang_section == build_longhubang_section(
+            str(tmp_path / "pit_cache" / "longhubang.csv")
+        )
+
+    def test_review_today_path_carries_longhubang_section(self, tmp_path, monkeypatch) -> None:
+        """正常 review_today 路径（有信号）也塞龙虎榜段。"""
+        from aqsp.briefing.closing_review import ClosingReviewer
+
+        ledger = tmp_path / "predictions.jsonl"
+        paper = tmp_path / "paper_trades.jsonl"
+        ledger.write_text("", encoding="utf-8")
+        paper.write_text("", encoding="utf-8")
+        monkeypatch.setenv("AQSP_RUNTIME_DATA_ROOT", str(tmp_path))
+        (tmp_path / "pit_cache").mkdir()
+        _write_lhb(tmp_path / "pit_cache")
+
+        review = ClosingReviewer(
+            ledger_path=str(ledger), paper_ledger_path=str(paper)
+        ).review_today("2025-06-01")
+        assert "龙虎榜关注" in review.longhubang_section
+
+    def test_default_path_resolves_via_runtime_root(self, tmp_path, monkeypatch) -> None:
+        """csv_path=None ⇒ 走 <runtime>/pit_cache/longhubang.csv（写读同源）。"""
+        from aqsp.briefing.closing_review import build_longhubang_section
+
+        monkeypatch.setenv("AQSP_RUNTIME_DATA_ROOT", str(tmp_path))
+        (tmp_path / "pit_cache").mkdir()
+        _write_lhb(tmp_path / "pit_cache")
+        assert "龙虎榜关注" in build_longhubang_section()
