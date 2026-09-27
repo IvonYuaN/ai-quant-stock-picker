@@ -150,6 +150,13 @@ class DailyReview:
     # 分级计数，作为收盘时「市场资讯环境」证据。空串 = 数据缺失/陈旧标注，
     # 报告不渲染该节；绝不写回打分/排序/下单（红线，与板块资金面段同级别）。
     news_section: str = ""
+    # 重大公告动态（只读）：读 pit_cache/announcements.csv（公告标题，
+    # announcement 源盘后落盘，先被 filters_lethal.announcement_keyword 用于排雷
+    # 筛选，但从未作为可读段呈现给用户）。按披露日近 N 日过滤 + 关键词分类
+    # （监管处罚/立案/重组/减持/增持回购/业绩/分红/中标/停复牌），作为收盘时
+    # 「事件风险环境」证据。空串 = 数据缺失/陈旧标注，报告不渲染该节；
+    # 绝不写回打分/排序/下单（红线，与板块资金面段同级别）。
+    announcements_section: str = ""
     # LLM 解读层（降级安全）：AI 复盘解读小节 + 降级标记。
     # llm_review_text 为空串时报告不渲染 AI 小节；degraded=True 表示走了
     # fallback 规则文本（不显示该小节）。红线：LLM 只进该独立小节，
@@ -341,6 +348,8 @@ class ClosingReviewer:
         board_fund_section = build_board_fund_section()
         longhubang_section = build_longhubang_section()
         news_section = build_news_section()
+        # 防 09-26 IC 段同类「早退静默丢弃」缺陷：新只读段在两条路径都显式构造
+        announcements_section = build_announcements_section()
 
         return DailyReview(
             date=today,
@@ -370,6 +379,7 @@ class ClosingReviewer:
             board_fund_section=board_fund_section,
             longhubang_section=longhubang_section,
             news_section=news_section,
+            announcements_section=announcements_section,
         )
 
     def _latest_review_date(self) -> str:
@@ -1278,6 +1288,9 @@ class ClosingReviewer:
             # 财经快讯与龙虎榜/板块资金面同理：独立于「有无信号」，盘后预载落盘即展示，
             # 早退分支漏塞会静默丢弃（与 09-26 IC 段同类缺陷）。
             news_section=build_news_section(),
+            # 重大公告动态与财经快讯/龙虎榜同理：独立于「有无信号」，盘后落盘即展示，
+            # 早退分支漏塞会静默丢弃（与 09-26 IC 段同类缺陷）。
+            announcements_section=build_announcements_section(),
         )
 
     def generate_weekly_summary(self, end_date: str | None = None) -> WeeklySummary:
@@ -2004,6 +2017,161 @@ def build_news_section(
     return "\n".join(lines)
 
 
+# 公告关键词分类词典：按「风险/事件」关注度排序，前者优先归入（一条公告可命中多类，
+# 但展示时只取最高优先级一类，避免监管处罚被淹没在「其他」里）。
+_ANNOUNCE_CATEGORIES: list[tuple[str, tuple[str, ...]]] = [
+    ("监管处罚", ("行政处罚", "立案", "行政处罚事先告知", "行政监管措施", "监管措施",
+                  "警示函", "通报批评", "公开谴责", "罚款", "退市风险", "行政监督管理措施")),
+    ("重组/并购", ("重组", "并购", "收购", "资产注入", "借壳", "混合所有制")),
+    ("减持", ("减持", "被动减持", "大宗交易减持")),
+    ("增持/回购", ("增持", "回购", "股权激励", "员工持股")),
+    ("业绩", ("业绩", "净利润", "亏损", "扭亏", "业绩预告", "业绩快报", "营收")),
+    ("分红/送转", ("分红", "送转", "派息", "转增", "配股")),
+    ("中标/合同", ("中标", "合同", "订单", "项目中标", "签约")),
+    ("停复牌", ("停牌", "复牌", "终止上市", "退市")),
+    ("其他", ("",)),
+]
+
+
+def _categorize_announcement(text: str) -> str:
+    for cat, kws in _ANNOUNCE_CATEGORIES:
+        if cat == "其他":
+            return "其他"
+        for kw in kws:
+            if kw and kw in text:
+                return cat
+    return "其他"
+
+
+def build_announcements_section(
+    csv_path: str | Path | None = None,
+    top_n: int = 12,
+    *,
+    stale_hours: int = 72,
+    recent_days: int = 7,
+) -> str:
+    """重大公告动态段（只读）：读 ``pit_cache/announcements.csv``（公告标题）。
+
+    按披露日近 ``recent_days`` 日过滤 + 关键词分类（监管处罚/立案/重组/减持/增持回购/
+    业绩/分红/中标/停复牌），作为收评「事件风险环境」证据。数据源 = ``announcement``
+    源盘后落盘的 ``announcements.csv``，先被 ``filters_lethal.announcement_keyword``
+    用于排雷筛选，但**从未作为可读段呈现给用户**——本段把"被筛选吃掉的公告"重新
+    显式呈现为收盘风险参考。
+
+    降级安全（与 ``news_section`` / ``longhubang_section`` 同级别，红线）：
+      - 文件缺失 / 读失败 / 表头残缺 / 全部行坏 ⇒ 返回空串，报告不渲染该节；
+      - 单行字段坏只剔除该行、不拖垮整段；
+      - 绝不写回打分 / 排序 / 下单；
+      - 数据陈旧（本体 mtime 超 ``stale_hours``）⇒ 段尾标注「非实时」，不作实时信号。
+    """
+    import csv
+    import os
+    import time
+    from datetime import datetime
+
+    if csv_path is None:
+        csv_path = os.path.join(
+            _factor_ic_runtime_root(),
+            "pit_cache",
+            "announcements.csv",
+        )
+    path = Path(csv_path)
+    if not path.exists():
+        return ""
+
+    rows: list[dict[str, str]] = []
+    try:
+        with path.open(encoding="utf-8") as fh:
+            reader = csv.DictReader(fh)
+            required = {"symbol", "name", "notice_date", "text"}
+            if not required.issubset(set(reader.fieldnames or [])):
+                return ""
+            rows = list(reader)
+    except Exception:
+        return ""
+
+    cutoff = (now_shanghai() - timedelta(days=recent_days)).date()
+    parsed: list[dict[str, str]] = []
+    for r in rows:
+        symbol = str(r.get("symbol") or "").strip()
+        name = str(r.get("name") or "").strip()
+        notice = str(r.get("notice_date") or "").strip()
+        text = str(r.get("text") or "").strip()
+        if not symbol or not text or not notice:
+            continue
+        try:
+            nd = datetime.strptime(notice[:10], "%Y-%m-%d").date()
+        except ValueError:
+            continue
+        if nd < cutoff:
+            continue
+        parsed.append(
+            {
+                "symbol": symbol,
+                "name": name,
+                "notice": notice[:10],
+                "text": text,
+                "cat": _categorize_announcement(text),
+            }
+        )
+    if not parsed:
+        return ""
+
+    # 分类计数（按关注度顺序）
+    order = [c[0] for c in _ANNOUNCE_CATEGORIES]
+    cat_counts: dict[str, int] = {c: 0 for c in order}
+    for p in parsed:
+        cat_counts[p["cat"]] = cat_counts.get(p["cat"], 0) + 1
+
+    def _row(p: dict[str, str]) -> str:
+        # 标题可能过长，截断到 46 字避免日报被撑爆
+        t = p["text"]
+        if len(t) > 46:
+            t = t[:46] + "…"
+        return f"  [{p['cat']}] {p['notice'][5:]} {p['name']}（{p['symbol']}）：{t}"
+
+    # 展示优先级：监管处罚/重组/减持/增持/业绩 在前，其他/中标/分红/停复牌 在后
+    show_order = [
+        "监管处罚", "重组/并购", "减持", "增持/回购", "业绩",
+        "分红/送转", "中标/合同", "停复牌", "其他",
+    ]
+    lines: list[str] = [
+        f"## 重大公告动态（事件风险环境 · 近 {recent_days} 日）",
+        "",
+        "近 {recent} 日共 {n} 条公告｜".format(recent=recent_days, n=len(parsed))
+        + " ".join(
+            f"{c} {cat_counts[c]}" for c in order if cat_counts[c]
+        ),
+    ]
+    for cat in show_order:
+        items = [p for p in parsed if p["cat"] == cat][: (top_n // 3 or 4)]
+        if not items:
+            continue
+        lines.append("")
+        lines.append(f"{cat}（{len([p for p in parsed if p['cat'] == cat])}）：")
+        lines.extend(_row(p) for p in items)
+    if len(parsed) > top_n:
+        lines.append("")
+        lines.append(f"  （仅展示重点 {top_n} 条，其余 {len(parsed) - top_n} 条见原始数据）")
+
+    # 新鲜度：以 CSV 本体 mtime 判陈旧（公告时效性强，默认 72h）。
+    try:
+        age_h = (time.time() - path.stat().st_mtime) / 3600
+        if age_h > stale_hours:
+            mdate = time.strftime("%Y-%m-%d", time.localtime(path.stat().st_mtime))
+            lines.append("")
+            lines.append(
+                f"⏳ 数据更新于 {mdate}（{age_h:.0f}h 前，超 {stale_hours}h 阈值），"
+                "作陈旧参考、非实时。"
+            )
+    except (OSError, ValueError):
+        pass
+
+    lines.append("")
+    lines.append("⚠️ 只读参考：重大公告仅作事件风险环境参考，不改变打分/排序/下单。")
+    return "\n".join(lines)
+
+
 def _to_finite(value: object) -> float | None:
     try:
         f = float(value)  # type: ignore[arg-type]
@@ -2140,6 +2308,11 @@ def format_daily_review(review: DailyReview) -> str:
 
     if review.news_section:
         for line in review.news_section.splitlines():
+            report.append(line)
+        report.append("")
+
+    if review.announcements_section:
+        for line in review.announcements_section.splitlines():
             report.append(line)
         report.append("")
 
