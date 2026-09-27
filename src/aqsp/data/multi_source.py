@@ -42,6 +42,8 @@ class MultiSource(DataSource):
         validate_consistency: bool = True,
         live_fetch_deadline_seconds: float = 30.0,
         deferred_live_short_sources: frozenset[str] | set[str] | None = None,
+        deferred_live_short_deadline_seconds: float | None = None,
+        deferred_fetch_deadline_per_symbol_seconds: float = 0.5,
     ) -> None:
         self.primary = primary
         self.fallbacks = fallbacks
@@ -49,6 +51,16 @@ class MultiSource(DataSource):
         if live_fetch_deadline_seconds <= 0:
             raise ValueError("live_fetch_deadline_seconds 必须大于 0")
         self.live_fetch_deadline_seconds = float(live_fetch_deadline_seconds)
+        if deferred_live_short_deadline_seconds is not None and (
+            deferred_live_short_deadline_seconds <= 0
+        ):
+            raise ValueError("deferred_live_short_deadline_seconds 必须大于 0")
+        self.deferred_live_short_deadline_seconds = deferred_live_short_deadline_seconds
+        if deferred_fetch_deadline_per_symbol_seconds < 0:
+            raise ValueError("deferred_fetch_deadline_per_symbol_seconds 不能为负")
+        self.deferred_fetch_deadline_per_symbol_seconds = float(
+            deferred_fetch_deadline_per_symbol_seconds
+        )
         # Sources listed here are intraday reserves: excluded from the
         # concurrent live_short race, tried sequentially only after every raced
         # source failed, and skipped entirely on the daily/index chain. Use it
@@ -244,6 +256,22 @@ class MultiSource(DataSource):
             # 故被放弃的在途抓取不会在解释器退出时被 join 卡死（见 utils/concurrency.py）。
             pool.shutdown(wait=False, cancel_futures=True)
 
+    def _effective_deferred_deadline(self, n_symbols: int) -> float:
+        """Independent time budget for the deferred fallback stage.
+
+        Deferred reserves are per-IP rate-limited and retried one symbol at a
+        time, so their wall-clock scales with the symbol count, NOT with the
+        fast-race deadline. Reusing the flat ``live_fetch_deadline_seconds``
+        here was the bug: a 256-symbol Eastmoney fallback (~0.35s/symbol,
+        measured 0.347s on the 2026-09 production batch) hit its own 30s
+        deadline before finishing and produced zero coverage.
+        """
+        if self.deferred_live_short_deadline_seconds is not None:
+            return self.deferred_live_short_deadline_seconds
+        return self.live_fetch_deadline_seconds + (
+            max(1, n_symbols) * self.deferred_fetch_deadline_per_symbol_seconds
+        )
+
     def _run_deferred_live_short_fallback(
         self,
         deferred: list[tuple[int, DataSource | SourceFactory, str]],
@@ -263,7 +291,9 @@ class MultiSource(DataSource):
         """
         if not deferred:
             return None
-        deadline = time.monotonic() + self.live_fetch_deadline_seconds
+        deadline = time.monotonic() + self._effective_deferred_deadline(
+            len(expected_keys)
+        )
         for _index, source_ref, source_name in deferred:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
