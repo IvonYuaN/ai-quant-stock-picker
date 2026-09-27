@@ -1654,6 +1654,27 @@ def test_preload_event_data_script_covers_all_event_sources() -> None:
     assert 'if [ "$ATTEMPTED" -gt 0 ] && [ "$FAILED" -eq "$ATTEMPTED" ]' in script
 
 
+def test_preload_event_data_concept_board_relay_and_freshness_audit() -> None:
+    """concept_board 走 runner 中继（prod IP 被 push2 族阻断）+ 收尾 mtime 新鲜度审计。
+
+    2026-09-27 根治「板块资金面段永远陈旧」：concept_board 自 09-08 起在 prod 连续
+    抓取失败（东财 push2 全族 RemoteDisconnected），被 best-effort WARN 静默吞掉 3 周。
+    中继可关（CONCEPT_BOARD_RELAY=0）、失败回落本地直连；审计只告警不改退出码。
+    """
+    script = (PROJECT_ROOT / "scripts" / "preload_event_data.sh").read_text(
+        encoding="utf-8"
+    )
+    # runner 中继：代抓 + 回流 + 可停用 + 失败回落本地
+    assert "CONCEPT_BOARD_RELAY" in script
+    assert "fetch_concept_board_via_runner" in script
+    assert "rsync -a -e" in script
+    assert "回落本地直连" in script
+    # 新鲜度审计：mtime 超阈值打 [ERROR]（响亮告警，monitors 可捕），不改退出码
+    assert "AQSP_PRELOAD_FRESH_HOURS" in script
+    assert "[ERROR] pit_cache/" in script
+    assert "陈旧" in script
+
+
 def test_bt_task_event_data_action_wires_preload_script() -> None:
     """event-data 计划任务必须真的调用预加载脚本（否则事件数据面仍是空转）。"""
 
