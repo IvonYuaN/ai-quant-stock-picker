@@ -93,7 +93,9 @@ def _window_dates(db: str, as_of: str, window_days: int, lookback: int) -> list[
     return _distinct_dates(db, as_of, window_days + lookback + 30)
 
 
-def _build_factor_objs(extra: list[str]) -> tuple[list[str], dict[str, object]]:
+def _build_factor_objs(
+    extra: list[str], lookback: int = 60
+) -> tuple[list[str], dict[str, object]]:
     """实例化打分对象。基础三因子走 WF-001 变体；extra 用 enabled 派生副本。"""
     from aqsp.cli import _apply_walkforward_grid_variant, load_thresholds
     from aqsp.strategies.base import StrategyConfig
@@ -122,8 +124,16 @@ def _build_factor_objs(extra: list[str]) -> tuple[list[str], dict[str, object]]:
     order = list(_BASE_FACTORS)
     for key, (cls, cfgname) in extra_cls.items():
         if key in extra and key not in order:
+            # rps 的默认 rps_period=120 远超本诊断每截面实际喂入的窗口
+            # （下方 `df[df["date"] <= d].tail(lookback + 10)`，lookback=60 ⇒ 70 行）
+            # ⇒ `len(p) < k+1` 恒成立 ⇒ 全票 NaN ⇒ IC 恒报 nan（2026-09-28 实测：
+            #   730 日/step5/146 截面跑批里 rps 四项指标全 nan）。
+            # 显式对齐到 lookback：既保证可计算，又保持「仅用截面日及之前数据」的 PIT 语义。
+            params = {"rps_period": int(lookback)} if key == "rps" else {}
             try:
-                objs[key] = cls(StrategyConfig(name=cfgname, enabled=True), diag)
+                objs[key] = cls(
+                    StrategyConfig(name=cfgname, enabled=True, params=params), diag
+                )
                 order.append(key)
             except Exception as exc:  # 单因子不可用不阻断整体诊断
                 print(f"[warn] {key} 无法实例化，跳过: {exc}")
@@ -179,7 +189,7 @@ def run(
         index=close.index,
         columns=close.columns,
     )
-    factor_order, factor_objs = _build_factor_objs(extra_factors or [])
+    factor_order, factor_objs = _build_factor_objs(extra_factors or [], lookback)
     by_symbol: dict[str, pd.DataFrame] = {}
     for sym, g in raw.sort_values("trade_date").groupby("symbol", sort=False):
         d = g[["trade_date", "open", "high", "low", "close", "volume"]].rename(
