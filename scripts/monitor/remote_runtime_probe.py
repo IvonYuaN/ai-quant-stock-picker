@@ -45,10 +45,17 @@ def _parse_ssh_config(host_alias: str) -> dict[str, str]:
 
 def _resolve_ssh_target(host_alias: str) -> tuple[str, int, str]:
     config = _parse_ssh_config(host_alias)
-    host = config.get("hostname", "").strip() or host_alias.strip()
+    alias = host_alias.strip()
+    host = config.get("hostname", "").strip() or alias
     port_raw = config.get("port", "22").strip() or "22"
     user = config.get("user", "").strip()
-    if not config and host_alias.strip() == "aqsp-server":
+    # 🔴 2026-09-28 实测：`ssh -G <alias>` **总会**返回一份（默认值）配置 —— 别名未定义时
+    #   只是把 hostname 原样回声成别名本身。因此原先的 `if not config` 判据**永不成立**，
+    #   这段「未定义别名 ⇒ 自检 127.0.0.1」的回退成了死代码：在没配 `aqsp-server` 别名的
+    #   prod 上，探针会去连 `aqsp-server:22` ⇒ DNS 解析失败 ⇒ server_status 每次都报
+    #   `critical check failed: remote_runtime_probe`（假 critical、掩盖真报警）。
+    #   改为按「hostname 是否退化为别名本身」判定别名未定义。
+    if host == alias and alias == "aqsp-server":
         host = "127.0.0.1"
     try:
         port = int(port_raw)
