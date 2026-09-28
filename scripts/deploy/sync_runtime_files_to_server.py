@@ -24,7 +24,19 @@ from pathlib import Path
 from aqsp.core.time import now_shanghai
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+def _find_project_root(start: Path) -> Path:
+    """向上寻找含 pyproject.toml 的目录（兼容脚本位于子目录/经根软链调用）。
+
+    该脚本用 PROJECT_ROOT 做**文件 sha256 比对**与 `git rev-parse`（cwd=PROJECT_ROOT），
+    根算错会静默比对错误路径的文件集。
+    """
+    for candidate in (start, *start.parents):
+        if (candidate / "pyproject.toml").is_file():
+            return candidate
+    return start
+
+
+PROJECT_ROOT = _find_project_root(Path(__file__).resolve().parent)
 DEFAULT_REMOTE_ROOT = "/opt/aqsp"
 DEFAULT_BACKUP_DIR = "/opt/aqsp/runtime-backups"
 DEFAULT_REMOTE_OVERLAY_STATE = ".state/runtime-sync-overlay.json"

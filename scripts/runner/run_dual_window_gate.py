@@ -25,7 +25,15 @@ if __package__ in {None, ""}:
 from aqsp.utils.jsonl_io import atomic_write_text  # noqa: E402
 from aqsp.walkforward_gate import build_window_consistency  # noqa: E402
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+def _find_project_root(start: Path) -> Path:
+    """向上寻找含 pyproject.toml 的目录（兼容脚本位于子目录/经根软链调用）。"""
+    for candidate in (start, *start.parents):
+        if (candidate / "pyproject.toml").is_file():
+            return candidate
+    return start
+
+
+PROJECT_ROOT = _find_project_root(Path(__file__).resolve().parent)
 PRODUCTION_GATE = PROJECT_ROOT / "scripts" / "run_production_walkforward_gate.py"
 
 
