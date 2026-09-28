@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from aqsp.core.runtime import runtime_data_root
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -49,6 +50,13 @@ _PAGE_SIZE = 500
 _MAX_PAGES_PER_QUARTER = 40  # 40×500=20000 行/季守卫：A 股全市场远小于此
 _DEFAULT_QUARTERS = 4
 _DISCLOSURE_WINDOW_DAYS = 45  # 季末后该天数视为「该季数据基本披露完」
+# 单页瞬时故障（东财 502 / Response ended prematurely / 超时）重试：
+# 09-28 首自动跑批实证 2026-03-31 p3 断流 ⇒ 旧实现整季 raise、后续季度全不抓、
+# load() 随后空结果 to_csv 把好数据截断。修复 = 页级重试 + 局部失败降级（#259）。
+_PAGE_RETRIES = 3
+_PAGE_BACKOFF_SECONDS = (2, 4, 8)
+# 合并写封顶最近 8 季：4 季常规 + 4 季缓冲，防缓存无限膨胀（#259）。
+_MAX_CACHED_QUARTERS = 8
 _logger = logging.getLogger("aqsp.data.holder_num")
 
 
@@ -155,11 +163,20 @@ class HolderNumSource:
             import requests
         except ImportError as e:  # pragma: no cover
             raise DataError(f"holder_num: 缺少依赖 requests（{e}）") from e
-        items: list[HolderNumItem] = []
-        for quarter in quarters:
-            page = 1
-            quarter_items: list[HolderNumItem] = []
-            while True:
+
+        def _get_page(page: int, quarter: str) -> tuple[list, int]:
+            """抓单页：瞬时故障（502 / 断流 / 超时）重试后仍败才抛 DataError。
+
+            返回 (raw_rows, total_count)；末页 raw_rows 可能为空。
+            """
+            last: Exception | None = None
+            for attempt in range(_PAGE_RETRIES):
+                if attempt:
+                    time.sleep(
+                        _PAGE_BACKOFF_SECONDS[
+                            min(attempt, len(_PAGE_BACKOFF_SECONDS)) - 1
+                        ]
+                    )
                 params: dict[str, str] = {
                     "reportName": EM_HOLDER_REPORT,
                     "columns": "ALL",
@@ -172,42 +189,84 @@ class HolderNumSource:
                 }
                 try:
                     r = requests.get(
-                        EM_HOLDER_URL, params=params, headers=_EM_HEADERS, timeout=60
+                        EM_HOLDER_URL,
+                        params=params,
+                        headers=_EM_HEADERS,
+                        timeout=60,
                     )
                     r.raise_for_status()
                     payload = r.json()
-                except Exception as e:
-                    raise DataError(
-                        f"holder_num: 东财股东户数抓取失败 {quarter} p{page}（{e}）"
-                    ) from e
-                result = payload.get("result")
-                rows = result.get("data") if isinstance(result, dict) else None
-                if not isinstance(rows, list) or not rows:
-                    break
-                page_items = _parse_quarter_rows(rows)
-                quarter_items.extend(page_items)
-                total = 0
-                if isinstance(result, dict):
-                    try:
-                        total = int(result.get("count") or 0)
-                    except (TypeError, ValueError):
-                        total = 0
-                # 取全判定：当季累计达到 count、或末页不满
-                if (total and len(quarter_items) >= total) or len(
-                    page_items
-                ) < _PAGE_SIZE:
-                    break
-                page += 1
-                if page > _MAX_PAGES_PER_QUARTER:
-                    self.truncated = True
-                    _logger.warning(
-                        "holder_num: 季度 %s 触达分页上限 %d 页，该季可能被截断",
-                        quarter,
-                        _MAX_PAGES_PER_QUARTER,
-                    )
-                    break
+                    result = payload.get("result")
+                    rows = result.get("data") if isinstance(result, dict) else None
+                    total = 0
+                    if isinstance(result, dict):
+                        try:
+                            total = int(result.get("count") or 0)
+                        except (TypeError, ValueError):
+                            total = 0
+                    return (rows if isinstance(rows, list) else []), total
+                except Exception as exc:
+                    last = exc
+            raise DataError(
+                f"holder_num: 东财股东户数抓取失败 {quarter} p{page}（{last}）"
+            ) from last
+
+        items: list[HolderNumItem] = []
+        for quarter in quarters:
+            page = 1
+            quarter_items: list[HolderNumItem] = []
+            try:
+                while True:
+                    raw_rows, total = _get_page(page, quarter)
+                    if not raw_rows:
+                        break
+                    page_items = _parse_quarter_rows(raw_rows)
+                    quarter_items.extend(page_items)
+                    # 取全判定：当季累计达到 count、或本页不满（末页）
+                    if (total and len(quarter_items) >= total) or len(
+                        page_items
+                    ) < _PAGE_SIZE:
+                        break
+                    page += 1
+                    if page > _MAX_PAGES_PER_QUARTER:
+                        self.truncated = True
+                        _logger.warning(
+                            "holder_num: 季度 %s 触达分页上限 %d 页，该季可能被截断",
+                            quarter,
+                            _MAX_PAGES_PER_QUARTER,
+                        )
+                        break
+            except DataError as e:
+                # 单季重试耗尽仍失败 ⇒ 局部降级（保住该季已抓部分 + 继续后续季度），
+                # 绝不绑架整批：否则一次瞬断就整表丢/旧（#259）。
+                _logger.warning(
+                    "holder_num: 季度 %s 抓取降级（%s），已得 %d 行，继续后续季度",
+                    quarter,
+                    e,
+                    len(quarter_items),
+                )
+                self.truncated = True
             items.extend(quarter_items)
         return items
+
+    def _read_cache(self, path: str) -> list[HolderNumItem]:
+        """读旧缓存（坏文件/缺列 ⇒ 空列表，绝不拖垮上层）。"""
+        if not os.path.exists(path):
+            return []
+        try:
+            df = pd.read_csv(path, dtype={"symbol": str})
+            return [
+                HolderNumItem(
+                    symbol=str(row["symbol"]).zfill(6),
+                    name=str(row.get("name") or ""),
+                    quarter=str(row.get("quarter") or ""),
+                    holder_count=float(row.get("holder_count") or 0),
+                    notice_date=str(row.get("notice_date") or ""),
+                )
+                for _, row in df.iterrows()
+            ]
+        except Exception:
+            return []
 
     def load(
         self, force: bool = False, quarters: Optional[list[str]] = None
@@ -216,26 +275,42 @@ class HolderNumSource:
             quarters = _recent_quarter_ends(today_shanghai(), _default_quarter_count())
         path = self._default_cache_path()
         if not force and not self._items and os.path.exists(path):
-            try:
-                df = pd.read_csv(path, dtype={"symbol": str})
-                self._items = [
-                    HolderNumItem(
-                        symbol=str(row["symbol"]).zfill(6),
-                        name=str(row.get("name") or ""),
-                        quarter=str(row.get("quarter") or ""),
-                        holder_count=float(row.get("holder_count") or 0),
-                        notice_date=str(row.get("notice_date") or ""),
-                    )
-                    for _, row in df.iterrows()
-                ]
+            cached = self._read_cache(path)
+            if cached:
+                self._items = cached
                 return self._items
+        # force 场景下旧缓存仅作「全灭兜底」，不得替代本次强制重抓（#259）
+        prev_items = self._read_cache(path) if force else []
+        fetched = self._fetch(quarters)
+        # 合并写：按 (symbol, quarter) 键并入旧缓存，fetched 胜出（更新披露），
+        # 封顶最近 8 季防膨胀（#259）。降级跑批（某季失败）绝不冲掉已缓存的其余季。
+        if fetched:
+            merged: dict[tuple[str, str], HolderNumItem] = {
+                (i.symbol, i.quarter): i for i in prev_items
+            }
+            for i in fetched:
+                merged[(i.symbol, i.quarter)] = i
+            keep_quarters = sorted({i.quarter for i in merged.values()}, reverse=True)[
+                :_MAX_CACHED_QUARTERS
+            ]
+            self._items = [i for i in merged.values() if i.quarter in keep_quarters]
+        elif self._items or prev_items:
+            # 本次全季抓取失败（网络全灭/断流）⇒ 保全旧缓存、绝不写空表（#259）。
+            self._items = self._items or prev_items
+            _logger.warning(
+                "holder_num: 本次抓取零结果，沿用旧缓存 %d 行（不写空表）",
+                len(self._items),
+            )
+            return self._items
+        else:
+            self._items = []
+        if self._items:
+            try:
+                pd.DataFrame([i.__dict__ for i in self._items]).to_csv(
+                    path, index=False
+                )
             except Exception:
-                self._items = []
-        self._items = self._fetch(quarters)
-        try:
-            pd.DataFrame([i.__dict__ for i in self._items]).to_csv(path, index=False)
-        except Exception:
-            pass
+                pass
         return self._items
 
     def items(

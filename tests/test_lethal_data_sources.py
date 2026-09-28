@@ -184,12 +184,44 @@ class TestHolderNumSourceFetch:
         assert src.truncated is True
         assert len(items) == 500 * _MAX_PAGES_PER_QUARTER
 
-    def test_fetch_network_error_raises_data_error(self, fake_requests):
-        from aqsp.core.errors import DataError
+    def test_fetch_network_error_degrades_not_raise(self, fake_requests, monkeypatch):
+        """#259 契约：某季全页抓取失败（网络全灭/断流）⇒ 该季降级跳过、绝不
+        绑架整批 raise（旧契约「网络错 ⇒ DataError」已废）。truncated 标记供上层
+        感知数据不完整；多季时失败季不拖累成功季。"""
+        import time
 
+        monkeypatch.setattr(time, "sleep", lambda *_: None)  # 免真实退避等待
+        src = HolderNumSource()
         fake_requests.get.side_effect = ConnectionError("boom")
-        with pytest.raises(DataError):
-            HolderNumSource()._fetch(quarters=["2026-06-30"])
+        items = src._fetch(quarters=["2026-06-30"])
+        assert items == []  # 该季全失败被降级
+        assert src.truncated is True
+
+    def test_fetch_one_quarter_fail_others_still_fetched(self, fake_requests, monkeypatch):
+        """#259：失败季不拖累成功季——Q1 断流、Q2 正常 ⇒ Q2 完整保留。"""
+        import time
+
+        monkeypatch.setattr(time, "sleep", lambda *_: None)
+        src = HolderNumSource()
+        good = {
+            "result": {
+                "count": 1,
+                "data": [
+                    {"SECURITY_CODE": "000001", "HOLDER_NUM": 450712,
+                     "END_DATE": "2026-06-30", "HOLD_NOTICE_DATE": "2026-08-15"}
+                ],
+            }
+        }
+
+        def flaky_get(url, *, params, headers, timeout):
+            if "2026-03-31" in params["filter"]:
+                raise ConnectionError("Response ended prematurely")
+            return _resp(good)
+
+        fake_requests.get.side_effect = flaky_get
+        items = src._fetch(quarters=["2026-03-31", "2026-06-30"])
+        assert [i.quarter for i in items] == ["2026-06-30"]
+        assert src.truncated is True
 
     def test_fetch_uses_history_report_with_quarter_filter(self, fake_requests):
         """回归（2026-09-27 根治）：必须用 RPT_HOLDERNUM_DET（每票×每期完整历史）
