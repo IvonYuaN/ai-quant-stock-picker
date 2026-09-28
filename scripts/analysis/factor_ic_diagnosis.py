@@ -248,9 +248,16 @@ def main() -> int:
         ("mean_reversion", MeanReversionStrategy),
         ("volume", VolumeBreakoutStrategy),
     ) + candidate_classes:
+        # rps 的默认 rps_period=120 远超本诊断每截面实际喂入的窗口
+        # （下方 `df[df['date'] <= d].tail(args.lookback + 10)`，lookback=60 ⇒ 70 行）
+        # ⇒ `len(p) < k+1` 恒成立 ⇒ 全 NaN ⇒ IC 报 nan（2026-09-28 实测）。
+        # 显式对齐到 lookback：既保证可计算，又保持「仅用截面日及之前数据」的 PIT 语义。
+        _params: dict[str, object] = (
+            {"rps_period": int(args.lookback)} if _name == "rps" else {}
+        )
         try:
             extra_factors[_name] = _cls(
-                StrategyConfig(name=_name, enabled=True), diag_thresholds
+                StrategyConfig(name=_name, enabled=True, params=_params), diag_thresholds
             )
         except Exception as exc:  # noqa: BLE001 - 单个因子不可用不应中断整体诊断
             print(f"[warn] {_name} 无法实例化，跳过: {exc}")
