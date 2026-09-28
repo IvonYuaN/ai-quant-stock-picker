@@ -144,6 +144,7 @@ def run(
     db: str,
     *,
     window_days: int = 90,
+    as_of: str | None = None,
     lookback: int = 60,
     horizon: int = 3,
     step: int = 10,
@@ -157,7 +158,9 @@ def run(
     """滚动 IC 诊断主流程，返回写入 JSON 的结构（供测试直接断言）。
     write_ready 时落 IC_READY 标记（同 runner_gate 的 RESULT_READY 契约）。"""
     _optin_prefiltered_universe()
-    as_of = _as_of(db)
+    # 显式 as_of 时以其为窗口右端（可复现的历史窗口 / 两窗对照）；缺省取库内 MAX。
+    as_of_source = "显式 --as-of" if as_of else "库内 MAX"
+    as_of = as_of or _as_of(db)
     dates_all = _window_dates(db, as_of, window_days, lookback)
     if len(dates_all) < lookback + window_days + horizon:
         raise ValueError(f"库内 {as_of} 之前交易日仅 {len(dates_all)} 天，不足窗口")
@@ -227,6 +230,7 @@ def run(
 
     result = {
         "as_of": as_of,
+        "as_of_source": as_of_source,
         "window_days": window_days,
         "horizon": horizon,
         "step": step,
@@ -263,7 +267,7 @@ def _write_report(path: Path, result: dict) -> None:
     """人读版（与 factor_ic_diagnosis 同口径判读）。"""
     lines = [
         "# 滚动窗口因子 IC 诊断",
-        f"- as-of: `{result['as_of']}`（库内 MAX，窗口右端截断，未读未来数据）",
+        f"- as-of: `{result['as_of']}`（{result.get('as_of_source', '库内 MAX')}，窗口右端截断，未读未来数据）",
         f"- 窗口: 近 {result['window_days']} 交易日 / 每 {result['step']} 日一截面 / "
         f"horizon={result['horizon']} / lookback={result['lookback']}",
         f"- 标的池: {result['universe']['note']}（{result['universe']['n_symbols']} 只）",
@@ -302,6 +306,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--db", required=True)
     ap.add_argument("--output-dir", required=True)
     ap.add_argument("--window-days", type=int, default=90)
+    ap.add_argument(
+        "--as-of",
+        default=None,
+        help="窗口右端交易日（YYYY-MM-DD）。缺省取库内 MAX。用于可复现的历史窗口/两窗对照。",
+    )
     ap.add_argument("--lookback", type=int, default=60)
     ap.add_argument("--horizon", type=int, default=3)
     ap.add_argument("--step", type=int, default=10)
@@ -315,6 +324,7 @@ def main(argv: list[str] | None = None) -> int:
     run(
         a.db,
         window_days=a.window_days,
+        as_of=a.as_of,
         lookback=a.lookback,
         horizon=a.horizon,
         step=a.step,
