@@ -1288,7 +1288,7 @@ class TestAnnouncementsSection:
                 [
                     _ANNOUNCE_HEADER,
                     "600001,坏公司,,标题但缺披露日",            # notice_date 空 ⇒ 剔除
-                    "600002,,2026-09-25,有日缺名字",           # name 空但 symbol/text/notice 全 ⇒ 仍收录
+                    "600002,,2026-09-25,有日缺名字:股份回购实施情况公告",  # name 空但 symbol/text/notice 全 ⇒ 仍收录
                     "600003,好公司,2026-09-25,好公司:收到行政处罚事先告知书",  # 有效
                     ",空代码,2026-09-25,无代码公告",           # symbol 空 ⇒ 剔除
                 ]
@@ -1350,6 +1350,55 @@ class TestAnnouncementsSection:
         (tmp_path / "pit_cache").mkdir()
         _write_announcements(tmp_path / "pit_cache")
         assert "重大公告动态" in build_announcements_section()
+
+    def test_routine_other_category_counted_but_not_listed(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """#258 降噪：常规「其他」类只计入分类计数、不铺样本行；
+        重点档仍铺行并在尾部注明隐藏量（含其他计数）。"""
+        from aqsp.briefing.closing_review import build_announcements_section
+
+        _fixed_now(monkeypatch)
+        path = tmp_path / "announcements.csv"
+        path.write_text(
+            "\n".join(
+                [
+                    _ANNOUNCE_HEADER,
+                    "600001,好公司,2026-09-25,好公司:收到行政处罚事先告知书",
+                    "600002,杂公司A,2026-09-26,杂公司A:关于召开2026年第二次临时股东大会的通知",
+                    "600003,杂公司B,2026-09-26,杂公司B:关于日常经营合同的公告",
+                    "600004,杂公司C,2026-09-27,杂公司C:年度报告摘要",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        section = build_announcements_section(str(path))
+        assert "近 7 日共 4 条公告" in section
+        assert "监管处罚 1" in section
+        assert "其他 2" in section
+        # 重点行铺出，常规「其他」不铺样本行
+        assert "[监管处罚] 09-25 好公司（600001）" in section
+        assert "[其他]" not in section
+        assert "股东大会" not in section
+        assert "杂公司C" not in section  # 年度报告摘要 ⇒ 其他类，不铺行
+        assert "仅展示重点 2 条，其余 2 条（含常规「其他」2 条）" in section
+
+    def test_new_event_categories_matched(self, tmp_path, monkeypatch) -> None:
+        """#258 扩词典：诉讼/仲裁、募资/再融资、高管/股东变动 命中对应新类。"""
+        from aqsp.briefing.closing_review import (
+            _ANNOUNCE_ROUTINE,
+            _categorize_announcement,
+        )
+
+        assert _categorize_announcement("X:关于涉及重大诉讼暨公司收到起诉状的公告") == "诉讼/仲裁"
+        assert _categorize_announcement("X:关于向特定对象发行股票募集资金的公告") == "募资/再融资"
+        assert _categorize_announcement("X:关于副董事长辞职暨聘任新高管的公告") == "高管/股东变动"
+        assert _categorize_announcement("X:关于控股股东质押部分股份的公告") == "高管/股东变动"
+        # 优先级：监管处罚仍压过新类；未命中任何类 ⇒ 常规档
+        assert _categorize_announcement("X:涉嫌违法违规被立案调查暨涉诉讼") == "监管处罚"
+        assert _categorize_announcement("X:关于召开股东大会的通知") == "其他"
+        assert "其他" in _ANNOUNCE_ROUTINE
 
 
 # ===========================================================================
