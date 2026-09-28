@@ -1,0 +1,66 @@
+# Multi-stage build for backend
+FROM python:3.10-slim as builder
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# Copy project files
+COPY pyproject.toml ./
+COPY src ./src
+COPY backend ./backend
+
+# Install dependencies to a virtual environment
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Install all dependencies including extras
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -e ".[data,api,dev]"
+
+
+# Production stage
+FROM python:3.10-slim
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create app user
+RUN useradd -m -u 1000 aqsp && \
+    mkdir -p /app /app/data /app/reports /app/logs /app/pit_cache && \
+    chown -R aqsp:aqsp /app
+
+WORKDIR /app
+
+# Copy virtual environment from builder
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Copy application code
+COPY --chown=aqsp:aqsp src ./src
+COPY --chown=aqsp:aqsp backend ./backend
+COPY --chown=aqsp:aqsp pyproject.toml ./
+COPY --chown=aqsp:aqsp config ./config
+
+# Create necessary directories with proper permissions
+RUN mkdir -p data reports logs pit_cache A股量化分析数据 && \
+    chown -R aqsp:aqsp /app
+
+# Switch to non-root user
+USER aqsp
+
+# Expose backend port
+EXPOSE 8900
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD curl -f http://localhost:8900/api/health || exit 1
+
+# Start uvicorn
+CMD ["uvicorn", "backend.app:app", "--host", "0.0.0.0", "--port", "8900", "--workers", "1"]

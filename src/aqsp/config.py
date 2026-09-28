@@ -5,6 +5,15 @@ from dataclasses import dataclass
 
 from aqsp.goal_switches import goal_switch_enabled
 
+# 新增：导入统一配置管理
+try:
+    from aqsp.settings import get_settings
+
+    _USE_NEW_SETTINGS = True
+except ImportError:
+    # 向后兼容：如果 pydantic-settings 未安装，回退到旧实现
+    _USE_NEW_SETTINGS = False
+
 
 def _env_flag(name: str, default: str = "false") -> bool:
     return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
@@ -174,6 +183,61 @@ def _default_debate_roles_for_task(
 
 
 def load_runtime_config() -> RuntimeConfig:
+    """加载运行时配置
+
+    新实现：优先使用 pydantic-settings 统一配置管理
+    向后兼容：如果 pydantic-settings 未安装，回退到旧实现
+    """
+    if _USE_NEW_SETTINGS:
+        # 使用新的统一配置系统
+        try:
+            # 清缓存：这两个 load_* 的语义是「读取当前环境变量」（旧实现每调用即读），
+            # 而 get_settings 带 lru_cache 会把上一次的 env 结果带过来，须先失效。
+            get_settings.cache_clear()
+            settings = get_settings()
+
+            # 将 settings 转换为 RuntimeConfig
+            symbols = tuple(
+                item.strip()
+                for item in settings.runtime.symbols.split(",")
+                if item.strip()
+            )
+            walkforward_symbols = tuple(
+                item.strip()
+                for item in settings.runtime.walkforward_symbols.split(",")
+                if item.strip()
+            )
+
+            return RuntimeConfig(
+                symbols=symbols,
+                walkforward_symbols=walkforward_symbols,
+                research_engine=settings.runtime.research_engine,
+                mode=settings.runtime.mode,
+                limit=settings.runtime.limit,
+                max_universe=settings.runtime.max_universe,
+                min_avg_amount=settings.runtime.min_avg_amount,
+                max_data_lag_days=settings.data_source.max_data_lag_days,
+                enable_online_factors=settings.data_source.enable_online_factors,
+                allow_online_fallback=settings.data_source.allow_online_fallback
+                and online_fallback_allowed(),
+                enable_debate=goal_switch_enabled(
+                    "multi_agent_advisory_layer",
+                    default=True,
+                )
+                and settings.debate.enable_debate,
+                notify=settings.notification.notify,
+                notify_mode=settings.notification.notify_mode,
+                enable_auto_evolution=goal_switch_enabled(
+                    "auto_optimization_proposals",
+                    default=True,
+                )
+                and settings.debate.enable_auto_evolution,
+            )
+        except Exception:
+            # 如果新配置系统出错，回退到旧实现
+            pass
+
+    # 旧实现（向后兼容）
     symbols = tuple(
         item.strip()
         for item in os.getenv("AQSP_SYMBOLS", "").split(",")
@@ -213,11 +277,101 @@ def load_runtime_config() -> RuntimeConfig:
 
 
 def load_debate_runtime_config(task_id: str | None = None) -> DebateRuntimeConfig:
+    """加载多 Agent 讨论运行时配置
+
+    新实现：优先使用 pydantic-settings 统一配置管理
+    向后兼容：如果 pydantic-settings 未安装，回退到旧实现
+    """
     from aqsp.briefing.agent_roles import (
         DEFAULT_RUNTIME_AGENT_ROLE_NAMES,
         select_runtime_agent_roles,
     )
 
+    if _USE_NEW_SETTINGS:
+        # 使用新的统一配置系统
+        try:
+            # 清缓存：这两个 load_* 的语义是「读取当前环境变量」（旧实现每调用即读），
+            # 而 get_settings 带 lru_cache 会把上一次的 env 结果带过来，须先失效。
+            get_settings.cache_clear()
+            settings = get_settings()
+
+            enabled = goal_switch_enabled(
+                "multi_agent_advisory_layer", default=True
+            ) and settings.debate.enable_debate
+            global_enable_llm = enabled and settings.debate.debate_enable_llm
+            max_rounds = max(1, settings.debate.debate_max_rounds)
+            max_candidates = max(1, _env_int("AQSP_DEBATE_MAX_CANDIDATES", 5, minimum=1))
+            language = settings.debate.debate_language
+            normalized_task_id = _normalize_debate_task_id(task_id)
+            explicit_roles = settings.debate.debate_roles if settings.debate.debate_roles else None
+            explicit_roles_enabled = explicit_roles is not None
+            if explicit_roles is None:
+                requested_roles = _default_debate_roles_for_task(
+                    normalized_task_id,
+                    DEFAULT_RUNTIME_AGENT_ROLE_NAMES,
+                )
+            else:
+                requested_roles = tuple(
+                    item.strip().lower() for item in explicit_roles.split(",") if item.strip()
+                )
+            focus_roles = tuple(
+                item.strip().lower()
+                for item in os.getenv("AQSP_DEBATE_FOCUS_ROLES", "").split(",")
+                if item.strip()
+            )
+            disabled_roles = tuple(
+                item.strip().lower()
+                for item in os.getenv("AQSP_DEBATE_DISABLED_ROLES", "").split(",")
+                if item.strip()
+            )
+            roles = tuple(
+                role.value
+                for role in select_runtime_agent_roles(
+                    requested_roles,
+                    focus_roles=focus_roles,
+                    disabled_roles=disabled_roles,
+                )
+            )
+            role_enable_map = _parse_role_mapping(settings.debate.debate_role_llm)
+            role_provider_map = _parse_role_mapping(settings.debate.debate_role_providers)
+            role_model_map = _parse_role_mapping(settings.debate.debate_role_models)
+            role_runtime = tuple(
+                DebateRoleRuntime(
+                    role=role,
+                    enable_llm=(
+                        False
+                        if not global_enable_llm
+                        else (
+                            global_enable_llm
+                            if role not in role_enable_map
+                            else role_enable_map[role].strip().lower()
+                            in {"1", "true", "yes", "on"}
+                        )
+                    ),
+                    provider=role_provider_map.get(role, "").strip().lower(),
+                    model=role_model_map.get(role, "").strip(),
+                )
+                for role in roles
+            )
+            return DebateRuntimeConfig(
+                task_id=normalized_task_id,
+                enabled=enabled,
+                enable_llm=global_enable_llm,
+                max_rounds=max_rounds,
+                max_candidates=max_candidates,
+                language=language,
+                requested_roles=requested_roles,
+                focus_roles=focus_roles,
+                disabled_roles=disabled_roles,
+                roles=roles,
+                role_runtime=role_runtime,
+                explicit_roles=explicit_roles_enabled,
+            )
+        except Exception:
+            # 如果新配置系统出错，回退到旧实现
+            pass
+
+    # 旧实现（向后兼容）
     enabled = goal_switch_enabled(
         "multi_agent_advisory_layer", default=True
     ) and _env_flag("AQSP_ENABLE_DEBATE", "true")

@@ -1,0 +1,186 @@
+# ============================================================================
+# 备份系统 Cron 配置示例
+# ============================================================================
+#
+# 本文件提供了自动备份任务的 cron 配置示例。
+# 根据您的需求选择合适的备份频率和时间。
+#
+# 安装方法：
+#   1. 复制本文件内容
+#   2. 编辑 crontab: crontab -e
+#   3. 粘贴并根据需要调整配置
+#   4. 保存退出
+#
+# 查看当前 cron 任务:
+#   crontab -l
+#
+# Cron 时间格式:
+#   分钟 (0-59)
+#   |   小时 (0-23)
+#   |   |   日期 (1-31)
+#   |   |   |   月份 (1-12)
+#   |   |   |   |   星期 (0-7, 0和7都表示周日)
+#   |   |   |   |   |
+#   *   *   *   *   *   command
+#
+# ============================================================================
+
+# 设置环境变量（根据实际情况调整）
+AQSP_PROJECT_ROOT=/Users/ivon/Documents/AI量化选股
+AQSP_BACKUP_DIR=/Users/ivon/Documents/AI量化选股/backups
+AQSP_BACKUP_KEEP=10
+PATH=/usr/local/bin:/usr/bin:/bin
+
+# ============================================================================
+# 推荐配置：每日备份
+# ============================================================================
+
+# 每天凌晨 2:00 执行完整备份
+0 2 * * * cd $AQSP_PROJECT_ROOT && bash scripts/backup.sh >> logs/backup/cron.log 2>&1
+
+# 每周日凌晨 3:00 验证所有备份
+0 3 * * 0 cd $AQSP_PROJECT_ROOT && bash scripts/backup_verify.sh --all --report reports/backup_verify_report.txt >> logs/verify/cron.log 2>&1
+
+# ============================================================================
+# 备选配置：高频备份（适用于生产环境）
+# ============================================================================
+
+# 每 6 小时备份一次（00:00, 06:00, 12:00, 18:00）
+# 0 */6 * * * cd $AQSP_PROJECT_ROOT && bash scripts/backup.sh >> logs/backup/cron.log 2>&1
+
+# 每 4 小时备份一次
+# 0 */4 * * * cd $AQSP_PROJECT_ROOT && bash scripts/backup.sh >> logs/backup/cron.log 2>&1
+
+# 每 2 小时备份一次（仅工作时间 9:00-21:00）
+# 0 9-21/2 * * * cd $AQSP_PROJECT_ROOT && bash scripts/backup.sh >> logs/backup/cron.log 2>&1
+
+# ============================================================================
+# 备选配置：低频备份（适用于开发环境）
+# ============================================================================
+
+# 每周一次（每周日凌晨 2:00）
+# 0 2 * * 0 cd $AQSP_PROJECT_ROOT && bash scripts/backup.sh >> logs/backup/cron.log 2>&1
+
+# 每月一次（每月1号凌晨 2:00）
+# 0 2 1 * * cd $AQSP_PROJECT_ROOT && bash scripts/backup.sh >> logs/backup/cron.log 2>&1
+
+# ============================================================================
+# 远程备份配置
+# ============================================================================
+
+# 每天凌晨 2:30 备份到远程服务器
+# 注意：需要先配置 SSH 免密登录
+# 30 2 * * * cd $AQSP_PROJECT_ROOT && bash scripts/backup.sh --remote user@backup-server:/backup/aqsp >> logs/backup/cron.log 2>&1
+
+# ============================================================================
+# 验证和监控
+# ============================================================================
+
+# 每天早上 8:00 验证最新备份
+# 0 8 * * * cd $AQSP_PROJECT_ROOT && bash scripts/backup_verify.sh --backup $(ls -t $AQSP_BACKUP_DIR/backup-*.tar.gz | head -1) --quiet >> logs/verify/cron.log 2>&1
+
+# 每周一次全面验证（周日凌晨 3:00）
+# 0 3 * * 0 cd $AQSP_PROJECT_ROOT && bash scripts/backup_verify.sh --all --report reports/weekly_backup_report.txt >> logs/verify/cron.log 2>&1
+
+# ============================================================================
+# 清理和维护
+# ============================================================================
+
+# 每月清理超过 30 天的日志文件（每月1号凌晨 4:00）
+# 0 4 1 * * find $AQSP_PROJECT_ROOT/logs/backup -name "*.log" -mtime +30 -delete
+# 0 4 1 * * find $AQSP_PROJECT_ROOT/logs/verify -name "*.log" -mtime +30 -delete
+# 0 4 1 * * find $AQSP_PROJECT_ROOT/logs/restore -name "*.log" -mtime +30 -delete
+
+# ============================================================================
+# 特定场景配置
+# ============================================================================
+
+# 交易日收盘后备份（周一至周五 16:30）
+# 30 16 * * 1-5 cd $AQSP_PROJECT_ROOT && bash scripts/backup.sh >> logs/backup/cron.log 2>&1
+
+# 交易日开盘前验证（周一至周五 9:00）
+# 0 9 * * 1-5 cd $AQSP_PROJECT_ROOT && bash scripts/backup_verify.sh --backup $(ls -t $AQSP_BACKUP_DIR/backup-*.tar.gz | head -1) --quiet >> logs/verify/cron.log 2>&1
+
+# ============================================================================
+# macOS LaunchAgent 配置示例
+# ============================================================================
+#
+# 如果使用 macOS，推荐使用 LaunchAgent 代替 cron。
+# 创建文件: ~/Library/LaunchAgents/com.aqsp.backup.plist
+#
+# <?xml version="1.0" encoding="UTF-8"?>
+# <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+# <plist version="1.0">
+# <dict>
+#     <key>Label</key>
+#     <string>com.aqsp.backup</string>
+#     <key>ProgramArguments</key>
+#     <array>
+#         <string>/bin/bash</string>
+#         <string>/Users/ivon/Documents/AI量化选股/scripts/backup.sh</string>
+#     </array>
+#     <key>StartCalendarInterval</key>
+#     <dict>
+#         <key>Hour</key>
+#         <integer>2</integer>
+#         <key>Minute</key>
+#         <integer>0</integer>
+#     </dict>
+#     <key>StandardOutPath</key>
+#     <string>/Users/ivon/Documents/AI量化选股/logs/backup/launchd.log</string>
+#     <key>StandardErrorPath</key>
+#     <string>/Users/ivon/Documents/AI量化选股/logs/backup/launchd.error.log</string>
+#     <key>WorkingDirectory</key>
+#     <string>/Users/ivon/Documents/AI量化选股</string>
+#     <key>EnvironmentVariables</key>
+#     <dict>
+#         <key>AQSP_PROJECT_ROOT</key>
+#         <string>/Users/ivon/Documents/AI量化选股</string>
+#         <key>AQSP_BACKUP_KEEP</key>
+#         <string>10</string>
+#     </dict>
+# </dict>
+# </plist>
+#
+# 加载和管理 LaunchAgent:
+#   launchctl load ~/Library/LaunchAgents/com.aqsp.backup.plist
+#   launchctl unload ~/Library/LaunchAgents/com.aqsp.backup.plist
+#   launchctl list | grep aqsp
+#   launchctl start com.aqsp.backup
+#   launchctl stop com.aqsp.backup
+#
+# ============================================================================
+
+# ============================================================================
+# 注意事项
+# ============================================================================
+#
+# 1. 确保脚本有执行权限:
+#    chmod +x scripts/backup.sh
+#    chmod +x scripts/restore.sh
+#    chmod +x scripts/backup_verify.sh
+#
+# 2. 确保日志目录存在:
+#    mkdir -p logs/backup logs/verify logs/restore
+#
+# 3. 测试 cron 任务:
+#    在添加到 crontab 之前，先手动运行脚本测试
+#
+# 4. 监控备份状态:
+#    定期检查日志文件，确保备份正常运行
+#
+# 5. 磁盘空间:
+#    确保备份目录有足够的磁盘空间
+#    使用 df -h 检查磁盘使用情况
+#
+# 6. 远程备份:
+#    配置 SSH 密钥认证，避免密码提示
+#    测试 rsync 连接: rsync -avz test.txt user@host:/path/
+#
+# 7. 权限问题:
+#    确保 cron 运行的用户有权限访问项目目录和备份目录
+#
+# 8. 环境变量:
+#    cron 环境与交互式 shell 不同，可能需要显式设置 PATH
+#
+# ============================================================================

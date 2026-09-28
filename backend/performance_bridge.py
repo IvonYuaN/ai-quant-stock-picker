@@ -413,3 +413,151 @@ def performance_payload() -> dict[str, Any]:
         "status_counts": status_counts,
         "notes": notes,
     }
+
+
+def _cumulative_returns(settled: pd.DataFrame) -> list[dict[str, Any]]:
+    """计算累计收益曲线（按 signal_date 排序）。"""
+    if settled.empty or "signal_date" not in settled.columns:
+        return []
+
+    work = settled.copy()
+    work["return_decimal"] = _return_series(work)
+    work["signal_date"] = pd.to_datetime(work["signal_date"], errors="coerce")
+    work = work.dropna(subset=["signal_date"])
+    if work.empty:
+        return []
+
+    # 按日期聚合：同一天多只票取平均收益
+    by_day = work.groupby("signal_date")["return_decimal"].mean().sort_index()
+
+    # 计算累计收益
+    cumulative = (1 + by_day).cumprod() - 1
+
+    return [
+        {
+            "date": date.strftime("%Y-%m-%d"),
+            "cumulative_return": round(float(ret), 4),
+        }
+        for date, ret in cumulative.items()
+    ]
+
+
+def dashboard_metrics() -> dict[str, Any]:
+    """仪表盘指标汇总：总体统计、策略表现、时间序列、数据源健康、最近信号。
+
+    专为前端仪表盘设计的聚合视图，复用 performance_payload 的核心计算逻辑。
+    """
+    path = _ledger_path()
+    if not path.exists():
+        return {
+            "available": False,
+            "reason": f"未找到台账文件：{path}",
+            "overall_stats": None,
+            "strategy_performance": [],
+            "time_series": [],
+            "data_source_health": {"ledger": "unavailable"},
+            "recent_signals": [],
+        }
+
+    try:
+        rows = read_ledger(path)
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "available": False,
+            "reason": f"台账读取失败：{exc}",
+            "overall_stats": None,
+            "strategy_performance": [],
+            "time_series": [],
+            "data_source_health": {"ledger": "error"},
+            "recent_signals": [],
+        }
+
+    if not rows:
+        return {
+            "available": False,
+            "reason": "台账为空，尚无已记录信号。",
+            "overall_stats": None,
+            "strategy_performance": [],
+            "time_series": [],
+            "data_source_health": {"ledger": "empty"},
+            "recent_signals": [],
+        }
+
+    settled = _settled_frame(rows)
+    if settled.empty:
+        return {
+            "available": False,
+            "reason": "台账中还没有已结算（validated）的信号。",
+            "overall_stats": None,
+            "strategy_performance": [],
+            "time_series": [],
+            "data_source_health": {"ledger": "no_validated"},
+            "recent_signals": [],
+        }
+
+    # ---- 总体统计 ----
+    overall = _overall(settled)
+    total_signals = len(rows)
+    total_signal_days = int(overall["observations"]) if overall else 0
+    is_cold_start = total_signal_days < MIN_INDEPENDENT_SIGNAL_DAYS
+
+    # 计算平均收益和夏普率
+    returns = _return_series(settled)
+    avg_return = float(returns.mean()) if len(returns) > 0 else 0.0
+    sharpe = float(returns.mean() / returns.std()) if len(returns) > 1 and returns.std() > 0 else 0.0
+
+    overall_stats = {
+        "total_signals": total_signals,
+        "win_rate": round(float(overall["hit_rate"]), 4) if overall and not is_cold_start else None,
+        "avg_return": round(avg_return, 4),
+        "sharpe_ratio": round(sharpe, 4),
+        "displayable": not is_cold_start,
+        "cold_start_progress": f"{total_signal_days}/{MIN_INDEPENDENT_SIGNAL_DAYS}",
+    }
+
+    # ---- 策略表现 ----
+    try:
+        learner = PerformanceLearner(
+            config=LearnerConfig(),
+            weight_history_path=_weight_history_path(),
+        )
+        performances = learner.learn_from_ledger(settled, record_history=False)
+    except Exception:  # noqa: BLE001
+        performances = {}
+
+    strategy_performance = []
+    for name, perf in sorted(performances.items()):
+        recent = perf.recent_performance
+        days = int(recent.independent_signal_days)
+        strategy_performance.append({
+            "name": name,
+            "win_rate": round(float(recent.win_rate), 4) if days >= MIN_INDEPENDENT_SIGNAL_DAYS else None,
+            "avg_return": round(float(recent.avg_return), 4),
+            "signal_count": int(recent.total_picks),
+            "displayable": days >= MIN_INDEPENDENT_SIGNAL_DAYS,
+        })
+
+    # ---- 时间序列：累计收益曲线 ----
+    time_series = _cumulative_returns(settled)
+
+    # ---- 数据源健康 ----
+    freshness = _freshness(rows, path)
+    data_source_health = {
+        "ledger": "stale" if freshness["stale"] else "healthy",
+        "latest_signal_date": freshness["latest_signal_date"],
+        "ledger_updated_at": freshness["ledger_updated_at"],
+        "trading_days_since_latest": freshness["trading_days_since_latest"],
+    }
+
+    # ---- 最近信号 ----
+    recent_signals = _recent_picks(settled, limit=10)
+
+    return {
+        "available": True,
+        "reason": "",
+        "overall_stats": overall_stats,
+        "strategy_performance": strategy_performance,
+        "time_series": time_series,
+        "data_source_health": data_source_health,
+        "recent_signals": recent_signals,
+    }

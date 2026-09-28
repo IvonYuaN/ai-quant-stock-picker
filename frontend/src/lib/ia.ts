@@ -9,6 +9,7 @@
 // 拆成两页只会让"今天到底能不能买"这个判断被割到两个入口里，还容易口径不一致。
 // 现在按**阅读顺序**在页内分段：结论 → 推荐 → 候选 → 证据 → 讨论。
 import {
+  Activity,
   Archive,
   Compass,
   FileText,
@@ -47,6 +48,7 @@ export const SYSTEM_LINE: NavLine = {
   scope: "public",
   items: [
     { to: "/today", label: "今日研究", desc: "结论 · 门禁 · 候选 · 证据", icon: Compass },
+    { to: "/dashboard", label: "业务监控", desc: "指标总览 · 系统健康", icon: Activity },
     { to: "/market", label: "市场环境", desc: "指数 · 情绪 · 榜单", icon: Globe2 },
     { to: "/radar", label: "资讯雷达", desc: "12 赛道 RSS 聚合", icon: Rss },
     { to: "/lab", label: "策略实验室", desc: "变体对比与生命周期", icon: FlaskConical },

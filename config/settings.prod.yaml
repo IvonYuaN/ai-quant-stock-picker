@@ -1,0 +1,60 @@
+# 生产环境配置
+# 用于实盘运行，强调安全性和稳定性
+
+database:
+  source: sqlite_db
+  sqlite_db_path: /opt/market-data/astocks_raw.db
+
+data_source:
+  enable_online_factors: false  # 生产环境禁用在线因子
+  allow_online_fallback: false  # 生产必须 fail-closed，不允许静默回退
+  max_data_lag_days: 3  # 生产环境严格限制数据滞后
+
+notification:
+  notify: false  # 需要时通过环境变量启用
+  gate_notify: false
+  notify_mode: summary
+  notify_summary_fallback_full: false
+  # 通知渠道配置通过环境变量或 .env 文件设置（不提交到版本控制）
+
+llm:
+  enable_llm_briefing: true
+  llm_provider: glm  # 生产环境默认使用稳定的免费 provider
+  glm_model: glm-4.7-flash
+  qwen_model: qwen-turbo
+  agnes_model: agnes-2.0-flash
+  siliconflow_model: Qwen/Qwen2.5-7B-Instruct
+  siliconflow_free_only: true  # 生产环境启用免费模型白名单护栏
+  openai_model: gpt-4o-mini
+  anthropic_model: claude-3-5-haiku-20241022
+  # API Keys 通过环境变量设置（不提交到版本控制）
+
+debate:
+  enable_debate: true
+  debate_enable_llm: false  # 生产环境默认使用规则引擎，LLM 仅用于摘要增强
+  debate_max_rounds: 2
+  debate_language: zh-CN
+  debate_roles: bull,bear,risk_control,sector_leader,policy_sensitive,northbound
+  enable_auto_evolution: false  # 生产环境谨慎启用自动演化
+
+deployment:
+  deploy_dashboard: false
+  # 部署配置通过环境变量或 GitHub Actions Secrets 设置
+
+runtime:
+  symbols: ""  # 生产留空，走全市场池
+  walkforward_symbols: ""
+  mode: close
+  limit: 10
+  max_universe: 0  # 0 表示全市场，生产短线扫描必须为 0 或 >= full-market gate 下限
+  min_avg_amount: 50000000
+  ledger: data/predictions.jsonl
+  paper_ledger: data/paper_trades.jsonl
+  report: reports/latest.md
+  output_csv: reports/latest.csv
+  paper_report: reports/paper.md
+  dashboard: dist/dashboard/index.html
+  dashboard_html: dist/dashboard/index.html
+  dashboard_db: dist/dashboard/aqsp.db
+  research_engine: auto
+  # 外部 Token（GitHub/Gitee/Tushare）通过环境变量或 .env 设置

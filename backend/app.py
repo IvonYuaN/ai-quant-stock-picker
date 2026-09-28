@@ -15,14 +15,31 @@ import time as _time
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+import structlog
+
+# 配置结构化日志（应用启动时）
+# 检查 aqsp 包是否可用
+try:
+    from aqsp.core.logging import configure_logging
+    configure_logging()
+    logger = structlog.get_logger(__name__)
+    logger.info("backend_started", version="0.1.3")
+except ImportError:
+    # aqsp 包未安装，回退到标准日志
+    import logging
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger(__name__)
+    logger.info("Backend started (aqsp package not available, using stdlib logging)")
 
 import astock
 import aqsp_bridge
 import chat as chat_layer
 import cli_runtime
 import gstock
+import metrics
 import newsradar
 import portfolio as pf
 import market
@@ -30,7 +47,59 @@ import myreports as mr
 import performance_bridge
 import tenant as _tenant
 
-app = FastAPI(title="AQSP API", version="0.1.3")
+app = FastAPI(
+    title="AQSP API",
+    version="0.1.3",
+    description="""
+# AQSP —— A 股量化选股 API
+
+A 股数据层 HTTP 接口，提供行情、财务、资讯、持仓管理及量化研究功能。
+
+## 功能模块
+
+- **持仓管理**：本地持仓记录与实时盈亏计算
+- **行情数据**：实时行情、K线、指数快照
+- **财务数据**：财务指标、估值分位、一致预期
+- **资讯雷达**：12 赛道公开 RSS 资讯聚合
+- **市场情绪**：连板梯队、板块资金流、全球指数
+- **事件日历**：解禁预警、龙虎榜、停复牌、业绩预告
+- **资金面**：融资融券、大宗交易、主力资金流
+- **AQSP 研究**：量化选股快照只读接口（需独立 aqsp 包）
+- **AI 对话**：系统 AI 对话流式接口
+
+## 数据源
+
+- 行情：腾讯财经、东方财富、同花顺
+- 财务：akshare、mootdx（可选依赖）
+- 资讯：公开 RSS 源
+- 研究：本地 AQSP runtime 快照
+
+## 注意事项
+
+- 行情接口按用户传入代码返回客观数据，不预置标的、不下单、不建议
+- 持仓、研报和 RSS 缓存保存在本地
+- 公网模式需配置 `VR_API_KEY` 环境变量
+    """,
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_tags=[
+        {"name": "系统", "description": "健康检查与版本信息"},
+        {"name": "持仓管理", "description": "本地持仓记录、盈亏计算与已实现收益"},
+        {"name": "我的研报", "description": "用户上传研报的本地存储与管理"},
+        {"name": "行情", "description": "实时行情、K线、指数快照"},
+        {"name": "财务", "description": "财务指标、估值分位、一致预期"},
+        {"name": "资讯", "description": "个股新闻、公告、研报"},
+        {"name": "资讯雷达", "description": "12 赛道公开 RSS 资讯聚合"},
+        {"name": "市场情绪", "description": "连板梯队、板块资金流、成交额榜"},
+        {"name": "全球市场", "description": "全球指数、美港股行情"},
+        {"name": "事件日历", "description": "解禁预警、龙虎榜、停复牌、业绩预告、分红"},
+        {"name": "资金面", "description": "融资融券、大宗交易、主力资金流、股东户数"},
+        {"name": "板块概念", "description": "个股板块归属、热门概念"},
+        {"name": "互动易", "description": "投资者问答"},
+        {"name": "AQSP 研究", "description": "量化选股快照只读接口"},
+        {"name": "AI 对话", "description": "系统 AI 对话流式接口"},
+    ],
+)
 
 # 每半小时后台刷新持仓数据（仅本地/私有模式：单用户，tenant 恒为 local）。
 # 公网/鉴权模式（设了 VR_API_KEY）下多用户各自有独立租户目录，全局调度器无法
@@ -69,6 +138,12 @@ app.add_middleware(
 async def _require_api_key(request: Request, call_next):
     is_api = request.url.path.startswith("/api/")
     is_health = request.url.path == "/api/health"
+    is_metrics = request.url.path == "/metrics"
+
+    # Prometheus /metrics 端点不需要鉴权（内网监控专用）
+    if is_metrics:
+        return await call_next(request)
+
     if (
         _PUBLIC_MODE
         and not _API_KEY
@@ -95,7 +170,58 @@ async def _require_api_key(request: Request, call_next):
         _tenant.current_tenant.reset(token)
 
 
+@app.middleware("http")
+async def _metrics_middleware(request: Request, call_next):
+    """记录所有 HTTP 请求的指标（请求数、响应时间）。"""
+    # /metrics 端点本身不记录指标，避免递归
+    if request.url.path == "/metrics":
+        return await call_next(request)
+
+    # 简化端点路径（将路径参数替换为占位符，避免高基数）
+    endpoint = request.url.path
+    for pattern in [r"/api/myreports/file/", r"/api/myreports/", r"/api/aqsp/candidate/", r"/api/aqsp/candidates/"]:
+        if pattern in endpoint:
+            # 简化为模板路径
+            parts = endpoint.split("/")
+            if len(parts) > 3 and parts[-1] and parts[-1] not in ["refresh", "close", "holding"]:
+                endpoint = "/".join(parts[:-1]) + "/{id}"
+            break
+
+    method = request.method
+    start_time = _time.time()
+
+    try:
+        response = await call_next(request)
+        status_code = response.status_code
+    except Exception:
+        status_code = 500
+        raise
+    finally:
+        duration = _time.time() - start_time
+        metrics.http_requests_total.labels(
+            method=method,
+            endpoint=endpoint,
+            status_code=status_code
+        ).inc()
+        metrics.http_request_duration_seconds.labels(
+            method=method,
+            endpoint=endpoint
+        ).observe(duration)
+
+    return response
+
+
 _CODE_RE = r"^\d{6}$"
+
+
+@app.get("/metrics", tags=["系统"])
+def prometheus_metrics():
+    """Prometheus 指标端点（文本格式）。
+
+    返回所有已注册的 Prometheus 指标，供 Prometheus Server 抓取。
+    此端点不需要鉴权，适用于内网监控环境。
+    """
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 def _validate(code: str) -> str:
@@ -170,7 +296,21 @@ def _gate_freshness() -> dict:
     return {"present": False, "verdict": None, "generated_at": None, "updated": None}
 
 
-@app.get("/api/health")
+@app.get(
+    "/api/health",
+    tags=["系统"],
+    summary="健康检查",
+    description="""
+返回服务健康状态、版本信息及关键数据新鲜度。
+
+- `ok`: 服务是否正常运行
+- `version`: API 版本号
+- `release_sha`: 部署时的 Git commit SHA（用于部署自检）
+- `radar`: 资讯雷达缓存新鲜度
+- `gate`: 生产 gate 判定新鲜度
+    """,
+    response_description="服务健康状态与元信息",
+)
 def health():
     return {
         "ok": True,
@@ -182,7 +322,12 @@ def health():
     }
 
 
-@app.get("/api/version")
+@app.get(
+    "/api/version",
+    tags=["系统"],
+    summary="版本信息",
+    description="返回 API 版本号与部署 commit SHA",
+)
 def api_version():
     return {"service": "aqsp-api", "release_sha": _release_sha(), "app_version": "0.1.3"}
 
@@ -200,7 +345,26 @@ class ChatReq(BaseModel):
     llm: LLMConfig
 
 
-@app.post("/api/chat")
+@app.post(
+    "/api/chat",
+    tags=["AI 对话"],
+    summary="系统 AI 对话（流式）",
+    description="""
+系统 AI 对话，返回 **流式** NDJSON（每行一个事件 {type: tool|delta|done|error}）。
+
+## 接入方式
+
+- **API 接入**：OpenAI 兼容 function-calling，边流答案边推工具调用事件
+- **订阅接入**（provider=cli-*）：调本机已登录的 CLI，stdout 边出边流
+
+## 错误处理
+
+- 配置错误（缺 key / 未装 CLI）：HTTP 400
+- 运行时错误：流内 error 事件
+
+用户配置随请求传入，后端不持久化。
+    """,
+)
 def chat(req: ChatReq):
     """系统 AI 对话，**流式** NDJSON（每行一个事件 {type: tool|delta|done|error}）。
 
@@ -250,7 +414,18 @@ class HoldingIn(BaseModel):
     cost: float
 
 
-@app.get("/api/portfolio")
+@app.get(
+    "/api/portfolio",
+    tags=["持仓管理"],
+    summary="获取持仓与实时盈亏",
+    description="""
+返回本地持仓列表及实时盈亏计算。
+
+- 持仓数据存储在本地，按租户隔离
+- 实时拉取最新行情计算浮动盈亏
+- 浮动盈亏采用红涨绿跌显示
+    """,
+)
 def portfolio_get():
     """持仓 + 实时盈亏（浮动盈亏红涨绿跌）。"""
     try:
@@ -259,7 +434,23 @@ def portfolio_get():
         raise HTTPException(502, f"持仓读取异常：{e}") from e
 
 
-@app.post("/api/portfolio/holding")
+@app.post(
+    "/api/portfolio/holding",
+    tags=["持仓管理"],
+    summary="添加持仓",
+    description="""
+添加一笔持仓记录。
+
+- 同代码多次添加会按加权平均成本合并
+- 数据存储在本地，不上传到服务器
+- 成本价支持负数（融券/返息/摊薄等场景）
+
+**参数：**
+- `code`: 6位股票代码
+- `shares`: 持仓数量（必须大于0）
+- `cost`: 成本价（支持负数）
+    """,
+)
 def portfolio_add(h: HoldingIn):
     """加一笔持仓（同代码按加权平均成本合并）。存本地，不上传。"""
     code = (h.code or "").strip()
@@ -271,8 +462,13 @@ def portfolio_add(h: HoldingIn):
     return {"data": pf.add_holding(code, h.shares, h.cost)}
 
 
-@app.delete("/api/portfolio/holding")
-def portfolio_remove(code: str = Query(...)):
+@app.delete(
+    "/api/portfolio/holding",
+    tags=["持仓管理"],
+    summary="删除持仓",
+    description="删除指定代码的持仓记录",
+)
+def portfolio_remove(code: str = Query(..., description="6位股票代码")):
     return {"data": pf.remove_holding(code.strip())}
 
 
@@ -284,12 +480,28 @@ class ReportIn(BaseModel):
     content_b64: str
 
 
-@app.get("/api/myreports")
+@app.get(
+    "/api/myreports",
+    tags=["我的研报"],
+    summary="研报列表",
+    description="获取用户上传的研报列表，包含研报 ID、文件名、行业标签等信息",
+)
 def myreports_list():
     return {"data": mr.list_reports()}
 
 
-@app.post("/api/myreports")
+@app.post(
+    "/api/myreports",
+    tags=["我的研报"],
+    summary="上传研报",
+    description="""
+上传一份研报并存储到本地。
+
+- 研报内容以 base64 编码传输
+- 自动根据文件名打行业标签
+- 数据仅存储在本地，不上传到服务器
+    """,
+)
 def myreports_upload(r: ReportIn):
     """上传一份研报（base64）→ 存本地 + 按文件名自动打行业标签。"""
     try:
@@ -298,7 +510,12 @@ def myreports_upload(r: ReportIn):
         raise HTTPException(400, str(e)) from e
 
 
-@app.get("/api/myreports/file/{rid}")
+@app.get(
+    "/api/myreports/file/{rid}",
+    tags=["我的研报"],
+    summary="下载研报文件",
+    description="下载或预览指定 ID 的研报原文件",
+)
 def myreports_file(rid: str):
     """下载/预览某份研报原文件。"""
     hit = mr.report_path(rid)
@@ -308,7 +525,12 @@ def myreports_file(rid: str):
     return FileResponse(str(path), filename=name)
 
 
-@app.delete("/api/myreports/{rid}")
+@app.delete(
+    "/api/myreports/{rid}",
+    tags=["我的研报"],
+    summary="删除研报",
+    description="删除指定 ID 的研报",
+)
 def myreports_delete(rid: str):
     return {"data": {"ok": mr.delete_report(rid)}}
 
@@ -321,7 +543,26 @@ class CloseIn(BaseModel):
     cost: float
 
 
-@app.post("/api/portfolio/close")
+@app.post(
+    "/api/portfolio/close",
+    tags=["持仓管理"],
+    summary="记录已清仓",
+    description="""
+记录一笔已清仓的交易，计算已实现盈亏。
+
+- 数据存储在本地
+- 清仓价与股数必须大于 0
+- 成本价支持负数（融券等场景）
+- 已实现盈亏 = (清仓价 - 成本) × 股数
+
+**参数：**
+- `code`: 6位股票代码
+- `date`: 清仓日期 (YYYY-MM-DD)
+- `price`: 清仓价格
+- `shares`: 清仓股数
+- `cost`: 买入成本价
+    """,
+)
 def portfolio_close(c: CloseIn):
     """记一笔已清仓（已实现盈亏）。存本地。"""
     code = (c.code or "").strip()
@@ -342,12 +583,22 @@ def portfolio_close(c: CloseIn):
     return {"data": pf.close_position(code, date, c.price, c.shares, c.cost)}
 
 
-@app.delete("/api/portfolio/close")
-def portfolio_close_remove(index: int = Query(...)):
+@app.delete(
+    "/api/portfolio/close",
+    tags=["持仓管理"],
+    summary="删除清仓记录",
+    description="删除指定索引的已清仓记录",
+)
+def portfolio_close_remove(index: int = Query(..., description="清仓记录索引")):
     return {"data": pf.remove_closed(index)}
 
 
-@app.post("/api/portfolio/refresh")
+@app.post(
+    "/api/portfolio/refresh",
+    tags=["持仓管理"],
+    summary="手动刷新持仓",
+    description="立即重新拉取行情并计算盈亏",
+)
 def portfolio_refresh():
     """手动刷新：立即重拉行情算盈亏。"""
     try:
@@ -356,7 +607,18 @@ def portfolio_refresh():
         raise HTTPException(502, f"刷新失败：{e}") from e
 
 
-@app.get("/api/radar")
+@app.get(
+    "/api/radar",
+    tags=["资讯雷达"],
+    summary="资讯雷达",
+    description="""
+返回 12 赛道的公开 RSS 资讯聚合。
+
+- 数据从缓存读取
+- 无缓存时返回赛道骨架结构
+- 包含各赛道最新资讯列表
+    """,
+)
 def radar():
     """资讯雷达：12 赛道公开 RSS 资讯（读缓存，无缓存返回赛道骨架）。"""
     try:
@@ -365,7 +627,17 @@ def radar():
         raise HTTPException(502, f"资讯雷达异常：{e}") from e
 
 
-@app.post("/api/radar/refresh")
+@app.post(
+    "/api/radar/refresh",
+    tags=["资讯雷达"],
+    summary="刷新资讯雷达",
+    description="""
+强制重新抓取全部 RSS 源并更新缓存。
+
+- 耗时约 20-40 秒
+- 更新所有赛道的资讯数据
+    """,
+)
 def radar_refresh():
     """强制重抓全部 RSS 源（耗时约 20-40s），更新缓存。"""
     try:
@@ -379,7 +651,19 @@ def radar_refresh():
 # 共用同一 env 覆盖点（AQSP_NEWS_JSON_OUTPUT），未配置时回落规范 runtime 路径
 # （经 AQSP_PROJECT_ROOT 解析）。报告尚未生成时必须失败降级（返回空 events），
 # 不得抛 500。
-@app.get("/api/catalyst")
+@app.get(
+    "/api/catalyst",
+    tags=["资讯雷达"],
+    summary="新闻催化事件中枢",
+    description="""
+读取最新的新闻催化报告。
+
+- 只读 runtime 产物，不生成新数据
+- 数据由定时任务生成
+- 无数据时返回空事件列表，不报错
+- 包含事件详情、生成时间、数据源状态
+    """,
+)
 def catalyst():
     """新闻催化事件中枢（event hub）：读取最新催化报告，无数据则失败降级。"""
     try:
@@ -441,8 +725,31 @@ def _events_jsonable(event_map: dict) -> dict:
     return event_map
 
 
-@app.get("/api/events")
-def events(code: str = Query(...)):
+@app.get(
+    "/api/events",
+    tags=["事件日历"],
+    summary="事件日历",
+    description="""
+返回个股事件日历，包括：
+
+- **解禁预警**：未来 30 天限售股解禁计划
+- **龙虎榜**：近 5 日上榜记录
+- **停复牌**：停牌与复牌事件
+- **业绩预告**：最新业绩预告
+- **分红计划**：即将到来的分红方案
+
+## 数据来源
+
+- 只读 pit_cache，不联网
+- 数据由 `scripts/preload_event_data.sh` 预加载
+- 缺缓存不等于没事件，通过 `has_*_data` 字段区分
+
+## Fail-soft 策略
+
+任何异常返回 200 + 空结构，不返回 500 错误
+    """,
+)
+def events(code: str = Query(..., description="6位股票代码")):
     """事件日历（解禁预警 + 近 5 日龙虎榜）：只读 pit_cache，绝不联网。
 
     数据由 scripts/preload_event_data.sh 预加载到
@@ -498,7 +805,18 @@ def events(code: str = Query(...)):
         return {"data": _events_empty_payload(code)}
 
 
-@app.get("/api/market/overview")
+@app.get(
+    "/api/market/overview",
+    tags=["市场情绪"],
+    summary="市场总览",
+    description="""
+返回市场情绪与板块资金流数据。
+
+- 板块/大盘级数据
+- 全站共享缓存 5 分钟
+- 包含市场整体情绪指标和板块资金流向
+    """,
+)
 def market_overview():
     """市场情绪 + 板块资金流（板块/大盘级，全站共享缓存 5 分钟）。"""
     try:
@@ -507,7 +825,27 @@ def market_overview():
         raise HTTPException(502, f"市场总览异常：{e}") from e
 
 
-@app.get("/api/market/emotion")
+@app.get(
+    "/api/market/emotion",
+    tags=["市场情绪"],
+    summary="短线情绪",
+    description="""
+返回短线市场情绪指标，包括：
+
+- 连板梯队个股清单（代码、名称、连板数等）
+- 最高连板天数
+- 炸板率
+- 封板率
+- 晋级率
+- 涨跌停家数
+
+## 数据说明
+
+- 客观展示东财公开榜单数据
+- 只呈现事实，不附推荐/评分/预测/买卖时机
+- 全站共享缓存 5 分钟
+    """,
+)
 def market_emotion():
     """短线情绪：连板梯队 / 最高连板 / 炸板率 / 封板率 / 晋级率 / 涨跌停家数。
 
@@ -520,7 +858,18 @@ def market_emotion():
         raise HTTPException(502, f"短线情绪异常：{e}") from e
 
 
-@app.get("/api/market/turnover-top")
+@app.get(
+    "/api/market/turnover-top",
+    tags=["市场情绪"],
+    summary="成交额榜 Top20",
+    description="""
+返回全市场成交额排名前 20 的个股。
+
+- 客观公开榜单数据
+- 非推荐/非预测/不评分
+- 全站共享缓存 5 分钟
+    """,
+)
 def market_turnover_top():
     """全市场成交额榜 Top20（客观公开榜单数据，非推荐/非预测/不评分）。全站共享缓存 5 分钟。"""
     try:
@@ -529,7 +878,24 @@ def market_turnover_top():
         raise HTTPException(502, f"成交额榜异常：{e}") from e
 
 
-@app.get("/api/global/indices")
+@app.get(
+    "/api/global/indices",
+    tags=["全球市场"],
+    summary="全球指数快照",
+    description="""
+返回全球主要指数的实时行情。
+
+## 包含指数
+
+- 道琼斯工业指数
+- 标普 500
+- 纳斯达克综合指数
+- 恒生指数
+- 恒生科技指数
+
+用于观察隔夜外围市场对 A 股的影响。缓存 5 分钟。
+    """,
+)
 def global_indices():
     """全球指数快照（道指 / 标普500 / 纳斯达克 / 恒生 / 恒生科技）—— A 股看隔夜外围脸色。缓存 5 分钟。"""
     try:
@@ -538,8 +904,26 @@ def global_indices():
         raise HTTPException(502, f"全球指数异常：{e}") from e
 
 
-@app.get("/api/global/stock")
-def global_stock(symbol: str = Query(..., min_length=1, max_length=16)):
+@app.get(
+    "/api/global/stock",
+    tags=["全球市场"],
+    summary="美港股个股行情",
+    description="""
+返回美股或港股个股的聚合数据。
+
+## 数据内容
+
+- 实时行情
+- 关键财务指标
+
+## 参数
+
+- `symbol`: 股票代码（如 AAPL / BABA / 00700）
+
+数据源：东方财富
+    """,
+)
+def global_stock(symbol: str = Query(..., min_length=1, max_length=16, description="美股或港股代码，如 AAPL / BABA / 00700")):
     """美股 / 港股个股聚合：行情 + 关键财务指标（东财域内源）。symbol 如 AAPL / BABA / 00700。"""
     try:
         data = gstock.us_hk_stock(symbol.strip())
@@ -552,7 +936,23 @@ def global_stock(symbol: str = Query(..., min_length=1, max_length=16)):
         raise HTTPException(502, f"美港股查询异常：{e}") from e
 
 
-@app.get("/api/indices")
+@app.get(
+    "/api/indices",
+    tags=["行情"],
+    summary="A股大盘指数行情",
+    description="""
+返回 A 股主要指数的实时行情。
+
+## 包含指数
+
+- 上证指数
+- 深证成指
+- 创业板指
+- 沪深 300
+
+仅使用标准库，无额外依赖。
+    """,
+)
 def indices():
     """A股大盘指数实时行情（上证/深证成指/创业板指/沪深300）。仅标准库。"""
     try:
@@ -561,7 +961,30 @@ def indices():
         raise HTTPException(502, f"指数行情异常：{e}") from e
 
 
-@app.get("/api/quote")
+@app.get(
+    "/api/quote",
+    tags=["行情"],
+    summary="实时行情",
+    description="""
+批量获取个股实时行情数据。
+
+## 返回数据
+
+- 现价
+- 涨跌幅
+- PE（市盈率）
+- PB（市净率）
+- 市值
+- 换手率
+- 涨跌停价格
+
+## 参数
+
+- `codes`: 逗号分隔的 6 位股票代码（如 "000001,600519"）
+
+仅使用标准库，永远可用。
+    """,
+)
 def quote(codes: str = Query(..., description="逗号分隔的 6 位代码")):
     """实时行情：现价/涨跌/PE/PB/市值/换手/涨跌停。仅标准库，永远可用。"""
     lst = [c.strip() for c in codes.split(",") if c.strip()]
@@ -574,10 +997,25 @@ def quote(codes: str = Query(..., description="逗号分隔的 6 位代码")):
 
 
 _PCT_CACHE: dict = {}
+_ANN_CACHE: dict = {}  # key=code -> (ts, data) 个股公告，TTL 15min
+_FIN_CACHE: dict = {}  # key=code -> (ts, data) 财务关键指标，TTL 30min
 
 
-@app.get("/api/valuation/percentile")
-def valuation_percentile(code: str = Query(...)):
+@app.get(
+    "/api/valuation/percentile",
+    tags=["财务"],
+    summary="估值历史分位",
+    description="""
+返回个股 PE-TTM 和 PB 的历史分位数据（近 5 年）。
+
+- 帮助判断当前估值在历史中的位置
+- 全站缓存 30 分钟/代码
+- 历史序列为日频数据，变化较慢
+
+**依赖：** 需要安装可选依赖
+    """,
+)
+def valuation_percentile(code: str = Query(..., description="6位股票代码")):
     """PE-TTM / PB 历史分位（近5年）。全站缓存 30 分钟/代码（历史序列日频、变化慢）。"""
     code = _validate(code)
     hit = _PCT_CACHE.get(code)
@@ -593,11 +1031,19 @@ def valuation_percentile(code: str = Query(...)):
         raise HTTPException(502, f"估值分位异常：{e}") from e
 
 
-_ANN_CACHE: dict = {}
+@app.get(
+    "/api/announcements",
+    tags=["资讯"],
+    summary="个股公告",
+    description="""
+返回个股近期公告列表。
 
-
-@app.get("/api/announcements")
-def announcements(code: str = Query(...)):
+- 数据源：东方财富
+- 仅需 requests 库
+- 缓存 15 分钟/代码
+    """,
+)
+def announcements(code: str = Query(..., description="6位股票代码")):
     """个股近期公告（东财，仅 requests）。缓存 15 分钟/代码。"""
     code = _validate(code)
     hit = _ANN_CACHE.get(code)
@@ -611,11 +1057,19 @@ def announcements(code: str = Query(...)):
         raise HTTPException(502, f"公告源异常：{e}") from e
 
 
-_FIN_CACHE: dict = {}
+@app.get(
+    "/api/financials",
+    tags=["财务"],
+    summary="财务关键指标",
+    description="""
+返回个股财务关键指标（最新报告期）。
 
-
-@app.get("/api/financials")
-def financials(code: str = Query(...)):
+- 数据源：同花顺财务摘要
+- 缓存 30 分钟/代码
+- **依赖：** 需要安装可选依赖
+    """,
+)
+def financials(code: str = Query(..., description="6位股票代码")):
     """财务关键指标（同花顺财务摘要，最新报告期）。缓存 30 分钟/代码。"""
     code = _validate(code)
     hit = _FIN_CACHE.get(code)
@@ -631,8 +1085,23 @@ def financials(code: str = Query(...)):
         raise HTTPException(502, f"财务摘要异常：{e}") from e
 
 
-@app.get("/api/valuation")
-def valuation(code: str = Query(...)):
+@app.get(
+    "/api/valuation",
+    tags=["财务"],
+    summary="完整估值",
+    description="""
+返回个股完整估值数据。
+
+## 包含数据
+
+- 实时行情
+- 一致预期（机构预测）
+- 前向 PE（市盈率）
+- PEG（市盈率相对盈利增长比率）
+- 消化年数
+    """,
+)
+def valuation(code: str = Query(..., description="6位股票代码")):
     """完整估值：行情 + 一致预期 + 前向PE/PEG/消化年数。"""
     code = _validate(code)
     try:
@@ -643,8 +1112,22 @@ def valuation(code: str = Query(...)):
         raise HTTPException(502, f"估值计算异常：{e}") from e
 
 
-@app.get("/api/reports")
-def reports(code: str = Query(...), pages: int = Query(2, ge=1, le=5)):
+@app.get(
+    "/api/reports",
+    tags=["资讯"],
+    summary="个股研报",
+    description="""
+返回个股研报列表，包含 PDF 下载链接。
+
+## 参数
+
+- `code`: 6位股票代码
+- `pages`: 获取页数（1-5，默认 2）
+
+数据源：东方财富，仅需 requests 库
+    """,
+)
+def reports(code: str = Query(..., description="6位股票代码"), pages: int = Query(2, ge=1, le=5, description="获取页数")):
     """个股研报列表（东财，含 PDF 链接）。仅需 requests。"""
     code = _validate(code)
     try:
@@ -658,8 +1141,22 @@ def reports(code: str = Query(...), pages: int = Query(2, ge=1, le=5)):
         raise HTTPException(502, f"研报源异常：{e}") from e
 
 
-@app.get("/api/news")
-def news(code: str = Query(...), limit: int = Query(20, ge=1, le=50)):
+@app.get(
+    "/api/news",
+    tags=["资讯"],
+    summary="个股新闻",
+    description="""
+返回个股相关新闻列表。
+
+## 参数
+
+- `code`: 6位股票代码
+- `limit`: 返回数量（1-50，默认 20）
+
+**依赖：** 需要 akshare
+    """,
+)
+def news(code: str = Query(..., description="6位股票代码"), limit: int = Query(20, ge=1, le=50, description="返回数量")):
     """个股新闻（东财，需 akshare）。"""
     code = _validate(code)
     try:
@@ -670,8 +1167,23 @@ def news(code: str = Query(...), limit: int = Query(20, ge=1, le=50)):
         raise HTTPException(502, f"新闻源异常：{e}") from e
 
 
-@app.get("/api/info")
-def info(code: str = Query(...)):
+@app.get(
+    "/api/info",
+    tags=["行情"],
+    summary="个股基本面",
+    description="""
+返回个股基本面信息。
+
+## 包含数据
+
+- 所属行业
+- 总股本/流通股本
+- 上市时间
+
+**依赖：** 需要 akshare
+    """,
+)
+def info(code: str = Query(..., description="6位股票代码")):
     """个股基本面：行业/股本/上市时间（需 akshare）。"""
     code = _validate(code)
     try:
@@ -682,8 +1194,17 @@ def info(code: str = Query(...)):
         raise HTTPException(502, f"基本面源异常：{e}") from e
 
 
-@app.get("/api/disclosure")
-def disclosure(code: str = Query(...)):
+@app.get(
+    "/api/disclosure",
+    tags=["资讯"],
+    summary="巨潮公告",
+    description="""
+返回个股在巨潮资讯网的公告列表。
+
+**依赖：** 需要 akshare
+    """,
+)
+def disclosure(code: str = Query(..., description="6位股票代码")):
     """巨潮公告列表（需 akshare）。"""
     code = _validate(code)
     try:
@@ -694,11 +1215,26 @@ def disclosure(code: str = Query(...)):
         raise HTTPException(502, f"公告源异常：{e}") from e
 
 
-@app.get("/api/kline")
+@app.get(
+    "/api/kline",
+    tags=["行情"],
+    summary="K线数据",
+    description="""
+返回个股 K 线数据。
+
+## 参数
+
+- `code`: 6位股票代码
+- `category`: K线类型（4=日线, 5=周线, 6=月线, 11=60分钟）
+- `offset`: 数据条数（1-800，默认 60）
+
+**依赖：** 需要 mootdx
+    """,
+)
 def kline(
-    code: str = Query(...),
-    category: int = Query(4),
-    offset: int = Query(60, ge=1, le=800),
+    code: str = Query(..., description="6位股票代码"),
+    category: int = Query(4, description="K线类型：4=日 5=周 6=月 11=60分钟"),
+    offset: int = Query(60, ge=1, le=800, description="数据条数"),
 ):
     """K线（需 mootdx）。category 4=日 5=周 6=月 11=60分钟。"""
     code = _validate(code)
@@ -710,8 +1246,17 @@ def kline(
         raise HTTPException(502, f"K线源异常：{e}") from e
 
 
-@app.get("/api/finance")
-def finance(code: str = Query(...)):
+@app.get(
+    "/api/finance",
+    tags=["财务"],
+    summary="季报财务快照",
+    description="""
+返回个股季报财务数据快照。
+
+**依赖：** 需要 mootdx
+    """,
+)
+def finance(code: str = Query(..., description="6位股票代码")):
     """季报财务快照（需 mootdx）。"""
     code = _validate(code)
     try:
@@ -740,8 +1285,19 @@ def _cached(endpoint: str, code: str, ttl: int, fetch):
     return data
 
 
-@app.get("/api/margin")
-def margin(code: str = Query(...)):
+@app.get(
+    "/api/margin",
+    tags=["资金面"],
+    summary="融资融券",
+    description="""
+返回个股融资融券明细数据。
+
+- 数据源：东方财富
+- 日级数据
+- 缓存 30 分钟
+    """,
+)
+def margin(code: str = Query(..., description="6位股票代码")):
     """融资融券明细（东财，日级）。缓存 30 分钟。"""
     code = _validate(code)
     try:
@@ -752,8 +1308,18 @@ def margin(code: str = Query(...)):
         raise HTTPException(502, f"融资融券异常：{e}") from e
 
 
-@app.get("/api/block-trade")
-def block_trade(code: str = Query(...)):
+@app.get(
+    "/api/block-trade",
+    tags=["资金面"],
+    summary="大宗交易",
+    description="""
+返回个股大宗交易记录。
+
+- 数据源：东方财富
+- 缓存 30 分钟
+    """,
+)
+def block_trade(code: str = Query(..., description="6位股票代码")):
     """大宗交易（东财）。缓存 30 分钟。"""
     code = _validate(code)
     try:
@@ -762,8 +1328,19 @@ def block_trade(code: str = Query(...)):
         raise HTTPException(502, f"大宗交易异常：{e}") from e
 
 
-@app.get("/api/holders")
-def holders(code: str = Query(...)):
+@app.get(
+    "/api/holders",
+    tags=["资金面"],
+    summary="股东户数变化",
+    description="""
+返回个股股东户数变化趋势。
+
+- 数据源：东方财富
+- 季度级数据
+- 缓存 30 分钟
+    """,
+)
+def holders(code: str = Query(..., description="6位股票代码")):
     """股东户数变化（东财，季度级）。缓存 30 分钟。"""
     code = _validate(code)
     try:
@@ -776,8 +1353,18 @@ def holders(code: str = Query(...)):
         raise HTTPException(502, f"股东户数异常：{e}") from e
 
 
-@app.get("/api/dividend")
-def dividend(code: str = Query(...)):
+@app.get(
+    "/api/dividend",
+    tags=["事件日历"],
+    summary="分红送转历史",
+    description="""
+返回个股历史分红送转记录。
+
+- 数据源：东方财富
+- 缓存 30 分钟
+    """,
+)
+def dividend(code: str = Query(..., description="6位股票代码")):
     """分红送转历史（东财）。缓存 30 分钟。"""
     code = _validate(code)
     try:
@@ -790,8 +1377,19 @@ def dividend(code: str = Query(...)):
         raise HTTPException(502, f"分红送转异常：{e}") from e
 
 
-@app.get("/api/fund-flow")
-def fund_flow(code: str = Query(...)):
+@app.get(
+    "/api/fund-flow",
+    tags=["资金面"],
+    summary="个股资金流",
+    description="""
+返回个股资金流数据（120 日主力净流入）。
+
+- 数据源：东方财富 push2his
+- 缓存 15 分钟
+- **注意：** 部分大陆住宅 IP 可能受风控影响返回空数据
+    """,
+)
+def fund_flow(code: str = Query(..., description="6位股票代码")):
     """个股资金流（东财 push2his，120 日主力净流入）。缓存 15 分钟。
     注：push2his 对部分大陆住宅 IP 有间歇风控，可能返回空（非代码问题）。"""
     code = _validate(code)
@@ -805,8 +1403,23 @@ def fund_flow(code: str = Query(...)):
         raise HTTPException(502, f"资金流异常：{e}") from e
 
 
-@app.get("/api/dragon-tiger")
-def dragon_tiger(code: str = Query(...)):
+@app.get(
+    "/api/dragon-tiger",
+    tags=["事件日历"],
+    summary="龙虎榜",
+    description="""
+返回个股龙虎榜数据。
+
+## 包含数据
+
+- 近期上榜记录
+- 买卖席位明细
+- 机构净买额
+
+数据源：东方财富，缓存 30 分钟
+    """,
+)
+def dragon_tiger(code: str = Query(..., description="6位股票代码")):
     """龙虎榜：该股近期上榜记录 + 买卖席位 + 机构净买（东财）。缓存 30 分钟。"""
     code = _validate(code)
     try:
@@ -817,8 +1430,22 @@ def dragon_tiger(code: str = Query(...)):
         raise HTTPException(502, f"龙虎榜异常：{e}") from e
 
 
-@app.get("/api/lockup")
-def lockup(code: str = Query(...)):
+@app.get(
+    "/api/lockup",
+    tags=["事件日历"],
+    summary="限售解禁日历",
+    description="""
+返回个股限售解禁日历。
+
+## 包含数据
+
+- 历史解禁记录
+- 未来 90 天待解禁计划
+
+数据源：东方财富，缓存 30 分钟
+    """,
+)
+def lockup(code: str = Query(..., description="6位股票代码")):
     """限售解禁日历：历史解禁 + 未来 90 天待解禁（东财）。缓存 30 分钟。"""
     code = _validate(code)
     try:
@@ -829,8 +1456,18 @@ def lockup(code: str = Query(...)):
         raise HTTPException(502, f"解禁日历异常：{e}") from e
 
 
-@app.get("/api/blocks")
-def blocks(code: str = Query(...)):
+@app.get(
+    "/api/blocks",
+    tags=["板块概念"],
+    summary="个股板块归属",
+    description="""
+返回个股所属板块和概念列表。
+
+- 数据源：东方财富 slist
+- 缓存 30 分钟
+    """,
+)
+def blocks(code: str = Query(..., description="6位股票代码")):
     """个股所属板块/概念归属（东财 slist）。缓存 30 分钟。"""
     code = _validate(code)
     try:
@@ -841,8 +1478,18 @@ def blocks(code: str = Query(...)):
         raise HTTPException(502, f"板块归属异常：{e}") from e
 
 
-@app.get("/api/hot-concepts")
-def hot_concepts(code: str = Query(...)):
+@app.get(
+    "/api/hot-concepts",
+    tags=["板块概念"],
+    summary="热门概念",
+    description="""
+返回个股当下被市场归到哪些概念在炒。
+
+- 数据源：东方财富热门概念命中
+- 缓存 15 分钟
+    """,
+)
+def hot_concepts(code: str = Query(..., description="6位股票代码")):
     """个股当下被市场归到哪些概念在炒（东财热门概念命中）。缓存 15 分钟。"""
     code = _validate(code)
     try:
@@ -851,8 +1498,22 @@ def hot_concepts(code: str = Query(...)):
         raise HTTPException(502, f"热门概念异常：{e}") from e
 
 
-@app.get("/api/investor-qa")
-def investor_qa(code: str = Query(...)):
+@app.get(
+    "/api/investor-qa",
+    tags=["互动易"],
+    summary="互动易问答",
+    description="""
+返回个股在巨潮互动易的投资者问答。
+
+## 包含内容
+
+- 投资者提问
+- 公司回复
+
+缓存 15 分钟
+    """,
+)
+def investor_qa(code: str = Query(..., description="6位股票代码")):
     """互动易问答（巨潮）：投资者提问 + 公司回复。缓存 15 分钟。"""
     code = _validate(code)
     try:
@@ -861,8 +1522,22 @@ def investor_qa(code: str = Query(...)):
         raise HTTPException(502, f"互动易异常：{e}") from e
 
 
-@app.get("/api/industry")
-def industry(top: int = Query(20, ge=5, le=50)):
+@app.get(
+    "/api/industry",
+    tags=["板块概念"],
+    summary="行业涨跌幅排名",
+    description="""
+返回全行业涨跌幅排名。
+
+- 数据源：东方财富行业板块
+- 板块级数据，不包含个股
+- 缓存 5 分钟
+
+**参数：**
+- `top`: 返回前 N 个行业（5-50，默认 20）
+    """,
+)
+def industry(top: int = Query(20, ge=5, le=50, description="返回前 N 个行业")):
     """全行业涨跌幅排名（东财行业板块，板块级、零个股名单）。缓存 5 分钟。"""
     key = ("industry", str(top))
     hit = _DC_CACHE.get(key)
@@ -899,13 +1574,40 @@ def _aqsp_bridge_call(fn, *args, **kwargs):
         raise HTTPException(503, f"AQSP 研究快照不可用：{exc}") from exc
 
 
-@app.get("/api/aqsp/snapshot")
-def aqsp_snapshot(date: str | None = Query(default=None)):
+@app.get(
+    "/api/aqsp/snapshot",
+    tags=["AQSP 研究"],
+    summary="AQSP 研究快照",
+    description="""
+读取当前或指定日期的 AQSP 量化选股研究快照。
+
+## 参数
+
+- `date`: 可选，指定日期（YYYY-MM-DD）。不传则返回最新快照
+
+## 注意事项
+
+- 只读 runtime 产物，不生成新数据
+- 历史日期需严格精确匹配
+- 需要独立安装 aqsp 包
+    """,
+)
+def aqsp_snapshot(date: str | None = Query(default=None, description="日期 (YYYY-MM-DD)，不传则返回最新快照")):
     """读取当前或指定日期的 AQSP 研究快照；历史日期严格精确匹配。"""
     return _aqsp_bridge_call(aqsp_bridge.snapshot_response, date)
 
 
-@app.get("/api/aqsp/dates")
+@app.get(
+    "/api/aqsp/dates",
+    tags=["AQSP 研究"],
+    summary="AQSP 快照日期列表",
+    description="""
+返回 AQSP 快照实际提供的日期列表。
+
+- 只读现有数据，不生成或补齐历史
+- 用于前端日期选择器
+    """,
+)
 def aqsp_dates():
     """读取 AQSP 快照实际提供的日期列表，不生成或补齐历史数据。"""
     return {"data": _aqsp_bridge_call(aqsp_bridge.dates_payload)}
@@ -915,19 +1617,61 @@ def _aqsp_candidate(symbol: str, date: str | None = None):
     return {"data": _aqsp_bridge_call(aqsp_bridge.candidate_payload, symbol, date)}
 
 
-@app.get("/api/aqsp/candidate/{symbol}")
-def aqsp_candidate(symbol: str, date: str | None = Query(default=None)):
+@app.get(
+    "/api/aqsp/candidate/{symbol}",
+    tags=["AQSP 研究"],
+    summary="AQSP 候选详情",
+    description="""
+读取指定日期的单个候选股票详情。
+
+## 包含数据
+
+- 候选股票基本信息
+- Advisory-only 讨论摘要
+- 量化评分与因子
+
+## 参数
+
+- `symbol`: 6位股票代码
+- `date`: 可选，指定日期（YYYY-MM-DD）
+    """,
+)
+def aqsp_candidate(symbol: str, date: str | None = Query(default=None, description="日期 (YYYY-MM-DD)")):
     """读取指定日期的单个候选及 advisory-only 讨论摘要。"""
     return _aqsp_candidate(symbol, date)
 
 
-@app.get("/api/aqsp/candidates/{symbol}")
-def aqsp_candidates(symbol: str, date: str | None = Query(default=None)):
+@app.get(
+    "/api/aqsp/candidates/{symbol}",
+    tags=["AQSP 研究"],
+    summary="AQSP 候选详情（复数形式）",
+    description="兼容复数资源名的 AQSP 候选只读详情端点，功能同 `/api/aqsp/candidate/{symbol}`",
+)
+def aqsp_candidates(symbol: str, date: str | None = Query(default=None, description="日期 (YYYY-MM-DD)")):
     """兼容复数资源名的 AQSP 候选只读详情端点。"""
     return _aqsp_candidate(symbol, date)
 
 
-@app.get("/api/aqsp/performance")
+@app.get(
+    "/api/aqsp/performance",
+    tags=["AQSP 研究"],
+    summary="AQSP 策略表现",
+    description="""
+返回纸面交易台账的命中率与策略表现（只读）。
+
+## 统计口径
+
+- 整体按 signal_date 合成观察（§5.2）
+- not_executable 不计入统计（§5.3）
+- 独立信号日不足 30 时标记为冷启动期（§5.4）
+
+## 冷启动期说明
+
+**前端在冷启动期内不得展示胜率**，因为样本量不足，统计不稳定。
+
+数据完全复用 `aqsp.ledger.learner` 的计算逻辑。
+    """,
+)
 def aqsp_performance():
     """纸面交易台账的命中率与策略表现（只读）。
 
@@ -936,3 +1680,251 @@ def aqsp_performance():
     前端在冷启动期内**不得**展示胜率。
     """
     return {"data": performance_bridge.performance_payload()}
+
+
+_DASHBOARD_CACHE: dict = {}  # key="dashboard_metrics" -> (ts, data)
+
+
+@app.get(
+    "/api/dashboard/metrics",
+    tags=["AQSP 研究"],
+    summary="业务指标监控仪表盘",
+    description="""
+返回业务指标监控数据，专为前端仪表盘设计。
+
+## 包含数据
+
+- **总体统计**：总信号数、胜率、平均收益、夏普率
+- **策略表现**：每个策略的胜率、收益、信号数
+- **时间序列**：按日期的累计收益曲线
+- **数据源健康**：台账数据的可用性和新鲜度
+- **最近信号**：最近10条信号的执行情况
+
+## 缓存策略
+
+缓存 5 分钟，避免频繁计算。
+    """,
+)
+def dashboard_metrics():
+    """业务指标监控仪表盘（缓存 5 分钟）。"""
+    key = "dashboard_metrics"
+    hit = _DASHBOARD_CACHE.get(key)
+    if hit and _time.time() - hit[0] < 300:
+        return {"data": hit[1]}
+
+    try:
+        data = performance_bridge.dashboard_metrics()
+        _DASHBOARD_CACHE[key] = (_time.time(), data)
+        return {"data": data}
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"仪表盘指标读取失败：{e}") from e
+
+
+# ==================== 复盘笔记系统 ====================
+
+
+class ReviewCreateIn(BaseModel):
+    signal_id: str
+    date: str
+    symbol: str
+    rating: int
+    tags: list[str] | None = None
+    notes: str = ""
+
+
+class ReviewUpdateIn(BaseModel):
+    rating: int | None = None
+    tags: list[str] | None = None
+    notes: str | None = None
+
+
+@app.get(
+    "/api/reviews",
+    tags=["AQSP 研究"],
+    summary="查询复盘记录",
+    description="""
+查询历史信号的复盘笔记。
+
+## 查询参数
+
+- `symbol`: 股票代码过滤
+- `date`: 日期过滤（YYYY-MM-DD）
+- `signal_id`: 信号ID过滤
+- `tags`: 标签过滤（逗号分隔，任一匹配即返回）
+- `min_rating`: 最低评分过滤（1-5）
+
+所有参数可选，不传参数返回全部记录（按创建时间倒序）。
+    """,
+)
+def get_reviews_endpoint(
+    symbol: str | None = Query(default=None, description="股票代码"),
+    date: str | None = Query(default=None, description="信号日期 (YYYY-MM-DD)"),
+    signal_id: str | None = Query(default=None, description="信号ID"),
+    tags: str | None = Query(default=None, description="标签（逗号分隔）"),
+    min_rating: int | None = Query(default=None, description="最低评分（1-5）"),
+):
+    """查询复盘记录。"""
+    try:
+        from aqsp.review import get_reviews
+
+        tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else None
+
+        reviews = get_reviews(
+            symbol=symbol,
+            date=date,
+            signal_id=signal_id,
+            tags=tag_list,
+            min_rating=min_rating,
+        )
+
+        return {
+            "data": [
+                {
+                    "id": r.id,
+                    "signal_id": r.signal_id,
+                    "date": r.date,
+                    "symbol": r.symbol,
+                    "rating": r.rating,
+                    "tags": list(r.tags),
+                    "notes": r.notes,
+                    "created_at": r.created_at,
+                    "updated_at": r.updated_at,
+                }
+                for r in reviews
+            ]
+        }
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"查询复盘记录失败：{e}") from e
+
+
+@app.post(
+    "/api/reviews",
+    tags=["AQSP 研究"],
+    summary="创建复盘记录",
+    description="""
+为历史信号创建复盘笔记。
+
+## 参数
+
+- `signal_id`: 关联的信号ID（来自 predictions.jsonl）
+- `date`: 信号日期（YYYY-MM-DD）
+- `symbol`: 股票代码
+- `rating`: 评分（1-5星）
+- `tags`: 标签列表（可选）
+- `notes`: 复盘笔记（Markdown格式，可选）
+
+返回创建的复盘记录ID。
+    """,
+)
+def create_review_endpoint(review_in: ReviewCreateIn):
+    """创建复盘记录。"""
+    try:
+        from aqsp.review import add_review
+
+        review_id = add_review(
+            signal_id=review_in.signal_id,
+            date=review_in.date,
+            symbol=review_in.symbol,
+            rating=review_in.rating,
+            tags=review_in.tags,
+            notes=review_in.notes,
+        )
+
+        return {"data": {"id": review_id}}
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"创建复盘记录失败：{e}") from e
+
+
+@app.put(
+    "/api/reviews/{review_id}",
+    tags=["AQSP 研究"],
+    summary="更新复盘记录",
+    description="""
+更新已有的复盘笔记。
+
+## 参数
+
+- `review_id`: 复盘记录ID（路径参数）
+- `rating`: 新评分（1-5星，可选）
+- `tags`: 新标签列表（可选）
+- `notes`: 新笔记（可选）
+
+仅更新提供的字段，未提供的字段保持不变。
+    """,
+)
+def update_review_endpoint(review_id: str, review_in: ReviewUpdateIn):
+    """更新复盘记录。"""
+    try:
+        from aqsp.review import update_review
+
+        found = update_review(
+            review_id=review_id,
+            rating=review_in.rating,
+            tags=review_in.tags,
+            notes=review_in.notes,
+        )
+
+        if not found:
+            raise HTTPException(404, "复盘记录不存在")
+
+        return {"data": {"ok": True}}
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"更新复盘记录失败：{e}") from e
+
+
+@app.delete(
+    "/api/reviews/{review_id}",
+    tags=["AQSP 研究"],
+    summary="删除复盘记录",
+    description="""
+删除指定的复盘笔记。
+
+## 参数
+
+- `review_id`: 复盘记录ID（路径参数）
+
+返回是否成功删除。
+    """,
+)
+def delete_review_endpoint(review_id: str):
+    """删除复盘记录。"""
+    try:
+        from aqsp.review import delete_review
+
+        found = delete_review(review_id=review_id)
+
+        if not found:
+            raise HTTPException(404, "复盘记录不存在")
+
+        return {"data": {"ok": True}}
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"删除复盘记录失败：{e}") from e
+
+
+@app.get(
+    "/api/reviews/tags",
+    tags=["AQSP 研究"],
+    summary="获取所有标签",
+    description="""
+返回所有使用过的标签列表（按使用频率倒序）。
+
+用于标签选择器的自动完成功能。
+    """,
+)
+def get_tags_endpoint():
+    """获取所有使用过的标签。"""
+    try:
+        from aqsp.review import get_all_tags
+
+        tags = get_all_tags()
+        return {"data": tags}
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"获取标签失败：{e}") from e

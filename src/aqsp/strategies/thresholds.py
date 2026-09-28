@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field, fields, replace
+from dataclasses import MISSING, asdict, dataclass, field, fields, replace
 from typing import Dict, Mapping
 import yaml
 from pathlib import Path
@@ -649,6 +649,38 @@ class Thresholds:
         if not supported:
             return self
         return replace(self, **{section: replace(target, **supported)})
+
+    def to_dict(self) -> dict:
+        """返回嵌套 dict 形式（供实验框架 / 序列化使用）。
+
+        使用 ``dataclasses.asdict`` 递归展开各分段，得到形如
+        ``{"momentum": {...}, "composite": {...}, ...}`` 的结构。
+        """
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Thresholds":
+        """从嵌套 dict 还原（``to_dict`` 的逆操作）。
+
+        每个分段用 ``_filter_dataclass_kwargs`` 过滤未知键后构造，保证
+        历史/实验配置里多出的字段不会污染 Thresholds 契约。
+        """
+        data = data or {}
+        kwargs: dict = {}
+        for f in fields(cls):
+            if f.name not in data:
+                continue
+            value = data[f.name]
+            factory = f.default_factory
+            if (
+                factory is not MISSING
+                and isinstance(factory, type)
+                and hasattr(factory, "__dataclass_fields__")
+            ):
+                kwargs[f.name] = factory(**_filter_dataclass_kwargs(factory, value))
+            else:
+                kwargs[f.name] = value
+        return cls(**kwargs)
 
 
 def _as_dict(data: object) -> dict:

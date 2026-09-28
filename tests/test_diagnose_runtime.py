@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import pytest
 import struct
 from datetime import date
 
@@ -26,6 +27,21 @@ from scripts.diagnose_runtime import (
     _tdx_vipdoc_summary,
     _wrapper_drift_summary,
 )
+
+
+@pytest.fixture(autouse=True)
+def _restore_environ_after_main() -> None:
+    """隔离 ``_load_dotenv_defaults()`` 的副作用。
+
+    ``diagnose_runtime.main()`` 会调用 ``_load_dotenv_defaults()``，把仓库根 ``.env``
+    里的 ``AQSP_*`` 直接写进 ``os.environ``（不经 monkeypatch）。若不还原，这些值会
+    泄漏到后续用例——例如 ``DatabaseSettings().source`` 不再是默认 ``sqlite_db``，
+    令 ``tests/test_settings.py`` 的「默认值」断言在全量跑时假失败。
+    """
+    before = dict(os.environ)
+    yield
+    os.environ.clear()
+    os.environ.update(before)
 
 
 def test_large_return_rows_flags_contaminated_samples() -> None:

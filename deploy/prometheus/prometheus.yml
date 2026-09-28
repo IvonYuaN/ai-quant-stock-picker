@@ -1,0 +1,59 @@
+# Prometheus 配置文件示例
+# 用于监控 AQSP API 服务
+
+global:
+  scrape_interval: 15s  # 默认抓取间隔
+  evaluation_interval: 15s  # 规则评估间隔
+  external_labels:
+    cluster: 'aqsp-prod'
+    environment: 'production'
+
+# Alertmanager 配置（可选）
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets:
+#           - 'localhost:9093'
+
+# 告警规则文件（可选）
+# rule_files:
+#   - 'alerts/*.yml'
+
+# 抓取配置
+scrape_configs:
+  # AQSP API 服务
+  - job_name: 'aqsp-api'
+    scrape_interval: 10s  # API 指标更新频繁，10秒抓取一次
+    scrape_timeout: 5s
+    metrics_path: '/metrics'
+    static_configs:
+      - targets:
+          - 'localhost:8900'  # AQSP API 默认端口
+        labels:
+          service: 'aqsp-api'
+          instance: 'main'
+
+  # 如果有多个实例，可以添加更多 targets
+  # - job_name: 'aqsp-api-preview'
+  #   scrape_interval: 10s
+  #   metrics_path: '/metrics'
+  #   static_configs:
+  #     - targets:
+  #         - 'localhost:8901'
+  #       labels:
+  #         service: 'aqsp-api'
+  #         instance: 'preview'
+
+  # Prometheus 自身监控
+  - job_name: 'prometheus'
+    scrape_interval: 5s
+    static_configs:
+      - targets:
+          - 'localhost:9090'
+
+# 数据存储配置
+# storage:
+#   tsdb:
+#     path: /var/lib/prometheus/data
+#     retention.time: 15d  # 保留15天数据
+#     retention.size: 10GB  # 最多占用10GB

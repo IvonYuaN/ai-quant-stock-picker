@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import logging
 import time
 from datetime import date
 from typing import Literal
 import pandas as pd
 import baostock as bs
+import structlog
 
 from aqsp.data.source import (
     DataSource,
@@ -22,7 +22,7 @@ from aqsp.core.time import now_shanghai
 _REQUEST_DELAY = 0.05
 _MAX_RETRIES = 3
 
-_logger = logging.getLogger("aqsp.data.baostock")
+_logger = structlog.get_logger(__name__)
 
 
 class BaostockSource(DataSource):

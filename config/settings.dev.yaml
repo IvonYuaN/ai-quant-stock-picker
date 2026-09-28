@@ -1,0 +1,58 @@
+# 开发环境配置
+# 用于本地开发、测试和调试
+
+database:
+  source: sqlite_db
+  sqlite_db_path: /opt/market-data/astocks_raw.db
+
+data_source:
+  enable_online_factors: false
+  allow_online_fallback: true  # 开发环境允许在线回退
+  max_data_lag_days: 5  # 开发环境容忍更长的数据滞后
+
+notification:
+  notify: false  # 开发环境默认关闭通知
+  gate_notify: false
+  notify_mode: summary
+  notify_summary_fallback_full: false
+
+llm:
+  enable_llm_briefing: true
+  llm_provider: glm  # 默认使用智谱 GLM（永久免费）
+  glm_model: glm-4.7-flash
+  qwen_model: qwen-turbo
+  agnes_model: agnes-2.0-flash
+  siliconflow_model: Qwen/Qwen2.5-7B-Instruct
+  siliconflow_free_only: true
+  openai_model: gpt-4o-mini
+  anthropic_model: claude-3-5-haiku-20241022
+  custom_base_url: http://localhost:11434/v1
+  custom_model: llama3.1
+
+debate:
+  enable_debate: true  # 开发环境启用多 Agent 讨论
+  debate_enable_llm: false  # 默认不启用 LLM（规则引擎即可）
+  debate_max_rounds: 2
+  debate_language: zh-CN
+  debate_roles: bull,bear,risk_control,sector_leader,policy_sensitive,northbound
+  enable_auto_evolution: false
+
+deployment:
+  deploy_dashboard: false
+
+runtime:
+  symbols: ""  # 开发环境可以指定测试股票池
+  walkforward_symbols: ""
+  mode: close
+  limit: 10
+  max_universe: 300  # 开发环境使用小规模股票池
+  min_avg_amount: 50000000
+  ledger: data/predictions.jsonl
+  paper_ledger: data/paper_trades.jsonl
+  report: reports/latest.md
+  output_csv: reports/latest.csv
+  paper_report: reports/paper.md
+  dashboard: dist/dashboard/index.html
+  dashboard_html: dist/dashboard/index.html
+  dashboard_db: dist/dashboard/aqsp.db
+  research_engine: auto

@@ -97,7 +97,7 @@ def _gitignored_top_level_names(
     gitignored 的目录在 CI 的干净 checkout 上**根本不存在**，把它们纳入扫描会让
     「本地跑」与「CI 跑」结果不一致（本地多余文件导致假失败）。故显式排除。
     """
-    excluded = {".venv", "node_modules", "__pycache__"}
+    excluded = {".venv", "node_modules", "__pycache__", "examples"}
     path = gitignore or (PROJECT_ROOT / ".gitignore")
     if not path.is_file():
         return excluded

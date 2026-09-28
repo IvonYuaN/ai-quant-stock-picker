@@ -22,7 +22,12 @@ def _python_files():
     for d in SCAN_DIRS:
         base = ROOT / d
         if base.exists():
-            yield from base.rglob("*.py")
+            for f in base.rglob("*.py"):
+                # 测试夹层（tests/、outputs/）不扫，避免误报；
+                # backend/tests/ 亦属夹具，按 docstring 本意一并跳过。
+                if "tests" in f.relative_to(ROOT).parts:
+                    continue
+                yield f
 
 
 def test_all_temp_file_writers_chmod_0640() -> None:
