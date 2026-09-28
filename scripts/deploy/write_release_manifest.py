@@ -20,6 +20,12 @@ GENERATED_RELEASE_DIRS = {
     ("frontend", "node_modules", ".vite"),
     ("frontend", "node_modules", ".vite-temp"),
 }
+# ⚠️ 必须与 check_release_consistency.py 的同名常量**逐字一致**：
+#   部署脚本先 stamp_manifest（算 digest）再写 RELEASE_SHA，若此处不排除它，
+#   而检查器排除它，就会在「release 目录已存在」的重跑场景差 1 个文件 ⇒
+#   Release consistency FAILED + 部署中止（2026-09-28 实测踩中）。
+#   tests/test_release_manifest_exclusions.py 会守住两边不漂移。
+GENERATED_RELEASE_FILES = {"RELEASE_SHA"}
 
 
 def _git(root: Path, *args: str) -> str:
@@ -62,7 +68,7 @@ def _release_files(root: Path) -> list[str]:
             or parts[:3] in GENERATED_RELEASE_DIRS
         ):
             continue
-        if path.name.endswith((".pyc", ".pyo")):
+        if path.name in GENERATED_RELEASE_FILES or path.name.endswith((".pyc", ".pyo")):
             continue
         files.append(relative)
     return sorted(files)

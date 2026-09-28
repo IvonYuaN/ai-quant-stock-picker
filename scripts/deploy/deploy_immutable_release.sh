@@ -28,13 +28,15 @@ case "$TARGET" in
     REPO_ROOT="${AQSP_REPO_ROOT:-/opt/aqsp-runner}"
     RELEASES_ROOT="${AQSP_RELEASES_ROOT:-/opt/aqsp-runner/releases}"
     RUNTIME_ROOT="${AQSP_RUNTIME_ROOT:-/opt/aqsp-runner}"
+    SHARED_VENV_DIR="${AQSP_SHARED_VENV_DIR:-/opt/aqsp-runner/venv}"
     ;;
   *) fail "unknown AQSP_DEPLOY_TARGET: $TARGET (expected prod|runner)" ;;
 esac
 
 CURRENT_LINK="${AQSP_RELEASE_CURRENT_LINK:-${RELEASES_ROOT}/aqsp-scheduler-current}"
 ROLLBACK_LINK="${AQSP_RELEASE_ROLLBACK_LINK:-${RELEASES_ROOT}/aqsp-scheduler-rollback}"
-SHARED_VENV_DIR="${AQSP_SHARED_VENV_DIR:-/opt/aqsp-vibe-venv}"
+# 尊重上文 target 分支已设的值（runner → /opt/aqsp-runner/venv）；未设时才回落 prod 默认。
+SHARED_VENV_DIR="${SHARED_VENV_DIR:-${AQSP_SHARED_VENV_DIR:-/opt/aqsp-vibe-venv}}"
 PYTHON_BIN="${AQSP_RUNTIME_PYTHON:-${SHARED_VENV_DIR}/bin/python3}"
 NPM_BIN="${AQSP_NPM_BIN:-/usr/bin/npm}"
 REMOTE="${AQSP_GIT_REMOTE:-origin}"
@@ -285,6 +287,39 @@ check_release() {
         --active-file scripts/bt_task.sh \
         --executable-file scripts/bt_task.sh \
         --executable-file scripts/health_vibe_research.sh
+}
+
+# 切链前的运行时依赖探针。
+#
+# 背景（2026-09-28 实测）：新 release 若引入新的 python 依赖，而目标机**共享 venv** 没装，
+# 服务会在 restart 时起不来 ⇒ 表现为 `local service acceptance failed` + 自动回滚 ——
+# 白跑一整轮，且报错指向「服务不活」而非「缺依赖」。这里在**切链前**用目标 venv 逐个
+# import 入口模块，把失败提前定位到「装依赖」这一步。
+# 修法：把新依赖装进 ${SHARED_VENV_DIR}（prod 与 runner **各一份、互不共享**）。
+check_runtime_dependencies() {
+    local root="$1" probe cwd
+    local -a probes=("aqsp.cli")
+    if [ "$TARGET" = "prod" ]; then
+        probes+=("app")
+    fi
+    local -a failed_probes=()
+    for probe in "${probes[@]}"; do
+        if [ "$probe" = "app" ]; then
+            cwd="$root/backend"
+        else
+            cwd="$root"
+        fi
+        if ! (cd "$cwd" && PYTHONPATH="$root/src" "$PYTHON_BIN" -c "import ${probe}" >/dev/null 2>&1); then
+            failed_probes+=("$probe")
+        fi
+    done
+    if ((${#failed_probes[@]})); then
+        fail "runtime dependency probe failed: ${failed_probes[*]}
+    目标 venv: ${SHARED_VENV_DIR}（这是**环境供给**问题，与 release 内容无关）
+    修法: ${SHARED_VENV_DIR}/bin/pip install \"<按 pyproject.toml 依赖段>\"，然后重跑部署。
+    注意: prod 与 runner 的 venv 互不共享，两机都要装。"
+    fi
+    log "runtime dependency probe passed: ${probes[*]}"
 }
 
 check_current_release() {
@@ -651,6 +686,7 @@ stamp_manifest "$RELEASE_DIR" "$COMMIT"
 normalize_release_modes "$RELEASE_DIR"
 prepare_frontend_runtime_cache "$RELEASE_DIR"
 check_release "$RELEASE_DIR"
+check_runtime_dependencies "$RELEASE_DIR"
 # The BaoTa wrappers are external state. Reject schedule drift before the
 # symlink/service switch so a failed acceptance never leaves a half deployment.
 run_scheduler_check "$RELEASE_DIR"
