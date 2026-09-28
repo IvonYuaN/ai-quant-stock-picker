@@ -24,10 +24,8 @@ from __future__ import annotations
 
 import json
 import uuid
-from dataclasses import dataclass, asdict
-from datetime import date as date_type
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 from aqsp.core.time import now_shanghai, to_iso8601
 

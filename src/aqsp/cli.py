@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
-import structlog
 
 from aqsp.config import (
     load_debate_runtime_config,
@@ -9013,7 +9012,6 @@ def run_closing_review(args: argparse.Namespace) -> int:
 def run_experiment(args: argparse.Namespace) -> int:
     """运行参数优化和A/B测试实验"""
     import logging
-    from pathlib import Path
     import yaml
 
     from aqsp.experiment import GridSearchRunner, ABTestRunner
@@ -9138,7 +9136,7 @@ def run_experiment(args: argparse.Namespace) -> int:
                 reverse=True,
             )
 
-            print(f"\nTop 5 configurations (by Deflated Sharpe Ratio):")
+            print("\nTop 5 configurations (by Deflated Sharpe Ratio):")
             print("-"*80)
             for i, result in enumerate(sorted_results[:5], 1):
                 print(f"\n{i}. {result.variant_id}")

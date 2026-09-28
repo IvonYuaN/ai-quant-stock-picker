@@ -1,6 +1,5 @@
 """Prometheus 指标集成测试。"""
 
-import pytest
 from fastapi.testclient import TestClient
 
 import app as app_module

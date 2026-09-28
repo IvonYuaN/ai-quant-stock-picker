@@ -11,7 +11,7 @@ import time
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from pathlib import Path
+    pass
 
 _logger = logging.getLogger(__name__)
 

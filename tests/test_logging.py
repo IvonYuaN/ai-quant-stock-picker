@@ -2,13 +2,9 @@
 
 from __future__ import annotations
 
-import json
-import logging
 import os
-from io import StringIO
 
 import pytest
-import structlog
 
 from aqsp.core.logging import configure_logging, get_logger
 

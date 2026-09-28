@@ -8,9 +8,8 @@ import sys
 project_root = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(project_root / "src"))
 
-from aqsp.data.source_health import (
+from aqsp.data.source_health import (  # noqa: E402
     DataSourceMonitor,
-    read_source_health,
     record_source_success,
     record_source_failure,
     prioritize_source_ids,

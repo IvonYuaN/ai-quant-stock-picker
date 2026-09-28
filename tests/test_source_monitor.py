@@ -2,25 +2,17 @@
 
 from __future__ import annotations
 
-import json
-import os
-import tempfile
 import time
-from datetime import datetime, timedelta
 from pathlib import Path
-from unittest.mock import Mock, patch
 
 import pytest
 
-from aqsp.core.time import now_shanghai
 from aqsp.data.source_health import (
     DataSourceMonitor,
     HealthCheckResult,
-    SourceHealthStatus,
     read_source_health,
     record_source_failure,
     record_source_success,
-    source_health_path,
     prioritize_source_ids,
 )
 

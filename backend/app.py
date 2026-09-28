@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import time as _time
 
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -194,7 +193,7 @@ async def _metrics_middleware(request: Request, call_next):
     try:
         response = await call_next(request)
         status_code = response.status_code
-    except Exception as e:
+    except Exception:
         status_code = 500
         raise
     finally:
@@ -998,6 +997,8 @@ def quote(codes: str = Query(..., description="逗号分隔的 6 位代码")):
 
 
 _PCT_CACHE: dict = {}
+_ANN_CACHE: dict = {}  # key=code -> (ts, data) 个股公告，TTL 15min
+_FIN_CACHE: dict = {}  # key=code -> (ts, data) 财务关键指标，TTL 30min
 
 
 @app.get(

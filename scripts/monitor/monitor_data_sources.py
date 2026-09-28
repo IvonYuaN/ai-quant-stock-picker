@@ -22,22 +22,27 @@ import os
 import signal
 import sys
 import time
-from datetime import date, timedelta
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
-# Add project root to path
-project_root = Path(__file__).resolve().parents[1]
+# Add project root to path（向上找 pyproject.toml，兼容脚本被移动到子目录/经软链调用）
+for _candidate in Path(__file__).resolve().parent, *Path(__file__).resolve().parent.parents:
+    if (_candidate / "pyproject.toml").is_file():
+        project_root = _candidate
+        break
+else:
+    project_root = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(project_root / "src"))
 
-from aqsp.core.time import now_shanghai, today_shanghai
-from aqsp.data.source_health import (
+from aqsp.core.time import now_shanghai, today_shanghai  # noqa: E402
+from aqsp.data.source_health import (  # noqa: E402
     DataSourceMonitor,
     HealthCheckResult,
     source_health_path,
 )
-from aqsp.data.registry import list_registry_entries
-from aqsp.data.source_health_alerts import build_source_health_alert
+from aqsp.data.registry import list_registry_entries  # noqa: E402
+from aqsp.data.source_health_alerts import build_source_health_alert  # noqa: E402
 
 _logger = logging.getLogger(__name__)
 _should_stop = False
@@ -207,7 +212,7 @@ def run_monitoring_cycle(config: dict[str, Any]) -> None:
     except Exception as exc:
         _logger.error(f"保存健康报告失败: {exc}")
 
-    _logger.info(f"监控周期完成")
+    _logger.info("监控周期完成")
 
 
 def run_daemon(config: dict[str, Any]) -> None:

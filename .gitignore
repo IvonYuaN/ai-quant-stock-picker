@@ -71,3 +71,6 @@ pit_cache/
 # 报告目录下的运行日志 / 二进制报告
 reports/*.log
 *.docx
+
+# 重组后 scripts/data/ 下的 walkforward 运行时缓存（原 data/ 位置已被忽略）
+scripts/data/walkforward_production_symbols.json

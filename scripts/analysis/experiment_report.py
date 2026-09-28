@@ -13,16 +13,13 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from typing import List, Dict, Any
 
 import matplotlib
 matplotlib.use('Agg')  # 无GUI后端
 import matplotlib.pyplot as plt
-import seaborn as sns
 import numpy as np
-import pandas as pd
 
-from aqsp.experiment import ExperimentResult, load_experiment_results
+from aqsp.experiment import load_experiment_results
 
 
 def generate_grid_search_report(
@@ -42,17 +39,16 @@ def generate_grid_search_report(
 
     # 提取数据
     params_list = [r.params for r in results]
-    metrics_list = [r.metrics for r in results]
 
     # 生成Markdown报告
     report_lines = [
-        f"# 网格搜索实验报告",
-        f"",
+        "# 网格搜索实验报告",
+        "",
         f"**实验ID:** {experiment_id}",
         f"**变体数量:** {len(results)}",
-        f"",
-        f"## 最优配置 (Top 5 by DSR)",
-        f"",
+        "",
+        "## 最优配置 (Top 5 by DSR)",
+        "",
     ]
 
     # 按DSR排序
@@ -65,16 +61,16 @@ def generate_grid_search_report(
     for i, result in enumerate(sorted_results[:5], 1):
         report_lines.extend([
             f"### {i}. {result.variant_id}",
-            f"",
-            f"**参数:**",
-            f"```json",
+            "",
+            "**参数:**",
+            "```json",
             json.dumps(result.params, indent=2, ensure_ascii=False),
-            f"```",
-            f"",
-            f"**指标:**",
-            f"",
-            f"| 指标 | 值 |",
-            f"|------|-----|",
+            "```",
+            "",
+            "**指标:**",
+            "",
+            "| 指标 | 值 |",
+            "|------|-----|",
             f"| Sharpe Ratio | {result.metrics.get('sharpe_ratio', 0):.4f} |",
             f"| Deflated Sharpe | {result.metrics.get('deflated_sharpe', 0):.4f} |",
             f"| Total Return | {result.metrics.get('total_return', 0):.2%} |",
@@ -84,13 +80,13 @@ def generate_grid_search_report(
             f"| Profit Factor | {result.metrics.get('profit_factor', 0):.4f} |",
             f"| Trades | {int(result.metrics.get('trades', 0))} |",
             f"| Robustness Score | {result.metrics.get('robustness_score', 0):.4f} |",
-            f"",
+            "",
         ])
 
     # 参数敏感性分析
     report_lines.extend([
-        f"## 参数敏感性分析",
-        f"",
+        "## 参数敏感性分析",
+        "",
     ])
 
     # 提取参数名称
@@ -120,9 +116,9 @@ def generate_grid_search_report(
 
             report_lines.extend([
                 f"### {param_name}",
-                f"",
-                f"| 值 | Avg DSR | Avg Return | Avg Sharpe |",
-                f"|-----|---------|------------|------------|",
+                "",
+                "| 值 | Avg DSR | Avg Return | Avg Sharpe |",
+                "|-----|---------|------------|------------|",
             ])
 
             for val in sorted(avg_metrics.keys()):
@@ -135,8 +131,8 @@ def generate_grid_search_report(
 
     # 生成可视化图表
     report_lines.extend([
-        f"## 可视化图表",
-        f"",
+        "## 可视化图表",
+        "",
     ])
 
     # 创建图表
@@ -237,15 +233,15 @@ def generate_ab_test_report(
 
     # 生成Markdown报告
     report_lines = [
-        f"# A/B 测试报告",
-        f"",
+        "# A/B 测试报告",
+        "",
         f"**实验ID:** {experiment_id}",
         f"**完成时间:** {comparison_data.get('completed_at', 'N/A')}",
-        f"",
-        f"## 变体对比",
-        f"",
-        f"| 指标 | Variant A | Variant B | 差异 | 变化率 | 胜者 |",
-        f"|------|-----------|-----------|------|--------|------|",
+        "",
+        "## 变体对比",
+        "",
+        "| 指标 | Variant A | Variant B | 差异 | 变化率 | 胜者 |",
+        "|------|-----------|-----------|------|--------|------|",
     ]
 
     for metric, comp in comparison.items():
@@ -261,19 +257,19 @@ def generate_ab_test_report(
         )
 
     report_lines.extend([
-        f"",
-        f"## Variant A 配置",
-        f"",
-        f"```json",
+        "",
+        "## Variant A 配置",
+        "",
+        "```json",
         json.dumps(result_a.get("params", {}), indent=2, ensure_ascii=False),
-        f"```",
-        f"",
-        f"## Variant B 配置",
-        f"",
-        f"```json",
+        "```",
+        "",
+        "## Variant B 配置",
+        "",
+        "```json",
         json.dumps(result_b.get("params", {}), indent=2, ensure_ascii=False),
-        f"```",
-        f"",
+        "```",
+        "",
     ])
 
     # 生成对比图表
@@ -376,8 +372,8 @@ def generate_ab_test_report(
     plt.savefig(chart_path, dpi=150, bbox_inches='tight')
     plt.close()
 
-    report_lines.append(f"## 可视化图表")
-    report_lines.append(f"")
+    report_lines.append("## 可视化图表")
+    report_lines.append("")
     report_lines.append(f"![Comparison Charts]({chart_path.name})")
     report_lines.append("")
 

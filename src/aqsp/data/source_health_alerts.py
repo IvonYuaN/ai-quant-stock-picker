@@ -79,7 +79,7 @@ def build_source_health_alert(
         "",
         "---",
         "",
-        f"监控系统已自动记录故障详情到健康文件",
+        "监控系统已自动记录故障详情到健康文件",
     ])
 
     return "\n".join(lines)
@@ -104,7 +104,7 @@ def build_source_recovery_notification(
         f"✅ 数据源 **{source_id}** 已恢复正常",
         "",
         f"- 之前连续失败: {previous_failures} 次",
-        f"- 当前状态: 健康",
+        "- 当前状态: 健康",
         "",
         "系统已自动恢复使用该数据源。",
     ])
