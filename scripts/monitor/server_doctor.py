@@ -16,7 +16,19 @@ from aqsp.data.source_readiness import inspect_source_readiness
 from aqsp.utils.llm_safe import llm_call_or_fallback
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+def _find_project_root(start: Path) -> Path:
+    """向上寻找含 pyproject.toml 的目录作为仓库根。
+
+    兼容脚本被移动到 scripts/<子目录>/ 或经 scripts/ 根级兼容软链调用的情况 ——
+    ``Path(__file__).resolve()`` 会跟随软链，单靠 ``parents[N]`` 会算错层级。
+    """
+    for candidate in (start, *start.parents):
+        if (candidate / "pyproject.toml").is_file():
+            return candidate
+    return start
+
+
+PROJECT_ROOT = _find_project_root(Path(__file__).resolve().parent)
 
 
 @dataclass(frozen=True)

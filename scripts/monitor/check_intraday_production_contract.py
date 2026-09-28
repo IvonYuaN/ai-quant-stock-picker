@@ -17,7 +17,15 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+def _find_project_root(start: Path) -> Path:
+    """向上寻找含 pyproject.toml 的目录（兼容脚本位于子目录/经根软链调用）。"""
+    for candidate in (start, *start.parents):
+        if (candidate / "pyproject.toml").is_file():
+            return candidate
+    return start
+
+
+PROJECT_ROOT = _find_project_root(Path(__file__).resolve().parent)
 if str(PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
 

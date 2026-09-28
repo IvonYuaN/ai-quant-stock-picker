@@ -35,7 +35,15 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+def _find_project_root(start: Path) -> Path:
+    """向上寻找含 pyproject.toml 的目录（兼容脚本位于子目录/经根软链调用）。"""
+    for candidate in (start, *start.parents):
+        if (candidate / "pyproject.toml").is_file():
+            return candidate
+    return start
+
+
+REPO_ROOT = _find_project_root(Path(__file__).resolve().parent)
 DEFAULT_SOURCE = REPO_ROOT / "scripts" / "run_production_walkforward_gate.py"
 
 # P1 — the parser's own choices tuple (the wrapper does not inherit the CLI's).
