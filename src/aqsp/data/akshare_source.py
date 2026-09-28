@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import logging
 import os
 import time
 from datetime import date
 from typing import Literal
 import pandas as pd
+import structlog
 
 from aqsp.data.source import (
     DataSource,
@@ -20,7 +20,7 @@ from aqsp.core.errors import DataError
 from aqsp.core.time import now_shanghai
 from aqsp.data.quote_metadata import parse_vendor_timestamp, quote_timestamp_metadata
 
-_logger = logging.getLogger("aqsp.data.akshare")
+_logger = structlog.get_logger(__name__)
 
 
 class AkshareSource(DataSource):

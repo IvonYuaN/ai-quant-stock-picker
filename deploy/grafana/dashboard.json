@@ -1,0 +1,233 @@
+{
+  "dashboard": {
+    "title": "AQSP API 监控面板",
+    "tags": ["aqsp", "api", "monitoring"],
+    "timezone": "Asia/Shanghai",
+    "schemaVersion": 38,
+    "version": 1,
+    "refresh": "10s",
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "panels": [
+      {
+        "id": 1,
+        "title": "API 请求总数（QPS）",
+        "type": "graph",
+        "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "rate(aqsp_http_requests_total[1m])",
+            "legendFormat": "{{method}} {{endpoint}} ({{status_code}})",
+            "refId": "A"
+          }
+        ],
+        "yaxes": [
+          {"format": "reqps", "label": "请求/秒"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "id": 2,
+        "title": "API 响应时间（P99）",
+        "type": "graph",
+        "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.99, rate(aqsp_http_request_duration_seconds_bucket[5m]))",
+            "legendFormat": "P99 {{method}} {{endpoint}}",
+            "refId": "A"
+          },
+          {
+            "expr": "histogram_quantile(0.95, rate(aqsp_http_request_duration_seconds_bucket[5m]))",
+            "legendFormat": "P95 {{method}} {{endpoint}}",
+            "refId": "B"
+          },
+          {
+            "expr": "histogram_quantile(0.50, rate(aqsp_http_request_duration_seconds_bucket[5m]))",
+            "legendFormat": "P50 {{method}} {{endpoint}}",
+            "refId": "C"
+          }
+        ],
+        "yaxes": [
+          {"format": "s", "label": "响应时间"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "id": 3,
+        "title": "HTTP 状态码分布",
+        "type": "piechart",
+        "gridPos": {"x": 0, "y": 8, "w": 8, "h": 8},
+        "targets": [
+          {
+            "expr": "sum by (status_code) (increase(aqsp_http_requests_total[5m]))",
+            "legendFormat": "{{status_code}}",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "title": "数据源健康状态",
+        "type": "stat",
+        "gridPos": {"x": 8, "y": 8, "w": 8, "h": 8},
+        "targets": [
+          {
+            "expr": "aqsp_datasource_available",
+            "legendFormat": "{{source}}",
+            "refId": "A"
+          }
+        ],
+        "options": {
+          "colorMode": "background",
+          "graphMode": "none",
+          "textMode": "value_and_name"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "mappings": [
+              {"type": "value", "value": "1", "text": "UP"},
+              {"type": "value", "value": "0", "text": "DOWN"}
+            ],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"value": 0, "color": "red"},
+                {"value": 1, "color": "green"}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 5,
+        "title": "候选股数量",
+        "type": "graph",
+        "gridPos": {"x": 16, "y": 8, "w": 8, "h": 8},
+        "targets": [
+          {
+            "expr": "aqsp_candidate_stocks_count",
+            "legendFormat": "{{date}}",
+            "refId": "A"
+          }
+        ],
+        "yaxes": [
+          {"format": "short", "label": "数量"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "id": 6,
+        "title": "策略命中率",
+        "type": "gauge",
+        "gridPos": {"x": 0, "y": 16, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "aqsp_strategy_hit_rate_percent",
+            "legendFormat": "{{strategy}}",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "min": 0,
+            "max": 100,
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"value": 0, "color": "red"},
+                {"value": 40, "color": "yellow"},
+                {"value": 60, "color": "green"}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 7,
+        "title": "持仓统计",
+        "type": "stat",
+        "gridPos": {"x": 12, "y": 16, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "aqsp_portfolio_holdings_count",
+            "legendFormat": "持仓数量",
+            "refId": "A"
+          },
+          {
+            "expr": "aqsp_portfolio_total_market_value_cny",
+            "legendFormat": "总市值",
+            "refId": "B"
+          },
+          {
+            "expr": "aqsp_portfolio_unrealized_pnl_cny",
+            "legendFormat": "浮动盈亏",
+            "refId": "C"
+          }
+        ],
+        "options": {
+          "colorMode": "value",
+          "graphMode": "area",
+          "textMode": "value_and_name"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short"
+          },
+          "overrides": [
+            {
+              "matcher": {"id": "byName", "options": "总市值"},
+              "properties": [{"id": "unit", "value": "currencyCNY"}]
+            },
+            {
+              "matcher": {"id": "byName", "options": "浮动盈亏"},
+              "properties": [
+                {"id": "unit", "value": "currencyCNY"},
+                {
+                  "id": "thresholds",
+                  "value": {
+                    "mode": "absolute",
+                    "steps": [
+                      {"value": null, "color": "red"},
+                      {"value": 0, "color": "green"}
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "id": 8,
+        "title": "热门端点 Top 10",
+        "type": "table",
+        "gridPos": {"x": 0, "y": 24, "w": 24, "h": 8},
+        "targets": [
+          {
+            "expr": "topk(10, sum by (endpoint) (rate(aqsp_http_requests_total[5m])))",
+            "legendFormat": "",
+            "refId": "A",
+            "format": "table",
+            "instant": true
+          }
+        ],
+        "transformations": [
+          {
+            "id": "organize",
+            "options": {
+              "excludeByName": {"Time": true},
+              "renameByName": {
+                "endpoint": "端点",
+                "Value": "请求/秒"
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

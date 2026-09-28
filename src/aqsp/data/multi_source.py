@@ -17,6 +17,7 @@ from aqsp.data.source_readiness import (
     workload_guard_message,
 )
 from aqsp.utils.concurrency import DaemonWorkerPool
+from aqsp.data.multi_source_health import track_multi_source_fetch
 
 
 @dataclass(frozen=True)
@@ -465,6 +466,8 @@ class MultiSource(DataSource):
         partial_results: list[_PartialResult] = []
         exceptions = []
 
+        fetch_start_time = time.time()
+
         for source_ref in sources:
             source_name = self._source_name(source_ref)
             if source_name in self.deferred_live_short_sources:
@@ -550,6 +553,13 @@ class MultiSource(DataSource):
                 except Exception:
                     self._clear_last_used()
                     raise
+            # 记录成功获取事件
+            track_multi_source_fetch(
+                requested_source=self._source_name(self.primary),
+                actual_source=primary_source_name,
+                start_time=fetch_start_time,
+                success=True,
+            )
             return primary_result
 
         merged_result = _merge_partial_results(
@@ -574,9 +584,18 @@ class MultiSource(DataSource):
             return merged_result
 
         self._clear_last_used()
-        raise DataError(
+        error = DataError(
             f"所有数据源获取{method_name}失败: {', '.join(f'{name}: {str(e)[:50]}' for name, e in exceptions)}"
         )
+        # 记录失败事件
+        track_multi_source_fetch(
+            requested_source=self._source_name(self.primary),
+            actual_source=None,
+            start_time=fetch_start_time,
+            success=False,
+            error=error,
+        )
+        raise error
 
     def _clear_last_used(self) -> None:
         self._last_used_source = None

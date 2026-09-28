@@ -1,0 +1,113 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: aqsp-backend
+    restart: unless-stopped
+    ports:
+      - "8900:8900"
+    environment:
+      # API Configuration
+      - VR_API_KEY=${VR_API_KEY:-}
+      - VR_PUBLIC_MODE=${VR_PUBLIC_MODE:-0}
+      - VR_ALLOW_ORIGINS=${VR_ALLOW_ORIGINS:-*}
+
+      # AQSP Configuration
+      - AQSP_MODE=${AQSP_MODE:-close}
+      - AQSP_LIMIT=${AQSP_LIMIT:-10}
+      - AQSP_MAX_UNIVERSE=${AQSP_MAX_UNIVERSE:-0}
+      - AQSP_MIN_AVG_AMOUNT=${AQSP_MIN_AVG_AMOUNT:-50000000}
+      - AQSP_ENABLE_ONLINE_FACTORS=${AQSP_ENABLE_ONLINE_FACTORS:-false}
+      - AQSP_ALLOW_ONLINE_FALLBACK=${AQSP_ALLOW_ONLINE_FALLBACK:-false}
+      - AQSP_MAX_DATA_LAG_DAYS=${AQSP_MAX_DATA_LAG_DAYS:-3}
+      - AQSP_SOURCE=${AQSP_SOURCE:-sqlite_db}
+
+      # Data paths (container paths)
+      - AQSP_LEDGER=/app/data/predictions.jsonl
+      - AQSP_PAPER_LEDGER=/app/data/paper_trades.jsonl
+      - AQSP_REPORT=/app/reports/latest.md
+      - AQSP_OUTPUT_CSV=/app/reports/latest.csv
+      - AQSP_PAPER_REPORT=/app/reports/paper.md
+      - AQSP_SQLITE_DB_PATH=${AQSP_SQLITE_DB_PATH:-/app/data/astocks_raw.db}
+      - AQSP_RUNTIME_DATA_ROOT=/app/data/runtime
+      - VR_RADAR_CACHE_DIR=/app/data/radar
+      - VR_DATA_DIR=/app/data
+
+      # LLM Configuration
+      - ENABLE_LLM_BRIEFING=${ENABLE_LLM_BRIEFING:-1}
+      - LLM_PROVIDER=${LLM_PROVIDER:-glm}
+      - GLM_API_KEY=${GLM_API_KEY:-}
+      - GLM_MODEL=${GLM_MODEL:-glm-4.7-flash}
+      - QWEN_API_KEY=${QWEN_API_KEY:-}
+      - QWEN_MODEL=${QWEN_MODEL:-qwen-turbo}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
+
+      # Notification Configuration
+      - AQSP_NOTIFY=${AQSP_NOTIFY:-false}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
+      - FEISHU_WEBHOOK_URL=${FEISHU_WEBHOOK_URL:-}
+      - DINGTALK_WEBHOOK_URL=${DINGTALK_WEBHOOK_URL:-}
+
+      # Debate Configuration
+      - AQSP_ENABLE_DEBATE=${AQSP_ENABLE_DEBATE:-false}
+      - AQSP_DEBATE_ENABLE_LLM=${AQSP_DEBATE_ENABLE_LLM:-false}
+      - AQSP_DEBATE_MAX_ROUNDS=${AQSP_DEBATE_MAX_ROUNDS:-2}
+
+      # Data source tokens (use with caution)
+      - TUSHARE_TOKEN=${TUSHARE_TOKEN:-}
+
+    volumes:
+      # Persistent data directories
+      - ./data:/app/data
+      - ./reports:/app/reports
+      - ./logs:/app/logs
+      - ./pit_cache:/app/pit_cache
+      - ./A股量化分析数据:/app/A股量化分析数据
+      # Configuration files
+      - ./config:/app/config:ro
+      # Optional: mount .env file
+      - ./.env:/app/.env:ro
+    networks:
+      - aqsp-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8900/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: aqsp-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - aqsp-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:80/"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+networks:
+  aqsp-network:
+    driver: bridge
+
+volumes:
+  # Named volumes for better management (optional, currently using bind mounts)
+  data:
+  reports:
+  logs:

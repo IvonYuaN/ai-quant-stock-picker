@@ -1,0 +1,53 @@
+# 示例配置：Variant A（保守配置）
+version: "1.0.0"
+effective_from: '2024-01-01'
+
+composite:
+  base_blend_weight: 0.7
+  min_total_score: 0.45
+  momentum_weight: 0.3
+  quality_weight: 0.0
+  regime_blend_weight: 0.3
+  value_weight: 0.0
+  volume_weight: 0.0
+  mean_reversion_weight: 0.0
+  triple_rise_weight: 0.3
+
+execution:
+  commission_rate: 0.0003
+  stamp_tax_rate: 0.001
+  net_fee_mode: true
+  slippage: 0.002
+
+filter:
+  max_price: 1000.0
+  min_avg_volume: 1000000
+  min_days_listed: 90
+  min_price: 1.0
+
+momentum:
+  lookback_days: 60
+  ma_period: 20
+  max_volatility: 0.3
+  min_returns: 0.05  # 保守值
+  rsi_overbought: 70
+  rsi_oversold: 30
+  trend_strength_threshold: 0.5
+  weights:
+    momentum: 0.4
+    rsi: 0.3
+    trend: 0.3
+
+risk:
+  single_stock_stop_pct: 0.08  # 保守止损
+  portfolio_stop_pct: 0.15
+  profit_take_threshold_pct: 0.15
+  max_positions: 8
+  max_single_position_pct: 0.30
+
+triple_rise:
+  enabled: true
+  lookback_days: 25
+  avg_rise_strong: 0.03
+  avg_rise_medium: 0.02
+  avg_rise_weak: 0.01

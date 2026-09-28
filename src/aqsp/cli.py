@@ -14,11 +14,13 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+import structlog
 
 from aqsp.config import (
     load_debate_runtime_config,
     load_runtime_config,
 )
+from aqsp.core.logging import configure_logging
 from aqsp.core.errors import DataError, MissingDataError
 from aqsp.core.time import now_shanghai, today_shanghai
 from aqsp.core.types import RunMetadata
@@ -727,6 +729,9 @@ def _build_sqlite_db_source(*, cache: DataCache | None):
 
 
 def main(argv: list[str] | None = None) -> int:
+    # 配置结构化日志（应用启动时调用一次）
+    configure_logging()
+
     parser = argparse.ArgumentParser(prog="aqsp")
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -970,6 +975,52 @@ def main(argv: list[str] | None = None) -> int:
     news_cmd.add_argument("--llm-timeout-seconds", type=float, default=8.0)
     news_cmd.add_argument("--max-llm-review-events", type=int, default=3)
     news_cmd.add_argument("--enable-llm-review", action="store_true")
+
+    # Experiment 子命令
+    experiment_cmd = sub.add_parser("experiment", help="run parameter optimization and A/B tests")
+    experiment_sub = experiment_cmd.add_subparsers(dest="experiment_command", required=True)
+
+    # Grid search 子命令
+    grid_cmd = experiment_sub.add_parser("grid", help="run grid search for parameter optimization")
+    grid_cmd.add_argument("--strategy", required=True, help="strategy name")
+    grid_cmd.add_argument(
+        "--param",
+        action="append",
+        dest="params",
+        help="parameter grid in format 'param_name:val1,val2,val3' (can be specified multiple times)",
+    )
+    grid_cmd.add_argument("--start", required=True, help="backtest start date")
+    grid_cmd.add_argument("--end", required=True, help="backtest end date")
+    grid_cmd.add_argument("--train-days", type=int, default=120)
+    grid_cmd.add_argument("--test-days", type=int, default=30)
+    grid_cmd.add_argument("--purge-days", type=int, default=5)
+    grid_cmd.add_argument("--top-n", type=int, default=10)
+    grid_cmd.add_argument("--output-dir", default="experiments", help="experiment output directory")
+    grid_cmd.add_argument(
+        "--source",
+        choices=WALKFORWARD_SOURCE_CHOICES,
+        default="sqlite_db",
+    )
+    grid_cmd.add_argument("--benchmark-symbol", default="000300")
+
+    # A/B test 子命令
+    ab_cmd = experiment_sub.add_parser("ab", help="run A/B test to compare two configurations")
+    ab_cmd.add_argument("--variant-a", required=True, help="path to variant A config (YAML)")
+    ab_cmd.add_argument("--variant-b", required=True, help="path to variant B config (YAML)")
+    ab_cmd.add_argument("--start", required=True, help="backtest start date")
+    ab_cmd.add_argument("--end", required=True, help="backtest end date")
+    ab_cmd.add_argument("--train-days", type=int, default=120)
+    ab_cmd.add_argument("--test-days", type=int, default=30)
+    ab_cmd.add_argument("--purge-days", type=int, default=5)
+    ab_cmd.add_argument("--top-n", type=int, default=10)
+    ab_cmd.add_argument("--name", default="ab_test", help="experiment name")
+    ab_cmd.add_argument("--output-dir", default="experiments", help="experiment output directory")
+    ab_cmd.add_argument(
+        "--source",
+        choices=WALKFORWARD_SOURCE_CHOICES,
+        default="sqlite_db",
+    )
+    ab_cmd.add_argument("--benchmark-symbol", default="000300")
 
     doctor_cmd = sub.add_parser("doctor", help="diagnose server/runtime readiness")
     doctor_cmd.add_argument(
@@ -1238,6 +1289,8 @@ def main(argv: list[str] | None = None) -> int:
             return run_event_signals(args)
         if args.command == "closing-review":
             return run_closing_review(args)
+        if args.command == "experiment":
+            return run_experiment(args)
     except DataError as exc:
         print(f"数据错误: {exc}")
         return 1
@@ -8953,6 +9006,231 @@ def run_closing_review(args: argparse.Namespace) -> int:
         output_path = Path(args.output)
         atomic_write_text(output_path, report)
         print(f"\n报告已保存到: {output_path}")
+
+    return 0
+
+
+def run_experiment(args: argparse.Namespace) -> int:
+    """运行参数优化和A/B测试实验"""
+    import logging
+    from pathlib import Path
+    import yaml
+
+    from aqsp.experiment import GridSearchRunner, ABTestRunner
+    from aqsp.strategies.composite import CompositeStrategy
+    from aqsp.strategies.thresholds import load_thresholds, Thresholds
+    from aqsp.data.sqlite_db_source import resolve_sqlite_db_path
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
+
+    if args.experiment_command == "grid":
+        # 参数网格搜索
+        print(f"Running grid search for strategy: {args.strategy}")
+
+        # 解析参数网格
+        param_grid = {}
+        if args.params:
+            for param_spec in args.params:
+                if ":" not in param_spec:
+                    print(f"Error: Invalid param format '{param_spec}'. Expected 'name:val1,val2,val3'")
+                    return 1
+                param_name, values_str = param_spec.split(":", 1)
+                values = []
+                for v in values_str.split(","):
+                    v = v.strip()
+                    try:
+                        if "." in v:
+                            values.append(float(v))
+                        else:
+                            values.append(int(v))
+                    except ValueError:
+                        values.append(v)
+                param_grid[param_name] = values
+
+        if not param_grid:
+            print("Error: No parameters specified. Use --param name:val1,val2,val3")
+            return 1
+
+        print(f"Parameter grid: {param_grid}")
+
+        base_thresholds = load_thresholds()
+
+        def strategy_factory(params):
+            thresholds_dict = base_thresholds.to_dict()
+            if args.strategy == "volume_breakout":
+                if "volume" not in thresholds_dict:
+                    thresholds_dict["volume"] = {}
+                thresholds_dict["volume"].update(params)
+            else:
+                for key, value in params.items():
+                    if "." in key:
+                        parts = key.split(".")
+                        d = thresholds_dict
+                        for part in parts[:-1]:
+                            if part not in d:
+                                d[part] = {}
+                            d = d[part]
+                        d[parts[-1]] = value
+                    else:
+                        thresholds_dict[key] = value
+            modified_thresholds = Thresholds.from_dict(thresholds_dict)
+            return CompositeStrategy(modified_thresholds)
+
+        runner = GridSearchRunner(
+            strategy_factory=strategy_factory,
+            base_config=base_thresholds.to_dict(),
+            output_dir=args.output_dir,
+        )
+
+        print("Loading market data from SQLite...")
+        db_path = resolve_sqlite_db_path()
+
+        import sqlite3
+        import pandas as pd
+
+        conn = sqlite3.connect(db_path)
+        symbols_query = "SELECT DISTINCT symbol FROM daily_price ORDER BY symbol"
+        symbols_df = pd.read_sql_query(symbols_query, conn)
+        symbols = symbols_df["symbol"].tolist()[:500]
+
+        print(f"Loading data for {len(symbols)} symbols...")
+        data = {}
+        for symbol in symbols:
+            query = f"""
+                SELECT date, open, high, low, close, volume, amount
+                FROM daily_price
+                WHERE symbol = '{symbol}'
+                AND date >= '{args.start}'
+                AND date <= '{args.end}'
+                ORDER BY date
+            """
+            df = pd.read_sql_query(query, conn)
+            if not df.empty:
+                data[symbol] = df
+
+        conn.close()
+        print(f"Loaded data for {len(data)} symbols")
+
+        results = runner.run(
+            param_grid=param_grid,
+            data=data,
+            start_date=args.start,
+            end_date=args.end,
+            experiment_name=args.strategy,
+            train_period_days=args.train_days,
+            test_period_days=args.test_days,
+            purge_days=args.purge_days,
+            top_n=args.top_n,
+            benchmark_symbol=args.benchmark_symbol,
+        )
+
+        print("\n" + "="*80)
+        print("Grid Search Results Summary")
+        print("="*80)
+
+        if results:
+            sorted_results = sorted(
+                results,
+                key=lambda r: r.metrics.get("deflated_sharpe", -999),
+                reverse=True,
+            )
+
+            print(f"\nTop 5 configurations (by Deflated Sharpe Ratio):")
+            print("-"*80)
+            for i, result in enumerate(sorted_results[:5], 1):
+                print(f"\n{i}. {result.variant_id}")
+                print(f"   Parameters: {result.params}")
+                print(f"   Sharpe: {result.metrics.get('sharpe_ratio', 0):.2f}")
+                print(f"   DSR: {result.metrics.get('deflated_sharpe', 0):.2f}")
+                print(f"   Total Return: {result.metrics.get('total_return', 0):.2%}")
+                print(f"   Max Drawdown: {result.metrics.get('max_drawdown', 0):.2%}")
+                print(f"   Win Rate: {result.metrics.get('win_rate', 0):.2%}")
+
+        print(f"\nDetailed results saved to: {args.output_dir}/")
+
+    elif args.experiment_command == "ab":
+        print(f"Running A/B test: {args.name}")
+
+        with open(args.variant_a, "r", encoding="utf-8") as f:
+            variant_a_config = yaml.safe_load(f)
+
+        with open(args.variant_b, "r", encoding="utf-8") as f:
+            variant_b_config = yaml.safe_load(f)
+
+        def strategy_factory(config):
+            thresholds = Thresholds.from_dict(config)
+            return CompositeStrategy(thresholds)
+
+        runner = ABTestRunner(
+            strategy_factory=strategy_factory,
+            output_dir=args.output_dir,
+        )
+
+        print("Loading market data from SQLite...")
+        db_path = resolve_sqlite_db_path()
+
+        import sqlite3
+        import pandas as pd
+
+        conn = sqlite3.connect(db_path)
+        symbols_query = "SELECT DISTINCT symbol FROM daily_price ORDER BY symbol"
+        symbols_df = pd.read_sql_query(symbols_query, conn)
+        symbols = symbols_df["symbol"].tolist()[:500]
+
+        print(f"Loading data for {len(symbols)} symbols...")
+        data = {}
+        for symbol in symbols:
+            query = f"""
+                SELECT date, open, high, low, close, volume, amount
+                FROM daily_price
+                WHERE symbol = '{symbol}'
+                AND date >= '{args.start}'
+                AND date <= '{args.end}'
+                ORDER BY date
+            """
+            df = pd.read_sql_query(query, conn)
+            if not df.empty:
+                data[symbol] = df
+
+        conn.close()
+        print(f"Loaded data for {len(data)} symbols")
+
+        result_a, result_b = runner.run(
+            variant_a_config=variant_a_config,
+            variant_b_config=variant_b_config,
+            data=data,
+            start_date=args.start,
+            end_date=args.end,
+            experiment_name=args.name,
+            train_period_days=args.train_days,
+            test_period_days=args.test_days,
+            purge_days=args.purge_days,
+            top_n=args.top_n,
+            benchmark_symbol=args.benchmark_symbol,
+        )
+
+        print("\n" + "="*80)
+        print("A/B Test Results")
+        print("="*80)
+
+        print("\nVariant A:")
+        print(f"  Config: {args.variant_a}")
+        print(f"  Sharpe: {result_a.metrics.get('sharpe_ratio', 0):.2f}")
+        print(f"  DSR: {result_a.metrics.get('deflated_sharpe', 0):.2f}")
+        print(f"  Total Return: {result_a.metrics.get('total_return', 0):.2%}")
+        print(f"  Max Drawdown: {result_a.metrics.get('max_drawdown', 0):.2%}")
+
+        print("\nVariant B:")
+        print(f"  Config: {args.variant_b}")
+        print(f"  Sharpe: {result_b.metrics.get('sharpe_ratio', 0):.2f}")
+        print(f"  DSR: {result_b.metrics.get('deflated_sharpe', 0):.2f}")
+        print(f"  Total Return: {result_b.metrics.get('total_return', 0):.2%}")
+        print(f"  Max Drawdown: {result_b.metrics.get('max_drawdown', 0):.2%}")
+
+        print(f"\nDetailed results saved to: {args.output_dir}/")
 
     return 0
 

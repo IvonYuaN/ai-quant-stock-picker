@@ -497,9 +497,42 @@ export interface PerformancePayload {
   notes: string[];
 }
 
+/** 仪表盘指标数据 */
+export interface DashboardMetrics {
+  available: boolean;
+  reason: string;
+  overall_stats: {
+    total_signals: number;
+    win_rate: number | null;
+    avg_return: number;
+    sharpe_ratio: number;
+    displayable: boolean;
+    cold_start_progress: string;
+  } | null;
+  strategy_performance: {
+    name: string;
+    win_rate: number | null;
+    avg_return: number;
+    signal_count: number;
+    displayable: boolean;
+  }[];
+  time_series: {
+    date: string;
+    cumulative_return: number;
+  }[];
+  data_source_health: {
+    ledger: string;
+    latest_signal_date: string;
+    ledger_updated_at: string;
+    trading_days_since_latest: number | null;
+  };
+  recent_signals: PerformanceRecentPick[];
+}
+
 export const api = {
   health: () => get<{ ok: boolean }>("/health"),
   performance: () => get<PerformancePayload>("/aqsp/performance"),
+  dashboardMetrics: () => get<DashboardMetrics>("/dashboard/metrics"),
   aqspSnapshot: (date?: string, options?: AqspRequestOptions): Promise<AqspSnapshotView> =>
     getEnvelope<AqspSnapshotEnvelope>(
       date ? `/aqsp/snapshot?date=${encodeURIComponent(date)}` : "/aqsp/snapshot",

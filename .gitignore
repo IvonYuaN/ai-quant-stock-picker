@@ -64,3 +64,10 @@ src/data/
 dist/
 build/
 *.egg-info/
+# 本机部署配置：含真实服务器地址与密钥路径，仅提交 .example 模板
+deploy-config.env
+# 本地运行时缓存：pit_cache 运行数据随日期轮换，属本地数据
+pit_cache/
+# 报告目录下的运行日志 / 二进制报告
+reports/*.log
+*.docx

@@ -1,0 +1,104 @@
+# Git
+.git
+.gitignore
+.github
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info
+dist
+build
+.eggs
+*.egg
+.venv
+venv
+env
+ENV
+
+# Testing
+.pytest_cache
+.pytest_run*
+.pytest_audit_full
+.pytest_pr_audit
+.pytest_tmp
+.coverage
+htmlcov
+*.cover
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Node
+node_modules
+frontend/node_modules
+frontend/dist
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Data and outputs
+data/*
+!data/.gitkeep
+reports/*
+!reports/.gitkeep
+logs/*
+!logs/.gitkeep
+outputs
+pit_cache
+private_data
+runtime-backups
+A股量化分析数据
+gate_run_5y
+
+# Documentation
+docs
+*.md
+!README.md
+AGENTS.md
+
+# Temporary files
+*.log
+*.tmp
+.locks
+.streamlit
+.ruff_cache
+.workbuddy
+.workbuddy-ai
+.codex
+.codeartsdoer
+.arts
+
+# Environment files (security)
+.env
+.env.local
+.env.*.local
+
+# External dependencies
+_external
+
+# Test outputs
+tests/__pycache__
+backend/tests/__pycache__
+
+# Docker
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Deployment
+deploy
+workbench
+
+# Office files
+*.docx
+*.xlsx
+*.pptx

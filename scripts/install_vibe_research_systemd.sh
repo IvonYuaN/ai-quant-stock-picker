@@ -1,244 +1,300 @@
 #!/usr/bin/env bash
-# Provision an isolated Vibe-Research runtime and render its systemd units.
+# AQSP systemd 服务安装脚本 - 支持前端/后端分离部署
+#
+# 使用方法：
+#   --frontend-only: 仅安装前端服务（React）
+#   --backend-only:  仅安装后端服务（FastAPI）
+#   --env-file:      环境变量文件路径
+#   --no-start:      安装后不自动启动服务
+
 set -euo pipefail
 
-PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SYSTEMD_SOURCE_DIR="${PROJECT_ROOT}/deploy/systemd"
-SYSTEMD_DEST_DIR="/etc/systemd/system"
-SYSTEMCTL_BIN="${SYSTEMCTL_BIN:-systemctl}"
-SERVICE_USER="${AQSP_VIBE_USER:-aqsp-vibe}"
-SERVICE_GROUP="${AQSP_VIBE_GROUP:-${SERVICE_USER}}"
-VENV_DIR="${AQSP_VIBE_VENV_DIR:-${PROJECT_ROOT}/.venv-vibe-research}"
-BOOTSTRAP_PYTHON="${AQSP_VIBE_BOOTSTRAP_PYTHON:-python3}"
-NPM_BIN="${AQSP_VIBE_NPM_BIN:-}"
-ENV_FILE="${AQSP_VIBE_ENV_FILE:-/etc/aqsp/vibe-research.env}"
-LOG_DIR="${AQSP_VIBE_LOG_DIR:-${PROJECT_ROOT}/logs/vibe-research}"
-DATA_DIR="${AQSP_VIBE_DATA_DIR:-${PROJECT_ROOT}/data/vibe-research}"
-SKIP_BUILD="false"
-NO_START="false"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-usage() {
-    cat <<'EOF'
-用法: sudo scripts/install_vibe_research_systemd.sh [选项]
+# 默认参数
+FRONTEND_ONLY=false
+BACKEND_ONLY=false
+NO_START=false
+ENV_FILE="${ENV_FILE:-/etc/aqsp/vibe-research.env}"
 
-默认创建隔离用户 aqsp-vibe、独立虚拟环境 .venv-vibe-research，并安装项目的 [api] extra。
-模板会渲染为可直接被 systemd 加载的 unit；不会复用一个缺少 fastapi 的现有 venv。
-
-  --user NAME          运行用户，默认 aqsp-vibe
-  --group NAME         运行组，默认与用户同名
-  --venv-dir PATH      独立 venv 路径
-  --python PATH        创建 venv 的 Python
-  --npm PATH           npm 可执行文件路径
-  --env-file PATH      systemd EnvironmentFile 路径
-  --skip-build         不执行 npm ci/build，只验证已有 frontend/dist
-  --no-start           只 provision 和安装 unit，不启动服务
-EOF
-}
-
-while (($# > 0)); do
+# 解析命令行参数
+while [[ $# -gt 0 ]]; do
     case "$1" in
-        --user) SERVICE_USER="${2:?缺少 --user 参数}"; shift ;;
-        --group) SERVICE_GROUP="${2:?缺少 --group 参数}"; shift ;;
-        --venv-dir) VENV_DIR="${2:?缺少 --venv-dir 参数}"; shift ;;
-        --python) BOOTSTRAP_PYTHON="${2:?缺少 --python 参数}"; shift ;;
-        --npm) NPM_BIN="${2:?缺少 --npm 参数}"; shift ;;
-        --env-file) ENV_FILE="${2:?缺少 --env-file 参数}"; shift ;;
-        --skip-build) SKIP_BUILD="true" ;;
-        --no-start) NO_START="true" ;;
-        -h|--help) usage; exit 0 ;;
-        *) echo "未知参数: $1" >&2; usage >&2; exit 2 ;;
+        --frontend-only)
+            FRONTEND_ONLY=true
+            shift
+            ;;
+        --backend-only)
+            BACKEND_ONLY=true
+            shift
+            ;;
+        --env-file)
+            ENV_FILE="$2"
+            shift 2
+            ;;
+        --no-start)
+            NO_START=true
+            shift
+            ;;
+        *)
+            echo "未知参数: $1"
+            echo "用法: $0 [--frontend-only|--backend-only] [--env-file FILE] [--no-start]"
+            exit 1
+            ;;
     esac
-    shift
 done
 
-[[ "$(id -u)" -eq 0 ]] || { echo "此脚本需要 root，用于创建系统用户和安装 unit。" >&2; exit 1; }
-for command_name in useradd groupadd usermod id getent install runuser; do
-    command -v "$command_name" >/dev/null 2>&1 || {
-        echo "缺少系统命令: ${command_name}" >&2
-        exit 1
-    }
-done
-[[ -f "${PROJECT_ROOT}/pyproject.toml" && -f "${PROJECT_ROOT}/backend/app.py" ]] \
-    || { echo "不是可用的 AQSP 项目根目录: ${PROJECT_ROOT}" >&2; exit 1; }
-[[ -f "${SYSTEMD_SOURCE_DIR}/aqsp-vibe-research-api.service" ]] \
-    || { echo "缺少 systemd 模板: ${SYSTEMD_SOURCE_DIR}" >&2; exit 1; }
+# 检查权限
+if [[ $EUID -ne 0 ]]; then
+    echo "错误: 此脚本需要 root 权限运行"
+    echo "请使用: sudo $0 $*"
+    exit 1
+fi
 
-if getent passwd "$SERVICE_USER" >/dev/null 2>&1; then
-    [[ "$(id -u "$SERVICE_USER")" -ne 0 ]] \
-        || { echo "拒绝使用 UID 0 作为 Vibe-Research 隔离用户: ${SERVICE_USER}" >&2; exit 1; }
+# 确定要安装的服务
+INSTALL_FRONTEND=true
+INSTALL_BACKEND=true
+
+if [[ "$FRONTEND_ONLY" == "true" ]]; then
+    INSTALL_BACKEND=false
+    echo "模式: 仅安装前端服务"
+elif [[ "$BACKEND_ONLY" == "true" ]]; then
+    INSTALL_FRONTEND=false
+    echo "模式: 仅安装后端服务"
 else
-    useradd --system --create-home --home-dir "/var/lib/${SERVICE_USER}" \
-        --shell /usr/sbin/nologin --user-group "$SERVICE_USER"
+    echo "模式: 安装前端和后端服务"
 fi
 
-if ! getent group "$SERVICE_GROUP" >/dev/null 2>&1; then
-    groupadd --system "$SERVICE_GROUP"
-fi
-usermod -g "$SERVICE_GROUP" "$SERVICE_USER"
+echo "环境变量文件: $ENV_FILE"
+echo "项目路径: $PROJECT_ROOT"
+echo ""
 
-install -d -o root -g "$SERVICE_GROUP" "$(dirname "$ENV_FILE")"
-if [[ ! -f "$ENV_FILE" ]]; then
-    install -m 0640 -o root -g "$SERVICE_GROUP" \
-        "${SYSTEMD_SOURCE_DIR}/aqsp-vibe-research.env.example" "$ENV_FILE"
-fi
+# 检查必需的文件
+check_prerequisites() {
+    local missing_files=()
 
-set -a
-# shellcheck disable=SC1090
-. "$ENV_FILE"
-set +a
-DATA_DIR="${VR_DATA_DIR:-$DATA_DIR}"
-install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" "$LOG_DIR" "$DATA_DIR"
-SNAPSHOT_PATH="${AQSP_RESEARCH_SURFACE_SNAPSHOT:-}"
-SNAPSHOT_INDEX_PATH="$(dirname "$SNAPSHOT_PATH")/home_dashboard_snapshot_index.json"
-[[ "$VENV_DIR" = /* && "$ENV_FILE" = /* ]] \
-    || { echo "venv 和 EnvironmentFile 必须是绝对路径。" >&2; exit 1; }
-[[ "$SNAPSHOT_PATH" = /* ]] \
-    || { echo "AQSP_RESEARCH_SURFACE_SNAPSHOT 必须是绝对路径: ${SNAPSHOT_PATH:-未设置}" >&2; exit 1; }
-SNAPSHOT_DIR="$(dirname "$SNAPSHOT_PATH")"
-install -d -o root -g "$SERVICE_GROUP" -m 2750 "$SNAPSHOT_DIR"
-chown root:"$SERVICE_GROUP" "$SNAPSHOT_DIR"
-chmod 2750 "$SNAPSHOT_DIR"
-[[ -f "$SNAPSHOT_PATH" && -r "$SNAPSHOT_PATH" ]] \
-    || { echo "Vibe 用户不可读 AQSP 快照: ${SNAPSHOT_PATH}" >&2; exit 1; }
+    if [[ "$INSTALL_BACKEND" == "true" ]]; then
+        [[ ! -f "$PROJECT_ROOT/backend/app.py" ]] && missing_files+=("backend/app.py")
+        [[ ! -d "$PROJECT_ROOT/.venv" ]] && missing_files+=(".venv (Python虚拟环境)")
+    fi
 
-# 隔离用户必须能读 **API 会 serve 的每一个运行时路径**，而不只是快照那两个。
-#
-# 2026-09-18 的教训：这里原本只给 SNAPSHOT_PATH / SNAPSHOT_INDEX_PATH 加 ACL，
-# 而环境文件里其实声明了 8 条读取路径。结果 predictions.jsonl、debate_results.jsonl、
-# paper_trades.jsonl、news_catalysts_latest.json 都是 600，隔离用户读不到 ——
-# 选股绩效、讨论、纸面交易、消息面雷达**四个功能全部静默降级成空数据**，
-# 而下面的一致性检查只查那两个文件，所以 provision 一直报成功、没人发现。
-#
-# 所以读取路径**从环境文件里抽**（绝对路径型的 AQSP_* 变量），不硬编码：
-# 新增读取路径只改环境文件，ACL 自动跟上。
-READ_PATHS=()
-while IFS= read -r var_name; do
-    var_value="${!var_name:-}"
-    [[ "$var_value" == /* ]] && READ_PATHS+=("$var_value")
-done < <(grep -oE '^AQSP_[A-Z0-9_]+=' "$ENV_FILE" | tr -d '=')
-[[ -f "$SNAPSHOT_INDEX_PATH" ]] && READ_PATHS+=("$SNAPSHOT_INDEX_PATH")
+    if [[ "$INSTALL_FRONTEND" == "true" ]]; then
+        [[ ! -d "$PROJECT_ROOT/frontend/dist" ]] && missing_files+=("frontend/dist (前端构建产物)")
+    fi
 
-if ((${#READ_PATHS[@]})); then
-    if ! command -v setfacl >/dev/null 2>&1; then
-        echo "缺少 setfacl：隔离用户无法读取 600 运行时文件。" >&2
-        echo "请安装 acl 后重试；需要 u:${SERVICE_USER}:r-- 文件 ACL 和祖先目录 --x ACL。" >&2
+    if [[ ${#missing_files[@]} -gt 0 ]]; then
+        echo "错误: 缺少必需的文件或目录:"
+        printf '  - %s\n' "${missing_files[@]}"
+        echo ""
+        echo "请先完成以下操作:"
+        [[ "$INSTALL_BACKEND" == "true" ]] && [[ ! -d "$PROJECT_ROOT/.venv" ]] && echo "  - 创建 Python 虚拟环境: python3 -m venv .venv && .venv/bin/pip install -e '.[data,api]'"
+        [[ "$INSTALL_FRONTEND" == "true" ]] && [[ ! -d "$PROJECT_ROOT/frontend/dist" ]] && echo "  - 构建前端: cd frontend && npm install && npm run build"
         exit 1
     fi
-    for read_path in "${READ_PATHS[@]}"; do
-        ancestor="$(dirname "$read_path")"
-        while [[ "$ancestor" != "/" && "$ancestor" != "." ]]; do
-            setfacl -m "u:${SERVICE_USER}:--x" "$ancestor" 2>/dev/null || true
-            ancestor="$(dirname "$ancestor")"
+}
+
+check_prerequisites
+
+# 创建日志目录
+AQSP_LOG_DIR="${PROJECT_ROOT}/logs"
+mkdir -p "$AQSP_LOG_DIR"
+chown -R "$(stat -c '%U:%G' "$PROJECT_ROOT")" "$AQSP_LOG_DIR" 2>/dev/null || \
+    chown -R "$(stat -f '%Su:%Sg' "$PROJECT_ROOT")" "$AQSP_LOG_DIR"
+
+echo "日志目录: $AQSP_LOG_DIR"
+
+# 获取项目属主
+AQSP_USER=$(stat -c '%U' "$PROJECT_ROOT" 2>/dev/null || stat -f '%Su' "$PROJECT_ROOT")
+AQSP_GROUP=$(stat -c '%G' "$PROJECT_ROOT" 2>/dev/null || stat -f '%Sg' "$PROJECT_ROOT")
+
+echo "运行用户: $AQSP_USER:$AQSP_GROUP"
+
+# 查找 npm 路径
+find_npm() {
+    local npm_path
+    npm_path=$(command -v npm 2>/dev/null || echo "")
+    if [[ -z "$npm_path" ]]; then
+        # 尝试常见路径
+        for path in /usr/local/bin/npm /usr/bin/npm "$HOME/.nvm/versions/node/"*/bin/npm; do
+            if [[ -x "$path" ]]; then
+                npm_path="$path"
+                break
+            fi
         done
-        parent="$(dirname "$read_path")"
-        if [[ -d "$parent" ]]; then
-            # 默认 ACL：以后在该目录新建的文件自动对隔离用户可读，
-            # 不必每次写完文件还记得补 ACL —— 上次漏掉的正是这一环。
-            setfacl -m "d:u:${SERVICE_USER}:r-x,d:m:r-x" "$parent"
-        fi
-        if [[ -f "$read_path" ]]; then
-            setfacl -m "u:${SERVICE_USER}:r--,m:r--" "$read_path"
-        elif [[ -d "$read_path" ]]; then
-            setfacl -m "u:${SERVICE_USER}:r-x,m:r-x" "$read_path"
-            setfacl -m "d:u:${SERVICE_USER}:r-x,d:m:r-x" "$read_path"
-        fi
-    done
-
-    # 逐条验证：**任何一个读取路径不可读都算 provision 失败**。
-    # 只验证两个快照文件是上次漏检的根因，这里必须覆盖全部。
-    unreadable=()
-    for read_path in "${READ_PATHS[@]}"; do
-        [[ -e "$read_path" ]] || continue
-        runuser -u "$SERVICE_USER" -- test -r "$read_path" || unreadable+=("$read_path")
-    done
-    if ((${#unreadable[@]})); then
-        echo "隔离用户仍无法读取以下运行时路径（服务用户=${SERVICE_USER}）：" >&2
-        printf '  %s\n' "${unreadable[@]}" >&2
-        echo "请检查: getfacl <路径>" >&2
-        exit 1
     fi
-    echo "已授予 ${SERVICE_USER} 对 ${#READ_PATHS[@]} 条运行时读取路径的最小读取 ACL（文件 r--，目录 r-x，父目录带默认 ACL）。"
-fi
-
-if [[ -z "$NPM_BIN" ]]; then
-    NPM_BIN="$(command -v npm || true)"
-fi
-[[ -x "$NPM_BIN" ]] || { echo "缺少 npm，可用 --npm 指定绝对路径。" >&2; exit 1; }
-[[ -x "$BOOTSTRAP_PYTHON" || "$BOOTSTRAP_PYTHON" == */* ]] \
-    || BOOTSTRAP_PYTHON="$(command -v "$BOOTSTRAP_PYTHON" || true)"
-[[ -x "$BOOTSTRAP_PYTHON" ]] || { echo "缺少 Python: ${BOOTSTRAP_PYTHON}" >&2; exit 1; }
-
-if [[ -x "${VENV_DIR}/bin/python" ]]; then
-    echo "复用已有 Vibe-Research venv: ${VENV_DIR}"
-else
-    "$BOOTSTRAP_PYTHON" -m venv "$VENV_DIR"
-fi
-"${VENV_DIR}/bin/python" -m pip install -e "${PROJECT_ROOT}[api]"
-"${VENV_DIR}/bin/python" -c 'import fastapi, uvicorn'
-chown -R "$SERVICE_USER:$SERVICE_GROUP" "$VENV_DIR"
-
-if [[ "$SKIP_BUILD" != "true" ]]; then
-    "$NPM_BIN" ci --prefix "${PROJECT_ROOT}/frontend"
-    "$NPM_BIN" run build --prefix "${PROJECT_ROOT}/frontend"
-fi
-[[ -f "${PROJECT_ROOT}/frontend/dist/index.html" ]] \
-    || { echo "缺少 frontend/dist/index.html，请移除 --skip-build 重试。" >&2; exit 1; }
-
-# npm ci/build usually runs as root during provisioning, while Vite preview
-# runs as the isolated service user and needs a writable config cache.
-if [[ -d "${PROJECT_ROOT}/frontend/node_modules" ]]; then
-    chown -R "$SERVICE_USER:$SERVICE_GROUP" "${PROJECT_ROOT}/frontend/node_modules"
-fi
-if [[ -d "${PROJECT_ROOT}/frontend/dist" ]]; then
-    chown -R "$SERVICE_USER:$SERVICE_GROUP" "${PROJECT_ROOT}/frontend/dist"
-fi
-
-runuser -u "$SERVICE_USER" -- env \
-    PYTHONPATH="${PROJECT_ROOT}/src:${PROJECT_ROOT}/backend" \
-    "${VENV_DIR}/bin/python" -c 'import aqsp, aqsp_bridge, fastapi, uvicorn'
-
-escape_sed() {
-    printf '%s' "$1" | sed 's/[\\&|]/\\&/g'
-}
-PROJECT_ROOT_ESCAPED="$(escape_sed "$PROJECT_ROOT")"
-SERVICE_USER_ESCAPED="$(escape_sed "$SERVICE_USER")"
-SERVICE_GROUP_ESCAPED="$(escape_sed "$SERVICE_GROUP")"
-VENV_DIR_ESCAPED="$(escape_sed "$VENV_DIR")"
-ENV_FILE_ESCAPED="$(escape_sed "$ENV_FILE")"
-LOG_DIR_ESCAPED="$(escape_sed "$LOG_DIR")"
-NPM_BIN_ESCAPED="$(escape_sed "$NPM_BIN")"
-
-render_unit() {
-    local source="$1"
-    local destination="$2"
-    sed \
-        -e "s|@AQSP_PROJECT_ROOT@|${PROJECT_ROOT_ESCAPED}|g" \
-        -e "s|@AQSP_VIBE_USER@|${SERVICE_USER_ESCAPED}|g" \
-        -e "s|@AQSP_VIBE_GROUP@|${SERVICE_GROUP_ESCAPED}|g" \
-        -e "s|@AQSP_VENV_DIR@|${VENV_DIR_ESCAPED}|g" \
-        -e "s|@AQSP_ENV_FILE@|${ENV_FILE_ESCAPED}|g" \
-        -e "s|@AQSP_LOG_DIR@|${LOG_DIR_ESCAPED}|g" \
-        -e "s|@AQSP_NPM_BIN@|${NPM_BIN_ESCAPED}|g" \
-        "$source" >"$destination"
-    # Template comments document the placeholder syntax; only executable unit
-    # lines must be checked for unresolved substitutions.
-    ! grep -vE '^[[:space:]]*#' "$destination" | grep -Eq '@AQSP_[A-Z_]+@'
+    echo "$npm_path"
 }
 
-install -d "$SYSTEMD_DEST_DIR"
-tmp_dir="$(mktemp -d)"
-trap 'rm -rf "$tmp_dir"' EXIT
-render_unit "${SYSTEMD_SOURCE_DIR}/aqsp-vibe-research-api.service" "${tmp_dir}/aqsp-vibe-research-api.service"
-render_unit "${SYSTEMD_SOURCE_DIR}/aqsp-vibe-research-preview.service" "${tmp_dir}/aqsp-vibe-research-preview.service"
-install -m 0644 "${tmp_dir}/aqsp-vibe-research-api.service" "$SYSTEMD_DEST_DIR/"
-install -m 0644 "${tmp_dir}/aqsp-vibe-research-preview.service" "$SYSTEMD_DEST_DIR/"
-install -m 0644 "${SYSTEMD_SOURCE_DIR}/aqsp-vibe-research.target" "$SYSTEMD_DEST_DIR/"
+NPM_BIN=$(find_npm)
 
-"$SYSTEMCTL_BIN" daemon-reload
-if [[ "$NO_START" == "true" ]]; then
-    echo "Vibe-Research provisioned; services were not started (--no-start)."
-else
-    VIBE_RESEARCH_PYTHON_BIN="${VENV_DIR}/bin/python" \
-    VIBE_RESEARCH_NPM_BIN="$NPM_BIN" \
-        "${PROJECT_ROOT}/scripts/start_vibe_research_service.sh" --env-file "$ENV_FILE"
+if [[ "$INSTALL_FRONTEND" == "true" ]] && [[ -z "$NPM_BIN" ]]; then
+    echo "错误: 未找到 npm 命令"
+    exit 1
 fi
+
+[[ -n "$NPM_BIN" ]] && echo "npm 路径: $NPM_BIN"
+
+# 创建环境变量文件目录
+ENV_DIR=$(dirname "$ENV_FILE")
+mkdir -p "$ENV_DIR"
+
+# 如果环境变量文件不存在，从项目复制
+if [[ ! -f "$ENV_FILE" ]] && [[ -f "$PROJECT_ROOT/.env" ]]; then
+    echo "复制环境变量文件: $PROJECT_ROOT/.env -> $ENV_FILE"
+    cp "$PROJECT_ROOT/.env" "$ENV_FILE"
+    chmod 600 "$ENV_FILE"
+fi
+
+# 安装后端服务
+install_backend_service() {
+    echo ""
+    echo "=== 安装后端服务 (FastAPI) ==="
+
+    local service_file="/etc/systemd/system/aqsp-vibe-research-api.service"
+    local template_file="$PROJECT_ROOT/deploy/systemd/aqsp-vibe-research-api.service"
+
+    # 从模板生成服务文件
+    sed -e "s|@AQSP_PROJECT_ROOT@|$PROJECT_ROOT|g" \
+        -e "s|@AQSP_VENV_DIR@|$PROJECT_ROOT/.venv|g" \
+        -e "s|@AQSP_ENV_FILE@|$ENV_FILE|g" \
+        -e "s|@AQSP_LOG_DIR@|$AQSP_LOG_DIR|g" \
+        -e "s|@AQSP_VIBE_USER@|$AQSP_USER|g" \
+        -e "s|@AQSP_VIBE_GROUP@|$AQSP_GROUP|g" \
+        "$template_file" > "$service_file"
+
+    echo "已创建服务文件: $service_file"
+
+    # 重载 systemd
+    systemctl daemon-reload
+    echo "已重载 systemd 配置"
+
+    # 启用服务
+    systemctl enable aqsp-vibe-research-api.service
+    echo "已启用后端服务"
+}
+
+# 安装前端服务
+install_frontend_service() {
+    echo ""
+    echo "=== 安装前端服务 (React) ==="
+
+    local service_file="/etc/systemd/system/aqsp-vibe-research-preview.service"
+    local template_file="$PROJECT_ROOT/deploy/systemd/aqsp-vibe-research-preview.service"
+
+    # 从模板生成服务文件
+    sed -e "s|@AQSP_PROJECT_ROOT@|$PROJECT_ROOT|g" \
+        -e "s|@AQSP_VENV_DIR@|$PROJECT_ROOT/.venv|g" \
+        -e "s|@AQSP_NPM_BIN@|$NPM_BIN|g" \
+        -e "s|@AQSP_ENV_FILE@|$ENV_FILE|g" \
+        -e "s|@AQSP_LOG_DIR@|$AQSP_LOG_DIR|g" \
+        -e "s|@AQSP_VIBE_USER@|$AQSP_USER|g" \
+        -e "s|@AQSP_VIBE_GROUP@|$AQSP_GROUP|g" \
+        "$template_file" > "$service_file"
+
+    echo "已创建服务文件: $service_file"
+
+    # 重载 systemd
+    systemctl daemon-reload
+    echo "已重载 systemd 配置"
+
+    # 启用服务
+    systemctl enable aqsp-vibe-research-preview.service
+    echo "已启用前端服务"
+}
+
+# 安装 target（仅在同时安装前后端时）
+install_target() {
+    if [[ "$INSTALL_FRONTEND" == "true" ]] && [[ "$INSTALL_BACKEND" == "true" ]]; then
+        echo ""
+        echo "=== 安装 systemd target ==="
+
+        local target_file="/etc/systemd/system/aqsp-vibe-research.target"
+        local template_file="$PROJECT_ROOT/deploy/systemd/aqsp-vibe-research.target"
+
+        cp "$template_file" "$target_file"
+        echo "已创建 target 文件: $target_file"
+
+        systemctl daemon-reload
+        systemctl enable aqsp-vibe-research.target
+        echo "已启用 AQSP target"
+    fi
+}
+
+# 执行安装
+[[ "$INSTALL_BACKEND" == "true" ]] && install_backend_service
+[[ "$INSTALL_FRONTEND" == "true" ]] && install_frontend_service
+install_target
+
+# 启动服务
+if [[ "$NO_START" != "true" ]]; then
+    echo ""
+    echo "=== 启动服务 ==="
+
+    if [[ "$INSTALL_FRONTEND" == "true" ]] && [[ "$INSTALL_BACKEND" == "true" ]]; then
+        systemctl start aqsp-vibe-research.target
+        echo "已启动 AQSP target"
+    else
+        [[ "$INSTALL_BACKEND" == "true" ]] && systemctl start aqsp-vibe-research-api.service && echo "已启动后端服务"
+        [[ "$INSTALL_FRONTEND" == "true" ]] && systemctl start aqsp-vibe-research-preview.service && echo "已启动前端服务"
+    fi
+
+    # 等待服务启动
+    echo "等待服务启动..."
+    sleep 3
+
+    # 检查服务状态
+    echo ""
+    echo "=== 服务状态 ==="
+    [[ "$INSTALL_BACKEND" == "true" ]] && systemctl status aqsp-vibe-research-api.service --no-pager || true
+    [[ "$INSTALL_FRONTEND" == "true" ]] && systemctl status aqsp-vibe-research-preview.service --no-pager || true
+else
+    echo ""
+    echo "=== 服务已安装但未启动 ==="
+    echo "启动服务命令:"
+    if [[ "$INSTALL_FRONTEND" == "true" ]] && [[ "$INSTALL_BACKEND" == "true" ]]; then
+        echo "  sudo systemctl start aqsp-vibe-research.target"
+    else
+        [[ "$INSTALL_BACKEND" == "true" ]] && echo "  sudo systemctl start aqsp-vibe-research-api.service"
+        [[ "$INSTALL_FRONTEND" == "true" ]] && echo "  sudo systemctl start aqsp-vibe-research-preview.service"
+    fi
+fi
+
+echo ""
+echo "=== 安装完成 ==="
+echo ""
+echo "常用命令:"
+[[ "$INSTALL_BACKEND" == "true" ]] && cat <<EOF
+  后端服务:
+    启动: sudo systemctl start aqsp-vibe-research-api.service
+    停止: sudo systemctl stop aqsp-vibe-research-api.service
+    重启: sudo systemctl restart aqsp-vibe-research-api.service
+    状态: sudo systemctl status aqsp-vibe-research-api.service
+    日志: sudo journalctl -u aqsp-vibe-research-api.service -f
+
+EOF
+
+[[ "$INSTALL_FRONTEND" == "true" ]] && cat <<EOF
+  前端服务:
+    启动: sudo systemctl start aqsp-vibe-research-preview.service
+    停止: sudo systemctl stop aqsp-vibe-research-preview.service
+    重启: sudo systemctl restart aqsp-vibe-research-preview.service
+    状态: sudo systemctl status aqsp-vibe-research-preview.service
+    日志: sudo journalctl -u aqsp-vibe-research-preview.service -f
+
+EOF
+
+if [[ "$INSTALL_FRONTEND" == "true" ]] && [[ "$INSTALL_BACKEND" == "true" ]]; then
+    cat <<EOF
+  整体管理:
+    启动: sudo systemctl start aqsp-vibe-research.target
+    停止: sudo systemctl stop aqsp-vibe-research.target
+    重启: sudo systemctl restart aqsp-vibe-research.target
+    状态: sudo systemctl status aqsp-vibe-research.target
+
+EOF
+fi
+
+echo "健康检查:"
+[[ "$INSTALL_BACKEND" == "true" ]] && echo "  后端: curl http://127.0.0.1:8900/api/health"
+[[ "$INSTALL_FRONTEND" == "true" ]] && echo "  前端: curl http://127.0.0.1:5899/"
