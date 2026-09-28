@@ -2027,6 +2027,8 @@ def build_news_section(
 
 # 公告关键词分类词典：按「风险/事件」关注度排序，前者优先归入（一条公告可命中多类，
 # 但展示时只取最高优先级一类，避免监管处罚被淹没在「其他」里）。
+# PR #258 降噪：扩充 4 个事件类（诉讼/董监高/募资再融资/质押担保）吸收原「其他」噪声，
+# 并拆「重点/常规」两档——常规类（其他）只计入计数、不铺样本行。
 _ANNOUNCE_CATEGORIES: list[tuple[str, tuple[str, ...]]] = [
     ("监管处罚", ("行政处罚", "立案", "行政处罚事先告知", "行政监管措施", "监管措施",
                   "警示函", "通报批评", "公开谴责", "罚款", "退市风险", "行政监督管理措施")),
@@ -2034,11 +2036,18 @@ _ANNOUNCE_CATEGORIES: list[tuple[str, tuple[str, ...]]] = [
     ("减持", ("减持", "被动减持", "大宗交易减持")),
     ("增持/回购", ("增持", "回购", "股权激励", "员工持股")),
     ("业绩", ("业绩", "净利润", "亏损", "扭亏", "业绩预告", "业绩快报", "营收")),
+    ("诉讼/仲裁", ("诉讼", "仲裁", "重大诉讼", "重大仲裁", "被起诉", "执行")),
     ("分红/送转", ("分红", "送转", "派息", "转增", "配股")),
+    ("募资/再融资", ("募集资金", "再融资", "定增", "增发", "可转债", "配股预案")),
+    ("高管/股东变动", ("董监高", "辞职", "离任", "聘任", "被留置", "冻结", "司法拍卖",
+                       "质押")),
     ("中标/合同", ("中标", "合同", "订单", "项目中标", "签约")),
     ("停复牌", ("停牌", "复牌", "终止上市", "退市")),
     ("其他", ("",)),
 ]
+
+# 重点档：铺样本行。常规档（含「其他」）：仅计入计数，避免 7000+ 条时重点被噪声稀释。
+_ANNOUNCE_ROUTINE = frozenset({"其他"})
 
 
 def _categorize_announcement(text: str) -> str:
@@ -2138,11 +2147,9 @@ def build_announcements_section(
             t = t[:46] + "…"
         return f"  [{p['cat']}] {p['notice'][5:]} {p['name']}（{p['symbol']}）：{t}"
 
-    # 展示优先级：监管处罚/重组/减持/增持/业绩 在前，其他/中标/分红/停复牌 在后
-    show_order = [
-        "监管处罚", "重组/并购", "减持", "增持/回购", "业绩",
-        "分红/送转", "中标/合同", "停复牌", "其他",
-    ]
+    # 展示优先级：高关注事件类在前；「其他」为常规档（_ANNOUNCE_ROUTINE），
+    # 只计入上方分类计数、不铺样本行，避免 7000+ 条时重点被噪声稀释（#258 降噪）。
+    show_order = [c[0] for c in _ANNOUNCE_CATEGORIES if c[0] not in _ANNOUNCE_ROUTINE]
     lines: list[str] = [
         f"## 重大公告动态（事件风险环境 · 近 {recent_days} 日）",
         "",
@@ -2151,16 +2158,26 @@ def build_announcements_section(
             f"{c} {cat_counts[c]}" for c in order if cat_counts[c]
         ),
     ]
+    shown = 0
     for cat in show_order:
-        items = [p for p in parsed if p["cat"] == cat][: (top_n // 3 or 4)]
-        if not items:
+        if shown >= top_n:
+            break
+        cat_items = [p for p in parsed if p["cat"] == cat]
+        if not cat_items:
             continue
+        items = cat_items[: max(1, top_n - shown)]
+        shown += len(items)
         lines.append("")
-        lines.append(f"{cat}（{len([p for p in parsed if p['cat'] == cat])}）：")
+        lines.append(f"{cat}（{len(cat_items)}）：")
         lines.extend(_row(p) for p in items)
-    if len(parsed) > top_n:
+    hidden = len(parsed) - shown
+    if hidden > 0:
         lines.append("")
-        lines.append(f"  （仅展示重点 {top_n} 条，其余 {len(parsed) - top_n} 条见原始数据）")
+        lines.append(
+            f"  （仅展示重点 {shown} 条，其余 {hidden} 条"
+            + (f"（含常规「其他」{cat_counts['其他']} 条）" if cat_counts.get("其他") else "")
+            + "见原始数据）"
+        )
 
     # 新鲜度：以 CSV 本体 mtime 判陈旧（公告时效性强，默认 72h）。
     try:
