@@ -225,3 +225,160 @@ def test_event_calendar_cache_missing_still_degrades_gracefully(
     assert cal.is_empty() is True
     assert cal.has_unlock_data() is False
     assert cal.has_longhubang_data() is False
+
+
+# ---------------------------------------------------------------------------
+# 3) holder_num 抓取韧性（#259：页级重试 + 季度局部降级 + 不写空表 + 合并写）
+#    09-28 首自动跑批实证 2026-03-31 p3 断流「Response ended prematurely」，
+#    旧实现任一分页故障 ⇒ 整批 raise、后续季度全不抓、load() 空结果 to_csv
+#    把好数据截断。以下 4 组 case 钉死修复后的行为。
+# ---------------------------------------------------------------------------
+class _FakeEMResponse:
+    def __init__(self, payload: dict) -> None:
+        self._payload = payload
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def json(self) -> dict:
+        return self._payload
+
+
+def _em_payload(rows: list[dict], count: int) -> dict:
+    return {"result": {"data": rows, "count": count}}
+
+
+def test_holder_page_retry_succeeds_after_transient_failure(
+    data_root: str, tmp_path: Path, monkeypatch
+) -> None:
+    """页级重试：首请求断流、次请求成功 ⇒ 该季抓全，不抛错。"""
+    from aqsp.data import holder_num
+    import requests
+
+    calls = {"n": 0}
+    rows = [
+        {"SECURITY_CODE": "600001", "SECURITY_NAME_ABBR": "测试",
+         "HOLDER_NUM": "1000", "HOLD_NOTICE_DATE": "2026-04-20 00:00:00",
+         "END_DATE": "2026-03-31 00:00:00"}
+    ]
+
+    def fake_get(url: str, *, params: dict, headers: dict, timeout: int) -> _FakeEMResponse:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise ConnectionError("Response ended prematurely")
+        return _FakeEMResponse(_em_payload(rows, count=1))
+
+    monkeypatch.setattr(requests, "get", fake_get)
+    import time as _time_stdlib
+
+    monkeypatch.setattr(_time_stdlib, "sleep", lambda *_: None)
+    src = holder_num.HolderNumSource(cache_path=str(tmp_path / "h.csv"))
+    src.truncated = False
+    items = src._fetch(["2026-03-31"])
+    assert len(items) == 1
+    assert items[0].symbol == "600001"
+    assert src.truncated is False
+
+
+def test_holder_quarter_degrades_without_blocking_others(
+    data_root: str, tmp_path: Path, monkeypatch
+) -> None:
+    """季度局部降级：Q1 全页 502（重试耗尽）⇒ 该季跳过，Q2 仍抓全，整批不 raise。"""
+    from aqsp.data import holder_num
+    import requests
+
+    q2_rows = [
+        {"SECURITY_CODE": "600002", "SECURITY_NAME_ABBR": "甲",
+         "HOLDER_NUM": "2000", "HOLD_NOTICE_DATE": "2026-07-15 00:00:00",
+         "END_DATE": "2026-06-30 00:00:00"}
+    ]
+
+    def fake_get(url: str, *, params: dict, headers: dict, timeout: int) -> _FakeEMResponse:
+        quarter = params["filter"]
+        if "2026-03-31" in quarter:
+            raise requests.HTTPError("502 Bad Gateway")
+        return _FakeEMResponse(_em_payload(q2_rows, count=1))
+
+    monkeypatch.setattr(requests, "get", fake_get)
+    import time as _time_stdlib
+
+    monkeypatch.setattr(_time_stdlib, "sleep", lambda *_: None)
+    src = holder_num.HolderNumSource(cache_path=str(tmp_path / "h.csv"))
+    items = src._fetch(["2026-03-31", "2026-06-30"])
+    # 失败季被跳过、成功季完整保留
+    assert [i.quarter for i in items] == ["2026-06-30"]
+    assert src.truncated is True  # 局部截断标记（供上层知晓数据不完整）
+
+
+def test_holder_load_empty_fetch_keeps_cache(
+    data_root: str, tmp_path: Path, monkeypatch
+) -> None:
+    """全季抓取失败（网络全灭）⇒ 保旧缓存、绝不写空表。"""
+    from aqsp.data import holder_num
+
+    cache = str(tmp_path / "h.csv")
+    _write_producer_csv(
+        cache,
+        [
+            holder_num.HolderNumItem(
+                symbol="600003",
+                name="乙",
+                quarter="2026-03-31",
+                holder_count=5000.0,
+                notice_date="2026-04-18",
+            ),
+        ],
+    )
+    src = holder_num.HolderNumSource(cache_path=cache)
+    monkeypatch.setattr(src, "_fetch", lambda quarters: [])  # 模拟网络全灭
+
+    items = src.load(force=True)
+    assert len(items) == 1  # 沿用旧缓存
+    # 缓存文件未被截断
+    frame = pd.read_csv(cache, dtype={"symbol": str})
+    assert len(frame) == 1
+    assert frame.iloc[0]["symbol"] == "600003"
+
+
+def test_holder_load_merge_write_preserves_older_quarters(
+    data_root: str, tmp_path: Path, monkeypatch
+) -> None:
+    """合并写：新抓取只有最新季 ⇒ 与旧缓存按 (symbol, quarter) 合并，旧季不丢。"""
+    from aqsp.data import holder_num
+
+    cache = str(tmp_path / "h.csv")
+    _write_producer_csv(
+        cache,
+        [
+            holder_num.HolderNumItem(
+                symbol="600004",
+                name="丙",
+                quarter="2026-03-31",
+                holder_count=9000.0,
+                notice_date="2026-04-20",
+            ),
+        ],
+    )
+    src = holder_num.HolderNumSource(cache_path=cache)
+    monkeypatch.setattr(
+        src,
+        "_fetch",
+        lambda quarters: [
+            holder_num.HolderNumItem(
+                symbol="600004",
+                name="丙",
+                quarter="2026-06-30",
+                holder_count=8000.0,
+                notice_date="2026-07-15",
+            ),
+        ],
+    )
+
+    items = src.load(force=True)
+    quarters = sorted(i.quarter for i in items)
+    assert quarters == ["2026-03-31", "2026-06-30"]  # 两季都在，QoQ 可比
+    # 同键 (symbol, quarter) 新值胜出
+    q1 = [i for i in items if i.quarter == "2026-03-31"][0]
+    assert q1.holder_count == 9000.0
+    q2 = [i for i in items if i.quarter == "2026-06-30"][0]
+    assert q2.holder_count == 8000.0
