@@ -36,23 +36,33 @@ def test_metrics_endpoint_no_auth_required():
     assert r.status_code == 200
 
 
+def _counter_sum(text: str, metric: str) -> float:
+    """把某计数器在 Prometheus 文本里的所有样本值求和（忽略 # HELP / # TYPE）。"""
+    total = 0.0
+    for line in text.splitlines():
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith(f"{metric}{{") or line.startswith(f"{metric} "):
+            total += float(line.rsplit(" ", 1)[-1])
+    return total
+
+
 def test_metrics_middleware_records_requests():
     """测试中间件是否记录请求指标。"""
-    # 先获取当前指标
-    r1 = client.get("/metrics")
-    initial_content = r1.text
+    before = _counter_sum(client.get("/metrics").text, "aqsp_http_requests_total")
 
     # 发起一个测试请求
     client.get("/api/health")
 
-    # 再次获取指标
-    r2 = client.get("/metrics")
-    updated_content = r2.text
+    updated_content = client.get("/metrics").text
 
-    # 验证指标已更新（包含 /api/health 端点）
+    # 验证指标已更新：计数器严格增长 + 出现 /api/health 端点标签。
+    # 注意：不要用「文本长度只增」来判断——Prometheus 文本长度会随样本/标签
+    # 抖动（实测曾出现 29556 < 29557 的假失败），必须比较计数值本身。
+    after = _counter_sum(updated_content, "aqsp_http_requests_total")
     assert "aqsp_http_requests_total" in updated_content
-    # 由于计数器只增不减，第二次应该包含更多数据
-    assert len(updated_content) >= len(initial_content)
+    assert after > before, f"middleware 未记录新请求: {before} -> {after}"
+    assert 'endpoint="/api/health"' in updated_content
 
 
 def test_metrics_middleware_excludes_metrics_endpoint():
