@@ -9019,7 +9019,7 @@ def run_experiment(args: argparse.Namespace) -> int:
     from aqsp.experiment import GridSearchRunner, ABTestRunner
     from aqsp.strategies.composite import CompositeStrategy
     from aqsp.strategies.thresholds import load_thresholds, Thresholds
-    from aqsp.data.sqlite_db_source import resolve_sqlite_db_path
+    from aqsp.data.source_factory import resolve_sqlite_db_path
 
     logging.basicConfig(
         level=logging.INFO,

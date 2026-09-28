@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Literal
 
 try:
-    from pydantic import Field, field_validator
+    from pydantic import AliasChoices, Field, field_validator
     from pydantic_settings import BaseSettings, SettingsConfigDict
 except ImportError:
     raise ImportError(
@@ -69,19 +69,67 @@ class NotificationSettings(BaseSettings):
         default=False, description="摘要模式失败时是否回退到完整模式"
     )
 
-    # 通知渠道配置
-    telegram_bot_token: str = Field(default="", description="Telegram Bot Token")
-    telegram_chat_id: str = Field(default="", description="Telegram Chat ID")
-    serverchan_sendkey: str = Field(default="", description="Server酱 SendKey")
-    wechat_webhook_url: str = Field(default="", description="企业微信 Webhook URL")
-    feishu_webhook_url: str = Field(default="", description="飞书 Webhook URL")
-    generic_webhook_url: str = Field(default="", description="通用 Webhook URL")
-    bark_url: str = Field(default="", description="Bark 推送 URL")
-    pushplus_token: str = Field(default="", description="PushPlus Token")
-    dingtalk_webhook_url: str = Field(default="", description="钉钉 Webhook URL")
-    dingtalk_secret: str = Field(default="", description="钉钉签名密钥")
-    discord_webhook_url: str = Field(default="", description="Discord Webhook URL")
-    slack_webhook_url: str = Field(default="", description="Slack Webhook URL")
+    # 通知渠道配置（env 名沿用全仓既有约定：无 AQSP_ 前缀；同时兼容 AQSP_ 前缀写法）
+    telegram_bot_token: str = Field(
+        default="",
+        validation_alias=AliasChoices("TELEGRAM_BOT_TOKEN", "AQSP_TELEGRAM_BOT_TOKEN"),
+        description="Telegram Bot Token",
+    )
+    telegram_chat_id: str = Field(
+        default="",
+        validation_alias=AliasChoices("TELEGRAM_CHAT_ID", "AQSP_TELEGRAM_CHAT_ID"),
+        description="Telegram Chat ID",
+    )
+    serverchan_sendkey: str = Field(
+        default="",
+        validation_alias=AliasChoices("SERVERCHAN_SENDKEY", "AQSP_SERVERCHAN_SENDKEY"),
+        description="Server酱 SendKey",
+    )
+    wechat_webhook_url: str = Field(
+        default="",
+        validation_alias=AliasChoices("WECHAT_WEBHOOK_URL", "AQSP_WECHAT_WEBHOOK_URL"),
+        description="企业微信 Webhook URL",
+    )
+    feishu_webhook_url: str = Field(
+        default="",
+        validation_alias=AliasChoices("FEISHU_WEBHOOK_URL", "AQSP_FEISHU_WEBHOOK_URL"),
+        description="飞书 Webhook URL",
+    )
+    generic_webhook_url: str = Field(
+        default="",
+        validation_alias=AliasChoices("GENERIC_WEBHOOK_URL", "AQSP_GENERIC_WEBHOOK_URL"),
+        description="通用 Webhook URL",
+    )
+    bark_url: str = Field(
+        default="",
+        validation_alias=AliasChoices("BARK_URL", "AQSP_BARK_URL"),
+        description="Bark 推送 URL",
+    )
+    pushplus_token: str = Field(
+        default="",
+        validation_alias=AliasChoices("PUSHPLUS_TOKEN", "AQSP_PUSHPLUS_TOKEN"),
+        description="PushPlus Token",
+    )
+    dingtalk_webhook_url: str = Field(
+        default="",
+        validation_alias=AliasChoices("DINGTALK_WEBHOOK_URL", "AQSP_DINGTALK_WEBHOOK_URL"),
+        description="钉钉 Webhook URL",
+    )
+    dingtalk_secret: str = Field(
+        default="",
+        validation_alias=AliasChoices("DINGTALK_SECRET", "AQSP_DINGTALK_SECRET"),
+        description="钉钉签名密钥",
+    )
+    discord_webhook_url: str = Field(
+        default="",
+        validation_alias=AliasChoices("DISCORD_WEBHOOK_URL", "AQSP_DISCORD_WEBHOOK_URL"),
+        description="Discord Webhook URL",
+    )
+    slack_webhook_url: str = Field(
+        default="",
+        validation_alias=AliasChoices("SLACK_WEBHOOK_URL", "AQSP_SLACK_WEBHOOK_URL"),
+        description="Slack Webhook URL",
+    )
 
 
 class LLMSettings(BaseSettings):
@@ -143,15 +191,18 @@ class DebateSettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="AQSP_")
 
-    enable_debate: bool = Field(default=False, description="是否启用多 Agent 讨论")
+    enable_debate: bool = Field(
+        default=True,
+        description="是否启用多 Agent 讨论（默认启用，对齐 AQSP_ENABLE_DEBATE 旧默认 true）",
+    )
     debate_enable_llm: bool = Field(
         default=False, description="是否在讨论中启用 LLM"
     )
     debate_max_rounds: int = Field(default=2, ge=1, description="最大讨论轮数")
     debate_language: str = Field(default="zh-CN", description="讨论语言")
     debate_roles: str = Field(
-        default="bull,bear,risk_control,sector_leader,policy_sensitive,northbound",
-        description="讨论角色（逗号分隔）",
+        default="",
+        description="讨论角色（逗号分隔）。留空 = 按 task 选用预设角色，对齐旧 AQSP_DEBATE_ROLES 语义",
     )
     debate_role_llm: str = Field(default="", description="角色 LLM 映射")
     debate_role_providers: str = Field(default="", description="角色 Provider 映射")
@@ -222,6 +273,27 @@ class RuntimeSettings(BaseSettings):
     tushare_token: str = Field(default="", description="Tushare Token")
 
 
+def _merge_env_over_yaml(sub_cls: type[BaseSettings], yaml_section: dict) -> BaseSettings:
+    """合并「YAML 段」与「环境变量」，环境变量优先。
+
+    pydantic-settings 中，以 init kwargs 传入的值优先级高于 env；子配置若直接用
+    ``sub_cls(**yaml_section)`` 构造，会把 env 压制掉。这里改为：分别构造
+    「YAML 版」与「仅 env+默认 版」，逐字段比较——若某字段的 env 值与默认值不同，
+    说明 env 显式设置了它，环境变量胜出；否则采用 YAML 值。
+    """
+    yaml_inst = sub_cls(**yaml_section)
+    env_inst = sub_cls()
+    merged: dict = {}
+    for name, field in sub_cls.model_fields.items():
+        try:
+            default = field.get_default(call_default_factory=True)
+        except Exception:  # pragma: no cover - 防御性
+            default = None
+        env_val = getattr(env_inst, name)
+        merged[name] = env_val if env_val != default else getattr(yaml_inst, name)
+    return sub_cls(**merged)
+
+
 class AQSPSettings(BaseSettings):
     """AQSP 主配置类 - 聚合所有子配置"""
 
@@ -273,31 +345,41 @@ class AQSPSettings(BaseSettings):
             AQSPSettings 实例
         """
         if yaml_path is None:
-            # 自动检测环境
-            env = os.getenv("AQSP_ENV", "dev").lower()
-            yaml_path = Path(f"config/settings.{env}.yaml")
+            # 仅当显式设置 AQSP_ENV 时才自动探测对应环境配置；
+            # 未设置 ⇒ 只用环境变量 + 默认值（避免生产机未设 AQSP_ENV 时静默加载 dev 配置）。
+            env = os.getenv("AQSP_ENV")
+            if not env:
+                return cls()
+            yaml_path = Path(f"config/settings.{env.lower()}.yaml")
 
+        yaml_config: dict = {}
         if Path(yaml_path).exists():
-            # 先加载 YAML，再用环境变量覆盖
             with open(yaml_path, encoding="utf-8") as f:
-                yaml_config = yaml.safe_load(f) or {}
+                loaded = yaml.safe_load(f) or {}
+            if isinstance(loaded, dict):
+                yaml_config = loaded
 
-            # 创建临时实例以合并配置
-            base_settings = cls(**yaml_config)
+        if not yaml_config:
+            # 无 YAML：仅使用环境变量和默认值
+            return cls()
 
-            # 重新加载以应用环境变量（环境变量会覆盖 YAML）
-            return cls(
-                database=DatabaseSettings(),
-                data_source=DataSourceSettings(),
-                notification=NotificationSettings(),
-                llm=LLMSettings(),
-                debate=DebateSettings(),
-                deployment=DeploymentSettings(),
-                runtime=RuntimeSettings(),
-            )
-
-        # 如果 YAML 不存在，仅使用环境变量和默认值
-        return cls()
+        # 有 YAML：逐段合并，环境变量优先
+        section_map = {
+            "database": DatabaseSettings,
+            "data_source": DataSourceSettings,
+            "notification": NotificationSettings,
+            "llm": LLMSettings,
+            "debate": DebateSettings,
+            "deployment": DeploymentSettings,
+            "runtime": RuntimeSettings,
+        }
+        kwargs = {}
+        for section, sub_cls in section_map.items():
+            section_data = yaml_config.get(section) or {}
+            if not isinstance(section_data, dict):
+                section_data = {}
+            kwargs[section] = _merge_env_over_yaml(sub_cls, section_data)
+        return cls(**kwargs)
 
 
 @lru_cache

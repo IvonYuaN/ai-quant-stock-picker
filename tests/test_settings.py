@@ -138,12 +138,13 @@ class TestDebateSettings:
 
     def test_default_values(self):
         settings = DebateSettings()
-        assert settings.enable_debate is False
+        # 既有契约：AQSP_ENABLE_DEBATE 未设时默认启用（config.load_runtime_config 亦然）
+        assert settings.enable_debate is True
         assert settings.debate_enable_llm is False
         assert settings.debate_max_rounds == 2
         assert settings.debate_language == "zh-CN"
-        assert "bull" in settings.debate_roles
-        assert "bear" in settings.debate_roles
+        # debate_roles 留空表示「按 task 选用预设角色」，而非固定角色串
+        assert settings.debate_roles == ""
 
     def test_env_override(self, monkeypatch):
         monkeypatch.setenv("AQSP_ENABLE_DEBATE", "true")

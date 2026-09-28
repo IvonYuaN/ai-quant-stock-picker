@@ -191,9 +191,10 @@ def get_reviews(
             updated_at=review["updated_at"],
         ))
 
-    # 按创建时间倒序
-    filtered.sort(key=lambda r: r.created_at, reverse=True)
-    return filtered
+    # 按创建时间倒序；created_at 精确到秒，同一秒内以「后写入者更新」为次序（稳定逆序）
+    indexed = list(enumerate(filtered))
+    indexed.sort(key=lambda pair: (pair[1].created_at, pair[0]), reverse=True)
+    return [item for _, item in indexed]
 
 
 def update_review(

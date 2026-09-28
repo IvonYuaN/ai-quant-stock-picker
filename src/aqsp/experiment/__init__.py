@@ -11,7 +11,6 @@ import json
 import logging
 import os
 from dataclasses import dataclass, asdict, field
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Callable
 
@@ -20,6 +19,7 @@ import pandas as pd
 import yaml
 
 from aqsp.backtest.walk_forward import WalkForwardTester, WalkForwardResult
+from aqsp.core.time import now_shanghai
 from aqsp.strategies.composite import CompositeStrategy
 from aqsp.strategies.thresholds import Thresholds
 
@@ -36,7 +36,7 @@ class ExperimentConfig:
     end_date: str
     params: Dict[str, Any]
     metadata: Dict[str, Any] = field(default_factory=dict)
-    created_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    created_at: str = field(default_factory=lambda: now_shanghai().isoformat())
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -54,7 +54,7 @@ class ExperimentResult:
     params: Dict[str, Any]
     metrics: Dict[str, float]
     walk_forward_result: Dict[str, Any]  # WalkForwardResult 序列化
-    completed_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    completed_at: str = field(default_factory=lambda: now_shanghai().isoformat())
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -201,9 +201,9 @@ class GridSearchRunner:
         end_date: Optional[str],
     ) -> str:
         """生成实验 ID"""
-        content = f"{name}_{param_grid}_{start_date}_{end_date}_{datetime.now()}"
+        content = f"{name}_{param_grid}_{start_date}_{end_date}_{now_shanghai()}"
         hash_hex = hashlib.sha256(content.encode()).hexdigest()[:12]
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = now_shanghai().strftime("%Y%m%d_%H%M%S")
         return f"{name}_{timestamp}_{hash_hex}"
 
     def _extract_metrics(self, wf_result: WalkForwardResult) -> Dict[str, float]:
@@ -393,7 +393,7 @@ class ABTestRunner:
         end_date: Optional[str],
     ) -> str:
         """生成实验 ID"""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = now_shanghai().strftime("%Y%m%d_%H%M%S")
         return f"{name}_{timestamp}"
 
     def _extract_metrics(self, wf_result: WalkForwardResult) -> Dict[str, float]:
@@ -447,7 +447,7 @@ class ABTestRunner:
             "variant_a": result_a.to_dict(),
             "variant_b": result_b.to_dict(),
             "comparison": self._compute_comparison(result_a, result_b),
-            "completed_at": datetime.now().isoformat(),
+            "completed_at": now_shanghai().isoformat(),
         }
 
         comparison_path = self.output_dir / f"{experiment_id}_comparison.json"

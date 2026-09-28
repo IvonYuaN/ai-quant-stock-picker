@@ -22,7 +22,20 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+def _find_project_root(start: Path) -> Path:
+    """向上寻找含 pyproject.toml 的目录作为仓库根。
+
+    兼容两种情况：脚本被移动到 scripts/<子目录>/（如 scripts/monitor/），
+    以及通过 scripts/ 根级兼容软链调用（``Path(__file__).resolve()`` 会跟随
+    软链落到子目录，单纯用 ``parents[N]`` 会算错层级）。
+    """
+    for candidate in (start, *start.parents):
+        if (candidate / "pyproject.toml").is_file():
+            return candidate
+    return start
+
+
+PROJECT_ROOT = _find_project_root(Path(__file__).resolve().parent)
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 

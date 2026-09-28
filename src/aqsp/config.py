@@ -191,6 +191,9 @@ def load_runtime_config() -> RuntimeConfig:
     if _USE_NEW_SETTINGS:
         # 使用新的统一配置系统
         try:
+            # 清缓存：这两个 load_* 的语义是「读取当前环境变量」（旧实现每调用即读），
+            # 而 get_settings 带 lru_cache 会把上一次的 env 结果带过来，须先失效。
+            get_settings.cache_clear()
             settings = get_settings()
 
             # 将 settings 转换为 RuntimeConfig
@@ -287,6 +290,9 @@ def load_debate_runtime_config(task_id: str | None = None) -> DebateRuntimeConfi
     if _USE_NEW_SETTINGS:
         # 使用新的统一配置系统
         try:
+            # 清缓存：这两个 load_* 的语义是「读取当前环境变量」（旧实现每调用即读），
+            # 而 get_settings 带 lru_cache 会把上一次的 env 结果带过来，须先失效。
+            get_settings.cache_clear()
             settings = get_settings()
 
             enabled = goal_switch_enabled(

@@ -146,6 +146,56 @@ if [[ ! -f "$ENV_FILE" ]] && [[ -f "$PROJECT_ROOT/.env" ]]; then
     chmod 600 "$ENV_FILE"
 fi
 
+# ---- 运行时读取路径 ACL 供给 ----
+# 服务以 ${AQSP_USER} 运行，必须能读 API 会 serve 的每一个运行时路径（而非只硬编码几个）。
+# 2026-09-18 教训：只给快照加 ACL，而 env 里声明的 8 条读取路径全是 600 ⇒
+# 选股绩效/讨论/纸面交易/消息面雷达四个功能全部静默降级成空数据，一致性检查却一直报成功。
+# 故读取路径**从环境文件派生**（绝对路径型 AQSP_* 变量），新增读取路径只改 env，ACL 自动跟上。
+if [[ -f "$ENV_FILE" ]]; then
+    set -a
+    # shellcheck disable=SC1090
+    . "$ENV_FILE"
+    set +a
+
+    READ_PATHS=()
+    while IFS= read -r var_name; do
+        var_value="${!var_name:-}"
+        [[ "$var_value" == /* ]] && READ_PATHS+=("$var_value")
+    done < <(grep -oE '^AQSP_[A-Z0-9_]+=' "$ENV_FILE" | tr -d '=')
+
+    if ((${#READ_PATHS[@]})); then
+        if ! command -v setfacl >/dev/null 2>&1; then
+            echo "警告: 缺少 setfacl，运行时 600 文件可能对 ${AQSP_USER} 不可读（ACL 600 陷阱）。" >&2
+        else
+            for read_path in "${READ_PATHS[@]}"; do
+                ancestor="$(dirname "$read_path")"
+                while [[ "$ancestor" != "/" && "$ancestor" != "." ]]; do
+                    setfacl -m "u:${AQSP_USER}:--x" "$ancestor" 2>/dev/null || true
+                    ancestor="$(dirname "$ancestor")"
+                done
+                parent="$(dirname "$read_path")"
+                [[ -d "$parent" ]] && setfacl -d -m "u:${AQSP_USER}:r--" "$parent" 2>/dev/null || true
+                [[ -f "$read_path" ]] && setfacl -m "u:${AQSP_USER}:r--" "$read_path" 2>/dev/null || true
+            done
+            echo "已为 ${AQSP_USER} 补齐 ${#READ_PATHS[@]} 条运行时读取路径的 ACL"
+
+            # 逐条验证：**任何一个读取路径不可读都算 provision 失败**。
+            # 只验证两个快照文件是上次漏检的根因，这里必须覆盖全部。
+            unreadable=()
+            for read_path in "${READ_PATHS[@]}"; do
+                [[ -e "$read_path" ]] || continue
+                runuser -u "$AQSP_USER" -- test -r "$read_path" || unreadable+=("$read_path")
+            done
+            if ((${#unreadable[@]})); then
+                echo "服务用户 ${AQSP_USER} 仍无法读取以下运行时路径：" >&2
+                printf '  %s\n' "${unreadable[@]}" >&2
+                echo "请检查: getfacl <路径>" >&2
+                exit 1
+            fi
+        fi
+    fi
+fi
+
 # 安装后端服务
 install_backend_service() {
     echo ""
