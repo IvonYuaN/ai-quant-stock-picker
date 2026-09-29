@@ -598,6 +598,22 @@ export interface IcHistoryPayload {
   latest_factors: Record<string, number>;
 }
 
+/** `GET /api/aqsp/closing-review` 的 `data.sections` 元素：单段收评（市场级只读）。 */
+export interface ClosingReviewSection {
+  key: string;
+  title: string;
+  /** builder 产出的 markdown（首行自带 `## 段标题`；缺数据时为空串）。 */
+  markdown: string;
+  /** false = 该段缺数据/读失败（fail-soft），前端置灰折叠。 */
+  available: boolean;
+}
+
+/** `GET /api/aqsp/closing-review` 的 `data`：收评日报 6 段市场级聚合。 */
+export interface ClosingReviewPayload {
+  as_of: string;
+  sections: ClosingReviewSection[];
+}
+
 export interface ReviewCreateInput {
   signal_id: string;
   date: string;
@@ -674,6 +690,8 @@ export const api = {
   reviewTags: () => get<string[]>("/reviews/tags"),
   reviewInsights: () => get<ReviewInsights>("/reviews/insights"),
   icHistory: () => get<IcHistoryPayload>("/aqsp/ic-history"),
+  // 收评日报 6 段（市场级只读聚合，fail-soft）
+  closingReview: () => get<ClosingReviewPayload>("/aqsp/closing-review"),
   createReview: (input: ReviewCreateInput) =>
     request<{ id: string }>("/reviews", "POST", input),
   updateReview: (id: string, input: ReviewUpdateInput) =>

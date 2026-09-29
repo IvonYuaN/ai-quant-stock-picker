@@ -2030,3 +2030,59 @@ def ic_history_endpoint():
         raise
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"读取因子 IC 历史失败：{e}") from e
+
+
+@app.get(
+    "/api/aqsp/closing-review",
+    tags=["AQSP 研究"],
+    summary="收评日报 6 段（市场级 · 只读聚合）",
+    description="""
+聚合收评日报的 6 个市场级只读段（因子 IC 健康 / 板块资金面 / 龙虎榜关注 / 财经快讯 /
+重大公告 / 股东户数异动），复用 `aqsp.briefing.closing_review` 的 `build_*_section()`
+（读全市场 pit_cache，默认走 `runtime_data_root()`，与 IC cron 回流写读同源）。
+
+- **红线**：只读展示，各段 builder 绝不写回打分/排序/下单。
+- **fail-soft**：任一段缺数据/读失败/表头残缺 ⇒ 该段 `available=false`、`markdown` 空，
+  整端点仍 200，绝不 500。
+- **口径**：市场级（全市场 pit_cache），区别于 `/api/events` 等单票级端点；
+  前端据此做收评日报卡片流。
+""",
+)
+def aqsp_closing_review_endpoint():
+    from aqsp.briefing.closing_review import (
+        build_announcements_section,
+        build_board_fund_section,
+        build_factor_ic_section,
+        build_holder_concentration_section,
+        build_longhubang_section,
+        build_news_section,
+    )
+
+    try:
+        from aqsp.core.time import today_shanghai
+
+        as_of = today_shanghai().isoformat()
+    except Exception:  # noqa: BLE001 — 时间取不到不拖垮整端点，降级为本地墙钟（北京时区）
+        from datetime import datetime, timedelta, timezone
+
+        as_of = datetime.now(timezone(timedelta(hours=8))).isoformat()
+
+    # 顺序 = 收评日报呈现顺序：决策相关的放前（IC 健康），市场环境证据放后。
+    spec = [
+        ("factor_ic", "因子 IC 健康", build_factor_ic_section),
+        ("board_fund", "板块资金面", build_board_fund_section),
+        ("longhubang", "龙虎榜关注", build_longhubang_section),
+        ("news", "财经快讯", build_news_section),
+        ("announcements", "重大公告", build_announcements_section),
+        ("holder_concentration", "股东户数异动", build_holder_concentration_section),
+    ]
+    sections = []
+    for key, title, builder in spec:
+        try:
+            md = builder() or ""
+        except Exception:  # noqa: BLE001 — 单段失败不拖垮整端点（fail-soft）
+            md = ""
+        sections.append(
+            {"key": key, "title": title, "markdown": md, "available": bool(md.strip())}
+        )
+    return {"data": {"as_of": as_of, "sections": sections}}
