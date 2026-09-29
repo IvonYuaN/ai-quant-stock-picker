@@ -1124,6 +1124,16 @@
     color: hsl(var(--primary));
     border-color: hsl(var(--primary) / 0.65);
   }
+  .aq-review-echo {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.792rem;
+    color: hsl(var(--muted-foreground));
+    background: hsl(var(--muted) / 0.4);
+    border-radius: 0.45rem;
+    padding: 0.35rem 0.55rem;
+  }
 
   .aq-phase-strip {
     display: grid;
