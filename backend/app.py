@@ -1974,6 +1974,9 @@ def review_insights_endpoint():
 - `since`: 只返回 signal_date >= 此日（YYYY-MM-DD，可选）
 """,
 )
+
+
+
 def list_signals_endpoint(
     limit: int = Query(default=100, ge=1, le=1000, description="最多返回条数"),
     since: str | None = Query(default=None, description="signal_date 下限（YYYY-MM-DD）"),
@@ -1987,3 +1990,43 @@ def list_signals_endpoint(
         raise HTTPException(400, str(e)) from e
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"查询历史信号失败：{e}") from e
+
+
+@app.get(
+    "/api/aqsp/ic-history",
+    tags=["AQSP 研究"],
+    summary="因子 IC 趋势（每日滚动诊断回流）",
+    description="""
+返回 runner 每日滚动 IC 诊断的历史序列（`ic_history.jsonl`，只读回流产物）。
+
+每点含 `as_of`（窗口右端交易日）、`run_at`（跑批时刻 UTC）与各因子 IC 均值。
+用于直观判断「哪个因子在稳定达标」——是换族决策（预注册判据）的监控面。
+
+数据缺失/文件不存在时返回空序列（fail-soft，绝不 500）。
+""",
+)
+def ic_history_endpoint():
+    """因子 IC 历史序列（只读）。"""
+    try:
+        import json as _json
+        from pathlib import Path as _Path
+
+        root = os.environ.get("AQSP_RUNTIME_DATA_ROOT", "").strip() or "/opt/aqsp/data"
+        path = _Path(root) / "pit_cache" / "factor_ic" / "ic_history.jsonl"
+        points: list[dict] = []
+        if path.exists():
+            for line in path.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    points.append(_json.loads(line))
+                except _json.JSONDecodeError:
+                    continue
+        points.sort(key=lambda p: str(p.get("run_at", "")))
+        latest_factors = points[-1].get("factors", {}) if points else {}
+        return {"data": {"points": points, "latest_factors": latest_factors}}
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"读取因子 IC 历史失败：{e}") from e
