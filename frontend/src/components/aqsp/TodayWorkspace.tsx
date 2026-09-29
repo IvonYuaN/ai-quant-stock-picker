@@ -209,7 +209,7 @@ function PersistentBlock({ view }: { view: DailyView }) {
 
       <PhaseStrip view={view} />
 
-      <Link to="/reviews" className="aq-review-cta-link">
+      <Link to={`/reviews?date=${view.date}`} className="aq-review-cta-link">
         <BookOpen aria-hidden="true" />
         今日复盘：对最近的信号记录评分 · 标签 · 笔记
       </Link>
