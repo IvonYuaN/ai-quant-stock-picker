@@ -162,6 +162,10 @@ class DailyReview:
     # 按 symbol 聚合连续两季算 QoQ：户数降=集中（吸筹）/户数升=分散。空串 =
     # 数据缺失/陈旧标注，报告不渲染该节；绝不写回打分/排序/下单（红线）。
     holder_concentration_section: str = ""
+    # 复盘回顾（只读）：读运行时 overlay 的 reviews.jsonl（复盘笔记页的数据源）。
+    # 把老大最近写的复盘带进日报，是复盘闭环里承上启下的一环。空串 =
+    # 没有复盘记录/模块不可用，报告不渲染该节；绝不写回打分/排序/下单（红线）。
+    review_recall_section: str = ""
     # LLM 解读层（降级安全）：AI 复盘解读小节 + 降级标记。
     # llm_review_text 为空串时报告不渲染 AI 小节；degraded=True 表示走了
     # fallback 规则文本（不显示该小节）。红线：LLM 只进该独立小节，
@@ -356,6 +360,7 @@ class ClosingReviewer:
         # 防 09-26 IC 段同类「早退静默丢弃」缺陷：新只读段在两条路径都显式构造
         announcements_section = build_announcements_section()
         holder_concentration_section = build_holder_concentration_section()
+        review_recall_section = build_review_recall_section()
 
         return DailyReview(
             date=today,
@@ -387,6 +392,7 @@ class ClosingReviewer:
             news_section=news_section,
             announcements_section=announcements_section,
             holder_concentration_section=holder_concentration_section,
+            review_recall_section=review_recall_section,
         )
 
     def _latest_review_date(self) -> str:
@@ -1299,6 +1305,7 @@ class ClosingReviewer:
             # 早退分支漏塞会静默丢弃（与 09-26 IC 段同类缺陷）。
             announcements_section=build_announcements_section(),
             holder_concentration_section=build_holder_concentration_section(),
+            review_recall_section=build_review_recall_section(),
         )
 
     def generate_weekly_summary(self, end_date: str | None = None) -> WeeklySummary:
@@ -2197,6 +2204,47 @@ def build_announcements_section(
     return "\n".join(lines)
 
 
+def build_review_recall_section(limit: int = 5) -> str:
+    """复盘回顾段（只读）：读运行时 overlay 的 reviews.jsonl（复盘笔记页的数据源）。
+
+    把老大最近写的复盘带进日报——决策前后看一眼「自己上次怎么想的」，
+    是复盘闭环里承上启下的一环。空串 = 没有复盘记录/模块不可用，报告不渲染
+    该节；绝不写回打分/排序/下单（红线）。
+    """
+    try:
+        from aqsp.review import get_reviews
+
+        rows = get_reviews()
+    except Exception:  # noqa: BLE001 - 复盘数据缺失不阻断日报主流程
+        return ""
+    if not rows:
+        return ""
+    recent = sorted(
+        rows,
+        key=lambda r: (str(r.date), str(r.created_at)),
+        reverse=True,
+    )[:limit]
+    lines: list[str] = [
+        f"## 复盘回顾（最近 {len(recent)} 条 · 全部记录见复盘笔记页）",
+        "",
+        "| 信号日 | 票 | 评分 | 标签 | 笔记摘录 |",
+        "|---|---|---|---|---|",
+    ]
+    for row in recent:
+        tags = " / ".join(row.tags) or "—"
+        notes = " ".join(str(row.notes or "").split())
+        if len(notes) > 40:
+            notes = notes[:40] + "…"
+        lines.append(
+            f"| {row.date} | {row.symbol} | {row.rating}★ | {tags} | {notes or '—'} |"
+        )
+    lines += [
+        "",
+        "⚠️ 只读回顾：复盘笔记是本机私有数据，不进入打分/排序/下单。",
+    ]
+    return "\n".join(lines)
+
+
 def build_holder_concentration_section(
     csv_path: str | Path | None = None,
     top_n: int = 8,
@@ -2484,6 +2532,11 @@ def format_daily_review(review: DailyReview) -> str:
 
     if review.holder_concentration_section:
         for line in review.holder_concentration_section.splitlines():
+            report.append(line)
+        report.append("")
+
+    if review.review_recall_section:
+        for line in review.review_recall_section.splitlines():
             report.append(line)
         report.append("")
 
