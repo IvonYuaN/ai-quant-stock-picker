@@ -1931,6 +1931,33 @@ def get_tags_endpoint():
 
 
 @app.get(
+    "/api/reviews/insights",
+    tags=["复盘笔记"],
+    summary="复盘洞察聚合",
+    description="""
+把复盘记录从「流水」聚合成「模式」：
+
+- 总量：复盘次数 / 覆盖票数 / 平均评分 / 最近一次复盘日期
+- 标签维度：每个标签的出现次数与平均评分（同标签反复出现且平均分低 = 行为模式预警）
+- 个股维度：复盘次数最多的票
+- 评分分布：1-5 星直方图
+
+无复盘记录时 total=0、列表为空（前端如实显示「暂无数据」，不硬凑结论）。
+""",
+)
+def review_insights_endpoint():
+    """复盘洞察聚合（只读）。"""
+    try:
+        from aqsp.review import summarize_reviews
+
+        return {"data": summarize_reviews()}
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"复盘洞察聚合失败：{e}") from e
+
+
+@app.get(
     "/api/aqsp/signals",
     tags=["AQSP 研究"],
     summary="历史信号列表",

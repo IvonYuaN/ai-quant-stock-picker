@@ -575,6 +575,17 @@ export interface SignalsPayload {
   };
 }
 
+/** `GET /api/reviews/insights` 的 `data`：复盘洞察聚合（把流水变成模式）。 */
+export interface ReviewInsights {
+  total: number;
+  covered_symbols: number;
+  avg_rating: number | null;
+  latest_date: string | null;
+  rating_histogram: Record<string, number>;
+  tag_insights: { tag: string; count: number; avg_rating: number }[];
+  symbol_insights: { symbol: string; count: number }[];
+}
+
 export interface ReviewCreateInput {
   signal_id: string;
   date: string;
@@ -649,6 +660,7 @@ export const api = {
   signals: (limit = 100) => get<SignalsPayload>(`/aqsp/signals?limit=${limit}`),
   reviews: () => get<ReviewRecord[]>("/reviews"),
   reviewTags: () => get<string[]>("/reviews/tags"),
+  reviewInsights: () => get<ReviewInsights>("/reviews/insights"),
   createReview: (input: ReviewCreateInput) =>
     request<{ id: string }>("/reviews", "POST", input),
   updateReview: (id: string, input: ReviewUpdateInput) =>
