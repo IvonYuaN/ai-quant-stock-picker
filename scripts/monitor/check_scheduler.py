@@ -165,19 +165,36 @@ def check_crontab() -> CheckResult:
     code, output = _run(["crontab", "-l"])
     if code != 0:
         return CheckResult("system crontab", True, output or "crontab unavailable")
-    relevant = [
-        line
-        for line in output.splitlines()
-        if line.strip()
-        and not line.lstrip().startswith("#")
-        and any(term in line for term in LEGACY_CRON_TERMS)
-    ]
+    # 「受认可的直连形态」= 入口脚本 + 已知 action。这是 install_server_cron.sh 的
+    # 迁移形态（也是 event-data 的现行登记方式），不算遗留条目；但仍如实提示，
+    # 提醒最终应迁移到 BT Panel wrapper 托管。
+    sanctioned_pattern = re.compile(
+        r"release_task_entrypoint\.sh\s+(" + "|".join(sorted(SCHEDULED_ACTIONS)) + r")\b"
+    )
+    relevant: list[str] = []
+    sanctioned_entries: list[str] = []
+    for line in output.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if sanctioned_pattern.search(stripped):
+            sanctioned_entries.append(stripped)
+            continue
+        if any(term in stripped for term in LEGACY_CRON_TERMS):
+            relevant.append(stripped)
     if relevant:
         return CheckResult(
             "system crontab",
             False,
             "direct or legacy AQSP system cron entries; production should use BT Panel wrappers only:\n"
             + "\n".join(relevant),
+        )
+    if sanctioned_entries:
+        return CheckResult(
+            "system crontab",
+            True,
+            "no legacy AQSP entries; direct entrypoint schedule present (consider BT Panel registration):\n"
+            + "\n".join(sanctioned_entries),
         )
     return CheckResult(
         "system crontab",
@@ -273,6 +290,15 @@ def _scheduled_actions(
         if text is None:
             continue
         actions.update(action_pattern.findall(text))
+    # 直接登记形态：cron 行里**直接**出现 `release_task_entrypoint.sh <action>`（不经
+    # flock 包 wrapper）。这是 install_server_cron.sh 的迁移形态，也是 2026-09-23
+    # 老大授权的 event-data 登记方式。BT Panel wrapper 仍是首选（上面的 flock 路径），
+    # 但「已排期」这一事实必须被承认——否则已排期动作会被误报为 missing。
+    for line in crontab.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        actions.update(action_pattern.findall(stripped))
     return actions
 
 

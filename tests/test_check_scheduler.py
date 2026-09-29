@@ -60,6 +60,50 @@ def test_check_crontab_rejects_legacy_direct_entries(monkeypatch) -> None:
     assert "daily_run.sh" in result.detail
 
 
+def test_check_crontab_accepts_sanctioned_direct_entrypoint(monkeypatch) -> None:
+    """受认可的直连入口形态（入口脚本 + 已知 action）不算遗留条目，但需如实提示。
+
+    背景：event-data 以 `release_task_entrypoint.sh event-data` 直连登记（09-23 老大
+    授权，09-28 归位为入口形态）。旧逻辑把它判成 legacy ⇒ 与「missing: event-data」
+    一起产生双重 WARN（2026-09-29 实测）。
+    """
+    crontab = (
+        "20 8 * * 1-5 /bin/bash /opt/aqsp-releases/aqsp-scheduler-current"
+        "/scripts/release_task_entrypoint.sh event-data"
+        " >> /opt/aqsp/data/logs/event-data/cron-wrap.log 2>&1\n"
+    )
+    monkeypatch.setattr(check_scheduler, "_run", lambda _args: (0, crontab))
+
+    result = check_scheduler.check_crontab()
+
+    assert result.ok is True
+    assert "direct entrypoint schedule present" in result.detail
+    assert "event-data" in result.detail
+
+
+def test_check_crontab_still_rejects_bt_task_direct_call(monkeypatch) -> None:
+    """遗留形态（直接调 bt_task.sh，不走入口/面板 wrapper）必须继续拒绝。"""
+    crontab = "30 22 * * * /bin/bash /opt/aqsp/scripts/bt_task.sh daily\n"
+    monkeypatch.setattr(check_scheduler, "_run", lambda _args: (0, crontab))
+
+    result = check_scheduler.check_crontab()
+
+    assert result.ok is False
+
+
+def test_scheduled_actions_recognizes_direct_entrypoint_schedule() -> None:
+    """直连入口形态也必须被认作「已排期」，否则已排期动作被误报 missing。"""
+    crontab = (
+        "20 8 * * 1-5 /bin/bash /opt/aqsp-releases/aqsp-scheduler-current"
+        "/scripts/release_task_entrypoint.sh event-data"
+        " >> /opt/aqsp/data/logs/event-data/cron-wrap.log 2>&1\n"
+    )
+
+    actions = check_scheduler._scheduled_actions(crontab, lambda _path: None)
+
+    assert actions == {"event-data"}
+
+
 def test_scheduled_actions_returns_actions_from_bt_panel_wrappers(tmp_path) -> None:
     daily = tmp_path / "daily"
     daily.write_text(
