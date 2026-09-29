@@ -7,7 +7,10 @@
 // 样本不足时给出数字会制造虚假信心，所以这一页在此情况下必须显示"—"。
 import { useCallback, useEffect, useState } from "react";
 import { Gauge, RefreshCw, TrendingDown } from "lucide-react";
-import { api, type PerformancePayload } from "@/lib/api";
+import { api, type IcHistoryPayload, type PerformancePayload } from "@/lib/api";
+import { icTrendOption } from "@/lib/chart-options";
+import { useThemeMode } from "@/lib/theme-mode";
+import { EChart } from "@/components/ui/EChart";
 import {
   Badge,
   EmptyState,
@@ -60,8 +63,10 @@ const STATUS_LABELS: Readonly<Record<string, string>> = {
 
 export function PerformancePage() {
   const [payload, setPayload] = useState<PerformancePayload>(EMPTY_PAYLOAD);
+  const [icHistory, setIcHistory] = useState<IcHistoryPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const mode = useThemeMode();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -72,6 +77,12 @@ export function PerformancePage() {
       setError(err instanceof Error ? err.message : "绩效读取失败");
     } finally {
       setLoading(false);
+    }
+    // 因子 IC 趋势：独立加载，失败不影响绩效主视图（fail-soft）
+    try {
+      setIcHistory(await api.icHistory());
+    } catch {
+      setIcHistory(null);
     }
   }, []);
 
@@ -165,6 +176,40 @@ export function PerformancePage() {
             {!view.canShowOverallHitRate ? (
               <p className="aq-note">样本不足，命中率不予展示（§5.4）。</p>
             ) : null}
+          </section>
+
+          {/* 因子 IC 趋势（每日滚动诊断回流；换族决策的监控面） */}
+          <section className="aq-section">
+            <SectionHeader
+              title="因子 IC 趋势"
+              description="每日滚动诊断回流 · 线在零轴上方 = 正向（每日 146 截面）"
+            />
+            {icHistory && icHistory.points.length > 0 ? (
+              <>
+                <EChart
+                  option={icTrendOption(icHistory.points, mode)}
+                  height={260}
+                  fallback={
+                    <StatePanel tone="warn">图表库不可用，请查看收盘日报的 IC 段。</StatePanel>
+                  }
+                />
+                <div className="aq-flow-cols">
+                  {Object.entries(icHistory.latest_factors).map(([name, value]) => (
+                    <div key={name} className="aq-insights-card">
+                      <b className={value > 0 ? "aq-tone-up" : "aq-tone-down"}>
+                        {value.toFixed(4)}
+                      </b>
+                      <span>{name} · 最新 IC</span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <EmptyState
+                title="暂无 IC 历史数据"
+                detail="runner 每日滚动诊断回流后，这里会出现各因子 IC 的时间序列。"
+              />
+            )}
           </section>
 
           {/* 策略表现 */}

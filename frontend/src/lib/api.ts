@@ -586,6 +586,18 @@ export interface ReviewInsights {
   symbol_insights: { symbol: string; count: number }[];
 }
 
+/** `GET /api/aqsp/ic-history` 的 `data`：因子 IC 滚动诊断历史（每日回流）。 */
+export interface IcHistoryPoint {
+  as_of: string;
+  run_at: string;
+  factors: Record<string, number>;
+}
+
+export interface IcHistoryPayload {
+  points: IcHistoryPoint[];
+  latest_factors: Record<string, number>;
+}
+
 export interface ReviewCreateInput {
   signal_id: string;
   date: string;
@@ -661,6 +673,7 @@ export const api = {
   reviews: () => get<ReviewRecord[]>("/reviews"),
   reviewTags: () => get<string[]>("/reviews/tags"),
   reviewInsights: () => get<ReviewInsights>("/reviews/insights"),
+  icHistory: () => get<IcHistoryPayload>("/aqsp/ic-history"),
   createReview: (input: ReviewCreateInput) =>
     request<{ id: string }>("/reviews", "POST", input),
   updateReview: (id: string, input: ReviewUpdateInput) =>

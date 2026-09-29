@@ -128,3 +128,46 @@ export function industryOption(rows: readonly IndustryRowView[], mode: ThemeMode
     ],
   };
 }
+
+/** 因子 IC 趋势：多因子折线 + 零轴虚线（IC>0 = 正向）。 */
+export function icTrendOption(
+  points: readonly { as_of: string; run_at: string; factors: Record<string, number> }[],
+  mode: ThemeMode,
+): EChartsOption {
+  const palette = chartPalette(mode);
+  const factorNames = Object.keys(points[0]?.factors ?? {});
+  const labels = points.map((p) => `${p.as_of} ${p.run_at.slice(11, 16)}`.trim());
+  return {
+    grid: { ...BASE_GRID, left: 44, top: 34 },
+    tooltip: {
+      trigger: "axis",
+      valueFormatter: (value) => `${Number(value).toFixed(4)}`,
+    },
+    legend: { top: 0, textStyle: { color: palette.text, fontSize: 10 } },
+    xAxis: {
+      type: "category",
+      data: labels,
+      axisLabel: { color: palette.text, fontSize: 10 },
+      axisLine: { lineStyle: { color: palette.axisLine } },
+    },
+    yAxis: {
+      type: "value",
+      axisLabel: { color: palette.text, fontSize: 10 },
+      splitLine: { lineStyle: { color: palette.splitLine } },
+    },
+    series: factorNames.map((name) => ({
+      name,
+      type: "line" as const,
+      connectNulls: true,
+      showSymbol: points.length <= 30,
+      data: points.map((p) => p.factors?.[name] ?? null),
+      markLine: {
+        silent: true,
+        symbol: "none",
+        label: { show: false },
+        lineStyle: { color: palette.axisLine, type: "dashed" },
+        data: [{ yAxis: 0 }],
+      },
+    })),
+  };
+}
