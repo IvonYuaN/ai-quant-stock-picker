@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import json
 import tempfile
 from pathlib import Path
 
@@ -562,3 +563,91 @@ def test_default_reviews_path_falls_back_to_repo(monkeypatch) -> None:
     assert p.name == "reviews.jsonl"
     # 回退目标仍是仓库内 data/（parents[3] = 仓库根）
     assert (p.parent.parent / "pyproject.toml").is_file()
+
+
+# ---------------------------------------------------------------------------
+# 复盘洞察聚合（summarize_reviews + GET /api/reviews/insights）
+# ---------------------------------------------------------------------------
+
+
+def _write_reviews_file(path: Path, rows: list[dict]) -> None:
+    with path.open("w", encoding="utf-8") as f:
+        for row in rows:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def test_summarize_reviews_aggregates(tmp_path) -> None:
+    import aqsp.review as review_module
+
+    p = tmp_path / "reviews.jsonl"
+    _write_reviews_file(
+        p,
+        [
+            {
+                "id": "1", "signal_id": "s1", "date": "2026-09-20", "symbol": "000001",
+                "rating": 5, "tags": ["突破回踩", "纪律"], "notes": "",
+                "created_at": "t", "updated_at": "t",
+            },
+            {
+                "id": "2", "signal_id": "s2", "date": "2026-09-21", "symbol": "000001",
+                "rating": 2, "tags": ["追高被套"], "notes": "",
+                "created_at": "t", "updated_at": "t",
+            },
+            {
+                "id": "3", "signal_id": "s3", "date": "2026-09-22", "symbol": "600519",
+                "rating": 4, "tags": ["追高被套"], "notes": "",
+                "created_at": "t", "updated_at": "t",
+            },
+        ],
+    )
+
+    summary = review_module.summarize_reviews(p)
+    assert summary["total"] == 3
+    assert summary["covered_symbols"] == 2
+    assert summary["avg_rating"] == 3.67
+    assert summary["latest_date"] == "2026-09-22"
+    assert summary["rating_histogram"]["5"] == 1
+    assert summary["rating_histogram"]["2"] == 1
+    tags = {t["tag"]: t for t in summary["tag_insights"]}
+    assert tags["追高被套"]["count"] == 2
+    assert tags["追高被套"]["avg_rating"] == 3.0
+    # 个股维度：复盘次数最多的票排第一
+    assert summary["symbol_insights"][0] == {"symbol": "000001", "count": 2}
+
+
+def test_summarize_reviews_empty_is_fail_soft(tmp_path) -> None:
+    import aqsp.review as review_module
+
+    p = tmp_path / "reviews.jsonl"
+    p.touch()
+    summary = review_module.summarize_reviews(p)
+    assert summary["total"] == 0
+    assert summary["covered_symbols"] == 0
+    assert summary["avg_rating"] is None
+    assert summary["tag_insights"] == []
+
+
+def test_reviews_insights_endpoint(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("AQSP_RUNTIME_DATA_ROOT", str(tmp_path))
+    _write_reviews_file(
+        tmp_path / "reviews.jsonl",
+        [
+            {
+                "id": "1", "signal_id": "s1", "date": "2026-09-20", "symbol": "000001",
+                "rating": 3, "tags": ["纪律"], "notes": "按计划执行",
+                "created_at": "t", "updated_at": "t",
+            }
+        ],
+    )
+    from fastapi.testclient import TestClient
+
+    import app as app_module
+
+    client = TestClient(app_module.app)
+    r = client.get("/api/reviews/insights")
+    assert r.status_code == 200
+    data = r.json()["data"]
+    assert data["total"] == 1
+    assert data["covered_symbols"] == 1
+    assert data["avg_rating"] == 3
+    assert data["tag_insights"][0]["tag"] == "纪律"

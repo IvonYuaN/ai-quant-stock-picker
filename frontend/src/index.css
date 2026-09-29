@@ -1134,6 +1134,43 @@
     border-radius: 0.45rem;
     padding: 0.35rem 0.55rem;
   }
+  .aq-insights-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
+    gap: 0.6rem;
+  }
+  .aq-insights-card {
+    display: grid;
+    gap: 0.15rem;
+    border: 1px solid hsl(var(--border) / 0.7);
+    border-radius: 0.55rem;
+    background: hsl(var(--card) / 0.5);
+    padding: 0.6rem 0.75rem;
+  }
+  .aq-insights-card > b {
+    font-size: 1.1rem;
+  }
+  .aq-insights-card > span {
+    font-size: 0.792rem;
+    color: hsl(var(--muted-foreground));
+  }
+  .aq-insights-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin-top: 0.6rem;
+  }
+  .aq-insights-tag {
+    font-size: 0.792rem;
+    color: hsl(var(--muted-foreground));
+    border: 1px solid hsl(var(--border) / 0.8);
+    border-radius: 999px;
+    padding: 0.25rem 0.6rem;
+  }
+  .aq-insights-tag:hover {
+    color: hsl(var(--primary));
+    border-color: hsl(var(--primary) / 0.6);
+  }
 
   .aq-phase-strip {
     display: grid;

@@ -11,7 +11,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { BookOpen, Edit, Star, Tags, Trash2, Filter, X } from "lucide-react";
-import { api, type ReviewRecord, type SignalRecord } from "@/lib/api";
+import { api, type ReviewRecord, type SignalRecord, type ReviewInsights } from "@/lib/api";
 import { Badge, EmptyState, StatePanel } from "@/components/ui/primitives";
 import { cn } from "@/lib/utils";
 
@@ -22,6 +22,7 @@ export function ReviewPage() {
   const [reviews, setReviews] = useState<Review[]>([]);
   const [signals, setSignals] = useState<Signal[]>([]);
   const [allTags, setAllTags] = useState<string[]>([]);
+  const [insights, setInsights] = useState<ReviewInsights | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -55,15 +56,17 @@ export function ReviewPage() {
     setError(null);
     try {
       // 并行加载复盘记录、历史信号和标签
-      const [reviewRows, signalsPayload, tagList] = await Promise.all([
+      const [reviewRows, signalsPayload, tagList, insightData] = await Promise.all([
         api.reviews(),
         api.signals(100),
         api.reviewTags(),
+        api.reviewInsights().catch(() => null),
       ]);
 
       setReviews(reviewRows);
       setSignals(signalsPayload.signals);
       setAllTags(tagList);
+      setInsights(insightData);
     } catch (err) {
       setError(err instanceof Error ? err.message : "加载失败");
     } finally {
@@ -190,6 +193,43 @@ export function ReviewPage() {
           <p className="aq-page-desc">对历史信号进行标签、笔记和评分</p>
         </div>
       </header>
+
+      {/* 复盘洞察：把流水变成模式（样本不足时如实显示暂无） */}
+      {insights ? (
+        <section className="aq-section aq-insights">
+          {insights.total > 0 ? (
+            <>
+              <div className="aq-insights-cards">
+                <div className="aq-insights-card"><b>{insights.total}</b><span>复盘次数</span></div>
+                <div className="aq-insights-card"><b>{insights.covered_symbols}</b><span>覆盖票数</span></div>
+                <div className="aq-insights-card"><b>{insights.avg_rating ?? "—"}</b><span>平均评分</span></div>
+                <div className="aq-insights-card"><b>{insights.latest_date ?? "—"}</b><span>最近复盘</span></div>
+              </div>
+              {insights.tag_insights.length > 0 ? (
+                <div className="aq-insights-tags">
+                  {insights.tag_insights.slice(0, 8).map((item) => (
+                    <button
+                      key={item.tag}
+                      type="button"
+                      className="aq-insights-tag"
+                      onClick={() => setFilterTags([item.tag])}
+                      title={`该标签平均 ${item.avg_rating}★ · 点击按此标签过滤`}
+                    >
+                      {item.tag} × {item.count} · {item.avg_rating}★
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </>
+          ) : (
+            <EmptyState
+              icon={BookOpen}
+              title="暂无复盘数据"
+              detail="写下第一条复盘后，这里会浮现你的行为模式（高频标签、平均评分、反复折腾的票）"
+            />
+          )}
+        </section>
+      ) : null}
 
       {/* 过滤器 */}
       <section className="aq-section">

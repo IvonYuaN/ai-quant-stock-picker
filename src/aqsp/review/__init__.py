@@ -323,3 +323,79 @@ __all__ = [
     "get_all_tags",
     "DEFAULT_REVIEWS_PATH",
 ]
+
+
+def summarize_reviews(reviews_path: Path | None = None) -> dict:
+    """复盘洞察聚合：把复盘记录从「流水」变成「模式」。
+
+    口径（与诚实原则一致——样本不足时如实说不足，不硬凑结论）：
+    - 总量：复盘次数 / 覆盖票数 / 平均评分 / 最近一次复盘日期
+    - 标签维度：每个标签的出现次数与平均评分（同一标签反复出现且平均分低，
+      就是需要警惕的行为模式）
+    - 个股维度：复盘次数最多的票（反复复盘同一只票，往往是反复在同一只票上折腾）
+    - 评分分布：1-5 星各多少次
+
+    Args:
+        reviews_path: reviews.jsonl 路径（None 使用默认路径）
+
+    Returns:
+        聚合结果 dict；无复盘记录时 total=0、各列表为空（前端显示「暂无数据」）。
+    """
+    rows = _read_reviews(reviews_path or _default_reviews_path())
+    total = len(rows)
+    if total == 0:
+        return {
+            "total": 0,
+            "covered_symbols": 0,
+            "avg_rating": None,
+            "latest_date": None,
+            "rating_histogram": {str(i): 0 for i in range(1, 6)},
+            "tag_insights": [],
+            "symbol_insights": [],
+        }
+
+    ratings = [int(r.get("rating", 0)) for r in rows if r.get("rating") is not None]
+    avg_rating = round(sum(ratings) / len(ratings), 2) if ratings else None
+
+    histogram: dict[str, int] = {str(i): 0 for i in range(1, 6)}
+    for value in ratings:
+        if 1 <= value <= 5:
+            histogram[str(value)] += 1
+
+    tag_counter: dict[str, list[int]] = {}
+    symbol_counter: dict[str, int] = {}
+    dates: list[str] = []
+    for row in rows:
+        for tag in row.get("tags") or []:
+            tag_counter.setdefault(str(tag), []).append(int(row.get("rating", 0) or 0))
+        symbol = str(row.get("symbol", "") or "")
+        if symbol:
+            symbol_counter[symbol] = symbol_counter.get(symbol, 0) + 1
+        if row.get("date"):
+            dates.append(str(row["date"]))
+
+    tag_insights = sorted(
+        (
+            {
+                "tag": tag,
+                "count": len(values),
+                "avg_rating": round(sum(values) / len(values), 2),
+            }
+            for tag, values in tag_counter.items()
+        ),
+        key=lambda item: (-item["count"], item["avg_rating"]),
+    )
+    symbol_insights = sorted(
+        ({"symbol": symbol, "count": count} for symbol, count in symbol_counter.items()),
+        key=lambda item: -item["count"],
+    )[:10]
+
+    return {
+        "total": total,
+        "covered_symbols": len(symbol_counter),
+        "avg_rating": avg_rating,
+        "latest_date": max(dates) if dates else None,
+        "rating_histogram": histogram,
+        "tag_insights": tag_insights[:12],
+        "symbol_insights": symbol_insights,
+    }
