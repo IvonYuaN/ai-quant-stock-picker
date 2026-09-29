@@ -11,6 +11,7 @@
 import {
   Activity,
   Archive,
+  BookOpen,
   Compass,
   FileText,
   FlaskConical,
@@ -67,6 +68,7 @@ export const MY_LINE: NavLine = {
     { to: "/my/holdings", label: "我的持仓", desc: "台账与盈亏", icon: Wallet },
     { to: "/my/notes", label: "我的笔记", desc: "投研沉淀", icon: NotebookPen },
     { to: "/my/reports", label: "我的研报", desc: "私有资料", icon: FileText },
+    { to: "/reviews", label: "复盘笔记", desc: "信号复盘 · 评分标签", icon: BookOpen },
   ],
 };
 
