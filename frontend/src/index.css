@@ -557,6 +557,158 @@
     margin-top: 0.8rem;
   }
 
+  /* ------------------------------------------------------------------ */
+  /* 收评日报 6 段卡片流（纯白极简 · 纵向堆叠 · 可折叠 · 缺数据置灰）    */
+  /* ------------------------------------------------------------------ */
+  .aq-closing {
+    min-width: 0;
+    margin-top: 1rem;
+    display: grid;
+    gap: 0.6rem;
+  }
+
+  .aq-closing-headbar {
+    display: flex;
+    align-items: baseline;
+    gap: 0.75rem;
+    padding: 0 0.15rem 0.15rem;
+  }
+  .aq-closing-headbar h3 {
+    font-size: 1.05rem;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+  }
+  .aq-closing-sub {
+    font-size: 0.78rem;
+    color: hsl(var(--muted-foreground));
+  }
+
+  .aq-closing-flow {
+    display: grid;
+    gap: 0.55rem;
+  }
+
+  .aq-closing-card {
+    min-width: 0;
+    border: 1px solid hsl(var(--border) / 0.8);
+    border-radius: 0.6rem;
+    background: hsl(var(--card) / 0.55);
+    overflow: hidden;
+    transition: border-color 140ms ease;
+  }
+  .aq-closing-card:hover {
+    border-color: hsl(var(--primary) / 0.3);
+  }
+  .aq-closing-card-empty {
+    opacity: 0.62;
+  }
+  .aq-closing-card-empty:hover {
+    border-color: hsl(var(--border));
+  }
+
+  .aq-closing-head {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+    padding: 0.75rem 0.85rem;
+    background: transparent;
+    border: 0;
+    cursor: pointer;
+    text-align: left;
+  }
+  .aq-closing-eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    color: hsl(var(--primary));
+  }
+  .aq-closing-icon {
+    width: 0.9rem;
+    height: 0.9rem;
+  }
+  .aq-closing-title {
+    flex: 1;
+    font-size: 0.95rem;
+    font-weight: 650;
+    color: hsl(var(--foreground));
+  }
+  .aq-closing-chevron {
+    width: 1rem;
+    height: 1rem;
+    color: hsl(var(--muted-foreground));
+    transition: transform 160ms ease;
+  }
+  .aq-closing-chevron-open {
+    transform: rotate(180deg);
+  }
+
+  .aq-closing-body {
+    padding: 0.1rem 0.95rem 0.9rem;
+    font-size: 0.875rem;
+    line-height: 1.6;
+    color: hsl(var(--foreground) / 0.86);
+  }
+  /* 段正文内 markdown 表格 / 列表的极简样式 */
+  .aq-closing-body .aq-markdown-raw {
+    white-space: pre-wrap;
+    font-family: inherit;
+  }
+  .aq-closing-body table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0.5rem 0;
+    font-size: 0.82rem;
+  }
+  .aq-closing-body th,
+  .aq-closing-body td {
+    border: 1px solid hsl(var(--border) / 0.85);
+    padding: 0.35rem 0.5rem;
+    text-align: left;
+    vertical-align: top;
+  }
+  .aq-closing-body th {
+    background: hsl(var(--muted) / 0.4);
+    font-weight: 600;
+  }
+  .aq-closing-body ul,
+  .aq-closing-body ol {
+    padding-left: 1.1rem;
+    margin: 0.4rem 0;
+  }
+  .aq-closing-body h1,
+  .aq-closing-body h2,
+  .aq-closing-body h3 {
+    font-size: 0.9rem;
+    font-weight: 700;
+    margin: 0.6rem 0 0.3rem;
+  }
+
+  .aq-closing-empty-hint {
+    margin: 0.2rem 0.15rem;
+    font-size: 0.82rem;
+    color: hsl(var(--muted-foreground));
+  }
+  .aq-closing-loading {
+    padding: 0.4rem 0.15rem;
+    font-size: 0.84rem;
+    color: hsl(var(--muted-foreground));
+  }
+  .aq-closing-error {
+    display: grid;
+    gap: 0.5rem;
+    padding: 0.6rem 0.85rem;
+    border: 1px solid hsl(var(--warning) / 0.4);
+    border-radius: 0.6rem;
+    background: hsl(var(--warning) / 0.06);
+    font-size: 0.84rem;
+    color: hsl(var(--foreground) / 0.82);
+  }
+
+
   .aq-section {
     display: grid;
     min-width: 0;

@@ -23,6 +23,7 @@ import { formatAqspTime, isAqspSnapshotStale, useWorkspaceSnapshot } from "./use
 import { MarketStrip } from "./MarketStrip";
 import { ReviewExportButton } from "./ReviewExportButton";
 import { DecisionPanel } from "./DecisionPanel";
+import { ClosingReviewPanel } from "./ClosingReviewPanel";
 import { StockDetailDrawer, type StockIntro } from "./StockDetailDrawer";
 import { CandidateSection } from "./sections/CandidateSection";
 import { MessageSection } from "./sections/MessageSection";
@@ -329,6 +330,7 @@ export function TodayWorkspace() {
         <>
           <DecisionPanel snapshot={data} />
           <PersistentBlock view={view} />
+          <ClosingReviewPanel />
           <SectionTabs active={active} />
           <main className="aq-active-section" aria-live="polite">
             <ActiveSection view={view} active={active} onPick={setPicked} />
