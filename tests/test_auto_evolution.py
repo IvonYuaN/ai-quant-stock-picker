@@ -57,6 +57,43 @@ def _passing_gate_payload() -> dict[str, object]:
     )
 
 
+def test_default_paths_anchor_to_runtime_root_not_cwd(monkeypatch, tmp_path) -> None:
+    """设 ``AQSP_RUNTIME_DATA_ROOT``（prod 自动链路恒设 /opt/aqsp/data）⇒ 默认
+    写路径（data_dir）与 gate 读路径（walkforward_gate_path）都锚定该 env 根，
+    **不再**跟随 CWD 相对的 ``data/evolution``。
+
+    这是 2026-09-29 待办③的根治验证：定时任务 CWD = 不可变 release 目录（root
+    只读、跨发版即丢），旧默认 ``data/evolution`` 会把进化产物写进 release。
+    现默认锚 ``runtime_data_root()``，与 holder_num / pit_cache 生产写路径同约定。
+    """
+    runtime_root = tmp_path / "runtime"
+    runtime_root.mkdir()
+    monkeypatch.setenv("AQSP_RUNTIME_DATA_ROOT", str(runtime_root))
+    thresholds = tmp_path / "thresholds.yaml"
+    thresholds.write_text("version: test\nstrategies: {}\n", encoding="utf-8")
+    evolution = AutoEvolution(thresholds_path=str(thresholds))
+
+    assert evolution.data_dir == runtime_root / "evolution"
+    assert evolution.walkforward_gate_path == runtime_root / "walkforward_gate.json"
+    # 默认 mkdir 落在运行时根，而非 CWD 下的 data/evolution
+    assert (runtime_root / "evolution").is_dir()
+
+
+def test_default_paths_fallback_to_runtime_data_root(monkeypatch, tmp_path) -> None:
+    """未设 env（dev 裸 CLI）⇒ 默认锚定 ``runtime_data_root()`` 的回落基准
+    （repo / release 根），与 holder_num / pit_cache 同一约定。"""
+    import aqsp.core.runtime as rt
+
+    monkeypatch.delenv("AQSP_RUNTIME_DATA_ROOT", raising=False)
+    monkeypatch.setattr(rt, "_PROJECT_ROOT", tmp_path)  # 回落基准锚到 tmp，避免污染真实 repo
+    thresholds = tmp_path / "thresholds.yaml"
+    thresholds.write_text("version: test\nstrategies: {}\n", encoding="utf-8")
+    evolution = AutoEvolution(thresholds_path=str(thresholds))
+
+    assert evolution.data_dir == tmp_path / "evolution"
+    assert evolution.walkforward_gate_path == tmp_path / "walkforward_gate.json"
+
+
 def test_auto_evolution_proposal_records_failure_evidence_samples_and_validation(
     tmp_path,
 ) -> None:

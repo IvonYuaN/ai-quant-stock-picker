@@ -74,3 +74,7 @@ reports/*.log
 
 # 重组后 scripts/data/ 下的 walkforward 运行时缓存（原 data/ 位置已被忽略）
 scripts/data/walkforward_production_symbols.json
+
+# 自动进化产物（auto_evolution 写 evolution_history / threshold_proposals 等）：
+# 默认锚定 runtime_data_root()（dev 回落 repo 根），属运行时数据而非源码，本地忽略。
+evolution/
