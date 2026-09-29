@@ -2,7 +2,7 @@
 //
 // 数据全部来自 daily-view 的展示模型，本文件不做任何判断逻辑，
 // 因此"候选名怎么显示""什么算可复核"在页签和卡片里必然一致。
-import { ArrowRight, Check, ExternalLink, ShieldAlert, TrendingUp } from "lucide-react";
+import { ArrowRight, BookOpen, Check, ExternalLink, ShieldAlert, TrendingUp } from "lucide-react";
 import {
   Badge,
   Card,
@@ -12,9 +12,10 @@ import {
   ToneCallout,
   clickableRowProps,
 } from "@/components/ui/primitives";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { cn } from "@/lib/utils";
+import { api, type ReviewRecord } from "@/lib/api";
 import { useOwnership } from "../useOwnership";
 import type { CandidateRow, DailyView, SectionView } from "@/lib/daily-view";
 import { symbolNames } from "@/lib/daily-view";
@@ -96,6 +97,7 @@ function CandidateDetailCard({
   ownership,
   inCompare,
   compareFull,
+  reviews,
   onToggleCompare,
   onPick,
 }: {
@@ -103,6 +105,7 @@ function CandidateDetailCard({
   ownership: OwnershipSets;
   inCompare: boolean;
   compareFull: boolean;
+  reviews: ReviewRecord[];
   onToggleCompare: (symbol: string) => void;
   onPick?: (symbol: string) => void;
 }) {
@@ -148,6 +151,19 @@ function CandidateDetailCard({
       </div>
 
       {row.context ? <p className="aq-card-summary">{row.context}</p> : null}
+
+      {reviews.length > 0 ? (
+        <p
+          className="aq-review-echo"
+          title={reviews[reviews.length - 1].notes || undefined}
+        >
+          <BookOpen aria-hidden="true" />
+          历史复盘 {reviews.length} 次 · 上次 {reviews[reviews.length - 1].rating}★
+          {reviews[reviews.length - 1].tags.length > 0
+            ? ` · ${reviews[reviews.length - 1].tags.join("/")}`
+            : ""}
+        </p>
+      ) : null}
 
       {row.metrics.length > 0 ? (
         <div className="aq-metric-grid">
@@ -395,6 +411,33 @@ export function CandidateSection({
   const [strategy, setStrategy] = useState<string | null>(null);
   const [hideOwned, setHideOwned] = useState(false);
   const ownership = useOwnership();
+  // 历史复盘：看候选时同步看到「自己上次对这只票的判断」——决策时刻最有价值的镜子。
+  // 取不到时静默降级（不影响候选研究主流程）。
+  const [reviewsBySymbol, setReviewsBySymbol] = useState<Map<string, ReviewRecord[]>>(
+    () => new Map(),
+  );
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .reviews()
+      .then((rows) => {
+        if (cancelled) return;
+        const map = new Map<string, ReviewRecord[]>();
+        for (const row of rows) {
+          if (!row.symbol) continue;
+          const list = map.get(row.symbol) ?? [];
+          list.push(row);
+          map.set(row.symbol, list);
+        }
+        setReviewsBySymbol(map);
+      })
+      .catch(() => {
+        /* fail-soft：复盘数据缺失不阻断候选研究 */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const selection = selectCandidates(view.candidates, {
     sort,
     onlyReady,
@@ -512,6 +555,7 @@ export function CandidateSection({
                     ownership={ownership}
                     inCompare={compareSymbols.includes(row.symbol)}
                     compareFull={compareSymbols.length >= MAX_COMPARE_SYMBOLS}
+                    reviews={reviewsBySymbol.get(row.symbol) ?? []}
                     onToggleCompare={(symbol) =>
                       setCompareSymbols(toggleCompareSymbol(compareSymbols, symbol))
                     }
