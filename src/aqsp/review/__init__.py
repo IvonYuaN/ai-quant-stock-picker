@@ -23,14 +23,38 @@
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
 from aqsp.core.time import now_shanghai, to_iso8601
 
-# reviews.jsonl 默认路径
-DEFAULT_REVIEWS_PATH = Path(__file__).resolve().parents[3] / "data" / "reviews.jsonl"
+
+def _default_reviews_path() -> Path:
+    """reviews.jsonl 默认路径：**运行时数据 overlay 优先**。
+
+    不可变 release 下 `<release>/data` 归 root、服务用户（aqsp-vibe）只读 ⇒
+    生产上复盘必须落到运行时数据目录（AQSP_RUNTIME_DATA_ROOT，如 /opt/aqsp/data），
+    否则写入报 `Permission denied`（2026-09-29 在 prod 实测踩中：ReviewPage 保存即 502）。
+
+    优先级：
+      1. ``AQSP_REVIEWS_PATH``（显式指定文件路径）
+      2. ``AQSP_RUNTIME_DATA_ROOT``/reviews.jsonl（运行时 overlay）
+      3. 仓库内 ``data/reviews.jsonl``（本机开发，无 env 时）
+    """
+    explicit = os.environ.get("AQSP_REVIEWS_PATH", "").strip()
+    if explicit:
+        return Path(explicit)
+    runtime_root = os.environ.get("AQSP_RUNTIME_DATA_ROOT", "").strip()
+    if runtime_root:
+        return Path(runtime_root) / "reviews.jsonl"
+    return Path(__file__).resolve().parents[3] / "data" / "reviews.jsonl"
+
+
+# reviews.jsonl 默认路径（import 时解析一次；服务进程的 env 由 systemd 注入，
+# 本机开发无 env 时回退仓库内路径，行为与历史版本一致）
+DEFAULT_REVIEWS_PATH = _default_reviews_path()
 
 
 @dataclass(frozen=True)
