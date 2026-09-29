@@ -10,6 +10,7 @@ import {
   dedupeResearchText,
   sameResearchText,
 } from "@/lib/research-view";
+import { roleLabel } from "@/lib/display-labels";
 import { symbolNames, unique, type DailyView, type SectionView } from "@/lib/daily-view";
 import type { AqspAgentResult } from "@/types/aqsp";
 
@@ -70,7 +71,7 @@ function DebateCard({ result }: { result: AqspAgentResult }) {
             {result.active_roles.length > 0 ? (
               <div className="aq-tag-row">
                 {result.active_roles.map((role) => (
-                  <Tag key={role}>{role}</Tag>
+                  <Tag key={role}>{roleLabel(role)}</Tag>
                 ))}
               </div>
             ) : null}

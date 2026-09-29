@@ -14,6 +14,7 @@
 import type { AqspSnapshot, AqspCandidate } from "@/types/aqsp";
 import type { PerformanceView } from "./performance-view";
 import { asRecord, asString, asNumber, asArray } from "./safe";
+import { strategyListLabel } from "./display-labels";
 
 export type Tone = "ok" | "warn" | "neutral";
 
@@ -82,10 +83,7 @@ export function projectCandidates(snapshot: AqspSnapshot): DecisionCandidate[] {
         score: asNumber(r.score),
         status: asString(r.research_status, "状态未记录"),
         nextStep: asString(r.next_step),
-        strategies: asArray<unknown>(r.strategies as readonly unknown[])
-          .map((s) => asString(s))
-          .filter(Boolean)
-          .join(" · "),
+      strategies: strategyListLabel(asArray<unknown>(r.strategies as readonly unknown[]).map((s) => asString(s))),
         evidence: asString(r.evidence_status),
       };
     })

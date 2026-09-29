@@ -11,6 +11,7 @@ import { api, type Quote } from "@/lib/api";
 import { Badge, LoadingState, StatePanel, Tag } from "@/components/ui/primitives";
 import { changeClass, formatSignedPct } from "@/lib/format";
 import { externalLinks } from "@/lib/external-links";
+import { evidenceLabel, statusLabel } from "@/lib/display-labels";
 import { cn } from "@/lib/utils";
 
 /** AQSP 自己的判断摘要（外部站点没有的信息）。 */
@@ -166,8 +167,8 @@ export function StockDetailDrawer({
                     <span>评分</span>
                   </div>
                   <div className="aq-tag-row">
-                    <Tag tone="primary">{intro.status}</Tag>
-                    <Tag>{intro.evidence}</Tag>
+                    <Tag tone="primary">{statusLabel(intro.status)}</Tag>
+                    <Tag>{evidenceLabel(intro.evidence)}</Tag>
                     {intro.ready ? <Tag tone="ok">可复核</Tag> : <Tag tone="warn">仅观察</Tag>}
                   </div>
                 </div>

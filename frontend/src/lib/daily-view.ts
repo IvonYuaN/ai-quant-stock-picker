@@ -35,6 +35,7 @@ import {
   snapshotConclusion,
 } from "./research-view";
 import { asArray, asRecord, asString } from "./safe";
+import { gateReasonLabel, strategyListLabel } from "./display-labels";
 
 /** 统一的语气档：ok=可推进 / warn=需注意 / neutral=信息缺失。 */
 export type Tone = "ok" | "warn" | "neutral";
@@ -275,7 +276,7 @@ export function gateView(gate: AqspRecommendationGate | undefined): ToneView {
   return {
     tone: "warn",
     label: "当前结果仅供观察",
-    detail: reason ? `未放行原因：${reason}` : "当前结果仅供观察，不进入正式推荐或纸面复核。",
+    detail: reason ? `未放行原因：${gateReasonLabel(reason)}` : "当前结果仅供观察，不进入正式推荐或纸面复核。",
   };
 }
 
@@ -350,7 +351,7 @@ function buildCandidateRows(snapshot: AqspSnapshot): CandidateRow[] {
       status: candidate.research_status || "状态未记录",
       evidence: candidate.evidence_status || "证据未记录",
       ready: candidateResearchReady(snapshot, symbol),
-      strategies: candidate.strategies.join(" · "),
+      strategies: strategyListLabel(candidate.strategies),
       keyMetric: keyMetric ? `${keyMetric.label} ${keyMetric.value}` : "",
       messageCount: messages.length,
       firstMessageTitle: messages[0]?.title ?? "",

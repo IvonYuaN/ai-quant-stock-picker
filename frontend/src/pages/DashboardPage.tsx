@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/primitives";
 import { EChart } from "@/components/ui/EChart";
 import { cn } from "@/lib/utils";
+import { strategyLabel } from "@/lib/display-labels";
 import type { EChartsOption } from "echarts";
 
 const EMPTY_METRICS: DashboardMetrics = {
@@ -354,7 +355,7 @@ export function DashboardPage() {
                           <div className="aq-tag-row">
                             {signal.strategies.slice(0, 3).map((s) => (
                               <Tag key={s} tone="neutral">
-                                {s}
+                                {strategyLabel(s)}
                               </Tag>
                             ))}
                             {signal.strategies.length > 3 ? <Tag tone="neutral">+{signal.strategies.length - 3}</Tag> : null}
