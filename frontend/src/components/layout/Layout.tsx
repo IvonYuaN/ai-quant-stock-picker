@@ -1,12 +1,13 @@
 import { Suspense, useEffect, useRef, useState } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
-import { Download, LineChart, Moon, PanelLeftClose, PanelLeftOpen, Search, Sun, Upload } from "lucide-react";
+import { Download, KeyRound, LineChart, Moon, PanelLeftClose, PanelLeftOpen, Search, Sun, Upload } from "lucide-react";
 import { Toaster, toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { NAV_LINES } from "@/lib/ia";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import { AqspWorkspaceProvider, useAqspSnapshot } from "@/components/aqsp/useAqspSnapshot";
 import { downloadVault, importVault } from "@/lib/vault";
+import { loadAccessKey, saveAccessKey } from "@/lib/api";
 import { LoadingState } from "@/components/ui/primitives";
 import { CommandPalette } from "@/components/ui/CommandPalette";
 
@@ -156,6 +157,23 @@ function WorkspaceLayout() {
               >
                 <Upload aria-hidden="true" />
                 <span>导入</span>
+              </button>
+              <button
+                type="button"
+                className="aq-icon-btn"
+                title="设置 API 访问密钥（公网模式）"
+                onClick={() => {
+                  const key = window.prompt(
+                    "输入访问密钥（VR_API_KEY）\n留空并确定 = 清除已保存密钥",
+                    loadAccessKey(),
+                  );
+                  if (key === null) return;
+                  saveAccessKey(key.trim());
+                  toast(key.trim() ? "访问密钥已保存，立即生效" : "访问密钥已清除");
+                }}
+              >
+                <KeyRound aria-hidden="true" />
+                <span>访问密钥</span>
               </button>
               <input
                 ref={fileRef}
