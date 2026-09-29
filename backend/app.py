@@ -1928,3 +1928,35 @@ def get_tags_endpoint():
         return {"data": tags}
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"获取标签失败：{e}") from e
+
+
+@app.get(
+    "/api/aqsp/signals",
+    tags=["AQSP 研究"],
+    summary="历史信号列表",
+    description="""
+返回最近的历史信号（**含 pending**，按 signal_date 新→旧），供复盘页挑选复盘对象。
+
+- 数据源：`predictions.jsonl`（只读台账，不写台账、不触发权重落盘）
+- 每条带 `id`（台账行 uuid）—— 复盘记录的 `signal_id` 引用的就是它
+- `win` / `return_pct` 对未结算信号为 `null`（validate 之后才写入，不冒充"已出结果"）
+
+## 查询参数
+
+- `limit`: 最多返回条数（1..1000，默认 100）
+- `since`: 只返回 signal_date >= 此日（YYYY-MM-DD，可选）
+""",
+)
+def list_signals_endpoint(
+    limit: int = Query(default=100, ge=1, le=1000, description="最多返回条数"),
+    since: str | None = Query(default=None, description="signal_date 下限（YYYY-MM-DD）"),
+):
+    """历史信号列表（复盘页数据源）。"""
+    try:
+        return {"data": performance_bridge.signals_payload(limit=limit, since=since)}
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"查询历史信号失败：{e}") from e

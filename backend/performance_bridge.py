@@ -561,3 +561,81 @@ def dashboard_metrics() -> dict[str, Any]:
         "data_source_health": data_source_health,
         "recent_signals": recent_signals,
     }
+
+
+def _signal_view(row: dict) -> dict[str, Any]:
+    """复盘页的「信号」视图：台账行的最小投影（**含 pending**）。
+
+    `id` 是台账行自身的 uuid —— 复盘记录的 `signal_id` 引用的就是它（两者必须
+    同源，否则复盘和信号对不上号）。`win` / `return_pct` 在 validate 之后才写入，
+    因此对未结算信号如实给 `None`，不回填 0 冒充"已出结果"。
+    """
+    strategies_raw = row.get("strategies")
+    if strategies_raw is None:
+        strategies: list[str] = []
+    elif isinstance(strategies_raw, str):
+        strategies = [s for s in strategies_raw.split(",") if s]
+    else:
+        strategies = [str(s) for s in strategies_raw]
+    reasons_raw = row.get("reasons")
+    reasons: list[str] = (
+        [str(x) for x in reasons_raw] if isinstance(reasons_raw, list) else []
+    )
+    score_raw = row.get("score")
+    try:
+        score_val = None if score_raw in (None, "") else round(float(score_raw), 4)
+    except (TypeError, ValueError):
+        score_val = None
+    win_raw = row.get("win")
+    return {
+        "id": str(row.get("id", "") or ""),
+        "signal_date": str(row.get("signal_date", "") or "")[:10],
+        "symbol": str(row.get("symbol", "") or ""),
+        "name": str(row.get("name", "") or ""),
+        "rating": str(row.get("rating", "") or ""),
+        "score": score_val,
+        "strategies": strategies,
+        "reasons": reasons,
+        "status": str(row.get("status", "") or ""),
+        "win": None if win_raw is None else bool(win_raw),
+        "return_pct": row.get("return_pct"),
+    }
+
+
+def signals_payload(limit: int = 100, since: str | None = None) -> dict[str, Any]:
+    """最近的历史信号（**含 pending**），供复盘页挑选复盘对象。
+
+    只读 `predictions.jsonl`；**不写台账、不触发权重落盘**（与绩效桥接同口径）。
+    与 `_recent_picks`（只回 validated、已结算）不同：这里**不过滤状态** ——
+    复盘可以在信号出结果**之前**进行（这正是复盘页"先记下当时的判断"的价值）。
+
+    Raises:
+        ValueError: limit 越界。
+    """
+    if limit < 1 or limit > 1000:
+        raise ValueError("limit 必须在 1..1000 之间")
+    path = _ledger_path()
+    rows = read_ledger(path) if path.exists() else []
+    if since:
+        since_norm = str(since).replace("-", "")
+        rows = [
+            r
+            for r in rows
+            if str(r.get("signal_date", "")).replace("-", "") >= since_norm
+        ]
+    # 台账按时间追加 ⇒ 尾部即最新；倒序输出（新→旧）
+    signals = [_signal_view(row) for row in reversed(rows[-limit:])]
+    signals = [s for s in signals if s["id"]]  # 无 id 的历史行无法被复盘引用
+    freshness = _freshness(rows, path)
+    return {
+        "available": True,
+        "reason": "",
+        "signals": signals,
+        "count": len(signals),
+        "data_source_health": {
+            "ledger": "stale" if freshness["stale"] else "healthy",
+            "latest_signal_date": freshness["latest_signal_date"],
+            "ledger_updated_at": freshness["ledger_updated_at"],
+            "trading_days_since_latest": freshness["trading_days_since_latest"],
+        },
+    }

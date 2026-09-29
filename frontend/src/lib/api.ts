@@ -117,7 +117,7 @@ function errorDetail(payload: unknown): string | undefined {
 
 async function requestPayload(
   path: string,
-  method: "GET" | "POST" | "DELETE" = "GET",
+  method: "GET" | "POST" | "PUT" | "DELETE" = "GET",
   body?: unknown,
   options?: AqspRequestOptions,
 ): Promise<unknown> {
@@ -150,7 +150,11 @@ async function requestPayload(
   return payload;
 }
 
-async function request<T>(path: string, method: "GET" | "POST" | "DELETE" = "GET", body?: unknown): Promise<T> {
+async function request<T>(
+  path: string,
+  method: "GET" | "POST" | "PUT" | "DELETE" = "GET",
+  body?: unknown,
+): Promise<T> {
   const payload = await requestPayload(path, method, body);
   return (hasDataField(payload) && payload.data != null ? payload.data : payload) as T;
 }
@@ -529,6 +533,63 @@ export interface DashboardMetrics {
   recent_signals: PerformanceRecentPick[];
 }
 
+/** 单条复盘记录（后端 `aqsp.review`，落 `reviews.jsonl`）。 */
+export interface ReviewRecord {
+  id: string;
+  signal_id: string;
+  date: string;
+  symbol: string;
+  rating: number;
+  tags: string[];
+  notes: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** 台账（predictions.jsonl）的一行 —— 复盘页挑选复盘对象的「历史信号」。 */
+export interface SignalRecord {
+  id: string;
+  signal_date: string;
+  symbol: string;
+  name: string;
+  rating: string;
+  score: number | null;
+  strategies: string[];
+  reasons: string[];
+  status: string;
+  win: boolean | null;
+  return_pct: number | null;
+}
+
+/** `GET /api/aqsp/signals` 的 `data`（含台账新鲜度）。 */
+export interface SignalsPayload {
+  available: boolean;
+  reason: string;
+  signals: SignalRecord[];
+  count: number;
+  data_source_health: {
+    ledger: string;
+    latest_signal_date: string;
+    ledger_updated_at: string;
+    trading_days_since_latest: number | null;
+  };
+}
+
+export interface ReviewCreateInput {
+  signal_id: string;
+  date: string;
+  symbol: string;
+  rating: number;
+  tags?: string[];
+  notes?: string;
+}
+
+export interface ReviewUpdateInput {
+  rating?: number;
+  tags?: string[];
+  notes?: string;
+}
+
 export const api = {
   health: () => get<{ ok: boolean }>("/health"),
   performance: () => get<PerformancePayload>("/aqsp/performance"),
@@ -583,4 +644,15 @@ export const api = {
   uploadReport: (name: string, contentB64: string) =>
     request<MyReport>("/myreports", "POST", { name, content_b64: contentB64 }),
   deleteReport: (id: string) => request<{ ok: boolean }>(`/myreports/${id}`, "DELETE"),
+
+  // ---- 复盘笔记（aqsp.review；`signal_id` 引用台账行的 `id`）----
+  signals: (limit = 100) => get<SignalsPayload>(`/aqsp/signals?limit=${limit}`),
+  reviews: () => get<ReviewRecord[]>("/reviews"),
+  reviewTags: () => get<string[]>("/reviews/tags"),
+  createReview: (input: ReviewCreateInput) =>
+    request<{ id: string }>("/reviews", "POST", input),
+  updateReview: (id: string, input: ReviewUpdateInput) =>
+    request<{ ok: boolean }>(`/reviews/${id}`, "PUT", input),
+  deleteReview: (id: string) =>
+    request<{ ok: boolean }>(`/reviews/${id}`, "DELETE"),
 };
