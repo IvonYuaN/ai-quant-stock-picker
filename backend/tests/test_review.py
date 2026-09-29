@@ -521,3 +521,44 @@ def test_api_get_tags(client, temp_reviews_path):
     tags = response.json()["data"]
     assert tags[0] == "趋势突破"  # 出现2次，排第一
     assert set(tags[1:]) == {"止盈", "止损"}
+
+
+# ---------------------------------------------------------------------------
+# 默认路径解析（运行时 overlay 优先）
+# ---------------------------------------------------------------------------
+
+
+def test_default_reviews_path_prefers_runtime_overlay(monkeypatch, tmp_path) -> None:
+    """复盘默认路径必须优先运行时 overlay。
+
+    背景：不可变 release 下 `<release>/data` 归 root、服务用户只读 ⇒ 若默认路径
+    指向 release 内，ReviewPage 保存复盘会直接 502（2026-09-29 prod 实测：
+    `[Errno 13] Permission denied: '.../data/reviews.jsonl'`）。
+    """
+    import aqsp.review as review_module
+
+    monkeypatch.setenv("AQSP_RUNTIME_DATA_ROOT", str(tmp_path))
+    monkeypatch.delenv("AQSP_REVIEWS_PATH", raising=False)
+
+    assert review_module._default_reviews_path() == tmp_path / "reviews.jsonl"
+
+
+def test_default_reviews_path_honors_explicit_env(monkeypatch, tmp_path) -> None:
+    import aqsp.review as review_module
+
+    monkeypatch.setenv("AQSP_REVIEWS_PATH", str(tmp_path / "custom.jsonl"))
+    monkeypatch.delenv("AQSP_RUNTIME_DATA_ROOT", raising=False)
+
+    assert review_module._default_reviews_path() == tmp_path / "custom.jsonl"
+
+
+def test_default_reviews_path_falls_back_to_repo(monkeypatch) -> None:
+    import aqsp.review as review_module
+
+    monkeypatch.delenv("AQSP_REVIEWS_PATH", raising=False)
+    monkeypatch.delenv("AQSP_RUNTIME_DATA_ROOT", raising=False)
+
+    p = review_module._default_reviews_path()
+    assert p.name == "reviews.jsonl"
+    # 回退目标仍是仓库内 data/（parents[3] = 仓库根）
+    assert (p.parent.parent / "pyproject.toml").is_file()
