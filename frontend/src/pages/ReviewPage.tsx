@@ -8,8 +8,8 @@
 // 5. 笔记富文本编辑（Markdown）
 // 6. 按日期、标签、评分过滤
 
-import { useEffect, useState, useMemo } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { BookOpen, Edit, Star, Tags, Trash2, Filter, X } from "lucide-react";
 import { api, type ReviewRecord, type SignalRecord } from "@/lib/api";
 import { Badge, EmptyState, StatePanel } from "@/components/ui/primitives";
@@ -25,9 +25,13 @@ export function ReviewPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // 深链：/reviews?date=YYYY-MM-DD（来自「今日研究」页 CTA）⇒ 初始过滤到该日
+  const [searchParams] = useSearchParams();
+  const deepLinkDate = searchParams.get("date") || "";
+
   // 过滤器状态
   const [filterSymbol, setFilterSymbol] = useState("");
-  const [filterDate, setFilterDate] = useState("");
+  const [filterDate, setFilterDate] = useState(deepLinkDate);
   const [filterTags, setFilterTags] = useState<string[]>([]);
   const [filterMinRating, setFilterMinRating] = useState<number | null>(null);
 
@@ -68,8 +72,7 @@ export function ReviewPage() {
   };
 
   // 过滤后的复盘记录
-  const filteredReviews = useMemo(() => {
-    return reviews.filter((r) => {
+  const filteredReviews = useMemo(() => {    return reviews.filter((r) => {
       if (filterSymbol && !r.symbol.includes(filterSymbol)) return false;
       if (filterDate && r.date !== filterDate) return false;
       if (filterTags.length > 0 && !filterTags.some((tag) => r.tags.includes(tag))) return false;
@@ -77,6 +80,12 @@ export function ReviewPage() {
       return true;
     });
   }, [reviews, filterSymbol, filterDate, filterTags, filterMinRating]);
+
+  // 日期过滤同样作用于信号列表：深链进来时只看该日的信号（复盘写作的主要对象）
+  const visibleSignals = useMemo(() => {
+    if (!filterDate) return signals;
+    return signals.filter((s) => s.signal_date === filterDate);
+  }, [signals, filterDate]);
 
   // 创建复盘记录
   const handleCreate = async (signal: Signal) => {
@@ -318,10 +327,10 @@ export function ReviewPage() {
       <section className="aq-section">
         <div className="aq-section-head">
           <h2>历史信号</h2>
-          <span className="aq-section-count">{signals.length} 条</span>
+          <span className="aq-section-count">{visibleSignals.length} 条</span>
         </div>
 
-        {signals.length === 0 ? (
+        {visibleSignals.length === 0 ? (
           <EmptyState
             icon={BookOpen}
             title="暂无历史信号"
@@ -344,7 +353,7 @@ export function ReviewPage() {
                 </tr>
               </thead>
               <tbody>
-                {signals.slice(0, 50).map((signal) => {
+                {visibleSignals.slice(0, 50).map((signal) => {
                   const hasReview = reviews.some((r) => r.signal_id === signal.id);
                   return (
                     <tr key={signal.id}>
