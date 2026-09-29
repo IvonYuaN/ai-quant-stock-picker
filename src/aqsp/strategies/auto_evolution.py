@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 import yaml
 
+from aqsp.core.runtime import runtime_data_root
 from aqsp.core.time import now_shanghai
 from aqsp.regime.hmm_detector import HMMRegimeDetector
 from aqsp.regime.strategy_mixer import canonical_regime_from_hmm
@@ -96,13 +97,25 @@ class AutoEvolution:
         self,
         config_path: str = "config/evolution_config.yaml",
         thresholds_path: str = "config/thresholds.yaml",
-        data_dir: str = "data/evolution",
-        walkforward_gate_path: str = "data/walkforward_gate.json",
+        data_dir: str | None = None,
+        walkforward_gate_path: str | None = None,
     ) -> None:
         self.config_path = Path(config_path)
         self.thresholds_path = Path(thresholds_path)
-        self.data_dir = Path(data_dir)
-        self.walkforward_gate_path = Path(walkforward_gate_path)
+        # 进化产物（evolution_history / performance_history / threshold_proposals）
+        # 与 gate 证据默认锚定「运行时数据根」，绝不落到 CWD 相对的不可变 release。
+        # 定时任务 CWD = release 目录（只读、跨发版即丢），prod 自动链路恒设
+        # AQSP_RUNTIME_DATA_ROOT=/opt/aqsp/data，dev 回落 repo 根 ⇒ 与 holder_num /
+        # pit_cache 等生产者同一约定。显式传 data_dir / walkforward_gate_path 则用传入值。
+        runtime_root = runtime_data_root()
+        if data_dir is None:
+            self.data_dir = runtime_root / "evolution"
+        else:
+            self.data_dir = Path(data_dir)
+        if walkforward_gate_path is None:
+            self.walkforward_gate_path = runtime_root / "walkforward_gate.json"
+        else:
+            self.walkforward_gate_path = Path(walkforward_gate_path)
         self.data_dir.mkdir(parents=True, exist_ok=True)
 
         self.config = self._load_config()
