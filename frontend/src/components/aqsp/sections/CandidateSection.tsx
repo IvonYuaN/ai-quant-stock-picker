@@ -16,6 +16,7 @@ import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { api, type ReviewRecord } from "@/lib/api";
+import { evidenceLabel, statusLabel } from "@/lib/display-labels";
 import { useOwnership } from "../useOwnership";
 import type { CandidateRow, DailyView, SectionView } from "@/lib/daily-view";
 import { symbolNames } from "@/lib/daily-view";
@@ -123,8 +124,8 @@ function CandidateDetailCard({
       </div>
 
       <div className="aq-tag-row">
-        <Tag tone="primary">{row.status}</Tag>
-        <Tag>{row.evidence}</Tag>
+        <Tag tone="primary">{statusLabel(row.status)}</Tag>
+        <Tag>{evidenceLabel(row.evidence)}</Tag>
         {row.ready ? <Tag tone="ok">可复核</Tag> : <Tag tone="warn">仅观察</Tag>}
         <OwnerTag ownership={ownership} code={row.symbol} />
         {onPick && row.symbol ? (

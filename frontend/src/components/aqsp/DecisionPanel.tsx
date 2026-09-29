@@ -17,6 +17,7 @@ import {
   stalenessMessage,
   type RecentPickView,
 } from "@/lib/performance-view";
+import { statusLabel, strategyListLabel } from "@/lib/display-labels";
 import {
   buildDecision,
   formatHitRate,
@@ -149,7 +150,7 @@ export function DecisionPanel({ snapshot }: { snapshot: AqspSnapshot }) {
                     <span className="aq-decision-cand-name">{row.name}</span>
                   </td>
                   <td className="aq-num">{row.score}</td>
-                  <td>{row.status}</td>
+                  <td>{statusLabel(row.status)}</td>
                   <td>{row.strategies || "—"}</td>
                   <td>{row.nextStep || "—"}</td>
                 </tr>
@@ -242,7 +243,9 @@ function RecentPicksTable({ picks }: { picks: readonly RecentPickView[] }) {
                   <td>
                     <Tag tone={row.win ? "ok" : "neutral"}>{row.win ? "命中" : "未中"}</Tag>
                     {row.strategies.length ? (
-                      <span className="aq-decision-review-strat">{row.strategies.join(" · ")}</span>
+                      <span className="aq-decision-review-strat">
+                        {strategyListLabel(row.strategies)}
+                      </span>
                     ) : null}
                   </td>
                 </tr>

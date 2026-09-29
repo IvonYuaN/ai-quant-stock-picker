@@ -12,6 +12,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { BookOpen, Edit, Star, Tags, Trash2, Filter, X } from "lucide-react";
 import { api, type ReviewRecord, type SignalRecord, type ReviewInsights } from "@/lib/api";
+import { ratingLabel, strategyLabel } from "@/lib/display-labels";
 import { Badge, EmptyState, StatePanel } from "@/components/ui/primitives";
 import { cn } from "@/lib/utils";
 
@@ -406,11 +407,13 @@ export function ReviewPage() {
                       <td>{signal.name}</td>
                       <td>
                         <Badge tone={signal.rating === "strong_buy_candidate" ? "ok" : "neutral"}>
-                          {signal.rating}
+                          {ratingLabel(signal.rating)}
                         </Badge>
                       </td>
                       <td className="aq-num">{signal.score}</td>
-                      <td>{signal.strategies.join(", ")}</td>
+                      <td>
+                        {signal.strategies.length ? signal.strategies.map(strategyLabel).join(" · ") : "—"}
+                      </td>
                       <td>
                         {signal.win === true ? (
                           <Badge tone="ok">盈利</Badge>

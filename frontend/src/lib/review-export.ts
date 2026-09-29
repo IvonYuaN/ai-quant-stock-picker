@@ -5,6 +5,7 @@
 //
 // 这里是纯函数（不碰 DOM），导出动作在 components/aqsp/ReviewExportButton.tsx。
 import type { DailyView } from "./daily-view";
+import { evidenceLabel, statusLabel } from "./display-labels";
 
 /** 表格单元格里的竖线会破坏 Markdown 表格，必须转义。 */
 function cell(value: string): string {
@@ -46,8 +47,8 @@ export function buildReviewMarkdown(view: DailyView): string {
     const split = "| --- | --- | --- | --- | --- | --- | --- |";
     const rows = view.candidates.map(
       (row) =>
-        `| ${cell(row.symbol)} | ${cell(row.name)} | ${cell(row.scoreText)} | ${cell(row.status)} | ${cell(
-          row.evidence,
+        `| ${cell(row.symbol)} | ${cell(row.name)} | ${cell(row.scoreText)} | ${cell(statusLabel(row.status))} | ${cell(
+          evidenceLabel(row.evidence),
         )} | ${row.ready ? "✅" : "—"} | ${cell(row.keyMetric)} |`,
     );
     parts.push(block(`候选（${view.candidates.length}）`, [[header, split, ...rows].join("\n")]));

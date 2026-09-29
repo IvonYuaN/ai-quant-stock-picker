@@ -7,6 +7,7 @@
 import type { EChartsOption } from "echarts";
 import type { IndustryRowView, LadderRow, SectorFlowRow } from "./market-view";
 import type { ThemeMode } from "./theme-mode";
+import { factorLabel } from "./display-labels";
 
 export const UP_COLOR = "#e5484d"; // 红：流入 / 上涨 / 盈利
 export const DOWN_COLOR = "#30a46c"; // 绿：流出 / 下跌 / 亏损
@@ -156,7 +157,8 @@ export function icTrendOption(
       splitLine: { lineStyle: { color: palette.splitLine } },
     },
     series: factorNames.map((name) => ({
-      name,
+      // 图例/tooltip 显示中文名（display-labels 单一映射，未知码原样透传）
+      name: factorLabel(name),
       type: "line" as const,
       connectNulls: true,
       showSymbol: points.length <= 30,

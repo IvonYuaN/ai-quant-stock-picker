@@ -21,6 +21,11 @@ import {
   ToneCallout,
 } from "@/components/ui/primitives";
 import {
+  factorLabel,
+  ledgerStatusLabel,
+  strategyLabel,
+} from "@/lib/display-labels";
+import {
   normalizePerformance,
   performanceHeadline,
   stalenessMessage,
@@ -52,14 +57,7 @@ const EMPTY_PAYLOAD: PerformancePayload = {
   notes: [],
 };
 
-const STATUS_LABELS: Readonly<Record<string, string>> = {
-  validated: "已结算",
-  pending: "待结算",
-  watch_only: "仅观察",
-  not_executable: "不可执行",
-  blocked_by_circuit_breaker: "风控拦截",
-  run_completed_no_picks: "无候选",
-};
+// 台账状态分布与策略名的中文映射统一走 lib/display-labels（未知码原样透传）。
 
 export function PerformancePage() {
   const [payload, setPayload] = useState<PerformancePayload>(EMPTY_PAYLOAD);
@@ -199,7 +197,7 @@ export function PerformancePage() {
                       <b className={value > 0 ? "aq-tone-up" : "aq-tone-down"}>
                         {value.toFixed(4)}
                       </b>
-                      <span>{name} · 最新 IC</span>
+                      <span>{factorLabel(name)} · 最新 IC</span>
                     </div>
                   ))}
                 </div>
@@ -237,7 +235,7 @@ export function PerformancePage() {
                   <tbody>
                     {view.strategies.map((row) => (
                       <tr key={row.name}>
-                        <td>{row.name}</td>
+                        <td>{strategyLabel(row.name)}</td>
                         <td className="aq-num">{row.independentSignalDays}</td>
                         <td className="aq-num">{row.totalPicks}</td>
                         <td className={cn("aq-num", row.canShowHitRate && "aq-tone-up")}>
@@ -280,8 +278,8 @@ export function PerformancePage() {
                     // 冷启动期只说"近期走弱"，不给具体数字（§5.4）
                     title={
                       view.coldStart
-                        ? `${alert.strategy}：近期${alert.severity === "critical" ? "明显" : ""}走弱（近 ${alert.lookbackDays} 天样本不足，不展示胜率）`
-                        : `${alert.strategy}：近 ${alert.lookbackDays} 天命中率 ${(alert.recentWinRate * 100).toFixed(1)}%`
+                        ? `${strategyLabel(alert.strategy)}：近期${alert.severity === "critical" ? "明显" : ""}走弱（近 ${alert.lookbackDays} 天样本不足，不展示胜率）`
+                        : `${strategyLabel(alert.strategy)}：近 ${alert.lookbackDays} 天命中率 ${(alert.recentWinRate * 100).toFixed(1)}%`
                     }
                     detail={view.coldStart ? `后续观察方向：${alert.recommendation}（冷启动期不执行）` : alert.recommendation}
                   />
@@ -297,7 +295,7 @@ export function PerformancePage() {
               <div className="aq-tag-row">
                 {view.statusCounts.map(([status, count]) => (
                   <Tag key={status} tone={status === "validated" ? "ok" : "neutral"}>
-                    {STATUS_LABELS[status] ?? status} {count}
+                    {ledgerStatusLabel(status)} {count}
                   </Tag>
                 ))}
               </div>
