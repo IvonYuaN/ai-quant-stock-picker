@@ -47,8 +47,14 @@ REPO_ROOT = _find_project_root(Path(__file__).resolve().parent)
 DEFAULT_SOURCE = REPO_ROOT / "scripts" / "run_production_walkforward_gate.py"
 
 # P1 — the parser's own choices tuple (the wrapper does not inherit the CLI's).
-CHOICES_ANCHOR = '        choices=("stable", "stable_plus", "exploratory"),\n'
-CHOICES_PATCHED = '        choices=("stable", "stable_plus", "exploratory", "htf_mr"),\n'
+CHOICES_ANCHOR = (
+    '        choices=('
+    '"stable", "stable_plus", "exploratory", "planb_v1", "planb_v2", "planb_v3"),\n'
+)
+CHOICES_PATCHED = (
+    '        choices=('
+    '"stable", "stable_plus", "exploratory", "planb_v1", "planb_v2", "planb_v3", "htf_mr"),\n'
+)
 
 # P2 — anchor is the child command's pool block; insertion keeps argument order stable.
 POOL_ANCHOR = '        "--pool",\n        "all",\n'
