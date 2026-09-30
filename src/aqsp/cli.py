@@ -877,7 +877,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     wf.add_argument(
         "--grid-profile",
-        choices=("stable", "stable_plus", "exploratory", "htf_mr"),
+        choices=(
+            "stable",
+            "stable_plus",
+            "exploratory",
+            "htf_mr",
+            "planb_v1",
+            "planb_v2",
+            "planb_v3",
+        ),
         default="stable",
         help="grid CSCV 变体集合：stable 用于上线门禁（N=5），stable_plus 用于功效增强（N=8，含因子族多样性），exploratory 保留研究探索网格（N=11），htf_mr 为 T3 方案 A 因子族替换验证网格（htf+mr 换 mom+tr，N=8，不改动默认）",
     )
@@ -6268,6 +6276,10 @@ class WalkForwardGridVariant:
     horizon_days: int
     top_n: int
     strategy_mix: str = "momentum"
+    # 方案 B（预注册）：显式 7 维 composite 权重向量 (mom/qual/val/vol/mr/tr/htf)。
+    # 仅 planb_* profile 使用；非 None 时 _apply_walkforward_grid_variant 按此直接注入，
+    # 绕过旧 4 种 strategy_mix（只能表达 momentum/tr 2 维，表达不了 7 维候选）。
+    composite_weights: tuple[float, ...] | None = None
 
 
 _WALKFORWARD_VALIDATED_GRID_VARIANTS: tuple[WalkForwardGridVariant, ...] = (
@@ -6328,6 +6340,61 @@ _WALKFORWARD_HTF_MR_GRID_VARIANTS: tuple[WalkForwardGridVariant, ...] = (
     WalkForwardGridVariant("WF-H08", 0.0, 0.0, 40, 5, 5, "htf_mr"),
 )
 
+# 方案 B（预注册裁决单，revisit_family 触发版）：7 维 composite 候选网格。
+# 旧 4 种 strategy_mix（momentum/volume/mean_reversion/htf_mr）只能表达 momentum/tr
+# 2 维，表达不了 V1/V2/V3 的任意 7 维向量，直接跑会静默退化成旧 mix（幽灵变体）。
+# 这里给每个候选 V 钉死一个固定 7 维向量（composite_weights），CSCV 的 8 个互异臂
+# 由活旋钮 top_n × horizon 展开（top_n∈{10,20,30,50} × horizon∈{3,5}，8 臂两两互异，
+# 无重复列 ⇒ MIN_CSCV_VARIANTS=8 的 PBO 可信，规避 T3 htf_mr「重复列凑 8」反模式）。
+# 7 维序 = (mom, quality, value, volume, mean_reversion, triple_rise, high_tight_flag)。
+_PLANB_VARIANTS: dict[str, tuple[WalkForwardGridVariant, ...]] = {
+    # V1 负侧剥离：摘 momentum，余权摊 quality/value/volume（归一后各 1/3）。
+    "planb_v1": tuple(
+        WalkForwardGridVariant(
+            f"WB-V1-{tn}x{hz}",
+            0.0,
+            0.0,
+            60,
+            hz,
+            tn,
+            "planb",
+            composite_weights=(0.0, 0.4, 0.4, 0.4, 0.0, 0.0, 0.0),
+        )
+        for hz in (3, 5)
+        for tn in (10, 20, 30, 50)
+    ),
+    # V2 正负换位：momentum 0.3→0.2 降权 + htf 0→0.2 启用等权（最温和）。
+    "planb_v2": tuple(
+        WalkForwardGridVariant(
+            f"WB-V2-{tn}x{hz}",
+            0.0,
+            0.0,
+            60,
+            hz,
+            tn,
+            "planb",
+            composite_weights=(0.2, 0.2, 0.2, 0.2, 0.0, 0.0, 0.2),
+        )
+        for hz in (3, 5)
+        for tn in (10, 20, 30, 50)
+    ),
+    # V3 激进：momentum 摘除 + htf 顶格（唯一显著正 IC 给最高权重）。
+    "planb_v3": tuple(
+        WalkForwardGridVariant(
+            f"WB-V3-{tn}x{hz}",
+            0.0,
+            0.0,
+            60,
+            hz,
+            tn,
+            "planb",
+            composite_weights=(0.0, 0.2, 0.2, 0.2, 0.0, 0.0, 0.4),
+        )
+        for hz in (3, 5)
+        for tn in (10, 20, 30, 50)
+    ),
+}
+
 _WALKFORWARD_GRID_VARIANTS: tuple[WalkForwardGridVariant, ...] = (
     _WALKFORWARD_EXPLORATORY_GRID_VARIANTS
 )
@@ -6342,6 +6409,8 @@ def _walkforward_grid_variants(
         return _WALKFORWARD_STABLE_PLUS_GRID_VARIANTS
     if profile == "htf_mr":
         return _WALKFORWARD_HTF_MR_GRID_VARIANTS
+    if profile in _PLANB_VARIANTS:
+        return _PLANB_VARIANTS[profile]
     return _WALKFORWARD_STABLE_GRID_VARIANTS
 
 
@@ -6457,8 +6526,52 @@ def _apply_walkforward_grid_variant(
     enable_volume = False
     enable_mr = False
     enable_htf = False
+    enable_quality = False
+    enable_value = False
     mr_lookback_days: int | None = None
-    if strategy_mix == "momentum":
+    if strategy_mix == "planb":
+        # 方案 B（预注册）：显式 7 维 composite 权重向量，绕过旧 4 种 strategy_mix 的
+        # 2 维限制（它们表达不了 V1/V2/V3 的任意 7 维候选，直接跑会静默退化成旧 mix）。
+        # 按 weight>0 逐个 enable 对应因子，避免 thresholds.yaml 默认 enabled=False 导致
+        # 权重写了但因子没开（幽灵变体 / 因子族隔离破坏）。momentum 无 enabled 字段、
+        # 默认核心参与，仅写 weight 即可。
+        if variant.composite_weights is None:
+            raise ValueError(
+                f"planb variant {variant.variant_id} must declare composite_weights"
+            )
+        if len(variant.composite_weights) < 7:
+            raise ValueError(
+                f"planb variant {variant.variant_id} composite_weights must have 7 dims "
+                f"(got {len(variant.composite_weights)})"
+            )
+        (
+            planb_mom,
+            planb_qual,
+            planb_val,
+            planb_vol,
+            planb_mr,
+            planb_tr,
+            planb_htf,
+        ) = (float(x) for x in variant.composite_weights[:7])
+        composite_updates.update(
+            {
+                "momentum_weight": planb_mom,
+                "quality_weight": planb_qual,
+                "value_weight": planb_val,
+                "volume_weight": planb_vol,
+                "mean_reversion_weight": planb_mr,
+                "triple_rise_weight": planb_tr,
+                "high_tight_flag_weight": planb_htf,
+            }
+        )
+        enable_volume = planb_vol > 0
+        enable_mr = planb_mr > 0
+        enable_htf = planb_htf > 0
+        enable_quality = planb_qual > 0
+        enable_value = planb_val > 0
+        # planb 不接 lookback 死旋钮：CSCV 的互异臂由 top_n×horizon 展开（见 _PLANB_VARIANTS），
+        # 故 momentum.lookback_days 不参与打分隔离，保持 base 值即可（不做 mr_lookback_days 接线）。
+    elif strategy_mix == "momentum":
         composite_updates["momentum_weight"] = variant.momentum_weight
         composite_updates["triple_rise_weight"] = variant.triple_rise_weight
     elif strategy_mix == "volume":
@@ -6525,6 +6638,10 @@ def _apply_walkforward_grid_variant(
         replace_kwargs["high_tight_flag"] = replace(
             thresholds.high_tight_flag, enabled=True
         )
+    if enable_quality:
+        replace_kwargs["quality"] = replace(thresholds.quality, enabled=True)
+    if enable_value:
+        replace_kwargs["value"] = replace(thresholds.value, enabled=True)
     return replace(thresholds, **replace_kwargs)
 
 

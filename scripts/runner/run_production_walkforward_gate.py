@@ -2000,10 +2000,11 @@ def main() -> int:
     parser.add_argument("--min-symbols", type=int, default=MIN_PRODUCTION_GATE_SYMBOLS)
     parser.add_argument(
         "--grid-profile",
-        choices=("stable", "stable_plus", "exploratory"),
+        choices=("stable", "stable_plus", "exploratory", "planb_v1", "planb_v2", "planb_v3"),
         default="stable_plus",
         help="grid CSCV 变体集合：stable_plus(N=8，默认，满足 CSCV n_variants>=8 硬前置) 功效增强，"
-        "stable(N=5，CSCV 变体不足、门禁 fail-closed) 已被取代，exploratory(N=11) 仅供研究",
+        "stable(N=5，CSCV 变体不足、门禁 fail-closed) 已被取代，exploratory(N=11) 仅供研究，"
+        "planb_v1/v2/v3(N=8) 为方案B预注册7维候选实验档位（不进默认值）",
     )
     parser.add_argument(
         "--crash-protection",
