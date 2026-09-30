@@ -70,10 +70,34 @@ def _sign(v: float) -> int:
     return 1 if v > 0 else -1
 
 
+def _native_num(v):
+    """numpy 标量 → Python float（None 保留）。np.float64 / Python float / NaN 均安全。"""
+    return None if v is None else float(v)
+
+
+def _native_int(v) -> int:
+    """numpy 标量 → Python int（None → 0）。np.int64 非 int 子类，须显式转。"""
+    return 0 if v is None else int(v)
+
+
+def _native_bool(v) -> bool:
+    """numpy 标量 → Python bool。np.bool_ 非 bool 子类，直接进 json.dumps 会
+    ``TypeError: Object of type bool is not JSON serializable``（见下），须显式转。"""
+    return bool(v)
+
+
 def verdict_for_factor(stats_a: dict, stats_b: dict) -> dict:
     """单因子双窗判决（纯函数：两窗 run() 的 per-factor stats dict → 判决）。
 
     达标（hit）= 两窗同号 且 双 |t|≥2 且 两窗截面数均 ≥ MIN_SECTIONS。
+
+    红线：所有输出字段统一 native 化（Python float/int/bool）——上游
+    ``ic_diagnosis.run()`` 的 per-factor stats 是 numpy 标量（np.float64 t、
+    np.int64 n、比较式产 np.bool_）。np.bool_ 不是 bool 子类，直接塞进
+    json.dumps 会炸（runner 首跑实证 2026-09-30：B 窗某因子 |t|<2 ⇒
+    dual_significant = np.bool_(False) ⇒ ``TypeError: Object of type bool is
+    not JSON serializable``）。合成单测用 Python 型 stats 故未暴露，须以
+    numpy 型输入 + 端到端 json.dumps 兜住。
     """
     ma, ta, na = stats_a.get("mean"), stats_a.get("t"), stats_a.get("n", 0)
     mb, tb, nb = stats_b.get("mean"), stats_b.get("t"), stats_b.get("n", 0)
@@ -92,15 +116,15 @@ def verdict_for_factor(stats_a: dict, stats_b: dict) -> dict:
         and nb >= MIN_SECTIONS
     )
     return {
-        "mean_a": ma,
-        "t_a": ta,
-        "n_a": na,
-        "mean_b": mb,
-        "t_b": tb,
-        "n_b": nb,
-        "sign_match": sign_match,
-        "dual_significant": dual_significant,
-        "hit": bool(sign_match and dual_significant),
+        "mean_a": _native_num(ma),
+        "t_a": _native_num(ta),
+        "n_a": _native_int(na),
+        "mean_b": _native_num(mb),
+        "t_b": _native_num(tb),
+        "n_b": _native_int(nb),
+        "sign_match": _native_bool(sign_match),
+        "dual_significant": _native_bool(dual_significant),
+        "hit": _native_bool(sign_match and dual_significant),
     }
 
 
