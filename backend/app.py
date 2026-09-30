@@ -2032,6 +2032,45 @@ def ic_history_endpoint():
         raise HTTPException(502, f"读取因子 IC 历史失败：{e}") from e
 
 
+def _parse_iso_utc_z(value: object):
+    """把 UTC ISO-8601 时间戳（`…Z` 或 `…+00:00`）解析成 aware datetime；取不到返回 None。
+
+    用于双窗判决新鲜度护栏：`dual_window_latest.json` 的 `run_at` / `generated_at`
+    都是 producer 写入的 UTC ISO。解析失败绝不抛（fail-soft），返回 None 让上层
+    按「判不出龄」处理（不压制可用性）。
+    """
+    from datetime import datetime, timezone
+
+    if not value:
+        return None
+    s = str(value).strip()
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(s)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _dual_verdict_age_hours(latest: dict, now) -> float | None:
+    """双窗判决「产出至今」的小时龄（取 producer 的 run_at / generated_at），取不到返回 None。
+
+    用 producer 时间戳（而非回流文件 mtime）= 判决真正计算所依据的数据时点，
+    才符合「新鲜度」语义。None 表示无法判龄（缺字段/格式异常）⇒ 上层不压制。
+    """
+    ts = _parse_iso_utc_z(latest.get("run_at") or latest.get("generated_at"))
+    if ts is None:
+        return None
+    if getattr(now, "tzinfo", None) is None:
+        from datetime import timezone
+
+        now = now.replace(tzinfo=timezone.utc)
+    return max(0.0, (now - ts).total_seconds() / 3600.0)
+
+
 @app.get(
     "/api/aqsp/ic-dual-verdict",
     tags=["AQSP 研究"],
@@ -2051,17 +2090,35 @@ IC/t 同号且双 |t|≥2 达标判定 + 连续达标日数 + `revisit_family` �
 """,
 )
 def ic_dual_verdict_endpoint():
-    """双窗因子 IC 滚动判决（只读 · proposal-only · fail-soft）。"""
+    """双窗因子 IC 滚动判决（只读 · proposal-only · fail-soft）。
+
+    新鲜度护栏（与 fetch 双窗段 quarantine 双保险，堵「静默失效≠健康」）：
+    产物 `run_at`/`generated_at` 龄 > `DUAL_MAX_AGE_HOURS`（默认 36h，env 可覆盖，
+    与 fetch 侧 `DUAL_MAX_AGE_HOURS`/`MAX_AGE_HOURS` 同值）⇒ 判定为陈旧（runner 双窗
+    连败且尚未到下一次 fetch）⇒ **自降 `available=false`**，绝不把陈旧判决静默当「最新」
+    展示；`latest` 保留供观测、`stale` 标记本次是否被抑制。判不出龄（缺时间戳/格式异常）
+    ⇒ 不压制（fail-safe），维持原可用性语义。
+    """
     from aqsp.briefing.closing_review import _factor_ic_runtime_root
 
     try:
         import json as _json
+        import os as _os
+        from datetime import datetime, timezone
         from pathlib import Path as _Path
 
         root = _factor_ic_runtime_root()
         path = _Path(root) / "pit_cache" / "factor_ic" / "dual_window_latest.json"
+
+        # 新鲜度上限：默认 36h，与 fetch 双窗段 quarantine 的 DUAL_MAX_AGE_HOURS 同值同 env。
+        try:
+            max_age_hours = float(_os.environ.get("DUAL_MAX_AGE_HOURS", "36"))
+        except (TypeError, ValueError):
+            max_age_hours = 36.0
+
         latest = None
         available = False
+        stale = False
         streak_n = 5
         if path.exists():
             try:
@@ -2070,11 +2127,27 @@ def ic_dual_verdict_endpoint():
                 streak_n = int(latest.get("streak_n", 5))
             except Exception:  # 读失败/字段残缺 ⇒ 降级空，不 500
                 latest = None
-        return {"data": {"available": available, "latest": latest, "streak_n": streak_n}}
+                available = False
+
+        # 新鲜度护栏：仅当「本来可用」+ 能判龄 + 超龄 ⇒ 自降不可用（判不出龄不压制）。
+        if available and latest:
+            age_hours = _dual_verdict_age_hours(latest, datetime.now(timezone.utc))
+            if age_hours is not None and age_hours > max_age_hours:
+                available = False
+                stale = True
+
+        return {
+            "data": {
+                "available": available,
+                "latest": latest,
+                "streak_n": streak_n,
+                "stale": stale,
+            }
+        }
     except HTTPException:
         raise
     except Exception:  # noqa: BLE001  读失败/字段残缺 ⇒ fail-soft，绝不 500
-        return {"data": {"available": False, "latest": None, "streak_n": 5}}
+        return {"data": {"available": False, "latest": None, "streak_n": 5, "stale": False}}
 
 
 @app.get(

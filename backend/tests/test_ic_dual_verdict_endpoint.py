@@ -16,6 +16,7 @@ tmp_path 下的 runtime 根（端点是函数体内 ``from ... import``，patch 
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 
@@ -27,6 +28,13 @@ ROUTE = "/api/aqsp/ic-dual-verdict"
 
 def _client() -> TestClient:
     return TestClient(app_module.app)
+
+
+def _hours_ago_iso(hours: float) -> str:
+    """now(UTC) − hours 的 UTC ISO `…Z`（与 producer `run_at` 同格式）。"""
+    return (
+        datetime.now(timezone.utc) - timedelta(hours=hours)
+    ).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _write_latest(root_path, payload: dict) -> None:
@@ -105,3 +113,88 @@ def test_ic_dual_verdict_fail_soft_when_artifact_empty_factors(
     data = resp.json()["data"]
     assert data["available"] is False  # 空 factors ⇒ 不算可用
     assert data["streak_n"] == 3
+
+
+# ── 新鲜度护栏（M5 补：与 fetch 双窗段 quarantine 双保险，堵「静默失效≠健康」） ──
+
+def test_ic_dual_verdict_fresh_run_at_is_available(
+    monkeypatch, tmp_path
+) -> None:
+    """run_at 距今 2h（< 默认 36h）⇒ available=True、stale=False。"""
+    _write_latest(
+        tmp_path,
+        {
+            "run_at": _hours_ago_iso(2),
+            "as_of_b": "2026-09-24",
+            "streak_n": 5,
+            "factors": [{"name": "momentum", "hit": False, "t_a": -0.3, "t_b": -2.1}],
+        },
+    )
+    monkeypatch.setattr(cr, "_factor_ic_runtime_root", lambda: str(tmp_path))
+
+    data = _client().get(ROUTE).json()["data"]
+    assert data["available"] is True
+    assert data["stale"] is False
+    assert data["latest"]["factors"][0]["name"] == "momentum"
+
+
+def test_ic_dual_verdict_stale_run_at_is_suppressed(
+    monkeypatch, tmp_path
+) -> None:
+    """run_at 距今 48h（> 默认 36h）⇒ 自降 available=False + stale=True，
+    但 latest 仍保留供观测（前端据此降级，不再把陈旧判决当「最新」）。"""
+    _write_latest(
+        tmp_path,
+        {
+            "run_at": _hours_ago_iso(48),
+            "as_of_b": "2026-09-24",
+            "streak_n": 5,
+            "factors": [{"name": "momentum", "hit": False, "t_a": -0.3, "t_b": -2.1}],
+        },
+    )
+    monkeypatch.setattr(cr, "_factor_ic_runtime_root", lambda: str(tmp_path))
+
+    data = _client().get(ROUTE).json()["data"]
+    assert data["available"] is False  # 陈旧 ⇒ 抑制
+    assert data["stale"] is True
+    assert data["latest"]["factors"][0]["name"] == "momentum"  # latest 仍在
+
+
+def test_ic_dual_verdict_stale_overridable_via_env(
+    monkeypatch, tmp_path
+) -> None:
+    """48h 产物 + DUAL_MAX_AGE_HOURS=60（放宽上限，与 fetch 侧同 env）⇒ 转新鲜 available=True。"""
+    _write_latest(
+        tmp_path,
+        {
+            "run_at": _hours_ago_iso(48),
+            "as_of_b": "2026-09-24",
+            "streak_n": 5,
+            "factors": [{"name": "momentum", "hit": False, "t_a": -0.3, "t_b": -2.1}],
+        },
+    )
+    monkeypatch.setattr(cr, "_factor_ic_runtime_root", lambda: str(tmp_path))
+    monkeypatch.setenv("DUAL_MAX_AGE_HOURS", "60")
+
+    data = _client().get(ROUTE).json()["data"]
+    assert data["available"] is True  # 48h < 60h ⇒ 不压制
+    assert data["stale"] is False
+
+
+def test_ic_dual_verdict_no_timestamp_not_suppressed(
+    monkeypatch, tmp_path
+) -> None:
+    """缺 run_at/generated_at ⇒ 判不出龄（fail-safe，不压制）⇒ available=True、stale=False。"""
+    _write_latest(
+        tmp_path,
+        {
+            "as_of_b": "2026-09-24",
+            "streak_n": 5,
+            "factors": [{"name": "htf", "hit": True, "t_a": 2.4, "t_b": 2.6}],
+        },
+    )
+    monkeypatch.setattr(cr, "_factor_ic_runtime_root", lambda: str(tmp_path))
+
+    data = _client().get(ROUTE).json()["data"]
+    assert data["available"] is True
+    assert data["stale"] is False

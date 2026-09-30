@@ -532,16 +532,21 @@ function DualVerdictBar({ icDual }: { icDual: IcDualVerdictPayload | null }) {
   const v = dualVerdictSummary(icDual);
 
   if (!v.available || v.total === 0) {
+    const emptyTitle = v.stale
+      ? "双窗判决已隔离（数据陈旧）"
+      : "暂无双窗判决数据";
+    const emptyDetail = v.stale ? (
+      "上一份双窗判决已超过新鲜度上限，避免把陈旧判决误当「最新」而隔离展示；等待下一次 runner 回流后自动恢复。"
+    ) : (
+      "runner 每日双窗判决回流后，这里会展示逐因子达标/观察/翻向状态与连续达标日数。"
+    );
     return (
       <section className="aq-section">
         <SectionHeader
           title="双窗因子 IC 判决"
           description="相邻不重叠两窗（各 73 截面）逐因子同号且双 |t|≥2 达标 · 连续 5 个数据日达标 ⇒ 回换族流程（proposal-only，只记录不自动改参）"
         />
-        <EmptyState
-          title="暂无双窗判决数据"
-          detail="runner 每日双窗判决回流后，这里会展示逐因子达标/观察/翻向状态与连续达标日数。"
-        />
+        <EmptyState title={emptyTitle} detail={emptyDetail} />
       </section>
     );
   }
