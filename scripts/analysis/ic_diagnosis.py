@@ -93,10 +93,31 @@ def _window_dates(db: str, as_of: str, window_days: int, lookback: int) -> list[
     return _distinct_dates(db, as_of, window_days + lookback + 30)
 
 
+def _planb_profile_variant(profile: str) -> "object":
+    """planb profile → 代表臂（8 臂权重向量逐臂一致，仅 top_n×horizon 互异；
+    IC 侧 horizon/lookback 由 run() 外部控制，故取第一臂即可）。
+
+    非 planb profile 抛 ValueError（本入口只开放 planb_v1/v2/v3，WF001 走缺省路径）。
+    """
+    from aqsp.cli import _PLANB_VARIANTS
+
+    if profile not in _PLANB_VARIANTS:
+        raise ValueError(
+            f"未知 --planb-profile {profile!r}（可选: {', '.join(_PLANB_VARIANTS)} 或省略=WF001）"
+        )
+    return _PLANB_VARIANTS[profile][0]
+
+
 def _build_factor_objs(
-    extra: list[str], lookback: int = 60
+    extra: list[str], lookback: int = 60, variant: object | None = None
 ) -> tuple[list[str], dict[str, object]]:
-    """实例化打分对象。基础三因子走 WF-001 变体；extra 用 enabled 派生副本。"""
+    """实例化打分对象。基础三因子走 WF-001 变体；extra 用 enabled 派生副本。
+
+    ``variant``（方案 B 注入）：缺省 None = 钉 WF001（现状零漂移）；给定 planb
+    变体时 composite/基础三因子全部按该变体 thresholds 打分（7 维权重经
+    ``_apply_walkforward_grid_variant`` planb 分支注入），extra 因子随其
+    enabled 状态派生——改后权重的 composite 因子 IC 由此可复现。
+    """
     from aqsp.cli import _apply_walkforward_grid_variant, load_thresholds
     from aqsp.strategies.base import StrategyConfig
     from aqsp.strategies.candidates import HighTightFlagCandidate, RpsCandidate
@@ -104,8 +125,10 @@ def _build_factor_objs(
     from aqsp.strategies.mean_reversion import MeanReversionStrategy
     from aqsp.strategies.volume import VolumeBreakoutStrategy
 
+    # WF001 由模块顶层 import（scripts.factor_ic_diagnosis）提供，此处不再重复 import。
     thresholds = load_thresholds()
-    vth = _apply_walkforward_grid_variant(thresholds, WF001)
+    active_variant = variant if variant is not None else WF001
+    vth = _apply_walkforward_grid_variant(thresholds, active_variant)
     strategy = CompositeStrategy(thresholds=vth)
     diag = vth.with_overrides("mean_reversion", {"enabled": True}).with_overrides(
         "volume", {"enabled": True}
@@ -154,9 +177,14 @@ def run(
     extra_factors: list[str] | None = None,
     out_dir: str | Path = ".",
     write_ready: bool = True,
+    planb_profile: str | None = None,
 ) -> dict:
     """滚动 IC 诊断主流程，返回写入 JSON 的结构（供测试直接断言）。
-    write_ready 时落 IC_READY 标记（同 runner_gate 的 RESULT_READY 契约）。"""
+    write_ready 时落 IC_READY 标记（同 runner_gate 的 RESULT_READY 契约）。
+    planb_profile（方案 B 注入）：缺省 None = 钉 WF001（现状零漂移）；给定
+    planb_v1/v2/v3 时 composite/基础三因子按该 profile 代表臂 7 维权重打分
+    （主判据「改后权重双窗 IC 对照」的可执行入口，不改 thresholds.yaml）。"""
+    variant = _planb_profile_variant(planb_profile) if planb_profile else None
     _optin_prefiltered_universe()
     # 显式 as_of 时以其为窗口右端（可复现的历史窗口 / 两窗对照）；缺省取库内 MAX。
     as_of_source = "显式 --as-of" if as_of else "库内 MAX"
@@ -192,7 +220,9 @@ def run(
         index=close.index,
         columns=close.columns,
     )
-    factor_order, factor_objs = _build_factor_objs(extra_factors or [], lookback)
+    factor_order, factor_objs = _build_factor_objs(
+        extra_factors or [], lookback, variant=variant
+    )
     by_symbol: dict[str, pd.DataFrame] = {}
     for sym, g in raw.sort_values("trade_date").groupby("symbol", sort=False):
         d = g[["trade_date", "open", "high", "low", "close", "volume"]].rename(
@@ -237,6 +267,8 @@ def run(
         "lookback": lookback,
         "n_sections": len(dates),
         "universe": {"note": universe_note, "n_symbols": len(by_symbol)},
+        # 注入来源观测（proposal-only，不写回打分/排序/下单）：缺省 wf001，planb 跑 = 该 profile。
+        "ic_profile": planb_profile or "wf001",
         # §3.4 全项目禁裸 datetime.now()：统一走项目时钟 now_shanghai()，再归一 UTC。
         "generated_at": now_shanghai().astimezone(timezone.utc).strftime(
             "%Y-%m-%dT%H:%M:%SZ"
@@ -320,6 +352,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--extra-factors", default=os.environ.get("AQSP_IC_EXTRA_FACTORS", "")
     )
+    ap.add_argument(
+        "--planb-profile",
+        default=None,
+        help="方案 B 注入：planb_v1/v2/v3（composite/基础三因子按该 profile 代表臂 7 维权重打分，"
+        "主判据「改后权重双窗 IC 对照」入口）。缺省 = 钉 WF001（现状零漂移，不改 yaml）。",
+    )
     a = ap.parse_args(argv)
     run(
         a.db,
@@ -335,6 +373,7 @@ def main(argv: list[str] | None = None) -> int:
             x for x in (a.extra_factors or "").split(",") if x in _EXTRA_CHOICES
         ],
         out_dir=a.output_dir,
+        planb_profile=a.planb_profile,
     )
     return 0
 

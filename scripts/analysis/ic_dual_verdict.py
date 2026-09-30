@@ -181,13 +181,19 @@ def run_dual_verdict(
     extra_factors: list[str] | None = None,
     streak_n: int = DEFAULT_STREAK_N,
     write_ready: bool = True,
+    planb_profile: str | None = None,
 ) -> dict:
     """双窗判决主流程，返回与 dual_window_latest.json 同构的结构（供测试断言）。
 
     红线守卫：step≥horizon（重叠虚高 t）；2×window_days ≤ 3 年红线（不碰 5y）。
     双窗各跑一次 run()（scratch 子目录、write_ready=False），互验 B 窗 73 截面
     = 单窗 146 截面「近 73」同一口径（同 run() ⇒ 构造上零口径漂移）。
-    """
+
+    planb_profile（方案 B 注入，主判据入口）：缺省 None = 两窗 composite/基础三因子
+    均钉 WF001（生产滚动监控口径，**cron 零漂移**）。给定 planb_v1/v2/v3 时两窗
+    按该 profile 代表臂 7 维权重打分，用于「改后 composite 因子 IC 双窗对照」
+    （裁决单 §三步骤 2）。🔴 注入跑批须写**独立 out_dir**（如 gate_run/planb_dual_v1/），
+    与生产 ledger 的 streak 计数天然隔离（streak 只认生产 WF001 口径）。"""
     if step < horizon:
         raise ValueError(f"step({step}) < horizon({horizon})：截面重叠虚高 t，拒绝")
     if 2 * window_days > THREE_YEAR_REDLINE_DAYS:
@@ -213,6 +219,7 @@ def run_dual_verdict(
         min_avg_amount=min_avg_amount,
         extra_factors=extra_factors,
         write_ready=False,
+        planb_profile=planb_profile,
     )
     rb = run(db, as_of=as_of_b, out_dir=str(scratch / "b"), **common)
     ra = run(db, as_of=as_of_a, out_dir=str(scratch / "a"), **common)
@@ -246,6 +253,7 @@ def run_dual_verdict(
 
     result = {
         **row,
+        "ic_profile": planb_profile or "wf001",
         "streak_n": streak_n,
         "streaks": streaks,
         "event": event,
@@ -282,6 +290,12 @@ def _write_dual_report(path: Path, r: dict) -> None:
         f"- 窗口 A: 截至 `{r['as_of_a']}`（前 {r['window_days']} 交易日）｜"
         f"窗口 B: 截至 `{r['as_of_b']}`（库 MAX）｜step={r['step']}｜"
         f"各 {r['n_sections_a']}/{r['n_sections_b']} 截面（相邻不重叠，均未读未来数据）",
+        f"- IC 打分口径: `{r.get('ic_profile', 'wf001')}`"
+        + (
+            "（planb 注入跑批，composite/基础三因子按该 profile 代表臂 7 维权重）"
+            if r.get("ic_profile", "wf001") != "wf001"
+            else "（生产 WF001 口径）"
+        ),
         f"- 判据: 两窗同号 且 双 |t|≥2；连续 {r['streak_n']} 个数据日达标 ⇒ "
         f"revisit_family 事件（**仅记录，不自动改参数/权重/下单**）",
         "",
@@ -320,6 +334,14 @@ def main(argv: list[str] | None = None) -> int:
         default=os.environ.get("AQSP_IC_EXTRA_FACTORS", ""),
     )
     ap.add_argument("--streak-n", type=int, default=DEFAULT_STREAK_N)
+    ap.add_argument(
+        "--planb-profile",
+        default=None,
+        help="方案 B 注入（主判据入口）：planb_v1/v2/v3 ⇒ 两窗 composite/基础三因子"
+        " 按该 profile 代表臂 7 维权重打分，用于「改后权重双窗 IC 对照」。"
+        "缺省 = 钉 WF001（生产滚动监控口径，cron 零漂移）。"
+        "🔴 注入跑批务必配独立 --output-dir（与生产 ledger 的 streak 计数隔离）。",
+    )
     a = ap.parse_args(argv)
     extra = [x for x in (a.extra_factors or "").split(",") if x]
     run_dual_verdict(
@@ -333,6 +355,7 @@ def main(argv: list[str] | None = None) -> int:
         min_avg_amount=a.min_avg_amount,
         extra_factors=extra,
         streak_n=a.streak_n,
+        planb_profile=a.planb_profile,
     )
     return 0
 
