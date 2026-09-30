@@ -2033,6 +2033,51 @@ def ic_history_endpoint():
 
 
 @app.get(
+    "/api/aqsp/ic-dual-verdict",
+    tags=["AQSP 研究"],
+    summary="双窗因子 IC 滚动判决（每日 · proposal-only）",
+    description="""
+返回 runner 每日双窗因子 IC 判决（`ic_dual_verdict.py` 的 `dual_window_latest.json`，
+只读回流产物）：两个相邻不重叠等长窗（各 73 截面，3 年红线内）逐因子的
+IC/t 同号且双 |t|≥2 达标判定 + 连续达标日数 + `revisit_family` 事件。
+
+用途：换族决策的**监控面**（方案 B §六 判据的每日滚动版）——「某因子何时稳定达标、
+该回换族流程」一眼可见。
+
+红线：
+- **proposal-only**：纯只读展示，产物/端点/前端均**绝不写回打分/排序/下单、不自动改参数**。
+- **fail-soft**：双窗产物缺失（尚未启用/未回流）/ 读失败 / 字段残缺 ⇒ `available=false`、
+  `latest=null`，端点仍 200，绝不 500（区别于单窗 ic-history，双窗是新增监控面，缺了不拖主链路）。
+""",
+)
+def ic_dual_verdict_endpoint():
+    """双窗因子 IC 滚动判决（只读 · proposal-only · fail-soft）。"""
+    from aqsp.briefing.closing_review import _factor_ic_runtime_root
+
+    try:
+        import json as _json
+        from pathlib import Path as _Path
+
+        root = _factor_ic_runtime_root()
+        path = _Path(root) / "pit_cache" / "factor_ic" / "dual_window_latest.json"
+        latest = None
+        available = False
+        streak_n = 5
+        if path.exists():
+            try:
+                latest = _json.loads(path.read_text(encoding="utf-8"))
+                available = bool(latest.get("factors"))
+                streak_n = int(latest.get("streak_n", 5))
+            except Exception:  # 读失败/字段残缺 ⇒ 降级空，不 500
+                latest = None
+        return {"data": {"available": available, "latest": latest, "streak_n": streak_n}}
+    except HTTPException:
+        raise
+    except Exception:  # noqa: BLE001  读失败/字段残缺 ⇒ fail-soft，绝不 500
+        return {"data": {"available": False, "latest": None, "streak_n": 5}}
+
+
+@app.get(
     "/api/aqsp/closing-review",
     tags=["AQSP 研究"],
     summary="收评日报 6 段（市场级 · 只读聚合）",

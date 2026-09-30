@@ -34,6 +34,17 @@ if [ "${FAKE_SSH_FAIL:-0}" = "1" ]; then
   exit 255
 fi
 cat >/dev/null 2>&1 || true
+# 双窗产物存在性探测可开关（fail-soft）：FAKE_DUAL_PRESENT=0 ⇒ 远端无双窗文件
+# （4 个双窗产物：dual_window_history.jsonl / dual_window_latest.json /
+#  dual_report.md / IC_READY_DUAL；前 3 个 dual_ 前缀、末个大写 DUAL，两种都匹配）。
+# 单窗 test -f（factor_ic_latest.json 等）不受此开关影响，一律放行。
+case "$cmd" in
+  *test\\ -f\\ *dual_*|*test\\ -f*IC_READY_DUAL*)
+    if [ "${FAKE_DUAL_PRESENT:-1}" = "0" ]; then
+      exit 1
+    fi
+    ;;
+esac
 case "$cmd" in
   *bash\\ -s*)
     now=$(date +%s)
@@ -84,6 +95,7 @@ def _fake_bin(
     ssh_fail: bool = False,
     dry_run: str = "0",
     max_age_hours: str = "36",
+    dual_present: int = 1,
 ) -> tuple[Path, dict[str, str]]:
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir(parents=True, exist_ok=True)
@@ -104,6 +116,7 @@ def _fake_bin(
         "FAKE_JSON_PRESENT": str(json_present),
         "FAKE_STATUS_VALUE": status_value,
         "FAKE_SSH_FAIL": "1" if ssh_fail else "0",
+        "FAKE_DUAL_PRESENT": str(dual_present),
     }
     return fake_bin, env
 
@@ -190,3 +203,45 @@ def test_fetch_ic_fails_closed_when_runner_unreachable(tmp_path: Path) -> None:
     result, dest = _run(tmp_path, ssh_fail=True, ready_present=1, json_present=1)
     assert result.returncode == 1, result.stdout + result.stderr
     assert not (dest / "factor_ic_latest.json").exists(), "连不上时保留本地旧产物"
+
+
+def test_fetch_ic_pulls_dual_window_artifacts_when_present(tmp_path: Path) -> None:
+    """双窗判决产物（proposal-only）远端存在 ⇒ 随单窗一起拉回，exit 0。"""
+    result, dest = _run(
+        tmp_path,
+        ready_present=1,
+        ready_age_h=2,
+        json_present=1,
+        status_value="completed",
+        dual_present=1,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    for name in (
+        "dual_window_history.jsonl",
+        "dual_window_latest.json",
+        "dual_report.md",
+        "IC_READY_DUAL",
+    ):
+        assert (dest / name).exists(), f"双窗产物应被拉取：{name}"
+
+
+def test_fetch_ic_dual_absent_is_fail_soft_not_an_error(tmp_path: Path) -> None:
+    """双窗产物远端缺（未启用/未产出）⇒ 静默跳过，不影响单窗主退出码语义（exit 0）。
+
+    红线：双窗是 proposal-only 监控面，「双窗缺失」绝不降级单窗回流为失败。
+    """
+    result, dest = _run(
+        tmp_path,
+        ready_present=1,
+        ready_age_h=2,
+        json_present=1,
+        status_value="completed",
+        dual_present=0,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    # 单窗 4 文件照常拉取
+    for name in ("factor_ic_latest.json", "ic_history.jsonl", "report.md", "IC_READY"):
+        assert (dest / name).exists(), f"单窗产物应不受双窗缺失影响：{name}"
+    # 双窗 4 文件未被拉取（远端无 ⇒ 不创建）
+    for name in ("dual_window_history.jsonl", "dual_window_latest.json", "IC_READY_DUAL"):
+        assert not (dest / name).exists(), f"远端无该双窗文件时不得臆造：{name}"

@@ -105,4 +105,46 @@ else
   rm -f "$OUT_DIR/IC_READY"
   log "IC 诊断未成功（rc=$rc），已清理旧 IC_READY，跳过回传；exit 0 不阻断"
 fi
+
+# ── 3) 双窗 IC 滚动判决（proposal-only）：单窗成功后顺跑 ──────────────────
+#    设计（方案 IC双窗滚动监控）：
+#      - 独立 load 复核 + 独立超时预算（DUAL_TIMEOUT_SEC），绝不抢业务/抢单窗；
+#      - 双窗失败/超时 ⇒ 删 IC_READY_DUAL（不留陈旧标记），但**不碰单窗 IC_READY**
+#        （单窗成果保住），exit 0 不阻断；
+#      - 红线（脚本内守卫）：step≥horizon（不重叠虚高 t）、双窗总深≤3 年；
+#        产物只读回流 + 事件记录，**不自动改参数/权重/下单**（proposal-only）。
+#    单窗未成功（无 IC_READY）⇒ 跳过双窗（数据面不可信时不判决）。
+DUAL_ENABLE="${DUAL_ENABLE:-1}"
+DUAL_TIMEOUT_SEC="${DUAL_TIMEOUT_SEC:-1800}"
+DUAL_WINDOW_DAYS="${DUAL_WINDOW_DAYS:-365}"
+DUAL_STEP="${DUAL_STEP:-5}"
+if [ "$DUAL_ENABLE" = "1" ] && [ -f "$OUT_DIR/IC_READY" ]; then
+  dual_rc=0
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "$DUAL_TIMEOUT_SEC" "$PY" "$RELEASE/scripts/ic_dual_verdict.py" \
+      --db "$DATA" \
+      --output-dir "$OUT_DIR" \
+      --window-days "$DUAL_WINDOW_DAYS" \
+      --step "$DUAL_STEP" \
+      --extra-factors "$EXTRA_FACTORS" \
+      >>"$OUT_DIR/dual_run.log" 2>&1 || dual_rc=$?
+  else
+    log "⚠️ 无 timeout 命令，双窗无超时墙直跑（仅开发环境可接受）"
+    "$PY" "$RELEASE/scripts/ic_dual_verdict.py" \
+      --db "$DATA" \
+      --output-dir "$OUT_DIR" \
+      --window-days "$DUAL_WINDOW_DAYS" \
+      --step "$DUAL_STEP" \
+      --extra-factors "$EXTRA_FACTORS" \
+      >>"$OUT_DIR/dual_run.log" 2>&1 || dual_rc=$?
+  fi
+  if [ "$dual_rc" -eq 0 ] && [ -f "$OUT_DIR/IC_READY_DUAL" ]; then
+    log "双窗 IC 判决完成 → $OUT_DIR（proposal-only，已标记 IC_READY_DUAL）"
+  else
+    rm -f "$OUT_DIR/IC_READY_DUAL"
+    log "双窗判决未成功（rc=$dual_rc），已清理旧 IC_READY_DUAL；单窗 IC_READY 不受影响；exit 0 不阻断"
+  fi
+elif [ "$DUAL_ENABLE" = "1" ]; then
+  log "单窗无 IC_READY，跳过双窗判决"
+fi
 exit 0
