@@ -152,6 +152,55 @@ class TestVerdictForFactor:
         assert v["sign_match"] is False
 
 
+class TestVerdictForFactorNumpyTypes:
+    """numpy 型 stats 回归（首跑实证 2026-09-30 暴露的真缺陷）。
+
+    上游 ``ic_diagnosis.run()`` 的 per-factor stats 是 numpy 标量：``t`` 在
+    std>0 时为 np.float64，比较式 ``na>=MIN`` 产 np.bool_。``np.bool_`` 不是
+    Python ``bool`` 子类，直接进 ``json.dumps`` 会
+    ``TypeError: Object of type bool is not JSON serializable``。合成单测用
+    Python 型 stats 故未暴露——这里以 numpy 型输入 + 端到端 json.dumps 兜住。
+    """
+
+    def test_numpy_stats_produce_native_types_and_serialize(self):
+        # B 窗某因子 |t|<2 ⇒ dual_significant 走「短路为 np.bool_(False)」分支
+        a = {"mean": np.float64(-0.04), "t": np.float64(-2.5), "n": np.int64(73)}
+        b = {"mean": np.float64(-0.01), "t": np.float64(-0.8), "n": np.int64(73)}
+        v = verdict_for_factor(a, b)
+        # 类型必须落到**内置** native（np.bool_ 不是 bool 子类，type(...) is bool 才
+        # 能在所有 numpy 版本上区分 np.bool_ 与 built-in bool——isinstance 在旧版
+        # numpy（np.bool_ 曾是 bool 子类）上会假绿，故用 type 同一性断言）。
+        assert type(v["sign_match"]) is bool
+        assert type(v["dual_significant"]) is bool
+        assert type(v["hit"]) is bool
+        assert type(v["mean_a"]) is float
+        assert type(v["t_a"]) is float
+        assert type(v["n_a"]) is int
+        # 端到端可序列化（首跑正是栽在这一步）
+        json.dumps({"factors": {"momentum": v}}, ensure_ascii=False)
+        # 语义不变：A 窗 |t|≥2 但 B 窗 |t|<2 ⇒ 方向同号但未双显著 ⇒ no hit
+        assert v["sign_match"] is True
+        assert v["dual_significant"] is False
+        assert v["hit"] is False
+
+    def test_hit_with_numpy_stats_serializes_true(self):
+        a = {"mean": np.float64(0.03), "t": np.float64(2.4), "n": np.int64(73)}
+        b = {"mean": np.float64(0.035), "t": np.float64(2.6), "n": np.int64(73)}
+        v = verdict_for_factor(a, b)
+        assert v["hit"] is True
+        assert type(v["dual_significant"]) is bool  # np.bool_(True) 也须 native 化
+        json.dumps(v, ensure_ascii=False)
+
+    def test_nan_numpy_mean_no_hit_and_serializes(self):
+        nan = np.float64("nan")
+        a = {"mean": nan, "t": nan, "n": np.int64(73)}
+        b = {"mean": np.float64(0.02), "t": np.float64(2.4), "n": np.int64(73)}
+        v = verdict_for_factor(a, b)
+        assert v["sign_match"] is False
+        assert v["hit"] is False
+        json.dumps(v, ensure_ascii=False)
+
+
 class TestFactorStreak:
     def test_streak_counts_from_latest_day_and_breaks_on_miss(self):
         rows = [
