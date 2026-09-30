@@ -7,6 +7,7 @@
 // 样本不足时给出数字会制造虚假信心，所以这一页在此情况下必须显示"—"。
 import { useCallback, useEffect, useState } from "react";
 import { Gauge, RefreshCw, TrendingDown } from "lucide-react";
+import { Link } from "react-router-dom";
 import { api, type IcHistoryPayload, type PerformancePayload } from "@/lib/api";
 import { icTrendOption } from "@/lib/chart-options";
 import { useThemeMode } from "@/lib/theme-mode";
@@ -24,10 +25,18 @@ import {
   factorLabel,
   ledgerStatusLabel,
   strategyLabel,
+  strategyListLabel,
 } from "@/lib/display-labels";
 import {
+  exitReasonLabel,
+  formatReturnPct,
   normalizePerformance,
   performanceHeadline,
+  recentPicksSummary,
+  sortRecentPicks,
+  type RecentPickView,
+  type RecentPicksSortKey,
+  type SortDir,
   stalenessMessage,
 } from "@/lib/performance-view";
 import { cn } from "@/lib/utils";
@@ -89,6 +98,9 @@ export function PerformancePage() {
   }, [load]);
 
   const view = normalizePerformance(payload);
+
+  // 票级复盘明细：仅有已结算（validated）逐笔时挂载；空数据整块隐藏，不编数字。
+  const picksSummary = recentPicksSummary(view.recentPicks);
 
   if (loading && !payload.available) return <LoadingState label="正在读取选股绩效…" />;
   if (error) return <StatePanel tone="warn">{error}</StatePanel>;
@@ -210,6 +222,11 @@ export function PerformancePage() {
             )}
           </section>
 
+          {/* 票级复盘明细：上次具体选了哪只票、事后结果如何（逐笔事实，非统计推断） */}
+          {view.available && picksSummary.total > 0 ? (
+            <RecentPicksDetail picks={view.recentPicks} />
+          ) : null}
+
           {/* 策略表现 */}
           <section className="aq-section">
             <SectionHeader
@@ -317,5 +334,167 @@ export function PerformancePage() {
         </>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * 票级复盘明细（#69b）：把"上次具体选了哪只票、事后结果如何"落成一张可扫读的完整表。
+ *
+ * 与 DecisionPanel 内嵌的紧凑 `RecentPicksTable` 的区别：这里是**绩效页的一等公民**——
+ * 带汇总条（命中/未中/平均收益·仅观测）+ 可点击列头排序，适合"逐笔回看"，而非决策面板里
+ * 扫一眼的缩略表。数据与 DecisionPanel 同源（performance.recent_picks），零重复拉取。
+ *
+ * 诚实边界：
+ *   - 命中/未中是逐笔事实计数（不受 §5.4 样本门槛约束，可如实展示）；
+ *   - 平均收益是 PnL 派生，标注"仅观测"，绝不当主指标（§8）；
+ *   - 收益缺失（returnPct/excessReturnPct = null）显示 "—"，与"真的是 0"区分开；
+ *   - 红涨绿跌：A 股约定，正收益着色 aq-pick-return-pos、负收益着色 aq-pick-return-neg。
+ */
+function RecentPicksDetail({ picks }: { picks: readonly RecentPickView[] }) {
+  const [sortKey, setSortKey] = useState<RecentPicksSortKey>("signalDate");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const rows = sortRecentPicks(picks, sortKey, sortDir);
+  const sum = recentPicksSummary(picks);
+
+  const toggle = (key: RecentPicksSortKey) => {
+    if (key === sortKey) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(key);
+      // 首次点某列给最直觉的方向：日期升序（旧→新），收益/超额降序（大→小）
+      setSortDir(key === "signalDate" ? "asc" : "desc");
+    }
+  };
+
+  // 列头排序指示：只在当前排序列上显，方向明确
+  const sortMark = (key: RecentPicksSortKey) =>
+    key !== sortKey ? null : sortDir === "asc" ? " ↑" : " ↓";
+
+  return (
+    <section className="aq-section">
+      <SectionHeader
+        title="票级复盘明细"
+        description="上次具体选了哪只票、事后结果如何 · 逐笔事实（命中率见「按策略」，平均收益仅观测 §8）"
+        count={`${sum.total} 笔`}
+      />
+
+      {/* 汇总条：命中/未中是逐笔事实，可如实展示；平均收益标注仅观测 */}
+      <div className="aq-flow-cols">
+        <div className="aq-insights-card">
+          <b className="aq-tone-up">{sum.hitRatio !== null ? `${(sum.hitRatio * 100).toFixed(1)}%` : "—"}</b>
+          <span>命中 {sum.winCount} / 未中 {sum.loseCount}</span>
+        </div>
+        <div className="aq-insights-card">
+          <b
+            className={
+              sum.avgReturnPct === null
+                ? undefined
+                : sum.avgReturnPct > 0
+                  ? "aq-pick-return-pos"
+                  : sum.avgReturnPct < 0
+                    ? "aq-pick-return-neg"
+                    : "aq-pick-return-mid"
+            }
+          >
+            {sum.avgReturnPct !== null ? formatReturnPct(sum.avgReturnPct) : "—"}
+          </b>
+          <span>平均收益（仅观测 · {sum.recordedReturns} 笔已记录）</span>
+        </div>
+        <div className="aq-insights-card">
+          <b>
+            <span className="aq-pick-return-pos">{sum.posCount}</span>
+            {" / "}
+            <span className="aq-pick-return-neg">{sum.negCount}</span>
+          </b>
+          <span>正 / 负收益笔数</span>
+        </div>
+      </div>
+
+      <div className="aq-table-wrap">
+        <table className="aq-table aq-decision-review-table">
+          <thead>
+            <tr>
+              <th>
+                <button type="button" className="aq-th-sort" onClick={() => toggle("signalDate")}>
+                  代码 / 名称{sortMark("signalDate")}
+                </button>
+              </th>
+              <th>信号日</th>
+              <th>了结</th>
+              <th className="aq-num">
+                <button
+                  type="button"
+                  className="aq-th-sort aq-num"
+                  onClick={() => toggle("returnPct")}
+                >
+                  收益{sortMark("returnPct")}
+                </button>
+              </th>
+              <th className="aq-num">
+                <button
+                  type="button"
+                  className="aq-th-sort aq-num"
+                  onClick={() => toggle("excessReturnPct")}
+                >
+                  超额{sortMark("excessReturnPct")}
+                </button>
+              </th>
+              <th>结果 / 策略</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => {
+              const retClass =
+                row.returnPct === null
+                  ? "aq-pick-return-mid"
+                  : row.returnPct > 0
+                    ? "aq-pick-return-pos"
+                    : row.returnPct < 0
+                      ? "aq-pick-return-neg"
+                      : "aq-pick-return-mid";
+              const excessClass =
+                row.excessReturnPct === null
+                  ? "aq-pick-return-mid"
+                  : row.excessReturnPct > 0
+                    ? "aq-pick-return-pos"
+                    : row.excessReturnPct < 0
+                      ? "aq-pick-return-neg"
+                      : "aq-pick-return-mid";
+              return (
+                <tr key={`${row.symbol}-${row.signalDate}`}>
+                  <td>
+                    <Link to={`/stock/${row.symbol}`} className="aq-link">
+                      <b>{row.symbol}</b>
+                    </Link>
+                    <span className="aq-decision-cand-name">{row.name}</span>
+                  </td>
+                  <td className="aq-num">{row.signalDate || "—"}</td>
+                  <td className="aq-num">
+                    {row.exitDate ? (
+                      <>
+                        {row.exitDate}
+                        <div className="aq-decision-review-strat">{exitReasonLabel(row.exitReason)}</div>
+                      </>
+                    ) : (
+                      <span className="aq-pick-return-mid">未了结</span>
+                    )}
+                  </td>
+                  <td className={cn("aq-num", retClass)}>{formatReturnPct(row.returnPct)}</td>
+                  <td className={cn("aq-num", excessClass)}>
+                    {row.excessReturnPct === null ? "—" : formatReturnPct(row.excessReturnPct)}
+                  </td>
+                  <td>
+                    <Tag tone={row.win ? "ok" : "neutral"}>{row.win ? "命中" : "未中"}</Tag>
+                    {row.strategies.length ? (
+                      <span className="aq-decision-review-strat">{strategyListLabel(row.strategies)}</span>
+                    ) : null}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }
