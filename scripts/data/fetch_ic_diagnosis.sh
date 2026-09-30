@@ -141,4 +141,21 @@ if [ "$PULLED" -eq 0 ]; then
   exit "$EXIT_NO_RESULT"
 fi
 log "IC 诊断回流完成：${PULLED} 个文件 → $DEST_DIR"
+
+# ── 4) 双窗 IC 判决产物（fail-soft，不影响单窗主退出码语义） ────────────────
+#    双窗是 proposal-only 监控面：远端缺产物（尚未启用 / 跑失败）时静默跳过，
+#    绝不把「双窗缺失」当整体失败（单窗 4 文件已成功拉取 = 本次回流达成）。
+DUAL_PULLED=0
+for f in dual_window_history.jsonl dual_window_latest.json dual_report.md IC_READY_DUAL; do
+  if $RSYNC_SSH "$RUNNER_HOST" "test -f '$REMOTE_DIR/$f'"; then
+    rsync -a -e "$RSYNC_SSH" "$RUNNER_HOST:$REMOTE_DIR/$f" "$DEST_DIR/"
+    DUAL_PULLED=$((DUAL_PULLED + 1))
+    log "已拉取双窗产物 → $DEST_DIR/$f"
+  fi
+done
+if [ "$DUAL_PULLED" -gt 0 ]; then
+  log "双窗 IC 判决回流完成：${DUAL_PULLED} 个文件 → $DEST_DIR"
+else
+  log "双窗 IC 判决产物暂缺（未启用/未产出）——跳过，不影响单窗回流（exit 0）"
+fi
 exit 0

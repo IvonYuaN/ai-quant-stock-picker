@@ -8,7 +8,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { Gauge, RefreshCw, TrendingDown } from "lucide-react";
 import { Link } from "react-router-dom";
-import { api, type IcHistoryPayload, type PerformancePayload } from "@/lib/api";
+import {
+  api,
+  type IcDualVerdictPayload,
+  type IcHistoryPayload,
+  type PerformancePayload,
+} from "@/lib/api";
 import { icTrendOption } from "@/lib/chart-options";
 import { useThemeMode } from "@/lib/theme-mode";
 import { EChart } from "@/components/ui/EChart";
@@ -39,6 +44,7 @@ import {
   type SortDir,
   stalenessMessage,
 } from "@/lib/performance-view";
+import { dualVerdictSummary, type DualFactorView } from "@/lib/dual-verdict-view";
 import { cn } from "@/lib/utils";
 
 const EMPTY_PAYLOAD: PerformancePayload = {
@@ -71,6 +77,7 @@ const EMPTY_PAYLOAD: PerformancePayload = {
 export function PerformancePage() {
   const [payload, setPayload] = useState<PerformancePayload>(EMPTY_PAYLOAD);
   const [icHistory, setIcHistory] = useState<IcHistoryPayload | null>(null);
+  const [icDual, setIcDual] = useState<IcDualVerdictPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const mode = useThemeMode();
@@ -90,6 +97,12 @@ export function PerformancePage() {
       setIcHistory(await api.icHistory());
     } catch {
       setIcHistory(null);
+    }
+    // 双窗因子 IC 判决（proposal-only 监控面）：独立加载，fail-soft
+    try {
+      setIcDual(await api.icDualVerdict());
+    } catch {
+      setIcDual(null);
     }
   }, []);
 
@@ -221,6 +234,9 @@ export function PerformancePage() {
               />
             )}
           </section>
+
+          {/* 双窗因子 IC 滚动判决（proposal-only 监控面：换族判据的每日滚动版） */}
+          <DualVerdictBar icDual={icDual} />
 
           {/* 票级复盘明细：上次具体选了哪只票、事后结果如何（逐笔事实，非统计推断） */}
           {view.available && picksSummary.total > 0 ? (
@@ -495,6 +511,118 @@ function RecentPicksDetail({ picks }: { picks: readonly RecentPickView[] }) {
           </tbody>
         </table>
       </div>
+    </section>
+  );
+}
+
+/**
+ * 双窗因子 IC 滚动判决状态条（proposal-only 监控面）。
+ *
+ * 数据 = /aqsp/ic-dual-verdict（runner 每日双窗判决回流）；经 `dualVerdictSummary`
+ * 归一成三态（hit 达标 / pending 方向稳待功效 / miss 翻向）。
+ * 红线：纯展示「何时该回换族流程」的监控读数，**绝不写回打分/排序/下单**。
+ * 配色沿用红涨绿跌（同票级复盘表）：t 正向 = 红（有效因子）、t 反向 = 绿（失效因子）。
+ */
+function tColumnClass(t: number | null): string {
+  if (t === null) return "";
+  return t > 0 ? "aq-pick-return-pos" : t < 0 ? "aq-pick-return-neg" : "";
+}
+
+function DualVerdictBar({ icDual }: { icDual: IcDualVerdictPayload | null }) {
+  const v = dualVerdictSummary(icDual);
+
+  if (!v.available || v.total === 0) {
+    return (
+      <section className="aq-section">
+        <SectionHeader
+          title="双窗因子 IC 判决"
+          description="相邻不重叠两窗（各 73 截面）逐因子同号且双 |t|≥2 达标 · 连续 5 个数据日达标 ⇒ 回换族流程（proposal-only，只记录不自动改参）"
+        />
+        <EmptyState
+          title="暂无双窗判决数据"
+          detail="runner 每日双窗判决回流后，这里会展示逐因子达标/观察/翻向状态与连续达标日数。"
+        />
+      </section>
+    );
+  }
+
+  return (
+    <section className="aq-section">
+      <SectionHeader
+        title="双窗因子 IC 判决"
+        description={`截至 B 窗 ${v.as_of_b}（前窗 ${v.as_of_a}）· 两窗各 73 截面 · 同号且双 |t|≥2 才达标`}
+      />
+      <div className="aq-flow-cols">
+        <div className="aq-insights-card">
+          <b className={v.hitCount > 0 ? "aq-pick-return-pos" : undefined}>{v.hitCount}</b>
+          <span>达标因子（同号且双 |t|≥2）</span>
+        </div>
+        <div className="aq-insights-card">
+          <b>{v.pendingCount}</b>
+          <span>观察中（方向稳、功效待补）</span>
+        </div>
+        <div className="aq-insights-card">
+          <b className={v.missCount > 0 ? "aq-pick-return-neg" : undefined}>{v.missCount}</b>
+          <span>翻向 / 未同向因子</span>
+        </div>
+      </div>
+
+      {v.event === "revisit_family" ? (
+        <p className="aq-note">
+          ⚠️ 已触发 <b>revisit_family</b>：有因子连续 {v.streak_n} 个数据日双窗达标 ⇒ 建议回换族流程
+          （本层只记录提醒，不自动改权重/下单）。
+        </p>
+      ) : null}
+      {v.next_candidate ? (
+        <p className="aq-note">
+          观察候选：<b>{factorLabel(v.next_candidate)}</b> 方向稳定但功效未双达标，持续滚动监控。
+        </p>
+      ) : null}
+
+      <div className="aq-table-wrap">
+        <table className="aq-table">
+          <thead>
+            <tr>
+              <th>因子</th>
+              <th className="aq-num">A 窗 t</th>
+              <th className="aq-num">B 窗 t</th>
+              <th>状态</th>
+              <th className="aq-num">连续达标日</th>
+            </tr>
+          </thead>
+          <tbody>
+            {v.factors.map((f: DualFactorView) => {
+              const statusTag =
+                f.status === "hit" ? (
+                  <Tag tone="ok">达标</Tag>
+                ) : f.status === "pending" ? (
+                  <Tag tone="warn">观察</Tag>
+                ) : (
+                  <Tag tone="neutral">翻向</Tag>
+                );
+              return (
+                <tr key={f.name}>
+                  <td>{factorLabel(f.name)}</td>
+                  <td className={cn("aq-num", tColumnClass(f.t_a))}>
+                    {f.t_a === null ? "—" : f.t_a.toFixed(2)}
+                  </td>
+                  <td className={cn("aq-num", tColumnClass(f.t_b))}>
+                    {f.t_b === null ? "—" : f.t_b.toFixed(2)}
+                  </td>
+                  <td>{statusTag}</td>
+                  <td className="aq-num">
+                    {f.streak}/{v.streak_n}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p className="aq-note">
+        判据（方案 B §六）：两窗 IC 同号 且 双 |t|≥2；连续 {v.streak_n} 个数据日达标 ⇒
+        revisit_family 事件。纯诊断层，不产出信号、不写回打分/排序/下单。
+      </p>
     </section>
   );
 }

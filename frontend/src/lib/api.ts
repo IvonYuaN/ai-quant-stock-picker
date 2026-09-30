@@ -598,6 +598,44 @@ export interface IcHistoryPayload {
   latest_factors: Record<string, number>;
 }
 
+/** `GET /api/aqsp/ic-dual-verdict` 的 `data`：双窗因子 IC 滚动判决（proposal-only）。 */
+export interface IcDualFactorVerdict {
+  mean_a: number | null;
+  t_a: number | null;
+  n_a: number;
+  mean_b: number | null;
+  t_b: number | null;
+  n_b: number;
+  /** 两窗 IC 同号（方向稳定）。 */
+  sign_match: boolean;
+  /** 双 |t|≥2（且两窗截面数 ≥ 门槛）。 */
+  dual_significant: boolean;
+  /** 达标 = sign_match && dual_significant。 */
+  hit: boolean;
+}
+
+export interface IcDualVerdictPayload {
+  /** 双窗产物是否存在（fail-soft：未启用/未回流 = false，端点仍 200）。 */
+  available: boolean;
+  /** 最新一次双窗判决；available=false 时为 null。 */
+  latest: {
+    run_at: string;
+    as_of_a: string;
+    as_of_b: string;
+    window_days: number;
+    step: number;
+    n_sections_a: number;
+    n_sections_b: number;
+    factors: Record<string, IcDualFactorVerdict>;
+    hits: string[];
+    streaks: Record<string, number>;
+    event: string | null;
+    next_candidate: string | null;
+  } | null;
+  /** 连续达标日数阈值（N 日达标 ⇒ revisit_family 事件）。 */
+  streak_n: number;
+}
+
 /** `GET /api/aqsp/closing-review` 的 `data.sections` 元素：单段收评（市场级只读）。 */
 export interface ClosingReviewSection {
   key: string;
@@ -690,6 +728,7 @@ export const api = {
   reviewTags: () => get<string[]>("/reviews/tags"),
   reviewInsights: () => get<ReviewInsights>("/reviews/insights"),
   icHistory: () => get<IcHistoryPayload>("/aqsp/ic-history"),
+  icDualVerdict: () => get<IcDualVerdictPayload>("/aqsp/ic-dual-verdict"),
   // 收评日报 6 段（市场级只读聚合，fail-soft）
   closingReview: () => get<ClosingReviewPayload>("/aqsp/closing-review"),
   createReview: (input: ReviewCreateInput) =>
