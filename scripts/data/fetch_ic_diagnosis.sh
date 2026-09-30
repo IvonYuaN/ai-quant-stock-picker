@@ -11,7 +11,11 @@
 #   - IC_READY 不存在            ⇒ 本轮 runner 没产出（未跑/让位/失败）：保留本地旧产物，exit 2
 #   - IC_READY 陈旧(>MAX_AGE_H)  ⇒ 旧产物伪装风险：保留本地旧产物，exit 3（不当成「有新结果」）
 #   - 新鲜                       ⇒ rsync 拉取 4 个产物，exit 0
-# 退出码是 best-effort 语义：调用方（daily 链路）只记日志、绝不因此阻断跑批。
+# 双窗新鲜度契约（§4，M5 补）：双窗段 fail-soft 但**不豁免新鲜度**——
+#   - IC_READY_DUAL 陈旧(>DUAL_MAX_AGE_HOURS，默认=MAX_AGE_HOURS)
+#     ⇒ runner 双窗连续失败/让位：隔离（删除）本地旧双窗 4 文件，端点 fail-soft
+#       available:false，绝不把陈旧判决静默当「最新」展示（不影响单窗 exit 0）。
+退出码是 best-effort 语义：调用方（daily 链路）只记日志、绝不因此阻断跑批。
 #
 # 用法（在 prod 上）：
 #   DRY_RUN=1 bash scripts/fetch_ic_diagnosis.sh        # 只判定并打印，不实际拉
@@ -77,6 +81,16 @@ if [ -f "$status" ]; then
 else
   echo "STATUS_VALUE="
 fi
+# 双窗判决新鲜度标记（runner 双窗段成功才写 IC_READY_DUAL；stale ⇒ prod 须删
+# 本地旧双窗产物，防端点把陈旧判决当「最新」静默展示）
+dualready="$OUT/IC_READY_DUAL"
+if [ -f "$dualready" ]; then
+  echo "DUAL_READY_PRESENT=1"
+  echo "DUAL_READY_MTIME=$(stat -c %Y "$dualready" 2>/dev/null || echo 0)"
+else
+  echo "DUAL_READY_PRESENT=0"
+  echo "DUAL_READY_MTIME=0"
+fi
 REMOTE
 )" || {
   log "❌ 无法连接 runner（${RUNNER_HOST}:${RUNNER_PORT}）；保留本地旧产物"
@@ -89,8 +103,11 @@ READY_PRESENT="$(field READY_PRESENT)"
 READY_MTIME="$(field READY_MTIME)"
 JSON_PRESENT="$(field JSON_PRESENT)"
 STATUS_VALUE="$(field STATUS_VALUE)"
+DUAL_READY_PRESENT="$(field DUAL_READY_PRESENT)"
+DUAL_READY_MTIME="$(field DUAL_READY_MTIME)"
 NOW="${NOW:-0}"
 READY_MTIME="${READY_MTIME:-0}"
+DUAL_READY_MTIME="${DUAL_READY_MTIME:-0}"
 
 age_hours() {  # $1 = mtime epoch；输出整数小时（负数归 0）
   local mtime="${1:-0}"
@@ -142,18 +159,38 @@ if [ "$PULLED" -eq 0 ]; then
 fi
 log "IC 诊断回流完成：${PULLED} 个文件 → $DEST_DIR"
 
-# ── 4) 双窗 IC 判决产物（fail-soft，不影响单窗主退出码语义） ────────────────
+# ── 4) 双窗 IC 判决产物（fail-soft + 新鲜度契约，不影响单窗主退出码语义） ────
 #    双窗是 proposal-only 监控面：远端缺产物（尚未启用 / 跑失败）时静默跳过，
 #    绝不把「双窗缺失」当整体失败（单窗 4 文件已成功拉取 = 本次回流达成）。
+#    新鲜度契约（同单窗 IC_READY 范式，防「静默失效≠健康」）：
+#      runner 双窗连续失败/让位 ⇒ IC_READY_DUAL 陈旧（> DUAL_MAX_AGE_HOURS，默认 36h
+#      = 单窗 MAX_AGE_HOURS 同值）⇒ 删本地旧双窗 4 文件 ⇒ 端点 fail-soft
+#      available:false，绝不把陈旧判决当「最新」静默展示。
+DUAL_MAX_AGE_HOURS="${DUAL_MAX_AGE_HOURS:-${MAX_AGE_HOURS}}"
+DUAL_QUARANTINED=0
+if [ "$DUAL_READY_PRESENT" = "1" ]; then
+  DUAL_READY_AGE="$(age_hours "$DUAL_READY_MTIME")"
+  if [ -n "$DUAL_READY_AGE" ] && [ "$DUAL_READY_AGE" -gt "$DUAL_MAX_AGE_HOURS" ]; then
+    log "双窗 STALE —— IC_READY_DUAL 已 ${DUAL_READY_AGE}h > ${DUAL_MAX_AGE_HOURS}h，隔离本地旧双窗产物（防端点静默展示陈旧判决）"
+    DUAL_QUARANTINED=1
+  fi
+fi
 DUAL_PULLED=0
 for f in dual_window_history.jsonl dual_window_latest.json dual_report.md IC_READY_DUAL; do
   if $RSYNC_SSH "$RUNNER_HOST" "test -f '$REMOTE_DIR/$f'"; then
-    rsync -a -e "$RSYNC_SSH" "$RUNNER_HOST:$REMOTE_DIR/$f" "$DEST_DIR/"
-    DUAL_PULLED=$((DUAL_PULLED + 1))
-    log "已拉取双窗产物 → $DEST_DIR/$f"
+    if [ "$DUAL_QUARANTINED" = "1" ]; then
+      rm -f "$DEST_DIR/$f"
+      log "双窗 STALE 隔离：不拉取/已删 $f"
+    else
+      rsync -a -e "$RSYNC_SSH" "$RUNNER_HOST:$REMOTE_DIR/$f" "$DEST_DIR/"
+      DUAL_PULLED=$((DUAL_PULLED + 1))
+      log "已拉取双窗产物 → $DEST_DIR/$f"
+    fi
   fi
 done
-if [ "$DUAL_PULLED" -gt 0 ]; then
+if [ "$DUAL_QUARANTINED" = "1" ]; then
+  log "双窗 IC 判决已隔离（STALE）：本地旧产物清除，端点 fail-soft available=false；不影响单窗（exit 0）"
+elif [ "$DUAL_PULLED" -gt 0 ]; then
   log "双窗 IC 判决回流完成：${DUAL_PULLED} 个文件 → $DEST_DIR"
 else
   log "双窗 IC 判决产物暂缺（未启用/未产出）——跳过，不影响单窗回流（exit 0）"
