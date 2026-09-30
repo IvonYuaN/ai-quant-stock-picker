@@ -24,6 +24,7 @@ import pandas as pd
 import pytest
 
 from aqsp.cli import (
+    _PLANB_VARIANTS,
     _WALKFORWARD_VALIDATED_GRID_VARIANTS,
     WalkForwardGridVariant,
     _apply_walkforward_grid_variant,
@@ -33,11 +34,11 @@ from aqsp.strategies.composite import CompositeStrategy
 from aqsp.strategies.thresholds import load_thresholds
 from aqsp.walkforward_gate import MIN_CSCV_VARIANTS
 
-PROFILES = ("stable", "stable_plus", "exploratory", "htf_mr")
+PROFILES = ("stable", "stable_plus", "exploratory", "htf_mr", "planb_v1", "planb_v2", "planb_v3")
 
 #: 变体数 >= MIN_CSCV_VARIANTS 的档位 —— 只有这些档位才受「互异列数必须真正够数」
 #: 这条守卫约束（``stable`` N=5 天然不足，不在此列）。
-PROFILES_MEETING_MIN_CSCV = ("stable_plus", "exploratory", "htf_mr")
+PROFILES_MEETING_MIN_CSCV = ("stable_plus", "exploratory", "htf_mr", "planb_v1", "planb_v2", "planb_v3")
 
 BARS = 220
 SYMBOL_COUNT = 40
@@ -201,3 +202,95 @@ def test_profile_meets_min_cscv_variants_with_distinct_columns(profile: str) -> 
         f"[{profile}] 有 {len(variants)} 列但仅 {len(distinct)} 个互异列；"
         f"MIN_CSCV_VARIANTS={MIN_CSCV_VARIANTS} 会被重复列凑数满足"
     )
+
+
+# ---------------------------------------------------------------------------
+# 方案 B（planb）专属契约：7 维 composite 权重向量必须被精确注入，且按权重
+# 逐个 enable 因子（thresholds.yaml 默认 enabled=False，只改权重不 enable 会
+# 静默退化成「权重写了、因子没开」的幽灵变体）。
+# 7 维序 = (mom, quality, value, volume, mean_reversion, triple_rise, high_tight_flag)
+# ---------------------------------------------------------------------------
+
+
+def test_planb_profiles_declare_7_dim_composite_weights() -> None:
+    """每个 planb profile 的 8 臂都必须显式声明 7 维 composite_weights。"""
+    for profile, variants in _PLANB_VARIANTS.items():
+        assert len(variants) == 8, f"[{profile}] 应为 8 臂（4 top_n × 2 horizon）"
+        for variant in variants:
+            assert variant.strategy_mix == "planb", variant.variant_id
+            assert variant.composite_weights is not None, (
+                f"[{profile}] {variant.variant_id} 缺 composite_weights"
+            )
+            assert len(variant.composite_weights) == 7, (
+                f"[{profile}] {variant.variant_id} composite_weights 须 7 维"
+            )
+
+
+@pytest.mark.parametrize("profile", ("planb_v1", "planb_v2", "planb_v3"))
+def test_planb_injects_exact_composite_weights(profile: str) -> None:
+    """_apply_walkforward_grid_variant 必须把 7 维权重向量精确写进 CompositeThresholds。"""
+    variants = _walkforward_grid_variants(profile)
+    expected = tuple(float(x) for x in variants[0].composite_weights)  # 8 臂同向量
+    thresholds = load_thresholds()
+    first = _apply_walkforward_grid_variant(thresholds, variants[0])
+    composite = first.composite
+    injected = (
+        composite.momentum_weight,
+        composite.quality_weight,
+        composite.value_weight,
+        composite.volume_weight,
+        composite.mean_reversion_weight,
+        composite.triple_rise_weight,
+        composite.high_tight_flag_weight,
+    )
+    assert injected == expected, f"[{profile}] 注入 {injected} != 声明 {expected}"
+
+
+@pytest.mark.parametrize("profile", ("planb_v1", "planb_v2", "planb_v3"))
+def test_planb_enables_only_declared_factors(profile: str) -> None:
+    """声明权重 >0 的因子必须被 enable（防静默退化）；未声明的保持原 enabled 态。
+
+    V1 摘 momentum（weight=0）但摊权给 quality/value/volume ⇒ 三者必须 enabled；
+    V2 启用 htf(0.2) + 降 momentum(0.2) ⇒ quality/value/volume/htf enabled；
+    V3 同 V2 但 htf 顶格(0.4) + momentum 摘除。
+    """
+    thresholds = load_thresholds()
+    variant = _walkforward_grid_variants(profile)[0]
+    applied = _apply_walkforward_grid_variant(thresholds, variant)
+    w = variant.composite_weights
+    # (composite 权重, 因子名, applied 上的 enabled 字段路径)
+    cases = (
+        (w[1], "quality", applied.quality.enabled),
+        (w[2], "value", applied.value.enabled),
+        (w[3], "volume", applied.volume.enabled),
+        (w[4], "mean_reversion", applied.mean_reversion.enabled),
+        (w[6], "high_tight_flag", applied.high_tight_flag.enabled),
+    )
+    for weight, name, enabled in cases:
+        if weight > 0:
+            assert enabled, f"[{profile}] {name} 权重={weight}>0 但未 enabled（静默退化）"
+        else:
+            # 未声明权重（=0）的因子不得被本分支误 enable
+            assert not enabled or getattr(thresholds, name).enabled, (
+                f"[{profile}] {name} 权重=0 却被 enable"
+            )
+
+
+@pytest.mark.parametrize("profile", ("planb_v1", "planb_v2", "planb_v3"))
+def test_planb_v1_not_collapsed_to_volume_only(profile: str) -> None:
+    """V1 摘 momentum 后质量/价值必须真在打分里（否则塌缩成 volume-only 幽灵变体）。"""
+    if profile != "planb_v1":
+        pytest.skip("仅 V1 校验摘 momentum 后是否塌缩")
+    data = _data()
+    v1 = _walkforward_grid_variants("planb_v1")[0]
+    strat = CompositeStrategy(
+        thresholds=_apply_walkforward_grid_variant(load_thresholds(), v1)
+    )
+    # V1 向量 (0.0,0.4,0.4,0.4,0,0,0)：quality/value/volume 三项都必须生效
+    assert strat._has_quality(), "V1 quality 未生效（塌缩风险）"
+    assert strat._has_value(), "V1 value 未生效（塌缩风险）"
+    assert strat._has_volume(), "V1 volume 未生效（塌缩风险）"
+    # 打分向量必须非退化（不是全 0 / 单一量）——确认三项因子真实参与
+    scores = strat.calculate_score(data, regime="unknown")
+    assert len(scores) > 0
+    assert any(s != 0.0 for s in scores.values()), "V1 打分为全 0（因子族全未生效）"
