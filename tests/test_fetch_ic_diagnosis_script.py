@@ -38,6 +38,8 @@ cat >/dev/null 2>&1 || true
 # （4 个双窗产物：dual_window_history.jsonl / dual_window_latest.json /
 #  dual_report.md / IC_READY_DUAL；前 3 个 dual_ 前缀、末个大写 DUAL，两种都匹配）。
 # 单窗 test -f（factor_ic_latest.json 等）不受此开关影响，一律放行。
+# 双窗新鲜度：FAKE_DUAL_READY_PRESENT（缺省随 dual_present）+ FAKE_DUAL_READY_AGE_H
+# 回放 IC_READY_DUAL 的 mtime 龄（与单窗 FAKE_READY_AGE_H 同范式）。
 case "$cmd" in
   *test\\ -f\\ *dual_*|*test\\ -f*IC_READY_DUAL*)
     if [ "${FAKE_DUAL_PRESENT:-1}" = "0" ]; then
@@ -63,6 +65,17 @@ case "$cmd" in
       echo "JSON_PRESENT=0"
     fi
     echo "STATUS_VALUE=${FAKE_STATUS_VALUE:-}"
+    # 双窗新鲜度标记：缺省随 dual_present；AGE_H 可独立回放（stale 隔离用例）
+    if [ "${FAKE_DUAL_READY_PRESENT:-auto}" = "auto" ]; then
+      FAKE_DUAL_READY_PRESENT="${FAKE_DUAL_PRESENT:-1}"
+    fi
+    if [ "${FAKE_DUAL_READY_PRESENT}" = "1" ]; then
+      echo "DUAL_READY_PRESENT=1"
+      echo "DUAL_READY_MTIME=$(( now - ${FAKE_DUAL_READY_AGE_H:-0} * 3600 ))"
+    else
+      echo "DUAL_READY_PRESENT=0"
+      echo "DUAL_READY_MTIME=0"
+    fi
     ;;
 esac
 exit 0
@@ -96,6 +109,7 @@ def _fake_bin(
     dry_run: str = "0",
     max_age_hours: str = "36",
     dual_present: int = 1,
+    dual_ready_age_h: int = 0,
 ) -> tuple[Path, dict[str, str]]:
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir(parents=True, exist_ok=True)
@@ -117,6 +131,7 @@ def _fake_bin(
         "FAKE_STATUS_VALUE": status_value,
         "FAKE_SSH_FAIL": "1" if ssh_fail else "0",
         "FAKE_DUAL_PRESENT": str(dual_present),
+        "FAKE_DUAL_READY_AGE_H": str(dual_ready_age_h),
     }
     return fake_bin, env
 
@@ -245,3 +260,74 @@ def test_fetch_ic_dual_absent_is_fail_soft_not_an_error(tmp_path: Path) -> None:
     # 双窗 4 文件未被拉取（远端无 ⇒ 不创建）
     for name in ("dual_window_history.jsonl", "dual_window_latest.json", "IC_READY_DUAL"):
         assert not (dest / name).exists(), f"远端无该双窗文件时不得臆造：{name}"
+
+
+def test_fetch_ic_dual_stale_is_quarantined(tmp_path: Path) -> None:
+    """双窗 IC_READY_DUAL 陈旧（> DUAL_MAX_AGE_HOURS，默认随 MAX_AGE_HOURS=36h）
+    ⇒ runner 双窗连续失败/让位：隔离本地旧双窗产物，端点 fail-soft available:false，
+    绝不把陈旧判决静默当「最新」展示（防「静默失效≠健康」）。
+
+    红线：隔离只删本地双窗 4 文件；单窗 4 文件与主退出码语义（exit 0）不受影响。
+    """
+    result, dest = _run(
+        tmp_path,
+        ready_present=1,
+        ready_age_h=2,
+        json_present=1,
+        status_value="completed",
+        dual_present=1,
+        dual_ready_age_h=48,  # 超过默认 36h 上限
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "双窗 STALE" in result.stdout, "应显式日志记录双窗 STALE 隔离"
+    # 单窗 4 文件照常拉取（隔离不扩散）
+    for name in ("factor_ic_latest.json", "ic_history.jsonl", "report.md", "IC_READY"):
+        assert (dest / name).exists(), f"单窗产物应不受双窗 STALE 隔离影响：{name}"
+    # 双窗 4 文件不得被拉取（远端陈旧 ⇒ 本地不得留下旧判决）
+    for name in ("dual_window_history.jsonl", "dual_window_latest.json", "IC_READY_DUAL"):
+        assert not (dest / name).exists(), f"双窗 STALE 时不得保留/臆造旧产物：{name}"
+
+
+def test_fetch_ic_dual_fresh_is_pulled_not_quarantined(tmp_path: Path) -> None:
+    """双窗 IC_READY_DUAL 新鲜（48h 但 DUAL_MAX_AGE_HOURS 抬到 60）⇒ 正常拉取，不隔离。
+
+    与单窗 MAX_AGE_HOURS 同范式：双窗上限是 env 可覆盖的独立开关。
+    """
+    # 先制造一份「本地旧双窗产物」（模拟上一轮拉回来的），验证新鲜时正常刷新
+    _, env = _fake_bin(
+        tmp_path,
+        ready_present=1,
+        ready_age_h=2,
+        dual_present=1,
+        dual_ready_age_h=48,
+    )
+    dest = Path(env["DEST_DIR"])
+    result = subprocess.run(
+        ["bash", str(SCRIPT)],
+        capture_output=True,
+        text=True,
+        errors="replace",
+        env=env,
+        cwd=str(PROJECT_ROOT),
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    # 48h < 默认 36h 上限之外？不对——48h > 36h，默认会隔离；
+    # 这里验证 env 可覆盖性：抬 DUAL_MAX_AGE_HOURS=60 后 48h 转新鲜。
+    for name in ("dual_window_history.jsonl", "dual_window_latest.json", "IC_READY_DUAL"):
+        assert not (dest / name).exists(), f"默认 36h 上限下 48h 双窗应被隔离：{name}"
+    assert "双窗 STALE" in result.stdout
+
+    env2 = {**env, "DUAL_MAX_AGE_HOURS": "60"}
+    result2 = subprocess.run(
+        ["bash", str(SCRIPT)],
+        capture_output=True,
+        text=True,
+        errors="replace",
+        env=env2,
+        cwd=str(PROJECT_ROOT),
+    )
+    assert result2.returncode == 0, result2.stdout + result2.stderr
+    assert "双窗 STALE" not in result2.stdout, "DUAL_MAX_AGE_HOURS=60 时 48h 双窗转新鲜，不得隔离"
+    for name in ("dual_window_history.jsonl", "dual_window_latest.json", "IC_READY_DUAL"):
+        assert (dest / name).exists(), f"DUAL_MAX_AGE_HOURS 放宽后双窗应正常拉取：{name}"
+        assert (dest / name).read_text(encoding="utf-8") == "stub\n"
