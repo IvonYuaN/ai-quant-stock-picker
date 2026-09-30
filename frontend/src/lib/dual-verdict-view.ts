@@ -32,6 +32,8 @@ export interface DualFactorView {
 
 export interface DualVerdictView {
   available: boolean;
+  /** 产物本可用但被端点新鲜度护栏（run_at 龄 > 上限）抑制 ⇒ true。区别于真「暂无数据」。 */
+  stale: boolean;
   streak_n: number;
   as_of_a: string;
   as_of_b: string;
@@ -61,6 +63,10 @@ export function dualVerdictSummary(
   const streak_n = payload?.streak_n ?? 5;
   const latest = payload?.latest ?? null;
   const available = payload?.available === true && latest !== null;
+  // 陈旧隔离标记：端点新鲜度护栏（run_at/generated_at 龄 > 上限）把可用产物抑制成
+  // available=false 时置 stale=true。仅 available=true 时才判 stale（available=false
+  // 且无 latest = 真「暂无数据」，stale=false），供前端区分两种空态文案。
+  const stale = available === false && payload?.stale === true;
 
   const factors: DualFactorView[] = [];
   let hitCount = 0;
@@ -95,6 +101,7 @@ export function dualVerdictSummary(
 
   return {
     available,
+    stale,
     streak_n,
     as_of_a: latest?.as_of_a ?? "",
     as_of_b: latest?.as_of_b ?? "",

@@ -28,8 +28,12 @@ function mv(hit: boolean, sign_match: boolean, dual: boolean): IcDualFactorVerdi
 function payload(
   factors: Record<string, IcDualFactorVerdict>,
   streaks: Record<string, number>,
-  opts?: Partial<NonNullable<IcDualVerdictPayload["latest"]>> & { available?: boolean },
+  opts?: Partial<NonNullable<IcDualVerdictPayload["latest"]>> & {
+    available?: boolean;
+    stale?: boolean;
+  },
 ): IcDualVerdictPayload {
+  const { stale, ...latestOpts } = opts ?? {};
   return {
     available: opts?.available ?? true,
     latest: {
@@ -47,9 +51,10 @@ function payload(
       streaks,
       event: null,
       next_candidate: null,
-      ...opts,
+      ...latestOpts,
     } as NonNullable<IcDualVerdictPayload["latest"]>,
     streak_n: 5,
+    ...(stale === undefined ? {} : { stale }),
   };
 }
 
@@ -114,6 +119,20 @@ const nextCandidatePassthrough: boolean =
     payload({ htf: mv(false, true, false) }, { htf: 4 }, { next_candidate: "htf" }),
   ).next_candidate === "htf";
 
+/* ---- 5. 新鲜度护栏 stale 透传（M5：端点把陈旧可用产物抑制成 available=false + stale=true） ---- */
+// stale=true ⇒ 即便 latest 有内容，视图也判 unavailable + stale（区别真「暂无数据」）。
+const staleSuppressed = dualVerdictSummary(
+  payload({ htf: mv(true, true, true) }, { htf: 5 }, { available: false, stale: true }),
+);
+const staleFlagIsTrue: boolean = staleSuppressed.stale === true;
+const staleStillUnavailable: boolean = staleSuppressed.available === false;
+// 真「暂无数据」：available=false 但 stale 缺省 ⇒ stale=false（不糊弄文案）。
+const noDataFlagFalse: boolean =
+  dualVerdictSummary(payload({}, {}, { available: false })).stale === false;
+// available=true ⇒ stale 必 false（新鲜时不标陈旧）。
+const freshFlagFalse: boolean =
+  dualVerdictSummary(payload({ htf: mv(true, true, true) }, { htf: 5 })).stale === false;
+
 export const dualVerdictContract = {
   /* 1. 状态归类 */
   statusHitWinsOverPending,
@@ -136,6 +155,11 @@ export const dualVerdictContract = {
   unavailableTotalZero,
   eventPassthrough,
   nextCandidatePassthrough,
+  /* 5. 新鲜度护栏 stale 透传 */
+  staleFlagIsTrue,
+  staleStillUnavailable,
+  noDataFlagFalse,
+  freshFlagFalse,
 };
 
 // 供调试直读（run-contracts 递归收集布尔）

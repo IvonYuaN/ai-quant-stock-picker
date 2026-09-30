@@ -615,9 +615,9 @@ export interface IcDualFactorVerdict {
 }
 
 export interface IcDualVerdictPayload {
-  /** 双窗产物是否存在（fail-soft：未启用/未回流 = false，端点仍 200）。 */
+  /** 双窗产物是否存在且新鲜（fail-soft：未启用/未回流 = false；陈旧被新鲜度护栏抑制 = false）。 */
   available: boolean;
-  /** 最新一次双窗判决；available=false 时为 null。 */
+  /** 最新一次双窗判决；available=false 时仍可能保留（供观测陈旧读数）。 */
   latest: {
     run_at: string;
     as_of_a: string;
@@ -634,6 +634,11 @@ export interface IcDualVerdictPayload {
   } | null;
   /** 连续达标日数阈值（N 日达标 ⇒ revisit_family 事件）。 */
   streak_n: number;
+  /**
+   * true = 产物本可用但被端点新鲜度护栏（run_at/generated_at 龄 > DUAL_MAX_AGE_HOURS）
+   * 抑制 ⇒ 前端应展示「数据陈旧已隔离，等待下一次 runner 回流」，区别于真「暂无数据」。
+   */
+  stale?: boolean;
 }
 
 /** `GET /api/aqsp/closing-review` 的 `data.sections` 元素：单段收评（市场级只读）。 */
