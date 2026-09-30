@@ -226,3 +226,87 @@ export function exitReasonLabel(reason: string): string {
       return reason || "未记录";
   }
 }
+
+/**
+ * 票级复盘明细的汇总。
+ *
+ * 诚实边界（§5.4 / §8）：命中/未中是**逐笔事实计数**（不是策略级统计推断，不受样本
+ * 门槛约束，可如实展示）；平均收益是 **PnL 派生，仅作观测**，绝不当主指标。
+ * 全空时 total=0、hitRatio/avgReturnPct=null —— 渲染层据此整块隐藏，不编数字。
+ */
+export interface RecentPicksSummary {
+  total: number;
+  winCount: number;
+  loseCount: number;
+  /** 命中笔数占比（0~1）；total=0 时为 null（不编）。 */
+  hitRatio: number | null;
+  /** 已记录收益的算术平均（仅对非 null 求）；无任何已记录收益时 null（区分"未记录"与"真的是 0"）。 */
+  avgReturnPct: number | null;
+  /** 非 null 收益的条数（分母）。 */
+  recordedReturns: number;
+  posCount: number;
+  negCount: number;
+}
+
+export function recentPicksSummary(picks: readonly RecentPickView[]): RecentPicksSummary {
+  let winCount = 0;
+  let loseCount = 0;
+  let posCount = 0;
+  let negCount = 0;
+  let recordedReturns = 0;
+  let sum = 0;
+  for (const p of picks) {
+    if (p.win) winCount += 1;
+    else loseCount += 1;
+    if (p.returnPct !== null) {
+      recordedReturns += 1;
+      sum += p.returnPct;
+      if (p.returnPct > 0) posCount += 1;
+      else if (p.returnPct < 0) negCount += 1;
+    }
+  }
+  const total = picks.length;
+  return {
+    total,
+    winCount,
+    loseCount,
+    hitRatio: total > 0 ? winCount / total : null,
+    avgReturnPct: recordedReturns > 0 ? sum / recordedReturns : null,
+    recordedReturns,
+    posCount,
+    negCount,
+  };
+}
+
+export type RecentPicksSortKey = "signalDate" | "returnPct" | "excessReturnPct";
+export type SortDir = "asc" | "desc";
+
+/**
+ * 票级明细排序：返回**新数组**（不 mutate 入参，调用方 state 可安全重排）。
+ * 收益/超额列把 null（未记录）永远排到末尾，无论升/降序——"未记录"不是 0，
+ * 混进数值序会误导；signalDate 是 YYYY-MM-DD 字符串，字典序即时间序。
+ */
+export function sortRecentPicks(
+  picks: readonly RecentPickView[],
+  key: RecentPicksSortKey,
+  dir: SortDir,
+): RecentPickView[] {
+  const sign = dir === "asc" ? 1 : -1;
+  const copy = [...picks];
+  copy.sort((a, b) => {
+    if (key === "signalDate") {
+      const av = a.signalDate || "";
+      const bv = b.signalDate || "";
+      if (av === bv) return 0;
+      return (av > bv ? 1 : -1) * sign;
+    }
+    const av = key === "returnPct" ? a.returnPct : a.excessReturnPct;
+    const bv = key === "returnPct" ? b.returnPct : b.excessReturnPct;
+    if (av === null && bv === null) return 0;
+    if (av === null) return 1;
+    if (bv === null) return -1;
+    if (av === bv) return 0;
+    return (av > bv ? 1 : -1) * sign;
+  });
+  return copy;
+}

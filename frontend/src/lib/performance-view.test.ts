@@ -8,7 +8,9 @@ import {
   formatReturnPct,
   normalizePerformance,
   performanceHeadline,
+  recentPicksSummary,
   severityTone,
+  sortRecentPicks,
   stalenessMessage,
 } from "./performance-view";
 
@@ -176,6 +178,34 @@ export const performanceViewContract = {
   exitReasonHorizon: exitReasonLabel("horizon_close") === "到期了结",
   exitReasonTakeProfit: exitReasonLabel("take_profit") === "止盈触发",
   exitReasonUnknownPassthrough: exitReasonLabel("weird_reason") === "weird_reason",
+
+  /* ---- 票级复盘明细：汇总 + 排序（PerformancePage #69b 模块的纯函数面） ---- */
+  // warm 的 2 笔：601326 return -2.5484(loss), 000001 return +1.2(win)
+  summaryPicks: recentPicksSummary(warmView.recentPicks).total === 2,
+  summaryWin: recentPicksSummary(warmView.recentPicks).winCount === 1,
+  summaryLose: recentPicksSummary(warmView.recentPicks).loseCount === 1,
+  summaryHitRatio: recentPicksSummary(warmView.recentPicks).hitRatio === 0.5,
+  // 平均收益只算已记录的 2 笔（-2.5484 + 1.2）/2
+  summaryAvgReturn:
+    Math.abs((recentPicksSummary(warmView.recentPicks).avgReturnPct as number) - (-0.6742)) < 1e-9,
+  summaryRecorded: recentPicksSummary(warmView.recentPicks).recordedReturns === 2,
+  summaryEmptySafe: recentPicksSummary([]).total === 0 &&
+    recentPicksSummary([]).hitRatio === null &&
+    recentPicksSummary([]).avgReturnPct === null,
+  // 全 null 收益（一笔只记了 win 没记 return）→ avg 仍为 null，不因缺数编 0
+  summaryAllNullReturns: recentPicksSummary(warmView.recentPicks.map((p) => ({ ...p, returnPct: null })))
+    .avgReturnPct === null,
+  // 降序收益：000001(+1.2) 在前、601326(-2.5484) 在后
+  sortDescTop: sortRecentPicks(warmView.recentPicks, "returnPct", "desc")[0].symbol === "000001",
+  sortAscBottom: sortRecentPicks(warmView.recentPicks, "returnPct", "asc")[0].symbol === "601326",
+  // 不 mutate 入参：原数组首元素仍是 601326
+  sortDoesNotMutate: warmView.recentPicks[0].symbol === "601326",
+  // null 收益永远排末尾（不论升降序）
+  sortNullsLast: sortRecentPicks(
+    warmView.recentPicks.map((p) => ({ ...p, returnPct: null })),
+    "returnPct",
+    "desc",
+  ).every((p) => p.returnPct === null),
 
   /* ---- 台账新鲜度：必须能区分"在积累"与"已停止" ---- */
   staleIsFlagged: staleView.stale,

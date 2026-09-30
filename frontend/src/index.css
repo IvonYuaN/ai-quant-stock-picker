@@ -1197,6 +1197,27 @@
   .aq-pick-return-mid {
     color: hsl(var(--muted-foreground));
   }
+  /* 可排序表头按钮（#69b 票级复盘明细）：与所在 th 对齐，hover 显主色，方向标记随文字 */
+  .aq-th-sort {
+    all: unset;
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.2rem;
+    font-weight: 600;
+    font-size: inherit;
+    color: inherit;
+    cursor: pointer;
+    transition: color 0.15s ease;
+  }
+  .aq-th-sort:hover,
+  .aq-th-sort:focus-visible {
+    color: hsl(var(--primary));
+  }
+  .aq-th-sort.aq-num {
+    float: right;
+    justify-content: flex-end;
+  }
 
   .aq-cm-strip {
     display: grid;
