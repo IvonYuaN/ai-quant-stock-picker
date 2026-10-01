@@ -131,7 +131,15 @@ class TestRun:
         # 历史追加
         hist = (out / "ic_history.jsonl").read_text().strip().splitlines()
         assert len(hist) == 1
-        assert json.loads(hist[0])["as_of"] == result["as_of"]
+        hist0 = json.loads(hist[0])
+        assert hist0["as_of"] == result["as_of"]
+        # 口径B 触发巡检（planb_b_trigger.py）逐日 |t|≥2 主判依赖：ledger 每行
+        # 额外带 per-day overall `t`（旧 factors 均值字段语义不动，向后兼容）
+        assert "t" in hist0, "ledger 行须带 per-day t 字段（口径B streak 判据）"
+        assert set(hist0["t"].keys()) == set(latest["factors"].keys())
+        for n, s in latest["factors"].items():
+            assert hist0["t"][n] == s["t"], f"{n} ledger t 与 overall t 不一致"
+            assert hist0["factors"][n] == s["mean"], f"{n} ledger mean 与 overall mean 不一致"
         # 人读报告
         report = (out / "report.md").read_text()
         assert "滚动窗口因子 IC 诊断" in report
