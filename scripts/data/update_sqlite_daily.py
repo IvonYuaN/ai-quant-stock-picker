@@ -23,7 +23,11 @@ from pathlib import Path
 from typing import Any
 
 if __package__ in {None, ""}:
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+    # __file__ is scripts/data/update_sqlite_daily.py -> parents[2] is the repo
+    # root, whose ``src`` package holds ``aqsp``. (parents[1] == scripts/src,
+    # which is NOT on the package path, so the old insert silently failed and
+    # only worked when PYTHONPATH happened to be set by the caller.)
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from aqsp.core.time import get_previous_trading_day, is_trading_day, today_shanghai
 from aqsp.data.sqlite_db_source import SqliteDbSource
