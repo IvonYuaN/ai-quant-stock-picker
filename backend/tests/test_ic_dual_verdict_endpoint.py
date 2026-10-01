@@ -53,7 +53,7 @@ def test_ic_dual_verdict_available_when_artifact_present(
 ) -> None:
     """产物存在且含 factors ⇒ available=True、latest 带内容、streak_n 取产物值。"""
     payload = {
-        "as_of_b": "2026-09-24",
+        "as_of_b": "2099-01-01",
         "streak_n": 7,
         "factors": [
             {"name": "momentum", "hit": False, "t_a": -2.5, "t_b": -2.1},
@@ -105,7 +105,7 @@ def test_ic_dual_verdict_fail_soft_when_artifact_empty_factors(
     monkeypatch, tmp_path
 ) -> None:
     """产物存在但 factors 为空 ⇒ available=False（空不视为有数据），streak_n 取产物值。"""
-    _write_latest(tmp_path, {"as_of_b": "2026-09-24", "streak_n": 3, "factors": []})
+    _write_latest(tmp_path, {"as_of_b": "2099-01-01", "streak_n": 3, "factors": []})
     monkeypatch.setattr(cr, "_factor_ic_runtime_root", lambda: str(tmp_path))
 
     resp = _client().get(ROUTE)
@@ -125,7 +125,7 @@ def test_ic_dual_verdict_fresh_run_at_is_available(
         tmp_path,
         {
             "run_at": _hours_ago_iso(2),
-            "as_of_b": "2026-09-24",
+            "as_of_b": "2099-01-01",
             "streak_n": 5,
             "factors": [{"name": "momentum", "hit": False, "t_a": -0.3, "t_b": -2.1}],
         },
@@ -147,7 +147,7 @@ def test_ic_dual_verdict_stale_run_at_is_suppressed(
         tmp_path,
         {
             "run_at": _hours_ago_iso(48),
-            "as_of_b": "2026-09-24",
+            "as_of_b": "2099-01-01",
             "streak_n": 5,
             "factors": [{"name": "momentum", "hit": False, "t_a": -0.3, "t_b": -2.1}],
         },
@@ -168,7 +168,7 @@ def test_ic_dual_verdict_stale_overridable_via_env(
         tmp_path,
         {
             "run_at": _hours_ago_iso(48),
-            "as_of_b": "2026-09-24",
+            "as_of_b": "2099-01-01",
             "streak_n": 5,
             "factors": [{"name": "momentum", "hit": False, "t_a": -0.3, "t_b": -2.1}],
         },
@@ -188,12 +188,99 @@ def test_ic_dual_verdict_no_timestamp_not_suppressed(
     _write_latest(
         tmp_path,
         {
-            "as_of_b": "2026-09-24",
+            "as_of_b": "2099-01-01",
             "streak_n": 5,
             "factors": [{"name": "htf", "hit": True, "t_a": 2.4, "t_b": 2.6}],
         },
     )
     monkeypatch.setattr(cr, "_factor_ic_runtime_root", lambda: str(tmp_path))
+
+    data = _client().get(ROUTE).json()["data"]
+    assert data["available"] is True
+    assert data["stale"] is False
+
+
+# ── 数据最新日护栏（data_as_of：堵「run_at 新鲜 + 数据冻死」静默窗口） ──
+
+def test_ic_dual_verdict_stale_as_of_b_is_suppressed(
+    monkeypatch, tmp_path
+) -> None:
+    """as_of_b 远落后于阈值（源库冻死）+ 新鲜 run_at(2h) ⇒ 第(2)道命中：
+    即便 run_at 不超龄，也因数据旧被抑制 ⇒ available=False + stale=True；latest 仍保留。"""
+    _write_latest(
+        tmp_path,
+        {
+            "run_at": _hours_ago_iso(2),
+            "as_of_b": "2000-01-01",
+            "streak_n": 5,
+            "factors": [{"name": "momentum", "hit": False, "t_a": -0.3, "t_b": -2.1}],
+        },
+    )
+    monkeypatch.setattr(cr, "_factor_ic_runtime_root", lambda: str(tmp_path))
+
+    data = _client().get(ROUTE).json()["data"]
+    assert data["available"] is False
+    assert data["stale"] is True
+    assert data["latest"]["as_of_b"] == "2000-01-01"  # latest 仍保留供观测
+
+
+def test_ic_dual_verdict_fresh_as_of_b_is_available(
+    monkeypatch, tmp_path
+) -> None:
+    """as_of_b 远在未来（数据最新日 >= 阈值）+ 新鲜 run_at(2h) ⇒ 两道均未命中：
+    available=True + stale=False。"""
+    _write_latest(
+        tmp_path,
+        {
+            "run_at": _hours_ago_iso(2),
+            "as_of_b": "2099-01-01",
+            "streak_n": 5,
+            "factors": [{"name": "momentum", "hit": False, "t_a": -0.3, "t_b": -2.1}],
+        },
+    )
+    monkeypatch.setattr(cr, "_factor_ic_runtime_root", lambda: str(tmp_path))
+
+    data = _client().get(ROUTE).json()["data"]
+    assert data["available"] is True
+    assert data["stale"] is False
+
+
+def test_ic_dual_verdict_missing_as_of_b_not_suppressed(
+    monkeypatch, tmp_path
+) -> None:
+    """缺 as_of_b（第(2)道判不出）⇒ fail-safe 不压制：available=True + stale=False
+    （与缺时间戳同语义，不把「判不出」当「陈旧」）。"""
+    _write_latest(
+        tmp_path,
+        {
+            "run_at": _hours_ago_iso(2),
+            "streak_n": 5,
+            "factors": [{"name": "htf", "hit": True, "t_a": 2.4, "t_b": 2.6}],
+        },
+    )
+    monkeypatch.setattr(cr, "_factor_ic_runtime_root", lambda: str(tmp_path))
+
+    data = _client().get(ROUTE).json()["data"]
+    assert data["available"] is True
+    assert data["stale"] is False
+
+
+def test_ic_dual_verdict_stale_as_of_b_overridable_via_env(
+    monkeypatch, tmp_path
+) -> None:
+    """as_of_b 陈旧("2000-01-01") + DUAL_MAX_LAG_TRADING_DAYS=99999（放宽滞后上限）⇒
+    阈值被推到极久远过去，as_of_b 不再落后 ⇒ 转新鲜 available=True + stale=False。"""
+    _write_latest(
+        tmp_path,
+        {
+            "run_at": _hours_ago_iso(2),
+            "as_of_b": "2000-01-01",
+            "streak_n": 5,
+            "factors": [{"name": "momentum", "hit": False, "t_a": -0.3, "t_b": -2.1}],
+        },
+    )
+    monkeypatch.setattr(cr, "_factor_ic_runtime_root", lambda: str(tmp_path))
+    monkeypatch.setenv("DUAL_MAX_LAG_TRADING_DAYS", "99999")
 
     data = _client().get(ROUTE).json()["data"]
     assert data["available"] is True
