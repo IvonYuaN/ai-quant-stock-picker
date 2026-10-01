@@ -32,8 +32,10 @@ from __future__ import annotations
 
 import argparse
 import json
-from datetime import date, datetime, timezone
+from datetime import date, timezone
 from pathlib import Path
+
+from aqsp.core.time import now_shanghai, today_shanghai
 
 SIG_T = 2.0          # 单窗 146 截面 |t| 门槛（口径 B 主判）
 STREAK_DAYS = 5      # 连续数据日数（IC ledger 按 as_of 去重）
@@ -198,7 +200,10 @@ def main() -> int:
                 "today_single_t": today_t.get(name),
                 "today_dual_sign_match": bool(d_fac.get(name, {}).get("sign_match"))
                 if isinstance(d_fac.get(name), dict) else False,
-                "checked_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                # §3.4 全项目禁裸 datetime.now()/date.today()：统一走项目时钟
+                "checked_at_utc": now_shanghai().astimezone(timezone.utc).isoformat(
+                    timespec="seconds"
+                ),
                 "criteria": "口径B: 逐日单窗146|t|>=2 AND 双窗73/73 sign_match AND "
                             "held-out30同向, 5数据日streak(as_of去重, 限as_of<2026-11-07)",
             }
@@ -216,7 +221,7 @@ def main() -> int:
             rows_out.append((name, streak, str(today_t.get(name))))
 
     print(
-        f"date={date.today()} single_as_of={single.get('as_of')} "
+        f"date={today_shanghai()} single_as_of={single.get('as_of')} "
         f"dual_as_of_b={dual.get('as_of_b')} ledger_days={len(ledger)}"
     )
     if triggered:
