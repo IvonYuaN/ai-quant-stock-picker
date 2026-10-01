@@ -285,6 +285,9 @@ def run(
         "as_of": as_of,
         "run_at": result["generated_at"],
         "factors": {n: v["mean"] for n, v in factors_out.items()},
+        # 口径B 触发巡检（planb_b_trigger.py）逐日 |t|≥2 主判需要的 per-day t
+        # （旧 factors 均值字段语义不动，向后兼容）。
+        "t": {n: v.get("t") for n, v in factors_out.items()},
     }
     with (out / "ic_history.jsonl").open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(hist, ensure_ascii=False) + "\n")
