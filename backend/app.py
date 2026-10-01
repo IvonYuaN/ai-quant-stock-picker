@@ -2071,6 +2071,41 @@ def _dual_verdict_age_hours(latest: dict, now) -> float | None:
     return max(0.0, (now - ts).total_seconds() / 3600.0)
 
 
+def _parse_iso_date(value: object):
+    """把双窗产物的 ``as_of_b``（ISO 日期串，如 "2026-09-24"）解析为 date；取不到返回 None。
+
+    与 ``check_data_freshness.py`` 的源库 MAX(trade_date) 口径一致（数据自身最新日）。
+    fail-soft：缺字段 / 格式异常 ⇒ None（上层按「判不出」处理，不压制可用性）。
+    """
+    if not value:
+        return None
+    s = str(value).strip()
+    if len(s) < 10:
+        return None
+    from datetime import date
+
+    try:
+        return date.fromisoformat(s[:10])
+    except ValueError:
+        return None
+
+
+def _dual_verdict_data_threshold(max_lag_trading_days: int):
+    """双窗判决「数据最新日」可容忍下限（as_of_b 早于它 ⇒ 源库冻死 ⇒ 判陈旧）。
+
+    口径与 ``check_data_freshness.py`` 完全一致：``threshold =
+    get_previous_trading_day(today) 往前 max_lag_trading_days 个交易日``。
+    默认 max_lag=1 ⇒ 容忍 1 个交易日滞后（正常 T+1 不算陈旧），≥2 交易日 ⇒ 判陈旧。
+    """
+    from aqsp.core.time import get_previous_trading_day, today_shanghai
+
+    expected = get_previous_trading_day(today_shanghai())
+    cur = expected
+    for _ in range(max_lag_trading_days):
+        cur = get_previous_trading_day(cur)
+    return cur
+
+
 @app.get(
     "/api/aqsp/ic-dual-verdict",
     tags=["AQSP 研究"],
@@ -2098,6 +2133,12 @@ def ic_dual_verdict_endpoint():
     连败且尚未到下一次 fetch）⇒ **自降 `available=false`**，绝不把陈旧判决静默当「最新」
     展示；`latest` 保留供观测、`stale` 标记本次是否被抑制。判不出龄（缺时间戳/格式异常）
     ⇒ 不压制（fail-safe），维持原可用性语义。
+
+    第二道护栏（数据自身最新日，堵「run_at 新鲜 + 数据冻死」静默窗口）：产物 `as_of_b`
+    （源库 MAX(trade_date)，与 `check_data_freshness.py` 同口径）落后 > `DUAL_MAX_LAG_TRADING_DAYS`
+    （默认 1 交易日，env 可覆盖）⇒ 源库冻死 ⇒ 同样自降 `available=false` + `stale=true`。
+    这是修源库监控的补强：修好源库后，今天跑在冻死库上的旧产物要等下一次重算才翻正，
+    期间端点本「绿但数据旧」，此护栏把该窗口也标 stale。缺 `as_of_b`/日历异常 ⇒ 不压制。
     """
     from aqsp.briefing.closing_review import _factor_ic_runtime_root
 
@@ -2129,12 +2170,34 @@ def ic_dual_verdict_endpoint():
                 latest = None
                 available = False
 
-        # 新鲜度护栏：仅当「本来可用」+ 能判龄 + 超龄 ⇒ 自降不可用（判不出龄不压制）。
+        # 新鲜度护栏（双保险）：
+        #  (1) run_at/generated_at 龄 > DUAL_MAX_AGE_HOURS（默认36h）⇒ 陈旧（runner 双窗连败）；
+        #  (2) 数据自身最新日 as_of_b 落后 > DUAL_MAX_LAG_TRADING_DAYS（默认1 交易日）⇒ 源库冻死
+        #        （堵「run_at 新鲜 + 数据冻死」静默窗口：修好源库后旧产物要等下一次重算才翻正，
+        #         ~1 天内端点会「绿但数据旧」）。两道任一命中 ⇒ 自降 available=False + stale=True；
+        #         判不出（缺字段/格式异常）不压制（fail-safe）。
         if available and latest:
+            # 第(1)道：产出时间戳龄
             age_hours = _dual_verdict_age_hours(latest, datetime.now(timezone.utc))
             if age_hours is not None and age_hours > max_age_hours:
                 available = False
                 stale = True
+
+            # 第(2)道：数据自身最新日（as_of_b）滞后 ⇒ 源库冻死
+            if not stale:
+                try:
+                    max_lag_td = int(_os.environ.get("DUAL_MAX_LAG_TRADING_DAYS", "1"))
+                except (TypeError, ValueError):
+                    max_lag_td = 1
+                as_of_b = _parse_iso_date(latest.get("as_of_b"))
+                if as_of_b is not None:
+                    try:
+                        threshold = _dual_verdict_data_threshold(max_lag_td)
+                        if as_of_b < threshold:
+                            available = False
+                            stale = True
+                    except Exception:  # 交易日历异常 ⇒ 不压制（fail-safe）
+                        pass
 
         return {
             "data": {
