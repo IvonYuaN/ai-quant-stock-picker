@@ -117,3 +117,61 @@ def test_release_sha_written_after_integrity_gate(sync_text: str) -> None:
     assert sha_pos > ln_pos, (
         "RELEASE_SHA 写在切链之前：rsync/切链失败时会留下「记录=新 SHA、实跑=旧 SHA」的不一致"
     )
+
+
+# ── rollback 软链维护（2026-10-03 新增）────────────────────────────────────
+# 事故：runner 的 `aqsp-scheduler-rollback` 悬空指向早已删除的 `0697d3e4`。
+# 根因：prod 的 `deploy_immutable_release.sh:switch_links()` 会自动维护 rollback，
+#       但 `runner_sync.sh` **此前完全不碰它** ⇒ 没有任何机制维持，指向的 release
+#       一被清理就永久悬空 ⇒ 「回滚能力假象」（真要回滚时才发现链是断的）。
+# 本组断言 runner 同步时**先记 rollback（指向旧 current）再切 current**。
+
+
+def _sync_lines() -> list[str]:
+    return SYNC_SCRIPT.read_text(encoding="utf-8").splitlines()
+
+
+def _first_code_line(needle: str) -> int:
+    """`needle` 首次出现在非注释行的 1-based 行号（注释里的同名字样要忽略）。"""
+    for i, line in enumerate(_sync_lines(), 1):
+        if line.strip().startswith("#"):
+            continue
+        if needle in line:
+            return i
+    raise AssertionError(f"找不到真正执行的 {needle!r}（脚本形态变了？请同步更新本守卫）")
+
+
+def test_runner_sync_maintains_rollback_symlink() -> None:
+    """runner 同步必须维护 rollback 软链（否则回滚链会随 release 清理而悬空）。"""
+    text = SYNC_SCRIPT.read_text(encoding="utf-8")
+    assert "aqsp-scheduler-rollback" in text, (
+        "runner_sync.sh 完全不碰 rollback 软链 ⇒ 指向的 release 被清理后回滚链永久悬空"
+    )
+
+
+def test_rollback_recorded_before_cutover() -> None:
+    """必须**先**把旧 current 写进 rollback，**再**切 current（否则记的是新 release 自己）。"""
+    rb = _first_code_line("aqsp-scheduler-rollback'")
+    cu = _first_code_line("ln -sfn '$RUNNER_ROOT/releases/$SHA' '$RUNNER_ROOT/aqsp-scheduler-current'")
+    assert 0 < rb < cu, (
+        f"rollback 写入（L{rb}）必须早于切 current（L{cu}）；"
+        "顺序反了会把「即将切进去的 release」记成回滚目标"
+    )
+
+
+def test_rollback_target_must_exist() -> None:
+    """写 rollback 前必须校验旧 release 目录真实存在（-d），否则照抄悬空目标。"""
+    guard_line = _first_code_line('-d "$OLD"')
+    rb_line = _first_code_line("aqsp-scheduler-rollback'")
+    assert 0 < guard_line < rb_line, (
+        "写 rollback 之前必须先 `[ -d \"$OLD\" ]` 校验旧 release 目录存在，"
+        "否则会把一个不存在的路径写进回滚链（正是 0697d3e4 悬空的成因）"
+    )
+
+
+def test_rollback_skipped_when_target_equals_new_release() -> None:
+    """旧 current == 新 release（重复同步）时**不得**把 rollback 指向自己。"""
+    text = SYNC_SCRIPT.read_text(encoding="utf-8")
+    assert '[ "$OLD" != "$RUNNER_ROOT/releases/$SHA" ]' in text, (
+        "缺少「旧 current ≠ 新 release」判断 ⇒ 重复同步同一 release 时 rollback 会被写成自指"
+    )
