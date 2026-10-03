@@ -33,6 +33,50 @@ requires_script = pytest.mark.skipif(
 )
 
 
+def _pgrep_shim(tmp: Path, *, match_walkforward: bool, match_bt_task: bool) -> Path:
+    """Build a fake ``pgrep`` on PATH so the idle guards are hermetic.
+
+    ``assert_idle_window`` / ``assert_idle_before_switch`` decide "busy" purely by
+    ``pgrep -f`` against the **live process table** (``[a]qsp walkforward`` /
+    ``[b]t_task[.]sh``). In CI that couples these tests to whatever else happens
+    to run in the same runner *and* to shard ordering: any co-located test or
+    stray process whose cmdline matches flips the guard and fails the
+    "nothing running" cases (observed flake: test_idle_window_allows_inside_window).
+
+    This shim replaces ``pgrep`` on PATH with a deterministic stub, so the guards
+    test their *logic* (window bounds, busy detection, --force) instead of the
+    ambient process table. It matches the real patterns: exit 0 (found) only when
+    the corresponding pattern is enabled.
+    """
+    bindir = tmp / "pgrep_shim_bin"
+    bindir.mkdir(parents=True, exist_ok=True)
+    shim = bindir / "pgrep"
+    # The script calls `pgrep -f "[a]qsp walkforward"` / `pgrep -f "[b]t_task[.]sh"`.
+    # Match those exact bracketed regex args (as substrings of "$*"), then decide.
+    shim.write_text(
+        "#!/usr/bin/env bash\n"
+        "# deterministic pgrep stub for idle-guard tests\n"
+        'args="$*"\n'
+        f"match_walkforward={'true' if match_walkforward else 'false'}\n"
+        f"match_bt_task={'true' if match_bt_task else 'false'}\n"
+        'case "$args" in\n'
+        '  *"[a]qsp walkforward"*) [ "$match_walkforward" = true ] && exit 0 || exit 1 ;;\n'
+        '  *"[b]t_task[.]sh"*)   [ "$match_bt_task" = true ] && exit 0 || exit 1 ;;\n'
+        'esac\n'
+        "exit 1\n"
+    )
+    shim.chmod(0o755)
+    return bindir
+
+
+def _run_with_pgrep_shim(bash: str, tmp: Path, *, match_walkforward: bool, match_bt_task: bool):
+    """Run a bash snippet with the pgrep shim first on PATH."""
+    bindir = _pgrep_shim(tmp, match_walkforward=match_walkforward, match_bt_task=match_bt_task)
+    env = dict(os.environ)
+    env["PATH"] = f"{bindir}{os.pathsep}{env.get('PATH', '')}"
+    return subprocess.run(["bash", "-c", bash], capture_output=True, text=True, env=env)
+
+
 def _run(args, env_extra=None, cwd=None):
     env = dict(os.environ)
     env.update(env_extra or {})
@@ -115,7 +159,12 @@ fi
 """
         % SCRIPT
     )
-    r = subprocess.run(["bash", "-c", bash], capture_output=True, text=True)
+    # hermetic: pretend no gate/walkforward & no bt_task is running, so this case
+    # exercises the *window* logic only (independent of the live process table).
+    with tempfile.TemporaryDirectory() as tmp:
+        r = _run_with_pgrep_shim(
+            bash, Path(tmp), match_walkforward=False, match_bt_task=False
+        )
     assert r.returncode == 0, r.stderr
     assert "ALLOWED" in r.stdout
 
@@ -133,7 +182,12 @@ echo PRE_SWITCH_OK
 """
         % SCRIPT
     )
-    r = subprocess.run(["bash", "-c", bash], capture_output=True, text=True)
+    # hermetic: pretend nothing is running so this asserts the guard *passes*
+    # when idle, regardless of any real walkforward/bt_task process present.
+    with tempfile.TemporaryDirectory() as tmp:
+        r = _run_with_pgrep_shim(
+            bash, Path(tmp), match_walkforward=False, match_bt_task=False
+        )
     assert r.returncode == 0, r.stderr
     assert "PRE_SWITCH_OK" in r.stdout
 
@@ -141,55 +195,40 @@ echo PRE_SWITCH_OK
 @requires_script
 def test_pre_switch_guard_rejects_while_baota_task_runs():
     """A busy BaoTa task must block the cut-over, not just the start-up check."""
-    with tempfile.TemporaryDirectory() as tmp:
-        # pgrep -f "[b]t_task[.]sh" matches any cmdline containing bt_task.sh,
-        # so a plain sleeping script with that name is a faithful stand-in.
-        fake = Path(tmp) / "bt_task.sh"
-        fake.write_text("sleep 60\n")
-        # the stand-in must not inherit the captured stdout pipe, or
-        # subprocess.run() blocks until its sleep finishes
-        bash = """
+    # hermetic: the pgrep shim reports a running bt_task.sh, so this exercises the
+    # guard's busy-detection without depending on a real (racy) sleep process.
+    bash = """
 set -e
 export AQSP_DEPLOY_LIB=1
 source "%s"
-bash "%s" >/dev/null 2>&1 &
-child=$!
-trap 'kill $child 2>/dev/null || true' EXIT
-sleep 1
 AQSP_DEPLOY_SWITCH_GRACE_SECONDS=1
 if assert_idle_before_switch; then
   echo ALLOWED
 else
   echo REJECTED
 fi
-""" % (SCRIPT, fake)
-        r = subprocess.run(["bash", "-c", bash], capture_output=True, text=True)
-        assert r.returncode != 0 or "REJECTED" in r.stdout, r.stdout + r.stderr
+""" % (SCRIPT,)
+    with tempfile.TemporaryDirectory() as tmp:
+        r = _run_with_pgrep_shim(bash, Path(tmp), match_walkforward=False, match_bt_task=True)
+    assert r.returncode != 0 or "REJECTED" in r.stdout, r.stdout + r.stderr
 
 
 @requires_script
 def test_pre_switch_guard_force_overrides():
-    with tempfile.TemporaryDirectory() as tmp:
-        fake = Path(tmp) / "bt_task.sh"
-        fake.write_text("sleep 60\n")
-        # the stand-in must not inherit the captured stdout pipe, or
-        # subprocess.run() blocks until its sleep finishes
-        bash = """
+    # hermetic: guard would report busy (bt_task), but FORCE=true must override.
+    bash = """
 set -e
 export AQSP_DEPLOY_LIB=1
 source "%s"
-bash "%s" >/dev/null 2>&1 &
-child=$!
-trap 'kill $child 2>/dev/null || true' EXIT
-sleep 1
 FORCE=true
 AQSP_DEPLOY_SWITCH_GRACE_SECONDS=1
 assert_idle_before_switch
 echo FORCE_PASSED
-""" % (SCRIPT, fake)
-        r = subprocess.run(["bash", "-c", bash], capture_output=True, text=True)
-        assert r.returncode == 0, r.stderr
-        assert "FORCE_PASSED" in r.stdout
+""" % (SCRIPT,)
+    with tempfile.TemporaryDirectory() as tmp:
+        r = _run_with_pgrep_shim(bash, Path(tmp), match_walkforward=False, match_bt_task=True)
+    assert r.returncode == 0, r.stderr
+    assert "FORCE_PASSED" in r.stdout
 
 
 @requires_script
