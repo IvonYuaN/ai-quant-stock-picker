@@ -7016,8 +7016,10 @@ def _append_walkforward_grid_rows(
     report_lines.extend(
         [
             "",
-            "| 变体 | mom | tr | lb | h | top | Sharpe | 总收益 | 暴露归一化收益 | 周期数 |",
-            "|------|-----|----|----|---|-----|--------|--------|----------------|--------|",
+            "| 变体 | mom | tr | qual | val | vol | mr | htf | lb | h | top | "
+            "Sharpe | 总收益 | 暴露归一化收益 | 周期数 |",
+            "|------|-----|----|------|-----|-----|----|-----|----|---|-----|"
+            "--------|--------|----------------|--------|",
         ]
     )
     for variant, sharpe, total_return, period_count, _trade_count in rows:
@@ -7026,10 +7028,26 @@ def _append_walkforward_grid_rows(
             normalized = f"{total_return / utilization:.2%}"
         else:
             normalized = "-"
+        # 7 维真实权重：planb 变体的权重在 composite_weights（mom/tr 两列会显示 0.0），
+        # 不渲染出来的话 V1/V2/V3 三行在报告里长得完全一样、无法辨认。
+        cw = variant.composite_weights
+        if cw is not None and len(cw) >= 7:
+            qual, val, vol, mr_w, _tr, htf = (
+                cw[1],
+                cw[2],
+                cw[3],
+                cw[4],
+                cw[5],
+                cw[6],
+            )
+        else:
+            # 旧 2 维 mix：qual/val/vol/mr/htf 未参与该 mix，权重为 0
+            qual = val = vol = mr_w = htf = 0.0
         report_lines.append(
             f"| {variant.variant_id} | "
             f"{variant.momentum_weight:.1f} | "
             f"{variant.triple_rise_weight:.1f} | "
+            f"{qual:.1f} | {val:.1f} | {vol:.1f} | {mr_w:.1f} | {htf:.1f} | "
             f"{variant.lookback_days} | "
             f"{variant.horizon_days} | "
             f"{variant.top_n} | "
@@ -7044,6 +7062,15 @@ def _append_walkforward_grid_rows(
                 "",
                 f"> 「暴露归一化收益」= 总收益 ÷ (h / {int(test_days)})，把各变体不同的持仓天数折算到同一暴露（A2）。"
                 "h 不同的变体之间**总收益不可直接比较**（暴露比可达 1:10），须看归一化列。",
+            ]
+        )
+    if any(v.composite_weights is not None for v, *_ in rows):
+        report_lines.extend(
+            [
+                "",
+                "> **7 维列说明**：`qual/val/vol/mr/htf` 才是方案 B 候选的真实权重"
+                "（`mom`/`tr` 两列在 planb 变体下恒为 0.0，权重全在 `composite_weights` 里）。"
+                "判读方案 B 候选**必须看这 5 列**，只看 mom/tr 会分不出 V1/V2/V3。",
             ]
         )
 

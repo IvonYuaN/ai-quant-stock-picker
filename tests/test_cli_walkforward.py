@@ -2407,11 +2407,18 @@ def test_walkforward_grid_cscv_writes_valid_pbo_gate(monkeypatch, tmp_path):
     assert "训练选中变体" in report_text
     assert "测试最优变体" in report_text
     assert "utilization" in report_text
+    # 逐变体表头：2026-10-03 起在 mom/tr 之后插入 qual/val/vol/mr/htf 五列，
+    # 让 planb 候选的**真实 7 维权重**在报告里可见（planb 的 mom/tr 恒为 0.0，
+    # 权重全在 composite_weights 里；不加这五列 V1/V2/V3 三行长得完全一样、分不出来）。
+    # 指标列（Sharpe/总收益/暴露归一化收益/周期数）位置后移，
+    # 但 compare_t3_dual_window.parse_report_variants 是**按表头名定位**的，不受影响。
     assert (
-        "| 变体 | mom | tr | lb | h | top | Sharpe | 总收益 | 暴露归一化收益 | 周期数 |"
+        "| 变体 | mom | tr | qual | val | vol | mr | htf | lb | h | top | "
+        "Sharpe | 总收益 | 暴露归一化收益 | 周期数 |"
         in report_text
     )
-    assert "| WF-001 | 0.3 | 0.3 | 60 | 3 | 10 |" in report_text
+    # WF-001（2 维 mix 基线臂）新增五列全为 0.0，其余列逐位不变
+    assert "| WF-001 | 0.3 | 0.3 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 60 | 3 | 10 |" in report_text
 
 
 def test_walkforward_grid_dsr_uses_period_level_observation_count(
