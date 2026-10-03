@@ -36,12 +36,45 @@ fi
 # 1) 代码：以 prod 当前生效 release 的 SHA 命名，保证两端口径严格一致
 SHA="$(basename "$(readlink -f "$RELEASE_LINK")")"
 log "release sha=$SHA"
-rsync -aP --delete -e "$RSYNC_SSH" \
+
+# 🔴 切链必须与「rsync 成功 + 目标树完整」绑定（2026-10-03 修复）。
+# 事故背景：85f596e7 于 10-01 03:21 同步进 runner 后**残缺**（`src/aqsp` 仅 166 个
+# .py、整个 `src/aqsp/data/` 子包缺失，正常应 222 个），而 `aqsp-scheduler-current`
+# 软链仍指向它 ⇒ 10-02 02:00 的 IC 以 `ModuleNotFoundError: No module named
+# 'aqsp.data'` 1 秒崩溃。旧代码里 `ln -sfn` 是**下一条独立命令**（rsync 中断也会照跑），
+# 且 `RELEASE_SHA` 写的是**目标** SHA ⇒ 日志显示 3805ed3e 而实跑的是残缺的 85f596e7。
+# 现在：①rsync 非 0 立即退出、绝不切链；②切链前在 runner 侧做**完整性体检**；
+#      ③体检不过则拒绝切链并报错（宁可不同步，也不指向残缺 release）。
+log "同步代码 → $RUNNER_ROOT/releases/$SHA/"
+if ! rsync -aP --delete -e "$RSYNC_SSH" \
   --exclude '.git/' --exclude 'node_modules/' --exclude '__pycache__/' --exclude '*.pyc' \
-  "$RELEASE_LINK/" "$RUNNER_HOST:$RUNNER_ROOT/releases/$SHA/"
+  "$RELEASE_LINK/" "$RUNNER_HOST:$RUNNER_ROOT/releases/$SHA/"; then
+  log "❌ rsync 失败（rc=$?）：**不切链**（避免软链指向残缺 release）"
+  exit 1
+fi
+
+# 完整性体检：关键子包必须存在 + .py 数与源端一致（少一个文件都可能让 import 崩）
+log "校验 $SHA 完整性…"
+if ! $RSYNC_SSH "$RUNNER_HOST" "
+  set -e
+  R='$RUNNER_ROOT/releases/$SHA'
+  n=\$(find \"\$R/src\" -name '*.py' 2>/dev/null | wc -l)
+  # 关键子包：aqsp.data 被 ic_diagnosis / factor_ic 直接 import，缺了必崩
+  for sub in src/aqsp/data src/aqsp/strategies src/aqsp/core; do
+    [ -d \"\$R/\$sub\" ] || { echo \"MISSING:\$sub\"; exit 3; }
+  done
+  [ \"\$n\" -ge 200 ] || { echo \"TOO_FEW_PY:\$n\"; exit 4; }
+  echo \"OK py=\$n\"
+"; then
+  log "❌ $SHA 完整性体检不过（缺关键子包或 .py 过少）⇒ **拒绝切链**"
+  log "   修法：重跑本脚本（rsync -aP 可续传）；必要时先在 runner 上删除该残缺 release 目录再重跑"
+  exit 1
+fi
+
 $RSYNC_SSH "$RUNNER_HOST" "ln -sfn '$RUNNER_ROOT/releases/$SHA' '$RUNNER_ROOT/aqsp-scheduler-current'"
 printf '%s\n' "$SHA" > /tmp/aqsp_release_sha
 rsync -aP -e "$RSYNC_SSH" /tmp/aqsp_release_sha "$RUNNER_HOST:$RUNNER_ROOT/RELEASE_SHA"
+log "✅ 已切链 → $SHA（rsync 成功 + 完整性体检通过）"
 
 # 2) 数据：直接 rsync 文件本体（不用 sqlite backup，避免在 1.6G 机器上再吃一份内存）
 #    ⚠️ 请在盘后落库完成之后、无写入时执行；runner 端会做 integrity_check 兜底。
