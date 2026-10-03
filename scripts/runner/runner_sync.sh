@@ -71,6 +71,20 @@ if ! $RSYNC_SSH "$RUNNER_HOST" "
   exit 1
 fi
 
+# 切链前先把「旧 current」记到 rollback 软链（2026-10-03 修复）。
+# 🔴 为什么必须在这里维护：prod 侧 `deploy_immutable_release.sh:switch_links()` 会自动维护
+#    rollback，但**本脚本此前完全不碰它** ⇒ runner 的 `aqsp-scheduler-rollback` 是历史手工
+#    建的软链，一旦指向的 release 被清理就**永久悬空**（实测 2026-10-03 指向早已删除的
+#    `0697d3e4`）⇒ **真要回滚时才发现回滚链是断的**，属「回滚能力假象」。
+#    与 current 的切链顺序：先记 rollback（指向旧 current），再切 current。
+if $RSYNC_SSH "$RUNNER_HOST" "[ -L '$RUNNER_ROOT/aqsp-scheduler-current' ]"; then
+  OLD=$($RSYNC_SSH "$RUNNER_HOST" "readlink -f '$RUNNER_ROOT/aqsp-scheduler-current'")
+  if [ -n "$OLD" ] && [ "$OLD" != "$RUNNER_ROOT/releases/$SHA" ] && [ -d "$OLD" ]; then
+    $RSYNC_SSH "$RUNNER_HOST" "ln -sfn '$OLD' '$RUNNER_ROOT/aqsp-scheduler-rollback'"
+    log "rollback 软链 → $(basename "$OLD")"
+  fi
+fi
+
 $RSYNC_SSH "$RUNNER_HOST" "ln -sfn '$RUNNER_ROOT/releases/$SHA' '$RUNNER_ROOT/aqsp-scheduler-current'"
 printf '%s\n' "$SHA" > /tmp/aqsp_release_sha
 rsync -aP -e "$RSYNC_SSH" /tmp/aqsp_release_sha "$RUNNER_HOST:$RUNNER_ROOT/RELEASE_SHA"
