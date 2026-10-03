@@ -15,7 +15,7 @@
 #   - IC_READY_DUAL 陈旧(>DUAL_MAX_AGE_HOURS，默认=MAX_AGE_HOURS)
 #     ⇒ runner 双窗连续失败/让位：隔离（删除）本地旧双窗 4 文件，端点 fail-soft
 #       available:false，绝不把陈旧判决静默当「最新」展示（不影响单窗 exit 0）。
-退出码是 best-effort 语义：调用方（daily 链路）只记日志、绝不因此阻断跑批。
+# 退出码是 best-effort 语义：调用方（daily 链路）只记日志、绝不因此阻断跑批。
 #
 # 用法（在 prod 上）：
 #   DRY_RUN=1 bash scripts/fetch_ic_diagnosis.sh        # 只判定并打印，不实际拉
