@@ -53,6 +53,15 @@ class MomentumStrategy(BaseStrategy):
         final_score = (
             momentum_score * w.momentum + trend_score * w.trend + rsi_score * w.rsi
         )
+        # 🔴 invert_signal=True 时做「方向纠正」：该因子在近 3 年 A 股反向有效
+        # （IC −2.52 / 样本内 t=−6.46、样本外 t=−3.85），而生产给它最高权重 ⇒ 系统性买反。
+        #
+        # ⚠️ 必须用 `1 - final_score` 而**不是** `-final_score`：
+        # 下面 max(0.0, min(1.0, …)) 会把分数钳制在 [0,1]，
+        # 取负 ⇒ 全部被 clamp 成 0 ⇒ 该维度退化成常量（无区分度），
+        # 等于把「买反」变成「完全不打分」，**比现状更糟**。
+        if self.thresholds.momentum.invert_signal:
+            final_score = 1.0 - final_score
         return max(0.0, min(1.0, final_score))
 
     def _calculate_momentum_score(

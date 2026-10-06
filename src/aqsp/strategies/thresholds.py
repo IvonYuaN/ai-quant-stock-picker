@@ -56,6 +56,20 @@ class MomentumThresholds:
     ma_period: int = 20
     trend_strength_threshold: float = 0.5
     weights: MomentumWeights = field(default_factory=MomentumWeights)
+    # 🔴 2026-10-06：方向纠正开关（**默认 False = 行为完全不变**）。
+    # 依据：146 截面单窗实测 momentum IC = −2.52（0930 窗 −1.87），
+    # 同期股票池等权 +45.40% 而生产基线 −13.89%（超额约 −59pp）
+    # ⇒ 该因子在近 3 年 A 股「反向有效」，而生产给它最高权重 0.30 ⇒ 系统性买反。
+    # 证据强度：样本内 t=−6.46 / 样本外 t=−3.85（同号 + 双侧 |t|>=2，OOS 独立复核）。
+    #
+    # ⚠️ 实现必须是 `1 - score` 而**不是 `-score`**：`_calculate_single_score` 末行
+    # `max(0.0, min(1.0, final_score))` 把分数钳制在 [0,1]，
+    # 取负会被 clamp 成全 0 ⇒ 3 维同时退化成常量 = 把「买反」变成「完全不打分」，
+    # **比现状更糟**（现状至少有区分度，只是方向反了）。
+    #
+    # 本开关仅供 walk-forward / 预注册实验调用；**是否改为默认 True 须经
+    # 3y gate 双门 + 股票池等权基准复核后另行拍板**，不随本 PR 生效。
+    invert_signal: bool = False
 
 
 @dataclass(frozen=True)
