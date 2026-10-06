@@ -7416,7 +7416,15 @@ def run_walkforward(args: argparse.Namespace) -> int:
     # 于是 quality/value/mean_reversion 拿不到 pe/roe ⇒ 三个维度恒为常数。
     # 但逐变体表仍会如实显示它们的 7 维权重（如 0.4/0.4），判读者极易误以为
     # 「这 0.4 权重在起作用」。此处显式标注，避免报告被误读。
-    if bool(getattr(args, "skip_pit_financials", False)):
+    #
+    # 数据来源优先级：`fetch_result.pit_note`（**运行时真实事实**）> args 开关（假设）。
+    # 用真实事实而非「假设它跳过了」，才能在将来 flag 与实际行为不一致时暴露问题。
+    # 注：fetch_result 属于**外层** run_walkforward 的局部变量，本函数是其闭包，
+    #     函数体里可直接按名访问（闭包捕获），无需 getattr/locals 绕路。
+    _pit_note = getattr(fetch_result, "pit_note", None)
+    if _pit_note:
+        tl_dr.append(f"> {_pit_note}")
+    elif bool(getattr(args, "skip_pit_financials", False)):
         tl_dr.append(
             "> ⚠️ **本次跑批跳过 PIT 财务数据**（`--skip-pit-financials`；`--streaming` 架构强制，"
             "见 cli.py:3691）⇒ 逐变体表中的 **`quality` / `value` / `mean_reversion` "

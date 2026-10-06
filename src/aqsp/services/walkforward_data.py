@@ -30,6 +30,10 @@ class WalkforwardFetchRequest:
 class WalkforwardFetchResult:
     frames: dict[str, pd.DataFrame]
     symbols: list[str]
+    # 2026-10-06：本次跑批「财务数据是否真的参与了打分」的说明（None = 未跳过 PIT，
+    # 走的是 enrich 分支，状态由 source_statuses 表达）。skip 分支必须填入，
+    # 否则「quality/value/mean_reversion 三维空转」这个事实不会被写进任何产物。
+    pit_note: str | None = None
 
 
 def _attach_benchmark_frame(
@@ -150,8 +154,26 @@ def fetch_walkforward_frames(
         frames = src.fetch_daily(symbols, start_d, end_d, adjust="")
         _attach_benchmark_frame(frames, src, benchmark_symbol, start_d, end_d)
         if request.skip_pit_financials:
+            # 🔴 2026-10-06：这里必须**显式声明哪些维度因此不参与打分**。
+            # 背景：`--streaming` 架构上强制本开关（cli.py:3691，避免 PIT 帧无界占内存），
+            # 跳过 ⇒ frames 无 pe/roe ⇒ quality/value/mean_reversion 恒为常数（实测
+            # 唯一值=1、std=0），即 7 维里有 3 维是**空转**的。若变体对这些维度配了
+            # 非零权重，该权重对选股**毫无作用**，而报告的逐变体表仍会如实显示它。
+            # 旧实现在此直接 return，把「财务数据源是否可用」这个关键事实
+            # **完全不上报**（pit_result.source_statuses 的打印在其后，永不执行）
+            # ⇒ 只能被人肉考古发现。现改为：既打印、也把状态挂到返回值上，
+            # 供 cli 写进 gate report（见 WalkforwardFetchResult.pit_note）。
+            skipped_note = (
+                "⚠️ 已跳过 point-in-time 财务补充（--skip-pit-financials；"
+                "--streaming 架构强制，见 cli.py:3691）⇒ quality / value / "
+                "mean_reversion 三维**未参与打分**（无 pe/roe 输入时它们恒为常数）；"
+                "若这些维度在变体表里有非零权重，该权重对选股**没有任何作用**。"
+            )
             print_fn("已跳过 point-in-time 财务补充，仅使用价格数据跑 gate")
-            return WalkforwardFetchResult(frames=frames, symbols=symbols)
+            print_fn(skipped_note)
+            return WalkforwardFetchResult(
+                frames=frames, symbols=symbols, pit_note=skipped_note
+            )
         print_fn(
             f"正在获取 {len(symbols)} 只股票 {request.start} ~ {request.end} 的 point-in-time 财务数据..."
         )
