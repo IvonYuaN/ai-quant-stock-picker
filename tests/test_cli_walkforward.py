@@ -2419,6 +2419,10 @@ def test_walkforward_grid_cscv_writes_valid_pbo_gate(monkeypatch, tmp_path):
     )
     # WF-001（2 维 mix 基线臂）新增五列全为 0.0，其余列逐位不变
     assert "| WF-001 | 0.3 | 0.3 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 60 | 3 | 10 |" in report_text
+    # 2026-10-06：本用例未传 skip_pit_financials ⇒ 报告**不得**出现「跳过 PIT 财务」警示。
+    # 警示的真端到端（skip_pit=True 时出现）由 tests/test_report_pit_skip_disclosure.py
+    # 的绑定守卫 + 下面的负向断言共同锁定，避免任何一侧无条件打印。
+    assert "跳过 PIT 财务数据" not in report_text
 
 
 def test_walkforward_grid_dsr_uses_period_level_observation_count(

@@ -7412,6 +7412,19 @@ def run_walkforward(args: argparse.Namespace) -> int:
     if metric_note:
         tl_dr.append(metric_note)
 
+    # 🔴 2026-10-06：--streaming 架构上强制 --skip-pit-financials（cli.py:3691），
+    # 于是 quality/value/mean_reversion 拿不到 pe/roe ⇒ 三个维度恒为常数。
+    # 但逐变体表仍会如实显示它们的 7 维权重（如 0.4/0.4），判读者极易误以为
+    # 「这 0.4 权重在起作用」。此处显式标注，避免报告被误读。
+    if bool(getattr(args, "skip_pit_financials", False)):
+        tl_dr.append(
+            "> ⚠️ **本次跑批跳过 PIT 财务数据**（`--skip-pit-financials`；`--streaming` 架构强制，"
+            "见 cli.py:3691）⇒ 逐变体表中的 **`quality` / `value` / `mean_reversion` "
+            "三维实际未参与打分**（无 `pe`/`roe` 输入时它们恒为常数）。"
+            "**若这些维度在变体表里有非零权重，该权重对选股没有任何作用**，"
+            "有效打分只来自其余有区分度的维度。"
+        )
+
     report_lines = [
         "# Walk-Forward 回测报告",
         "",
