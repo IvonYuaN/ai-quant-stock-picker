@@ -149,6 +149,13 @@ class CompositeThresholds:
     #    **且 `invert_signal: true`**（IC 为负，不反转等于赌反方向）。
     # ⚠️ 本维度不参与 regime 权重调整（同 pvc/volume_surge/volatility_position 保守处理）。
     lower_shadow_ratio_weight: float = 0.0
+    # 🔴 2026-10-08 新增维度：成交额比（资金/换手轴，扫描 3/4 显著，IC 为负）。
+    # 扫描实测 t：深−5.86/沪−5.87/创−8.28/科−1.42（3/4 显著）；
+    # 权威公式 amount/amount_ma5 与扫描脚本逐字一致 ⇒ 符号可直接采信，IC 为负。
+    # ⚠️ 默认 0.0 ⇒ 合并不改变任何生产行为；启用需同时 `amount_ratio.enabled: true`
+    #    **且 `invert_signal: true`**（IC 为负，不反转等于赌反方向）。
+    # ⚠️ 本维度不参与 regime 权重调整（同 pvc/volume_surge/volatility_position 保守处理）。
+    amount_ratio_weight: float = 0.0
     min_total_score: float = 0.6
     base_blend_weight: float = 0.7
     regime_blend_weight: float = 0.3
@@ -772,6 +779,28 @@ class LowerShadowRatioThresholds:
     invert_signal: bool = False
 
 
+@dataclass
+class AmountRatioThresholds:
+    """成交额比维度（2026-10-08 批量扫描新增）。
+
+    权威公式（auto_factor_mining.calculate_factor_value:269-271，逐字一致）：
+        amt_ma5 = amount.rolling(5).mean()
+        raw = amount / amt_ma5
+    扫描实测 t：深−5.86/沪−5.87/创−8.28/科−1.42（3/4 显著）；
+    权威公式 amount/amount_ma5 与扫描脚本 `factor_batch_scan.py:61` 逐字一致 ⇒ 符号可直接采信，IC 为负。
+    ⇒ 近期成交额放大 → 未来 5 日收益越低（放量见顶/派发的短期反转）；启用须 invert_signal=True。
+    """
+
+    enabled: bool = False
+    lookback_days: int = 10
+    min_history: int = 10
+    # 原生归一化尺度（线性 clip 到 [0,1]）；amount/ma5 典型 ~0.5(冷)-1.0(常态)-2.5(放量)
+    scale: float = 2.0
+    # 方向纠正开关（默认 False = 行为不变）。IC 为负 ⇒ 启用时须显式设 True。
+    # ⚠️ 必须 `1 - score` 而非 `-score`：末行 clamp 会把负值压成 0 ⇒ 退化成常量。
+    invert_signal: bool = False
+
+
 @dataclass(frozen=True)
 class Thresholds:
     version: str = "2.0.0"
@@ -792,6 +821,7 @@ class Thresholds:
     lower_shadow_ratio: LowerShadowRatioThresholds = field(
         default_factory=LowerShadowRatioThresholds
     )
+    amount_ratio: AmountRatioThresholds = field(default_factory=AmountRatioThresholds)
     composite: CompositeThresholds = field(default_factory=CompositeThresholds)
     risk: RiskThresholds = field(default_factory=RiskThresholds)
     filter: FilterThresholds = field(default_factory=FilterThresholds)
@@ -909,6 +939,12 @@ def _parse_macd_hist(data: dict) -> MacdHistThresholds:
 def _parse_lower_shadow_ratio(data: dict) -> LowerShadowRatioThresholds:
     return LowerShadowRatioThresholds(
         **_filter_dataclass_kwargs(LowerShadowRatioThresholds, _as_dict(data))
+    )
+
+
+def _parse_amount_ratio(data: dict) -> AmountRatioThresholds:
+    return AmountRatioThresholds(
+        **_filter_dataclass_kwargs(AmountRatioThresholds, _as_dict(data))
     )
 
 
@@ -1078,6 +1114,7 @@ def load_thresholds(
         lower_shadow_ratio=_parse_lower_shadow_ratio(
             data.get("lower_shadow_ratio", {})
         ),
+        amount_ratio=_parse_amount_ratio(data.get("amount_ratio", {})),
         composite=CompositeThresholds(
             **_filter_dataclass_kwargs(CompositeThresholds, data.get("composite", {}))
         ),

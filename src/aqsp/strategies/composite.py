@@ -13,6 +13,7 @@ from aqsp.strategies.volume_surge import VolumeSurge
 from aqsp.strategies.volatility_position import VolatilityPositionStrategy
 from aqsp.strategies.macd_hist import MACDHistStrategy
 from aqsp.strategies.lower_shadow_ratio import LowerShadowRatioStrategy
+from aqsp.strategies.amount_ratio import AmountRatioStrategy
 from aqsp.strategies.volume import VolumeBreakoutStrategy
 from aqsp.strategies.mean_reversion import MeanReversionStrategy
 from aqsp.strategies.triple_rise import TripleRiseStrategy
@@ -73,6 +74,13 @@ class CompositeStrategy(BaseStrategy):
             StrategyConfig(
                 name="lower_shadow_ratio",
                 enabled=self._has_lower_shadow_ratio(),
+            ),
+            thresholds=self.thresholds,
+        )
+        self.amount_ratio_strategy = AmountRatioStrategy(
+            StrategyConfig(
+                name="amount_ratio",
+                enabled=self._has_amount_ratio(),
             ),
             thresholds=self.thresholds,
         )
@@ -155,6 +163,12 @@ class CompositeStrategy(BaseStrategy):
         return (
             self.thresholds.lower_shadow_ratio.enabled
             and self.thresholds.composite.lower_shadow_ratio_weight > 0
+        )
+
+    def _has_amount_ratio(self) -> bool:
+        return (
+            self.thresholds.amount_ratio.enabled
+            and self.thresholds.composite.amount_ratio_weight > 0
         )
 
     def _has_price_volume_corr(self) -> bool:
@@ -330,6 +344,29 @@ class CompositeStrategy(BaseStrategy):
         mult = float(getattr(adj, "lower_shadow_ratio", 0.0) or 1.0) if adj else 1.0
         blended = base.base_blend_weight + base.regime_blend_weight * mult
         return base.lower_shadow_ratio_weight * blended
+
+    def amount_ratio_weight_for(self, regime: str) -> float:
+        """成交额比维度的 **regime 调整后**权重（与 lower_shadow_ratio/macd_hist 同源语义）。
+
+        `regime.strategy_weights` 目前**没有** `amount_ratio` 项
+        ⇒ 取中性乘子 1.0 ⇒ `blended(1.0) = 0.7 + 0.3 = 1.0`
+        ⇒ 数值上与「不调整」相同，但语义正确（将来 yaml 补项即自动生效）。
+        """
+        base = self.thresholds.composite
+        canonical = canonicalize_regime(regime)
+        adj = self.thresholds.regime.strategy_weights.get(canonical)
+        if adj is None:
+            legacy = {
+                "aggressive_bull": "stable_bull",
+                "volatile_bull": "volatile_bull",
+                "defensive_bear": "volatile_bear",
+                "rotation_sideways": "stable_sideways",
+            }.get(canonical)
+            if legacy:
+                adj = self.thresholds.regime.strategy_weights.get(legacy)
+        mult = float(getattr(adj, "amount_ratio", 0.0) or 1.0) if adj else 1.0
+        blended = base.base_blend_weight + base.regime_blend_weight * mult
+        return base.amount_ratio_weight * blended
 
     def calculate_score(
         self, data: Dict[str, pd.DataFrame], regime: str = "unknown"
