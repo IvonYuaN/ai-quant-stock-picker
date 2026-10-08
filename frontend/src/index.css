@@ -391,6 +391,46 @@
     font-size: 0.9rem;
     color: hsl(var(--muted-foreground));
   }
+  .aq-onboard {
+    border: 1px solid hsl(var(--primary) / 0.35);
+    background: hsl(var(--primary) / 0.07);
+    border-radius: 0.75rem;
+    padding: 0.9rem 1rem;
+    margin-bottom: 1rem;
+  }
+  .aq-onboard-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+  .aq-onboard-head strong {
+    font-size: 0.98rem;
+  }
+  .aq-onboard-close {
+    border: none;
+    background: transparent;
+    font-size: 1.3rem;
+    line-height: 1;
+    cursor: pointer;
+    color: hsl(var(--muted-foreground));
+    padding: 0 0.25rem;
+  }
+  .aq-onboard-steps {
+    margin: 0.6rem 0 0;
+    padding-left: 1.15rem;
+    display: grid;
+    gap: 0.4rem;
+    font-size: 0.9rem;
+  }
+  .aq-onboard-steps b {
+    color: hsl(var(--primary));
+  }
+  .aq-onboard-foot {
+    margin: 0.6rem 0 0;
+    font-size: 0.82rem;
+    color: hsl(var(--muted-foreground));
+  }
   .aq-meta-row {
     display: flex;
     flex-wrap: wrap;

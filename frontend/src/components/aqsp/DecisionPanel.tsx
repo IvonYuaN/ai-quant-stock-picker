@@ -95,11 +95,11 @@ export function DecisionPanel({ snapshot }: { snapshot: AqspSnapshot }) {
     <section className="aq-decision" aria-label="今日决策">
       <SectionHeader
         icon={decision?.canAct ? ClipboardCheck : OctagonPause}
-        title="今日决策"
-        description="走门 · 候选 · 命中 · 台账四件事，合成一句能不能下手"
+        title="今天能不能买"
+        description="综合「筛选是否放行 · 候选质量 · 历史命中 · 台账新鲜度」一句话结论"
         count={
           <Badge tone={mode === "act" ? "ok" : "warn"}>
-            {mode === "act" ? "可动模式" : "观察模式"}
+            {mode === "act" ? "可动" : "仅观察"}
           </Badge>
         }
       />

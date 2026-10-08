@@ -51,12 +51,15 @@ function TodayHeader({
       <div>
         <p className="aq-eyebrow">
           <Compass aria-hidden="true" />
-          AQSP · 短线研究
+          AQSP · 每日选股
         </p>
         <div className="aq-title-row">
-          <h1>今日研究</h1>
+          <h1>今日选股</h1>
           <strong>{date || "日期未记录"}</strong>
         </div>
+        <p className="aq-page-sub">
+          每天用 AI 从全市场筛几只值得关注的股票，附白话理由和「今天能不能买」的判断。先看下面的候选，觉得好就加到自选慢慢观察。
+        </p>
         <div className="aq-meta-row">
           {snapshot ? <span>更新 {formatAqspTime(snapshot.generated_at)}</span> : null}
           {snapshot ? (
@@ -82,6 +85,48 @@ function TodayHeader({
         </button>
       </div>
     </header>
+  );
+}
+
+/** 首次打开时的白话引导：讲清「这个工具怎么用」，关掉后不再出现。 */
+function OnboardingBanner() {
+  const [show, setShow] = useState(() => {
+    try {
+      return localStorage.getItem("aqsp-onboarded") !== "1";
+    } catch {
+      return false;
+    }
+  });
+  if (!show) return null;
+  const dismiss = () => {
+    try {
+      localStorage.setItem("aqsp-onboarded", "1");
+    } catch {
+      /* ignore */
+    }
+    setShow(false);
+  };
+  return (
+    <div className="aq-onboard" role="note">
+      <div className="aq-onboard-head">
+        <strong>这个工具每天帮你做一件事：挑股票</strong>
+        <button type="button" className="aq-onboard-close" onClick={dismiss} aria-label="不再显示">
+          ×
+        </button>
+      </div>
+      <ol className="aq-onboard-steps">
+        <li>
+          <b>看今日选股</b>：AI 从全市场筛出几只值得关注的票，每张卡片都有<b>白话理由</b>和评分。
+        </li>
+        <li>
+          <b>看「今天能不能买」</b>：顶部的判断会直接说「可动」还是「仅观察」，别在观察日硬上。
+        </li>
+        <li>
+          <b>加自选慢慢看</b>：觉得好就点卡片加入自选，过几天回来对比，别一上来就重仓。
+        </li>
+      </ol>
+      <p className="aq-onboard-foot">这是研究参考，不是买卖指令。任何决策都要你自己拍板，亏赚自负。</p>
+    </div>
   );
 }
 
@@ -300,6 +345,8 @@ export function TodayWorkspace() {
         onRefresh={refresh}
         actions={view ? <ReviewExportButton view={view} /> : null}
       />
+
+      <OnboardingBanner />
 
       {data ? <DatePicker snapshot={data} /> : null}
 

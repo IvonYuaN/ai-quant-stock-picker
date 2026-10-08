@@ -42,37 +42,49 @@ export interface NavLine {
   items: NavItem[];
 }
 
-export const SYSTEM_LINE: NavLine = {
-  id: "system",
-  title: "系统线",
-  subtitle: "AI 自动产出 · 公共只读",
+// 小白视角重排（2026-10-08）：原来 12 个 jargon 入口平铺，普通人一开门就懵。
+// 现在按「我会用到的」分三层 —— 主区只留每天真正要看的两件事，
+// 进阶工具收进「进阶分析」一组，本机私有数据单独成「我的」。
+export const PRIMARY_LINE: NavLine = {
+  id: "primary",
+  title: "每日选股",
+  subtitle: "AI 挑的票 · 能不能买",
   scope: "public",
   items: [
-    { to: "/today", label: "今日研究", desc: "结论 · 门禁 · 候选 · 证据", icon: Compass },
-    { to: "/dashboard", label: "业务监控", desc: "指标总览 · 系统健康", icon: Activity },
-    { to: "/market", label: "市场环境", desc: "指数 · 情绪 · 榜单", icon: Globe2 },
-    { to: "/radar", label: "资讯雷达", desc: "12 赛道 RSS 聚合", icon: Rss },
-    { to: "/lab", label: "策略实验室", desc: "变体对比与生命周期", icon: FlaskConical },
-    { to: "/archive", label: "结论归档", desc: "按日回看与多日对比", icon: Archive },
-    { to: "/performance", label: "选股绩效", desc: "命中率与策略衰减", icon: Gauge },
+    { to: "/today", label: "今日选股", desc: "今天 AI 挑的几只 · 白话理由", icon: Compass },
+    { to: "/market", label: "行情环境", desc: "大盘 · 情绪 · 涨跌家数", icon: Globe2 },
   ],
 };
 
 export const MY_LINE: NavLine = {
   id: "my",
-  title: "我的线",
+  title: "我的",
   subtitle: "只存本机 · 不上传服务端",
   scope: "private",
   items: [
-    { to: "/my/watchlist", label: "我的自选", desc: "关注股与行情", icon: Star },
-    { to: "/my/holdings", label: "我的持仓", desc: "台账与盈亏", icon: Wallet },
-    { to: "/my/notes", label: "我的笔记", desc: "投研沉淀", icon: NotebookPen },
-    { to: "/my/reports", label: "我的研报", desc: "私有资料", icon: FileText },
-    { to: "/reviews", label: "复盘笔记", desc: "信号复盘 · 评分标签", icon: BookOpen },
+    { to: "/my/watchlist", label: "自选", desc: "关注的票与行情", icon: Star },
+    { to: "/my/holdings", label: "持仓", desc: "台账与盈亏", icon: Wallet },
+    { to: "/my/notes", label: "笔记", desc: "投研沉淀", icon: NotebookPen },
+    { to: "/my/reports", label: "资料", desc: "私有资料", icon: FileText },
   ],
 };
 
-export const NAV_LINES: readonly NavLine[] = [SYSTEM_LINE, MY_LINE];
+export const ADVANCED_LINE: NavLine = {
+  id: "advanced",
+  title: "进阶分析",
+  subtitle: "给深度使用者",
+  scope: "public",
+  items: [
+    { to: "/reviews", label: "复盘笔记", desc: "信号复盘 · 评分标签", icon: BookOpen },
+    { to: "/dashboard", label: "运行监控", desc: "指标总览 · 系统健康", icon: Activity },
+    { to: "/radar", label: "资讯雷达", desc: "12 赛道 RSS 聚合", icon: Rss },
+    { to: "/lab", label: "策略实验室", desc: "变体对比与生命周期", icon: FlaskConical },
+    { to: "/archive", label: "历史结论", desc: "按日回看与多日对比", icon: Archive },
+    { to: "/performance", label: "历史表现", desc: "命中率与策略衰减", icon: Gauge },
+  ],
+};
+
+export const NAV_LINES: readonly NavLine[] = [PRIMARY_LINE, MY_LINE, ADVANCED_LINE];
 
 export const DEFAULT_ROUTE = "/today";
 

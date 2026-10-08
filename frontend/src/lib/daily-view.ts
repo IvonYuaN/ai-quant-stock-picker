@@ -77,9 +77,9 @@ export interface MetricView {
  * 而是常驻在页面头部，任何页签下都第一眼可见。
  */
 export const TODAY_SECTION_CATALOGUE = [
-  { id: "candidates", number: "01", label: "候选研究", tabLabel: "候选", description: "门禁 · 评分 · 依据" },
-  { id: "messages", number: "02", label: "消息证据", tabLabel: "证据", description: "来源与影响" },
-  { id: "discussion", number: "03", label: "讨论复核", tabLabel: "讨论", description: "分歧与风险" },
+  { id: "candidates", number: "01", label: "今日关注", tabLabel: "今日关注", description: "AI 挑的几只 · 白话理由" },
+  { id: "messages", number: "02", label: "为什么", tabLabel: "为什么", description: "相关消息与影响" },
+  { id: "discussion", number: "03", label: "多空观点", tabLabel: "多空", description: "看多还是看空" },
 ] as const;
 
 export type TodaySectionId = (typeof TODAY_SECTION_CATALOGUE)[number]["id"];
