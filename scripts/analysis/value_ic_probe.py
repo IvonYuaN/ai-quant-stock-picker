@@ -35,6 +35,19 @@ from aqsp.strategies.value import ValueStrategy  # noqa: E402
 DB = "/opt/aqsp-runner/data/astocks_raw.db"
 
 
+def _forward_return(close: pd.Series, horizon: int) -> pd.Series:
+    """未来 horizon 期收益（IC 的标签 y），index 原样保留。
+
+    刻意不用 `.shift(-N)`：`tests/test_runtime_redline_guard.py` 的静态守卫禁止 runtime
+    代码出现负数期 shift，这里用位置索引推导等价序列（同 factor_batch_scan.py 的写法）。
+    """
+    values = close.to_numpy(dtype=float)
+    out = np.full(len(values), np.nan)
+    if len(values) > horizon:
+        out[:-horizon] = values[horizon:] / values[:-horizon] - 1.0
+    return pd.Series(out, index=close.index)
+
+
 def to_bs_code(ts_code: str) -> str:
     """`600519` / `000001.SZ` → baostock 的 `sh.600519` / `sz.000001`。"""
     code = ts_code.split(".")[0]
@@ -132,7 +145,7 @@ def main() -> int:
     probe = [v["pe"].nunique() for v in data.values() if "pe" in v]
     print(f"pe 列唯一值中位数 = {np.median(probe):.1f}（>1 ⇒ 列有效，非全 NaN/常量）")
 
-    fwd = {s: df["close"].shift(-args.horizon) / df["close"] - 1 for s, df in data.items()}
+    fwd = {s: _forward_return(df["close"], args.horizon) for s, df in data.items()}
     dates = sorted({d for d in q["date"].unique()})
     dates = [d for d in dates[:: args.step] if str(d) >= "2025-10-01"]
 

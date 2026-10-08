@@ -35,21 +35,21 @@ def board_of(code: str) -> str:
 
 def compute_all(df: pd.DataFrame) -> dict[str, pd.Series]:
     """★ 一次性算出全部因子的时间序列（每票一次 rolling，而非每截面一次）。"""
-    c, o, h, l, v, amt = (df["close"], df["open"], df["high"],
-                          df["low"], df["volume"], df["amount"])
+    c, o, h, lo, v, amt = (df["close"], df["open"], df["high"],
+                           df["low"], df["volume"], df["amount"])
     r = np.log(c.where(c > 0))
     ret = r.diff()
-    hi20, lo20 = h.rolling(20).max(), l.rolling(20).min()
+    hi20, lo20 = h.rolling(20).max(), lo.rolling(20).min()
     rng20 = (hi20 - lo20).replace(0, np.nan)
     body_top = pd.concat([o, c], axis=1).max(axis=1)
     body_bot = pd.concat([o, c], axis=1).min(axis=1)
-    rng1 = (h - l).replace(0, np.nan)
+    rng1 = (h - lo).replace(0, np.nan)
     up = (h - body_top).replace(0, np.nan)
-    dn = (body_bot - l).replace(0, np.nan)
+    dn = (body_bot - lo).replace(0, np.nan)
     up_r, dn_r, rng10 = (up / rng1).rolling(10).mean(), (dn / rng1).rolling(10).mean(), rng1.rolling(10).mean()
     gain = c.diff().clip(lower=0).ewm(alpha=1 / 14).mean()
     loss = (-c.diff().clip(upper=0)).ewm(alpha=1 / 14).mean()
-    tr = pd.concat([h - l, (h - c.shift()).abs(), (l - c.shift()).abs()], axis=1).max(axis=1)
+    tr = pd.concat([h - lo, (h - c.shift()).abs(), (lo - c.shift()).abs()], axis=1).max(axis=1)
     return {
         "momentum_20": r.rolling(20).sum(),
         "momentum_10": r.rolling(10).sum(),
@@ -65,7 +65,7 @@ def compute_all(df: pd.DataFrame) -> dict[str, pd.Series]:
         "vol_of_vol_20": ret.rolling(20).std().rolling(20).std(),
         "realized_vol_10": ret.rolling(10).std(),
         "volatility_20": ret.rolling(20).std(),
-        "amplitude_5d": (h - l) / c.shift(5),
+        "amplitude_5d": (h - lo) / c.shift(5),
         "bias_20": c / c.rolling(20).mean() - 1,
         "bias_10": c / c.rolling(10).mean() - 1,
         "bias_5": c / c.rolling(5).mean() - 1,

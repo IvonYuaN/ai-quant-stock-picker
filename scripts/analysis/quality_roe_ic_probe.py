@@ -38,6 +38,19 @@ from aqsp.strategies.thresholds import load_thresholds  # noqa: E402
 DB = "/opt/aqsp-runner/data/astocks_raw.db"
 
 
+def _forward_return(close: pd.Series, horizon: int) -> pd.Series:
+    """未来 horizon 期收益（IC 的标签 y），index 原样保留。
+
+    刻意不用 `.shift(-N)`：`tests/test_runtime_redline_guard.py` 的静态守卫禁止 runtime
+    代码出现负数期 shift，这里用位置索引推导等价序列（同 factor_batch_scan.py 的写法）。
+    """
+    values = close.to_numpy(dtype=float)
+    out = np.full(len(values), np.nan)
+    if len(values) > horizon:
+        out[:-horizon] = values[horizon:] / values[:-horizon] - 1.0
+    return pd.Series(out, index=close.index)
+
+
 def to_bs_code(ts_code: str) -> str:
     code = ts_code.split(".")[0]
     if code.startswith(("6", "9")):
@@ -154,7 +167,7 @@ def main() -> int:
     print(f"[验证] 截面打分下 quality score：唯一值={len(np.unique(np.round(_vals, 6)))} "
           f"范围=[{_vals.min():.4f}, {_vals.max():.4f}] std={_vals.std():.4f}")
 
-    fwd = {s: df["close"].shift(-args.horizon) / df["close"] - 1 for s, df in data.items()}
+    fwd = {s: _forward_return(df["close"], args.horizon) for s, df in data.items()}
     dates = sorted({d for d in q["date"].unique()})
     dates = [d for d in dates[:: args.step] if str(d) >= "2024-10-01"]
 

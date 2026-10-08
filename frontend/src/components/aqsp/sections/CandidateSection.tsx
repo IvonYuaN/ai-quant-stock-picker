@@ -2,14 +2,13 @@
 //
 // 数据全部来自 daily-view 的展示模型，本文件不做任何判断逻辑，
 // 因此"候选名怎么显示""什么算可复核"在页签和卡片里必然一致。
-import { ArrowRight, BookOpen, Check, ExternalLink, ShieldAlert, TrendingUp } from "lucide-react";
+import { ArrowRight, BookOpen, Check, ExternalLink, TrendingUp } from "lucide-react";
 import {
   Badge,
   Card,
   EmptyState,
   SectionHeader,
   Tag,
-  ToneCallout,
   clickableRowProps,
 } from "@/components/ui/primitives";
 import { useEffect, useState } from "react";
@@ -126,7 +125,7 @@ function CandidateDetailCard({
       <div className="aq-tag-row">
         <Tag tone="primary">{statusLabel(row.status)}</Tag>
         <Tag>{evidenceLabel(row.evidence)}</Tag>
-        {row.ready ? <Tag tone="ok">可复核</Tag> : <Tag tone="warn">仅观察</Tag>}
+        {row.ready ? <Tag tone="ok">材料齐了</Tag> : <Tag tone="warn">材料待补</Tag>}
         <OwnerTag ownership={ownership} code={row.symbol} />
         {onPick && row.symbol ? (
           <button type="button" className="aq-btn aq-btn-icon" onClick={() => onPick(row.symbol)} title="查看个股详情">
@@ -283,8 +282,8 @@ function CandidateChainTable({
               <td>
                 <ChainCell
                   tone={row.ready ? "ok" : "warn"}
-                  label={row.ready ? "可复核" : "仅观察"}
-                  detail={row.ready ? row.nextStep || "按当前结论复核" : "等待消息与讨论闭环"}
+                  label={row.ready ? "材料齐了" : "材料待补"}
+                  detail={row.ready ? row.nextStep || "按当前结论跟进" : "等材料补齐再跟进"}
                 />
               </td>
             </tr>
@@ -474,13 +473,6 @@ export function CandidateSection({
       >
         <Badge tone={view.chain.tone}>{view.chain.label}</Badge>
       </SectionHeader>
-
-      <ToneCallout
-        tone={view.gate.tone}
-        title={view.gate.label}
-        detail={view.gate.detail}
-        icon={view.gate.tone === "ok" ? Check : ShieldAlert}
-      />
 
       <ResearchChainLane view={view} />
 

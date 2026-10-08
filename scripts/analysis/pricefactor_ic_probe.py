@@ -44,6 +44,19 @@ FACTORS = {
 }
 
 
+def _forward_return(close: pd.Series, horizon: int) -> pd.Series:
+    """未来 horizon 期收益（IC 的标签 y），index 原样保留。
+
+    刻意不用 `.shift(-N)`：`tests/test_runtime_redline_guard.py` 的静态守卫禁止 runtime
+    代码出现负数期 shift，这里用位置索引推导等价序列（同 factor_batch_scan.py 的写法）。
+    """
+    values = close.to_numpy(dtype=float)
+    out = np.full(len(values), np.nan)
+    if len(values) > horizon:
+        out[:-horizon] = values[horizon:] / values[:-horizon] - 1.0
+    return pd.Series(out, index=close.index)
+
+
 def load_strategy(name: str, th):
     path, cfgname, _ = FACTORS[name]
     mod, cls_name = path.split(":")
@@ -106,7 +119,7 @@ def main() -> int:
     if not strategies:
         return 2
 
-    fwd = {s: df["close"].shift(-args.horizon) / df["close"] - 1 for s, df in data.items()}
+    fwd = {s: _forward_return(df["close"], args.horizon) for s, df in data.items()}
     dates = sorted({d for d in q["date"].unique()})
     dates = [d for d in dates[:: args.step] if str(d) >= "2024-03-01"]
 

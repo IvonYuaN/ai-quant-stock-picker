@@ -15,8 +15,8 @@ import { cn } from "@/lib/utils";
 import {
   buildDailyView,
   resolveTodaySection,
-  TODAY_SECTION_CATALOGUE,
   type DailyView,
+  type SectionView,
 } from "@/lib/daily-view";
 import { formatResearchDate } from "@/lib/research-view";
 import { formatAqspTime, isAqspSnapshotStale, useWorkspaceSnapshot } from "./useAqspSnapshot";
@@ -119,7 +119,7 @@ function OnboardingBanner() {
           <b>看今日选股</b>：AI 从全市场筛出几只值得关注的票，每张卡片都有<b>白话理由</b>和评分。
         </li>
         <li>
-          <b>看「今天能不能买」</b>：顶部的判断会直接说「可动」还是「仅观察」，别在观察日硬上。
+          <b>看「今天能不能买」</b>：候选看过后，下面那块会直接说「可动」还是「仅观察」——观察日就别急着动。
         </li>
         <li>
           <b>加自选慢慢看</b>：觉得好就点卡片加入自选，过几天回来对比，别一上来就重仓。
@@ -263,10 +263,10 @@ function PersistentBlock({ view }: { view: DailyView }) {
   );
 }
 
-function SectionTabs({ active }: { active: string }) {
+function SectionTabs({ active, sections }: { active: string; sections: readonly SectionView[] }) {
   return (
     <nav className="aq-tabs" aria-label="今日研究分段">
-      {TODAY_SECTION_CATALOGUE.map((section) => (
+      {sections.map((section) => (
         <Link
           key={section.id}
           to={`/today#${section.id}`}
@@ -283,14 +283,16 @@ function SectionTabs({ active }: { active: string }) {
 function ActiveSection({
   view,
   active,
-  onPick,
 }: {
   view: DailyView;
   active: string;
-  onPick: (symbol: string) => void;
 }) {
-  const section = view.sections.find((item) => item.id === active) ?? view.sections[0];
-  if (section.id === "candidates") return <CandidateSection view={view} section={section} onPick={onPick} />;
+  // 候选段已固定在首屏（见 TodayWorkspace 的渲染顺序），本组件只承载「细节段」。
+  // 所以兜底**不能**再落到 sections[0] —— 那是候选段，会让首屏那份被渲染第二遍。
+  const section =
+    view.sections.find((item) => item.id === active && item.id !== "candidates") ??
+    view.sections.find((item) => item.id !== "candidates");
+  if (!section) return null;
   if (section.id === "messages") return <MessageSection view={view} section={section} />;
   return <DiscussionSection view={view} section={section} />;
 }
@@ -318,6 +320,12 @@ export function TodayWorkspace() {
 
   // 日期未对齐时不给页面任何"当前日期"的展示模型，从根上杜绝张冠李戴。
   const view = useMemo(() => (data && !switching ? buildDailyView(data) : null), [data, switching]);
+
+  // 首屏即选股：候选段固定顶到最上面，其余段（为什么 / 多空观点）走下方页签。
+  const candidateSection = view?.sections.find((section) => section.id === "candidates");
+  const detailSections = view ? view.sections.filter((section) => section.id !== "candidates") : [];
+  const activeDetailId =
+    detailSections.some((section) => section.id === active) ? active : detailSections[0]?.id ?? "";
 
   const targetDate = selectedDate || data?.selected_date || "";
 
@@ -375,12 +383,17 @@ export function TodayWorkspace() {
         <LoadingState />
       ) : (
         <>
+          {/* 首屏即选股：候选卡直接顶到最上面，meta 块（门禁/市场环境/阶段）全部下沉。 */}
+          {candidateSection ? (
+            <CandidateSection view={view} section={candidateSection} onPick={setPicked} />
+          ) : null}
           <DecisionPanel snapshot={data} />
           <PersistentBlock view={view} />
           <ClosingReviewPanel />
-          <SectionTabs active={active} />
+          {/* 页签只承载候选以外的细节（为什么 / 多空观点），候选已固定在首屏。 */}
+          <SectionTabs active={activeDetailId} sections={detailSections} />
           <main className="aq-active-section" aria-live="polite">
-            <ActiveSection view={view} active={active} onPick={setPicked} />
+            <ActiveSection view={view} active={activeDetailId} />
           </main>
         </>
       )}
