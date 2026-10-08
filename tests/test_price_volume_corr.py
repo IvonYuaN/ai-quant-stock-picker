@@ -15,13 +15,17 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 import numpy as np
 import pandas as pd
 import pytest
 
 from aqsp.strategies.base import StrategyConfig
+from aqsp.strategies.composite import CompositeStrategy
 from aqsp.strategies.price_volume_corr import PriceVolumeLevelCorrelation
 from aqsp.strategies.thresholds import (
+    CompositeThresholds,
     PriceVolumeCorrThresholds,
     Thresholds,
     load_thresholds,
@@ -116,3 +120,57 @@ def test_pit_no_lookahead() -> None:
     src = inspect.getsource(PriceVolumeLevelCorrelation)
     assert "shift(-" not in src, "🔴 禁止负向位移（AGENTS.md §5 红线）"
     assert "center=True" not in src, "🔴 禁止中心化 rolling"
+
+# ── composite 接线守卫（修复 5 · 第二步）───────────────────────────────
+
+def test_composite_weight_defaults_to_zero() -> None:
+    """composite 权重必须默认 0.0 —— 合并不得改变任何生产打分。"""
+    assert CompositeThresholds().price_volume_corr_weight == 0.0
+
+
+def _composite(weight: float, enabled: bool):
+    base = load_thresholds()
+    return CompositeStrategy(
+        StrategyConfig(name="composite", enabled=True),
+        Thresholds(
+            **{f: getattr(base, f) for f in base.__dataclass_fields__
+               if f not in ("price_volume_corr", "composite")},
+            price_volume_corr=PriceVolumeCorrThresholds(enabled=enabled, window=10),
+            composite=dataclasses.replace(
+                base.composite, price_volume_corr_weight=weight
+            ),
+        ),
+    )
+
+
+def test_guard_requires_both_enabled_and_weight() -> None:
+    """🔴 `_has_*` 语义：必须**同时** enabled 且 weight>0。
+
+    与 `volume.enabled=false + volume_weight=0.0` 是同一类静默失效
+    （生产 yaml 里 volume 就是 enabled:false）⇒ 只改一个会导致静默无效。
+    """
+    assert _composite(0.3, enabled=True)._has_price_volume_corr() is True
+    assert _composite(0.0, enabled=True)._has_price_volume_corr() is False, (
+        "weight=0 时必须不参与（否则会被计入 w_sum 改变归一化）"
+    )
+    assert _composite(0.3, enabled=False)._has_price_volume_corr() is False, (
+        "enabled=False 时必须不参与 —— 这正是 volume 的现状（yaml 里 enabled:false）"
+    )
+
+
+def test_default_config_output_unchanged() -> None:
+    """默认配置下 composite 的打分必须与「该维度不存在」完全一致。"""
+    import numpy as np
+
+    default = _composite(0.0, enabled=False)
+    enabled = _composite(0.3, enabled=True)
+    data = {f"{i:06d}": _frame("same" if i % 2 else "opposite") for i in range(40)}
+
+    a = default.calculate_score(data)
+    b = enabled.calculate_score(data)
+    assert set(a) == set(b)
+    diffs = [abs(a[k] - b[k]) for k in a]
+    assert max(diffs) > 0, "启用后必须有差异（否则说明接线没生效）"
+    # 默认侧不得被新维度影响：单独实例化时 w_sum 不含 pvc
+    assert default._has_price_volume_corr() is False
+    assert np.isfinite(list(a.values())).all()

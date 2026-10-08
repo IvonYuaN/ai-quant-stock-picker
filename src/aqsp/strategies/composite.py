@@ -8,6 +8,7 @@ from aqsp.strategies.base import BaseStrategy, StrategyConfig
 from aqsp.strategies.momentum import MomentumStrategy
 from aqsp.strategies.quality import QualityStrategy
 from aqsp.strategies.value import ValueStrategy
+from aqsp.strategies.price_volume_corr import PriceVolumeLevelCorrelation
 from aqsp.strategies.volume import VolumeBreakoutStrategy
 from aqsp.strategies.mean_reversion import MeanReversionStrategy
 from aqsp.strategies.triple_rise import TripleRiseStrategy
@@ -43,6 +44,9 @@ class CompositeStrategy(BaseStrategy):
         self.value_strategy = ValueStrategy(
             StrategyConfig(name="value", enabled=self._has_value()),
             thresholds=self.thresholds,
+        )
+        self.price_volume_corr_strategy = PriceVolumeLevelCorrelation(
+            StrategyConfig(name="price_volume_corr", enabled=True), self.thresholds
         )
         self.volume_strategy = VolumeBreakoutStrategy(
             StrategyConfig(
@@ -99,6 +103,12 @@ class CompositeStrategy(BaseStrategy):
         return (
             self.thresholds.triple_rise.enabled
             and self.thresholds.composite.triple_rise_weight > 0
+        )
+
+    def _has_price_volume_corr(self) -> bool:
+        return (
+            self.thresholds.price_volume_corr.enabled
+            and self.thresholds.composite.price_volume_corr_weight > 0
         )
 
     def _has_htf(self) -> bool:
@@ -177,6 +187,10 @@ class CompositeStrategy(BaseStrategy):
         if self._has_htf():
             htf_scores = self.htf_strategy.calculate_score(data)
 
+        pvc_scores: Dict[str, float] = {}
+        if self._has_price_volume_corr():
+            pvc_scores = self.price_volume_corr_strategy.calculate_score(data)
+
         all_symbols = set(momentum_scores.keys())
         all_symbols |= set(quality_scores.keys())
         all_symbols |= set(value_scores.keys())
@@ -184,9 +198,11 @@ class CompositeStrategy(BaseStrategy):
         all_symbols |= set(mr_scores.keys())
         all_symbols |= set(tr_scores.keys())
         all_symbols |= set(htf_scores.keys())
+        all_symbols |= set(pvc_scores.keys())
 
         # 使用市场状态调整后的权重
         mw, qw, vw, volw, mrw, trw, htfw = self.get_regime_adjusted_weights(regime)
+        pvcw = self.thresholds.composite.price_volume_corr_weight
 
         final_scores = {}
         for symbol in all_symbols:
@@ -226,6 +242,12 @@ class CompositeStrategy(BaseStrategy):
                 htf = htf_scores.get(symbol, 0.5)
                 total += htf * htfw
                 w_sum += htfw
+
+            # 🔴 修复 5：价量水平相关（不参与 regime 调整，用 base 权重）
+            if self._has_price_volume_corr():
+                pvc = pvc_scores.get(symbol, 0.5)
+                total += pvc * pvcw
+                w_sum += pvcw
 
             base_score = total / w_sum if w_sum > 0 else 0.0
             final_scores[symbol] = max(0.0, min(1.0, base_score))

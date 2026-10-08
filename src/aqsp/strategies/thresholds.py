@@ -118,6 +118,14 @@ class CompositeThresholds:
     mean_reversion_weight: float = 0.0
     triple_rise_weight: float = 0.0
     high_tight_flag_weight: float = 0.0
+    # 🔴 2026-08 新增维度（修复 5）：价量水平滚动相关。
+    # 实测 IC=−0.0306/t=−3.59（显著），且 ρ(·,momentum)=+0.285、ρ(·,surge)=+0.101
+    # ⇒ 当前唯一「既有显著 alpha、又与现有信号正交」的因子。
+    # ⚠️ 默认 0.0 ⇒ **合并不改变任何生产行为**；启用需同时把
+    #    `price_volume_corr.enabled` 设为 true（`_has_*` 守卫要求 enabled AND weight>0）。
+    # ⚠️ 本维度**不参与 regime 权重调整**（`regime.strategy_weights` 仍是 7 维口径），
+    #    第一版保守处理，避免改动已预注册的 regime 表。
+    price_volume_corr_weight: float = 0.0
     min_total_score: float = 0.6
     base_blend_weight: float = 0.7
     regime_blend_weight: float = 0.3
