@@ -240,43 +240,43 @@ export function gateView(gate: AqspRecommendationGate | undefined): ToneView {
   if (presentation === "unavailable") {
     return {
       tone: "neutral",
-      label: "门禁状态未记录",
-      detail: "服务端未返回推荐门禁状态，当前只展示可核验的数据。",
+      label: "状态还没出来",
+      detail: "还没拿到推荐状态，先只看能核实的数据。",
     };
   }
   if (presentation === "ready") {
     return {
       tone: "ok",
-      label: "已放行",
-      detail: "当前结果可进入纸面复核，不自动下单。",
+      label: "可以细看",
+      detail: "结果可以细看，但不会自动下单。",
     };
   }
   const reason = gate?.reasons?.[0] ?? "";
   if (gate?.status === "research_display" || reason.startsWith("research_display")) {
     return {
       tone: "warn",
-      label: "仅研究展示",
-      detail: "服务端标记为研究展示，不进入正式推荐或纸面复核。",
+      label: "只供研究参考",
+      detail: "标记为研究参考，不进正式推荐。",
     };
   }
   if (reason.startsWith("freshness_not_ready")) {
     return {
       tone: "warn",
-      label: "实时数据新鲜度未达标",
-      detail: "行情或消息未达到新鲜度要求，当前为研究展示，不进入正式推荐。",
+      label: "行情还不够新",
+      detail: "行情或消息还不够新，先当研究参考。",
     };
   }
   if (reason.startsWith("circuit_breaker")) {
     return {
       tone: "warn",
-      label: "组合保护处于冷却状态",
-      detail: "组合熔断冷却期内不生成新推荐，当前信号仅供参考。",
+      label: "系统在冷静期",
+      detail: "熔断冷静期里不推新票，信号仅供参考。",
     };
   }
   return {
     tone: "warn",
-    label: "当前结果仅供观察",
-    detail: reason ? `未放行原因：${gateReasonLabel(reason)}` : "当前结果仅供观察，不进入正式推荐或纸面复核。",
+    label: "先观察，别急",
+    detail: reason ? `未放行原因：${gateReasonLabel(reason)}` : "当前结果先观察，不进正式推荐。",
   };
 }
 
@@ -432,21 +432,21 @@ export function buildDailyView(snapshot: AqspSnapshot): DailyView {
     total === 0
       ? { tone: "neutral", label: "当天没有候选", detail: "当前没有通过数据质量与短线筛选的对象。" }
       : readyCount === total
-        ? { tone: "ok", label: "证据链已闭环", detail: "候选、个股消息、讨论与复核结论已闭环。" }
+        ? { tone: "ok", label: "依据已齐全", detail: "候选、相关消息、多空讨论都看过了。" }
         : {
             tone: "warn",
-            label: "证据链未完整",
-            detail: `${readyCount}/${total} 个候选完成复核闭环，其余仅观察。`,
+            label: "依据还没齐",
+            detail: `${readyCount}/${total} 个候选材料已齐，其余先观察。`,
           };
 
   const chainDetail =
     total === 0
-      ? "当前没有候选，无需复核。"
+      ? "当前没有候选，无需再看。"
       : readyCount === total
-        ? "候选、个股消息、讨论与复核结论已闭环。"
-        : `${candidates.filter((row) => row.debateRounds !== null).length}/${total} 个候选完成讨论，${
+        ? "候选、相关消息、多空讨论都看过了。"
+        : `${candidates.filter((row) => row.debateRounds !== null).length}/${total} 个候选有多空讨论，${
             candidates.filter((row) => row.messageCount > 0).length
-          }/${total} 个候选有可引用消息证据；当前仅观察。`;
+          }/${total} 个有可引用消息；其余先观察。`;
 
   const universe = snapshot.universe ?? null;
   const coverageText =

@@ -39,10 +39,10 @@ export function ratingLabel(code: string | null | undefined): string {
 /* ------------------------------------------------------- 候选状态 / 证据 */
 
 const STATUS_LABELS: LabelMap = {
-  validated: "已复核",
-  pending: "待复核",
-  watch_only: "仅观察",
-  not_executable: "无法复核",
+  validated: "已确认",
+  pending: "待确认",
+  watch_only: "先观察",
+  not_executable: "暂无法评估",
   blocked_by_circuit_breaker: "风控拦截",
   run_completed_no_picks: "无候选",
 };
@@ -53,22 +53,22 @@ export function statusLabel(code: string | null | undefined): string {
 }
 
 const EVIDENCE_LABELS: LabelMap = {
-  evidence_not_ready: "证据未就绪",
-  evidence_ready: "证据已就绪",
-  evidence_insufficient: "证据不足",
-  evidence_missing: "证据未记录",
+  evidence_not_ready: "依据待补",
+  evidence_ready: "依据齐全",
+  evidence_insufficient: "依据不足",
+  evidence_missing: "尚无依据",
 };
 
-/** 证据状态码 → 中文（缺省「证据不足」与后端默认一致）。未知码原样透传。 */
+/** 证据状态码 → 中文（缺省「依据不足」与后端默认一致）。未知码原样透传。 */
 export function evidenceLabel(code: string | null | undefined): string {
-  return mapOf(code ?? "", EVIDENCE_LABELS, "证据不足");
+  return mapOf(code ?? "", EVIDENCE_LABELS, "依据不足");
 }
 
 /* ------------------------------------------------------- 门禁原因码 */
 
 const GATE_REASON_LABELS: LabelMap = {
-  recommendation_gate_missing: "门禁状态未记录",
-  index_byte_budget: "当日快照超出容量上限，推荐状态未生成",
+  recommendation_gate_missing: "状态还没出来",
+  index_byte_budget: "当天数据量超限，推荐状态没生成",
 };
 
 /** 门禁未放行原因码 → 人话。未知码原样透传（保留可排查性）。 */

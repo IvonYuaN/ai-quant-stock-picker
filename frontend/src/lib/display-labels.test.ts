@@ -26,17 +26,17 @@ export const displayLabelsContract = {
   ratingNullDefault: ratingLabel(null) === "仅观察",
 
   /* ---- 候选状态 / 证据 ---- */
-  statusValidated: statusLabel("validated") === "已复核",
-  statusPending: statusLabel("pending") === "待复核",
+  statusValidated: statusLabel("validated") === "已确认",
+  statusPending: statusLabel("pending") === "待确认",
   statusBreaker: statusLabel("blocked_by_circuit_breaker") === "风控拦截",
   statusUnknownPassthrough: statusLabel("some_new_status") === "some_new_status",
   statusEmptyDefault: statusLabel("") === "状态未记录",
-  evidenceReady: evidenceLabel("evidence_ready") === "证据已就绪",
-  evidenceDefault: evidenceLabel("") === "证据不足",
+  evidenceReady: evidenceLabel("evidence_ready") === "依据齐全",
+  evidenceDefault: evidenceLabel("") === "依据不足",
 
   /* ---- 门禁原因 ---- */
-  gateMissing: gateReasonLabel("recommendation_gate_missing") === "门禁状态未记录",
-  gateByteBudget: gateReasonLabel("index_byte_budget") === "当日快照超出容量上限，推荐状态未生成",
+  gateMissing: gateReasonLabel("recommendation_gate_missing") === "状态还没出来",
+  gateByteBudget: gateReasonLabel("index_byte_budget") === "当天数据量超限，推荐状态没生成",
   gateUnknownPassthrough: gateReasonLabel("freshness_not_ready") === "freshness_not_ready",
 
   /* ---- 台账状态分布 ---- */

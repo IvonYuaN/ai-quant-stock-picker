@@ -176,20 +176,20 @@ const view = buildDailyView(dailyViewFixture);
 export const dailyViewContract = {
   /* ---- 门禁口径：全站唯一来源，信息缺失不得被当成"放行" ---- */
   gateMissingIsNeutralNotReady: gateView(undefined).tone === "neutral",
-  gateMissingSaysUnrecorded: gateView(undefined).label === "门禁状态未记录",
+  gateMissingSaysUnrecorded: gateView(undefined).label === "状态还没出来",
   gateFreshnessReasonIsMapped:
     gateView({ recommendation_allowed: false, status: "blocked", reasons: ["freshness_not_ready"] }).label ===
-    "实时数据新鲜度未达标",
+    "行情还不够新",
   gateCircuitBreakerReasonIsMapped:
     gateView({ recommendation_allowed: false, status: "blocked", reasons: ["circuit_breaker_daily"] }).label ===
-    "组合保护处于冷却状态",
+    "系统在冷静期",
   gateResearchDisplayIsWarnNotReady:
     gateView({ recommendation_allowed: true, status: "research_display", reasons: ["research_display_override"] })
       .tone === "warn",
   gateExplicitAllowIsOk: gateView({ recommendation_allowed: true, status: "ready", reasons: [] }).tone === "ok",
   gateUnknownReasonFallsBackToObserve:
     gateView({ recommendation_allowed: false, status: "blocked", reasons: ["something_new"] }).label ===
-    "当前结果仅供观察",
+    "先观察，别急",
 
   /* ---- 页签必须覆盖全部正文分段（原 bug：候选段无入口） ---- */
   sectionsCoverEveryTab: view.sections.map((section) => section.id).join("|") === TODAY_SECTION_IDS.join("|"),
