@@ -23,17 +23,21 @@ PER_BOARD = 500
 
 def board_of(code: str) -> str:
     x = code.split(".")[0]
-    if x.startswith("60"): return "沪主板"
-    if x.startswith("68"): return "科创板"
-    if x.startswith("00"): return "深主板"
-    if x.startswith("30"): return "创业板"
+    if x.startswith("60"):
+        return "沪主板"
+    if x.startswith("68"):
+        return "科创板"
+    if x.startswith("00"):
+        return "深主板"
+    if x.startswith("30"):
+        return "创业板"
     return "北交所"
 
 
 def lsr_auth(df: pd.DataFrame) -> pd.Series:
     """权威 lower_shadow_ratio = (min(open,close) - low)/close（单日）。"""
-    o, c, l = df["open"], df["close"], df["low"]
-    return (np.minimum(o, c) - l) / c.where(c > 0)
+    o, c, lo = df["open"], df["close"], df["low"]
+    return (np.minimum(o, c) - lo) / c.where(c > 0)
 
 
 def ic(g: pd.DataFrame) -> float:
