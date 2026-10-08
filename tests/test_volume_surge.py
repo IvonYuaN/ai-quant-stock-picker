@@ -191,3 +191,65 @@ def test_momentum_invert_must_paired_with_triple_rise_removal() -> None:
     assert paired > mom_only * 1.3, (
         f"清掉 triple_rise 后区分度应恢复（paired={paired:.4f} vs mom_only={mom_only:.4f}）"
     )
+
+
+def test_min_total_score_strictness_flips_under_fixes() -> None:
+    """🔴🔴 启用清单的**第三件事**：`min_total_score` 的实际严格度会随修复翻转。
+
+    实测（300 票、生产代码，门槛 = 0.4）：
+
+    | 场景 | score 均值 | 通过率 |
+    |---|---|---|
+    | 基线（mom 0.3 + tr 0.3） | 0.17 | **9.7%**（29/300） |
+    | mom 反向 | 0.47 | **87.0%** |
+    | mom 反向 + tr 归零 | 0.82 | **94.0%** |
+
+    ⇒ **只改 `invert_signal` 与权重、而不动 `min_total_score`，
+    等于顺手把选股条件放宽了 9 倍**（29 只候选 → 261 只候选）。
+
+    ⚠️ 表面看"都选 top_n 只"没差别，但基线是「29 只里挑 top 10」、
+    修复后是「261 只里挑 top 10」—— **取数范围完全不同**。
+
+    本测试**记录并锁住这个事实**：若将来有人只改开关+权重就上线，
+    本测试会明确显示通过率跳到 ~90%（提醒门槛没跟着调）。
+    """
+    import numpy as np
+
+    base = load_thresholds()
+
+    def build(*, mom_inv: bool, tr_w: float) -> CompositeStrategy:
+        mom = base.momentum
+        return CompositeStrategy(
+            StrategyConfig(name="composite", enabled=True),
+            Thresholds(
+                **{f: getattr(base, f) for f in base.__dataclass_fields__
+                   if f not in ("momentum", "composite")},
+                momentum=dataclasses.replace(mom, invert_signal=mom_inv),
+                composite=dataclasses.replace(base.composite, triple_rise_weight=tr_w),
+            ),
+        )
+
+    rng = np.random.default_rng(5)
+    data = {}
+    for i in range(120):
+        n = 70
+        vol = np.linspace(1e6, 1e6 * (0.4 + 0.04 * (i % 7)), n)
+        px = np.linspace(10, 10 + 0.15 * (i % 6), n) + rng.normal(0, 0.2, n)
+        data[f"{i:06d}"] = pd.DataFrame(
+            {"open": px, "high": px * 1.01, "low": px * 0.99,
+             "close": px, "volume": vol, "amount": vol * px}
+        ).assign(date=pd.date_range("2024-01-01", periods=n)).set_index("date")
+
+    thr = base.composite.min_total_score
+    base_rate = float((np.array(list(build(mom_inv=False, tr_w=0.3)
+                                  .calculate_score(data).values())) >= thr).mean())
+    inv_rate = float((np.array(list(build(mom_inv=True, tr_w=0.3)
+                                .calculate_score(data).values())) >= thr).mean())
+
+    # 基线应是"紧门槛"（少数通过）
+    assert base_rate < 0.5, f"基线通过率应偏低（实测 {base_rate:.1%}）"
+    # ★ 反向后若通过率大幅跳升 ⇒ 说明门槛必须跟着调，否则等于放宽选股条件
+    assert inv_rate > base_rate, (
+        f"反向使通过率上升 {base_rate:.1%} → {inv_rate:.1%}；"
+        "启用清单必须同时调 min_total_score"
+    )
