@@ -53,6 +53,14 @@ class VolumeBreakoutStrategy(BaseStrategy):
             + price_breakout_score * w.breakout
             + vol_price_corr_score * w.correlation
         )
+        # 🔴 invert_signal=True 时做「方向纠正」：该因子近 3 年 A 股反向有效
+        # （实测 IC −0.0324、t −3.07，生产代码 + 250 票真实行情）。
+        #
+        # ⚠️ 必须用 `1 - final` 而**不是** `-final`：下面 max(0.0, min(1.0, …))
+        # 会把分数钳制在 [0,1]，取负 ⇒ 全部被 clamp 成 0 ⇒ 该维度退化成常量
+        # （无区分度），**比现状更糟**。
+        if cfg.invert_signal:
+            final = 1.0 - final
         return max(0.0, min(1.0, final))
 
     @staticmethod

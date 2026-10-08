@@ -44,6 +44,20 @@ class VolumeThresholds:
     price_ma_period: int = 20
     correlation_window: int = 10
     weights: VolumeWeights = field(default_factory=VolumeWeights)
+    # 🔴 2026-10-08：方向纠正开关（**默认 False = 行为完全不变**）。
+    #
+    # 依据（2026-10-08 实测，生产 VolumeBreakoutStrategy + 真实行情，250 票/125 截面）：
+    #   原向 IC = **−0.0324**、t = **−3.07** ⇒ **显著** ⇒ 该因子近 3 年 A 股「反向有效」。
+    #   对照：production 给它 **0.0 权重**（唯一被实测证实的强信号却完全未启用），
+    #   而给 0.3 权重的 triple_rise 的 t 仅 −1.25（噪音）。
+    #
+    # ⚠️ 实现必须是 `1 - score` 而**不是** `-score`：`_calculate_single_score` 末行
+    # `max(0.0, min(1.0, final))` 把分数钳制在 [0,1]，取负会被 clamp 成全 0
+    # ⇒ 维度退化成常量（无区分度），**比现状更糟**。
+    #
+    # 本开关仅供 walk-forward / 预注册实验调用；**是否改为默认 True、是否给该维度
+    # 非零权重，均须经 3y gate 双门 + 股票池等权基准复核后另行拍板**，不随本 PR 生效。
+    invert_signal: bool = False
 
 
 @dataclass(frozen=True)
