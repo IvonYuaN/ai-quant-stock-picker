@@ -126,3 +126,68 @@ def test_pit_guard() -> None:
     src = inspect.getsource(VolumeSurge)
     assert "shift(-" not in src, "🔴 禁止负向位移（AGENTS.md §5）"
     assert "center=True" not in src, "🔴 禁止中心化 rolling"
+
+
+def test_momentum_invert_must_paired_with_triple_rise_removal() -> None:
+    """★★★ 组合层**交互效应**守卫（2026-08 实测发现）。
+
+    实测（400 票、生产代码、composite 层）：
+
+    | 场景 | score std | top20 与基线重合 |
+    |---|---|---|
+    | 现状（基线） | **0.1504** | 20/20 |
+    | **只开 `momentum.invert_signal`** | **0.0757** ⚠️ | 8/20 |
+    | mom 反向 + triple_rise 归零 | 0.1498 | 0/20 |
+
+    **单独把 momentum 反向会让打分区分度腰斩** —— 因为 `momentum` 与 `triple_rise`
+    同源（ρ = 0.609，生产实测），翻转 mom 后它与 tr **方向冲突**，
+    两者在归一化的 `(mom + tr)/2` 里互相抵消。
+
+    ⇒ 单因子层 IC 翻正（t=+2.88）**不代表组合层受益**；
+    ⇒ **修复 1 必须与「降/清 triple_rise 权重」成对启用**。
+
+    本测试锁住这条交互约束，防止将来只开 `momentum.invert_signal` 就上线。
+    """
+    base = load_thresholds()
+
+    def build(*, mom_inv: bool, tr_w: float) -> CompositeStrategy:
+        mom = base.momentum
+        return CompositeStrategy(
+            StrategyConfig(name="composite", enabled=True),
+            Thresholds(
+                **{f: getattr(base, f) for f in base.__dataclass_fields__
+                   if f not in ("momentum", "composite")},
+                momentum=dataclasses.replace(mom, invert_signal=mom_inv),
+                composite=dataclasses.replace(base.composite, triple_rise_weight=tr_w),
+            ),
+        )
+
+    import numpy as np
+
+    def spread(st: CompositeStrategy) -> float:
+        rng = np.random.default_rng(7)
+        data = {}
+        for i in range(60):
+            n = 70
+            vol = np.linspace(1e6, 1e6 * (0.4 + 0.05 * (i % 8)), n)
+            base_px = np.linspace(10, 10 + 0.2 * (i % 7), n) + rng.normal(0, 0.25, n)
+            data[f"{i:06d}"] = pd.DataFrame(
+                {"open": base_px, "high": base_px * 1.01, "low": base_px * 0.99,
+                 "close": base_px, "volume": vol, "amount": vol * base_px}
+            ).assign(date=pd.date_range("2024-01-01", periods=n)).set_index("date")
+        vals = np.array(list(st.calculate_score(data).values()))
+        return float(vals.std())
+
+    baseline = spread(build(mom_inv=False, tr_w=0.3))
+    mom_only = spread(build(mom_inv=True, tr_w=0.3))
+    paired = spread(build(mom_inv=True, tr_w=0.0))
+
+    # 反向且保留 tr ⇒ 区分度应明显低于基线（两者互相抵消）
+    assert mom_only < baseline * 0.75, (
+        f"只开 momentum 反向会让区分度塌陷（baseline={baseline:.4f} "
+        f"mom_only={mom_only:.4f}）—— 说明 tr 未清理时两者冲突"
+    )
+    # 反向且清掉 tr ⇒ 区分度应恢复
+    assert paired > mom_only * 1.3, (
+        f"清掉 triple_rise 后区分度应恢复（paired={paired:.4f} vs mom_only={mom_only:.4f}）"
+    )
