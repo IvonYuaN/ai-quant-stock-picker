@@ -289,12 +289,12 @@ function ActiveSection({
 }) {
   // 候选段已固定在首屏（见 TodayWorkspace 的渲染顺序），本组件只承载「细节段」。
   // 所以兜底**不能**再落到 sections[0] —— 那是候选段，会让首屏那份被渲染第二遍。
-  const detail =
+  const section =
     view.sections.find((item) => item.id === active && item.id !== "candidates") ??
     view.sections.find((item) => item.id !== "candidates");
-  if (!detail) return null;
-  if (detail.id === "messages") return <MessageSection view={view} section={detail} />;
-  return <DiscussionSection view={view} section={detail} />;
+  if (!section) return null;
+  if (section.id === "messages") return <MessageSection view={view} section={section} />;
+  return <DiscussionSection view={view} section={section} />;
 }
 
 export function TodayWorkspace() {
