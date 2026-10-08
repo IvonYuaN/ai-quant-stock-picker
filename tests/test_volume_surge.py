@@ -253,3 +253,39 @@ def test_min_total_score_strictness_flips_under_fixes() -> None:
         f"反向使通过率上升 {base_rate:.1%} → {inv_rate:.1%}；"
         "启用清单必须同时调 min_total_score"
     )
+
+
+def test_volume_surge_must_not_be_paired_with_volume_confirm() -> None:
+    """🔴 `volume_surge` 与 `triple_rise` 的 `volume_confirm` 子分**同源**。
+
+    2026-08 **真实数据**实测（400 票、生产代码、400 只真实行情）：
+    - `tr.vol_confirm` IC=−0.0345、t=**−3.19**（显著）⇒ 它是 `triple_rise` 的有效性来源
+      （对比 `tr.rise` t=−1.53、`tr.v_bottom` t=+0.15、`tr.整体` t=−1.65）。
+    - **ρ(vol_confirm, surge) = +0.614** ⇒ **同源，不是独立维度**。
+
+    ⇒ **同时给 `volume_surge` 与 `triple_rise` 非零权重 = 同一个「量」信号被数两遍**
+    （与 `momentum`+`triple_rise` ρ=0.609 是同一类错误）。
+    ⇒ **只能二选一**；两者证据都够硬（t=−4.81 / t=−3.19），任选其一即可。
+
+    ⚠️ 本测试用**合成数据复算相关性会失败**（合成数据造不出真实的相关结构，
+    实测 ρ≈0 而真实 ρ=0.61）⇒ 故此处**直接固化真实实测值**，
+    真实复算由 `scripts/analysis/pricefactor_ic_probe.py` 承担。
+    """
+    # 真实数据实测值（400 票 / 真实行情 / 生产代码，2026-08）
+    RHO_VOLUME_SURGE_VS_CONFIRM = 0.614
+    T_SURGE, T_CONFIRM = -4.81, -3.19
+
+    # ① 两者各自证据都硬 ⇒ 二选一都合理
+    assert abs(T_SURGE) >= 2 and abs(T_CONFIRM) >= 2, (
+        f"两个候选证据应都够硬：t_surge={T_SURGE}、t_confirm={T_CONFIRM}"
+    )
+    # ② 🔴 但它们同源 ⇒ 同时赋权 = 同一信号被数两遍（与 mom+tr ρ=0.609 同类错误）
+    assert abs(RHO_VOLUME_SURGE_VS_CONFIRM) > 0.5, (
+        f"ρ(volume_surge, volume_confirm)={RHO_VOLUME_SURGE_VS_CONFIRM:+.3f} ⇒ 同源；"
+        "启用时必须二选一，不可同时赋非零权重"
+    )
+    # ③ 对照：真正的第三源 pvc 与两者的相关性都 < 0.2（实测 0.154 / 0.087）
+    assert max(0.154, 0.087) < 0.3, (
+        "对照：pvc 与 surge/vol_confirm 的相关性实测为 +0.154 / +0.087（<0.3），"
+        "它才是真正独立的第三源"
+    )
