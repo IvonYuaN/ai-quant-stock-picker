@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date
 
 import pandas as pd
 import pytest
@@ -29,9 +29,20 @@ def _fresh_frame(latest: str) -> pd.DataFrame:
     )
 
 
-def test_data_freshness_rejects_stale_data_when_schema_valid() -> None:
-    stale = (date.today() - timedelta(days=10)).isoformat()
-    frames = {"600000": _fresh_frame(stale)}
+def test_data_freshness_rejects_stale_data_when_schema_valid(monkeypatch) -> None:
+    """行情落后超过 max_lag_days 个交易日时必须抛 FreshnessError。
+
+    这里固定「今天」而不是用 `date.today()`：断言依赖的是「数据日期 → 今天」跨过的
+    **交易日**数，而长假会把交易日 lag 压到阈值内 —— 2026-10-08（国庆后首个交易日）
+    实测自然日差 10 天、交易日 lag 只有 2，`max_lag_days=3` 于是判为新鲜，这条用例
+    就这么红过一次。同文件其余用例一律 monkeypatch 固定日期，这里对齐。
+    """
+    monkeypatch.setattr("aqsp.freshness.today_shanghai", lambda: date(2026, 10, 8))
+    monkeypatch.setattr(
+        "aqsp.freshness.load_optional_trade_calendar", lambda *_args, **_kwargs: None
+    )
+
+    frames = {"600000": _fresh_frame("2026-09-01")}
 
     with pytest.raises(FreshnessError, match="stale"):
         assert_fresh_data(frames, max_lag_days=3)
