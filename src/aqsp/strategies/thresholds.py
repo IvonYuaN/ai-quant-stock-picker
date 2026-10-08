@@ -126,6 +126,9 @@ class CompositeThresholds:
     # ⚠️ 本维度**不参与 regime 权重调整**（`regime.strategy_weights` 仍是 7 维口径），
     #    第一版保守处理，避免改动已预注册的 regime 表。
     price_volume_corr_weight: float = 0.0
+    # 🔴 2026-08 新增维度：量能冲击（`volume` 最强子分，t=−4.81）。
+    # ⚠️ 默认 0.0 ⇒ 合并不改变任何生产行为；启用需同时 `volume_surge.enabled: true`。
+    volume_surge_weight: float = 0.0
     min_total_score: float = 0.6
     base_blend_weight: float = 0.7
     regime_blend_weight: float = 0.3
@@ -630,6 +633,29 @@ class NReboundThresholds:
 
 
 @dataclass
+class VolumeSurgeThresholds:
+    """量能冲击独立维度（从 `volume` 因子拆出的最强子分）。
+
+    实测依据（2026-10-08，400 票 / 125 截面、生产口径，逐子分单独 IC）：
+      surge       IC=−0.0370  t=−4.81  ★ 最强
+      breakout    IC=−0.0264  t=−2.24  显著（含价成分）
+      correlation IC=−0.0037  t=−0.52  ✗ 无 alpha
+    ⇒ `volume` 的有效性几乎全部来自 `surge`，其余两个子分在稀释它。
+
+    独立性：ρ(surge, momentum)=+0.500、ρ(surge, triple_rise)=+0.580（中等相关）
+    ⇒ 属「量」的信息源，与「价」源的 momentum/tr 不同簇。
+    """
+
+    enabled: bool = False
+    lookback_days: int = 60
+    volume_ma_period: int = 20
+    surge_multiplier: float = 1.5
+    # 方向纠正开关（默认 False = 行为不变）。实测 IC 为负 ⇒ 近 3 年 A 股反向有效。
+    # ⚠️ 必须 `1 - score` 而非 `-score`：末行 clamp 会把负值压成 0 ⇒ 退化成常量。
+    invert_signal: bool = False
+
+
+@dataclass
 class PriceVolumeCorrThresholds:
     """价量水平滚动相关（修复 5 新维度）。
 
@@ -661,6 +687,7 @@ class Thresholds:
     price_volume_corr: PriceVolumeCorrThresholds = field(
         default_factory=PriceVolumeCorrThresholds
     )
+    volume_surge: VolumeSurgeThresholds = field(default_factory=VolumeSurgeThresholds)
     composite: CompositeThresholds = field(default_factory=CompositeThresholds)
     risk: RiskThresholds = field(default_factory=RiskThresholds)
     filter: FilterThresholds = field(default_factory=FilterThresholds)
@@ -750,6 +777,12 @@ def _filter_dataclass_kwargs(cls: type, data: object) -> dict:
     raw = _as_dict(data)
     allowed = {item.name for item in fields(cls)}
     return {key: value for key, value in raw.items() if str(key) in allowed}
+
+
+def _parse_volume_surge(data: dict) -> VolumeSurgeThresholds:
+    return VolumeSurgeThresholds(
+        **_filter_dataclass_kwargs(VolumeSurgeThresholds, _as_dict(data))
+    )
 
 
 def _parse_price_volume_corr(data: dict) -> PriceVolumeCorrThresholds:
@@ -916,6 +949,7 @@ def load_thresholds(
         price_volume_corr=_parse_price_volume_corr(
             data.get("price_volume_corr", {})
         ),
+        volume_surge=_parse_volume_surge(data.get("volume_surge", {})),
         composite=CompositeThresholds(
             **_filter_dataclass_kwargs(CompositeThresholds, data.get("composite", {}))
         ),

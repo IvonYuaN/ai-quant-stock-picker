@@ -9,6 +9,7 @@ from aqsp.strategies.momentum import MomentumStrategy
 from aqsp.strategies.quality import QualityStrategy
 from aqsp.strategies.value import ValueStrategy
 from aqsp.strategies.price_volume_corr import PriceVolumeLevelCorrelation
+from aqsp.strategies.volume_surge import VolumeSurge
 from aqsp.strategies.volume import VolumeBreakoutStrategy
 from aqsp.strategies.mean_reversion import MeanReversionStrategy
 from aqsp.strategies.triple_rise import TripleRiseStrategy
@@ -47,6 +48,9 @@ class CompositeStrategy(BaseStrategy):
         )
         self.price_volume_corr_strategy = PriceVolumeLevelCorrelation(
             StrategyConfig(name="price_volume_corr", enabled=True), self.thresholds
+        )
+        self.volume_surge_strategy = VolumeSurge(
+            StrategyConfig(name="volume_surge", enabled=True), self.thresholds
         )
         self.volume_strategy = VolumeBreakoutStrategy(
             StrategyConfig(
@@ -105,6 +109,12 @@ class CompositeStrategy(BaseStrategy):
             and self.thresholds.composite.triple_rise_weight > 0
         )
 
+    def _has_volume_surge(self) -> bool:
+        return (
+            self.thresholds.volume_surge.enabled
+            and self.thresholds.composite.volume_surge_weight > 0
+        )
+
     def _has_price_volume_corr(self) -> bool:
         return (
             self.thresholds.price_volume_corr.enabled
@@ -157,6 +167,29 @@ class CompositeStrategy(BaseStrategy):
             base.triple_rise_weight * blended(adjustment.triple_rise),
             base.high_tight_flag_weight * blended(adjustment.high_tight_flag),
         )
+
+    def volume_surge_weight_for(self, regime: str) -> float:
+        """量能冲击维度的 **regime 调整后**权重（与其余维度同源语义）。
+
+        与 `price_volume_corr_weight_for` 同理：`regime.strategy_weights` 无
+        `volume_surge` 项 ⇒ 中性乘子 1.0 ⇒ `blended(1.0) = base_blend + regime_blend = 1.0`
+        ⇒ 数值与「不调整」相同，但语义正确（将来 yaml 补项即自动生效）。
+        """
+        base = self.thresholds.composite
+        canonical = canonicalize_regime(regime)
+        adj = self.thresholds.regime.strategy_weights.get(canonical)
+        if adj is None:
+            legacy = {
+                "aggressive_bull": "stable_bull",
+                "volatile_bull": "volatile_bull",
+                "defensive_bear": "volatile_bear",
+                "rotation_sideways": "stable_sideways",
+            }.get(canonical)
+            if legacy:
+                adj = self.thresholds.regime.strategy_weights.get(legacy)
+        mult = float(getattr(adj, "volume_surge", 0.0) or 1.0) if adj else 1.0
+        blended = base.base_blend_weight + base.regime_blend_weight * mult
+        return base.volume_surge_weight * blended
 
     def price_volume_corr_weight_for(self, regime: str) -> float:
         """价量水平相关维度的 **regime 调整后**权重（与其余 7 维同源语义）。
@@ -220,6 +253,10 @@ class CompositeStrategy(BaseStrategy):
         if self._has_price_volume_corr():
             pvc_scores = self.price_volume_corr_strategy.calculate_score(data)
 
+        vsurge_scores: Dict[str, float] = {}
+        if self._has_volume_surge():
+            vsurge_scores = self.volume_surge_strategy.calculate_score(data)
+
         all_symbols = set(momentum_scores.keys())
         all_symbols |= set(quality_scores.keys())
         all_symbols |= set(value_scores.keys())
@@ -228,10 +265,12 @@ class CompositeStrategy(BaseStrategy):
         all_symbols |= set(tr_scores.keys())
         all_symbols |= set(htf_scores.keys())
         all_symbols |= set(pvc_scores.keys())
+        all_symbols |= set(vsurge_scores.keys())
 
         # 使用市场状态调整后的权重
         mw, qw, vw, volw, mrw, trw, htfw = self.get_regime_adjusted_weights(regime)
-        pvcw = self.price_volume_corr_weight_for(regime)  # 与其余 7 维同源 regime 语义
+        pvcw = self.price_volume_corr_weight_for(regime)  # 与其余维度同源 regime 语义
+        vsurgew = self.volume_surge_weight_for(regime)
 
         final_scores = {}
         for symbol in all_symbols:
@@ -272,11 +311,17 @@ class CompositeStrategy(BaseStrategy):
                 total += htf * htfw
                 w_sum += htfw
 
-            # 🔴 修复 5：价量水平相关（不参与 regime 调整，用 base 权重）
+            # 🔴 修复 5：价量水平相关（regime 同源权重）
             if self._has_price_volume_corr():
                 pvc = pvc_scores.get(symbol, 0.5)
                 total += pvc * pvcw
                 w_sum += pvcw
+
+            # 🔴 量能冲击（`volume` 最强子分；regime 同源权重）
+            if self._has_volume_surge():
+                vs = vsurge_scores.get(symbol, 0.0)
+                total += vs * vsurgew
+                w_sum += vsurgew
 
             base_score = total / w_sum if w_sum > 0 else 0.0
             final_scores[symbol] = max(0.0, min(1.0, base_score))
