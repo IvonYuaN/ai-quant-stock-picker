@@ -10,6 +10,7 @@ from aqsp.strategies.quality import QualityStrategy
 from aqsp.strategies.value import ValueStrategy
 from aqsp.strategies.price_volume_corr import PriceVolumeLevelCorrelation
 from aqsp.strategies.volume_surge import VolumeSurge
+from aqsp.strategies.volatility_position import VolatilityPositionStrategy
 from aqsp.strategies.volume import VolumeBreakoutStrategy
 from aqsp.strategies.mean_reversion import MeanReversionStrategy
 from aqsp.strategies.triple_rise import TripleRiseStrategy
@@ -51,6 +52,13 @@ class CompositeStrategy(BaseStrategy):
         )
         self.volume_surge_strategy = VolumeSurge(
             StrategyConfig(name="volume_surge", enabled=True), self.thresholds
+        )
+        self.volatility_position_strategy = VolatilityPositionStrategy(
+            StrategyConfig(
+                name="volatility_position",
+                enabled=self._has_volatility_position(),
+            ),
+            thresholds=self.thresholds,
         )
         self.volume_strategy = VolumeBreakoutStrategy(
             StrategyConfig(
@@ -113,6 +121,12 @@ class CompositeStrategy(BaseStrategy):
         return (
             self.thresholds.volume_surge.enabled
             and self.thresholds.composite.volume_surge_weight > 0
+        )
+
+    def _has_volatility_position(self) -> bool:
+        return (
+            self.thresholds.volatility_position.enabled
+            and self.thresholds.composite.volatility_position_weight > 0
         )
 
     def _has_price_volume_corr(self) -> bool:
@@ -220,6 +234,29 @@ class CompositeStrategy(BaseStrategy):
         blended = base.base_blend_weight + base.regime_blend_weight * mult
         return base.price_volume_corr_weight * blended
 
+    def volatility_position_weight_for(self, regime: str) -> float:
+        """波动/位置维度的 **regime 调整后**权重（与 pvc/volume_surge 同源语义）。
+
+        `regime.strategy_weights` 目前**没有** `volatility_position` 项
+        ⇒ 取中性乘子 1.0 ⇒ `blended(1.0) = 0.7 + 0.3 = 1.0`
+        ⇒ 数值上与「不调整」相同，但语义正确（将来 yaml 补项即自动生效）。
+        """
+        base = self.thresholds.composite
+        canonical = canonicalize_regime(regime)
+        adj = self.thresholds.regime.strategy_weights.get(canonical)
+        if adj is None:
+            legacy = {
+                "aggressive_bull": "stable_bull",
+                "volatile_bull": "volatile_bull",
+                "defensive_bear": "volatile_bear",
+                "rotation_sideways": "stable_sideways",
+            }.get(canonical)
+            if legacy:
+                adj = self.thresholds.regime.strategy_weights.get(legacy)
+        mult = float(getattr(adj, "volatility_position", 0.0) or 1.0) if adj else 1.0
+        blended = base.base_blend_weight + base.regime_blend_weight * mult
+        return base.volatility_position_weight * blended
+
     def calculate_score(
         self, data: Dict[str, pd.DataFrame], regime: str = "unknown"
     ) -> Dict[str, float]:
@@ -257,6 +294,10 @@ class CompositeStrategy(BaseStrategy):
         if self._has_volume_surge():
             vsurge_scores = self.volume_surge_strategy.calculate_score(data)
 
+        vp_scores: Dict[str, float] = {}
+        if self._has_volatility_position():
+            vp_scores = self.volatility_position_strategy.calculate_score(data)
+
         all_symbols = set(momentum_scores.keys())
         all_symbols |= set(quality_scores.keys())
         all_symbols |= set(value_scores.keys())
@@ -266,11 +307,13 @@ class CompositeStrategy(BaseStrategy):
         all_symbols |= set(htf_scores.keys())
         all_symbols |= set(pvc_scores.keys())
         all_symbols |= set(vsurge_scores.keys())
+        all_symbols |= set(vp_scores.keys())
 
         # 使用市场状态调整后的权重
         mw, qw, vw, volw, mrw, trw, htfw = self.get_regime_adjusted_weights(regime)
         pvcw = self.price_volume_corr_weight_for(regime)  # 与其余维度同源 regime 语义
         vsurgew = self.volume_surge_weight_for(regime)
+        vpw = self.volatility_position_weight_for(regime)
 
         final_scores = {}
         for symbol in all_symbols:
@@ -322,6 +365,12 @@ class CompositeStrategy(BaseStrategy):
                 vs = vsurge_scores.get(symbol, 0.0)
                 total += vs * vsurgew
                 w_sum += vsurgew
+
+            # 🔴 波动/位置维度（regime 同源权重）
+            if self._has_volatility_position():
+                vp = vp_scores.get(symbol, 0.5)
+                total += vp * vpw
+                w_sum += vpw
 
             base_score = total / w_sum if w_sum > 0 else 0.0
             final_scores[symbol] = max(0.0, min(1.0, base_score))

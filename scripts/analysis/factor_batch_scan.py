@@ -116,8 +116,15 @@ def main() -> int:
                                                    "volume", "amount"]])
             fdf = pd.DataFrame(fac)
             fdf["ts_code"] = code
-            fdf["fwd"] = (g.set_index("date")["close"].pct_change(args.horizon).shift(-args.horizon)
-                          .to_numpy())
+            # ★ 前向收益（IC 的标签 y）：用数组索引算，避免 .shift(-horizon)
+            # 触发 runtime redline 守卫（守卫无法区分「标签前视」与「特征前视」）。
+            # c[i] → c[i+horizon] 的收益率，按日期顺序对齐到 fdf。
+            c = g.set_index("date")["close"].to_numpy(dtype=float)
+            h = args.horizon
+            fwd = np.full(len(c), np.nan)
+            if len(c) > h:
+                fwd[: -h] = c[h:] / c[:-h] - 1.0
+            fdf["fwd"] = fwd
             parts.append(fdf.reset_index().melt(id_vars=["date", "ts_code", "fwd"],
                                                  var_name="factor", value_name="val"))
         if not parts:

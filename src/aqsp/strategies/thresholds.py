@@ -129,6 +129,13 @@ class CompositeThresholds:
     # 🔴 2026-08 新增维度：量能冲击（`volume` 最强子分，t=−4.81）。
     # ⚠️ 默认 0.0 ⇒ 合并不改变任何生产行为；启用需同时 `volume_surge.enabled: true`。
     volume_surge_weight: float = 0.0
+    # 🔴 2026-10-08 新增维度：波动/位置类（amplitude_5d + vol_of_vol_20 + distance_to_ma60 三子分包）。
+    # 批量扫描实测：amplitude_5d 3/4、vol_of_vol_20 3/4、distance_to_ma60 2/4（深创强），IC 皆负。
+    # ⚠️ 默认 0.0 ⇒ 合并不改变任何生产行为；启用需同时 `volatility_position.enabled: true`
+    #    （`_has_*` 守卫要求 enabled AND weight>0）**且 `invert_signal: true`**（三子分 IC 皆负，
+    #    不反转等于赌反方向 —— 与 price_volume_corr / volume_surge 同约定）。
+    # ⚠️ 本维度不参与 regime 权重调整（同 pvc/volume_surge 第一版保守处理）。
+    volatility_position_weight: float = 0.0
     min_total_score: float = 0.6
     base_blend_weight: float = 0.7
     regime_blend_weight: float = 0.3
@@ -675,6 +682,38 @@ class PriceVolumeCorrThresholds:
     invert_signal: bool = False
 
 
+@dataclass
+class VolatilityPositionThresholds:
+    """波动/位置类维度（2026-10-08 批量扫描新增）。
+
+    三子分（权威公式见 `auto_factor_mining.calculate_factor_value`，逐字一致）：
+      amplitude_5d    = (high_5 − low_5) / close         IC 深−8.13/沪−4.39/创−9.18/科−1.91 ★3/4
+      vol_of_vol_20   = std(std(returns,5),20)            IC 深−5.34/沪−2.26/创−5.35/科−2.04 ★3/4
+      distance_to_ma60 = (close − ma60) / ma60            IC 深−5.49/沪−2.04/创−4.62/科−1.13  2/4（深创强）
+    三者 IC 皆负 ⇒ 原生方向反 ⇒ `invert_signal` 默认 False（启用时须显式设 True）。
+    """
+
+    enabled: bool = False
+    lookback_days: int = 60
+    min_history: int = 60
+    # 子分窗口
+    amplitude_window: int = 5
+    vol_of_vol_inner: int = 5
+    vol_of_vol_outer: int = 20
+    ma_period: int = 60
+    # 子分权重（归一化组合）
+    w_amplitude: float = 0.5
+    w_vol_of_vol: float = 0.25
+    w_distance: float = 0.25
+    # 原生归一化尺度（线性 clip 到 [0,1]）
+    amp_scale: float = 0.10
+    vov_scale: float = 0.012
+    dist_center: float = 0.10
+    # 方向纠正开关（默认 False = 行为不变）。三子分 IC 皆负 ⇒ 启用时须显式设 True。
+    # ⚠️ 必须 `1 - score` 而非 `-score`：末行 clamp 会把负值压成 0 ⇒ 退化成常量。
+    invert_signal: bool = False
+
+
 @dataclass(frozen=True)
 class Thresholds:
     version: str = "2.0.0"
@@ -688,6 +727,9 @@ class Thresholds:
         default_factory=PriceVolumeCorrThresholds
     )
     volume_surge: VolumeSurgeThresholds = field(default_factory=VolumeSurgeThresholds)
+    volatility_position: VolatilityPositionThresholds = field(
+        default_factory=VolatilityPositionThresholds
+    )
     composite: CompositeThresholds = field(default_factory=CompositeThresholds)
     risk: RiskThresholds = field(default_factory=RiskThresholds)
     filter: FilterThresholds = field(default_factory=FilterThresholds)
@@ -788,6 +830,12 @@ def _parse_volume_surge(data: dict) -> VolumeSurgeThresholds:
 def _parse_price_volume_corr(data: dict) -> PriceVolumeCorrThresholds:
     return PriceVolumeCorrThresholds(
         **_filter_dataclass_kwargs(PriceVolumeCorrThresholds, _as_dict(data))
+    )
+
+
+def _parse_volatility_position(data: dict) -> VolatilityPositionThresholds:
+    return VolatilityPositionThresholds(
+        **_filter_dataclass_kwargs(VolatilityPositionThresholds, _as_dict(data))
     )
 
 
@@ -950,6 +998,9 @@ def load_thresholds(
             data.get("price_volume_corr", {})
         ),
         volume_surge=_parse_volume_surge(data.get("volume_surge", {})),
+        volatility_position=_parse_volatility_position(
+            data.get("volatility_position", {})
+        ),
         composite=CompositeThresholds(
             **_filter_dataclass_kwargs(CompositeThresholds, data.get("composite", {}))
         ),
