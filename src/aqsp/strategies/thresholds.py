@@ -142,6 +142,13 @@ class CompositeThresholds:
     #    **且 `invert_signal: true`**（IC 为负，不反转等于赌反方向）。
     # ⚠️ 本维度不参与 regime 权重调整（同 pvc/volume_surge/volatility_position 保守处理）。
     macd_hist_weight: float = 0.0
+    # 🔴 2026-10-08 新增维度：下影线比（蜡烛形态轴，权威公式重算 4/4 显著，IC 为负）。
+    # 批量扫描 CSV 的 +3.90 是「范围归一+10日平滑」版本的 IC，与权威管道公式符号相反；
+    # 权威公式 `(min(open,close)-low)/close` 真实 IC 全为负（深−6.98/沪−4.16/创−6.09/科−3.60）。
+    # ⚠️ 默认 0.0 ⇒ 合并不改变任何生产行为；启用需同时 `lower_shadow_ratio.enabled: true`
+    #    **且 `invert_signal: true`**（IC 为负，不反转等于赌反方向）。
+    # ⚠️ 本维度不参与 regime 权重调整（同 pvc/volume_surge/volatility_position 保守处理）。
+    lower_shadow_ratio_weight: float = 0.0
     min_total_score: float = 0.6
     base_blend_weight: float = 0.7
     regime_blend_weight: float = 0.3
@@ -744,6 +751,27 @@ class MacdHistThresholds:
     invert_signal: bool = False
 
 
+@dataclass
+class LowerShadowRatioThresholds:
+    """下影线比维度（2026-10-08 批量扫描 + 权威公式重算新增）。
+
+    权威公式（auto_factor_mining.calculate_factor_value:254-255，逐字一致）：
+        lower_shadow_ratio = (min(open, close) - low) / close
+    批量扫描 CSV 的 +3.90 是「范围归一 + 10 日平滑」版本的 IC，与权威管道公式符号相反；
+    权威公式真实 IC 全为负（深−0.0336/沪−0.0212/创−0.0295/科−0.0156，t 各 −6.98/−4.16/−6.09/−3.60，4/4 显著）。
+    ⇒ 当日下影线越长 → 未来 5 日收益越低（短期反转/获利了结）；启用须 invert_signal=True。
+    """
+
+    enabled: bool = False
+    lookback_days: int = 5
+    min_history: int = 5
+    # 原生归一化尺度（线性 clip 到 [0,1]）；单日下影线比典型 ~0.01-0.05
+    scale: float = 0.05
+    # 方向纠正开关（默认 False = 行为不变）。IC 为负 ⇒ 启用时须显式设 True。
+    # ⚠️ 必须 `1 - score` 而非 `-score`：末行 clamp 会把负值压成 0 ⇒ 退化成常量。
+    invert_signal: bool = False
+
+
 @dataclass(frozen=True)
 class Thresholds:
     version: str = "2.0.0"
@@ -761,6 +789,9 @@ class Thresholds:
         default_factory=VolatilityPositionThresholds
     )
     macd_hist: MacdHistThresholds = field(default_factory=MacdHistThresholds)
+    lower_shadow_ratio: LowerShadowRatioThresholds = field(
+        default_factory=LowerShadowRatioThresholds
+    )
     composite: CompositeThresholds = field(default_factory=CompositeThresholds)
     risk: RiskThresholds = field(default_factory=RiskThresholds)
     filter: FilterThresholds = field(default_factory=FilterThresholds)
@@ -865,14 +896,19 @@ def _parse_price_volume_corr(data: dict) -> PriceVolumeCorrThresholds:
 
 
 def _parse_volatility_position(data: dict) -> VolatilityPositionThresholds:
-    return VolatilityPositionThresholds(
-        **_filter_dataclass_kwargs(VolatilityPositionThresholds, _as_dict(data))
+    return VolatilityPositionThresholds(        **_filter_dataclass_kwargs(VolatilityPositionThresholds, _as_dict(data))
     )
 
 
 def _parse_macd_hist(data: dict) -> MacdHistThresholds:
     return MacdHistThresholds(
         **_filter_dataclass_kwargs(MacdHistThresholds, _as_dict(data))
+    )
+
+
+def _parse_lower_shadow_ratio(data: dict) -> LowerShadowRatioThresholds:
+    return LowerShadowRatioThresholds(
+        **_filter_dataclass_kwargs(LowerShadowRatioThresholds, _as_dict(data))
     )
 
 
@@ -1039,6 +1075,9 @@ def load_thresholds(
             data.get("volatility_position", {})
         ),
         macd_hist=_parse_macd_hist(data.get("macd_hist", {})),
+        lower_shadow_ratio=_parse_lower_shadow_ratio(
+            data.get("lower_shadow_ratio", {})
+        ),
         composite=CompositeThresholds(
             **_filter_dataclass_kwargs(CompositeThresholds, data.get("composite", {}))
         ),

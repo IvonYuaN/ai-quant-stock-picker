@@ -12,6 +12,7 @@ from aqsp.strategies.price_volume_corr import PriceVolumeLevelCorrelation
 from aqsp.strategies.volume_surge import VolumeSurge
 from aqsp.strategies.volatility_position import VolatilityPositionStrategy
 from aqsp.strategies.macd_hist import MACDHistStrategy
+from aqsp.strategies.lower_shadow_ratio import LowerShadowRatioStrategy
 from aqsp.strategies.volume import VolumeBreakoutStrategy
 from aqsp.strategies.mean_reversion import MeanReversionStrategy
 from aqsp.strategies.triple_rise import TripleRiseStrategy
@@ -65,6 +66,13 @@ class CompositeStrategy(BaseStrategy):
             StrategyConfig(
                 name="macd_hist",
                 enabled=self._has_macd_hist(),
+            ),
+            thresholds=self.thresholds,
+        )
+        self.lower_shadow_ratio_strategy = LowerShadowRatioStrategy(
+            StrategyConfig(
+                name="lower_shadow_ratio",
+                enabled=self._has_lower_shadow_ratio(),
             ),
             thresholds=self.thresholds,
         )
@@ -141,6 +149,12 @@ class CompositeStrategy(BaseStrategy):
         return (
             self.thresholds.macd_hist.enabled
             and self.thresholds.composite.macd_hist_weight > 0
+        )
+
+    def _has_lower_shadow_ratio(self) -> bool:
+        return (
+            self.thresholds.lower_shadow_ratio.enabled
+            and self.thresholds.composite.lower_shadow_ratio_weight > 0
         )
 
     def _has_price_volume_corr(self) -> bool:
@@ -294,6 +308,29 @@ class CompositeStrategy(BaseStrategy):
         blended = base.base_blend_weight + base.regime_blend_weight * mult
         return base.macd_hist_weight * blended
 
+    def lower_shadow_ratio_weight_for(self, regime: str) -> float:
+        """下影线比维度的 **regime 调整后**权重（与 macd_hist/volatility_position 同源语义）。
+
+        `regime.strategy_weights` 目前**没有** `lower_shadow_ratio` 项
+        ⇒ 取中性乘子 1.0 ⇒ `blended(1.0) = 0.7 + 0.3 = 1.0`
+        ⇒ 数值上与「不调整」相同，但语义正确（将来 yaml 补项即自动生效）。
+        """
+        base = self.thresholds.composite
+        canonical = canonicalize_regime(regime)
+        adj = self.thresholds.regime.strategy_weights.get(canonical)
+        if adj is None:
+            legacy = {
+                "aggressive_bull": "stable_bull",
+                "volatile_bull": "volatile_bull",
+                "defensive_bear": "volatile_bear",
+                "rotation_sideways": "stable_sideways",
+            }.get(canonical)
+            if legacy:
+                adj = self.thresholds.regime.strategy_weights.get(legacy)
+        mult = float(getattr(adj, "lower_shadow_ratio", 0.0) or 1.0) if adj else 1.0
+        blended = base.base_blend_weight + base.regime_blend_weight * mult
+        return base.lower_shadow_ratio_weight * blended
+
     def calculate_score(
         self, data: Dict[str, pd.DataFrame], regime: str = "unknown"
     ) -> Dict[str, float]:
@@ -339,6 +376,10 @@ class CompositeStrategy(BaseStrategy):
         if self._has_macd_hist():
             mh_scores = self.macd_hist_strategy.calculate_score(data)
 
+        lsr_scores: Dict[str, float] = {}
+        if self._has_lower_shadow_ratio():
+            lsr_scores = self.lower_shadow_ratio_strategy.calculate_score(data)
+
         all_symbols = set(momentum_scores.keys())
         all_symbols |= set(quality_scores.keys())
         all_symbols |= set(value_scores.keys())
@@ -350,6 +391,7 @@ class CompositeStrategy(BaseStrategy):
         all_symbols |= set(vsurge_scores.keys())
         all_symbols |= set(vp_scores.keys())
         all_symbols |= set(mh_scores.keys())
+        all_symbols |= set(lsr_scores.keys())
 
         # 使用市场状态调整后的权重
         mw, qw, vw, volw, mrw, trw, htfw = self.get_regime_adjusted_weights(regime)
@@ -357,6 +399,7 @@ class CompositeStrategy(BaseStrategy):
         vsurgew = self.volume_surge_weight_for(regime)
         vpw = self.volatility_position_weight_for(regime)
         mhw = self.macd_hist_weight_for(regime)
+        lsrw = self.lower_shadow_ratio_weight_for(regime)
 
         final_scores = {}
         for symbol in all_symbols:
@@ -420,6 +463,12 @@ class CompositeStrategy(BaseStrategy):
                 mh = mh_scores.get(symbol, 0.5)
                 total += mh * mhw
                 w_sum += mhw
+
+            # 🔴 下影线比维度（regime 同源权重）
+            if self._has_lower_shadow_ratio():
+                lsr = lsr_scores.get(symbol, 0.5)
+                total += lsr * lsrw
+                w_sum += lsrw
 
             base_score = total / w_sum if w_sum > 0 else 0.0
             final_scores[symbol] = max(0.0, min(1.0, base_score))
