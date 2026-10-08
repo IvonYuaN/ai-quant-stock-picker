@@ -621,6 +621,26 @@ class NReboundThresholds:
     min_score: float = 14.0
 
 
+@dataclass
+class PriceVolumeCorrThresholds:
+    """价量水平滚动相关（修复 5 新维度）。
+
+    实测依据（2026-10-08，400 票 / 125 截面、生产口径）：
+    `close.rolling(10).corr(volume)` 的 IC = **−0.0308**、t = **−3.62**（显著），
+    且 ρ(·, momentum) = **+0.285**、ρ(·, surge) = **+0.101**
+    ⇒ **当前唯一「既有显著 alpha、又与现有信号正交」的因子**。
+
+    ⚠️ 与 `VolumeWeights.correlation`（= `corr(Δp, Δv)`，实测 IC −0.0037 / t −0.52）**同名不同物**：
+    一个算**水平量**、一个算**变化量**，实测 IC 差 8 倍，不可互相替代。
+    """
+
+    enabled: bool = False
+    window: int = 10
+    # 方向纠正开关（默认 False = 行为不变）。实测 IC 为负 ⇒ 近 3 年 A 股反向有效。
+    # ⚠️ 必须 `1 - score` 而非 `-score`：末行 clamp 会把负值压成 0 ⇒ 退化成常量。
+    invert_signal: bool = False
+
+
 @dataclass(frozen=True)
 class Thresholds:
     version: str = "2.0.0"
@@ -630,6 +650,9 @@ class Thresholds:
     momentum: MomentumThresholds = field(default_factory=MomentumThresholds)
     quality: QualityThresholds = field(default_factory=QualityThresholds)
     value: ValueThresholds = field(default_factory=ValueThresholds)
+    price_volume_corr: PriceVolumeCorrThresholds = field(
+        default_factory=PriceVolumeCorrThresholds
+    )
     composite: CompositeThresholds = field(default_factory=CompositeThresholds)
     risk: RiskThresholds = field(default_factory=RiskThresholds)
     filter: FilterThresholds = field(default_factory=FilterThresholds)
@@ -719,6 +742,12 @@ def _filter_dataclass_kwargs(cls: type, data: object) -> dict:
     raw = _as_dict(data)
     allowed = {item.name for item in fields(cls)}
     return {key: value for key, value in raw.items() if str(key) in allowed}
+
+
+def _parse_price_volume_corr(data: dict) -> PriceVolumeCorrThresholds:
+    return PriceVolumeCorrThresholds(
+        **_filter_dataclass_kwargs(PriceVolumeCorrThresholds, _as_dict(data))
+    )
 
 
 def _parse_momentum(data: dict) -> MomentumThresholds:
@@ -876,6 +905,9 @@ def load_thresholds(
         momentum=_parse_momentum(data.get("momentum", {})),
         quality=_parse_quality(data.get("quality", {})),
         value=_parse_value(data.get("value", {})),
+        price_volume_corr=_parse_price_volume_corr(
+            data.get("price_volume_corr", {})
+        ),
         composite=CompositeThresholds(
             **_filter_dataclass_kwargs(CompositeThresholds, data.get("composite", {}))
         ),
