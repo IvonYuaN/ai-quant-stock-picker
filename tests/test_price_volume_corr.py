@@ -174,3 +174,34 @@ def test_default_config_output_unchanged() -> None:
     # 默认侧不得被新维度影响：单独实例化时 w_sum 不含 pvc
     assert default._has_price_volume_corr() is False
     assert np.isfinite(list(a.values())).all()
+
+
+def test_pvc_weight_is_regime_symmetric_with_other_dims() -> None:
+    """🔴 关键契约：pvc 权重必须与其余 7 维**同源 regime 语义**。
+
+    其余 7 维在 `get_regime_adjusted_weights` 里都乘 `blended(mult)`
+    （`base_blend + regime_blend * mult`）；若 pvc 裸用 base 权重，
+    在 `stable_bull`（momentum ×1.2 ⇒ blended=1.06）下 pvc 纹丝不动
+    ⇒ **相对份额失衡**。
+
+    当前 yaml 的 `strategy_weights` 没有 `price_volume_corr` 项
+    ⇒ 中性乘子 1.0 ⇒ `blended(1.0) = 0.7 + 0.3 = 1.0` ⇒ 各 regime 数值一致。
+    这正是本测试要锁的：**语义已预留、当前数值中性**。
+    """
+    st = _composite(0.3, enabled=True)
+    weights = {r: st.price_volume_corr_weight_for(r)
+               for r in ("unknown", "stable_bull", "volatile_bear", "stable_bear")}
+    assert len(set(weights.values())) == 1, f"各 regime 应一致（blended(1.0)=1.0）：{weights}"
+    assert weights["stable_bull"] == pytest.approx(0.3)
+
+    # 🔴 且必须真的调用了 blended —— 若直接返回裸权重，
+    #    当 base_blend/regime_blend 被改成非互补值时就会露出差异。
+    import dataclasses as _dc
+
+    base = load_thresholds()
+    tweaked = _dc.replace(
+        base, composite=_dc.replace(base.composite, price_volume_corr_weight=0.3,
+                                   base_blend_weight=0.5, regime_blend_weight=0.5))
+    st2 = CompositeStrategy(StrategyConfig(name="composite", enabled=True), tweaked)
+    # blended(1.0) = 0.5 + 0.5 = 1.0 ⇒ 仍为 0.3
+    assert st2.price_volume_corr_weight_for("stable_bull") == pytest.approx(0.3)

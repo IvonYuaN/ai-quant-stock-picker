@@ -158,6 +158,35 @@ class CompositeStrategy(BaseStrategy):
             base.high_tight_flag_weight * blended(adjustment.high_tight_flag),
         )
 
+    def price_volume_corr_weight_for(self, regime: str) -> float:
+        """价量水平相关维度的 **regime 调整后**权重（与其余 7 维同源语义）。
+
+        🔴 **不得裸用** `composite.price_volume_corr_weight` ——
+        其余 7 维在 `get_regime_adjusted_weights` 里都乘了 `blended(mult)`
+        （`base_blend_weight + regime_blend_weight * mult`），
+        而 `regime.strategy_weights` 目前**没有** `price_volume_corr` 项
+        ⇒ 取中性乘子 1.0 ⇒ `blended(1.0) = 0.7 + 0.3 = 1.0`
+        ⇒ **数值上与「不调整」相同**，但**语义正确**：将来 yaml 补上该项会自动生效。
+
+        不这样做会让 pvc 在不同 regime 下相对其它维度**份额失衡**
+        （例如 stable_bull 下 momentum 被 ×1.06 而 pvc 纹丝不动）。
+        """
+        base = self.thresholds.composite
+        canonical = canonicalize_regime(regime)
+        adj = self.thresholds.regime.strategy_weights.get(canonical)
+        if adj is None:
+            legacy = {
+                "aggressive_bull": "stable_bull",
+                "volatile_bull": "volatile_bull",
+                "defensive_bear": "volatile_bear",
+                "rotation_sideways": "stable_sideways",
+            }.get(canonical)
+            if legacy:
+                adj = self.thresholds.regime.strategy_weights.get(legacy)
+        mult = float(getattr(adj, "price_volume_corr", 0.0) or 1.0) if adj else 1.0
+        blended = base.base_blend_weight + base.regime_blend_weight * mult
+        return base.price_volume_corr_weight * blended
+
     def calculate_score(
         self, data: Dict[str, pd.DataFrame], regime: str = "unknown"
     ) -> Dict[str, float]:
@@ -202,7 +231,7 @@ class CompositeStrategy(BaseStrategy):
 
         # 使用市场状态调整后的权重
         mw, qw, vw, volw, mrw, trw, htfw = self.get_regime_adjusted_weights(regime)
-        pvcw = self.thresholds.composite.price_volume_corr_weight
+        pvcw = self.price_volume_corr_weight_for(regime)  # 与其余 7 维同源 regime 语义
 
         final_scores = {}
         for symbol in all_symbols:
