@@ -52,6 +52,18 @@ def test_rejects_limit_below_min_symbols() -> None:
     assert "args.max_symbols < args.min_symbols" in src, "必须比较上限与下限"
     assert "BLOCK: --max-symbols=" in src, "必须给出明确 BLOCK 原因"
     assert "return 2" in src, "必须以非零码退出（与其它 BLOCK 一致）"
+    # 🔴 但 --experiment 可显式豁免（否则小规模实验无法做）
+    assert "and not args.experiment" in src, "必须有 --experiment 豁免路径"
+    assert '"--experiment"' in src, "必须提供 --experiment 开关"
+
+
+def test_experiment_mode_is_explicitly_labelled() -> None:
+    """★ 实验模式必须**自我标注**，避免小实验结果被当成门禁结论使用。"""
+    src = _source()
+    assert "EXPERIMENT MODE" in src, "必须打印显式警告"
+    assert "不得" in src, "必须写明结果不得用于放行决策"
+    assert "[EXPERIMENT]" in src, "截断日志必须带 EXPERIMENT 标记"
+    assert "MIN_PRODUCTION_GATE_SYMBOLS" in src, "必须对照生产门禁下限给出差距"
 
 
 def test_truncation_is_deterministic() -> None:

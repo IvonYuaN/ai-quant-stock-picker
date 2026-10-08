@@ -2010,6 +2010,15 @@ def main() -> int:
     # 且**结果与全规模不可直接比较**（样本不同）⇒ 仅用于方向性验证，
     # 正式结论仍须全规模 + 预注册口径。
     parser.add_argument(
+        "--experiment",
+        action="store_true",
+        help=(
+            "**实验模式**：允许 `--min-symbols` 低于生产门禁下限 "
+            f"({MIN_PRODUCTION_GATE_SYMBOLS})，并在报告/状态里标注 EXPERIMENT。"
+            "用于小规模方向性验证；★ 其结果**不是门禁结论**，不得用于放行任何上线决策。"
+        ),
+    )
+    parser.add_argument(
         "--max-symbols",
         type=int,
         default=None,
@@ -2384,15 +2393,24 @@ def main() -> int:
     covered_symbols = inspection.covered_symbols
     # 🔴 --max-symbols：按**确定顺序**截断（inspection 已排好序），保证可复现
     if args.max_symbols is not None and args.max_symbols > 0:
-        if args.max_symbols < args.min_symbols:
+        if args.max_symbols < args.min_symbols and not args.experiment:
             print(
                 f"BLOCK: --max-symbols={args.max_symbols} < "
-                f"--min-symbols={args.min_symbols}；调小上限会让门禁失去意义。"
+                f"--min-symbols={args.min_symbols}；调小上限会让门禁失去意义。\n"
+                f"       若这是**小规模方向性实验**（不作为门禁结论），"
+                f"请显式加 --experiment 并把 --min-symbols 一并调低。"
             )
             return 2
+        if args.experiment and len(covered_symbols) < MIN_PRODUCTION_GATE_SYMBOLS:
+            print(
+                f"⚠️ EXPERIMENT MODE: {len(covered_symbols)} symbols "
+                f"< 生产门禁下限 {MIN_PRODUCTION_GATE_SYMBOLS}；"
+                "本次结果**不得**用于放行上线决策。"
+            )
         truncated = list(covered_symbols[: args.max_symbols])
+        tag = " [EXPERIMENT]" if args.experiment else ""
         print(
-            f"production gate max-symbols applied: "
+            f"production gate max-symbols applied{tag}: "
             f"{len(covered_symbols)} -> {len(truncated)}"
         )
         covered_symbols = truncated
