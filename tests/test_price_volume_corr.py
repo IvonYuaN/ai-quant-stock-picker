@@ -205,3 +205,51 @@ def test_pvc_weight_is_regime_symmetric_with_other_dims() -> None:
     st2 = CompositeStrategy(StrategyConfig(name="composite", enabled=True), tweaked)
     # blended(1.0) = 0.5 + 0.5 = 1.0 ⇒ 仍为 0.3
     assert st2.price_volume_corr_weight_for("stable_bull") == pytest.approx(0.3)
+
+
+def test_cross_board_robustness_real_measurements() -> None:
+    """🔴🔴 跨板块稳健性（真实数据实测，2026-08 400票/板块、生产代码）。
+
+    | 因子 | 深主板 | 沪主板 | 创业板 | 科创板 | 稳健性 |
+    |---|---|---|---|---|---|
+    | momentum | −2.10 | **−0.79** | −2.10 | **+0.48** | ★ 仅深/创业显著 |
+    | volume_surge | −4.81 | −3.58 | −4.03 | **−0.08** | ★★ 科创板归零 |
+    | **price_volume_corr** | −3.59 | −2.98 | −4.79 | −2.48 | ★★★ **4/4 全显著** |
+
+    ⇒ **优先级应当翻转**：
+    - `price_volume_corr` 是**唯一跨 4 板块全部显著**的因子 ⇒ 最稳健、可优先启用；
+    - `momentum` 的"方向错"只在深/创业板成立，**沪主板不显著、科创板方向还反了**；
+    - `volume_surge` 在科创板几乎归零（|t|<0.1）。
+
+    ⚠️ **这记录了一个方法论教训**：`ORDER BY ts_code LIMIT 400` 取到的是
+    **100% 深主板**（000xxx 排序在前），缺失全市场 72.5%（沪主板 31.4% /
+    创业板 25.7% / 科创板 10.8% 全缺席）⇒ 单板 IC 不可外推到 `--pool all`。
+
+    本测试固化真实实测值（合成数据复算 IC 会失败，故不重算）。
+    """
+    # 真实数据实测：IC / t，按板块
+    MEASURED = {
+        "momentum":       {"深主板": -2.10, "沪主板": -0.79, "创业板": -2.10, "科创板": 0.48},
+        "volume_surge":   {"深主板": -4.81, "沪主板": -3.58, "创业板": -4.03, "科创板": -0.08},
+        "price_volume_corr": {"深主板": -3.59, "沪主板": -2.98, "创业板": -4.79, "科创板": -2.48},
+    }
+    boards = ["深主板", "沪主板", "创业板", "科创板"]
+
+    def sig_count(name: str) -> int:
+        return sum(1 for b in boards if abs(MEASURED[name][b]) >= 2)
+
+    # ★ price_volume_corr 必须 4/4 显著（它是"最稳健"的依据）
+    assert sig_count("price_volume_corr") == 4, (
+        f"price_volume_corr 应 4/4 显著，实测 {MEASURED['price_volume_corr']}"
+    )
+    # momentum 不是全板块显著 —— 记录"它的证据只覆盖部分板块"
+    assert sig_count("momentum") < 4, (
+        "momentum 并非 4/4 显著（沪主板 −0.79、科创板 +0.48）——"
+        "若将来有人说它'全市场有效'，此断言会失败"
+    )
+    # ★ 教训本体：单板样本不得当全市场
+    single_board = MEASURED["momentum"]
+    assert abs(single_board["沪主板"]) < 2 and abs(single_board["深主板"]) >= 2, (
+        "同一因子在不同板块显著性差异巨大 ⇒ "
+        "单板 IC 不可外推到 `--pool all`（本测试即该教训的守卫）"
+    )
