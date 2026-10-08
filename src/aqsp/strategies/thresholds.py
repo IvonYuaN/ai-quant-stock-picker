@@ -136,6 +136,12 @@ class CompositeThresholds:
     #    不反转等于赌反方向 —— 与 price_volume_corr / volume_surge 同约定）。
     # ⚠️ 本维度不参与 regime 权重调整（同 pvc/volume_surge 第一版保守处理）。
     volatility_position_weight: float = 0.0
+    # 🔴 2026-10-08 新增维度：MACD 柱（动量轴里唯一 3/4 显著，比 price-based momentum 更强）。
+    # 批量扫描实测 t：深−5.55/沪−3.76/创−1.88/科−2.28（3/4 显著），IC 为负。
+    # ⚠️ 默认 0.0 ⇒ 合并不改变任何生产行为；启用需同时 `macd_hist.enabled: true`
+    #    **且 `invert_signal: true`**（IC 为负，不反转等于赌反方向）。
+    # ⚠️ 本维度不参与 regime 权重调整（同 pvc/volume_surge/volatility_position 保守处理）。
+    macd_hist_weight: float = 0.0
     min_total_score: float = 0.6
     base_blend_weight: float = 0.7
     regime_blend_weight: float = 0.3
@@ -714,6 +720,30 @@ class VolatilityPositionThresholds:
     invert_signal: bool = False
 
 
+@dataclass
+class MacdHistThresholds:
+    """MACD 柱维度（2026-10-08 批量扫描新增）。
+
+    权威公式（auto_factor_mining.calculate_factor_value:311-316，逐字一致）：
+        ema12 = close.ewm(span=12, adjust=False).mean()
+        ema26 = close.ewm(span=26, adjust=False).mean()
+        dif = ema12 - ema26
+        dea = dif.ewm(span=9, adjust=False).mean()
+        raw = (dif - dea) * 2
+    批量扫描实测 t：深−5.55/沪−3.76/创−1.88/科−2.28（3/4 显著），IC 为负
+    ⇒ 比 price-based momentum（仅 1/4 显著）更稳健，是动量轴里更好的信号。
+    """
+
+    enabled: bool = False
+    lookback_days: int = 60
+    min_history: int = 60
+    # 原生归一化尺度（线性 clip 到 [0,1]）；典型 |raw| ~ 0.03-0.06 价格单位
+    scale: float = 0.06
+    # 方向纠正开关（默认 False = 行为不变）。IC 为负 ⇒ 启用时须显式设 True。
+    # ⚠️ 必须 `1 - score` 而非 `-score`：末行 clamp 会把负值压成 0 ⇒ 退化成常量。
+    invert_signal: bool = False
+
+
 @dataclass(frozen=True)
 class Thresholds:
     version: str = "2.0.0"
@@ -730,6 +760,7 @@ class Thresholds:
     volatility_position: VolatilityPositionThresholds = field(
         default_factory=VolatilityPositionThresholds
     )
+    macd_hist: MacdHistThresholds = field(default_factory=MacdHistThresholds)
     composite: CompositeThresholds = field(default_factory=CompositeThresholds)
     risk: RiskThresholds = field(default_factory=RiskThresholds)
     filter: FilterThresholds = field(default_factory=FilterThresholds)
@@ -836,6 +867,12 @@ def _parse_price_volume_corr(data: dict) -> PriceVolumeCorrThresholds:
 def _parse_volatility_position(data: dict) -> VolatilityPositionThresholds:
     return VolatilityPositionThresholds(
         **_filter_dataclass_kwargs(VolatilityPositionThresholds, _as_dict(data))
+    )
+
+
+def _parse_macd_hist(data: dict) -> MacdHistThresholds:
+    return MacdHistThresholds(
+        **_filter_dataclass_kwargs(MacdHistThresholds, _as_dict(data))
     )
 
 
@@ -1001,6 +1038,7 @@ def load_thresholds(
         volatility_position=_parse_volatility_position(
             data.get("volatility_position", {})
         ),
+        macd_hist=_parse_macd_hist(data.get("macd_hist", {})),
         composite=CompositeThresholds(
             **_filter_dataclass_kwargs(CompositeThresholds, data.get("composite", {}))
         ),
