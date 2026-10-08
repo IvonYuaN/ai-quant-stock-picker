@@ -1998,6 +1998,26 @@ def main() -> int:
     parser.add_argument("--start", default="")
     parser.add_argument("--end", default="")
     parser.add_argument("--min-symbols", type=int, default=MIN_PRODUCTION_GATE_SYMBOLS)
+    # 🔴 2026-08-08 新增：限制参与回测的标的数（**默认 None = 现状零变化**）。
+    #
+    # 为什么需要：生产 gate 默认用**全部** covered symbols（2026-08 实测 5164 只），
+    # 在 runner（4C）上单次 3y 全规模跑批**实测跑不完**（三次尝试全部超时：
+    # 无 cache 39h 卡在 18/19；有 cache 因 symbols 涨到 5164 而更慢）。
+    # ⇒ 想做**小规模对照实验**（例如验证 `momentum.invert_signal`）就没有可用入口 ——
+    # `--symbols-cache-path` 只控制"缓存读取"，**并不控制规模**（已被实测证伪）。
+    #
+    # ⚠️ 限规模会改变 `timeout_seconds` 自动放大公式的输入（按标的数缩放），
+    # 且**结果与全规模不可直接比较**（样本不同）⇒ 仅用于方向性验证，
+    # 正式结论仍须全规模 + 预注册口径。
+    parser.add_argument(
+        "--max-symbols",
+        type=int,
+        default=None,
+        help=(
+            "最多取多少只标的参与回测（默认不限 = 生产全量）。"
+            "用于小规模对照实验；结果与全规模不可直接比较。"
+        ),
+    )
     parser.add_argument(
         "--grid-profile",
         choices=("stable", "stable_plus", "exploratory", "planb_v1", "planb_v2", "planb_v3"),
@@ -2362,6 +2382,20 @@ def main() -> int:
         return 2
 
     covered_symbols = inspection.covered_symbols
+    # 🔴 --max-symbols：按**确定顺序**截断（inspection 已排好序），保证可复现
+    if args.max_symbols is not None and args.max_symbols > 0:
+        if args.max_symbols < args.min_symbols:
+            print(
+                f"BLOCK: --max-symbols={args.max_symbols} < "
+                f"--min-symbols={args.min_symbols}；调小上限会让门禁失去意义。"
+            )
+            return 2
+        truncated = list(covered_symbols[: args.max_symbols])
+        print(
+            f"production gate max-symbols applied: "
+            f"{len(covered_symbols)} -> {len(truncated)}"
+        )
+        covered_symbols = truncated
     if len(covered_symbols) < args.min_symbols:
         _write_status(
             status_path,
