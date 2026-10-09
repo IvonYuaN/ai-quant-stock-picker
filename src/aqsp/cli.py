@@ -7195,6 +7195,16 @@ def run_walkforward(args: argparse.Namespace) -> int:
             len(symbols),
         )
 
+    # 🔴 2026-10-09：`fetch_result` 只在下面 `streaming_context is None` 分支里赋值，
+    # 但报告段（本函数尾部）会**无条件**读 `fetch_result.pit_note`。`--streaming` 路径
+    # 永远不进入该分支 ⇒ 必然 `UnboundLocalError: local variable 'fetch_result'
+    # referenced before assignment`，且崩在「全部臂 + DSR/PBO 都算完、报告写出之前」，
+    # 让整轮跑批白费（2026-10-08 实测：8 臂 ~81min 算完后崩在写 report.md）。
+    # ⚠️ 生产 gate cron 走的就是 `--streaming`，属 fail-closed 之外的纯浪费。
+    # 预初始化为 None 即可：`getattr(None, "pit_note", None)` → None，自动落入既有的
+    # `skip_pit_financials` 兜底分支，报告照常生成、行为零变化。
+    fetch_result: Any = None
+
     if streaming_context is None:
         from aqsp.services.walkforward_data import (
             WalkforwardFetchRequest,
@@ -7419,8 +7429,10 @@ def run_walkforward(args: argparse.Namespace) -> int:
     #
     # 数据来源优先级：`fetch_result.pit_note`（**运行时真实事实**）> args 开关（假设）。
     # 用真实事实而非「假设它跳过了」，才能在将来 flag 与实际行为不一致时暴露问题。
-    # 注：fetch_result 属于**外层** run_walkforward 的局部变量，本函数是其闭包，
-    #     函数体里可直接按名访问（闭包捕获），无需 getattr/locals 绕路。
+    # 注：`fetch_result` 与下面的报告段**同属 run_walkforward 一个作用域**（不是闭包），
+    #     它由本函数上方 `streaming_context is None` 分支赋值。该分支在 `--streaming`
+    #     路径下不会执行，故上方已预初始化为 None —— 删掉那行会立刻退化成
+    #     `UnboundLocalError`（2026-10-08 实际发生过，见该处注释）。
     _pit_note = getattr(fetch_result, "pit_note", None)
     if _pit_note:
         tl_dr.append(f"> {_pit_note}")
