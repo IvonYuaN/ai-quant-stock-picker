@@ -23,6 +23,39 @@ from aqsp.strategies.thresholds import (
     VolumeThresholds,
 )
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+# 与生产 `config/trading_holidays.json` 保持逐日一致的夹具副本（2026 年口径）。
+# ⚠️ 不要手改这里——生产配置更新时同步，`test_fixture_calendar_matches_production_config_for_2026`
+# 会在两边漂移时失败（#310/#312 的教训：夹具滞后 = 在测一个「不存在于生产」的日历）。
+_FIXTURE_CALENDAR: dict = {
+    "holidays": [
+        "2026-01-01",
+        "2026-01-02",
+        "2026-01-03",
+        "2026-02-15",
+        "2026-02-16",
+        "2026-02-17",
+        "2026-02-18",
+        "2026-02-19",
+        "2026-02-20",
+        "2026-02-21",
+        "2026-02-22",
+        "2026-02-23",
+        "2026-04-06",
+        "2026-05-01",
+        "2026-05-04",
+        "2026-05-05",
+        "2026-06-19",
+        "2026-09-25",
+        "2026-10-01",
+        "2026-10-02",
+        "2026-10-05",
+        "2026-10-06",
+        "2026-10-07",
+    ],
+}
+
 
 def _write_json(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -109,31 +142,7 @@ def _prepare_ready_runtime(root: Path) -> None:
     )
     _write_json(
         root / "config/trading_holidays.json",
-        {
-            "holidays": [
-                "2026-01-01",
-                "2026-02-15",
-                "2026-02-16",
-                "2026-02-17",
-                "2026-02-18",
-                "2026-02-19",
-                "2026-02-20",
-                "2026-02-21",
-                "2026-02-22",
-                "2026-02-23",
-                "2026-04-06",
-                "2026-05-01",
-                "2026-05-04",
-                "2026-05-05",
-                "2026-06-19",
-                "2026-09-25",
-                "2026-10-01",
-                "2026-10-02",
-                "2026-10-05",
-                "2026-10-06",
-                "2026-10-07",
-            ],
-        },
+        _FIXTURE_CALENDAR,
     )
     _write_json(
         root / "data/walkforward_gate.json",
@@ -229,6 +238,34 @@ def test_check_before_live_blocks_missing_critical_trading_holiday(
     # 02-23（周一）曾整段缺失，导致被误判成交易日（issue #312）。
     assert "2026-02-23" in finding.detail
     assert "2026-06-19" in finding.detail
+
+
+def test_fixture_calendar_matches_production_config_for_2026() -> None:
+    """夹具日历必须与生产 `config/trading_holidays.json` 的 2026 年逐日一致。
+
+    ⚠️ 防漂移守卫（issue #310/#312 的教训）：生产日历改了、夹具忘了同步时，
+    `_prepare_ready_runtime` 跑的是一个「不存在于生产」的日历，`all gates met`
+    全绿也是假绿。只比对 2026 年（夹具的 `today` 固定在 2026-06-14）；
+    生产配置 11 月起补 2027 年份时本守卫不失效（见 issue #314）。
+    """
+    production = json.loads(
+        (PROJECT_ROOT / "config" / "trading_holidays.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    prod_2026 = {
+        str(item) for item in production.get("holidays", []) if str(item).startswith("2026")
+    }
+    fixture_2026 = {
+        str(item)
+        for item in _FIXTURE_CALENDAR["holidays"]
+        if str(item).startswith("2026")
+    }
+    assert fixture_2026 == prod_2026, (
+        "夹具日历与生产配置在 2026 年发生漂移："
+        f"仅夹具有 {sorted(fixture_2026 - prod_2026)}；"
+        f"仅生产有 {sorted(prod_2026 - fixture_2026)}。请同步 _FIXTURE_CALENDAR。"
+    )
 
 
 def test_strategy_threshold_consistency_blocks_enabled_zero_weight() -> None:
