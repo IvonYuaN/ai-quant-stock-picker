@@ -824,6 +824,57 @@ def candidate_payload(symbol: str, selected_date: str | None = None) -> dict[str
     return payload
 
 
+def candidate_lifecycle_payload(selected_date: str | None = None) -> dict[str, Any]:
+    """Return candidate-pool membership history anchored at one date (issue #317 W1).
+
+    口径（只读快照面，不补日历、不生成历史）：
+
+    - ``dates`` = surface 实际提供的快照日期升序；早于快照面的历史不可知，
+      ``history_window`` 如实回传，前端可据此提示覆盖范围。
+    - ``streak`` = 从锚定日沿快照日期序列往回**连续**在榜的日期数（按快照日期计，
+      跨周末/节假日/跳日天然鲁棒，不按自然日）。
+    - ``first_seen`` / ``total_appearances`` 覆盖快照面内全部日期。
+    - 只回报锚定日快照中在榜的候选（已移出的票不在本端点范围，移出原因 v1 不做）。
+    """
+    surface = load_surface()
+    snapshot = surface.snapshot_for_date(selected_date)
+    _require_current_snapshot_fresh(surface, selected_date)
+    dates = sorted({item.selected_date for item in surface.dated_snapshots})
+    membership: dict[str, set[str]] = {}
+    for item in surface.dated_snapshots:
+        for candidate in item.candidates:
+            membership.setdefault(candidate.symbol, set()).add(item.selected_date)
+    anchor = snapshot.selected_date
+    try:
+        anchor_index = dates.index(anchor)
+    except ValueError as exc:  # pragma: no cover - snapshot_for_date 已保证一致
+        raise AQSPCandidateNotFound(f"锚定日期 {anchor} 不在快照日期索引中") from exc
+    lifecycles: dict[str, dict[str, Any]] = {}
+    for candidate in snapshot.candidates:
+        seen = membership.get(candidate.symbol)
+        if not seen or anchor not in seen:
+            continue
+        streak = 0
+        cursor = anchor_index
+        while cursor >= 0 and dates[cursor] in seen:
+            streak += 1
+            cursor -= 1
+        ordered = sorted(seen)
+        lifecycles[candidate.symbol] = {
+            "first_seen": ordered[0],
+            "last_seen": ordered[-1],
+            "streak": streak,
+            "total_appearances": len(ordered),
+            # 「新票」= 快照面内首次入选即锚定日；中断后回归的老票 streak=1 但不算新票
+            "is_new": ordered[0] == anchor,
+        }
+    return {
+        "date": anchor,
+        "history_window": len(dates),
+        "lifecycles": lifecycles,
+    }
+
+
 def _require_current_snapshot_fresh(
     surface: AQSPResearchSurface,
     selected_date: str | None,

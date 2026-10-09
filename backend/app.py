@@ -1653,6 +1653,29 @@ def aqsp_candidates(symbol: str, date: str | None = Query(default=None, descript
 
 
 @app.get(
+    "/api/aqsp/candidate-lifecycle",
+    tags=["AQSP 研究"],
+    summary="AQSP 候选池生命周期",
+    description="""
+返回锚定日期候选池中每只票的生命周期信息（issue #317 W1，只读快照面）。
+
+- `first_seen`：快照面内首次入选日期
+- `streak`：从锚定日沿快照日期序列往回连续在榜的日期数（按快照日期计，不按自然日）
+- `total_appearances`：快照面内出现在候选池的总日期数
+- `is_new`：streak == 1（当日新入选）
+- `history_window`：快照面覆盖的日期总数（早于快照面的历史不可知）
+
+## 参数
+
+- `date`: 可选，锚定日期（YYYY-MM-DD），不传则用最新快照
+    """,
+)
+def aqsp_candidate_lifecycle(date: str | None = Query(default=None, description="锚定日期 (YYYY-MM-DD)")):
+    """候选池生命周期（首次入选/连续在榜/出现次数），只读快照面。"""
+    return {"data": _aqsp_bridge_call(aqsp_bridge.candidate_lifecycle_payload, date)}
+
+
+@app.get(
     "/api/aqsp/performance",
     tags=["AQSP 研究"],
     summary="AQSP 策略表现",

@@ -881,3 +881,80 @@ def test_aqsp_bridge_does_not_invent_evidence_for_legacy_debate(
     assert debate["evidence"] == []
     assert debate["support_points"] == []
     assert debate["opposition_points"] == []
+
+
+def _write_lifecycle_index(tmp_path: Path) -> Path:
+    """4 个快照日（07-08/09/11/14，含 07-09→07-11 跳日）的生命周期夹具。
+
+    - 600001：四天全在榜 ⇒ streak=4, first_seen=07-08, total=4, is_new=False
+    - 600002：仅锚定日在榜 ⇒ streak=1, first_seen=07-14, total=1, is_new=True
+    - 600003：07-08/07-11 在榜但锚定日不在 ⇒ 不出现在 lifecycles
+    - 600004：07-08 与 07-14 在榜（中断后回归）⇒ streak=1, is_new=False, total=2
+    """
+
+    def merged(day: str, *symbols: str) -> dict:
+        base = _snapshot(day, symbols[0])
+        for extra in symbols[1:]:
+            base["candidates"] = base["candidates"] + _snapshot(day, extra)["candidates"]
+        return base
+
+    days = {
+        "2026-07-08": merged("2026-07-08", "600001", "600003", "600004"),
+        "2026-07-09": merged("2026-07-09", "600001"),
+        "2026-07-11": merged("2026-07-11", "600001", "600003"),
+        "2026-07-14": merged("2026-07-14", "600001", "600002", "600004"),
+    }
+    for snap in days.values():
+        snap["stale_after"] = "2099-01-01T00:00:00+08:00"
+    path = tmp_path / "home_dashboard_snapshot_index.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "v1-index",
+                "generated_at": "2026-07-14T18:00:00+08:00",
+                "stale_after": "2099-01-01T00:00:00+08:00",
+                "selected_date": "2026-07-14",
+                "days": [
+                    {"date": day, "snapshot": snap} for day, snap in sorted(days.items())
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    return _write_single(tmp_path, days["2026-07-14"])
+
+
+def test_aqsp_bridge_candidate_lifecycle_counts_streak_over_snapshot_dates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    snapshot_path = _write_lifecycle_index(tmp_path)
+    monkeypatch.setenv("AQSP_RESEARCH_SURFACE_SNAPSHOT", str(snapshot_path))
+    monkeypatch.delenv("AQSP_DEBATE_RESULTS", raising=False)
+
+    response = client.get("/api/aqsp/candidate-lifecycle")
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["date"] == "2026-07-14"
+    assert data["history_window"] == 4
+    lifecycles = data["lifecycles"]
+    assert lifecycles["600001"] == {
+        "first_seen": "2026-07-08",
+        "last_seen": "2026-07-14",
+        "streak": 4,
+        "total_appearances": 4,
+        "is_new": False,
+    }
+    # 跳日不按自然日计：600004 中断后回归 ⇒ streak=1、total=2、不算新票
+    assert lifecycles["600004"] == {
+        "first_seen": "2026-07-08",
+        "last_seen": "2026-07-14",
+        "streak": 1,
+        "total_appearances": 2,
+        "is_new": False,
+    }
+    assert lifecycles["600002"]["is_new"] is True
+    assert lifecycles["600002"]["first_seen"] == "2026-07-14"
+    # 锚定日不在榜的票不出现
+    assert "600003" not in lifecycles

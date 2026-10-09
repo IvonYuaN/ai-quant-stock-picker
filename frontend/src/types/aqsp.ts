@@ -230,6 +230,24 @@ export interface AqspDateIndex {
   available_dates: readonly string[];
 }
 
+/** 候选池生命周期（issue #317 W1）：口径见后端 candidate_lifecycle_payload。 */
+export interface AqspCandidateLifecycle {
+  first_seen: string;
+  last_seen: string;
+  /** 从锚定日沿快照日期序列往回连续在榜的日期数（不按自然日，跳日/周末鲁棒） */
+  streak: number;
+  total_appearances: number;
+  /** 快照面内首次入选即锚定日（中断后回归的老票 streak=1 但不算新票） */
+  is_new: boolean;
+}
+
+export interface AqspLifecycleIndex {
+  date: string;
+  /** 快照面覆盖的日期总数；早于快照面的历史不可知 */
+  history_window: number;
+  lifecycles: Record<string, AqspCandidateLifecycle>;
+}
+
 /** Snapshot data after the HTTP envelope is normalized for the existing view layer. */
 export interface AqspSnapshotView extends AqspSnapshot {
   meta: AqspSnapshotMeta;
