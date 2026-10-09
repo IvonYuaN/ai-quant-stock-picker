@@ -6,7 +6,6 @@ import { DEFAULT_ROUTE, LEGACY_ROUTES } from "@/lib/ia";
 // 路由级代码分割：多数人只打开「今日研究」，没必要为市场 / 雷达 / 持仓页付首屏流量。
 // 每个页面单独成 chunk，进入该路由时才拉；Layout 里用 Suspense 兜住加载态。
 const TodayPage = lazy(() => import("@/pages/TodayPage").then((m) => ({ default: m.TodayPage })));
-const DashboardPage = lazy(() => import("@/pages/DashboardPage").then((m) => ({ default: m.DashboardPage })));
 const MarketPage = lazy(() => import("@/pages/MarketPage").then((m) => ({ default: m.MarketPage })));
 const LabPage = lazy(() => import("@/pages/LabPage").then((m) => ({ default: m.LabPage })));
 const ArchivePage = lazy(() => import("@/pages/ArchivePage").then((m) => ({ default: m.ArchivePage })));
@@ -34,7 +33,6 @@ export const router = createBrowserRouter([
       { path: "/", element: <Navigate to={DEFAULT_ROUTE} replace /> },
       { path: "/today", element: <TodayPage /> },
       { path: "/stream", element: <InfoStreamPage /> },
-      { path: "/dashboard", element: <DashboardPage /> },
       { path: "/market", element: <MarketPage /> },
       { path: "/lab", element: <LabPage /> },
       { path: "/archive", element: <ArchivePage /> },
