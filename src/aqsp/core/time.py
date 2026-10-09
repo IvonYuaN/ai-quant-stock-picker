@@ -13,32 +13,31 @@ _BASIC_CALENDAR_PATH = (
 
 
 @lru_cache(maxsize=1)
-def _load_basic_trading_calendar() -> tuple[frozenset[date], frozenset[date]]:
+def _load_basic_trading_calendar() -> frozenset[date]:
+    """静态休市日历：``config/trading_holidays.json`` 的 ``holidays``。
+
+    ⚠️ 该文件只表达「休市日」，**不含**国务院的「调休上班日」。调休上班日
+    一律落在周末，而沪深交易所周末一律休市（交易所公告原文：「2月14日
+    （星期六）、2月28日（星期六）为周末休市」），因此调休上班日**不是**
+    交易日。2026-10 之前本文件曾带 ``makeup_workdays`` 并被无条件判成
+    交易日，属事实错误（issue #312），已整体移除。
+    """
     try:
         payload = json.loads(_BASIC_CALENDAR_PATH.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return frozenset(), frozenset()
+        return frozenset()
 
-    holidays = {
+    return frozenset(
         date.fromisoformat(str(item))
         for item in payload.get("holidays", [])
         if str(item).strip()
-    }
-    makeup_workdays = {
-        date.fromisoformat(str(item))
-        for item in payload.get("makeup_workdays", [])
-        if str(item).strip()
-    }
-    return frozenset(holidays), frozenset(makeup_workdays)
+    )
 
 
 def _is_basic_trading_day(d: date) -> bool:
-    holidays, makeup_workdays = _load_basic_trading_calendar()
-    if d in makeup_workdays:
-        return True
     if d.weekday() >= 5:
         return False
-    return d not in holidays
+    return d not in _load_basic_trading_calendar()
 
 
 def _get_basic_previous_trading_day(d: date) -> date:

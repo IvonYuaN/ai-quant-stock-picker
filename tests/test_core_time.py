@@ -119,6 +119,39 @@ def test_is_trading_day_2026_national_day_window_matches_exchange_notice():
     assert get_next_trading_day(date(2026, 9, 30)) == date(2026, 10, 8)
 
 
+def test_is_trading_day_2026_spring_festival_window_matches_exchange_notice():
+    """2026 春节窗口必须与交易所公告逐日一致（issue #312）。
+
+    依据：上交所《关于2026年春节休市安排的公告》（上证公告〔2026〕5号）原文：
+      「休市安排：2月15日（星期日）至2月23日（星期一）休市，
+        2月24日（星期二）起照常开市。
+        另外，2月14日（星期六）、2月28日（星期六）为周末休市。」
+    （国务院办公厅 国办发明电〔2025〕7号：春节 2/15–2/23 放假调休共 9 天，
+      2/14、2/28 上班——但调休上班日一律落在周末，交易所周末一律休市。）
+
+    ⚠️ 回归守卫：`config/trading_holidays.json` 曾整段缺 `2026-02-23`（周一），
+    使其落进「工作日即开市」回退而成为幽灵交易日；且 `makeup_workdays`
+    曾把 `2026-02-15`（实为假期首日）与 `2026-02-28`（周末休市）无条件判成
+    交易日，令交易日链错位（prev(02-17) 曾返回 02-15，正解 02-13）。
+    """
+    # 春节全窗口 02-15 ~ 02-23 休市（含周一 02-23，曾整段缺失）
+    for day in range(15, 24):
+        assert not is_trading_day(date(2026, 2, day)), f"2026-02-{day} 应休市"
+
+    # 调休上班日（周末）不是交易日 —— makeup_workdays 语义已废除
+    assert not is_trading_day(date(2026, 2, 14))
+    assert not is_trading_day(date(2026, 2, 28))
+
+    # 窗口两端照常开市
+    assert is_trading_day(date(2026, 2, 13))
+    assert is_trading_day(date(2026, 2, 24))
+
+    # 交易日链不得再被周末调休拉偏
+    assert get_previous_trading_day(date(2026, 2, 17)) == date(2026, 2, 13)
+    assert get_next_trading_day(date(2026, 2, 13)) == date(2026, 2, 24)
+    assert get_previous_trading_day(date(2026, 2, 24)) == date(2026, 2, 13)
+
+
 def test_static_holiday_overrides_runtime_calendar_open_flag():
     from aqsp.data.trading_calendar import resolve_is_trading_day
 

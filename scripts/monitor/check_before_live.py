@@ -1088,11 +1088,12 @@ def _check_trading_calendar_coverage(root: Path, today: date) -> ReadinessFindin
     if not payload:
         return ReadinessFinding("trading_calendar_coverage", False, "calendar missing")
     dates = []
-    for key in ("holidays", "makeup_workdays"):
-        for item in payload.get(key, []):
-            parsed = _parse_date(item)
-            if parsed is not None:
-                dates.append(parsed)
+    # 只看 holidays：makeup_workdays 已随 issue #312 移除（调休上班日
+    # 一律是周末，交易所休市，从来不是交易日）。
+    for item in payload.get("holidays", []):
+        parsed = _parse_date(item)
+        if parsed is not None:
+            dates.append(parsed)
     covered_years = {item.year for item in dates}
     required_years = {today.year}
     if today.month >= 11:
@@ -1100,6 +1101,10 @@ def _check_trading_calendar_coverage(root: Path, today: date) -> ReadinessFindin
     missing = sorted(required_years - covered_years)
     critical_holidays = {
         date(2026, 1, 1),
+        # 2026 春节窗口 02-15 ~ 02-23 共 9 天（上交所公告〔2026〕5号）。
+        # 02-15（周日）与 02-23（周一）曾缺失，02-23 是工作日却被判成
+        # 交易日（幽灵交易日，issue #312）。
+        date(2026, 2, 15),
         date(2026, 2, 16),
         date(2026, 2, 17),
         date(2026, 2, 18),
@@ -1107,6 +1112,7 @@ def _check_trading_calendar_coverage(root: Path, today: date) -> ReadinessFindin
         date(2026, 2, 20),
         date(2026, 2, 21),
         date(2026, 2, 22),
+        date(2026, 2, 23),
         date(2026, 4, 6),
         date(2026, 5, 1),
         date(2026, 5, 4),
