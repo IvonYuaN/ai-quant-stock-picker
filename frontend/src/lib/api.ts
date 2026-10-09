@@ -1,6 +1,6 @@
 // AQSP 后端 API 客户端。/api → vite 代理到本地 FastAPI（默认 8900）。
 // 后端未启动或数据源异常时抛 ApiError，页面据此优雅降级。
-import type { AqspDateIndex, AqspSnapshotEnvelope, AqspSnapshotView } from "@/types/aqsp";
+import type { AqspDateIndex, AqspLifecycleIndex, AqspSnapshotEnvelope, AqspSnapshotView } from "@/types/aqsp";
 
 export type {
   AqspAgentDiscussion,
@@ -683,6 +683,10 @@ export const api = {
     )
       .then(({ data, meta }) => ({ ...data, meta })),
   aqspDates: (): Promise<AqspDateIndex> => get<AqspDateIndex>("/aqsp/dates"),
+  aqspLifecycle: (date?: string): Promise<AqspLifecycleIndex> =>
+    get<AqspLifecycleIndex>(
+      date ? `/aqsp/candidate-lifecycle?date=${encodeURIComponent(date)}` : "/aqsp/candidate-lifecycle",
+    ),
   indices: () => get<IndexQuote[]>("/indices"),
   marketOverview: () => get<MarketOverview>("/market/overview"),
   emotion: () => get<ShortTermEmotion>("/market/emotion"),

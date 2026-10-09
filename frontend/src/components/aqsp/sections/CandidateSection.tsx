@@ -19,6 +19,7 @@ import { evidenceLabel, statusLabel } from "@/lib/display-labels";
 import { useOwnership } from "../useOwnership";
 import type { CandidateRow, DailyView, SectionView } from "@/lib/daily-view";
 import { symbolNames } from "@/lib/daily-view";
+import type { AqspCandidateLifecycle } from "@/types/aqsp";
 import {
   selectCandidates,
   strategyOptions,
@@ -92,12 +93,39 @@ function OwnerTag({ ownership, code }: { ownership: OwnershipSets; code: string 
   );
 }
 
+/**
+ * 候选池生命周期标记（issue #317 W1）：一眼看出「新面孔 / 连续在榜 / 中断后回归」。
+ * 证据挂在 title 上：首次入选、出现次数、快照面覆盖范围；取不到时静默不显示。
+ */
+function LifecycleTag({
+  lifecycle,
+  historyWindow,
+}: {
+  lifecycle?: AqspCandidateLifecycle;
+  historyWindow: number;
+}) {
+  if (!lifecycle) return null;
+  const label = lifecycle.is_new
+    ? "新入选"
+    : lifecycle.streak > 1
+      ? `连续 ${lifecycle.streak} 日在榜`
+      : "中断后回归";
+  const detail = `首次入选 ${lifecycle.first_seen} · 快照面内出现 ${lifecycle.total_appearances} 次 · 生命周期覆盖最近 ${historyWindow} 个快照日`;
+  return (
+    <Tag tone={lifecycle.is_new ? "primary" : "neutral"} title={detail}>
+      {label}
+    </Tag>
+  );
+}
+
 function CandidateDetailCard({
   row,
   ownership,
   inCompare,
   compareFull,
   reviews,
+  lifecycle,
+  historyWindow,
   onToggleCompare,
   onPick,
 }: {
@@ -106,6 +134,8 @@ function CandidateDetailCard({
   inCompare: boolean;
   compareFull: boolean;
   reviews: ReviewRecord[];
+  lifecycle?: AqspCandidateLifecycle;
+  historyWindow: number;
   onToggleCompare: (symbol: string) => void;
   onPick?: (symbol: string) => void;
 }) {
@@ -127,6 +157,7 @@ function CandidateDetailCard({
         <Tag>{evidenceLabel(row.evidence)}</Tag>
         {row.ready ? <Tag tone="ok">材料齐了</Tag> : <Tag tone="warn">材料待补</Tag>}
         <OwnerTag ownership={ownership} code={row.symbol} />
+        <LifecycleTag lifecycle={lifecycle} historyWindow={historyWindow} />
         {onPick && row.symbol ? (
           <button type="button" className="aq-btn aq-btn-icon" onClick={() => onPick(row.symbol)} title="查看个股详情">
             <ExternalLink aria-hidden="true" />
@@ -225,11 +256,15 @@ function CandidateChainTable({
   rows,
   variantDate,
   ownership,
+  lifecycles,
+  historyWindow,
   onPick,
 }: {
   rows: readonly CandidateRow[];
   variantDate: string;
   ownership: OwnershipSets;
+  lifecycles: Record<string, AqspCandidateLifecycle>;
+  historyWindow: number;
   onPick?: (symbol: string) => void;
 }) {
   return (
@@ -255,6 +290,10 @@ function CandidateChainTable({
                   <strong>{row.name}</strong>
                   <span className="aq-code">{row.symbol}</span>
                   <OwnerTag ownership={ownership} code={row.symbol} />
+                  <LifecycleTag
+                    lifecycle={lifecycles[row.symbol]}
+                    historyWindow={historyWindow}
+                  />
                 </div>
                 <b className="aq-chain-score">{row.scoreText}</b>
                 <p>{[row.strategies, row.keyMetric].filter(Boolean).join(" · ") || "策略未记录"}</p>
@@ -438,6 +477,26 @@ export function CandidateSection({
       cancelled = true;
     };
   }, []);
+  // 候选池生命周期（issue #317 W1）：新入选/连续在榜/回归一眼可见。
+  // 快照面缺失或端点不可用时静默降级，不阻断候选研究主流程。
+  const [lifecycles, setLifecycles] = useState<Record<string, AqspCandidateLifecycle>>({});
+  const [historyWindow, setHistoryWindow] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .aqspLifecycle()
+      .then((index) => {
+        if (cancelled) return;
+        setLifecycles(index.lifecycles ?? {});
+        setHistoryWindow(index.history_window ?? 0);
+      })
+      .catch(() => {
+        /* fail-soft：生命周期数据缺失不阻断候选研究 */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const selection = selectCandidates(view.candidates, {
     sort,
     onlyReady,
@@ -528,6 +587,8 @@ export function CandidateSection({
                 rows={visible}
                 variantDate={view.variantLatestDate ?? ""}
                 ownership={ownership}
+                lifecycles={lifecycles}
+                historyWindow={historyWindow}
                 onPick={onPick}
               />
               {compareSymbols.length >= 2 ? (
@@ -549,6 +610,8 @@ export function CandidateSection({
                     inCompare={compareSymbols.includes(row.symbol)}
                     compareFull={compareSymbols.length >= MAX_COMPARE_SYMBOLS}
                     reviews={reviewsBySymbol.get(row.symbol) ?? []}
+                    lifecycle={lifecycles[row.symbol]}
+                    historyWindow={historyWindow}
                     onToggleCompare={(symbol) =>
                       setCompareSymbols(toggleCompareSymbol(compareSymbols, symbol))
                     }

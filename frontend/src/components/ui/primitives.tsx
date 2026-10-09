@@ -96,11 +96,17 @@ export interface TagProps {
   tone?: Tone | "primary";
   children: ReactNode;
   className?: string;
+  /** 悬停证据说明（issue #317：展示带证据链） */
+  title?: string;
 }
 
 /** 轻量标签：策略名、板块名、角色名。 */
-export function Tag({ tone = "neutral", children, className }: TagProps) {
-  return <span className={cn("aq-tag", TAG_TONE[tone], className)}>{children}</span>;
+export function Tag({ tone = "neutral", children, className, title }: TagProps) {
+  return (
+    <span className={cn("aq-tag", TAG_TONE[tone], className)} title={title}>
+      {children}
+    </span>
+  );
 }
 
 /* -------------------------------------------------------------- 分区标题 */
