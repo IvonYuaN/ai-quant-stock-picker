@@ -39,6 +39,30 @@ export function strategyOptions(rows: readonly CandidateRow[]): string[] {
   return [...seen].sort((a, b) => a.localeCompare(b, "zh-CN"));
 }
 
+/** 每个策略各挂几只候选 —— 「分策略选股」的一等公民入口（issue #317）。 */
+export interface StrategyCount {
+  name: string;
+  /** 挂了该策略的候选数（一只候选可同时挂多个策略，各项之和会大于候选数）。 */
+  count: number;
+}
+
+/**
+ * 策略 × 计数，按候选数降序（点选率最高的策略排前面），同数按 zh-CN 字典序。
+ * 与 `strategyOptions` 共用同一套拆分规则，保证「chip 显示的策略」与「过滤命中的策略」必然一致。
+ */
+export function strategyCounts(rows: readonly CandidateRow[]): StrategyCount[] {
+  const counts = new Map<string, number>();
+  for (const row of rows) {
+    for (const part of (row.strategies ?? "").split(/[·、,，]/)) {
+      const name = part.trim();
+      if (name) counts.set(name, (counts.get(name) ?? 0) + 1);
+    }
+  }
+  return [...counts.entries()]
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "zh-CN"));
+}
+
 function matchStrategy(row: CandidateRow, strategy: string | null): boolean {
   if (!strategy) return true;
   return strategyOptions([row]).includes(strategy);

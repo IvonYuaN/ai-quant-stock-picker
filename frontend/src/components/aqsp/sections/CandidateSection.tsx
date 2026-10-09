@@ -22,7 +22,7 @@ import { symbolNames } from "@/lib/daily-view";
 import type { AqspCandidateLifecycle } from "@/types/aqsp";
 import {
   selectCandidates,
-  strategyOptions,
+  strategyCounts,
   type CandidateSortKey,
 } from "@/lib/candidate-view";
 import { ownedKind, summarizeOwned, type OwnershipSets } from "@/lib/ownership";
@@ -359,6 +359,49 @@ function ResearchChainLane({ view }: { view: DailyView }) {
   );
 }
 
+/**
+ * 分策略选股（issue #317）：策略不再藏在下拉里，做成带计数的一等 chip。
+ * 计数来自 strategyCounts，与过滤命中共用同一套拆分规则；
+ * 再点一次已选中的 chip 即清除过滤。
+ */
+function StrategyChips({
+  rows,
+  active,
+  onChange,
+}: {
+  rows: readonly CandidateRow[];
+  active: string | null;
+  onChange: (next: string | null) => void;
+}) {
+  const counts = strategyCounts(rows);
+  if (counts.length === 0) return null;
+  return (
+    <div className="aq-tag-row" role="group" aria-label="按策略选股">
+      <button
+        type="button"
+        className={cn("aq-chip", active === null && "aq-tag-primary")}
+        onClick={() => onChange(null)}
+        aria-pressed={active === null}
+        title={`全部 ${rows.length} 只候选`}
+      >
+        全部 {rows.length}
+      </button>
+      {counts.map(({ name, count }) => (
+        <button
+          key={name}
+          type="button"
+          className={cn("aq-chip", active === name && "aq-tag-primary")}
+          onClick={() => onChange(active === name ? null : name)}
+          aria-pressed={active === name}
+          title={`${name}：${count} 只候选（一只候选可同时挂多个策略）`}
+        >
+          {name} {count}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 /** 选股的操作区：排序 + 只看可复核 + 按策略过滤。 */
 function CandidateControls({
   rows,
@@ -380,7 +423,6 @@ function CandidateControls({
     hideOwned?: boolean;
   }) => void;
 }) {
-  const strategies = strategyOptions(rows);
   if (rows.length <= 1) return null;
   return (
     <div className="aq-toolbar aq-toolbar-wrap">
@@ -397,23 +439,7 @@ function CandidateControls({
         </select>
       </label>
 
-      {strategies.length > 0 ? (
-        <label className="aq-field-inline">
-          <span>策略</span>
-          <select
-            className="aq-input"
-            value={strategy ?? ""}
-            onChange={(event) => onChange({ strategy: event.target.value || null })}
-          >
-            <option value="">全部</option>
-            {strategies.map((name) => (
-              <option key={name} value={name}>
-                {name}
-              </option>
-            ))}
-          </select>
-        </label>
-      ) : null}
+      <StrategyChips rows={rows} active={strategy} onChange={(next) => onChange({ strategy: next })} />
 
       <button
         type="button"

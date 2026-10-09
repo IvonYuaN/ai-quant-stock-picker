@@ -9,7 +9,7 @@
 // 所有派生都在 daily-view 里完成，本文件不做业务判断。
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
-import { BookOpen, CalendarDays, Compass, RefreshCw, Sparkles } from "lucide-react";
+import { CalendarDays, Compass, RefreshCw, Sparkles } from "lucide-react";
 import { Badge, HeroState, LoadingState, ToneCallout } from "@/components/ui/primitives";
 import { cn } from "@/lib/utils";
 import {
@@ -254,11 +254,6 @@ function PersistentBlock({ view }: { view: DailyView }) {
       </div>
 
       <PhaseStrip view={view} />
-
-      <Link to={`/reviews?date=${view.date}`} className="aq-review-cta-link">
-        <BookOpen aria-hidden="true" />
-        今日复盘：对最近的信号记录评分 · 标签 · 笔记
-      </Link>
     </div>
   );
 }

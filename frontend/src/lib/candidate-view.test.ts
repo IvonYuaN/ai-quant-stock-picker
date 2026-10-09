@@ -1,5 +1,5 @@
 // 候选筛选与排序的契约断言（由 npm test 真正执行）。
-import { selectCandidates, strategyOptions } from "./candidate-view";
+import { selectCandidates, strategyCounts, strategyOptions } from "./candidate-view";
 import type { CandidateRow } from "./daily-view";
 
 const row = (over: Partial<CandidateRow>): CandidateRow =>
@@ -42,6 +42,19 @@ export const candidateViewContract = {
   strategiesDeduplicated: new Set(strategyOptions(rows)).size === strategyOptions(rows).length,
   strategiesEmptyWhenNoRows: strategyOptions([]).length === 0,
   strategiesEmptyWhenBlankField: strategyOptions([row({ strategies: "  " })]).length === 0,
+
+  /* ---- 策略 × 计数（分策略选股 chip 的数据源，issue #317）---- */
+  // 与 strategyOptions 同一套拆分规则 ⇒ chip 集合与过滤命中必然一致
+  countsMatchOptions: strategyCounts(rows).map((c) => c.name).join("|") === strategyOptions(rows).join("|"),
+  // 000001 挂两个策略 ⇒「放量突破」计 2、「均线缩量回踩」计 1、「RPS 相对强度」计 1
+  countsCountCandidates:
+    JSON.stringify(strategyCounts(rows).map((c) => [c.name, c.count])) ===
+    JSON.stringify([["放量突破", 2], ["均线缩量回踩", 1], ["RPS 相对强度", 1]]),
+  // 候选数多的策略排前面（点选率最高的一等入口），同数按 zh-CN 字典序
+  countsSortedByCountDesc:
+    strategyCounts(rows)[0].name === "放量突破" && strategyCounts(rows)[0].count === 2,
+  countsEmptyWhenNoRows: strategyCounts([]).length === 0,
+  countsEmptyWhenBlankField: strategyCounts([row({ strategies: "  " })]).length === 0,
 
   /* ---- 默认按评分降序 ---- */
   scoreSortDescending: selectCandidates(rows, base).rows.map((r) => r.symbol).join("|") === "000002|000003|000001",
