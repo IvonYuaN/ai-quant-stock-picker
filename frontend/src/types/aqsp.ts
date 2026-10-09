@@ -248,6 +248,35 @@ export interface AqspLifecycleIndex {
   lifecycles: Record<string, AqspCandidateLifecycle>;
 }
 
+/** 小道信息流（issue #317 W2）：财联社快讯 + 概念异动，单源失败显式降级。 */
+export interface InfoStreamNewsItem {
+  item_id: string;
+  title: string;
+  summary: string;
+  ctime: string;
+  level: string;
+  subjects: readonly string[];
+  source: string;
+}
+
+export interface InfoStreamConcept {
+  board_code: string;
+  board_name: string;
+  up_count: number;
+  down_count: number;
+  change_pct: number;
+  main_net_inflow: number;
+  main_net_ratio: number;
+}
+
+export interface InfoStreamData {
+  generated_at: string;
+  news: readonly InfoStreamNewsItem[];
+  concepts: readonly InfoStreamConcept[];
+  /** "ok" 或 "error: ..."（缺材料显式可见） */
+  sources: { cls_news: string; concept_board: string };
+}
+
 /** Snapshot data after the HTTP envelope is normalized for the existing view layer. */
 export interface AqspSnapshotView extends AqspSnapshot {
   meta: AqspSnapshotMeta;

@@ -21,6 +21,7 @@ import {
   Rss,
   Star,
   Wallet,
+  Zap,
   type LucideIcon,
 } from "lucide-react";
 
@@ -52,6 +53,7 @@ export const PRIMARY_LINE: NavLine = {
   scope: "public",
   items: [
     { to: "/today", label: "今日选股", desc: "今天 AI 挑的几只 · 白话理由", icon: Compass },
+    { to: "/stream", label: "小道信息", desc: "财联社快讯 · 概念异动", icon: Zap },
     { to: "/market", label: "行情环境", desc: "大盘 · 情绪 · 涨跌家数", icon: Globe2 },
   ],
 };
