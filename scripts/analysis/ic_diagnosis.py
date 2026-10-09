@@ -36,7 +36,7 @@ from scripts.factor_ic_diagnosis import (
 
 # 基础三因子与 gate WF-001 同口径；extra 为其追加项（默认空=省 CPU）。
 _BASE_FACTORS = ("momentum", "triple_rise", "composite")
-_EXTRA_CHOICES = ("htf", "mr", "volume", "rps")
+_EXTRA_CHOICES = ("htf", "mr", "volume", "rps", "volume_surge", "price_volume_corr")
 _REC_SPAN = 20  # 近 20 截面的短期口径（因子翻向侦测）
 
 
@@ -123,7 +123,9 @@ def _build_factor_objs(
     from aqsp.strategies.candidates import HighTightFlagCandidate, RpsCandidate
     from aqsp.strategies.composite import CompositeStrategy
     from aqsp.strategies.mean_reversion import MeanReversionStrategy
+    from aqsp.strategies.price_volume_corr import PriceVolumeLevelCorrelation
     from aqsp.strategies.volume import VolumeBreakoutStrategy
+    from aqsp.strategies.volume_surge import VolumeSurge
 
     # WF001 由模块顶层 import（scripts.factor_ic_diagnosis）提供，此处不再重复 import。
     thresholds = load_thresholds()
@@ -138,7 +140,18 @@ def _build_factor_objs(
         "volume": (VolumeBreakoutStrategy, "volume"),
         "rps": (RpsCandidate, "rps"),
         "htf": (HighTightFlagCandidate, "high_tight_flag"),
+        "volume_surge": (VolumeSurge, "volume_surge"),
+        "price_volume_corr": (PriceVolumeLevelCorrelation, "price_volume_corr"),
     }
+    # volume_surge / price_volume_corr **常诊**（2026-10-09，监控盲区修复）：
+    # 「三源是否启用」（抉择单 v2 D2）需要这两个维度的 IC 历史作依据，而 cron 的
+    # EXTRA_FACTORS 不含它们；在代码层常诊可免改 runner crontab（cron 变更须仓主
+    # 授权）。raw 口径（invert_signal=False，与 momentum 诊断一致）；二者 enabled
+    # 开关与类实现无关（composite.py 本就以 enabled=True 实例化）。
+    extra = list(extra or [])
+    for _always in ("volume_surge", "price_volume_corr"):
+        if _always not in extra:
+            extra.append(_always)
     objs: dict[str, object] = {
         "momentum": strategy.momentum_strategy,
         "triple_rise": strategy.triple_rise_strategy,

@@ -1574,7 +1574,19 @@ def build_factor_ic_section(
         "| 因子 | IC 均值 | ICIR | t | IC>0 占比 | 近 20 截面 | 判读 |",
         "|---|---|---|---|---|---|---|",
     ]
-    for name in ("momentum", "triple_rise", "composite", "htf", "mr", "volume", "rps"):
+    for name in (
+        "momentum",
+        "triple_rise",
+        "composite",
+        "htf",
+        "mr",
+        "volume",
+        "rps",
+        # 2026-10-09 常诊新增（ic_diagnosis.py 监控盲区修复，抉择单 v2 §五）：
+        # 产物里还没有这两列时 get() 返回 None，下方 isinstance 守卫自动跳过。
+        "volume_surge",
+        "price_volume_corr",
+    ):
         s = factors.get(name)
         if not isinstance(s, dict):
             continue
