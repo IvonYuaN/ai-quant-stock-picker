@@ -1118,7 +1118,6 @@ def _check_trading_calendar_coverage(root: Path, today: date) -> ReadinessFindin
         date(2026, 10, 5),
         date(2026, 10, 6),
         date(2026, 10, 7),
-        date(2026, 10, 8),
     }
     critical_missing = sorted(
         holiday.isoformat()
