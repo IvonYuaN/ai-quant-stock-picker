@@ -7422,10 +7422,15 @@ def run_walkforward(args: argparse.Namespace) -> int:
     if metric_note:
         tl_dr.append(metric_note)
 
-    # 🔴 2026-10-06：--streaming 架构上强制 --skip-pit-financials（cli.py:3691），
-    # 于是 quality/value/mean_reversion 拿不到 pe/roe ⇒ 三个维度恒为常数。
-    # 但逐变体表仍会如实显示它们的 7 维权重（如 0.4/0.4），判读者极易误以为
-    # 「这 0.4 权重在起作用」。此处显式标注，避免报告被误读。
+    # 🔴 2026-10-06 引入 / 2026-10-09 订正：--streaming 架构上强制 --skip-pit-financials
+    # （cli.py:3691），于是 frames 缺 pe/roe 等财务列 ⇒ **quality / value** 恒为常数。
+    # 但逐变体表仍会如实显示它们的 7 维权重（如 planb 档位的 qual/val=0.4），
+    # 判读者极易误以为「这 0.4 权重在起作用」。此处显式标注，避免报告被误读。
+    # ⚠️ 旧文案把 `mean_reversion` 也列为空转维度 —— **那是错的**：它是纯价量因子
+    # （只读 close/volume），跳过财务对它毫无影响；`stable_plus` 的 WF-MR1 正是靠它
+    # 与其余 7 臂区分。误列会让判读者以为 WF-MR1 退化 ⇒ 误以为 MIN_CSCV_VARIANTS=8
+    # 被破坏 ⇒ 误判 PBO/DSR 结论不可信。实测表与完整订正见
+    # `services/walkforward_data.pit_skip_note()` 上方长注释。
     #
     # 数据来源优先级：`fetch_result.pit_note`（**运行时真实事实**）> args 开关（假设）。
     # 用真实事实而非「假设它跳过了」，才能在将来 flag 与实际行为不一致时暴露问题。
@@ -7433,17 +7438,18 @@ def run_walkforward(args: argparse.Namespace) -> int:
     #     它由本函数上方 `streaming_context is None` 分支赋值。该分支在 `--streaming`
     #     路径下不会执行，故上方已预初始化为 None —— 删掉那行会立刻退化成
     #     `UnboundLocalError`（2026-10-08 实际发生过，见该处注释）。
+    from aqsp.services.walkforward_data import pit_skip_note
+
     _pit_note = getattr(fetch_result, "pit_note", None)
     if _pit_note:
         tl_dr.append(f"> {_pit_note}")
     elif bool(getattr(args, "skip_pit_financials", False)):
+        # 兜底：无运行时事实（`--streaming` 路径 `fetch_result` 恒为 None）时按开关**假设**。
+        # 正文与 fetch 侧共用 `pit_skip_note()`，避免两处文案再次漂移。
         tl_dr.append(
-            "> ⚠️ **本次跑批跳过 PIT 财务数据**（`--skip-pit-financials`；`--streaming` 架构强制，"
-            "见 cli.py:3691）⇒ 逐变体表中的 **`quality` / `value` / `mean_reversion` "
-            "三维实际未参与打分**（无 `pe`/`roe` 输入时它们恒为常数）。"
-            "**若这些维度在变体表里有非零权重，该权重对选股没有任何作用**，"
-            "有效打分只来自其余有区分度的维度。"
+            "> ⚠️ **本次跑批跳过 PIT 财务数据**（`--skip-pit-financials` 已置位）。"
         )
+        tl_dr.append(f"> {pit_skip_note()}")
 
     report_lines = [
         "# Walk-Forward 回测报告",
