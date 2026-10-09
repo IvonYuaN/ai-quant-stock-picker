@@ -247,7 +247,7 @@ function PersistentBlock({ view }: { view: DailyView }) {
             <ToneCallout
               tone="warn"
               title="当天暂无实时产物"
-              detail="当前页面不使用历史数据代替当天候选。下一次任务产出后会更新这里；需要回看可去「结论归档」。"
+              detail="当前页面不使用历史数据代替当天候选。下一次任务产出后会更新这里；需要回看可用上方日期切换。"
             />
           ) : null}
         </div>
