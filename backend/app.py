@@ -38,6 +38,7 @@ import astock
 import aqsp_bridge
 import chat as chat_layer
 import cli_runtime
+import info_stream
 import gstock
 import metrics
 import newsradar
@@ -1673,6 +1674,23 @@ def aqsp_candidates(symbol: str, date: str | None = Query(default=None, descript
 def aqsp_candidate_lifecycle(date: str | None = Query(default=None, description="锚定日期 (YYYY-MM-DD)")):
     """候选池生命周期（首次入选/连续在榜/出现次数），只读快照面。"""
     return {"data": _aqsp_bridge_call(aqsp_bridge.candidate_lifecycle_payload, date)}
+
+
+@app.get(
+    "/api/aqsp/info-stream",
+    tags=["AQSP 研究"],
+    summary="AQSP 小道信息流",
+    description="""
+财联社快讯 + 概念板块异动聚合（issue #317 W2）。
+
+- 只读外部公开源，进程内 5 分钟 TTL 缓存
+- 单源失败显式降级：该区为空且 `sources` 标注 `error: ...`（缺材料可见，不静默）
+- 不参与选股评分（proposal-only 数据面）
+    """,
+)
+def aqsp_info_stream(force: bool = Query(default=False, description="跳过 TTL 缓存强制刷新")):
+    """小道信息流：快讯 + 概念异动，带每源健康状态。"""
+    return {"data": info_stream.get_info_stream(force=force)}
 
 
 @app.get(
