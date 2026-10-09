@@ -32,8 +32,71 @@ class WalkforwardFetchResult:
     symbols: list[str]
     # 2026-10-06：本次跑批「财务数据是否真的参与了打分」的说明（None = 未跳过 PIT，
     # 走的是 enrich 分支，状态由 source_statuses 表达）。skip 分支必须填入，
-    # 否则「quality/value/mean_reversion 三维空转」这个事实不会被写进任何产物。
+    # 否则「quality/value 两维空转」这个事实不会被写进任何产物。
     pit_note: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# 🔴 2026-10-09 订正：哪些维度真的因「跳过 PIT 财务」而空转
+#
+# 原 note 写的是「quality / value / mean_reversion 三维恒为常数」，**对第三维是错的**。
+# 实测口径（`.workbuddy-ai/tools/probe_factor_constant_without_fundamentals.py`：
+# 40 只合成标的 × 160 日、**不含任何财务列**，各因子独立跑分后统计互异值/std）：
+#
+#   momentum             互异值=35  std=0.188  有区分度
+#   triple_rise          互异值=17  std=0.174  有区分度
+#   quality              互异值= 1  std=0.000  ← 恒为常数（roe/roa/debt_ratio/
+#                                                operating_margin 全部缺列 ⇒ 各子项
+#                                                返 0.5 ⇒ 常数）
+#   value                互异值= 1  std=0.000  ← 恒为常数（pe/pb/dividend_yield 缺列）
+#   volume               互异值=40  std=0.165  有区分度
+#   high_tight_flag      互异值=40  std=0.097  有区分度
+#   mean_reversion(关)   互异值= 1  std=0.000  常数 —— 但成因是 **enabled=False**，
+#                                              不是「缺 pe/roe」
+#   mean_reversion(开)   互异值=19  std=0.199  ← 有区分度
+#
+# 即 `mean_reversion` 是**纯价量因子**（只读 close/volume：RSI 超卖 / 乖离率 /
+# 量能确认，见 `strategies/mean_reversion.py`），跳过财务对它毫无影响。
+#
+# 危害（真实且直接落在生产 gate 上）：`stable_plus` 里 **WF-MR1 是唯一
+# `enable_mr=True` 且 `mr_weight=0.4` 的臂**。旧 note 会让判读者认定
+# 「WF-MR1 的 mr 权重无作用 ⇒ 该臂退化 ⇒ 有效臂只有 7 个 ⇒
+# MIN_CSCV_VARIANTS=8 被破坏 ⇒ PBO/DSR 结论不可信」——而这条推理链是假的。
+# 反向风险同样存在：`planb_*` 档位给 qual/val 配了非零权重（0.4/0.2），
+# 那些权重**确实**在 streaming 下空转，必须保留警示。
+# ---------------------------------------------------------------------------
+
+# 依赖财务列、缺列即恒为常数的因子（实测见上表）。
+PIT_SKIP_IDLE_FACTORS: tuple[str, ...] = ("quality", "value")
+
+# 只读价格/成交量、**不受**跳过财务影响的因子（用于在 note 里显式排除误读）。
+PIT_SKIP_PRICE_VOLUME_FACTORS: tuple[str, ...] = (
+    "momentum",
+    "triple_rise",
+    "volume",
+    "mean_reversion",
+    "high_tight_flag",
+)
+
+
+def pit_skip_note() -> str:
+    """`--skip-pit-financials` 下「哪些维度真的空转」的**单一事实来源**。
+
+    `walkforward_data` 的 skip 分支与 `cli` 报告段的兜底分支共用本函数，
+    避免两处文案再次漂移（2026-10-06 起两处各写一份，2026-10-09 才发现两份都错）。
+    """
+    idle = " / ".join(PIT_SKIP_IDLE_FACTORS)
+    unaffected = " / ".join(PIT_SKIP_PRICE_VOLUME_FACTORS)
+    return (
+        "⚠️ 已跳过 point-in-time 财务补充（`--skip-pit-financials`；"
+        "`--streaming` 架构强制，见 cli.py:3691）⇒ 依赖财务列的维度 "
+        f"**{idle}** 无 `pe`/`roe` 输入，恒为常数、**未参与打分**；"
+        "若变体表给这些维度配了非零权重（如 `planb_*` 档位的 qual/val），"
+        "该权重对选股**没有任何作用**。"
+        f"⚠️ 价量因子（{unaffected}）**不受影响** —— 它们只读价格/成交量；"
+        "`mean_reversion` 尤其如此：它只在被显式启用且权重>0 时参与打分，"
+        "启用后提供真实区分度（如 `stable_plus` 的 WF-MR1，mr=0.4）。"
+    )
 
 
 def _attach_benchmark_frame(
@@ -156,19 +219,17 @@ def fetch_walkforward_frames(
         if request.skip_pit_financials:
             # 🔴 2026-10-06：这里必须**显式声明哪些维度因此不参与打分**。
             # 背景：`--streaming` 架构上强制本开关（cli.py:3691，避免 PIT 帧无界占内存），
-            # 跳过 ⇒ frames 无 pe/roe ⇒ quality/value/mean_reversion 恒为常数（实测
-            # 唯一值=1、std=0），即 7 维里有 3 维是**空转**的。若变体对这些维度配了
-            # 非零权重，该权重对选股**毫无作用**，而报告的逐变体表仍会如实显示它。
+            # 跳过 ⇒ frames 无 pe/roe 等财务列 ⇒ **quality / value** 恒为常数
+            # （实测唯一值=1、std=0；见 `PIT_SKIP_IDLE_FACTORS` 上方实测表）。
+            # 若变体对这些维度配了非零权重（`planb_*` 档位），该权重对选股**毫无作用**，
+            # 而报告的逐变体表仍会如实显示它。
+            # ⚠️ 2026-10-09 订正：旧文案把 `mean_reversion` 也列为空转维度，**是错的**
+            # —— 它是纯价量因子，与财务列无关。详见 `pit_skip_note()` 上方长注释。
             # 旧实现在此直接 return，把「财务数据源是否可用」这个关键事实
             # **完全不上报**（pit_result.source_statuses 的打印在其后，永不执行）
             # ⇒ 只能被人肉考古发现。现改为：既打印、也把状态挂到返回值上，
             # 供 cli 写进 gate report（见 WalkforwardFetchResult.pit_note）。
-            skipped_note = (
-                "⚠️ 已跳过 point-in-time 财务补充（--skip-pit-financials；"
-                "--streaming 架构强制，见 cli.py:3691）⇒ quality / value / "
-                "mean_reversion 三维**未参与打分**（无 pe/roe 输入时它们恒为常数）；"
-                "若这些维度在变体表里有非零权重，该权重对选股**没有任何作用**。"
-            )
+            skipped_note = pit_skip_note()
             print_fn("已跳过 point-in-time 财务补充，仅使用价格数据跑 gate")
             print_fn(skipped_note)
             return WalkforwardFetchResult(
