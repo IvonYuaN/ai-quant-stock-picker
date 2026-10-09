@@ -172,8 +172,11 @@ def test_streaming_report_keeps_pit_skip_disclosure(
 ) -> None:
     """预初始化不得吞掉披露：``fetch_result=None`` 时仍要落到 ``skip_pit_financials`` 兜底。
 
-    ``--streaming`` 架构上强制跳过 PIT 财务 ⇒ quality/value/mean_reversion 三维恒为常数，
-    报告必须如实标注。这条同时证明「预初始化」没有把披露一起吃掉。
+    ``--streaming`` 架构上强制跳过 PIT 财务 ⇒ **quality / value** 两维恒为常数
+    （⚠️ 2026-10-09 订正：**不是三维** —— ``mean_reversion`` 只读 close/volume，
+    是价量因子，跳过财务对它毫无影响；实测见
+    ``tests/test_pit_skip_note_factor_accuracy.py``），报告必须如实标注。
+    这条同时证明「预初始化」没有把披露一起吃掉。
     """
     report = tmp_path / "report.md"
     args = _parse_walkforward_args(
@@ -206,8 +209,12 @@ def test_streaming_report_keeps_pit_skip_disclosure(
     assert cli_mod.run_walkforward(args) == 0
     body = report.read_text(encoding="utf-8")
     assert PIT_SKIP_MARKER in body
-    for dim in ("quality", "value", "mean_reversion"):
+    for dim in ("quality", "value"):
         assert dim in body, f"披露未点名空转维度 {dim}"
+    assert "mean_reversion" in body, (
+        "披露必须显式说明 mean_reversion **不受影响**（它是价量因子）；"
+        "漏掉它会让判读者以为 stable_plus 的 WF-MR1 退化了"
+    )
 
 
 # --------------------------------------------------------------------------- #
