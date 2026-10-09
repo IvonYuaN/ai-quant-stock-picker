@@ -88,3 +88,36 @@ def test_source_from_items_and_items():
     )
     assert len(src.items()) == 1
     assert src.items(autoload=False)[0].title == "t"
+
+
+def test_parse_ctime_seconds_unix_timestamp_not_nanoseconds():
+    """issue #317 W2：cls.cn ctime 是秒级 Unix 时间戳。
+
+    回归：pd.Timestamp(int) 按纳秒解释 ⇒ 1791529166 变成 1970-01-01，
+    信息流按时间倒序完全不可用。
+    """
+    payload = {
+        "data": {
+            "roll_data": [
+                {"id": "1", "title": "t1", "content": "c1", "ctime": 1791529166, "level": "A"},
+                {"id": "2", "title": "t2", "content": "c2", "ctime": "1791529166", "level": "A"},
+                {"id": "3", "title": "t3", "content": "c3", "ctime": 1791529166000, "level": "A"},
+                {"id": "4", "title": "t4", "content": "c4", "ctime": 1791529166000000000, "level": "A"},
+                {"id": "5", "title": "t5", "content": "c5", "ctime": "2026-10-09 19:39:26", "level": "A"},
+                {"id": "6", "title": "t6", "content": "c6", "ctime": "not-a-date", "level": "A"},
+            ]
+        }
+    }
+    items = _parse_items(payload)
+    assert len(items) == 6
+    expected = "2026-10-09T14:59:26+08:00"
+    # 秒（int/str 同值）、毫秒、纳秒四种数字输入归一到同一上海时区时刻
+    assert items[0].ctime == expected
+    assert items[1].ctime == expected
+    assert items[2].ctime == expected
+    assert items[3].ctime == expected
+    # 字符串日期原样解析（保持朴素本地时间，不做时区假设）
+    assert items[4].ctime == "2026-10-09 19:39:26"[:10] + "T19:39:26"
+    # 解析失败回退空串，绝不 crash 整批
+    assert items[5].ctime == ""
+    assert all(not it.ctime.startswith("1970") for it in items)

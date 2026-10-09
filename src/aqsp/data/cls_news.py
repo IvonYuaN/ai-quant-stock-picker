@@ -48,6 +48,32 @@ class ClsNewsItem:
     subjects: tuple[str, ...]  # 关联主题
 
 
+def _normalize_ctime(ctime_raw: object) -> str:
+    """把 cls.cn 的 ctime 归一成 ISO 字符串（issue #317 W2 修正）。
+
+    cls.cn roll 接口的 ctime 是**秒级** Unix 时间戳（实测 2026-10-09：
+    1791529166 应为 2026-10-09 19:39 CST）。此前直接 ``pd.Timestamp(int)``
+    会按**纳秒**解释 ⇒ 全部时间漂移到 1970 年，信息流按时间倒序完全不可用。
+    按量级识别 秒/毫秒/纳秒，字符串日期原样解析，解析失败回退空串。
+    """
+    if ctime_raw is None or ctime_raw == "":
+        return ""
+    try:
+        ts_int = int(ctime_raw)
+    except (TypeError, ValueError):
+        try:
+            return pd.Timestamp(str(ctime_raw)).isoformat()
+        except Exception:  # noqa: BLE001 - 单条漂移跳过
+            return ""
+    if ts_int >= 10**17:  # 纳秒（2026 年 ≈ 1.79e18）
+        return pd.Timestamp(ts_int, unit="ns", tz="Asia/Shanghai").isoformat()
+    if ts_int >= 10**14:  # 微秒（≈ 1.79e15）
+        return pd.Timestamp(ts_int, unit="us", tz="Asia/Shanghai").isoformat()
+    if ts_int >= 10**11:  # 毫秒（≈ 1.79e12）
+        return pd.Timestamp(ts_int, unit="ms", tz="Asia/Shanghai").isoformat()
+    return pd.Timestamp(ts_int, unit="s", tz="Asia/Shanghai").isoformat()
+
+
 def _normalize_subjects(raw: object) -> tuple[str, ...]:
     if not isinstance(raw, list):
         return ()
@@ -88,11 +114,7 @@ def _parse_items(payload: object) -> list[ClsNewsItem]:
             title = str(raw.get("title") or "").strip()
             summary = str(raw.get("content") or raw.get("brief") or "").strip()
             ctime_raw = raw.get("ctime")
-            ctime = (
-                pd.Timestamp(ctime_raw).isoformat()
-                if ctime_raw not in (None, "")
-                else ""
-            )
+            ctime = _normalize_ctime(ctime_raw)
             level = str(raw.get("level") or "").strip()
             out.append(
                 ClsNewsItem(
