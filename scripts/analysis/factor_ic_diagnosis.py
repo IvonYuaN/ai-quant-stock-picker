@@ -47,7 +47,9 @@ from aqsp.cli import (
 )
 from aqsp.strategies.composite import CompositeStrategy
 from aqsp.strategies.mean_reversion import MeanReversionStrategy
+from aqsp.strategies.price_volume_corr import PriceVolumeLevelCorrelation
 from aqsp.strategies.volume import VolumeBreakoutStrategy
+from aqsp.strategies.volume_surge import VolumeSurge
 from aqsp.strategies.candidates import RpsCandidate, HighTightFlagCandidate
 from aqsp.strategies.base import StrategyConfig
 
@@ -237,6 +239,10 @@ def main() -> int:
     # 扩展诊断：除既有的 momentum / triple_rise / composite 外，
     # 额外覆盖 mean_reversion / volume（二者只需 OHLCV，可在 runner 的 daily_qfq 上直接算；
     # quality / value 需基本面表，本诊断样本无，跳过）。
+    # volume_surge / price_volume_corr（2026-10-09，issue #312 同期新增维度的监控盲区修复）：
+    # 二者当前 enabled=false（composite 权重 0），但类实现与 enabled 无关（composite.py
+    # 本就以 enabled=True 实例化它们）⇒ 可在此以 raw 口径（invert_signal=False）诊断，
+    # 在「三源是否启用」拍板前就开始积累 IC 历史（抉择单 v2 §五的盲区项）。
     candidate_classes = ()
     if getattr(args, "candidates", False):
         candidate_classes = (
@@ -247,6 +253,8 @@ def main() -> int:
     for _name, _cls in (
         ("mean_reversion", MeanReversionStrategy),
         ("volume", VolumeBreakoutStrategy),
+        ("volume_surge", VolumeSurge),
+        ("price_volume_corr", PriceVolumeLevelCorrelation),
     ) + candidate_classes:
         # rps 的默认 rps_period=120 远超本诊断每截面实际喂入的窗口
         # （下方 `df[df['date'] <= d].tail(args.lookback + 10)`，lookback=60 ⇒ 70 行）
@@ -265,7 +273,14 @@ def main() -> int:
     # 固定顺序：先既有三因子，再追加扩展因子（含候选因子）
     factor_order = ["momentum", "triple_rise", "composite"] + [
         k
-        for k in ("mean_reversion", "volume", "rps", "high_tight_flag")
+        for k in (
+            "mean_reversion",
+            "volume",
+            "volume_surge",
+            "price_volume_corr",
+            "rps",
+            "high_tight_flag",
+        )
         if k in extra_factors
     ]
     factor_objs: dict[str, object] = {
