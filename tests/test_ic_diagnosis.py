@@ -44,6 +44,9 @@ def _make_db(
         amount = (s + 1) * 1e6 if amount_spread else 1e7
         for i, d in enumerate(dates):
             px = base + 0.01 * i + rng.standard_normal() * 0.2
+            # volume 须有横截面扰动：恒定 volume ⇒ surge 分恒为 1.0 ⇒ IC 全 NaN
+            # （volume_surge 常诊后本测试要求其 n>0，见 run 的 factors 断言）
+            vol = 1000.0 * (1.0 + 0.15 * float(rng.standard_normal()))
             rows.append(
                 (
                     f"{s:06d}.SZ",
@@ -52,7 +55,7 @@ def _make_db(
                     px + 0.2,
                     px - 0.2,
                     px,
-                    1000.0,
+                    vol,
                     amount,
                     px,
                     px + 0.2,
@@ -120,10 +123,14 @@ class TestRun:
         # JSON 产物
         latest = json.loads((out / "factor_ic_latest.json").read_text())
         assert latest["as_of"] == result["as_of"]
+        # volume_surge / price_volume_corr 为**常诊**（2026-10-09 监控盲区修复）：
+        # 即使不传 extra_factors 也必须出现（启用决策需要其 IC 历史，见抉择单 v2 D2）
         assert set(latest["factors"]) == {
             "momentum",
             "triple_rise",
             "composite",
+            "volume_surge",
+            "price_volume_corr",
         }
         for name, s in latest["factors"].items():
             assert s["n"] > 0, f"{name} 无截面（合成数据应可打分）"
