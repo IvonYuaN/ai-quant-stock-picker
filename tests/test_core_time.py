@@ -80,6 +80,45 @@ def test_is_trading_day_a_share_2026_holidays():
     assert get_next_trading_day(date(2026, 6, 18)) == date(2026, 6, 22)
 
 
+def test_is_trading_day_2026_national_day_window_matches_exchange_notice():
+    """2026 中秋/国庆窗口必须与交易所公告逐日一致。
+
+    依据：深交所《关于2026年中秋节、国庆节休市安排的通知》（2026-09-17）原文：
+      「9月25日（星期五）至9月27日（星期日）休市，9月28日（星期一）起照常开市。
+        10月1日（星期四）至10月7日（星期三）休市，**10月8日（星期四）起照常开市**。
+        另外，9月20日（星期日）、10月10日（星期六）为周末休市。」
+
+    ⚠️ 回归守卫（issue #310）：`config/trading_holidays.json` 曾把 `2026-10-08`
+    误列入 `holidays`，导致 prod 的 `data-refresh` 判其为「非交易日」而跳过 ⇒
+    `daily_qfq` **永久缺失该交易日约 4400 只标的日线**（实测 range 停在 20260930）。
+    该文件还曾把 `2026-09-27` / `2026-10-10` 放进 `makeup_workdays`，而
+    `_is_basic_trading_day()` 对 `makeup_workdays` 无条件返回 True ⇒ 公告明写
+    「周末休市」的两天被判成交易日。
+    """
+    # 中秋：9/25(五)–9/27(日) 休市，9/28(一) 照常开市
+    assert not is_trading_day(date(2026, 9, 25))
+    assert not is_trading_day(date(2026, 9, 27))  # 周日 + 公告「周末休市」
+    assert is_trading_day(date(2026, 9, 28))
+
+    # 国庆：10/1(四)–10/7(三) 休市
+    for day in (1, 2, 5, 6, 7):
+        assert not is_trading_day(date(2026, 10, day)), f"2026-10-0{day} 应休市"
+
+    # 🔴 公告明写「10月8日（星期四）起照常开市」—— 本用例的核心回归点
+    assert is_trading_day(date(2026, 10, 8)), (
+        "2026-10-08 是交易日（交易所公告「照常开市」）；"
+        "若判为休市，data-refresh 会静默跳过该日，永久缺失一根 K 线（issue #310）"
+    )
+    assert is_trading_day(date(2026, 10, 9))
+
+    # 10/10(六) 公告「周末休市」⇒ 非交易日（调休上班日不是交易日）
+    assert not is_trading_day(date(2026, 10, 10))
+
+    # 链路：10-08 必须真的在交易日链上，不能被跳过
+    assert get_previous_trading_day(date(2026, 10, 9)) == date(2026, 10, 8)
+    assert get_next_trading_day(date(2026, 9, 30)) == date(2026, 10, 8)
+
+
 def test_static_holiday_overrides_runtime_calendar_open_flag():
     from aqsp.data.trading_calendar import resolve_is_trading_day
 
