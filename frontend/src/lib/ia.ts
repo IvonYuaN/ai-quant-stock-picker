@@ -9,16 +9,10 @@
 // 拆成两页只会让"今天到底能不能买"这个判断被割到两个入口里，还容易口径不一致。
 // 现在按**阅读顺序**在页内分段：结论 → 推荐 → 候选 → 证据 → 讨论。
 import {
-  Activity,
-  Archive,
-  BookOpen,
   Compass,
   FileText,
-  FlaskConical,
-  Gauge,
   Globe2,
   NotebookPen,
-  Rss,
   Star,
   Wallet,
   Zap,
@@ -71,22 +65,25 @@ export const MY_LINE: NavLine = {
   ],
 };
 
-export const ADVANCED_LINE: NavLine = {
-  id: "advanced",
-  title: "进阶分析",
-  subtitle: "给深度使用者",
-  scope: "public",
-  items: [
-    { to: "/reviews", label: "复盘笔记", desc: "信号复盘 · 评分标签", icon: BookOpen },
-    { to: "/dashboard", label: "运行监控", desc: "指标总览 · 系统健康", icon: Activity },
-    { to: "/radar", label: "资讯雷达", desc: "12 赛道 RSS 聚合", icon: Rss },
-    { to: "/lab", label: "策略实验室", desc: "变体对比与生命周期", icon: FlaskConical },
-    { to: "/archive", label: "历史结论", desc: "按日回看与多日对比", icon: Archive },
-    { to: "/performance", label: "历史表现", desc: "命中率与策略衰减", icon: Gauge },
-  ],
-};
+/**
+ * W4 页面收敛第一阶段（issue #317，2026-10-09）：进阶页全部撤出侧栏。
+ *
+ * 仓主反馈「前端太复杂、很多多余内容」⇒ 侧栏只留「每日选股 + 小道信息 +
+ * 行情环境 + 我的」。原进阶页（复盘笔记/运行监控/资讯雷达/策略实验室/
+ * 历史结论/历史表现）路由与文件**暂时保留**（书签与 ⌘K 直达仍可用），
+ * 文件级删除走 W4 第二阶段逐页 PR。
+ * 复盘定位重申：笔记/资料是系统（agent）的任务，不是让用户写。
+ */
+export const RETIRED_PAGES: ReadonlyArray<{ to: string; label: string }> = [
+  { to: "/reviews", label: "复盘笔记" },
+  { to: "/dashboard", label: "运行监控" },
+  { to: "/radar", label: "资讯雷达" },
+  { to: "/lab", label: "策略实验室" },
+  { to: "/archive", label: "历史结论" },
+  { to: "/performance", label: "历史表现" },
+];
 
-export const NAV_LINES: readonly NavLine[] = [PRIMARY_LINE, MY_LINE, ADVANCED_LINE];
+export const NAV_LINES: readonly NavLine[] = [PRIMARY_LINE, MY_LINE];
 
 export const DEFAULT_ROUTE = "/today";
 
