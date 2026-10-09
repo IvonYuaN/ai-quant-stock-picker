@@ -112,6 +112,7 @@ def _prepare_ready_runtime(root: Path) -> None:
         {
             "holidays": [
                 "2026-01-01",
+                "2026-02-15",
                 "2026-02-16",
                 "2026-02-17",
                 "2026-02-18",
@@ -119,6 +120,7 @@ def _prepare_ready_runtime(root: Path) -> None:
                 "2026-02-20",
                 "2026-02-21",
                 "2026-02-22",
+                "2026-02-23",
                 "2026-04-06",
                 "2026-05-01",
                 "2026-05-04",
@@ -130,10 +132,6 @@ def _prepare_ready_runtime(root: Path) -> None:
                 "2026-10-05",
                 "2026-10-06",
                 "2026-10-07",
-            ],
-            "makeup_workdays": [
-                "2026-02-15",
-                "2026-02-28",
             ],
         },
     )
@@ -215,10 +213,7 @@ def test_check_before_live_blocks_missing_critical_trading_holiday(
     _prepare_ready_runtime(tmp_path)
     _write_json(
         tmp_path / "config/trading_holidays.json",
-        {
-            "holidays": ["2026-01-01"],
-            "makeup_workdays": [],
-        },
+        {"holidays": ["2026-01-01"]},
     )
 
     findings = check_before_live(
@@ -231,6 +226,8 @@ def test_check_before_live_blocks_missing_critical_trading_holiday(
     )
     assert finding.ok is False
     assert "2026-02-16" in finding.detail
+    # 02-23（周一）曾整段缺失，导致被误判成交易日（issue #312）。
+    assert "2026-02-23" in finding.detail
     assert "2026-06-19" in finding.detail
 
 

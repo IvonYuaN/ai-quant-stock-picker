@@ -51,11 +51,12 @@ def resolve_is_trading_day(
     exchange: str = "SSE",
     window: TradingCalendarWindow | None = None,
 ) -> bool:
-    holidays, makeup_workdays = _load_basic_trading_calendar()
+    # 静态休市名单是硬覆盖：交易所公告明写的休市日，即使运行时日历
+    # （Tushare）缺席/错误也必须休市。只列「休市日」，不列调休上班日
+    # （调休上班日一律是周末，交易所照样休市，issue #312）。
+    holidays = _load_basic_trading_calendar()
     if target in holidays:
         return False
-    if target in makeup_workdays:
-        return True
     runtime_calendar = (
         calendar_df
         if calendar_df is not None
