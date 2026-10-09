@@ -76,7 +76,6 @@ export const MY_LINE: NavLine = {
  */
 export const RETIRED_PAGES: ReadonlyArray<{ to: string; label: string }> = [
   { to: "/reviews", label: "复盘笔记" },
-  { to: "/lab", label: "策略实验室" },
   { to: "/archive", label: "历史结论" },
   { to: "/performance", label: "历史表现" },
 ];
@@ -95,9 +94,11 @@ export const LEGACY_ROUTES: Readonly<Record<string, string>> = {
   "/system/lab": "/lab",
   "/system/archive": "/archive",
   // W4 二阶段（issue #317）：资讯雷达页已删除，功能由「小道信息流」承接；
-  // 运行监控页已删除（纯运维视角，不属于每日选股主链）。旧书签兜底：
+  // 运行监控页已删除（纯运维视角，不属于每日选股主链）；策略实验室页已删除
+  // （变体数据仍在「今日选股」的历史变体列与个股详情中可见）。旧书签兜底：
   "/radar": "/stream",
   "/dashboard": "/today",
+  "/lab": "/today",
   // 「我的测试」已升级为「我的持仓」；对照所需的额外列已并入「我的自选」。
   "/my/lab": "/my/holdings",
 };
