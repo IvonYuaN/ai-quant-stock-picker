@@ -12,7 +12,8 @@
 - 禁 legacy streamlit / 8501
 
 IA 变化显式记在这里：原 4 分区（overview / messages / candidates / discussion）
-变为今天工作区 3 分区（candidates / messages / discussion），变体实验独立为「实验室」页。
+变为今天工作区 3 分区（candidates / messages / discussion）；原独立「实验室」页
+已于 2026-10-09 按 #317 W4 收敛删除，变体承接落点迁至候选链「历史变体」列。
 """
 
 from pathlib import Path
@@ -22,7 +23,6 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 FRONTEND_SRC = PROJECT_ROOT / "frontend" / "src"
 TODAY_WORKSPACE = FRONTEND_SRC / "components" / "aqsp" / "TodayWorkspace.tsx"
 CANDIDATE_SECTION = FRONTEND_SRC / "components" / "aqsp" / "sections" / "CandidateSection.tsx"
-LAB_PAGE = FRONTEND_SRC / "pages" / "LabPage.tsx"
 DAILY_VIEW = FRONTEND_SRC / "lib" / "daily-view.ts"
 CANDIDATE_CHAIN = FRONTEND_SRC / "lib" / "candidate-chain.ts"
 
@@ -53,8 +53,10 @@ def test_frontend_today_workspace_renders_every_catalogue_section() -> None:
     assert 'section.id === "messages"' in workspace
     assert "<DiscussionSection" in workspace
 
-    # 变体实验不再挂在今天工作区，而是由「实验室」页独立承接（IA 变化见文件头）
-    assert "VariantSection" in _read(LAB_PAGE)
+    # 变体实验不再挂在今天工作区。独立「实验室」页已按 #317 W4 收敛删除，
+    # 保证随之迁移：候选链表必须有「历史变体」列承接（variantCount 由
+    # daily-view 的 historicalVariantCount 算出，见下一条链函数断言）。
+    assert "历史变体" in _read(CANDIDATE_SECTION)
 
 
 def test_frontend_aqsp_keeps_empty_states_and_experiment_snapshot_bound_to_data() -> None:
