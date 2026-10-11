@@ -66,18 +66,16 @@ export const MY_LINE: NavLine = {
 };
 
 /**
- * W4 页面收敛第一阶段（issue #317，2026-10-09）：进阶页全部撤出侧栏。
+ * W4 页面收敛（issue #317，2026-10-09）：进阶页全部撤出侧栏。
  *
  * 仓主反馈「前端太复杂、很多多余内容」⇒ 侧栏只留「每日选股 + 小道信息 +
- * 行情环境 + 我的」。原进阶页（复盘笔记/运行监控/资讯雷达/策略实验室/
- * 历史结论/历史表现）路由与文件**暂时保留**（书签与 ⌘K 直达仍可用），
- * 文件级删除走 W4 第二阶段逐页 PR。
- * 复盘定位重申：笔记/资料是系统（agent）的任务，不是让用户写。
+ * 行情环境 + 我的」。二阶段逐页删除文件：资讯雷达已删（被「小道信息流」
+ * 取代，/radar 重定向到 /stream）；下列页面文件暂留（书签与 ⌘K 直达仍可用），
+ * 逐页 PR 删除。复盘定位重申：笔记/资料是系统（agent）的任务，不是让用户写。
  */
 export const RETIRED_PAGES: ReadonlyArray<{ to: string; label: string }> = [
   { to: "/reviews", label: "复盘笔记" },
   { to: "/dashboard", label: "运行监控" },
-  { to: "/radar", label: "资讯雷达" },
   { to: "/lab", label: "策略实验室" },
   { to: "/archive", label: "历史结论" },
   { to: "/performance", label: "历史表现" },
@@ -96,6 +94,9 @@ export const LEGACY_ROUTES: Readonly<Record<string, string>> = {
   "/system/recommend": "/today#candidates",
   "/system/lab": "/lab",
   "/system/archive": "/archive",
+  // W4 二阶段（issue #317）：资讯雷达页已删除，功能由「小道信息流」承接；
+  // 旧书签重定向到新页，不暴露任何"迁移"概念。
+  "/radar": "/stream",
   // 「我的测试」已升级为「我的持仓」；对照所需的额外列已并入「我的自选」。
   "/my/lab": "/my/holdings",
 };

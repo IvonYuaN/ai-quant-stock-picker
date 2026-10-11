@@ -8,7 +8,6 @@ import { DEFAULT_ROUTE, LEGACY_ROUTES } from "@/lib/ia";
 const TodayPage = lazy(() => import("@/pages/TodayPage").then((m) => ({ default: m.TodayPage })));
 const DashboardPage = lazy(() => import("@/pages/DashboardPage").then((m) => ({ default: m.DashboardPage })));
 const MarketPage = lazy(() => import("@/pages/MarketPage").then((m) => ({ default: m.MarketPage })));
-const RadarPage = lazy(() => import("@/pages/RadarPage").then((m) => ({ default: m.RadarPage })));
 const LabPage = lazy(() => import("@/pages/LabPage").then((m) => ({ default: m.LabPage })));
 const ArchivePage = lazy(() => import("@/pages/ArchivePage").then((m) => ({ default: m.ArchivePage })));
 const PerformancePage = lazy(() => import("@/pages/PerformancePage").then((m) => ({ default: m.PerformancePage })));
@@ -37,7 +36,6 @@ export const router = createBrowserRouter([
       { path: "/stream", element: <InfoStreamPage /> },
       { path: "/dashboard", element: <DashboardPage /> },
       { path: "/market", element: <MarketPage /> },
-      { path: "/radar", element: <RadarPage /> },
       { path: "/lab", element: <LabPage /> },
       { path: "/archive", element: <ArchivePage /> },
       { path: "/performance", element: <PerformancePage /> },
