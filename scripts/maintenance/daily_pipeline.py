@@ -2202,7 +2202,8 @@ def _build_config(args: argparse.Namespace) -> PipelineConfig:
     project_root = (
         Path(args.project_root)
         if args.project_root
-        else Path(__file__).resolve().parents[1]
+        # parents[2] = 仓库根（真身在 scripts/<子目录>/；resolve() 跟随根软链 ⇒ 需上跳 2 层）
+        else Path(__file__).resolve().parents[2]
     )
 
     return PipelineConfig(

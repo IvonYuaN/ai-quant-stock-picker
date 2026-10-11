@@ -20,7 +20,8 @@ import sys
 from pathlib import Path
 
 if __package__ in {None, ""}:
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+    # parents[2] = 仓库根（真身在 scripts/<子目录>/；resolve() 跟随根软链 ⇒ 需上跳 2 层）
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from aqsp.utils.jsonl_io import atomic_write_text  # noqa: E402
 from aqsp.walkforward_gate import build_window_consistency  # noqa: E402
