@@ -7,7 +7,6 @@ import { DEFAULT_ROUTE, LEGACY_ROUTES } from "@/lib/ia";
 // 每个页面单独成 chunk，进入该路由时才拉；Layout 里用 Suspense 兜住加载态。
 const TodayPage = lazy(() => import("@/pages/TodayPage").then((m) => ({ default: m.TodayPage })));
 const MarketPage = lazy(() => import("@/pages/MarketPage").then((m) => ({ default: m.MarketPage })));
-const LabPage = lazy(() => import("@/pages/LabPage").then((m) => ({ default: m.LabPage })));
 const ArchivePage = lazy(() => import("@/pages/ArchivePage").then((m) => ({ default: m.ArchivePage })));
 const PerformancePage = lazy(() => import("@/pages/PerformancePage").then((m) => ({ default: m.PerformancePage })));
 const WatchlistPage = lazy(() => import("@/pages/my/WatchlistPage").then((m) => ({ default: m.WatchlistPage })));
@@ -34,7 +33,6 @@ export const router = createBrowserRouter([
       { path: "/today", element: <TodayPage /> },
       { path: "/stream", element: <InfoStreamPage /> },
       { path: "/market", element: <MarketPage /> },
-      { path: "/lab", element: <LabPage /> },
       { path: "/archive", element: <ArchivePage /> },
       { path: "/performance", element: <PerformancePage /> },
       { path: "/my/watchlist", element: <WatchlistPage /> },
