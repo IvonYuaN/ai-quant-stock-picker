@@ -70,13 +70,13 @@ export const MY_LINE: NavLine = {
  *
  * 仓主反馈「前端太复杂、很多多余内容」⇒ 侧栏只留「每日选股 + 小道信息 +
  * 行情环境 + 我的」。二阶段逐页删除文件：资讯雷达已删（被「小道信息流」
- * 取代，/radar 重定向到 /stream）；运行监控已删（纯运维视角，/dashboard
- * 重定向到 /today）。下列页面文件暂留（书签与 ⌘K 直达仍可用），逐页 PR 删除。
+ * 取代，/radar 重定向到 /stream）；运行监控 /dashboard、策略实验室 /lab、
+ * 历史结论 /archive、历史表现 /performance 均已删（重定向到 /today）。
+ * 仅剩复盘笔记 /reviews（等系统侧复盘写入通道建好再删，见 #317）。
  * 复盘定位重申：笔记/资料是系统（agent）的任务，不是让用户写。
  */
 export const RETIRED_PAGES: ReadonlyArray<{ to: string; label: string }> = [
   { to: "/reviews", label: "复盘笔记" },
-  { to: "/performance", label: "历史表现" },
 ];
 
 export const NAV_LINES: readonly NavLine[] = [PRIMARY_LINE, MY_LINE];
@@ -99,6 +99,7 @@ export const LEGACY_ROUTES: Readonly<Record<string, string>> = {
   "/dashboard": "/today",
   "/lab": "/today",
   "/archive": "/today",
+  "/performance": "/today",
   // 「我的测试」已升级为「我的持仓」；对照所需的额外列已并入「我的自选」。
   "/my/lab": "/my/holdings",
 };
