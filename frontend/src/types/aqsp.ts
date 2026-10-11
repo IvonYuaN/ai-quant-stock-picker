@@ -225,11 +225,6 @@ export interface AqspSnapshotEnvelope {
   meta: AqspSnapshotMeta;
 }
 
-export interface AqspDateIndex {
-  selected_date: string;
-  available_dates: readonly string[];
-}
-
 /** 候选池生命周期（issue #317 W1）：口径见后端 candidate_lifecycle_payload。 */
 export interface AqspCandidateLifecycle {
   first_seen: string;

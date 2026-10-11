@@ -1,6 +1,6 @@
 // AQSP 后端 API 客户端。/api → vite 代理到本地 FastAPI（默认 8900）。
 // 后端未启动或数据源异常时抛 ApiError，页面据此优雅降级。
-import type { AqspDateIndex, AqspLifecycleIndex, AqspSnapshotEnvelope, AqspSnapshotView, InfoStreamData } from "@/types/aqsp";
+import type { AqspLifecycleIndex, AqspSnapshotEnvelope, AqspSnapshotView, InfoStreamData } from "@/types/aqsp";
 
 export type {
   AqspAgentDiscussion,
@@ -9,7 +9,6 @@ export type {
   AqspVariant,
   AqspVariantHolding,
   AqspCrossMarket,
-  AqspDateIndex,
   AqspMarketContext,
   AqspMessage,
   AqspPhase,
@@ -169,14 +168,6 @@ export interface Quote {
   limit_up: number; limit_down: number;
 }
 
-export interface Valuation {
-  name: string; code: string; price: number; mcap_yi: number;
-  pe_ttm: number; pb: number;
-  eps_26e: number | null; eps_27e: number | null; pe_26e: number | null;
-  cagr_pct: number | null; peg: number | null; digest_years: number | null;
-  analyst_count: number; forecast_note?: string;
-}
-
 export interface Report {
   title: string; publishDate: string; orgSName: string;
   emRatingName?: string; indvInduName?: string; pdfUrl?: string | null;
@@ -197,13 +188,6 @@ export interface KlineRow {
  * 所以只声明成字典，展示时按后端返回顺序原样列出。
  */
 export type StockInfo = Record<string, string | number | null>;
-export interface ValMetric {
-  current: number; percentile: number; min: number; max: number;
-  p20: number; p50: number; p80: number; n: number;
-}
-export interface ValPercentile {
-  period: string; metrics: { pe_ttm?: ValMetric; pb?: ValMetric };
-}
 
 export interface Announcement {
   date: string; title: string; type: string; url: string;
@@ -393,21 +377,6 @@ export interface IndustryData { top: IndustryRow[]; bottom: IndustryRow[]; total
 export interface GlobalIndex {
   key: string; name: string; region: string;
   price: number | null; change_pct: number | null;
-}
-export interface GlobalQuote {
-  code: string; name: string;
-  price: number | null; open: number | null; high: number | null; low: number | null;
-  prev_close: number | null; amount: number | null; mcap: number | null; change_pct: number | null;
-}
-export interface GlobalMetrics {
-  report_date: string;
-  revenue: number | null; revenue_yoy: number | null; net_profit: number | null;
-  eps: number | null; roe: number | null; gross_margin: number | null;
-  net_margin: number | null; debt_ratio: number | null;
-}
-export interface GlobalStock {
-  code: string; name: string; market: string;
-  quote: GlobalQuote; metrics: GlobalMetrics | null;
 }
 
 /** 单个策略的表现（后端复用 ledger learner 计算，口径唯一）。 */
@@ -673,7 +642,6 @@ export interface ReviewUpdateInput {
 }
 
 export const api = {
-  health: () => get<{ ok: boolean }>("/health"),
   performance: () => get<PerformancePayload>("/aqsp/performance"),
   dashboardMetrics: () => get<DashboardMetrics>("/dashboard/metrics"),
   aqspSnapshot: (date?: string, options?: AqspRequestOptions): Promise<AqspSnapshotView> =>
@@ -682,7 +650,6 @@ export const api = {
       options,
     )
       .then(({ data, meta }) => ({ ...data, meta })),
-  aqspDates: (): Promise<AqspDateIndex> => get<AqspDateIndex>("/aqsp/dates"),
   aqspLifecycle: (date?: string): Promise<AqspLifecycleIndex> =>
     get<AqspLifecycleIndex>(
       date ? `/aqsp/candidate-lifecycle?date=${encodeURIComponent(date)}` : "/aqsp/candidate-lifecycle",
@@ -694,7 +661,6 @@ export const api = {
   emotion: () => get<ShortTermEmotion>("/market/emotion"),
   turnoverTop: () => get<TurnoverTop>("/market/turnover-top"),
   globalIndices: () => get<GlobalIndex[]>("/global/indices"),
-  globalStock: (symbol: string) => get<GlobalStock>(`/global/stock?symbol=${encodeURIComponent(symbol)}`),
   radar: () => get<RadarData>("/radar"),
   events: (code: string) => get<EventCalendarData>(`/events?code=${code}`),
   radarRefresh: () => request<RadarData>("/radar/refresh", "POST"),
@@ -706,8 +672,6 @@ export const api = {
   closePosition: (code: string, date: string, price: number, shares: number, cost: number) =>
     request<PortfolioData>("/portfolio/close", "POST", { code, date, price, shares, cost }),
   removeClosed: (index: number) => request<PortfolioData>(`/portfolio/close?index=${index}`, "DELETE"),
-  valuation: (code: string) => get<Valuation>(`/valuation?code=${code}`),
-  percentile: (code: string) => get<ValPercentile>(`/valuation/percentile?code=${code}`),
   financials: (code: string) => get<Financials>(`/financials?code=${code}`),
   // 需 akshare；键是中文名，见 StockInfo
   info: (code: string) => get<StockInfo>(`/info?code=${code}`),
