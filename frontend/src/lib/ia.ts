@@ -65,20 +65,6 @@ export const MY_LINE: NavLine = {
   ],
 };
 
-/**
- * W4 页面收敛（issue #317，2026-10-09）：进阶页全部撤出侧栏。
- *
- * 仓主反馈「前端太复杂、很多多余内容」⇒ 侧栏只留「每日选股 + 小道信息 +
- * 行情环境 + 我的」。二阶段逐页删除文件：资讯雷达已删（被「小道信息流」
- * 取代，/radar 重定向到 /stream）；运行监控 /dashboard、策略实验室 /lab、
- * 历史结论 /archive、历史表现 /performance 均已删（重定向到 /today）。
- * 仅剩复盘笔记 /reviews（等系统侧复盘写入通道建好再删，见 #317）。
- * 复盘定位重申：笔记/资料是系统（agent）的任务，不是让用户写。
- */
-export const RETIRED_PAGES: ReadonlyArray<{ to: string; label: string }> = [
-  { to: "/reviews", label: "复盘笔记" },
-];
-
 export const NAV_LINES: readonly NavLine[] = [PRIMARY_LINE, MY_LINE];
 
 export const DEFAULT_ROUTE = "/today";
@@ -86,20 +72,29 @@ export const DEFAULT_ROUTE = "/today";
 /**
  * 旧路由 → 新路由。保留书签、外部链接与服务器上旧文档里的链接可用，
  * 不在页面上暴露任何"迁移"概念。
+ *
+ * W4 页面收敛（issue #317，2026-10-09）到此**全部完成**：仓主反馈「前端太复杂、
+ * 很多多余内容」⇒ 侧栏只留「每日选股 + 小道信息 + 行情环境 + 我的」。
+ * 二阶段逐页删除了 6 个进阶页文件（含本次的复盘笔记）：
+ *   - 资讯雷达 /radar → /stream（功能由「小道信息流」承接）
+ *   - 运行监控 /dashboard → /today（纯运维视角，不属于每日选股主链）
+ *   - 策略实验室 /lab → /today（变体数据仍在「今日选股」的历史变体列可见）
+ *   - 历史结论 /archive → /today
+ *   - 历史表现 /performance → /today
+ *   - 复盘笔记 /reviews → /today（复盘/笔记/资料是系统（agent）的任务，不是让
+ *     用户写；系统侧写入通道见 outputs/系统侧复盘写入通道_提案_2026-10-09.md）
  */
 export const LEGACY_ROUTES: Readonly<Record<string, string>> = {
   "/system/review": "/today",
   "/system/recommend": "/today#candidates",
   "/system/lab": "/lab",
   "/system/archive": "/archive",
-  // W4 二阶段（issue #317）：资讯雷达页已删除，功能由「小道信息流」承接；
-  // 运行监控页已删除（纯运维视角，不属于每日选股主链）；策略实验室页已删除
-  // （变体数据仍在「今日选股」的历史变体列与个股详情中可见）。旧书签兜底：
   "/radar": "/stream",
   "/dashboard": "/today",
   "/lab": "/today",
   "/archive": "/today",
   "/performance": "/today",
+  "/reviews": "/today",
   // 「我的测试」已升级为「我的持仓」；对照所需的额外列已并入「我的自选」。
   "/my/lab": "/my/holdings",
 };
