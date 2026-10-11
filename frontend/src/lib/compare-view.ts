@@ -5,7 +5,7 @@
 //   2. 候选数量与可复核数在怎么动
 //   3. 哪些候选**连续多天在榜**（持续被选中，最值得跟踪），哪些只是昙花一现
 //
-// 纯逻辑：日期解析 + 汇总。数据获取在 components/aqsp/useComparison.ts。
+// 纯逻辑：日期解析 + 汇总。（原数据获取 hook `useComparison` 已随 W4 删页清理 —— 无任何消费者）
 import type { DailyView, Tone } from "./daily-view";
 
 export const MAX_COMPARE = 5;
