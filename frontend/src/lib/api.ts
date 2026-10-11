@@ -168,43 +168,6 @@ export interface Quote {
   limit_up: number; limit_down: number;
 }
 
-export interface Report {
-  title: string; publishDate: string; orgSName: string;
-  emRatingName?: string; indvInduName?: string; pdfUrl?: string | null;
-}
-
-/**
- * K 线原始行（mootdx bars）：列名由上游决定，日期键可能是 datetime/date，
- * 成交量键可能是 vol/volume。展示前必须经 `normalizeKline` 归一化。
- */
-export interface KlineRow {
-  datetime?: string; date?: string;
-  open?: number; close?: number; high?: number; low?: number;
-  vol?: number; volume?: number; amount?: number;
-  [key: string]: unknown;
-}
-/**
- * 个股基本面（东财）：键是中文名（行业 / 总股本 / 上市时间…），具体字段由上游决定，
- * 所以只声明成字典，展示时按后端返回顺序原样列出。
- */
-export type StockInfo = Record<string, string | number | null>;
-
-export interface Announcement {
-  date: string; title: string; type: string; url: string;
-}
-
-export interface Financials {
-  period: string | null;
-  revenue: string | null; revenue_yoy: string | null;
-  net_profit: string | null; net_profit_yoy: string | null;
-  eps: string | null; bvps: string | null; roe: string | null;
-  gross_margin: string | null; net_margin: string | null; op_cf_ps: string | null;
-}
-
-export interface NewsItem {
-  新闻标题?: string; 发布时间?: string; 文章来源?: string; 新闻链接?: string;
-}
-
 export interface IndexQuote {
   name: string; price: number; change_pct: number; change_amt: number;
 }
@@ -340,24 +303,6 @@ export interface PortfolioData {
   updated: string; last_refresh: string | null;
 }
 
-// 资金面 / 筹码 / 信号（v3.3 并入，均为「用户查的那只股」的公开数据）
-export interface MarginRow { date: string; rzye: number; rzmre: number; rzche: number; rqye: number; rqmcl: number; rzrqye: number }
-export interface BlockTradeRow { date: string; price: number; close: number; premium_pct: number; vol: number; amount: number; buyer: string; seller: string }
-export interface HolderRow { date: string; holder_num: number; change_ratio: number; avg_shares: number }
-export interface DividendRow { date: string; bonus_rmb: number; transfer_ratio: number; bonus_ratio: number | null; plan: string }
-export interface FundFlowRow { date: string; main_net: number; small_net: number; mid_net: number; large_net: number; super_net: number }
-export interface DtSeat { name: string; buy_amt: number; sell_amt: number; net: number }
-export interface DragonTiger {
-  records: { date: string; reason: string; net_buy: number; turnover: number }[];
-  seats: { buy: DtSeat[]; sell: DtSeat[] };
-  institution: { buy_amt: number; sell_amt: number; net_amt: number };
-}
-export interface LockupRow { date: string; type: string; shares: number; able_shares: number; ratio: number }
-export interface Lockup { history: LockupRow[]; upcoming: LockupRow[] }
-export interface Board { name: string; code: string; change_pct: number | string; lead_stock: string }
-export interface Blocks { total: number; boards: Board[]; concept_tags: string[] }
-export interface HotConcept { concept: string; bk: string; hit: number }
-export interface QaRow { company: string; question: string; answer: string | null; answerer: string; ask_time: string }
 // 行业涨跌幅：东财对停牌/无数据的板块会给 "-" 占位串，故不能只声明 number。
 export interface IndustryRow { rank: number; name: string; change_pct: number | string; code: string; up_count: number; down_count: number }
 export interface IndustryData { top: IndustryRow[]; bottom: IndustryRow[]; total: number }
@@ -520,25 +465,7 @@ export const api = {
   closePosition: (code: string, date: string, price: number, shares: number, cost: number) =>
     request<PortfolioData>("/portfolio/close", "POST", { code, date, price, shares, cost }),
   removeClosed: (index: number) => request<PortfolioData>(`/portfolio/close?index=${index}`, "DELETE"),
-  financials: (code: string) => get<Financials>(`/financials?code=${code}`),
-  // 需 akshare；键是中文名，见 StockInfo
-  info: (code: string) => get<StockInfo>(`/info?code=${code}`),
-  announcements: (code: string) => get<Announcement[]>(`/announcements?code=${code}`),
   quote: (codes: string) => get<Record<string, Quote>>(`/quote?codes=${codes}`),
-  reports: (code: string) => get<Report[]>(`/reports?code=${code}`),
-  // category 4=日 5=周 6=月 11=60分钟；依赖 mootdx，未安装时后端返回 501
-  kline: (code: string, offset = 60) => get<KlineRow[]>(`/kline?code=${code}&category=4&offset=${offset}`),
-  news: (code: string) => get<NewsItem[]>(`/news?code=${code}`),
-  margin: (code: string) => get<MarginRow[]>(`/margin?code=${code}`),
-  blockTrade: (code: string) => get<BlockTradeRow[]>(`/block-trade?code=${code}`),
-  holders: (code: string) => get<HolderRow[]>(`/holders?code=${code}`),
-  dividend: (code: string) => get<DividendRow[]>(`/dividend?code=${code}`),
-  fundFlow: (code: string) => get<FundFlowRow[]>(`/fund-flow?code=${code}`),
-  dragonTiger: (code: string) => get<DragonTiger>(`/dragon-tiger?code=${code}`),
-  lockup: (code: string) => get<Lockup>(`/lockup?code=${code}`),
-  blocks: (code: string) => get<Blocks>(`/blocks?code=${code}`),
-  hotConcepts: (code: string) => get<HotConcept[]>(`/hot-concepts?code=${code}`),
-  investorQa: (code: string) => get<QaRow[]>(`/investor-qa?code=${code}`),
   industry: (top = 20) => get<IndustryData>(`/industry?top=${top}`),
   myReports: () => get<MyReport[]>("/myreports"),
   uploadReport: (name: string, contentB64: string) =>
