@@ -244,17 +244,6 @@ export interface TurnoverStock {
 }
 export interface TurnoverTop { stocks: TurnoverStock[]; updated: string }
 
-export interface RadarItem {
-  title: string; url: string; time: string; source: string; summary?: string; zh?: string;
-}
-export interface Industry {
-  key: string; name: string; accent: string; total: number; items: RadarItem[];
-}
-export interface RadarData {
-  generated_at: string | null; recent_days: number; industries: Industry[];
-  stats: { industries: number; total_sources: number; failed_sources?: number };
-}
-
 /** 单条解禁预警（后端 `GET /api/events` 的 `data.upcoming_unlocks` 元素）。 */
 export interface UpcomingUnlockEvent {
   symbol: string; name: string; event_type: string; event_date: string;
@@ -470,37 +459,6 @@ export interface PerformancePayload {
   notes: string[];
 }
 
-/** 仪表盘指标数据 */
-export interface DashboardMetrics {
-  available: boolean;
-  reason: string;
-  overall_stats: {
-    total_signals: number;
-    win_rate: number | null;
-    avg_return: number;
-    sharpe_ratio: number;
-    displayable: boolean;
-    cold_start_progress: string;
-  } | null;
-  strategy_performance: {
-    name: string;
-    win_rate: number | null;
-    avg_return: number;
-    signal_count: number;
-    displayable: boolean;
-  }[];
-  time_series: {
-    date: string;
-    cumulative_return: number;
-  }[];
-  data_source_health: {
-    ledger: string;
-    latest_signal_date: string;
-    ledger_updated_at: string;
-    trading_days_since_latest: number | null;
-  };
-  recent_signals: PerformanceRecentPick[];
-}
 
 /** 单条复盘记录（后端 `aqsp.review`，落 `reviews.jsonl`）。 */
 export interface ReviewRecord {
@@ -515,100 +473,7 @@ export interface ReviewRecord {
   updated_at: string;
 }
 
-/** 台账（predictions.jsonl）的一行 —— 复盘页挑选复盘对象的「历史信号」。 */
-export interface SignalRecord {
-  id: string;
-  signal_date: string;
-  symbol: string;
-  name: string;
-  rating: string;
-  score: number | null;
-  strategies: string[];
-  reasons: string[];
-  status: string;
-  win: boolean | null;
-  return_pct: number | null;
-}
 
-/** `GET /api/aqsp/signals` 的 `data`（含台账新鲜度）。 */
-export interface SignalsPayload {
-  available: boolean;
-  reason: string;
-  signals: SignalRecord[];
-  count: number;
-  data_source_health: {
-    ledger: string;
-    latest_signal_date: string;
-    ledger_updated_at: string;
-    trading_days_since_latest: number | null;
-  };
-}
-
-/** `GET /api/reviews/insights` 的 `data`：复盘洞察聚合（把流水变成模式）。 */
-export interface ReviewInsights {
-  total: number;
-  covered_symbols: number;
-  avg_rating: number | null;
-  latest_date: string | null;
-  rating_histogram: Record<string, number>;
-  tag_insights: { tag: string; count: number; avg_rating: number }[];
-  symbol_insights: { symbol: string; count: number }[];
-}
-
-/** `GET /api/aqsp/ic-history` 的 `data`：因子 IC 滚动诊断历史（每日回流）。 */
-export interface IcHistoryPoint {
-  as_of: string;
-  run_at: string;
-  factors: Record<string, number>;
-}
-
-export interface IcHistoryPayload {
-  points: IcHistoryPoint[];
-  latest_factors: Record<string, number>;
-}
-
-/** `GET /api/aqsp/ic-dual-verdict` 的 `data`：双窗因子 IC 滚动判决（proposal-only）。 */
-export interface IcDualFactorVerdict {
-  mean_a: number | null;
-  t_a: number | null;
-  n_a: number;
-  mean_b: number | null;
-  t_b: number | null;
-  n_b: number;
-  /** 两窗 IC 同号（方向稳定）。 */
-  sign_match: boolean;
-  /** 双 |t|≥2（且两窗截面数 ≥ 门槛）。 */
-  dual_significant: boolean;
-  /** 达标 = sign_match && dual_significant。 */
-  hit: boolean;
-}
-
-export interface IcDualVerdictPayload {
-  /** 双窗产物是否存在且新鲜（fail-soft：未启用/未回流 = false；陈旧被新鲜度护栏抑制 = false）。 */
-  available: boolean;
-  /** 最新一次双窗判决；available=false 时仍可能保留（供观测陈旧读数）。 */
-  latest: {
-    run_at: string;
-    as_of_a: string;
-    as_of_b: string;
-    window_days: number;
-    step: number;
-    n_sections_a: number;
-    n_sections_b: number;
-    factors: Record<string, IcDualFactorVerdict>;
-    hits: string[];
-    streaks: Record<string, number>;
-    event: string | null;
-    next_candidate: string | null;
-  } | null;
-  /** 连续达标日数阈值（N 日达标 ⇒ revisit_family 事件）。 */
-  streak_n: number;
-  /**
-   * true = 产物本可用但被端点新鲜度护栏（run_at/generated_at 龄 > DUAL_MAX_AGE_HOURS）
-   * 抑制 ⇒ 前端应展示「数据陈旧已隔离，等待下一次 runner 回流」，区别于真「暂无数据」。
-   */
-  stale?: boolean;
-}
 
 /** `GET /api/aqsp/closing-review` 的 `data.sections` 元素：单段收评（市场级只读）。 */
 export interface ClosingReviewSection {
@@ -626,24 +491,9 @@ export interface ClosingReviewPayload {
   sections: ClosingReviewSection[];
 }
 
-export interface ReviewCreateInput {
-  signal_id: string;
-  date: string;
-  symbol: string;
-  rating: number;
-  tags?: string[];
-  notes?: string;
-}
-
-export interface ReviewUpdateInput {
-  rating?: number;
-  tags?: string[];
-  notes?: string;
-}
 
 export const api = {
   performance: () => get<PerformancePayload>("/aqsp/performance"),
-  dashboardMetrics: () => get<DashboardMetrics>("/dashboard/metrics"),
   aqspSnapshot: (date?: string, options?: AqspRequestOptions): Promise<AqspSnapshotView> =>
     getEnvelope<AqspSnapshotEnvelope>(
       date ? `/aqsp/snapshot?date=${encodeURIComponent(date)}` : "/aqsp/snapshot",
@@ -661,9 +511,7 @@ export const api = {
   emotion: () => get<ShortTermEmotion>("/market/emotion"),
   turnoverTop: () => get<TurnoverTop>("/market/turnover-top"),
   globalIndices: () => get<GlobalIndex[]>("/global/indices"),
-  radar: () => get<RadarData>("/radar"),
   events: (code: string) => get<EventCalendarData>(`/events?code=${code}`),
-  radarRefresh: () => request<RadarData>("/radar/refresh", "POST"),
   catalyst: () => get<CatalystData>("/catalyst"),
   portfolio: () => get<PortfolioData>("/portfolio"),
   addHolding: (code: string, shares: number, cost: number) => request<PortfolioData>("/portfolio/holding", "POST", { code, shares, cost }),
@@ -698,18 +546,7 @@ export const api = {
   deleteReport: (id: string) => request<{ ok: boolean }>(`/myreports/${id}`, "DELETE"),
 
   // ---- 复盘笔记（aqsp.review；`signal_id` 引用台账行的 `id`）----
-  signals: (limit = 100) => get<SignalsPayload>(`/aqsp/signals?limit=${limit}`),
   reviews: () => get<ReviewRecord[]>("/reviews"),
-  reviewTags: () => get<string[]>("/reviews/tags"),
-  reviewInsights: () => get<ReviewInsights>("/reviews/insights"),
-  icHistory: () => get<IcHistoryPayload>("/aqsp/ic-history"),
-  icDualVerdict: () => get<IcDualVerdictPayload>("/aqsp/ic-dual-verdict"),
   // 收评日报 6 段（市场级只读聚合，fail-soft）
   closingReview: () => get<ClosingReviewPayload>("/aqsp/closing-review"),
-  createReview: (input: ReviewCreateInput) =>
-    request<{ id: string }>("/reviews", "POST", input),
-  updateReview: (id: string, input: ReviewUpdateInput) =>
-    request<{ ok: boolean }>(`/reviews/${id}`, "PUT", input),
-  deleteReview: (id: string) =>
-    request<{ ok: boolean }>(`/reviews/${id}`, "DELETE"),
 };
