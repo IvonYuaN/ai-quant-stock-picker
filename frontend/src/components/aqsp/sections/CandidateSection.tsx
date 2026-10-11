@@ -568,7 +568,7 @@ export function CandidateSection({
           action={
             view.previousReviewDate ? (
               <span className="aq-hint">
-                可用「结论归档」回看 {view.previousReviewDate} 的结果，当前页不顶替当天数据。
+                可用上方日期切换回看 {view.previousReviewDate} 的结果，当前页不顶替当天数据。
               </span>
             ) : null
           }
