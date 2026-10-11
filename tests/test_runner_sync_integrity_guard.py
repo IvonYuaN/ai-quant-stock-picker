@@ -175,3 +175,64 @@ def test_rollback_skipped_when_target_equals_new_release() -> None:
     assert '[ "$OLD" != "$RUNNER_ROOT/releases/$SHA" ]' in text, (
         "缺少「旧 current ≠ 新 release」判断 ⇒ 重复同步同一 release 时 rollback 会被写成自指"
     )
+
+
+# ── WAL 侧车处理（2026-10-11 新增，issue #328）──────────────────────────────
+# 事故：runner 侧残留 5MB 陈旧 `-wal`，本次同步只覆盖了主库（prod 侧已 checkpoint、
+#       无 -wal 可传）⇒「prod 的主库 + runner 的旧 WAL」在 runner 上被 SQLite 回放 ⇒
+#       10-10 01:00 的生产 gate 以 `sqlite3.DatabaseError: database disk image is
+#       malformed` 开局即崩。决定性证据：两侧主库 md5 逐字节一致（c7db2516…），
+#       唯一差异就是这个陈旧侧车。
+# 旧代码只「传」不「删」：prod 侧无 -wal 时 if 分支不执行，runner 的旧 WAL 原样留下。
+# 本组断言修复后的三个不变量：prod 先 checkpoint、runner 先删侧车再写主库、写后自检。
+
+
+def test_prod_checkpoint_runs_before_data_rsync() -> None:
+    """prod 侧必须在搬运主库**之前** wal_checkpoint(TRUNCATE)，否则主库文件不自洽。"""
+    text = SYNC_SCRIPT.read_text(encoding="utf-8")
+    assert "wal_checkpoint" in text, (
+        "runner_sync.sh 缺少 prod 侧 wal_checkpoint：主库文件可能不含未合并的 WAL 内容，"
+        "单独复制会丢最近提交"
+    )
+    cp_pos = _first_code_offset(text, 'python3 - "$RAW_DB" <<<"$CHECKPOINT_PY"')
+    db_pos = _first_code_offset(text, '"$RUNNER_HOST:$RUNNER_ROOT/data/astocks_raw.db"')
+    assert cp_pos < db_pos, (
+        "wal_checkpoint 必须在主库 rsync 之后才执行：此时复制出去的主库不含未合并的 WAL"
+    )
+
+
+def test_runner_sidecars_removed_before_overwrite() -> None:
+    """覆盖主库**之前**必须删掉 runner 侧 -wal/-shm（否则「新主库 + 旧 WAL」合成坏库）。"""
+    text = SYNC_SCRIPT.read_text(encoding="utf-8")
+    assert re.search(r"rm -f[^\n]*-wal[^\n]*-shm", text), (
+        "runner_sync.sh 未在覆盖主库前清理 runner 侧 -wal/-shm："
+        "陈旧 WAL 会与新主库合成坏库（issue #328 实测事故）"
+    )
+    rm_pos = _first_code_offset(text, "rm -f '$RUNNER_ROOT/data/astocks_raw.db-wal'")
+    db_pos = _first_code_offset(text, '"$RUNNER_HOST:$RUNNER_ROOT/data/astocks_raw.db"')
+    assert rm_pos < db_pos, (
+        "清理侧车的命令排在主库 rsync 之后：删掉的是同步后的新侧车，等于没删"
+    )
+
+
+def test_no_wal_sidecar_is_ever_transferred() -> None:
+    """不得再跨机搬运 `-wal`：侧车与主库必须同源，跨机搬运正是坏库来源。"""
+    text = SYNC_SCRIPT.read_text(encoding="utf-8")
+    for line in text.splitlines():
+        if line.strip().startswith("#"):
+            continue
+        assert not ("rsync" in line and "-wal" in line), (
+            f"仍在用 rsync 搬运 -wal（issue #328 的坏库来源）：{line.strip()}"
+        )
+
+
+def test_runner_integrity_check_fails_loud_after_sync() -> None:
+    """同步后必须做 runner 侧 quick_check 兜底，且不过即 exit（坏库不得进 gate）。"""
+    text = SYNC_SCRIPT.read_text(encoding="utf-8")
+    assert "quick_check" in text, (
+        "缺少同步后的 runner 侧 quick_check 兜底：坏库会被 gate 秒杀，且没人知道是同步造成的"
+    )
+    qc_pos = _first_code_offset(text, "quick_check")
+    assert re.search(r"exit\s+1", text[qc_pos : qc_pos + 600]), (
+        "quick_check 兜底不是 fail-loud（不过时未 exit 1）"
+    )

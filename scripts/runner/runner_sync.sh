@@ -91,12 +91,43 @@ rsync -aP -e "$RSYNC_SSH" /tmp/aqsp_release_sha "$RUNNER_HOST:$RUNNER_ROOT/RELEA
 log "✅ 已切链 → $SHA（rsync 成功 + 完整性体检通过）"
 
 # 2) 数据：直接 rsync 文件本体（不用 sqlite backup，避免在 1.6G 机器上再吃一份内存）
-#    ⚠️ 请在盘后落库完成之后、无写入时执行；runner 端会做 integrity_check 兜底。
+#    ⚠️ 请在盘后落库完成之后、无写入时执行。
+#
+# 🔴 2026-10-11 事故修复（issue #328）：**WAL 侧车文件绝不跨机搬运，且覆盖前必须显式清理**。
+#    事故：runner 侧残留 5MB 的 `astocks_raw.db-wal`（runner 自己早先写库留下的），本次同步
+#    只覆盖了主库文件（prod 侧已 checkpoint、无 -wal 可传）⇒「prod 的主库 + runner 的旧 WAL」
+#    在 runner 上被 SQLite 回放，10-10 01:00 的生产 gate 开局即
+#    `sqlite3.DatabaseError: database disk image is malformed` 崩溃。
+#    决定性证据：两侧主库 md5 逐字节一致（c7db2516…），唯一差异就是这个陈旧侧车。
+#    旧代码只「传」不「删」：prod 侧无 -wal 时那个 if 分支不执行，runner 的旧 WAL 原样留下。
+#    修法：① prod 侧先 wal_checkpoint(TRUNCATE) 让主库自洽；② runner 侧**先删**两个侧车再写
+#    主库，且不再同步任何 -wal；③ 同步后在 runner 侧 quick_check 兜底，不过即 fail-loud。
 RAW_DB="$(readlink -f /opt/market-data/astocks_raw.db)"
 log "同步数据 $(basename "$RAW_DB")"
+
+# ① prod 侧 checkpoint：把 WAL 内容并回主库并截断，保证「主库文件单独可复制」。
+CHECKPOINT_PY='import sqlite3, sys
+with sqlite3.connect(sys.argv[1]) as conn:
+    busy, log_pages, moved = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+print(f"wal_checkpoint(TRUNCATE): busy={busy} log={log_pages} checkpointed={moved}")'
+if ! python3 - "$RAW_DB" <<<"$CHECKPOINT_PY"; then
+  log "[ALERT][runner_sync] prod 库 wal_checkpoint 失败：主库可能不含未合并的 WAL 内容，请人工确认"
+fi
+
+# ② runner 侧**先清陈旧侧车、再覆盖主库**（顺序不可颠倒：先删后写，杜绝「新主库 + 旧 WAL」）
+$RSYNC_SSH "$RUNNER_HOST" \
+  "rm -f '$RUNNER_ROOT/data/astocks_raw.db-wal' '$RUNNER_ROOT/data/astocks_raw.db-shm'"
 rsync -aP --partial --inplace -e "$RSYNC_SSH" "$RAW_DB" "$RUNNER_HOST:$RUNNER_ROOT/data/astocks_raw.db"
-if [ -f "${RAW_DB}-wal" ]; then
-  rsync -aP -e "$RSYNC_SSH" "${RAW_DB}-wal" "$RUNNER_HOST:$RUNNER_ROOT/data/astocks_raw.db-wal"
+
+# ③ runner 侧体检：主库必须自洽，否则坏库会被 gate 秒杀（fail-loud，宁可同步报失败）
+INTEGRITY_PY='import sqlite3, sys
+c = sqlite3.connect("file:%s?mode=ro" % sys.argv[1], uri=True)
+row = c.execute("PRAGMA quick_check(3)").fetchone()
+print("runner integrity:", row[0])
+sys.exit(0 if row[0] == "ok" else 1)'
+if ! $RSYNC_SSH "$RUNNER_HOST" "python3 - '$RUNNER_ROOT/data/astocks_raw.db'" <<<"$INTEGRITY_PY"; then
+  log "❌ runner 库 quick_check 不过（主库与陈旧 WAL 合成坏库？）⇒ 数据同步失败，请人工检查 runner"
+  exit 1
 fi
 
 # 3) warm cache（~894MB；带上可让 runner 直接跳过取数阶段，只重算 grid）
