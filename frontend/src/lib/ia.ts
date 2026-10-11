@@ -76,7 +76,6 @@ export const MY_LINE: NavLine = {
  */
 export const RETIRED_PAGES: ReadonlyArray<{ to: string; label: string }> = [
   { to: "/reviews", label: "复盘笔记" },
-  { to: "/archive", label: "历史结论" },
   { to: "/performance", label: "历史表现" },
 ];
 
@@ -99,6 +98,7 @@ export const LEGACY_ROUTES: Readonly<Record<string, string>> = {
   "/radar": "/stream",
   "/dashboard": "/today",
   "/lab": "/today",
+  "/archive": "/today",
   // 「我的测试」已升级为「我的持仓」；对照所需的额外列已并入「我的自选」。
   "/my/lab": "/my/holdings",
 };
