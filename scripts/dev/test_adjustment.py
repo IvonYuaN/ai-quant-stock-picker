@@ -8,7 +8,8 @@ from pathlib import Path
 from datetime import timedelta
 
 # 添加项目根目录到路径
-project_root = Path(__file__).parent.parent
+# parents[2] = 仓库根（真身在 scripts/<子目录>/；resolve() 跟随根软链 ⇒ 需上跳 2 层）
+project_root = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(project_root))
 
 

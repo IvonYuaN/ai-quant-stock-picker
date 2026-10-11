@@ -17,7 +17,8 @@ import argparse
 from datetime import date
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+# parents[2] = 仓库根（真身在 scripts/<子目录>/；resolve() 跟随根软链 ⇒ 需上跳 2 层）
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 import numpy as np
 import pandas as pd

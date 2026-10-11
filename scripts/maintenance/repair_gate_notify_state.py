@@ -19,7 +19,8 @@ from aqsp.runtime.gate_notify import mark_gate_notification_suppressed
 def _resolve_project_root(raw: str) -> Path:
     if raw.strip():
         return Path(raw).expanduser().resolve(strict=False)
-    return Path(__file__).resolve().parents[1]
+    # parents[2] = 仓库根（真身在 scripts/<子目录>/；resolve() 跟随根软链 ⇒ 需上跳 2 层）
+    return Path(__file__).resolve().parents[2]
 
 
 def _resolve_runtime_path(project_root: Path, env_name: str, default: str) -> Path:
