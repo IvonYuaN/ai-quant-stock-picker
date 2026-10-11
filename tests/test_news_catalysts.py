@@ -3037,3 +3037,48 @@ def test_catalyst_report_artifact_round_trips_with_date_and_freshness_gate(
         )
         is None
     )
+
+
+# ---------------------------------------------------------------------------
+# 相对 cache_path 的兜底根（回归：曾用 parents[2] = <root>/src，把缓存写进
+# release 树内部的 <root>/src/data/...；prod 走 AQSP_PROJECT_ROOT 分支故长期潜伏）
+# ---------------------------------------------------------------------------
+
+
+def test_relative_cache_path_falls_back_to_project_root_not_src(monkeypatch) -> None:
+    """相对 cache_path 在无 AQSP_PROJECT_ROOT 时必须落在「仓库/发布根」下。"""
+    monkeypatch.delenv("AQSP_PROJECT_ROOT", raising=False)
+    project_root = Path(__file__).resolve().parents[1]  # tests/ 的上一级 = 仓库根
+
+    resolved = catalysts._resolve_catalyst_cache_path(
+        "data/runtime/catalyst_report_cache.json"
+    )
+
+    assert resolved == project_root / "data/runtime/catalyst_report_cache.json"
+    # 行为断言：解析结果不得落在仓库树内的 src/ 下（那等于写进 release 内部）
+    assert "src" not in resolved.relative_to(project_root).parts
+
+
+def test_relative_cache_path_honours_project_root_env(tmp_path, monkeypatch) -> None:
+    """显式 AQSP_PROJECT_ROOT 优先于兜底（prod 走的就是这条分支）。"""
+    monkeypatch.setenv("AQSP_PROJECT_ROOT", str(tmp_path))
+
+    resolved = catalysts._resolve_catalyst_cache_path("data/runtime/cache.json")
+
+    assert resolved == (tmp_path / "data/runtime/cache.json").resolve(strict=False)
+
+
+def test_absolute_cache_path_ignores_project_root(tmp_path, monkeypatch) -> None:
+    """绝对 cache_path 直接采用，不受 AQSP_PROJECT_ROOT 影响。"""
+    monkeypatch.setenv("AQSP_PROJECT_ROOT", str(tmp_path / "elsewhere"))
+    target = (tmp_path / "catalyst_cache.json").resolve()
+
+    assert catalysts._resolve_catalyst_cache_path(str(target)) == target
+
+
+def test_blank_cache_path_resolves_to_none(monkeypatch) -> None:
+    """空 cache_path 表示「不启用缓存」，返回 None 而不是当前目录。"""
+    monkeypatch.delenv("AQSP_PROJECT_ROOT", raising=False)
+
+    assert catalysts._resolve_catalyst_cache_path("") is None
+    assert catalysts._resolve_catalyst_cache_path("   ") is None

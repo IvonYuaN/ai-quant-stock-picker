@@ -284,7 +284,12 @@ def _resolve_catalyst_cache_path(path: str) -> Path | None:
     raw = Path(configured).expanduser()
     if raw.is_absolute():
         return raw.resolve(strict=False)
-    root = Path(os.getenv("AQSP_PROJECT_ROOT", Path(__file__).resolve().parents[2]))
+    # 兜底根必须是「仓库 / release 根」，不能是 <root>/src：
+    # src/aqsp/news/catalysts.py → parents[0]=news, [1]=aqsp, [2]=src, [3]=repo。
+    # prod 走 AQSP_PROJECT_ROOT（release_task_entrypoint.sh 恒设为 $RELEASE_ROOT），
+    # 故该兜底只约束裸 CLI / 本地 / 测试入口——曾用 parents[2] 把缓存写进
+    # <root>/src/data/...（release 树内部），长期潜伏。
+    root = Path(os.getenv("AQSP_PROJECT_ROOT", Path(__file__).resolve().parents[3]))
     return (root / raw).resolve(strict=False)
 
 
