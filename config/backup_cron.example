@@ -14,6 +14,10 @@
 # 查看当前 cron 任务:
 #   crontab -l
 #
+# ⚠️ 时区约定（AGENTS.md §3.4）：本文件所有 cron 时间均为**北京时间（Asia/Shanghai）**。
+#   生产机 / 计算节点若运行在 UTC（如 runner），换算公式：**北京时间 − 8 小时 = UTC**。
+#   例：北京 10:00 ⇒ UTC 02:00 ⇒ crontab 写 `0 2 * * 1-5`。
+#
 # Cron 时间格式:
 #   分钟 (0-59)
 #   |   小时 (0-23)
@@ -35,40 +39,40 @@ PATH=/usr/local/bin:/usr/bin:/bin
 # 推荐配置：每日备份
 # ============================================================================
 
-# 每天凌晨 2:00 执行完整备份
+# 每天北京时间 02:00 执行完整备份
 0 2 * * * cd $AQSP_PROJECT_ROOT && bash scripts/backup.sh >> logs/backup/cron.log 2>&1
 
-# 每周日凌晨 3:00 验证所有备份
+# 每周日北京时间 03:00 验证所有备份
 0 3 * * 0 cd $AQSP_PROJECT_ROOT && bash scripts/backup_verify.sh --all --report reports/backup_verify_report.txt >> logs/verify/cron.log 2>&1
 
 # ============================================================================
 # 备选配置：高频备份（适用于生产环境）
 # ============================================================================
 
-# 每 6 小时备份一次（00:00, 06:00, 12:00, 18:00）
+# 每 6 小时备份一次（北京时间 00:00, 06:00, 12:00, 18:00）
 # 0 */6 * * * cd $AQSP_PROJECT_ROOT && bash scripts/backup.sh >> logs/backup/cron.log 2>&1
 
-# 每 4 小时备份一次
+# 每 4 小时备份一次（按北京时间整点）
 # 0 */4 * * * cd $AQSP_PROJECT_ROOT && bash scripts/backup.sh >> logs/backup/cron.log 2>&1
 
-# 每 2 小时备份一次（仅工作时间 9:00-21:00）
+# 每 2 小时备份一次（仅工作时间，北京时间 9:00-21:00）
 # 0 9-21/2 * * * cd $AQSP_PROJECT_ROOT && bash scripts/backup.sh >> logs/backup/cron.log 2>&1
 
 # ============================================================================
 # 备选配置：低频备份（适用于开发环境）
 # ============================================================================
 
-# 每周一次（每周日凌晨 2:00）
+# 每周一次（每周日北京时间 02:00）
 # 0 2 * * 0 cd $AQSP_PROJECT_ROOT && bash scripts/backup.sh >> logs/backup/cron.log 2>&1
 
-# 每月一次（每月1号凌晨 2:00）
+# 每月一次（每月 1 号北京时间 02:00）
 # 0 2 1 * * cd $AQSP_PROJECT_ROOT && bash scripts/backup.sh >> logs/backup/cron.log 2>&1
 
 # ============================================================================
 # 远程备份配置
 # ============================================================================
 
-# 每天凌晨 2:30 备份到远程服务器
+# 每天北京时间 02:30 备份到远程服务器
 # 注意：需要先配置 SSH 免密登录
 # 30 2 * * * cd $AQSP_PROJECT_ROOT && bash scripts/backup.sh --remote user@backup-server:/backup/aqsp >> logs/backup/cron.log 2>&1
 
@@ -76,17 +80,17 @@ PATH=/usr/local/bin:/usr/bin:/bin
 # 验证和监控
 # ============================================================================
 
-# 每天早上 8:00 验证最新备份
+# 每天北京时间 08:00 验证最新备份
 # 0 8 * * * cd $AQSP_PROJECT_ROOT && bash scripts/backup_verify.sh --backup $(ls -t $AQSP_BACKUP_DIR/backup-*.tar.gz | head -1) --quiet >> logs/verify/cron.log 2>&1
 
-# 每周一次全面验证（周日凌晨 3:00）
+# 每周一次全面验证（周日北京时间 03:00）
 # 0 3 * * 0 cd $AQSP_PROJECT_ROOT && bash scripts/backup_verify.sh --all --report reports/weekly_backup_report.txt >> logs/verify/cron.log 2>&1
 
 # ============================================================================
 # 清理和维护
 # ============================================================================
 
-# 每月清理超过 30 天的日志文件（每月1号凌晨 4:00）
+# 每月清理超过 30 天的日志文件（每月 1 号北京时间 04:00）
 # 0 4 1 * * find $AQSP_PROJECT_ROOT/logs/backup -name "*.log" -mtime +30 -delete
 # 0 4 1 * * find $AQSP_PROJECT_ROOT/logs/verify -name "*.log" -mtime +30 -delete
 # 0 4 1 * * find $AQSP_PROJECT_ROOT/logs/restore -name "*.log" -mtime +30 -delete
@@ -95,10 +99,10 @@ PATH=/usr/local/bin:/usr/bin:/bin
 # 特定场景配置
 # ============================================================================
 
-# 交易日收盘后备份（周一至周五 16:30）
+# 交易日收盘后备份（周一至周五北京时间 16:30）
 # 30 16 * * 1-5 cd $AQSP_PROJECT_ROOT && bash scripts/backup.sh >> logs/backup/cron.log 2>&1
 
-# 交易日开盘前验证（周一至周五 9:00）
+# 交易日开盘前验证（周一至周五北京时间 09:00）
 # 0 9 * * 1-5 cd $AQSP_PROJECT_ROOT && bash scripts/backup_verify.sh --backup $(ls -t $AQSP_BACKUP_DIR/backup-*.tar.gz | head -1) --quiet >> logs/verify/cron.log 2>&1
 
 # ============================================================================
