@@ -3,9 +3,11 @@
 背景（issue #350，承接 #341）：仓库里存在「引用了不存在的 `scripts/` 路径」这类**悬空引用**。
 它们不会让 CI 变红，但会让运维/排障按图索骥时**静默走空**：
 
-  - `scripts/maintenance/daily_run.sh` 调 `scripts/resolve_notify_level.py`（**全仓不存在**），
-    被 `|| echo` 兜底 ⇒ `AQSP_NOTIFY_LEVEL_RESOLVED` 恒为 `info` ⇒ `= "critical"` 分支**不可达**
-    （#341：critical 抑制能力在链路迁移中被整体丢弃）。
+  - ✅ `scripts/maintenance/daily_run.sh` 曾调 `scripts/resolve_notify_level.py`（**全仓不存在**），
+    被 `|| echo` 兜底 ⇒ `AQSP_NOTIFY_LEVEL_RESOLVED` 恒为 `info` ⇒ `= "critical"` 分支**不可达**。
+    **已由 #341 修复**（PR 见 issue）：删掉三处悬空调用与死分支，改为按「总是推送」写实。
+    ⚠️ 本条目当初就是被本守卫的白名单收进来的，修复后又被「白名单不得过期」断言逼着删掉
+    —— 这正是那两条断言的设计目的。
   - `scripts/monitor/analyze_logs.py` 的用法说明写 `python scripts/analyze_logs.py ...`，
     但该文件在 `monitor/` 下且**没有顶层同名软链** ⇒ 照抄即报「文件不存在」。
   - `scripts/maintenance/verify_reorganization.sh` 引用 `scripts/create_symlinks.sh`
@@ -20,7 +22,7 @@
 ## 为什么带「白名单」而不是直接把 15 处全修掉
 
 这 4 类悬空引用的修法都**含口径选择**，不属 agent 可自行决定的范畴：
-  - `resolve_notify_level.py` → #341 的 **A 删 legacy / B 恢复能力 / C 修引用 / D 仅记录**；
+  - ✅ `resolve_notify_level.py` → **已由 #341 修复**（不再在清单里）；
   - `analyze_logs.py` → #350 的 **A 补顶层软链 / B 改 docstring**；
   - `create_symlinks.sh` + 占位符 → #350 建议**删掉整个 `verify_reorganization.sh`**。
 
@@ -60,10 +62,6 @@ _MIN_REFS = 100
 # 🔴 存量悬空引用白名单：ref -> 「为什么还没修 + 归属 issue」。
 # 修好任一条后，`test_known_dangling_allowlist_is_not_stale` 会失败 ⇒ 请同步删掉对应条目。
 KNOWN_DANGLING: dict[str, str] = {
-    "scripts/resolve_notify_level.py": (
-        "#341 —— daily_run.sh 调用但全仓不存在；修法待仓主定"
-        "（A 删 legacy / B 恢复 critical 抑制能力 / C 修引用 / D 仅记录）"
-    ),
     "scripts/analyze_logs.py": (
         "#350 —— monitor/analyze_logs.py 的用法说明引用根路径，但缺顶层同名软链；"
         "修法待定（A 补软链 / B 改 docstring 为 scripts/monitor/analyze_logs.py）"

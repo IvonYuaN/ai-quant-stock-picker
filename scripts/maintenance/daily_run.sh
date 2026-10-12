@@ -235,27 +235,20 @@ run_daily_pipeline() {
         exit "$RUN_STATUS"
     fi
 
-    AQSP_NOTIFY_LEVEL_RESOLVED="$("$PYTHON_BIN" scripts/resolve_notify_level.py --ledger "$AQSP_LEDGER" --field level 2>/dev/null || echo info)"
-    AQSP_NOTIFY_HEALTH_LABEL="$("$PYTHON_BIN" scripts/resolve_notify_level.py --ledger "$AQSP_LEDGER" --field label 2>/dev/null || echo unknown)"
-    AQSP_NOTIFY_SOURCE_ROUTE="$("$PYTHON_BIN" scripts/resolve_notify_level.py --ledger "$AQSP_LEDGER" --field route 2>/dev/null || echo unknown)"
-    export AQSP_NOTIFY_LEVEL_RESOLVED
-    export AQSP_NOTIFY_HEALTH_LABEL
-    export AQSP_NOTIFY_SOURCE_ROUTE
-    echo "notify_level=$AQSP_NOTIFY_LEVEL_RESOLVED source_health=$AQSP_NOTIFY_HEALTH_LABEL route=$AQSP_NOTIFY_SOURCE_ROUTE"
-
+    # issue #341：此处曾调 `scripts/resolve_notify_level.py`（**全仓不存在**）来解析
+    # notify level / source health / route，并据 `= "critical"` 决定是否抑制推送。
+    # 该脚本只存在于孤立提交 3dbe81d5（不在 main）⇒ 三个变量恒回落 info/unknown/unknown
+    # ⇒ `critical` 分支**从未可达**，实际总是走 `--notify`。既然现行链路
+    # （release_task_entrypoint.sh → daily_pipeline.py）也没有「源健康度 ⇒ 抑制推送」能力，
+    # 这里直接按「总是推送」写实，删掉死分支与那三处悬空引用。
+    # ⚠️ 若将来确实需要该能力，应在新链路上设计（判定源 / 抑制后是否另发告警），
+    # 而不是恢复这个早已失效的分支。
     echo ""
     echo "=== aqsp briefing @ $(date) ==="
-    if [ "$AQSP_NOTIFY_LEVEL_RESOLVED" = "critical" ]; then
-        echo "critical notify level detected; generate briefing and diagnosis, suppress normal push notification."
-        "$PYTHON_BIN" -m aqsp briefing \
-            --ledger "$AQSP_LEDGER" \
-            --output "$AQSP_BRIEFING_REPORT" 2>&1
-    else
-        "$PYTHON_BIN" -m aqsp briefing \
-            --ledger "$AQSP_LEDGER" \
-            --output "$AQSP_BRIEFING_REPORT" \
-            --notify 2>&1
-    fi
+    "$PYTHON_BIN" -m aqsp briefing \
+        --ledger "$AQSP_LEDGER" \
+        --output "$AQSP_BRIEFING_REPORT" \
+        --notify 2>&1
 
     echo ""
     echo "=== ledger 当前行数 ==="
