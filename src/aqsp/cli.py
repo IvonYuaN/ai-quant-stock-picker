@@ -887,7 +887,7 @@ def main(argv: list[str] | None = None) -> int:
             "planb_v3",
         ),
         default="stable",
-        help="grid CSCV 变体集合：stable 用于上线门禁（N=5），stable_plus 用于功效增强（N=8，含因子族多样性），exploratory 保留研究探索网格（N=11），htf_mr 为 T3 方案 A 因子族替换验证网格（htf+mr 换 mom+tr，N=8，不改动默认）",
+        help="grid CSCV 变体集合：stable 用于上线门禁（N=5），stable_plus 用于功效增强（N=8，含因子族多样性），exploratory 保留研究探索网格（N=13），htf_mr 为 T3 方案 A 因子族替换验证网格（htf+mr 换 mom+tr，N=8，不改动默认）",
     )
     wf.add_argument(
         "--pool",
