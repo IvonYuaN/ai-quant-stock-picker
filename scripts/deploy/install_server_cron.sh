@@ -76,10 +76,15 @@ emit_jobs() {
     fi
 
     if [[ "${ENABLE_RUNNER_SYNC,,}" =~ ^(1|true|yes|on)$ ]]; then
-        # prod→runner 单向同步：周六 09:20（北京时间）。此时周五 18:00 daily 已落库
-        # 完毕、周末无写入（满足 runner_sync.sh 的「无写入时执行」前提），且
-        # 01:20 UTC 不在生产 gate 窗口 07:30-17:30 UTC 内，赶在周六 22:00 gate 之前。
-        echo '20 9 * * 6 /bin/bash '"${SCHEDULER_BIN}"' runner-sync >> '"${CRON_LOG}"' 2>&1'
+        # prod→runner 单向同步：**周六 00:30（北京时间）**。此时周五 18:00 daily 已落库
+        # 完毕、周末无写入（满足 runner_sync.sh 的「无写入时执行」前提）。
+        # 🔴 关键约束：runner 的 gate 在 **周五 17:00 UTC = 周六 01:00 CST**（runner 侧
+        # `0 17 * * 5`）⇒ 推送必须**先于** gate ⇒ 00:30 早 30 分钟。
+        # （issue #368：此前写 09:20 + 「赶在周六 22:00 gate 前」——那个 22:00 gate 是
+        #  「prod 自己跑 gate」的旧设计，现 prod 侧该条目已停用、改由 runner 在 01:00 跑，
+        #  故 09:20 会比 gate 晚 8.5 小时、让 gate 跑在上周代码上。已对齐两机实际 cron 与
+        #  docs/two-node-handoff.md:123-124。）
+        echo '30 0 * * 6 /bin/bash '"${SCHEDULER_BIN}"' runner-sync >> '"${CRON_LOG}"' 2>&1'
     fi
 
     if [[ "${ENABLE_NEWS,,}" =~ ^(1|true|yes|on)$ ]]; then

@@ -78,7 +78,7 @@ Recommended BT schedule (Asia/Shanghai):
   data-refresh 15:35 Mon-Fri; bounded raw daily data refresh
   variant-refresh 22:30 Mon-Fri; bounded isolated experiment refresh
   walkforward-gate 22:00 Sat; controlled production evidence only, no threshold apply
-  runner-sync 09:20 Sat; push prod code+data to compute node (before Sat gate)
+  runner-sync 00:30 Sat; push prod code+data to compute node (30min before runner's Fri 17:00 UTC gate)
   monitor   every 15 min
   status    manual only
 
