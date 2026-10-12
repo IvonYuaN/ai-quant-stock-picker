@@ -2,7 +2,7 @@
 
 A. prod→runner 同步：runner_sync.sh 此前纯手动、无任何调度方 ⇒ runner 3y 库
    停在 20260918、生产 gate 被 blocked_cutoff 秒退。现在注册进 emit_jobs
-   （周六 09:20，避开生产 gate 窗口 07:30-17:30 UTC，赶在周六 22:00 gate 前），
+   （周六 00:30 CST，早于 runner 侧 gate 的周五 17:00 UTC = 周六 01:00 CST 30 分钟；issue #368 对齐），
    脚本自带新鲜度探针（落后超阈值输出 [ALERT][runner_sync] 告警行）。
 B. 排雷层 pit_cache fetchers：调度统一走 bt_task event-data → preload_event_data.sh
    → 全部 fetch_*.py（#185 已注册周一至五 08:20）。锁死「覆盖全部 fetch 脚本」
@@ -93,9 +93,9 @@ def test_emit_jobs_registers_runner_sync_weekly_before_gate() -> None:
 
     sync_lines = [line for line in lines if " runner-sync " in line]
     assert len(sync_lines) == 1, f"runner-sync 应恰好注册一次: {sync_lines}"
-    assert sync_lines[0].startswith("20 9 * * 6 "), (
-        "必须在周六 09:20（北京时间）：周五 daily 已落库、周末无写入、"
-        "01:20 UTC 避开生产 gate 窗口 07:30-17:30 UTC，赶在周六 22:00 gate 前"
+    assert sync_lines[0].startswith("30 0 * * 6 "), (
+        "必须在周六 00:30（北京时间）：周五 daily 已落库、周末无写入；"
+        "runner 的 gate 在周五 17:00 UTC = 周六 01:00 CST，推送须早于它 30 分钟（issue #368）"
     )
     assert "bt_task.sh runner-sync" in sync_lines[0]
 
