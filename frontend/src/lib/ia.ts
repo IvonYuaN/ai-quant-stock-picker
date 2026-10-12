@@ -81,8 +81,13 @@ export const DEFAULT_ROUTE = "/today";
  *   - 策略实验室 /lab → /today（变体数据仍在「今日选股」的历史变体列可见）
  *   - 历史结论 /archive → /today
  *   - 历史表现 /performance → /today
- *   - 复盘笔记 /reviews → /today（复盘/笔记/资料是系统（agent）的任务，不是让
- *     用户写；系统侧写入通道见 outputs/系统侧复盘写入通道_提案_2026-10-09.md）
+ *   - 复盘笔记 /reviews → /today（被删的是**系统侧复盘/笔记/资料**的输出页 —— 这类内容
+ *     由系统（agent）产出、不该让用户手写；系统侧写入通道见
+ *     outputs/系统侧复盘写入通道_提案_2026-10-09.md）
+ *
+ *     ⚠️ 与**用户自己的**笔记页 `/my/notes`（见上方侧栏项）不是同一回事：后者**有意保留**。
+ *     故「页面侧收敛完成」≠「用户不再有笔记功能」。此前本条注释写作「笔记是系统的任务、
+ *     不是让用户写」，与侧栏仍在的 `/my/notes` 自相矛盾（issue #347，2026-10-12 订正）。
  */
 export const LEGACY_ROUTES: Readonly<Record<string, string>> = {
   "/system/review": "/today",
