@@ -8,7 +8,10 @@ from pathlib import Path
 
 from aqsp.core.time import SHANGHAI_TZ
 from scripts.check_before_live import (
+    KNOWN_UNKNOWN_CRON_SUBCOMMANDS,
+    _bt_task_valid_subcommands,
     _check_strategy_executability_runtime_feedback,
+    _cron_wrapper_unknown_subcommand,
     _check_strategy_weight_snapshot_audit,
     _schedule_matches_bt_action,
     _strategy_threshold_consistency_blockers,
@@ -3370,3 +3373,84 @@ def test_check_before_live_allows_raw_gate_metadata_over_qfq_env(
 
     finding = next(item for item in findings if item.gate == "walkforward_price_mode")
     assert finding.ok is True
+
+
+# ---------------------------------------------------------------------------
+# issue #366：cron 包装器引用的 bt_task 子命令必须合法
+# ---------------------------------------------------------------------------
+def _write_fake_bt_task(root: Path, subcommands: str) -> None:
+    """在 root 下放一个只含 usage 行的 bt_task.sh（合法清单的「单一真源」）。"""
+    path = root / "scripts" / "maintenance" / "bt_task.sh"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        f"Usage: bt_task.sh <{subcommands}>\n", encoding="utf-8"
+    )
+
+
+def test_cron_wrapper_unknown_subcommand_is_flagged(tmp_path: Path) -> None:
+    """包装器调一个**未登记**的不存在子命令 ⇒ 必须报出来（这正是 #366 的形状）。"""
+    _write_fake_bt_task(tmp_path, "daily|intraday|data-refresh")
+    text = (
+        "PATH=/bin\n"
+        "/bin/bash /opt/aqsp-releases/aqsp-scheduler-current/scripts/"
+        "release_task_entrypoint.sh made-up-task || status=$?\n"
+    )
+
+    blocker = _cron_wrapper_unknown_subcommand(root=tmp_path, text=text)
+
+    assert blocker is not None
+    assert "made-up-task" in blocker
+    assert "data-refresh" in blocker  # 报错里给出合法清单，便于直接照抄修
+
+
+def test_cron_wrapper_allowlisted_subcommand_is_not_flagged(tmp_path: Path) -> None:
+    """已登记进白名单的存量条目**不得**报 —— 否则等于给 prod 加一盏立刻变红的灯。
+
+    这是本守卫「可安全上线」的关键：白名单让 #366 的存量保持绿，只拦**新增**的非法子命令。
+    """
+    _write_fake_bt_task(tmp_path, "daily|intraday|data-refresh")
+    assert KNOWN_UNKNOWN_CRON_SUBCOMMANDS, "白名单不应为空（否则本条测试失去意义）"
+
+    for sub in KNOWN_UNKNOWN_CRON_SUBCOMMANDS:
+        text = f"release_task_entrypoint.sh {sub}"
+        assert _cron_wrapper_unknown_subcommand(root=tmp_path, text=text) is None, sub
+
+
+def test_cron_wrapper_known_subcommands_pass(tmp_path: Path) -> None:
+    """合法子命令（两种调用形式）都不得报。"""
+    _write_fake_bt_task(tmp_path, "daily|intraday|data-refresh")
+
+    for text in (
+        "release_task_entrypoint.sh data-refresh",
+        "/bin/bash /opt/aqsp/scripts/bt_task.sh intraday || status=$?",
+        "# bt_task.sh owns the market-hours gate",  # 注释行不得误报
+        "echo 'no invocation here'",
+    ):
+        assert _cron_wrapper_unknown_subcommand(root=tmp_path, text=text) is None, text
+
+
+def test_cron_wrapper_missing_bt_task_source_does_not_block(tmp_path: Path) -> None:
+    """拿不到 bt_task.sh（合法清单真源）时不判 —— 宁可不报，也不要假阳性。"""
+    text = "release_task_entrypoint.sh definitely-not-a-real-subcommand"
+    assert _cron_wrapper_unknown_subcommand(root=tmp_path, text=text) is None
+
+
+def test_known_unknown_cron_subcommands_are_not_stale() -> None:
+    """白名单自毁断言：条目对应的子命令若已合法（被加回 bt_task.sh），必须删掉该条目。
+
+    与 #361 的 `test_known_dangling_allowlist_is_not_stale` 同一模式 ——
+    否则白名单会只增不减，最终退化成「永久豁免」。
+    """
+    valid = _bt_task_valid_subcommands(PROJECT_ROOT)
+    assert valid, "没能从 bt_task.sh 解析出合法子命令 —— usage 行格式变了？"
+    stale = sorted(set(KNOWN_UNKNOWN_CRON_SUBCOMMANDS) & valid)
+    assert not stale, (
+        "以下子命令已是 bt_task.sh 的合法子命令 ⇒ 请从 KNOWN_UNKNOWN_CRON_SUBCOMMANDS 删除："
+        f"{stale}"
+    )
+
+
+def test_known_unknown_cron_subcommands_cite_an_issue() -> None:
+    """白名单每条都要注明归属 issue，否则无从追踪。"""
+    bad = sorted(sub for sub, why in KNOWN_UNKNOWN_CRON_SUBCOMMANDS.items() if "#" not in why)
+    assert not bad, f"以下白名单条目未注明归属 issue：{bad}"

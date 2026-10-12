@@ -1643,6 +1643,10 @@ def _check_scheduler_notify_cadence(
         )
         if legacy_frequency_blocker:
             blockers.append(legacy_frequency_blocker)
+        if _should_check_cron_entry_bypass(label):
+            unknown_subcommand = _cron_wrapper_unknown_subcommand(root=root, text=text)
+            if unknown_subcommand:
+                blockers.append(f"{label}: {unknown_subcommand}")
 
     return ReadinessFinding(
         "scheduler_notify_cadence",
@@ -1817,6 +1821,70 @@ def _cron_wrapper_schedule_blocker(
         return ""
     preview = ", ".join(bad_schedules[:2])
     return f'{label}: unexpected wrapper cadence for {action} (cron="{preview}")'
+
+
+# 已知的「cron 包装器引用非法 bt_task 子命令」债务白名单（sub -> 说明）。
+#
+# ⚠️ 只登记**已被仓主知晓、尚未决定修法**的存量条目；新增的非法子命令一律直接 BLOCK。
+# 一旦某个子命令被加回 bt_task.sh（或对应 cron 被停用/改指向），本条目就**过期**了
+# ⇒ `tests/test_check_before_live.py::test_known_unknown_cron_subcommands_are_not_stale`
+#    会失败，逼着同步删除 —— 与 #361 的白名单自毁断言同一模式。
+KNOWN_UNKNOWN_CRON_SUBCOMMANDS: dict[str, str] = {
+    "data-refresh-retry": (
+        "#366 —— prod 宝塔包装器 4e4aca7f（*/10）调 release_task_entrypoint.sh data-refresh-retry，"
+        "但 bt_task.sh 无此子命令（且它在 main 上从未存在过，只在未合并分支 221c0f6b 里）"
+        "⇒ 该任务每 10 分钟 exit=2。修法（停用 / 改指向 data-refresh / 补实现）待仓主定。"
+    ),
+}
+
+
+def _bt_task_valid_subcommands(root: Path) -> set[str]:
+    """从 `bt_task.sh` **自己的 usage 行**解析合法子命令（单一真源，避免清单再次漂移）。
+
+    例：`Usage: bt_task.sh <daily|intraday|...|data-refresh|variant-refresh>`
+    """
+    path = root / "scripts" / "maintenance" / "bt_task.sh"
+    if not path.exists():
+        return set()
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return set()
+    match = re.search(r"Usage:\s*bt_task\.sh\s*<([^>]+)>", text)
+    if not match:
+        return set()
+    return {part.strip() for part in match.group(1).split("|") if part.strip()}
+
+
+def _cron_wrapper_unknown_subcommand(*, root: Path, text: str) -> str | None:
+    """包装器若调 `bt_task.sh <sub>` / `release_task_entrypoint.sh <sub>`，<sub> 必须合法。
+
+    issue #366：prod 的宝塔包装器 `4e4aca7f` 调 `release_task_entrypoint.sh data-refresh-retry`，
+    而 `bt_task.sh` 没有这个子命令（且它在 main 上**从未存在过**，只在一个未合并分支里）
+    ⇒ 该任务每 10 分钟 `exit=2`（日志累计 4650 行失败），**没有任何检查发现它**。
+    合法清单从 `bt_task.sh` 的 usage 行解析，避免硬编码清单再次漂移。
+    """
+    valid = _bt_task_valid_subcommands(root)
+    if not valid:
+        # 拿不到真源就不判 —— 宁可不报，也不要因读取失败造成假阳性
+        return None
+    offenders: list[str] = []
+    for line in text.splitlines():
+        if line.lstrip().startswith("#"):
+            continue
+        for match in re.finditer(
+            r"(?:bt_task|release_task_entrypoint)\.sh\s+([a-z][a-z0-9-]*)", line
+        ):
+            sub = match.group(1)
+            if sub in valid or sub in KNOWN_UNKNOWN_CRON_SUBCOMMANDS:
+                continue
+            offenders.append(sub)
+    if not offenders:
+        return None
+    return (
+        f"cron wrapper calls bt_task.sh with unknown subcommand(s) "
+        f"{sorted(set(offenders))}; valid: {sorted(valid)}"
+    )
 
 
 def _cron_wrapper_legacy_frequency_blocker(
