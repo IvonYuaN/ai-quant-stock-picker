@@ -1,6 +1,6 @@
 # AQSP 项目总说明文档（最完整版）
 
-> 本文档是「以后任何修改 / 处理都能搞清楚」的总入口。**代码宪法仍是 `docs/architecture.md`（§1-§10），本文件不重复它的条款，只做「全局地图 + 主链 + 审计发现 + 运维」的导航与状态记录。**
+> 本文档是「以后任何修改 / 处理都能搞清楚」的总入口。**代码宪法仍是 `docs/architecture.md`（§1-§11），本文件不重复它的条款，只做「全局地图 + 主链 + 审计发现 + 运维」的导航与状态记录。**
 > 维护约定（见 `AGENTS.md`）：改代码前先读 `docs/architecture.md` → 本文件 → `docs/agent-operating-boundaries.md` → 对应模块 spec。
 > 最后更新：2026-09-26（基于 main `e67f1766`，即 PR #230 已合入并上线 prod）。
 
@@ -88,7 +88,7 @@ RPS 相对强度、放量突破、均线缩量回踩、碗口反弹、低波趋�
 
 ### 4.2 子包
 - **`web/`** (24.6k, 10 文件)：FastAPI API + 静态 Dashboard 服务。路由在 `web/api*.py`；`web/data_provider.py` 供前端拉数据（其 212/1301 行附近有 `except` 吞异常，见 §11 R6）。`web/` 是 prod 的 `aqsp-vibe-research-api` / `-preview` service 本体。
-- **`data/`** (17.2k, 52 文件)：数据源层。`data/source.py` 定义 `DataSource` 抽象（协议）；`data/adjust.py` 的 PIT 复权（点复权因子，回测/ledger 走不复权+PIT，前复权只用于展示）；各 `*_source.py`/`*.py` 为具体源（eastmoney/sqlite/TDX/Baostock/Tushare/东方财富公告股东户数等）。`get_limit_pct`（涨跌停分类）单一来源在 `data/source.py`（architecture.md §9.5）。
+- **`data/`** (17.2k, 52 文件)：数据源层。`data/source.py` 定义 `DataSource` 抽象（协议）；`data/adjust.py` 的 PIT 复权（点复权因子，回测/ledger 走不复权+PIT，前复权只用于展示）；各 `*_source.py`/`*.py` 为具体源（eastmoney/sqlite/TDX/Baostock/Tushare/东方财富公告股东户数等）。`get_limit_pct`（涨跌停分类）单一来源在 `data/source.py`（architecture.md §10.5）。
 - **`briefing/`** (12.0k, 12 文件)：收评/早盘日报。`closing_review.py` 是核心（`review_today`、`_empty_review`、`build_factor_ic_section`、`_factor_ic_runtime_root`）。PR #228/#229/#230 在此收敛。**IC 段读/写 fallback 不同源已在 PR #230 修复**（见 §11）。
 - **`strategies/`** (9.9k, 28 文件)：因子与策略。含 momentum / triple_rise / composite / high_tight_flag / mean_reversion / event_driven / 自进化 / 自适应 / 因子挖掘。`thresholds.yaml` 注入点在各策略 `__init__`（AGENTS.md §3.5）。
 - **`backtest/`** (2.1k, 4 文件)：回测引擎（不复权+PIT、T+1 退出语义）。`walk_forward.py` 的 `except`（65/70/896）为回测单窗口失败隔离，**非**「吞成 -inf」。

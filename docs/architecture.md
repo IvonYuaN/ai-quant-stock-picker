@@ -36,6 +36,8 @@
 
 ## 2. 模块结构
 
+> ⚠️ **规划态快照（初版 20 个 PR 阶段）**：本节模块树是项目初期（约 PR #1–#20）的结构规划，列出约 33 个核心模块路径。代码经数月迭代已大幅扩张——`src/aqsp/` 现有约 **228** 个 `.py` 文件、部分初版路径已更名或重组（如 `ledger/store.py`→`ledger/base.py`、`strategies/rps_momentum.py`→`strategies/momentum.py`、`indicators/` 已清空）。**以 `src/aqsp/` 实际文件树为唯一事实源**；本节的逐文件清单仅作「有哪些子包 / 职责边界」的索引，不保证每个路径仍精确存在。完整重写见 issue #352。
+
 ```
 src/aqsp/
 ├── core/
@@ -399,21 +401,21 @@ class CircuitBreakerConfig:
 
 ---
 
-## 9. 回测计量口径规范（2026-09 校正）
+## 10. 回测计量口径规范（2026-09 校正）
 
 > 本节是 `reports/pbo-attribution-2026-09-07.md` 归因分析的工程落地。所有回测/账本/门禁必须遵循以下口径，避免 PBO/DSR 读数不可信。
 
-### 9.1 收益聚合
+### 10.1 收益聚合
 
 - **单期（一个信号日）**：`total_return = mean(各股收益%)`（等权并行持仓），**不是** `cumprod` 串行复利。
 - **跨期（Overall）**：`equity = cumprod(1 + 各期组合收益)`，年化按 `(1+R)^(periods_per_year / n_periods)`，Sharpe 用跨期收益序列 + `sqrt(periods_per_year)` 年化。
 - **periods_per_year**：`252.0 / test_period_days`（如 test=30 天 → 8.4），不是固定 252。
 
-### 9.2 T+1 退出语义
+### 10.2 T+1 退出语义
 
 `_resolve_exit` / `_resolve_exit_tiered` 必须跳过 entry bar 当日，从第二根 bar 开始检查止损/止盈。与 `variant_account.py` 的 `available_quantity` 机制对齐。
 
-### 9.3 CSCV 诊断强化
+### 10.3 CSCV 诊断强化
 
 `WalkForwardTester.calculate_cscv_pbo` 输出：
 - 主口径 `pbo` = mean(λ ≤ 0)（Bailey & López de Prado 原始定义）
@@ -421,17 +423,19 @@ class CircuitBreakerConfig:
 - `n_lambda_eq_0` / `n_lambda_lt_0` / `lambda_p25/p50/p75/std` 分布明细
 - `cscv_reliability`：`"ok"` 或 `"degraded"`（`block_size < 4` 或 `N < 8` 时告警）
 
-### 9.4 Grid Profile 选择
+### 10.4 Grid Profile 选择
 
 | profile | N 变体 | 用途 | 因子族多样性 |
 |---------|--------|------|-------------|
-| `stable` | 5 | 上线门禁（保守） | 仅 momentum/triple_rise |
+| `stable` | 5 | 上线门禁（保守） | 仅 momentum |
 | `stable_plus` | 8 | 功效增强（推荐） | +volume / mean_reversion |
-| `exploratory` | 11 | 研究探索 | 全部 |
+| `exploratory` | 13 | 研究探索 | 全部 |
+| `htf_mr` | 8 | T3 方案 A 因子族替换验证（htf+mr 换 mom+tr，不改默认） | htf_mr × 8 |
+| `planb_v1/v2/v3` | 各 8 | Plan-B 对照臂（权重配比实验） | planb |
 
-**门禁判定**：`stable` 或 `stable_plus` 的 PBO < 50% 且 DSR > 1.0。`exploratory` 仅用于研究，不参与生产门禁。
+**门禁判定**：`stable` 或 `stable_plus` 的 PBO < 50% 且 DSR > 1.0。`exploratory` / `htf_mr` / `planb_*` 仅用于研究与对照，不参与生产门禁。
 
-### 9.5 涨跌停板块分类
+### 10.5 涨跌停板块分类
 
 单一事实源：`data/source.py::get_limit_pct`。账本 fallback `_fallback_limit_pct` 必须与之对齐：
 - ST：`"*ST" in name or name.endswith("ST")` → 5%
@@ -439,7 +443,7 @@ class CircuitBreakerConfig:
 - 北交所：`43/83/87/88/920` 前缀 → 30%
 - 主板：其他 → 10%
 
-### 9.6 急跌保护（crash_protection）
+### 10.6 急跌保护（crash_protection）
 
 当 `market_regime="crash"`（大盘暴跌检测）时，`WalkForwardTester` 自动将 `top_n` 减半，降低高β暴露。这是对报告 §4 急跌段全族软肋的工程响应：
 
@@ -450,7 +454,7 @@ class CircuitBreakerConfig:
 
 ---
 
-## 10. 联系点
+## 11. 联系点
 
 - 文档同步:任何改动 `architecture.md` 的 PR 必须包含 `docs:` 前缀,Claude 优先审查。
 - 阈值变更:阈值 PR 必须附 walk-forward 回测报告,DSR 折扣后 > 1.0 才允许合并。
