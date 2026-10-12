@@ -61,18 +61,9 @@ _MIN_REFS = 100
 
 # 🔴 存量悬空引用白名单：ref -> 「为什么还没修 + 归属 issue」。
 # 修好任一条后，`test_known_dangling_allowlist_is_not_stale` 会失败 ⇒ 请同步删掉对应条目。
-KNOWN_DANGLING: dict[str, str] = {
-    "scripts/analyze_logs.py": (
-        "#350 —— monitor/analyze_logs.py 的用法说明引用根路径，但缺顶层同名软链；"
-        "修法待定（A 补软链 / B 改 docstring 为 scripts/monitor/analyze_logs.py）"
-    ),
-    "scripts/create_symlinks.sh": (
-        "#350 —— verify_reorganization.sh 引用；该脚本在 git 全历史中从未存在"
-    ),
-    "scripts/path/to/script.sh": (
-        "#350 —— verify_reorganization.sh 里的占位符（非真实引用）"
-    ),
-}
+# （2026-10-12 清空：#350 已删 verify_reorganization.sh、修 monitor/analyze_logs.py 的 docstring，
+#  三类悬空引用全部消除。若将来出现「暂不修」的存量，请在此登记并注明归属 issue。）
+KNOWN_DANGLING: dict[str, str] = {}
 
 
 def _scanned_files() -> list[pathlib.Path]:

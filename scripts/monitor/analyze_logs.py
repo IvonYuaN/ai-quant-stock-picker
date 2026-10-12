@@ -10,21 +10,22 @@
 - 字段值统计
 - 生成简报
 
-用法：
+用法（⚠️ 本文件在 ``scripts/monitor/`` 下，**没有** ``scripts/`` 根级同名软链，
+     请按下面的完整路径调用；issue #350）:
     # 分析单个日志文件
-    python scripts/analyze_logs.py /path/to/aqsp.log
+    python scripts/monitor/analyze_logs.py /path/to/aqsp.log
 
     # 分析多个日志文件
-    python scripts/analyze_logs.py /path/to/logs/*.log
+    python scripts/monitor/analyze_logs.py /path/to/logs/*.log
 
     # 指定时间范围
-    python scripts/analyze_logs.py aqsp.log --since "2026-09-27" --until "2026-09-28"
+    python scripts/monitor/analyze_logs.py aqsp.log --since "2026-09-27" --until "2026-09-28"
 
     # 只看错误
-    python scripts/analyze_logs.py aqsp.log --level error
+    python scripts/monitor/analyze_logs.py aqsp.log --level error
 
     # 导出为 JSON
-    python scripts/analyze_logs.py aqsp.log --output report.json
+    python scripts/monitor/analyze_logs.py aqsp.log --output report.json
 """
 
 from __future__ import annotations
