@@ -7,12 +7,29 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from aqsp.core.runtime import runtime_data_root
 from aqsp.core.time import now_shanghai
 
 logger = logging.getLogger(__name__)
 
-_CACHE_DIR = Path(__file__).resolve().parents[3] / "data"
-_CACHE_FILE = _CACHE_DIR / "margin_history.csv"
+
+def _default_cache_path() -> Path:
+    """默认缓存路径：``runtime_data_root()/pit_cache/<name>``。
+
+    与 ``data/{longhubang,lockup,suspend_resume,holder_num,announcement,concept_board}``
+    同源（issue #336）。
+
+    历史缺陷：本文件位于 ``src/aqsp/data/cn/``，而原实现写
+    ``Path(__file__).resolve().parents[3] / "data"`` —— ``parents[3]`` 实为 ``<repo>/src``，
+    于是缓存落到 ``<repo>/src/data/``（**release 树内部**）：prod 每次部署即被清空（永远冷启动），
+    release 只读时 ``mkdir`` 失败 ⇒ 静默退化为「无缓存」。同一错误还被 ``.gitignore`` 的
+    ``src/data/`` 与 ``config/strategy_sources.yaml`` 的 ``absorbed_from`` 两处固化。
+    """
+    base = runtime_data_root() / "pit_cache"
+    base.mkdir(parents=True, exist_ok=True)
+    return base / "margin_history.csv"
+
+
 
 _MARGIN_DETAIL_COL_MAP: dict[str, str] = {
     "日期": "date",
@@ -98,7 +115,7 @@ def fetch_margin_data(
     days: int = 60,
     cache_path: Path | None = None,
 ) -> pd.DataFrame:
-    cache_path = cache_path or _CACHE_FILE
+    cache_path = cache_path or _default_cache_path()
     cached = _load_cache(cache_path)
     if not cached.empty and "symbol" in cached.columns:
         symbol_cached = cached[cached["symbol"] == symbol]

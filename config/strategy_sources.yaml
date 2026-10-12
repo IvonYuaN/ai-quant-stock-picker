@@ -115,7 +115,8 @@ families:
     current_status: data_factor_only
     absorbed_from:
       - "yangguangyuan/Akshare-Sync"
-      - "src/data/margin_history.csv"
+      # 运行时缓存现落 <AQSP_RUNTIME_DATA_ROOT>/pit_cache/margin_history.csv
+      # （issue #336：曾误写 "src/data/margin_history.csv" —— parents[3] 实为 <repo>/src）
     signals:
       - 个股/市场融资余额5日变化
       - 极端分位降权
