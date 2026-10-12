@@ -2,8 +2,11 @@
 """预加载并缓存 PIT 数据源（申万行业 + 宏观社融/PMI）到本地 CSV。
 
 生产机联网执行一次即可激活 ``industry_pit`` / ``macro_pit`` 的管线接入：
-- 申万行业表 -> ``src/aqsp/data/industry_pit.csv``（IndustryPitSource 默认缓存）
-- 宏观序列   -> ``src/aqsp/data/macro_pit.csv``（MacroPitSource 默认缓存）
+- 申万行业表 -> ``<AQSP_RUNTIME_DATA_ROOT>/pit_cache/industry_pit.csv``
+  （IndustryPitSource 默认缓存；#335 起缓存统一落 runtime data root，
+  不再落不可变 release 目录内）
+- 宏观序列   -> ``<AQSP_RUNTIME_DATA_ROOT>/pit_cache/macro_pit.csv``
+  （MacroPitSource 默认缓存）
 
 沙箱不可联网，本脚本会抛 DataError 并退出非 0，属预期——管线靠优雅回退运行。
 宏观抓取还需在生产机为 ``macro_pit.PBC_SOCIAL_FINANCING_URL`` /

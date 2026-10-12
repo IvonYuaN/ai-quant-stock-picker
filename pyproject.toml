@@ -7,6 +7,12 @@ dependencies = [
     "pandas>=2.0,<4.0",
     "numpy>=1.24,<3.0",
     "requests>=2.31,<3.0",
+    # truststore（~50KB，纯 Python，Python 3.10+）：industry_pit 的上游
+    # swsresearch.com 证书链只发叶子证书、不发中间证书（openssl s_client 实测
+    # Verify return code: 21），默认 verify 在 prod 直连时 CERTIFICATE_VERIFY_FAILED。
+    # 走系统信任库完成完整校验——是 verify=False（安全红线，禁止）的合规替代；
+    # 仅挂在 industry_pit 的会话级连接池，不做进程级全局注入（#335）。
+    "truststore>=0.9,<1.0",
     "scipy>=1.10,<2.0",
     "jinja2>=3.1,<4.0",
     "pyyaml>=6.0,<7.0",

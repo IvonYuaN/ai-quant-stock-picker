@@ -25,6 +25,7 @@ from typing import Optional
 import pandas as pd
 
 from aqsp.core.errors import DataError
+from aqsp.core.runtime import runtime_data_root
 
 # 取数地址约定（生产机验证；沙箱不直连）
 PBC_SOCIAL_FINANCING_URL = (
@@ -94,7 +95,10 @@ class MacroPitSource:
     def _default_cache_path(self) -> str:
         if self._cache_dir:
             return os.path.join(self._cache_dir, "macro_pit.csv")
-        base = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+        # 遵循项目统一 runtime data root 约定（#335：release 目录不可变，缓存
+        # 落 repo 内等于没有；与 longhubang/lockup 等 6 个兄弟模块同款）。
+        root = runtime_data_root()
+        base = os.path.join(root, "pit_cache")
         os.makedirs(base, exist_ok=True)
         return os.path.join(base, "macro_pit.csv")
 
@@ -103,25 +107,47 @@ class MacroPitSource:
         self._points = sorted(points, key=lambda p: p.month)
         return self
 
+    def _read_cache_points(self) -> Optional[list[MacroPoint]]:
+        path = self._default_cache_path()
+        if not os.path.exists(path):
+            return None
+        try:
+            df = pd.read_csv(path)
+            return [
+                MacroPoint(**{k: _coerce(v) for k, v in row.items()})
+                for row in df.to_dict("records")
+            ]
+        except Exception:
+            return None  # 缓存损坏，按缺失处理
+
+    def load_cached(self) -> bool:
+        """仅从本地缓存加载（**绝不联网**）；命中且非空返回 True。
+
+        供消费者（pit_enrichment 默认单例）做缓存预热：缓存由
+        ``scripts/data/fetch_pit_data.py`` 预载，缺失/损坏时静默保持空序列，
+        由调用方走优雅回退。
+        """
+        points = self._read_cache_points()
+        if not points:
+            return False
+        self._points = points
+        return True
+
     def load(self, force: bool = False) -> list[MacroPoint]:
         """加载宏观序列：缓存命中且非强制时读本地，否则抓取并落盘。"""
-        path = self._default_cache_path()
-        if not force and not self._points and os.path.exists(path):
-            try:
-                df = pd.read_csv(path)
-                self._points = [
-                    MacroPoint(**{k: _coerce(v) for k, v in row.items()})
-                    for row in df.to_dict("records")
-                ]
+        if not force and not self._points:
+            cached = self._read_cache_points()
+            if cached is not None:
+                self._points = cached
                 return self._points
-            except Exception:
-                self._points = []
         sf = _fetch_social_financing()
         pmi = _fetch_pmi()
         merged = _merge_sf_pmi(sf, pmi)
         self._points = sorted(merged, key=lambda p: p.month)
         try:
-            pd.DataFrame([p.__dict__ for p in self._points]).to_csv(path, index=False)
+            pd.DataFrame([p.__dict__ for p in self._points]).to_csv(
+                self._default_cache_path(), index=False
+            )
         except Exception:
             pass
         return self._points

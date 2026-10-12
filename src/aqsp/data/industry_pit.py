@@ -17,13 +17,18 @@
 
 from __future__ import annotations
 
+import io
 import os
 from dataclasses import dataclass
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import pandas as pd
 
 from aqsp.core.errors import DataError
+from aqsp.core.runtime import runtime_data_root
+
+if TYPE_CHECKING:  # pragma: no cover - 仅类型检查
+    import requests
 
 SW_URL = (
     "https://www.swsresearch.com/swindex/pdf/SwClass2021/StockClassifyUse_stock.xls"
@@ -66,16 +71,40 @@ def _normalize(raw: pd.DataFrame) -> pd.DataFrame:
     return df.sort_values(["code", "start_date"]).reset_index(drop=True)
 
 
+def _sw_session() -> "requests.Session":
+    """申万源专用会话：swsresearch.com 证书链只发叶子证书、不发中间证书
+    （openssl s_client 实测 Verify return code: 21），默认 verify 在 prod 直连
+    时 CERTIFICATE_VERIFY_FAILED。用 truststore 走系统信任库（macOS/Windows
+    原生信任链）完成完整校验——**不是** verify=False（安全红线，禁止）。
+
+    truststore 只挂载到本会话的连接池（会话级注入），不做进程级全局
+    ``inject_into_ssl()``，避免影响其他模块的 TLS 行为。
+    """
+    import ssl
+
+    import requests
+
+    try:
+        import truststore
+    except ImportError as e:  # pragma: no cover - 依赖缺失属环境态
+        raise DataError(f"industry_pit: 缺少依赖 truststore（{e}）") from e
+
+    class _TruststoreHTTPAdapter(requests.adapters.HTTPAdapter):
+        """把 truststore SSLContext 注入本 adapter 的连接池（非全局）。"""
+
+        def init_poolmanager(self, *args: object, **kwargs: object) -> None:
+            kwargs["ssl_context"] = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            super().init_poolmanager(*args, **kwargs)  # type: ignore[arg-type]
+
+    session = requests.Session()
+    session.mount("https://", _TruststoreHTTPAdapter())
+    return session
+
+
 def sw_industry_history(url: str = SW_URL) -> pd.DataFrame:
     """抓取申万行业变迁史（网络）。失败抛 DataError。"""
     try:
-        import io
-
-        import requests
-    except ImportError as e:  # pragma: no cover - 依赖缺失属环境态
-        raise DataError(f"industry_pit: 缺少依赖 requests（{e}）") from e
-    try:
-        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=60)
+        r = _sw_session().get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=60)
         r.raise_for_status()
     except Exception as e:  # 网络/SSL/超时统一归为数据错误
         raise DataError(f"industry_pit: 申万行业表抓取失败（{e}）") from e
@@ -113,6 +142,24 @@ def industry_as_of(df: pd.DataFrame, code: str, as_of: str) -> Optional[Industry
     )
 
 
+def _read_cache_df(path: str) -> pd.DataFrame:
+    """读缓存 CSV 并恢复规范类型。
+
+    显式 ``dtype`` 锁死代码列（同 ``longhubang.load()`` 的踩坑注释），避免
+    ``"000001"`` 被 pandas 推断成 ``1`` 而**静默丢失前导零**，导致 symbol
+    匹配恒失败。l1/l2 派生列一并锁死，层级 join 才能对齐。
+    """
+    df = pd.read_csv(
+        path,
+        dtype={"code": str, "industry_code": str, "l1_code": str, "l2_code": str},
+    )
+    for col in ("code", "industry_code", "l1_code", "l2_code"):
+        if col in df.columns:
+            df[col] = df[col].astype(str).str.zfill(6)
+    df["start_date"] = pd.to_datetime(df["start_date"], errors="coerce")
+    return df
+
+
 class IndustryPitSource:
     """申万行业 PIT 查询源：取数 + 本地缓存 + 时点查询。"""
 
@@ -123,19 +170,36 @@ class IndustryPitSource:
     def _default_cache_path(self) -> str:
         if self._cache_path:
             return self._cache_path
-        base = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+        # 遵循项目统一 runtime data root 约定（#335：release 目录不可变，缓存
+        # 落 repo 内等于没有；与 longhubang/lockup 等 6 个兄弟模块同款）。
+        root = runtime_data_root()
+        base = os.path.join(root, "pit_cache")
         os.makedirs(base, exist_ok=True)
         return os.path.join(base, "industry_pit.csv")
+
+    def load_cached(self) -> bool:
+        """仅从本地缓存加载（**绝不联网**）；命中返回 True。
+
+        供消费者（pit_enrichment 默认单例）做缓存预热：缓存由
+        ``scripts/data/fetch_pit_data.py`` 预载，缺失/损坏时静默保持未加载
+        状态，由调用方走优雅回退。
+        """
+        path = self._default_cache_path()
+        if not os.path.exists(path):
+            return False
+        try:
+            self._df = _read_cache_df(path)
+            return True
+        except Exception:
+            self._df = None  # 缓存损坏，保持未加载
+            return False
 
     def load(self, force: bool = False) -> pd.DataFrame:
         """加载行业表：缓存命中且非强制时直接读本地，否则抓取并落盘。"""
         path = self._default_cache_path()
         if not force and self._df is None and os.path.exists(path):
             try:
-                self._df = pd.read_csv(path)
-                self._df["start_date"] = pd.to_datetime(
-                    self._df["start_date"], errors="coerce"
-                )
+                self._df = _read_cache_df(path)
                 return self._df
             except Exception:
                 self._df = None  # 缓存损坏，回退到抓取
