@@ -427,11 +427,13 @@ class CircuitBreakerConfig:
 
 | profile | N 变体 | 用途 | 因子族多样性 |
 |---------|--------|------|-------------|
-| `stable` | 5 | 上线门禁（保守） | 仅 momentum/triple_rise |
+| `stable` | 5 | 上线门禁（保守） | 仅 momentum |
 | `stable_plus` | 8 | 功效增强（推荐） | +volume / mean_reversion |
-| `exploratory` | 11 | 研究探索 | 全部 |
+| `exploratory` | 13 | 研究探索 | 全部 |
+| `htf_mr` | 8 | T3 方案 A 因子族替换验证（htf+mr 换 mom+tr，不改默认） | htf_mr × 8 |
+| `planb_v1/v2/v3` | 各 8 | Plan-B 对照臂（权重配比实验） | planb |
 
-**门禁判定**：`stable` 或 `stable_plus` 的 PBO < 50% 且 DSR > 1.0。`exploratory` 仅用于研究，不参与生产门禁。
+**门禁判定**：`stable` 或 `stable_plus` 的 PBO < 50% 且 DSR > 1.0。`exploratory` / `htf_mr` / `planb_*` 仅用于研究与对照，不参与生产门禁。
 
 ### 10.5 涨跌停板块分类
 
