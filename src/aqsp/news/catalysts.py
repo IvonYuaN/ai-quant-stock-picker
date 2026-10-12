@@ -44,6 +44,13 @@ _DEFAULT_MAX_STALE_CACHE_AGE_SECONDS = 30 * 60
 _SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 _CATALYST_REPORT_SCHEMA_VERSION = 2
 _RETIRED_SOURCE_TOKENS = ("新华社", "news.cn")
+# 外层隔离 deadline 在配置超时之上追加的固定余量：内层 composite 预算只会比配置值
+# 小一个固定 margin（news_source._COMPOSITE_TIMEOUT_MARGIN_SECONDS = 0.25s），若外层
+# 直接复用配置值，子进程在 composite 用满预算返回后只剩 0.25s 完成「序列化 frame +
+# 全量 per-feed health → multiprocessing.Queue → 父进程取回」，prod 实测该擦边导致
+# 首跑约 2/5 概率被杀、25 条 health 全部丢失（issue #334）。1s 覆盖 IPC 开销，
+# 不改变配置超时本身的语义。
+_ISOLATED_FETCH_DEADLINE_HEADROOM_SECONDS = 1.0
 
 
 @dataclass(frozen=True)
@@ -1397,7 +1404,12 @@ def _run_fetchers_in_processes(
         worker.daemon = True
         worker.start()
 
-    deadline = monotonic() + max(0.1, float(timeout_seconds))
+    # 严格大于内层 composite 预算（配置值 − margin），给子进程留出回传结果的
+    # IPC 余量，避免「composite 预算内返回但仍被外层杀掉、health 全丢」。
+    deadline_seconds = max(0.1, float(timeout_seconds)) + (
+        _ISOLATED_FETCH_DEADLINE_HEADROOM_SECONDS
+    )
+    deadline = monotonic() + deadline_seconds
     for worker in workers.values():
         worker.join(max(0.0, deadline - monotonic()))
 
@@ -1416,7 +1428,7 @@ def _run_fetchers_in_processes(
             worker.join(0.5)
         if key not in outcomes:
             outcomes[key] = _NewsFetchOutcome(
-                error=TimeoutError(f"消息源超过 {float(timeout_seconds):.1f}s 未返回"),
+                error=TimeoutError(f"消息源超过 {deadline_seconds:.1f}s 未返回"),
                 timed_out=True,
             )
         worker.close()

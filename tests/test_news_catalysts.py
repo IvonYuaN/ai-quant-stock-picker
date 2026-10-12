@@ -1767,6 +1767,173 @@ def test_composite_news_keeps_source_that_finishes_within_shared_budget() -> Non
     assert ("eastmoney_domestic_news", "ok") in health
 
 
+def _prod_like_source_health() -> tuple[NewsSourceHealth, ...]:
+    """prod 首跑成功路径的 25 条 per-feed health 形态：13 国际 / 11 国内 / 1 mixed。"""
+    fetched_at = now_shanghai().isoformat(timespec="seconds")
+    international = (
+        "美联储",
+        "SEC",
+        "ECB",
+        "NVIDIA-News",
+        "NVIDIA-Blog",
+        "AMD",
+        "Intel",
+        "OpenAI",
+        "NASA",
+        "EIA",
+        "DefenseNews",
+        "MarketWatch-1",
+        "MarketWatch-2",
+    )
+    domestic = ("中国新闻网-财经",) + tuple(f"eastmoney-主题{i}" for i in range(10))
+    entries = [
+        NewsSourceHealth(
+            name=name,
+            region="international",
+            status="ok",
+            successful=1,
+            row_count=2,
+            fetched_at=fetched_at,
+        )
+        for name in international
+    ] + [
+        NewsSourceHealth(
+            name=name,
+            region="domestic",
+            status="ok",
+            successful=1,
+            row_count=1,
+            fetched_at=fetched_at,
+        )
+        for name in domestic
+    ] + [
+        NewsSourceHealth(
+            name="rss_news",
+            region="mixed",
+            status="ok",
+            successful=1,
+            row_count=2,
+            fetched_at=fetched_at,
+        )
+    ]
+    return tuple(entries)
+
+
+def test_isolated_process_deadline_leaves_headroom_for_result_flush(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """外层隔离 deadline 必须严格大于内层 composite 预算。
+
+    复现 issue #334：composite 用满预算（timeout − margin）才返回，旧外层
+    deadline 直接复用配置值，子进程在序列化 health 进队列前就被杀，
+    25 条 per-feed health 全部丢失。新实现额外留 1s IPC 余量。
+    """
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    frame = pd.DataFrame(
+        [{"标题": "海外风险偏好回升", "来源": "国际媒体", "时间": _RECENT_NEWS_TIME}]
+    )
+    frame.attrs["aqsp_source_health"] = _prod_like_source_health()
+
+    def slow_composite() -> pd.DataFrame:
+        # 超过外层旧 deadline（timeout_seconds），但落在 headroom 之内。
+        time.sleep(0.6)
+        return frame
+
+    started = time.monotonic()
+    outcomes = catalysts._run_fetchers_in_processes(
+        {"__global__": slow_composite},
+        timeout_seconds=0.4,
+    )
+    elapsed = time.monotonic() - started
+
+    outcome = outcomes["__global__"]
+    assert outcome.error is None
+    assert not outcome.timed_out
+    assert len(outcome.frame.attrs["aqsp_source_health"]) == 25
+    assert elapsed >= 0.6
+
+
+def test_isolated_process_still_terminates_runaway_fetcher_after_headroom(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """headroom 只放宽擦边余量，不取消对真失控源的硬上限。"""
+
+    monkeypatch.setattr(sys, "platform", "linux")
+
+    def runaway() -> pd.DataFrame:
+        time.sleep(30)
+        return pd.DataFrame()
+
+    started = time.monotonic()
+    outcomes = catalysts._run_fetchers_in_processes(
+        {"__global__": runaway},
+        timeout_seconds=0.2,
+    )
+    elapsed = time.monotonic() - started
+
+    outcome = outcomes["__global__"]
+    assert outcome.error is not None
+    assert outcome.timed_out
+    assert "超过 1.2s 未返回" in str(outcome.error)
+    assert elapsed < 10
+
+
+def test_catalyst_report_keeps_full_health_when_slow_composite_uses_full_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """端到端复现首跑形态：慢源吃满预算返回后，25 条 health 不得丢失。
+
+    旧实现在 prod（isolate_process=True）下此形态 2/5 概率得到
+    ``global_news=timeout`` 且 health=0 ⇒ ``domestic=unavailable``。
+    """
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    frame = pd.DataFrame(
+        [{"标题": "MLCC 行业报价上调", "来源": "行业媒体", "时间": _RECENT_NEWS_TIME}]
+    )
+    frame.attrs["aqsp_source_health"] = _prod_like_source_health()
+
+    def slow_composite_global(_limit: int) -> pd.DataFrame:
+        # 超过配置超时 0.4s（旧外层 deadline），落在 headroom 1s 之内。
+        time.sleep(0.6)
+        return frame
+
+    report = build_catalyst_report(
+        fetch_global_news=slow_composite_global,
+        config=NewsCatalystConfig(
+            source_timeout_seconds=0.4,
+            isolate_external_sources=True,
+        ),
+    )
+
+    assert report.source_status == "ok"
+    assert len(report.source_statuses) == 25
+    statuses = {item.region: item for item in report.region_statuses}
+    assert statuses["domestic"].status == "ok"
+    assert statuses["domestic"].source_count == 11
+    assert statuses["international"].status == "ok"
+    assert statuses["international"].source_count == 13
+
+
+def test_region_statuses_source_count_excludes_mixed_entries() -> None:
+    """``region="mixed"`` 的源（如 rss_news/akshare_news 自身条目）不计入区域口径。"""
+
+    report = CatalystReport(
+        date=_RECENT_NEWS_DATE,
+        generated_at=f"{_RECENT_NEWS_DATE}T10:00:00+08:00",
+        events=(),
+        source_status="ok",
+        source_statuses=_prod_like_source_health(),
+    )
+
+    statuses = {item.region: item for item in report.region_statuses}
+    assert statuses["domestic"].source_count == 11
+    assert statuses["international"].source_count == 13
+    assert statuses["domestic"].status == "ok"
+    assert statuses["international"].status == "ok"
+
+
 def test_build_default_news_source_keeps_eastmoney_as_runtime_fallback(
     monkeypatch,
 ) -> None:
