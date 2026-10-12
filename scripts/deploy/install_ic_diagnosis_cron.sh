@@ -7,7 +7,7 @@
 #   - 指向软链 aqsp-scheduler-current（随 release 升级自动跟进，cron 行本身不改）。
 #
 # 时序红线（共享业务机 4C，同时跑 ifidy/lanshe 三业务）：
-#   - 北京 10:00 = UTC 02:00（runner 时区 UTC，北京−8h）⇒ 默认 schedule `0 2 * * 1-5`；
+#   - 北京时间 10:00 = UTC 02:00（runner 时区 UTC，北京时间−8h）⇒ 默认 schedule `0 2 * * 1-5`；
 #   - 完全避开 prod gate 窗口 07:30-17:30 UTC（=北京 15:30-01:30），不抢 gate；
 #   - ic_diagnosis_runner.sh 自身带 load 让位（MAX_LOAD1=4）+ 超时硬墙（1800s），
 #     双保险避免长期占机器导致业务被杀。
@@ -21,7 +21,7 @@ RUNNER_ROOT="${RUNNER_ROOT:-/opt/aqsp-runner}"
 RELEASE_LINK="$RUNNER_ROOT/aqsp-scheduler-current"
 RUNNER_SCRIPT="$RELEASE_LINK/scripts/ic_diagnosis_runner.sh"
 CRON_LOG="${AQSP_IC_CRON_LOG:-$RUNNER_ROOT/logs/ic_diagnosis_cron.log}"
-# 默认 UTC `0 2 * * 1-5`（= 北京 10:00，工作日）；时区不同时用 env 覆盖
+# 默认 UTC `0 2 * * 1-5`（= 北京时间 10:00，工作日）；时区不同时用 env 覆盖
 CRON_SCHEDULE="${AQSP_IC_CRON_SCHEDULE:-0 2 * * 1-5}"
 
 [ -f "$RUNNER_SCRIPT" ] || {
