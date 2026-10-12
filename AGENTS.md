@@ -31,7 +31,7 @@
 
 - Python 3.10+。
 - 所有公共函数必须有 type hints。
-- 风格:`ruff format` + `ruff check`,CI 卡死。
+- 风格:**CI 只卡 `ruff check .`**;`ruff format` 为本地约定,**CI 不 gate**(全仓历史欠账大,暂不加 `ruff format --check` 门禁 —— 取舍过程见 issue #351)。
 - 包管理:`pyproject.toml`,不要再加 `requirements.txt`。
 
 ### 3.2 命名与结构
