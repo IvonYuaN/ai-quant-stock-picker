@@ -9,20 +9,49 @@ Design rules (architecture §5 / §9 no-look-ahead red line):
   reclassifications or yet-unpublished macro prints.
 - All adapters are fail-soft: when a PIT source is unavailable (network blocked,
   cache missing) they fall back to the existing label / an empty dict, so the
-  pipeline behaviour is *unchanged* when data is absent. ``autoload=False`` keeps
-  them off the network during screening — production must preload the caches
-  (see ``scripts/fetch_pit_data.py``) to activate them.
+  pipeline behaviour is *unchanged* when data is absent. The default singletons
+  are preloaded **cache-only** (never network — see ``_ensure_cache_preloaded``);
+  production preloads the caches via ``scripts/data/fetch_pit_data.py`` to
+  activate them.
 """
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Optional, Sequence
 
 from aqsp.data.industry_pit import IndustryLabel, IndustryPitSource
 from aqsp.data.macro_pit import MacroPitSource
 
+_logger = logging.getLogger("aqsp.features.pit_enrichment")
+
 _DEFAULT_INDUSTRY_SOURCE = IndustryPitSource()
 _DEFAULT_MACRO_SOURCE = MacroPitSource()
+_cache_preload_attempted = False
+
+
+def _ensure_cache_preloaded() -> None:
+    """消费者接线（#335）：进程内一次性把 pit_cache 预热进默认单例。
+
+    此前单例从不 ``load()``、查询又一律 ``autoload=False`` ⇒ ``industry_pit``
+    / ``macro_pit`` 运行时永远空转（数据从未进入管线）。预热走
+    ``load_cached()``——**只读本地缓存、绝不联网**；缓存缺失/损坏时静默
+    保持未加载，沿用优雅回退（行为与「无缓存」时完全一致）。
+    """
+    global _cache_preload_attempted
+    if _cache_preload_attempted:
+        return
+    _cache_preload_attempted = True
+    try:
+        if not _DEFAULT_INDUSTRY_SOURCE.load_cached():
+            _logger.info("industry_pit 缓存缺失，行业 PIT 回退现有标签")
+    except Exception:  # noqa: BLE001 - best-effort enrichment
+        _logger.warning("industry_pit 缓存预热失败，回退现有标签", exc_info=True)
+    try:
+        if not _DEFAULT_MACRO_SOURCE.load_cached():
+            _logger.info("macro_pit 缓存缺失，宏观 PIT 保持空上下文")
+    except Exception:  # noqa: BLE001 - best-effort enrichment
+        _logger.warning("macro_pit 缓存预热失败，保持空上下文", exc_info=True)
 
 
 def pit_sector_industry_maps(
@@ -47,6 +76,8 @@ def pit_sector_industry_maps(
         Two dicts keyed by symbol. Symbols with neither a PIT label nor an
         existing label are omitted (matching the prior non-empty-only contract).
     """
+    if industry_source is None:
+        _ensure_cache_preloaded()
     source = industry_source or _DEFAULT_INDUSTRY_SOURCE
     sector_map: dict[str, str] = {}
     industry_map: dict[str, str] = {}
@@ -93,6 +124,8 @@ def macro_pit_context(
         macro_source: optional preloaded :class:`MacroPitSource`; defaults to a
             module-level singleton (unloaded -> empty dict, no network).
     """
+    if macro_source is None:
+        _ensure_cache_preloaded()
     source = macro_source or _DEFAULT_MACRO_SOURCE
     try:
         sf = source.social_financing(as_of, autoload=False)

@@ -2,13 +2,16 @@
 
 核心：未发布月份整行丢弃（不返回 NaN/0），PIT 回退到最近已发布月；
 未知 PMI 分项抛 DataError；实时抓取在未配置 URL 时抛 DataError（沙箱/单测走注入）。
+另锁死 #335 两项：缓存落 pit_cache、load_cached() 缓存只读预热（绝不联网）。
 """
 
 from __future__ import annotations
 
+import pandas as pd
 import pytest
 
 from aqsp.core.errors import DataError
+from aqsp.data import macro_pit
 from aqsp.data.macro_pit import (
     MacroPitSource,
     MacroPoint,
@@ -65,3 +68,42 @@ def test_fetch_raises_without_url():
         _fetch_social_financing()
     with pytest.raises(DataError):
         _fetch_pmi()
+
+
+# ---------------------------------------------------------------------------
+# #335：缓存落 runtime_data_root()/pit_cache/ + load_cached() 缓存只读
+# ---------------------------------------------------------------------------
+def test_default_cache_path_under_runtime_data_root(tmp_path, monkeypatch):
+    monkeypatch.setenv("AQSP_RUNTIME_DATA_ROOT", str(tmp_path))
+    assert MacroPitSource()._default_cache_path() == str(
+        tmp_path / "pit_cache" / "macro_pit.csv"
+    )
+
+
+def test_load_cached_roundtrip_no_network(tmp_path, monkeypatch):
+    monkeypatch.setenv("AQSP_RUNTIME_DATA_ROOT", str(tmp_path))
+
+    def _boom(*args, **kwargs):  # noqa: ANN002, ANN003
+        raise AssertionError("load_cached 绝不允许联网")
+
+    monkeypatch.setattr(macro_pit, "_fetch_social_financing", _boom)
+    monkeypatch.setattr(macro_pit, "_fetch_pmi", _boom)
+
+    # 生产者落盘形态：pd.DataFrame([p.__dict__ ...]).to_csv（同 load() 写盘）
+    points = [
+        MacroPoint("2026-07", social_financing_increment=0.5, pmi_manufacturing=49.3),
+        MacroPoint("2026-08", social_financing_increment=0.7, pmi_manufacturing=50.1),
+    ]
+    cache = MacroPitSource()._default_cache_path()
+    pd.DataFrame([p.__dict__ for p in points]).to_csv(cache, index=False)
+
+    fresh = MacroPitSource()
+    assert fresh.load_cached() is True
+    assert fresh.social_financing("2026-08-18", autoload=False) == 0.7
+    assert fresh.pmi("2026-08-18", autoload=False) == 50.1
+
+    # 缓存缺失：不联网、按未加载处理
+    import os
+
+    os.remove(cache)
+    assert MacroPitSource().load_cached() is False
