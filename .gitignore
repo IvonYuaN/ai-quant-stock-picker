@@ -63,10 +63,16 @@ runtime-backups/
 dist/
 build/
 *.egg-info/
+# pytest-cov / coverage.py 的产物（本地跑覆盖率会生成；并行模式会带 .<host>.<pid> 后缀）
+.coverage
+.coverage.*
 # 本机部署配置：含真实服务器地址与密钥路径，仅提交 .example 模板
 deploy-config.env
 # 本地运行时缓存：pit_cache 运行数据随日期轮换，属本地数据
 pit_cache/
+# 运行时数据根下的 data/（dev 时 runtime_data_root() 回落 repo 根）：
+# 测试与裸 CLI 会写 data/runtime/（如 catalyst 缓存及其锁文件），属运行时产物
+data/runtime/
 # 报告目录下的运行日志 / 二进制报告
 reports/*.log
 *.docx
