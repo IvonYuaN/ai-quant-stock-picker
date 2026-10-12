@@ -1,7 +1,9 @@
-"""东财概念板块（slist）—— 概念分类 + 资金流向数据源。
+"""东财概念板块（bkzj dataapi）—— 概念分类 + 资金流向数据源。
 
-`a-stock-data` v3.8 复核记录注明「东财 `slist` 概念板块替代失效百度 PAE」；
-AQSP `eastmoney_source` 是否实装 slist 待核，本模块以独立 fetcher 形式补齐，
+原走 push2 `clist/get`，2026-10-11 实测该端点在全部出口（prod/Mac/runner/海外代理）
+均被请求级阻断（issue #333），且 `push2delay` 降级路径同样失效。
+现换用同源页面在用端点 `data.eastmoney.com/dataapi/bkzj/getbkzj`
+（prod 直连实测 200，单请求返回全部 506 个概念板块，字段口径同 clist 的 f 码）。
 保持与 `cls_news` / `longhubang` / `lockup` 一致的 fail-soft 模式。
 """
 
@@ -16,20 +18,21 @@ import pandas as pd
 
 from aqsp.core.errors import DataError
 
-# 东财 clist 概念板块（2026-09-08 生产机实测：push2 主域被服务器级断连，
-# push2delay 可用；m:90+t:3 = 概念板块；f104/f105 = 上涨/下跌家数，
-# f62 = 主力净流入（元），f184 = 主力净占比（%））
-EM_CLIST_HOSTS = (
-    "https://push2delay.eastmoney.com/api/qt/clist/get",
-    "https://82.push2.eastmoney.com/api/qt/clist/get",
-    "https://push2.eastmoney.com/api/qt/clist/get",
-)
+# 东财板块资金流 dataapi（issue #333：clist/get 端点级被切后的替代，2026-10-11 实测）
+# m:90+t:3 = 概念板块；key 逗号分隔多字段：
+# f3 = 涨跌幅（×100），f62 = 主力净流入（元），f184 = 主力净占比（×100），
+# f104/f105 = 上涨/下跌家数
+EM_BKZJ_URL = "https://data.eastmoney.com/dataapi/bkzj/getbkzj"
+EM_BKZJ_PARAMS = {
+    "key": "f3,f62,f184,f104,f105",
+    "code": "m:90+t:3",
+}
 _EM_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
     ),
-    "Referer": "https://quote.eastmoney.com/",
+    "Referer": "https://data.eastmoney.com/bkzj/gn.html",
 }
 
 
@@ -65,18 +68,15 @@ def _to_int(v: object) -> int:
 
 
 def _parse_items(payload: object) -> list[ConceptBoardItem]:
-    """东财 clist 响应：{"data": {"diff": [...]}}。单条漂移跳过。"""
+    """东财 bkzj dataapi 响应：{"data": {"diff": [...]}}。单条漂移跳过。
+
+    数值口径（2026-10-11 实测）：f3 / f184 为 ×100（f3=470 → 4.70%），
+    f62 为元（→ 万元）。
+    """
     if not isinstance(payload, dict):
         return []
     data = payload.get("data")
-    if isinstance(data, dict):
-        diff = data.get("diff")
-    elif isinstance(data, list):
-        diff = data
-    else:
-        diff = payload.get("diff") if isinstance(payload, dict) else None
-        if diff is None:
-            diff = payload if isinstance(payload, list) else []
+    diff = data.get("diff") if isinstance(data, dict) else None
     if not isinstance(diff, list):
         return []
     out: list[ConceptBoardItem] = []
@@ -86,16 +86,13 @@ def _parse_items(payload: object) -> list[ConceptBoardItem]:
         try:
             out.append(
                 ConceptBoardItem(
-                    board_code=str(raw.get("f12") or raw.get("code") or "").strip(),
-                    board_name=str(raw.get("f14") or raw.get("name") or "").strip(),
-                    up_count=_to_int(raw.get("f104") or raw.get("up_count")),
-                    down_count=_to_int(raw.get("f105") or raw.get("down_count")),
-                    change_pct=_to_float(raw.get("f3") or raw.get("change_pct")),
-                    main_net_inflow=_to_float(
-                        raw.get("f62") or raw.get("main_net_inflow")
-                    )
-                    / 1e4,
-                    main_net_ratio=_to_float(raw.get("f184") or 0.0),
+                    board_code=str(raw.get("f12") or "").strip(),
+                    board_name=str(raw.get("f14") or "").strip(),
+                    up_count=_to_int(raw.get("f104")),
+                    down_count=_to_int(raw.get("f105")),
+                    change_pct=_to_float(raw.get("f3")) / 100.0,
+                    main_net_inflow=_to_float(raw.get("f62")) / 1e4,
+                    main_net_ratio=_to_float(raw.get("f184")) / 100.0,
                 )
             )
         except Exception:  # noqa: BLE001
@@ -128,30 +125,19 @@ class ConceptBoardSource:
             import requests
         except ImportError as e:  # pragma: no cover
             raise DataError(f"concept_board: 缺少依赖 requests（{e}）") from e
-        # m:90+t:3 = 概念板块；fs 按东财 clist 约定
-        params = {
-            "pn": "1",
-            "pz": "500",
-            "po": "1",
-            "np": "1",
-            "fltt": "2",
-            "invt": "2",
-            "fid": "f3",
-            "fs": "m:90+t:3",
-            "fields": "f12,f14,f3,f104,f105,f62,f184",
-        }
-        last_exc: Exception | None = None
-        for host in EM_CLIST_HOSTS:
-            try:
-                r = requests.get(host, params=params, headers=_EM_HEADERS, timeout=60)
-                r.raise_for_status()
-                return _parse_items(r.json())
-            except Exception as e:  # noqa: PERF203 - 逐 host 降级重试
-                last_exc = e
-                continue
-        raise DataError(
-            f"concept_board: 东财概念板块抓取失败（所有 host 均不可达: {last_exc}）"
-        )
+        # dataapi bkzj 单请求返回全部概念板块（无分页），排序由 key 决定，
+        # 展示侧（info_stream）自行按涨跌幅重排
+        try:
+            r = requests.get(
+                EM_BKZJ_URL,
+                params=EM_BKZJ_PARAMS,
+                headers=_EM_HEADERS,
+                timeout=60,
+            )
+            r.raise_for_status()
+            return _parse_items(r.json())
+        except Exception as e:  # noqa: BLE001 - fail-soft：统一抛 DataError
+            raise DataError(f"concept_board: 东财概念板块抓取失败（{e}）") from e
 
     def load(self, force: bool = False) -> list[ConceptBoardItem]:
         path = self._default_cache_path()
