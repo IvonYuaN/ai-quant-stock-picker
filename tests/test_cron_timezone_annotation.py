@@ -130,12 +130,37 @@ def test_guard_scope_excludes_github_workflows() -> None:
     )
 
 
+def _git_tracked_files() -> set[str] | None:
+    """返回 git 跟踪的文件集合；**不在 git 工作树内时返回 None**。
+
+    沿用本仓既有约定（`tests/test_shell_cjk_comment_guard.py:41-50` 的
+    `try git ... except CalledProcessError`）—— 但那里能回落 `rglob`，
+    而「是否被 git 跟踪」在非工作树里**没有有意义的替代**，故此处返回 None 由调用方 skip。
+    """
+    try:
+        out = subprocess.run(
+            ["git", "ls-files"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
+    return set(out.split())
+
+
 def test_cron_defining_files_are_tracked_by_git() -> None:
-    """清单里的文件必须受版本控制（否则改了也不进 PR）。"""
-    tracked = set(
-        subprocess.run(
-            ["git", "ls-files"], cwd=REPO_ROOT, capture_output=True, text=True, check=True
-        ).stdout.split()
-    )
+    """清单里的文件必须受版本控制（否则改了也不进 PR）。
+
+    ⚠️ 该属性**只在 git 工作树里有意义**。prod 的不可变 release 是 `git archive`
+    解包（**无 `.git`**），从那里跑测试时必须 skip —— 否则得到一个与被测对象无关的假失败。
+    （2026-10-12 在 prod 预置 release 内做切链前冒烟时**实测到**这个失败：
+    同批的 `test_shell_cjk_comment_guard.py` / `test_server_runtime_scripts.py`
+    因有 `except` 回落而通过，只有本用例硬失败。）
+    """
+    tracked = _git_tracked_files()
+    if tracked is None:
+        pytest.skip("不在 git 工作树内（release 目录无 .git），「被 git 跟踪」属性不适用")
     untracked = [rel for rel in CRON_DEFINING_FILES if rel not in tracked]
     assert not untracked, f"清单里的文件未被 git 跟踪：{untracked}"
