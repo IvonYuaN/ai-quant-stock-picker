@@ -20,8 +20,8 @@ from aqsp.strategies.thresholds import load_thresholds
 
 def test_load_thresholds():
     thresholds = load_thresholds()
-    assert thresholds.version == "1.1.20"
-    assert thresholds.last_walkforward_run == "2026-05-30"
+    assert thresholds.version == "1.1.21"
+    assert thresholds.last_walkforward_run == "2026-10-13"
     assert thresholds.momentum.lookback_days == 60
     assert thresholds.momentum.weights.momentum == 0.4
     assert thresholds.momentum.weights.trend == 0.3
@@ -31,7 +31,7 @@ def test_load_thresholds():
     assert thresholds.composite.momentum_weight == 0.3
     assert thresholds.composite.quality_weight == 0.0
     assert thresholds.composite.value_weight == 0.0
-    assert thresholds.composite.triple_rise_weight == 0.3
+    assert thresholds.composite.triple_rise_weight == 0.0
     assert thresholds.composite.base_blend_weight == 0.7
     assert thresholds.composite.regime_blend_weight == 0.3
     assert thresholds.composite.high_tight_flag_weight == 0.0
@@ -41,6 +41,15 @@ def test_load_thresholds():
     assert thresholds.triple_rise.enabled is True
     assert thresholds.triple_rise.lookback_days == 25
     assert thresholds.triple_rise.weights.triple_rise == 0.4
+    # #199 v1.1.21：momentum 反向 alpha 方向纠正（成对清零 triple_rise + 接入独立
+    # 第三源 price_volume_corr + 抬高 min_total_score）。min_total_score=0.70 由
+    # 2026-10-13 runner 生产宇宙校准（4391 只、90 分位 0.7015 ⇒ 通过率 10.0%）。
+    assert thresholds.momentum.invert_signal is True
+    assert thresholds.composite.min_total_score == 0.70
+    assert thresholds.composite.price_volume_corr_weight == 0.3
+    assert thresholds.price_volume_corr.enabled is True
+    assert thresholds.price_volume_corr.invert_signal is True
+    assert thresholds.price_volume_corr.window == 10
     assert thresholds.volume.enabled is False
     assert thresholds.regime.volatility_high == 0.3
     assert thresholds.regime.min_sample_size == 20
