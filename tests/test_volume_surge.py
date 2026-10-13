@@ -151,6 +151,9 @@ def test_momentum_invert_must_paired_with_triple_rise_removal() -> None:
     base = load_thresholds()
 
     def build(*, mom_inv: bool, tr_w: float) -> CompositeStrategy:
+        # 🔒 隔离 pvc 变量：本测试主题是 mom/tr 交互，pvc 是独立第三源、
+        # 对两个构建贡献相近的 spread 底噪，会把「恢复比例」压向 1。
+        # 1.3× 阈值是 pvc 关闭时校准的 ⇒ 此处显式归零 pvc 权重保持原语义。
         mom = base.momentum
         return CompositeStrategy(
             StrategyConfig(name="composite", enabled=True),
@@ -158,7 +161,11 @@ def test_momentum_invert_must_paired_with_triple_rise_removal() -> None:
                 **{f: getattr(base, f) for f in base.__dataclass_fields__
                    if f not in ("momentum", "composite")},
                 momentum=dataclasses.replace(mom, invert_signal=mom_inv),
-                composite=dataclasses.replace(base.composite, triple_rise_weight=tr_w),
+                composite=dataclasses.replace(
+                    base.composite,
+                    triple_rise_weight=tr_w,
+                    price_volume_corr_weight=0.0,
+                ),
             ),
         )
 
@@ -194,9 +201,12 @@ def test_momentum_invert_must_paired_with_triple_rise_removal() -> None:
 
 
 def test_min_total_score_strictness_flips_under_fixes() -> None:
-    """🔴🔴 启用清单的**第三件事**：`min_total_score` 的实际严格度会随修复翻转。
+    """🔴🔴 #199 v1.1.21：`min_total_score` 必须与「方向纠正 + 因子接线」成对校准。
 
-    实测（300 票、生产代码，门槛 = 0.4）：
+    生产配置（v1.1.21）= momentum.invert_signal=true + triple_rise_weight=0 +
+    price_volume_corr.weight=0.3 + min_total_score=0.72（占位，runner 校准后回填）。
+
+    历史实测（300 票、生产代码、门槛 0.4）：
 
     | 场景 | score 均值 | 通过率 |
     |---|---|---|
@@ -205,27 +215,33 @@ def test_min_total_score_strictness_flips_under_fixes() -> None:
     | mom 反向 + tr 归零 | 0.82 | **94.0%** |
 
     ⇒ **只改 `invert_signal` 与权重、而不动 `min_total_score`，
-    等于顺手把选股条件放宽了 9 倍**（29 只候选 → 261 只候选）。
+    等于顺手把选股条件放宽了 9 倍**——「29 只里挑 top 10」变「261 只里挑 top 10」。
 
-    ⚠️ 表面看"都选 top_n 只"没差别，但基线是「29 只里挑 top 10」、
-    修复后是「261 只里挑 top 10」—— **取数范围完全不同**。
-
-    本测试**记录并锁住这个事实**：若将来有人只改开关+权重就上线，
-    本测试会明确显示通过率跳到 ~90%（提醒门槛没跟着调）。
+    本测试（合成 120 帧、rng 固定）锁两件事：
+    ① 「只翻方向/接线、门槛仍留 0.4」⇒ 通过率爆炸（≥0.5）——证明门槛必须跟着抬；
+    ② 生产配置在其配置门槛（0.72）下通过率必须恢复基线严格度（~10%，实测 10.8%）
+       ——证明门槛与因子改动成对生效。若门槛未随因子校准，② 失败。
     """
     import numpy as np
 
     base = load_thresholds()
 
-    def build(*, mom_inv: bool, tr_w: float) -> CompositeStrategy:
-        mom = base.momentum
+    def build(*, mom_inv: bool, tr_w: float, pvc_w: float, min_score: float) -> CompositeStrategy:
         return CompositeStrategy(
             StrategyConfig(name="composite", enabled=True),
             Thresholds(
                 **{f: getattr(base, f) for f in base.__dataclass_fields__
-                   if f not in ("momentum", "composite")},
-                momentum=dataclasses.replace(mom, invert_signal=mom_inv),
-                composite=dataclasses.replace(base.composite, triple_rise_weight=tr_w),
+                   if f not in ("momentum", "price_volume_corr", "composite")},
+                momentum=dataclasses.replace(base.momentum, invert_signal=mom_inv),
+                price_volume_corr=dataclasses.replace(
+                    base.price_volume_corr, enabled=pvc_w > 0
+                ),
+                composite=dataclasses.replace(
+                    base.composite,
+                    triple_rise_weight=tr_w,
+                    price_volume_corr_weight=pvc_w,
+                    min_total_score=min_score,
+                ),
             ),
         )
 
@@ -240,18 +256,27 @@ def test_min_total_score_strictness_flips_under_fixes() -> None:
              "close": px, "volume": vol, "amount": vol * px}
         ).assign(date=pd.date_range("2024-01-01", periods=n)).set_index("date")
 
-    thr = base.composite.min_total_score
-    base_rate = float((np.array(list(build(mom_inv=False, tr_w=0.3)
-                                  .calculate_score(data).values())) >= thr).mean())
-    inv_rate = float((np.array(list(build(mom_inv=True, tr_w=0.3)
-                                .calculate_score(data).values())) >= thr).mean())
+    # ① 只翻方向/接线、门槛不动（0.4）⇒ 通过率应爆炸 —— 门槛必须跟着抬
+    old_thr = 0.4
+    flipped_old_thr = build(mom_inv=True, tr_w=0.0, pvc_w=0.3, min_score=old_thr)
+    rate_old_thr = float(
+        (np.array(list(flipped_old_thr.calculate_score(data).values())) >= old_thr).mean()
+    )
+    assert rate_old_thr >= 0.5, (
+        f"新因子组合 + 旧门槛 {old_thr} 的通过率仅 {rate_old_thr:.1%}（应 ≥50%）"
+        "——若此断言失败，说明①的『门槛不调=放宽选股』前提已变，须重新校准"
+    )
 
-    # 基线应是"紧门槛"（少数通过）
-    assert base_rate < 0.5, f"基线通过率应偏低（实测 {base_rate:.1%}）"
-    # ★ 反向后若通过率大幅跳升 ⇒ 说明门槛必须跟着调，否则等于放宽选股条件
-    assert inv_rate > base_rate, (
-        f"反向使通过率上升 {base_rate:.1%} → {inv_rate:.1%}；"
-        "启用清单必须同时调 min_total_score"
+    # ② 生产配置（YAML）在其配置门槛下 ⇒ 恢复基线 ~10% 严格度
+    prod = load_thresholds()
+    prod_thr = prod.composite.min_total_score
+    prod_st = CompositeStrategy(StrategyConfig(name="composite", enabled=True), prod)
+    rate_prod = float(
+        (np.array(list(prod_st.calculate_score(data).values())) >= prod_thr).mean()
+    )
+    assert 0.02 <= rate_prod <= 0.3, (
+        f"生产配置通过率 {rate_prod:.1%}（门槛 {prod_thr}）—— 应恢复基线 ~10% 严格度；"
+        "偏高说明门槛未随因子改动校准，偏低说明门槛过保守，两者都须重新校准"
     )
 
 

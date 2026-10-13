@@ -1705,8 +1705,11 @@ class TestGenerateSmartSummary:
         assert "当前市况: 稳定上涨" in main_chain_sec.content
         assert "策略偏向: 进攻牛市" in main_chain_sec.content
         assert "稳定上涨期，重仓动量+涨停板" in main_chain_sec.content
+        # #199 v1.1.21：triple_rise_weight=0.0 ⇒ n_rebound 挂在 tr 桶
+        # （_INTERNET_STRATEGY_REGIME_BUCKETS）⇒ 从运行时选股组合摘除，
+        # focus 由 4 项（低波趋势/均线回踩/N 字反弹/RPS 动量）收为 3 项。
         assert (
-            "更偏好这些方向: 低波趋势、均线回踩、N 字反弹、RPS 动量"
+            "更偏好这些方向: 低波趋势、均线回踩、RPS 动量"
             in main_chain_sec.content
         )
 
