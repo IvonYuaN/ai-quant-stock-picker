@@ -345,9 +345,12 @@ def test_update_sqlite_daily_marks_symbol_failed_after_retry_exhausted(
 
     assert summary.updated_rows == 0
     assert summary.failed_symbols == 1
-    # No re-login churn during retries: one login at start, one logout at end.
-    assert fake_bs.login_calls == 1
-    assert fake_bs.logout_calls == 1
+    # #378 新契约：连接类失败（Broken pipe）重试耗尽后必须**重建会话**——
+    # 旧契约「one login at start, one logout at end」正是本次事故的根因
+    # （同会话无限重试 = 连续失败 292 次占 flock 8.5h）。
+    assert fake_bs.login_calls == 2, "断线后应重登录一次（初始 + 重建）"
+    assert fake_bs.logout_calls == 2, "重登录前先 logout 旧会话 + 结尾 logout"
+    assert summary.session_relogins == 1
 
 
 def test_sync_stock_list_preserves_existing_historical_symbols_by_default(
@@ -671,3 +674,92 @@ def test_refresh_batch_guard_allows_fully_current_batch() -> None:
 
     assert refresh_sqlite_batch._has_no_target_day_coverage(summary) is False
 
+
+
+def test_broken_pipe_triggers_session_relogin_and_run_continues(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """#378 守卫：连接类失败（Broken pipe）必须触发**会话重登录**并继续跑完。
+
+    事故背景（2026-10-13）：runner 日更 bulk 到 1600/5562 时 baostock 会话断裂，
+    旧代码「同会话无限重试」⇒ 连续失败 292 次占 flock 8.5h、DB 停 2 个交易日。
+    修复：error_code == "exception"（连接类重试耗尽）时 logout+login 重建会话。
+    """
+
+    class CountingBaostock:
+        login_calls = 0
+        logout_calls = 0
+
+        def login(self):
+            type(self).login_calls += 1
+            return type("Login", (), {"error_code": "0", "error_msg": ""})()
+
+        def logout(self) -> None:
+            type(self).logout_calls += 1
+            return None
+
+    db = tmp_path / "astocks_raw.db"
+    monkeypatch.setattr(update_sqlite_daily, "_load_baostock", CountingBaostock)
+
+    def fake_sync_stock_list(conn, _bs, preserve_existing=True):
+        del preserve_existing
+        update_sqlite_daily.ensure_schema(conn)
+        conn.execute(
+            "INSERT OR REPLACE INTO stocks(ts_code, name) VALUES(?, ?)",
+            ("000001.SZ", "SZ Bank"),
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO stocks(ts_code, name) VALUES(?, ?)",
+            ("600000.SH", "PF Bank"),
+        )
+        conn.commit()
+        return ["000001.SZ", "600000.SH"]
+
+    monkeypatch.setattr(update_sqlite_daily, "sync_stock_list", fake_sync_stock_list)
+
+    real_query = update_sqlite_daily._query_history_rows
+    state = {"broken": True}
+
+    def flaky_query(**kwargs):
+        # 第一个符号（000001.SZ）的连接已断：重试层同会话重试也必败 ⇒ "exception"
+        if state["broken"] and kwargs["ts_code"] == "000001.SZ":
+            raise BrokenPipeError("[Errno 32] Broken pipe")
+        # 健康路径返回 canned 行（与真实 _query_history_rows 的 7 字段同构）
+        return (
+            "0",
+            [["2026-06-18", "10.0", "10.5", "9.8", "10.2", "1000", "10200.0"]],
+        )
+
+    del real_query
+    monkeypatch.setattr(update_sqlite_daily, "_query_history_rows", flaky_query)
+    # 仅在**重登录**（第 2 次及以后 login）后恢复健康 ⇒ 证明是重建会话救活的
+    orig_login = CountingBaostock.login
+
+    def login_and_heal(self):
+        result = orig_login(self)
+        if type(self).login_calls >= 2:
+            state["broken"] = False
+        return result
+
+    monkeypatch.setattr(CountingBaostock, "login", login_and_heal)
+
+    summary = update_sqlite_daily.update_sqlite_daily(
+        db,
+        target_day=date(2026, 6, 18),
+        sleep_seconds=0.0,
+        limit=0,
+        price_mode="raw",
+        # 关掉覆盖门，本测试只关心会话重建行为（1/2 符号有数据会误触覆盖失败）
+        require_target_coverage=False,
+    )
+
+    # 初始 1 次 + 断线重登录 1 次 + 结尾 logout 前的状态 ⇒ login >= 2
+    assert CountingBaostock.login_calls >= 2, (
+        f"断线后未重新登录（login_calls={CountingBaostock.login_calls}）"
+        "——同会话重试=死循环（#378 事故形态）"
+    )
+    assert CountingBaostock.logout_calls >= 2, "重登录前必须先 logout 旧会话"
+    assert summary.session_relogins == 1
+    # 第二个符号在会话重建后正常入库 ⇒ 运行从死循环中恢复
+    assert summary.updated_rows == 1, "会话重建后应继续完成剩余符号"
+    assert summary.failed_symbols == 1

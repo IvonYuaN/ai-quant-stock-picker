@@ -40,11 +40,19 @@ _QUERY_RETRY_BASE_SLEEP_SECONDS = 0.2
 _QUERY_RETRY_MAX_SLEEP_SECONDS = 5.0
 
 # Initial login is retried with exponential backoff instead of dying on the
-# first throttled attempt. baostock sessions stay valid for the whole process,
-# so we never re-login on a transient per-symbol query failure.
+# first throttled attempt.
+# 🔴 2026-10-13 修正（#378）：旧注释称「baostock sessions stay valid for the whole
+# process, so we never re-login」——**实测不成立**：长跑（~1.5h+）中会话会断裂
+# （Broken pipe），其后每次查询都失败，同会话重试=死循环（runner 实测连续失败
+# 292 次、占 flock 8.5h）。⇒ 连接类失败必须在进程级**重新登录**（见主循环
+# error_code == "exception" 分支），并按 _SESSION_RELOGIN_LIMIT 封顶。
 _LOGIN_RETRY_LIMIT = 5
 _LOGIN_RETRY_BASE_SECONDS = 2.0
 _LOGIN_RETRY_MAX_SECONDS = 60.0
+
+# 单次运行内允许的最大「断线重登录」次数。封顶理由：上游真死时无限重登录
+# 会把限流恶化；耗尽后靠末尾 require_target_coverage 的 fail-closed 收尾。
+_SESSION_RELOGIN_LIMIT = 5
 
 # Global rate-limit guard: once this many symbols fail in a row we assume the
 # upstream IP is throttled and pause (exponential, capped) before continuing.
@@ -89,6 +97,8 @@ class UpdateSummary:
     budget_exhausted: bool = False
     already_current_symbols: int = 0
     empty_response_symbols: int = 0
+    # #378：本次运行发生「断线重登录」的次数（连接类失败后重建会话）。
+    session_relogins: int = 0
 
 
 def _parse_trade_date(raw: object) -> date | None:
@@ -584,6 +594,7 @@ def update_sqlite_daily(
     empty_response = 0
     total_symbols = 0
     consecutive_failures = 0
+    session_relogins = 0
     try:
         with sqlite3.connect(db_path) as conn:
             configure_sqlite_connection(conn)
@@ -642,6 +653,31 @@ def update_sqlite_daily(
                 if error_code != "0":
                     failed += 1
                     consecutive_failures += 1
+                    # #378：连接类失败（Broken pipe/连接重置/超时，重试耗尽后
+                    # error_code == "exception"）⇒ 会话已死，同会话重试是死循环。
+                    # 重建会话（logout+login），按上限封顶；非连接类错误码
+                    # （baostock 业务错误）重登录无益，保持原冷却逻辑。
+                    if error_code == "exception":
+                        if session_relogins < _SESSION_RELOGIN_LIMIT:
+                            session_relogins += 1
+                            print(
+                                f"连接类失败（会话疑似断裂）→ 第 {session_relogins}/"
+                                f"{_SESSION_RELOGIN_LIMIT} 次重新登录",
+                                flush=True,
+                            )
+                            _logout_baostock_session(bs)
+                            try:
+                                _login_baostock_session(bs)
+                                print("重新登录成功，继续本批", flush=True)
+                            except Exception as exc:
+                                print(f"重新登录失败: {exc}", flush=True)
+                        elif session_relogins == _SESSION_RELOGIN_LIMIT:
+                            session_relogins += 1  # 只提示一次，之后静默走冷却
+                            print(
+                                f"重新登录已达上限 {_SESSION_RELOGIN_LIMIT} 次，"
+                                "转为纯冷却重试（上游可能持续不可用）",
+                                flush=True,
+                            )
                     if (
                         max_consecutive_failures > 0
                         and consecutive_failures >= max_consecutive_failures
@@ -717,6 +753,7 @@ def update_sqlite_daily(
         budget_exhausted=budget_exhausted,
         already_current_symbols=already_current,
         empty_response_symbols=empty_response,
+        session_relogins=session_relogins,
     )
 
 
