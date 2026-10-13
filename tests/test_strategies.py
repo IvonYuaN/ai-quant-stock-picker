@@ -42,10 +42,10 @@ def test_load_thresholds():
     assert thresholds.triple_rise.lookback_days == 25
     assert thresholds.triple_rise.weights.triple_rise == 0.4
     # #199 v1.1.21：momentum 反向 alpha 方向纠正（成对清零 triple_rise + 接入独立
-    # 第三源 price_volume_corr + 抬高 min_total_score）。min_total_score=0.72 为占位值，
-    # 精确值由 runner 生产宇宙校准后回填（测试断言随之更新）。
+    # 第三源 price_volume_corr + 抬高 min_total_score）。min_total_score=0.70 由
+    # 2026-10-13 runner 生产宇宙校准（4391 只、90 分位 0.7015 ⇒ 通过率 10.0%）。
     assert thresholds.momentum.invert_signal is True
-    assert thresholds.composite.min_total_score == 0.72
+    assert thresholds.composite.min_total_score == 0.70
     assert thresholds.composite.price_volume_corr_weight == 0.3
     assert thresholds.price_volume_corr.enabled is True
     assert thresholds.price_volume_corr.invert_signal is True

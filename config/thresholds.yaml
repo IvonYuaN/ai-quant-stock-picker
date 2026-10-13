@@ -2,7 +2,7 @@ version: "1.1.21"
 effective_from: '2026-10-13'
 composite:
   base_blend_weight: 0.7
-  min_total_score: 0.72
+  min_total_score: 0.70
   momentum_weight: 0.3
   quality_weight: 0.0
   regime_blend_weight: 0.3
@@ -18,7 +18,8 @@ composite:
   # 🔴 三条守卫强制的交互约束（outputs/issue199_AC_proposal_2026-10-13.md §1）：
   #   ① 翻 mom.invert_signal 必须成对清零 triple_rise_weight（ρ(mom,tr)=0.609 否则区分度腰斩）；
   #   ② 抬高 min_total_score（翻向后门槛 0.4 的通过率 9.7%→87%，等价放宽选股 9 倍）；
-  #      0.72 为占位值，精确值由 runner 生产宇宙校准（~90 分位，恢复基线 ~10% 通过率）后回填；
+  #      0.70 = 2026-10-13 runner 生产宇宙校准（4391 只、窗口 2026-06-03→10-09，
+  #      分数 90 分位 0.7015 ⇒ 通过率 10.0%，与基线 ~10% 严格度一致）；
   #   ③ volume_surge 与 triple_rise.volume_confirm 同源（ρ=0.614）⇒ 本次不启用 volume_surge。
   description: "v1.1.21：#199 DSR 负值修复——momentum.invert_signal=true（成对清零 triple_rise）+ 接入独立第三源 price_volume_corr + 抬高 min_total_score。证据 outputs/issue199_AC_proposal_2026-10-13.md"
   min_sample_size: 30
