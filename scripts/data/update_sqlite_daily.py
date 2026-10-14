@@ -54,6 +54,36 @@ _LOGIN_RETRY_MAX_SECONDS = 60.0
 # 会把限流恶化；耗尽后靠末尾 require_target_coverage 的 fail-closed 收尾。
 _SESSION_RELOGIN_LIMIT = 5
 
+# 🔴 2026-10-14 修正（#378 二次修复）：**真实故障路径不抛异常**。
+# 证据链（baostock 0.9.3 源码）：
+#   socketutil.send_msg() 的 `except Exception: print(...)` **只打印不 re-raise**
+#   （打印的正是现场那两行 "[Errno 32] Broken pipe" / "接收数据异常，请稍后再试。"）
+#   ⇒ 返回 None；history.py 见 None 则返回 error_code=BSERR_RECVSOCK_FAIL 的
+#   ResultData（**不抛异常**）⇒ 我们 `rs.error_code != "0"` 拿到的是**错误码字符串**。
+# 因此只认 error_code == "exception" 的判据**永不触发**（首版修复实测无效）。
+_SESSION_ERROR_CODES = frozenset(
+    {
+        "10002007",  # BSERR_RECVSOCK_FAIL：网络接收错误（socket 断裂的主路径）
+        "10002001",  # BSERR_SOCKET_ERR：网络错误
+        "10001001",  # BSERR_NO_LOGIN：用户未登录（会话被服务端清掉）
+    }
+)
+
+
+def _looks_like_session_failure(error_code: str, consecutive_failures: int) -> bool:
+    """判断本次失败是否可能源于**会话失效**（而非业务性失败）。
+
+    - 库抛传输异常 ⇒ 真（重试层耗尽后 error_code == "exception"）；
+    - baostock 传输/会话类错误码 ⇒ 真（**真实主路径**，见上方证据链）；
+    - 防御兜底：任何来源的连续失败达到冷却阈值 ⇒ 真——未知错误码也能自愈，
+      重登录有 _SESSION_RELOGIN_LIMIT 封顶，代价极低。
+    """
+    if error_code == "exception":
+        return True
+    if error_code in _SESSION_ERROR_CODES:
+        return True
+    return consecutive_failures >= _RATE_LIMIT_COOLDOWN_THRESHOLD
+
 # Global rate-limit guard: once this many symbols fail in a row we assume the
 # upstream IP is throttled and pause (exponential, capped) before continuing.
 _RATE_LIMIT_COOLDOWN_THRESHOLD = 3
@@ -653,15 +683,15 @@ def update_sqlite_daily(
                 if error_code != "0":
                     failed += 1
                     consecutive_failures += 1
-                    # #378：连接类失败（Broken pipe/连接重置/超时，重试耗尽后
-                    # error_code == "exception"）⇒ 会话已死，同会话重试是死循环。
-                    # 重建会话（logout+login），按上限封顶；非连接类错误码
-                    # （baostock 业务错误）重登录无益，保持原冷却逻辑。
-                    if error_code == "exception":
+                    # #378：会话失效（含 baostock 传输错误码这条**真实主路径**，
+                    # 以及连续失败兜底）⇒ 重建会话（logout+login），按上限封顶；
+                    # 业务性失败（如限流码）也会因兜底条款试一次重登录，代价极低。
+                    if _looks_like_session_failure(error_code, consecutive_failures):
                         if session_relogins < _SESSION_RELOGIN_LIMIT:
                             session_relogins += 1
                             print(
-                                f"连接类失败（会话疑似断裂）→ 第 {session_relogins}/"
+                                f"会话疑似失效（error_code={error_code}，连续失败"
+                                f" {consecutive_failures} 次）→ 第 {session_relogins}/"
                                 f"{_SESSION_RELOGIN_LIMIT} 次重新登录",
                                 flush=True,
                             )

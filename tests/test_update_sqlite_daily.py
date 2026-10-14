@@ -676,14 +676,10 @@ def test_refresh_batch_guard_allows_fully_current_batch() -> None:
 
 
 
-def test_broken_pipe_triggers_session_relogin_and_run_continues(
-    monkeypatch, tmp_path: Path
-) -> None:
-    """#378 守卫：连接类失败（Broken pipe）必须触发**会话重登录**并继续跑完。
+def _run_relogin_scenario(monkeypatch, tmp_path, first_failure):
+    """公共脚手架：两个符号，第一个按 first_failure 方式失败，第二个正常。
 
-    事故背景（2026-10-13）：runner 日更 bulk 到 1600/5562 时 baostock 会话断裂，
-    旧代码「同会话无限重试」⇒ 连续失败 292 次占 flock 8.5h、DB 停 2 个交易日。
-    修复：error_code == "exception"（连接类重试耗尽）时 logout+login 重建会话。
+    返回 (summary, login_calls, logout_calls, session_relogins)。
     """
 
     class CountingBaostock:
@@ -716,29 +712,26 @@ def test_broken_pipe_triggers_session_relogin_and_run_continues(
         return ["000001.SZ", "600000.SH"]
 
     monkeypatch.setattr(update_sqlite_daily, "sync_stock_list", fake_sync_stock_list)
-
-    real_query = update_sqlite_daily._query_history_rows
-    state = {"broken": True}
+    monkeypatch.setattr(update_sqlite_daily.time, "sleep", lambda _seconds: None)
+    state = {"healed": False}
 
     def flaky_query(**kwargs):
-        # 第一个符号（000001.SZ）的连接已断：重试层同会话重试也必败 ⇒ "exception"
-        if state["broken"] and kwargs["ts_code"] == "000001.SZ":
-            raise BrokenPipeError("[Errno 32] Broken pipe")
-        # 健康路径返回 canned 行（与真实 _query_history_rows 的 7 字段同构）
+        # 该符号**持续失败**（重试层 3 次都失败），直到会话被重建（healed）
+        if kwargs["ts_code"] == "000001.SZ" and not state["healed"]:
+            return first_failure()
         return (
             "0",
             [["2026-06-18", "10.0", "10.5", "9.8", "10.2", "1000", "10200.0"]],
         )
 
-    del real_query
     monkeypatch.setattr(update_sqlite_daily, "_query_history_rows", flaky_query)
-    # 仅在**重登录**（第 2 次及以后 login）后恢复健康 ⇒ 证明是重建会话救活的
+    # 只有**重登录**（第 2 次及以后 login）才恢复 ⇒ 证明是重建会话救活的
     orig_login = CountingBaostock.login
 
     def login_and_heal(self):
         result = orig_login(self)
         if type(self).login_calls >= 2:
-            state["broken"] = False
+            state["healed"] = True
         return result
 
     monkeypatch.setattr(CountingBaostock, "login", login_and_heal)
@@ -749,17 +742,56 @@ def test_broken_pipe_triggers_session_relogin_and_run_continues(
         sleep_seconds=0.0,
         limit=0,
         price_mode="raw",
-        # 关掉覆盖门，本测试只关心会话重建行为（1/2 符号有数据会误触覆盖失败）
         require_target_coverage=False,
     )
+    return summary, CountingBaostock.login_calls, CountingBaostock.logout_calls
 
-    # 初始 1 次 + 断线重登录 1 次 + 结尾 logout 前的状态 ⇒ login >= 2
-    assert CountingBaostock.login_calls >= 2, (
-        f"断线后未重新登录（login_calls={CountingBaostock.login_calls}）"
-        "——同会话重试=死循环（#378 事故形态）"
+
+def test_baostock_recvsock_error_code_triggers_relogin(monkeypatch, tmp_path: Path) -> None:
+    """#378 真实主路径守卫：socket 断裂时 baostock **不抛异常**，而是返回
+    error_code=BSERR_RECVSOCK_FAIL("10002007")（socketutil.send_msg 吞异常返回 None
+    → history.py 给该错误码）。首版修复只认 "exception" ⇒ 永不触发、死循环复发；
+    本守卫锁「错误码路径也必须重建会话」。
+    """
+    summary, login_calls, logout_calls = _run_relogin_scenario(
+        monkeypatch, tmp_path, lambda: ("10002007", [])
     )
-    assert CountingBaostock.logout_calls >= 2, "重登录前必须先 logout 旧会话"
+
+    assert login_calls >= 2, (
+        f"baostock 错误码路径未触发重登录（login_calls={login_calls}）"
+        "——这正是 2026-10-13 死循环的真实路径"
+    )
+    assert logout_calls >= 2
     assert summary.session_relogins == 1
-    # 第二个符号在会话重建后正常入库 ⇒ 运行从死循环中恢复
     assert summary.updated_rows == 1, "会话重建后应继续完成剩余符号"
     assert summary.failed_symbols == 1
+
+
+def test_transport_exception_triggers_relogin(monkeypatch, tmp_path: Path) -> None:
+    """异常路径（库确实抛传输异常时）同样要重建会话。"""
+    summary, login_calls, logout_calls = _run_relogin_scenario(
+        monkeypatch, tmp_path, lambda: (_ for _ in ()).throw(BrokenPipeError("[Errno 32] Broken pipe"))
+    )
+
+    assert login_calls >= 2
+    assert logout_calls >= 2
+    assert summary.session_relogins == 1
+    assert summary.updated_rows == 1
+    assert summary.failed_symbols == 1
+
+
+def test_repeated_business_failures_also_attempt_bounded_relogin(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """防御兜底：未知/业务错误码的连续失败达冷却阈值也应尝试重登录（有上限）。"""
+    assert update_sqlite_daily._looks_like_session_failure("10002007", 1) is True
+    assert update_sqlite_daily._looks_like_session_failure("exception", 1) is True
+    # 单次业务失败不重登录（避免无谓 churn）
+    assert update_sqlite_daily._looks_like_session_failure("99999999", 1) is False
+    # 但连续失败达阈值（默认 3）⇒ 兜底重登录一次
+    assert (
+        update_sqlite_daily._looks_like_session_failure(
+            "99999999", update_sqlite_daily._RATE_LIMIT_COOLDOWN_THRESHOLD
+        )
+        is True
+    )
