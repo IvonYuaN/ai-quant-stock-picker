@@ -120,6 +120,8 @@ export interface MarketView {
   sectorsBottom: SectorFlowRow[];
   emotion: EmotionView | null;
   turnover: TurnoverRow[];
+  /** 成交额榜的取数时间（后端东财源，非页面刷新时刻）；空串 = 源未标注。 */
+  turnoverUpdated: string;
   industryTop: IndustryRowView[];
   industryBottom: IndustryRowView[];
   industryTotal: number;
@@ -132,6 +134,8 @@ export interface MarketInput {
   overview?: MarketOverview | null;
   emotion?: ShortTermEmotion | null;
   turnover?: readonly TurnoverStock[];
+  /** turnover 接口自带的取数时间（W3 证据链：榜单逐块标注数据日期）。 */
+  turnoverUpdated?: string;
   industry?: IndustryData | null;
 }
 
@@ -254,6 +258,7 @@ export function buildMarketView(input: MarketInput): MarketView {
     sectorsBottom: sectors.slice(-6).reverse(),
     emotion: buildEmotion(input.emotion),
     turnover: asArray<TurnoverStock>(input.turnover).map(toTurnoverRow),
+    turnoverUpdated: input.turnoverUpdated ?? "",
     industryTop: asArray<IndustryRow>(input.industry?.top).map(toIndustryRow),
     industryBottom: asArray<IndustryRow>(input.industry?.bottom)
       .map(toIndustryRow)

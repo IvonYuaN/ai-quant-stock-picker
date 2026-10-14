@@ -29,6 +29,12 @@ function newsTime(ctime: string): string {
   return match ? `${match[1]} ${match[2]}` : ctime;
 }
 
+/** 聚合数据时间：ISO 串取 月-日 时:分（跨天/节假日打开时不误导）；格式异常原样返回。 */
+function aggregateTime(generatedAt: string): string {
+  const match = generatedAt.match(/(\d{2}-\d{2})T(\d{2}:\d{2})/);
+  return match ? `${match[1]} ${match[2]}` : generatedAt;
+}
+
 function SourceHealthBar({ data }: { data: InfoStreamData }) {
   const entries: ReadonlyArray<readonly [string, string, string]> = [
     ["cls_news", "财联社快讯", "cls_news"],
@@ -45,7 +51,7 @@ function SourceHealthBar({ data }: { data: InfoStreamData }) {
           </Tag>
         );
       })}
-      <span className="aq-hint">数据时间 {data.generated_at.slice(11, 16)}</span>
+      <span className="aq-hint">数据时间 {aggregateTime(data.generated_at)}</span>
     </div>
   );
 }

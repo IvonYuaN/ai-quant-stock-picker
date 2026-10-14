@@ -128,6 +128,7 @@ function EmotionBlock({ view, onPick }: { view: MarketView; onPick: (symbol: str
   if (!e) return null;
   return (
     <div className="aq-emotion-block">
+      {e.date ? <p className="aq-note">数据交易日 {e.date}（东财涨停板四池，回溯定位最近有数据的交易日）</p> : null}
       <div className="aq-breadth-metrics">
         <div>
           <span>涨停家数</span>
@@ -185,7 +186,10 @@ function EmotionBlock({ view, onPick }: { view: MarketView; onPick: (symbol: str
 
       {e.lianbanStocks.length > 0 ? (
         <div className="aq-ladder">
-          <p className="aq-label">连板股清单 · {e.lianbanStocks.length} 只 · 客观榜单，非推荐</p>
+          <p className="aq-label">
+            连板股清单 · 共 {e.lianbanStocks.length} 只
+            {e.lianbanStocks.length > 20 ? " · 仅展示前 20" : ""} · 客观榜单，非推荐
+          </p>
           <div className="aq-table-wrap">
             <table className="aq-table">
               <thead>
@@ -428,7 +432,7 @@ export function MarketPage() {
 
           {section({
             title: "成交额榜",
-            description: "全市场成交额 Top20 · 客观榜单，非推荐",
+            description: `全市场成交额 Top20 · 客观榜单，非推荐${view.turnoverUpdated ? ` · 数据时间 ${view.turnoverUpdated}` : ""}`,
             icon: Layers,
             available: availability.turnover,
             emptyTitle: "成交额榜未返回",
