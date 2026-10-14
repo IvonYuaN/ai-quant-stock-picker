@@ -149,3 +149,56 @@ def test_gstock_quote_full_null_shape():
         "change_pct",
     }
     assert all(v is None for v in q.values())
+
+
+def test_gate_freshness_maps_real_gate_fields(tmp_path, monkeypatch):
+    """#380 守卫：``_gate_freshness`` 必须映射 gate JSON 的**真实**字段。
+
+    事故（2026-10-14 实测 prod）：gate JSON 由 ``walkforward_gate.py`` 写入
+    ``run_date``/``both_pass``/``dsr_pass``/``pbo_pass``/``deflated_sharpe``/``pbo``/
+    ``n_variants`` —— **没有** ``verdict``/``generated_at``/``updated``。旧实现直接读这三个
+    键 ⇒ 文件存在即 present=true 而三字段**恒 null**（/api/health 的 gate 区块信息量为零）。
+    """
+    import json as _json
+
+    gate = tmp_path / "walkforward_gate.json"
+    gate.write_text(
+        _json.dumps(
+            {
+                "run_date": "2026-10-03",
+                "both_pass": False,
+                "dsr_pass": False,
+                "pbo_pass": True,
+                "deflated_sharpe": -1.4354,
+                "pbo": 0.4762,
+                "n_variants": 8,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        app_module, "_gate_freshness_candidates", lambda: [str(gate)]
+    )
+
+    out = app_module._gate_freshness()
+
+    assert out["present"] is True
+    # 核心：三字段不再恒 null（旧实现的 bug）
+    assert out["verdict"] == "fail"  # verdict ← both_pass
+    assert out["generated_at"] == "2026-10-03"  # generated_at ← run_date
+    assert isinstance(out["updated"], str) and "T" in out["updated"]  # ← 文件 mtime
+    # 原始判据可排障
+    assert out["both_pass"] is False
+    assert out["pbo_pass"] is True
+    assert out["deflated_sharpe"] == -1.4354
+    assert out["n_variants"] == 8
+
+
+def test_gate_freshness_absent_file_returns_not_present(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        app_module,
+        "_gate_freshness_candidates",
+        lambda: [str(tmp_path / "nope.json")],
+    )
+    out = app_module._gate_freshness()
+    assert out == {"present": False, "verdict": None, "generated_at": None, "updated": None}
