@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import time as _time
+from datetime import datetime
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -274,26 +275,52 @@ def _radar_freshness() -> dict:
         return {"present": False, "generated_at": None, "industries": 0}
 
 
-def _gate_freshness() -> dict:
-    """生产 gate 判定新鲜度（防御式，找不到文件返回 present=false）。"""
+def _gate_freshness_candidates() -> list[str]:
+    """gate 判定文件的候选路径（抽成函数，便于测试注入）。"""
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    candidates = [
+    return [
         os.path.join(repo_root, "data", "walkforward_gate.json"),
         "/opt/aqsp/data/walkforward_gate.json",
         os.path.expanduser("~/.vibe-research/walkforward_gate.json"),
     ]
-    for path in candidates:
+
+
+def _gate_freshness() -> dict:
+    """生产 gate 判定新鲜度（防御式，找不到文件返回 present=false）。
+
+    ⚠️ 2026-10-14（issue #380）：gate JSON 由 ``walkforward_gate.py`` 写入，**真实字段**是
+    ``run_date`` / ``both_pass`` / ``dsr_pass`` / ``pbo_pass`` / ``deflated_sharpe`` / ``pbo`` /
+    ``n_variants`` —— **没有** ``verdict`` / ``generated_at`` / ``updated``。旧实现直接读这三个
+    不存在的键 ⇒ 只要文件存在就 ``present=true`` 而三字段**恒 null**，该区块信息量为零。
+    现按真实字段映射（``verdict ← both_pass``、``generated_at ← run_date``、
+    ``updated ← 文件 mtime``），并把原始判据/指标一并暴露（便于监控与排障）。
+    """
+    for path in _gate_freshness_candidates():
         try:
             with open(path, encoding="utf-8") as fh:
                 data = json.load(fh)
-            return {
-                "present": True,
-                "verdict": data.get("verdict"),
-                "generated_at": data.get("generated_at"),
-                "updated": data.get("updated"),
-            }
         except Exception:
             continue
+        both_pass = data.get("both_pass")
+        try:
+            updated = (
+                datetime.fromtimestamp(os.path.getmtime(path)).astimezone().isoformat()
+            )
+        except Exception:
+            updated = None
+        return {
+            "present": True,
+            "verdict": None if both_pass is None else ("pass" if both_pass else "fail"),
+            "generated_at": data.get("run_date"),
+            "updated": updated,
+            # 原始字段：旧实现不暴露 ⇒ 恒 null 时无从排障
+            "both_pass": both_pass,
+            "dsr_pass": data.get("dsr_pass"),
+            "pbo_pass": data.get("pbo_pass"),
+            "deflated_sharpe": data.get("deflated_sharpe"),
+            "pbo": data.get("pbo"),
+            "n_variants": data.get("n_variants"),
+        }
     return {"present": False, "verdict": None, "generated_at": None, "updated": None}
 
 
