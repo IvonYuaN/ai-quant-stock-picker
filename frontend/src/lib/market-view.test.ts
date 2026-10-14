@@ -95,6 +95,7 @@ const fullInput: MarketInput = {
   overview: overviewFixture,
   emotion: emotionFixture,
   turnover: turnoverFixture,
+  turnoverUpdated: "2026-09-11 15:32",
   industry: industryFixture,
 };
 
@@ -135,6 +136,9 @@ export const marketViewContract = {
   industryPlaceholderBecomesNull: full.industryBottom[0].changePct === null,
   industryBottomIsReversed: full.industryBottom[0].name === "地产",
   updatedIsKept: full.updated === "2026-09-11 15:30",
+  // W3 证据链：turnover 接口自带的取数时间必须透传（此前在 useMarketData 被丢弃）
+  turnoverUpdatedIsKept: full.turnoverUpdated === "2026-09-11 15:32",
+  turnoverUpdatedIsEmptyWithoutSource: buildMarketView({ turnover: turnoverFixture }).turnoverUpdated === "",
 
   /* ---- 接口失败 vs 数据源没覆盖 ---- */
   availabilityIsAllFalseForEmptyView: Object.values(sectionAvailability(buildMarketView({}))).every((value) => value === false),

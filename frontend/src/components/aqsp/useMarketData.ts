@@ -55,9 +55,11 @@ export function useMarketData(): MarketDataState {
       results.forEach((result, index) => {
         const key = jobs[index][0];
         if (result.status === "fulfilled") {
-          // turnover 接口返回 {stocks, updated}，取其中的列表
+          // turnover 接口返回 {stocks, updated}：列表进 view，取数时间透传给页面做证据标注（W3）
           if (key === "turnover") {
-            input.turnover = (result.value as { stocks?: never[] } | null)?.stocks ?? [];
+            const payload = result.value as { stocks?: never[]; updated?: string } | null;
+            input.turnover = payload?.stocks ?? [];
+            input.turnoverUpdated = payload?.updated ?? "";
           } else {
             input[key] = result.value as never;
           }
