@@ -294,3 +294,35 @@ def test_planb_v1_not_collapsed_to_volume_only(profile: str) -> None:
     scores = strat.calculate_score(data, regime="unknown")
     assert len(scores) > 0
     assert any(s != 0.0 for s in scores.values()), "V1 打分为全 0（因子族全未生效）"
+
+
+def test_variant_application_preserves_invert_triple_rise_pairing() -> None:
+    """#382（2026-10-14）：base ``momentum.invert_signal=True`` 时，任何变体应用后
+    ``triple_rise_weight`` 必须为 0。
+
+    变体自带 mom/tr 权重会**覆盖 base YAML**（`cli.py` 的 momentum 分支），volume/mr
+    分支还硬编码 tr=0.2/0.1 ⇒ 若不在变体路径同步「翻正 ⇒ tr=0」这条强制配对
+    （守卫 `test_momentum_invert_must_paired_with_triple_rise_removal` 锁定），
+    stable_plus 全部 8 个变体会以「mom 翻正 + tr>0」的退化组合进 grid，生产 gate 的
+    DSR/PBO/verdict 将**不针对生产配置**（只有 prelude 的 Sharpe/收益是）。
+    """
+    from dataclasses import replace as dc_replace
+
+    base = load_thresholds()
+    assert base.momentum.invert_signal is True, "本守卫前提：生产 base 已翻正（v1.1.21+）"
+
+    for profile in PROFILES:
+        for variant in _walkforward_grid_variants(profile):
+            applied = _apply_walkforward_grid_variant(base, variant)
+            assert applied.composite.triple_rise_weight == 0.0, (
+                f"{profile}/{variant.variant_id}: 变体应用后 "
+                f"tr={applied.composite.triple_rise_weight}（invert 配对未同步，#382）"
+            )
+
+    # 向后兼容：base 未翻正时**不得**改动变体声明的 tr（旧配置行为零变化）
+    legacy = dc_replace(base, momentum=dc_replace(base.momentum, invert_signal=False))
+    wf001 = next(v for v in _walkforward_grid_variants("stable_plus") if v.variant_id == "WF-001")
+    applied_legacy = _apply_walkforward_grid_variant(legacy, wf001)
+    assert applied_legacy.composite.triple_rise_weight == wf001.triple_rise_weight == 0.3, (
+        "base 未翻正时变体 tr 不应被强制改写（向后兼容）"
+    )

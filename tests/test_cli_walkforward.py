@@ -1805,7 +1805,16 @@ def test_walkforward_grid_profile_stable_plus_returns_eight_diverse_variants() -
 
 
 def test_walkforward_grid_variant_applies_strategy_mix_weights() -> None:
-    """strategy_mix 的权重写入此前零覆盖（旧测试把它 monkeypatch 成 no-op）。"""
+    """strategy_mix 的权重写入此前零覆盖（旧测试把它 monkeypatch 成 no-op）。
+
+    ⚠️ 2026-10-14（#382）：生产 base 已 `momentum.invert_signal=True` ⇒ 分支声明的
+    `triple_rise_weight` 会被**强制为 0**（「翻正 ⇒ tr=0」强制配对，见
+    `_apply_walkforward_grid_variant`）。故本测试按两种 base 分别断言：
+    - 生产 base（已翻正）：分支权重生效，但 tr 必须为 0；
+    - 未翻正的 base：tr 取分支声明值（volume=0.2 / mr=0.1），保证分支语义未被改写。
+    """
+    from dataclasses import replace as dc_replace
+
     import aqsp.cli as cli_mod
     from aqsp.strategies.thresholds import load_thresholds
 
@@ -1813,19 +1822,24 @@ def test_walkforward_grid_variant_applies_strategy_mix_weights() -> None:
         v.variant_id: v for v in cli_mod._walkforward_grid_variants("stable_plus")
     }
 
-    volume_thresholds = cli_mod._apply_walkforward_grid_variant(
-        load_thresholds(), variants["WF-V01"]
-    )
-    assert volume_thresholds.composite.volume_weight == 0.3
-    assert volume_thresholds.composite.momentum_weight == 0.2
-    assert volume_thresholds.composite.triple_rise_weight == 0.2
+    base = load_thresholds()
+    legacy = dc_replace(base, momentum=dc_replace(base.momentum, invert_signal=False))
 
-    mr_thresholds = cli_mod._apply_walkforward_grid_variant(
-        load_thresholds(), variants["WF-MR1"]
-    )
-    assert mr_thresholds.composite.mean_reversion_weight == 0.4
-    assert mr_thresholds.composite.momentum_weight == 0.1
-    assert mr_thresholds.composite.triple_rise_weight == 0.1
+    for thresholds, expected_tr in ((base, 0.0), (legacy, 0.2)):
+        volume_thresholds = cli_mod._apply_walkforward_grid_variant(
+            thresholds, variants["WF-V01"]
+        )
+        assert volume_thresholds.composite.volume_weight == 0.3
+        assert volume_thresholds.composite.momentum_weight == 0.2
+        assert volume_thresholds.composite.triple_rise_weight == expected_tr
+
+    for thresholds, expected_tr in ((base, 0.0), (legacy, 0.1)):
+        mr_thresholds = cli_mod._apply_walkforward_grid_variant(
+            thresholds, variants["WF-MR1"]
+        )
+        assert mr_thresholds.composite.mean_reversion_weight == 0.4
+        assert mr_thresholds.composite.momentum_weight == 0.1
+        assert mr_thresholds.composite.triple_rise_weight == expected_tr
 
 
 def test_cscv_pbo_flags_degraded_reliability_on_small_grid() -> None:

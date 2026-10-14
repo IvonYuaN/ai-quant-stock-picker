@@ -6603,6 +6603,20 @@ def _apply_walkforward_grid_variant(
         # 故 lb 变化会真实改变打分向量。
         mr_lookback_days = variant.lookback_days
 
+    # 🔴 #382（2026-10-14）：`momentum.invert_signal=True` 时 tr 权重必须为 0 —— 这是
+    # 守卫 `test_momentum_invert_must_paired_with_triple_rise_removal` 锁定的**强制配对**
+    # （ρ(mom,tr)=0.609；只翻 mom 会把区分度 0.1504→0.0757）。但变体自带
+    # `momentum_weight`/`triple_rise_weight` 会**覆盖 base YAML**，且 volume/mr 分支还硬编码
+    # tr=0.2/0.1 ⇒ 不在此处同步不变量，stable_plus 全部 8 个变体都会以「mom 翻正 + tr>0」
+    # 的退化组合进 grid ⇒ 生产 gate 的 DSR/PBO/verdict 将不针对生产配置（只有 prelude 是）。
+    # 仅在 base 已翻正时生效 ⇒ 对未翻正的 base 行为零变化（向后兼容）。
+    # ⚠️ 必须在构造 replace_kwargs 之前改 composite_updates（否则改动不生效）。
+    if (
+        bool(getattr(getattr(thresholds, "momentum", None), "invert_signal", False))
+        and float(composite_updates.get("triple_rise_weight") or 0.0) != 0.0
+    ):
+        composite_updates["triple_rise_weight"] = 0.0
+
     replace_kwargs: dict[str, Any] = {
         "composite": CompositeThresholds(
             **{
@@ -6677,13 +6691,20 @@ def _run_walkforward_grid_cscv(
     variants = _walkforward_grid_variants(args.grid_profile)
 
     for variant in variants:
+        variant_thresholds = _apply_walkforward_grid_variant(thresholds, variant)
+        effective_trw = float(variant_thresholds.composite.triple_rise_weight)
+        declared_trw = float(variant.triple_rise_weight)
+        trw_note = (
+            f" trw={declared_trw:.1f}"
+            if effective_trw == declared_trw
+            else f" trw={declared_trw:.1f}→{effective_trw:.1f}(#382 强制配对)"
+        )
         print(
             "grid variant "
             f"{variant.variant_id}/{len(variants)}: "
-            f"mw={variant.momentum_weight:.1f} trw={variant.triple_rise_weight:.1f} "
+            f"mw={variant.momentum_weight:.1f}{trw_note} "
             f"lookback={variant.lookback_days} horizon={variant.horizon_days} top_n={variant.top_n}"
         )
-        variant_thresholds = _apply_walkforward_grid_variant(thresholds, variant)
         variant_strategy = CompositeStrategy(thresholds=variant_thresholds)
         fee_bps, slippage_bps = _execution_cost_bps_from_thresholds(thresholds)
         variant_cfg = WalkForwardEngineConfig(
