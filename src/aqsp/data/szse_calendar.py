@@ -42,7 +42,7 @@ from typing import Callable, Optional
 
 import pandas as pd
 
-from aqsp.core.http import build_http_session
+from aqsp.core.http import HttpClientConfig, build_http_session
 from aqsp.core.runtime import runtime_data_root
 from aqsp.core.time import now_shanghai
 
@@ -61,13 +61,27 @@ _SZSE_HEADERS = {
     "Referer": "https://www.szse.cn/",
 }
 
+# 🔴 本源的 HTTP 配置刻意**不走全仓默认**（connect 5s / read 10s / retry 2）：
+# ``is_trading_day()`` 是高频路径，境外出口（CI runner）连不上 szse.cn 时，
+# 默认配置下每次调用要等满 3 次重试 × 超时。这里压到「一次、短超时」，
+# 失败就快速降级回静态日历，把等待成本从数十秒降到个位数秒。
+_SZSE_HTTP_CONFIG = HttpClientConfig(
+    connect_timeout=3.0,
+    read_timeout=6.0,
+    max_retries=0,
+    backoff_factor=0.0,
+    backoff_max=0.0,
+)
+
 # 新鲜 TTL：命中则直接用磁盘缓存，不再打网络。
 _FRESH_TTL = timedelta(hours=24)
 # 陈旧 TTL：网络失败时，此前校验过的完整月份仍可短暂使用。
 _STALE_TTL = timedelta(days=7)
 # 进程内 memo：避免 ``is_trading_day()`` 热路径反复读盘。
 _MEMO_TTL_SECONDS = 300.0
-_MEMO_FAILURE_TTL_SECONDS = 60.0
+# 失败 memo：网络不可达时不要在同一个进程里反复重试（境外出口连不上 szse.cn）。
+# 取 10 分钟——日历本来就有 24h TTL，短暂失败不值得让整个进程一直空转。
+_MEMO_FAILURE_TTL_SECONDS = 600.0
 
 # ``jybz`` 取值语义：1 = 交易日，0 = 休市。未知值按 fail-closed 视为休市。
 _OPEN_FLAG = "1"
@@ -252,7 +266,9 @@ class SzseCalendarSource:
         session = self._session
         try:
             if session is None:
-                session = build_http_session(headers=_SZSE_HEADERS)
+                session = build_http_session(
+                    config=_SZSE_HTTP_CONFIG, headers=_SZSE_HEADERS
+                )
             response = session.get(  # type: ignore[attr-defined]
                 SZSE_MONTH_LIST_URL,
                 params={"month": month},

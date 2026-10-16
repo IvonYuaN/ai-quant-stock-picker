@@ -450,3 +450,75 @@ def test_load_month_result_is_sorted_and_deduplicated(tmp_path):
     dates = [d.trade_date for d in days]
     assert dates == sorted(dates)
     assert len(dates) == len(set(dates))
+
+
+# ---------------------------------------------------------------------------
+# 性能红线：已覆盖年份不得联网
+# ---------------------------------------------------------------------------
+
+
+def test_static_calendar_covers_year_reads_holiday_years():
+    from aqsp.data.trading_calendar import _static_calendar_covers_year
+
+    # 真实 config/trading_holidays.json 当前只含 2026 年
+    assert _static_calendar_covers_year(date(2026, 6, 1)) is True
+    assert _static_calendar_covers_year(date(2027, 6, 1)) is False
+
+
+def test_szse_source_is_never_called_for_years_covered_by_static_calendar(monkeypatch):
+    """🔴 性能红线：静态名单已覆盖该年时**不得**联网。
+
+    `is_trading_day()` 是高频路径；CI（GitHub runner 在境外）连不上 szse.cn，
+    若每次调用都打接口，整个测试套件会被重试超时拖死。
+    """
+    calls: list[date] = []
+    monkeypatch.setattr(
+        "aqsp.data.trading_calendar.load_szse_trade_calendar",
+        lambda start, end, **kwargs: calls.append(start) or None,
+    )
+    monkeypatch.setattr(
+        "aqsp.data.trading_calendar.load_optional_trade_calendar",
+        lambda *args, **kwargs: None,
+    )
+    assert resolve_is_trading_day(date(2026, 10, 16)) is True
+    assert resolve_is_trading_day(date(2026, 10, 17)) is False
+    assert calls == []
+
+
+def test_szse_source_is_called_for_years_missing_from_static_calendar(monkeypatch):
+    calls: list[date] = []
+    monkeypatch.setattr(
+        "aqsp.data.trading_calendar.load_szse_trade_calendar",
+        lambda start, end, **kwargs: calls.append(start) or None,
+    )
+    monkeypatch.setattr(
+        "aqsp.data.trading_calendar.load_optional_trade_calendar",
+        lambda *args, **kwargs: None,
+    )
+    resolve_is_trading_day(date(2027, 2, 9))
+    assert len(calls) == 1
+
+
+def test_tushare_result_short_circuits_before_the_year_guard(monkeypatch):
+    """Tushare 有数据时直接返回，不触发年份判定，也不碰 SZSE。"""
+    tushare_frame = pd.DataFrame({"cal_date": ["2027-02-09"], "is_open": [0]})
+    monkeypatch.setattr(
+        "aqsp.data.trading_calendar.load_optional_trade_calendar",
+        lambda *args, **kwargs: tushare_frame,
+    )
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("Tushare 命中时不应走到 SZSE")
+
+    monkeypatch.setattr("aqsp.data.trading_calendar.load_szse_trade_calendar", _boom)
+    assert resolve_is_trading_day(date(2027, 2, 9)) is False
+
+
+def test_repeated_failures_do_not_refetch_within_failure_memo(tmp_path):
+    """网络不可达时，同一进程内不得反复重试（失败 memo 兜住）。"""
+    failing = _FakeSession({"2026-10": _FakeResponse(503, None)})
+    source = SzseCalendarSource(tmp_path, session=failing)
+    assert source.load_month("2026-10") is None
+    assert source.load_month("2026-10") is None
+    assert source.load_month("2026-10") is None
+    assert failing.calls == ["2026-10"]  # 只打了一次

@@ -239,16 +239,33 @@ def trading_day_lag(
     return lag
 
 
+def _static_calendar_covers_year(target: date) -> bool:
+    """静态休市名单是否已覆盖 ``target`` 所在年份。
+
+    ``config/trading_holidays.json`` 按年维护「该年全部休市日」。只要该年出现在
+    名单里，就说明我们手上有这一年的权威休市表，``周末 + 名单`` 足以判定 ——
+    此时**不需要**再联网问深交所。
+
+    这条判定是**性能红线**，不是可选优化：``is_trading_day()`` 在选股链路里被
+    高频调用；若每次都打外部接口，CI（GitHub runner 位于境外，连不上 szse.cn）
+    每次调用都要等满重试 × 超时，整个测试套件会被拖死（实测：shard 3 从 154s
+    涨到 25min+ 仍未结束）。SZSE 源的职责是**补静态名单没写的年份**（如 2027），
+    不是复核已覆盖年份 —— 已覆盖年份的权威性由 #314 的「官方公告照抄」流程保证。
+    """
+    holidays = _load_basic_trading_calendar()
+    return any(holiday.year == target.year for holiday in holidays)
+
+
 def _load_runtime_calendar(
     target: date,
     *,
     exchange: str,
     window: TradingCalendarWindow | None,
 ) -> pd.DataFrame | None:
-    """运行时日历：Tushare 优先，缺席时回落到深交所官方日历。
+    """运行时日历：Tushare 优先，缺席且静态名单未覆盖该年时回落到深交所。
 
     静态休市名单仍是**硬覆盖**（见 ``resolve_is_trading_day`` 首段），本函数
-    只负责补「静态名单没写的年份/日子」。
+    只负责补「静态名单没写的年份」。
     """
     runtime_window = window or TradingCalendarWindow()
     start = target - timedelta(days=runtime_window.before_days)
@@ -256,4 +273,6 @@ def _load_runtime_calendar(
     tushare_calendar = load_optional_trade_calendar(start, end, exchange=exchange)
     if tushare_calendar is not None:
         return tushare_calendar
+    if _static_calendar_covers_year(target):
+        return None
     return load_szse_trade_calendar(start, end, anchor=target)
