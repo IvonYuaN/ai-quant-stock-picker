@@ -112,6 +112,8 @@ RPS 相对强度、放量突破、均线缩量回踩、碗口反弹、低波趋�
 ### 4.3 配置 `config/`（11 文件）
 `thresholds.yaml`（策略阈值**单一来源**，改必升 `version` + walk-forward 报告）、`blacklist.yaml`、`data_sources.yaml`、`evolution_config.yaml`、`factor_config.yaml`、`factor_library.json`、`goal_switches.yaml`、`monitors.yaml`、`news_sources.yaml`、`strategy_sources.yaml`、`trading_holidays.json`。
 
+⚠️ `trading_holidays.json`（静态休市名单，`aqsp.core.time._load_basic_trading_calendar` 的唯一来源）**不再是纯手写**：每年 12 月用 `python scripts/data/generate_trading_holidays.py --year <次年>` 由深交所官方日历生成 + 人工复核 diff，运行手册见该脚本 docstring。🔴 只对**新年份**落盘（`--write`），口径冲突见 issue #392。
+
 ### 4.4 文档 `docs/`（23 项）
 `architecture.md`（宪法，必读）、`AGENTS.md`/`agent-operating-boundaries.md`（协作/边界）、`CURRENT_STATE.md`、`CONSTITUTION.md`、`README.md`、`TROUBLESHOOTING.md`、`daily-operation.md`、`two-node-handoff.md`（runner↔prod 单向 pull）、`walkforward-2026-05.md`、`momentum-diagnosis.md`、`research/`、`archive/`（历史）。
 
