@@ -27,6 +27,21 @@
 - **锚点月缺失即整体降级**：接口按整月返回（28–31 行）或整月为空，因此只有
   锚点月（目标日所在月）真的拿到数据，才认为覆盖成立。避免「邻月有数据 ⇒
   目标月缺失的日子被当成休市」这类静默错误。
+
+🔴 红线：**联网必须显式 opt-in（``allow_network=True``）**
+--------------------------------------------------------
+``is_trading_day()`` / ``get_previous_trading_day()`` 是选股链路的**高频路径**，
+本模块**默认只读磁盘缓存、绝不联网**（``allow_network`` 默认 ``False``）。
+联网只允许由离线批处理显式发起（:func:`fetch_months`，供生成
+``config/trading_holidays.json`` 用）。
+
+这条红线的代价是被实测过的（2026-10-16 CI）：``backend/tests``
+``test_ic_dual_verdict_stale_as_of_b_overridable_via_env`` 用
+``DUAL_MAX_LAG_TRADING_DAYS=99999`` 驱动 ``get_previous_trading_day`` 逐日回退
+**≈385 年**，隐式联网版把 ``load_szse_trade_calendar`` 调了 **139,737 次**
+（去重后约 4,600 个月份各打一次接口）⇒ ``verify (shard 3)`` 在 ``Tests`` 步
+挂死 17 分钟直到被取消。而且**读响应**（``ssl.read``）不受 ``connect_timeout``
+保护：服务端慢速/不回包时单次调用可被吊住数分钟，靠调小超时无法根治。
 """
 
 from __future__ import annotations
@@ -38,7 +53,7 @@ import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, Iterable, Optional
 
 import pandas as pd
 
@@ -87,7 +102,9 @@ _MEMO_FAILURE_TTL_SECONDS = 600.0
 _OPEN_FLAG = "1"
 _CLOSED_FLAG = "0"
 
-# key = f"{cache_dir}|{month}"，value = (monotonic 时间戳, 该月天数或 None)
+# key = f"{cache_dir}|{month}|net={0|1}"，value = (monotonic 时间戳, 该月天数或 None)
+# ⚠️ key 必须带 ``net`` 位：离线读缓存与显式联网是两套语义，混用会让「离线未命中」
+# 把「显式联网」也一并短路掉。
 _MEMO: dict[str, tuple[float, Optional[tuple["SzseCalendarDay", ...]]]] = {}
 
 
@@ -286,16 +303,22 @@ class SzseCalendarSource:
 
     # -- 对外 --------------------------------------------------------------
 
-    def load_month(self, month: str) -> tuple[SzseCalendarDay, ...] | None:
+    def load_month(
+        self, month: str, *, allow_network: bool = False
+    ) -> tuple[SzseCalendarDay, ...] | None:
         """取整月日历。
 
-        - 返回 ``None`` ⇒ 取数失败（调用方应回退）；
+        - 返回 ``None`` ⇒ 不可用（缓存未命中，或显式联网取数失败）；
         - 返回 ``()`` ⇒ 成功但该月无数据（例如尚未公布的下月）。
+
+        🔴 ``allow_network`` **默认 ``False``**（只读缓存）。理由见模块 docstring：
+        ``is_trading_day()`` 是高频路径，隐式联网曾被实测拖死 CI 十几分钟。
+        只有离线批处理（:func:`fetch_months`）才传 ``True``。
         """
         if not self._enabled:
             return None
 
-        memo_key = f"{self._cache_dir}|{month}"
+        memo_key = f"{self._cache_dir}|{month}|net={int(allow_network)}"
         stamp = time.monotonic()
         memo = _MEMO.get(memo_key)
         if memo is not None:
@@ -315,6 +338,13 @@ class SzseCalendarSource:
             if now - fetched_at < _FRESH_TTL:
                 _MEMO[memo_key] = (stamp, days)
                 return days
+
+        if not allow_network:
+            # 离线模式：只认新鲜缓存。陈旧缓存本来的用途是「联网失败后的兜底」，
+            # 离线模式下没有「失败」可对照，宁可回退静态名单，也不要拿可能过期的
+            # 月份冒充交易所权威。
+            _MEMO[memo_key] = (stamp, None)
+            return None
 
         fresh = self._fetch(month)
         if fresh is not None:
@@ -342,6 +372,7 @@ class SzseCalendarSource:
         end: date,
         *,
         anchor: date | None = None,
+        allow_network: bool = False,
     ) -> pd.DataFrame | None:
         """返回与 Tushare 日历同 schema 的 DataFrame（``cal_date`` / ``is_open``）。
 
@@ -350,6 +381,8 @@ class SzseCalendarSource:
 
         这条规则防的是一类静默错误：窗口跨月时，邻月有数据、目标月尚未公布，
         若照单返回，目标月缺失的日子会被 ``is_open_day_in_calendar`` 判成休市。
+
+        ``allow_network`` 见 :meth:`load_month`（默认 ``False`` = 只读缓存）。
         """
         if end < start:
             return None
@@ -357,7 +390,7 @@ class SzseCalendarSource:
         rows: list[SzseCalendarDay] = []
         anchor_ok = anchor_month is None
         for month in months_between(start, end):
-            days = self.load_month(month)
+            days = self.load_month(month, allow_network=allow_network)
             if days is None:
                 # 取数失败：该月整体不可信。若它就是锚点月 ⇒ 放弃本次覆盖。
                 if month == anchor_month:
@@ -386,11 +419,32 @@ def _enabled_from_env() -> bool:
     return raw not in {"0", "false", "no", "off"}
 
 
+def fetch_months(
+    months: Iterable[str],
+    *,
+    source: SzseCalendarSource | None = None,
+    cache_dir: Path | str | None = None,
+) -> dict[str, tuple[SzseCalendarDay, ...] | None]:
+    """显式联网刷新若干月份 —— 本模块**唯一**允许打深交所接口的入口。
+
+    供**离线批处理**使用（生成 / 复核 ``config/trading_holidays.json``，issue #314
+    的自动化收尾）。运行时的 ``is_trading_day()`` 路径只读缓存，永远不经过这里。
+
+    返回值把「取数失败（``None``）」与「成功但该月无数据（``()``）」严格分开，
+    调用方据此决定是否落盘。副作用：命中的月份会写入 ``cache_dir`` 磁盘缓存。
+    """
+    calendar_source = source or SzseCalendarSource(cache_dir)
+    return {
+        month: calendar_source.load_month(month, allow_network=True) for month in months
+    }
+
+
 __all__ = [
     "SZSE_MONTH_LIST_URL",
     "SzseCalendarDay",
     "SzseCalendarSource",
     "clear_memo",
+    "fetch_months",
     "month_key",
     "months_between",
     "parse_month_payload",

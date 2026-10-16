@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import date, datetime, timedelta
 
 import pandas as pd
@@ -20,7 +21,11 @@ from aqsp.data.szse_calendar import (
     months_between,
     parse_month_payload,
 )
-from aqsp.data.trading_calendar import resolve_is_trading_day
+from aqsp.data.trading_calendar import (
+    resolve_is_trading_day,
+    resolve_next_trading_day,
+    resolve_previous_trading_day,
+)
 
 SHANGHAI = szse_calendar.now_shanghai().tzinfo
 
@@ -193,21 +198,37 @@ def test_months_between_returns_empty_for_reversed_range():
 def test_load_month_fetches_and_persists_cache(tmp_path):
     session = _FakeSession({"2026-10": _FakeResponse(200, _payload("2026-10"))})
     source = SzseCalendarSource(tmp_path, session=session)
-    days = source.load_month("2026-10")
+    days = source.load_month("2026-10", allow_network=True)
     assert days is not None
     assert len(days) == 31
     assert session.calls == ["2026-10"]
     assert (tmp_path / "2026-10.json").is_file()
 
 
+def test_load_month_never_fetches_without_explicit_opt_in(tmp_path):
+    """🔴 离线默认：未显式 opt-in 时**一次网络都不许打**。
+
+    这是 2026-10-16 CI 事故的直接回归守卫 —— ``is_trading_day()`` 高频路径
+    不得隐式联网。
+    """
+    session = _FakeSession({"2026-10": _FakeResponse(200, _payload("2026-10"))})
+    source = SzseCalendarSource(tmp_path, session=session)
+    assert source.load_month("2026-10") is None
+    assert session.calls == []
+    assert not (tmp_path / "2026-10.json").exists()
+
+
 def test_load_month_uses_fresh_cache_without_network(tmp_path):
     now = datetime(2026, 10, 16, 10, 0, tzinfo=SHANGHAI)
     first = _FakeSession({"2026-10": _FakeResponse(200, _payload("2026-10"))})
-    SzseCalendarSource(tmp_path, session=first, now=_fixed_now(now)).load_month("2026-10")
+    SzseCalendarSource(tmp_path, session=first, now=_fixed_now(now)).load_month(
+        "2026-10", allow_network=True
+    )
     clear_memo()
 
     later = now + timedelta(hours=1)
     second = _FakeSession({})
+    # 故意不传 allow_network：离线路径必须能直接吃下新鲜缓存。
     days = SzseCalendarSource(
         tmp_path, session=second, now=_fixed_now(later)
     ).load_month("2026-10")
@@ -215,15 +236,38 @@ def test_load_month_uses_fresh_cache_without_network(tmp_path):
     assert second.calls == []  # 24h 内不打网络
 
 
+def test_load_month_offline_ignores_stale_cache(tmp_path):
+    """离线模式只认新鲜缓存：陈旧缓存没有「取数失败」可对照，不启用。"""
+    now = datetime(2026, 10, 16, 10, 0, tzinfo=SHANGHAI)
+    SzseCalendarSource(
+        tmp_path,
+        session=_FakeSession({"2026-10": _FakeResponse(200, _payload("2026-10"))}),
+        now=_fixed_now(now),
+    ).load_month("2026-10", allow_network=True)
+    clear_memo()
+
+    later = now + timedelta(days=3)
+    session = _FakeSession({})
+    days = SzseCalendarSource(tmp_path, session=session, now=_fixed_now(later)).load_month(
+        "2026-10"
+    )
+    assert days is None  # 宁可回退静态名单
+    assert session.calls == []
+
+
 def test_load_month_refetches_after_ttl_expiry(tmp_path):
     now = datetime(2026, 10, 16, 10, 0, tzinfo=SHANGHAI)
     first = _FakeSession({"2026-10": _FakeResponse(200, _payload("2026-10"))})
-    SzseCalendarSource(tmp_path, session=first, now=_fixed_now(now)).load_month("2026-10")
+    SzseCalendarSource(tmp_path, session=first, now=_fixed_now(now)).load_month(
+        "2026-10", allow_network=True
+    )
     clear_memo()
 
     later = now + timedelta(hours=25)
     second = _FakeSession({"2026-10": _FakeResponse(200, _payload("2026-10"))})
-    SzseCalendarSource(tmp_path, session=second, now=_fixed_now(later)).load_month("2026-10")
+    SzseCalendarSource(tmp_path, session=second, now=_fixed_now(later)).load_month(
+        "2026-10", allow_network=True
+    )
     assert second.calls == ["2026-10"]
 
 
@@ -233,14 +277,14 @@ def test_load_month_falls_back_to_stale_cache_within_seven_days(tmp_path):
         tmp_path,
         session=_FakeSession({"2026-10": _FakeResponse(200, _payload("2026-10"))}),
         now=_fixed_now(now),
-    ).load_month("2026-10")
+    ).load_month("2026-10", allow_network=True)
     clear_memo()
 
     later = now + timedelta(days=3)
     failing = _FakeSession({"2026-10": _FakeResponse(503, None)})
     days = SzseCalendarSource(
         tmp_path, session=failing, now=_fixed_now(later)
-    ).load_month("2026-10")
+    ).load_month("2026-10", allow_network=True)
     assert days is not None and len(days) == 31
     assert failing.calls == ["2026-10"]
 
@@ -251,7 +295,7 @@ def test_load_month_returns_none_when_cache_too_stale_and_fetch_fails(tmp_path):
         tmp_path,
         session=_FakeSession({"2026-10": _FakeResponse(200, _payload("2026-10"))}),
         now=_fixed_now(now),
-    ).load_month("2026-10")
+    ).load_month("2026-10", allow_network=True)
     clear_memo()
 
     later = now + timedelta(days=30)
@@ -259,14 +303,19 @@ def test_load_month_returns_none_when_cache_too_stale_and_fetch_fails(tmp_path):
     assert (
         SzseCalendarSource(
             tmp_path, session=failing, now=_fixed_now(later)
-        ).load_month("2026-10")
+        ).load_month("2026-10", allow_network=True)
         is None
     )
 
 
 def test_load_month_returns_none_when_no_cache_and_network_error(tmp_path):
     failing = _FakeSession({"2026-10": _FakeResponse(403, None)})
-    assert SzseCalendarSource(tmp_path, session=failing).load_month("2026-10") is None
+    assert (
+        SzseCalendarSource(tmp_path, session=failing).load_month(
+            "2026-10", allow_network=True
+        )
+        is None
+    )
 
 
 def test_load_month_returns_none_when_transport_raises(tmp_path):
@@ -274,27 +323,36 @@ def test_load_month_returns_none_when_transport_raises(tmp_path):
         def get(self, *args, **kwargs):
             raise OSError("connection reset")
 
-    assert SzseCalendarSource(tmp_path, session=_Boom()).load_month("2026-10") is None
+    assert (
+        SzseCalendarSource(tmp_path, session=_Boom()).load_month(
+            "2026-10", allow_network=True
+        )
+        is None
+    )
 
 
 def test_load_month_returns_empty_tuple_for_announced_empty_month(tmp_path):
     """成功但该月无数据 ⇒ 空元组（与「取数失败返回 None」严格区分）。"""
     session = _FakeSession({"2027-06": _FakeResponse(200, {"data": []})})
-    days = SzseCalendarSource(tmp_path, session=session).load_month("2027-06")
+    days = SzseCalendarSource(tmp_path, session=session).load_month(
+        "2027-06", allow_network=True
+    )
     assert days == ()
 
 
 def test_load_month_returns_none_when_disabled(tmp_path):
     session = _FakeSession({"2026-10": _FakeResponse(200, _payload("2026-10"))})
     source = SzseCalendarSource(tmp_path, session=session, enabled=False)
-    assert source.load_month("2026-10") is None
+    assert source.load_month("2026-10", allow_network=True) is None
     assert session.calls == []
 
 
 def test_load_month_tolerates_corrupted_cache_file(tmp_path):
     (tmp_path / "2026-10.json").write_text("{ not json", encoding="utf-8")
     session = _FakeSession({"2026-10": _FakeResponse(200, _payload("2026-10"))})
-    days = SzseCalendarSource(tmp_path, session=session).load_month("2026-10")
+    days = SzseCalendarSource(tmp_path, session=session).load_month(
+        "2026-10", allow_network=True
+    )
     assert days is not None and len(days) == 31
 
 
@@ -312,7 +370,10 @@ def test_as_frame_returns_tushare_compatible_schema(tmp_path):
         }
     )
     frame = SzseCalendarSource(tmp_path, session=session).as_frame(
-        date(2026, 9, 15), date(2026, 11, 16), anchor=date(2026, 10, 16)
+        date(2026, 9, 15),
+        date(2026, 11, 16),
+        anchor=date(2026, 10, 16),
+        allow_network=True,
     )
     assert frame is not None
     assert list(frame.columns) == ["cal_date", "is_open"]
@@ -333,7 +394,10 @@ def test_as_frame_returns_none_when_anchor_month_has_no_data(tmp_path):
         }
     )
     frame = SzseCalendarSource(tmp_path, session=session).as_frame(
-        date(2026, 9, 15), date(2026, 11, 16), anchor=date(2026, 11, 10)
+        date(2026, 9, 15),
+        date(2026, 11, 16),
+        anchor=date(2026, 11, 10),
+        allow_network=True,
     )
     assert frame is None
 
@@ -347,7 +411,10 @@ def test_as_frame_returns_none_when_anchor_month_fetch_fails(tmp_path):
         }
     )
     frame = SzseCalendarSource(tmp_path, session=session).as_frame(
-        date(2026, 9, 15), date(2026, 11, 16), anchor=date(2026, 10, 16)
+        date(2026, 9, 15),
+        date(2026, 11, 16),
+        anchor=date(2026, 10, 16),
+        allow_network=True,
     )
     assert frame is None
 
@@ -362,7 +429,10 @@ def test_as_frame_tolerates_failing_neighbour_month(tmp_path):
         }
     )
     frame = SzseCalendarSource(tmp_path, session=session).as_frame(
-        date(2026, 9, 15), date(2026, 11, 16), anchor=date(2026, 10, 16)
+        date(2026, 9, 15),
+        date(2026, 11, 16),
+        anchor=date(2026, 10, 16),
+        allow_network=True,
     )
     assert frame is not None
     assert frame["cal_date"].min().startswith("2026-10")
@@ -380,7 +450,11 @@ def test_as_frame_returns_none_for_reversed_range(tmp_path):
 
 
 def test_resolve_is_trading_day_uses_szse_calendar_for_unlisted_year(monkeypatch):
-    """2027 春节未写进静态名单时，运行时日历必须能把它判成休市。"""
+    """2027 春节未写进静态名单时，运行时日历必须能把它判成休市。
+
+    这里直接注入 frame，等价于「缓存里已有该月的交易所口径」；离线读缓存
+    的真实验证见 ``test_runtime_resolution_reads_szse_cache_without_network``。
+    """
     frame = pd.DataFrame(
         {
             "cal_date": ["2027-02-05", "2027-02-08", "2027-02-09"],
@@ -444,7 +518,9 @@ def test_tushare_takes_priority_over_szse(monkeypatch):
 
 def test_load_month_result_is_sorted_and_deduplicated(tmp_path):
     session = _FakeSession({"2026-10": _FakeResponse(200, _payload("2026-10"))})
-    days = SzseCalendarSource(tmp_path, session=session).load_month("2026-10")
+    days = SzseCalendarSource(tmp_path, session=session).load_month(
+        "2026-10", allow_network=True
+    )
     assert days is not None
     assert isinstance(days[0], SzseCalendarDay)
     dates = [d.trade_date for d in days]
@@ -486,10 +562,11 @@ def test_szse_source_is_never_called_for_years_covered_by_static_calendar(monkey
 
 
 def test_szse_source_is_called_for_years_missing_from_static_calendar(monkeypatch):
-    calls: list[date] = []
+    """未覆盖年份会**读缓存**（不是联网）——调用必须显式带 ``allow_network=False``。"""
+    calls: list[tuple[date, dict]] = []
     monkeypatch.setattr(
         "aqsp.data.trading_calendar.load_szse_trade_calendar",
-        lambda start, end, **kwargs: calls.append(start) or None,
+        lambda start, end, **kwargs: calls.append((start, kwargs)) or None,
     )
     monkeypatch.setattr(
         "aqsp.data.trading_calendar.load_optional_trade_calendar",
@@ -497,6 +574,97 @@ def test_szse_source_is_called_for_years_missing_from_static_calendar(monkeypatc
     )
     resolve_is_trading_day(date(2027, 2, 9))
     assert len(calls) == 1
+    assert calls[0][1].get("allow_network") is False
+
+
+def test_runtime_resolution_never_attempts_network_for_unlisted_year(monkeypatch):
+    """🔴 红线：年份不在静态名单里时，运行时判定也**绝不允许联网**。
+
+    回归 2026-10-16 CI 事故：``backend/tests`` 的
+    ``test_ic_dual_verdict_stale_as_of_b_overridable_via_env`` 用
+    ``DUAL_MAX_LAG_TRADING_DAYS=99999`` 驱动 ``get_previous_trading_day``
+    逐日回退 ≈385 年，隐式联网版把深交所接口调了 **139,737 次**，
+    ``verify (shard 3)`` 在 ``Tests`` 步挂死 17 分钟后被取消。
+
+    这里用「``_fetch`` 一旦被调用就 AssertionError」把红线钉在**行为**上，
+    而不是断言源码里有没有某个字符串。
+    """
+
+    def _boom(self, month):  # noqa: ANN001
+        raise AssertionError(f"运行时判定不得联网（试图取 {month}）")
+
+    monkeypatch.setattr("aqsp.data.szse_calendar.SzseCalendarSource._fetch", _boom)
+    monkeypatch.setattr(
+        "aqsp.data.trading_calendar.load_optional_trade_calendar",
+        lambda *args, **kwargs: None,
+    )
+
+    assert resolve_is_trading_day(date(2099, 1, 5)) is True  # 周一
+    assert resolve_is_trading_day(date(2099, 1, 4)) is False  # 周日
+    # 逐日回退同样不得触网
+    assert resolve_previous_trading_day(date(2099, 1, 5)) == date(2099, 1, 2)
+    assert resolve_next_trading_day(date(2099, 1, 5)) == date(2099, 1, 6)
+
+
+def test_runtime_resolution_reads_szse_cache_without_network(tmp_path, monkeypatch):
+    """离线路径必须真能吃到新鲜磁盘缓存（否则 SZSE 源在运行时是死代码）。"""
+    now = szse_calendar.now_shanghai()
+    (tmp_path / "2027-02.json").write_text(
+        json.dumps(
+            {
+                "month": "2027-02",
+                "fetched_at": now.isoformat(timespec="seconds"),
+                "source": szse_calendar.SZSE_MONTH_LIST_URL,
+                # 交易所口径：春节 2/5–2/8 休市，2/9 开市
+                "days": {
+                    "2027-02-05": False,
+                    "2027-02-08": False,
+                    "2027-02-09": True,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(szse_calendar, "_default_cache_dir", lambda: tmp_path)
+
+    def _boom(self, month):  # noqa: ANN001
+        raise AssertionError("不得联网")
+
+    monkeypatch.setattr("aqsp.data.szse_calendar.SzseCalendarSource._fetch", _boom)
+    monkeypatch.setattr(
+        "aqsp.data.trading_calendar.load_optional_trade_calendar",
+        lambda *args, **kwargs: None,
+    )
+
+    assert resolve_is_trading_day(date(2027, 2, 8)) is False  # 缓存说休市
+    assert resolve_is_trading_day(date(2027, 2, 9)) is True  # 缓存说开市
+
+
+def test_runtime_resolution_falls_back_to_static_when_szse_cache_is_empty(monkeypatch):
+    """缓存为空 ⇒ 静默回退静态名单，且不联网、不抛异常。"""
+
+    def _boom(self, month):  # noqa: ANN001
+        raise AssertionError("不得联网")
+
+    monkeypatch.setattr("aqsp.data.szse_calendar.SzseCalendarSource._fetch", _boom)
+    monkeypatch.setattr(
+        "aqsp.data.trading_calendar.load_optional_trade_calendar",
+        lambda *args, **kwargs: None,
+    )
+    assert resolve_is_trading_day(date(2027, 2, 9)) is True  # 周二，静态口径开市
+
+
+def test_fetch_months_is_the_explicit_network_entry_point(tmp_path):
+    """``fetch_months`` 是唯一允许联网的入口（离线批处理用）。"""
+    session = _FakeSession({"2026-10": _FakeResponse(200, _payload("2026-10"))})
+    out = szse_calendar.fetch_months(
+        ["2026-10", "2026-11"],
+        source=SzseCalendarSource(tmp_path, session=session),
+    )
+    assert set(out) == {"2026-10", "2026-11"}
+    assert out["2026-10"] is not None and len(out["2026-10"]) == 31
+    assert out["2026-11"] is None  # 预置里没有 ⇒ 取数失败（None），不是 ()
+    assert session.calls == ["2026-10", "2026-11"]
 
 
 def test_tushare_result_short_circuits_before_the_year_guard(monkeypatch):
@@ -518,7 +686,7 @@ def test_repeated_failures_do_not_refetch_within_failure_memo(tmp_path):
     """网络不可达时，同一进程内不得反复重试（失败 memo 兜住）。"""
     failing = _FakeSession({"2026-10": _FakeResponse(503, None)})
     source = SzseCalendarSource(tmp_path, session=failing)
-    assert source.load_month("2026-10") is None
-    assert source.load_month("2026-10") is None
-    assert source.load_month("2026-10") is None
+    assert source.load_month("2026-10", allow_network=True) is None
+    assert source.load_month("2026-10", allow_network=True) is None
+    assert source.load_month("2026-10", allow_network=True) is None
     assert failing.calls == ["2026-10"]  # 只打了一次

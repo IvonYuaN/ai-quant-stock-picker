@@ -51,6 +51,7 @@ def load_szse_trade_calendar(
     *,
     anchor: date | None = None,
     source: SzseCalendarSource | None = None,
+    allow_network: bool = False,
 ) -> pd.DataFrame | None:
     """深交所官方日历（issue #314）—— Tushare 缺席时的运行时日历来源。
 
@@ -60,12 +61,19 @@ def load_szse_trade_calendar(
 
     取数失败 / 锚点月未公布 ⇒ 返回 ``None``，由调用方回退静态日历。
     本源**不抛异常**：日历源故障不得升级成选股链路故障。
+
+    🔴 ``allow_network`` **默认 ``False``**（只读磁盘缓存）。运行时
+    ``is_trading_day()`` 路径不得隐式联网 —— 详见 ``szse_calendar`` 模块
+    docstring 里 2026-10-16 CI 挂死 17 分钟的事故记录。只有离线批处理
+    （``szse_calendar.fetch_months``）才显式传 ``True``。
     """
     try:
         calendar_source = source or SzseCalendarSource()
     except (OSError, ValueError):
         return None
-    return calendar_source.as_frame(start, end, anchor=anchor)
+    return calendar_source.as_frame(
+        start, end, anchor=anchor, allow_network=allow_network
+    )
 
 
 def resolve_is_trading_day(
@@ -266,6 +274,12 @@ def _load_runtime_calendar(
 
     静态休市名单仍是**硬覆盖**（见 ``resolve_is_trading_day`` 首段），本函数
     只负责补「静态名单没写的年份」。
+
+    🔴 ``allow_network=False`` 是**红线**，不是默认值的巧合：本函数位于
+    ``is_trading_day()`` 的高频路径上，一次隐式联网会被调用几十万次
+    （2026-10-16 实测：``DUAL_MAX_LAG_TRADING_DAYS=99999`` 的用例把它调了
+    139,737 次，CI ``Tests`` 步挂死 17 分钟被取消）。深交所源在这里**只读
+    磁盘缓存**；真正联网只允许走离线批处理 ``szse_calendar.fetch_months``。
     """
     runtime_window = window or TradingCalendarWindow()
     start = target - timedelta(days=runtime_window.before_days)
@@ -275,4 +289,4 @@ def _load_runtime_calendar(
         return tushare_calendar
     if _static_calendar_covers_year(target):
         return None
-    return load_szse_trade_calendar(start, end, anchor=target)
+    return load_szse_trade_calendar(start, end, anchor=target, allow_network=False)
