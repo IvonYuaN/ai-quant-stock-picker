@@ -4,6 +4,10 @@
 - 每个源独立降级：单源失败 ⇒ 该区为空 + ``sources`` 显式标注错误（缺材料可见，
   不静默渲染成正常空数据）。
 - 进程内 TTL 缓存：信息流读多写少，避免每次请求都打外部接口（prod 1.6G 红线）。
+- 概念板块先过 :mod:`aqsp.features.narrative` 的噪声过滤与叙事归并：
+  500+ 个东财标签里混着融资融券 / 深股通 / 昨日涨停 / 沪深300_ 这类
+  指数成分与交易机制标签，它们跟着大盘动、对「今天的主线是什么」零信息量，
+  却会挤占异动榜前 20 名。
 """
 
 from __future__ import annotations
@@ -15,10 +19,16 @@ from typing import Any
 from aqsp.core.time import now_shanghai
 from aqsp.data.cls_news import ClsNewsSource
 from aqsp.data.concept_board import ConceptBoardSource
+from aqsp.features.narrative import (
+    is_noise_label,
+    merge_narratives,
+    narrative_for,
+)
 
 _TTL_SECONDS = 300
 _NEWS_LIMIT = 30
 _CONCEPT_LIMIT = 20
+_NARRATIVE_LIMIT = 10
 
 _lock = threading.Lock()
 _cache: dict[str, Any] | None = None
@@ -52,15 +62,23 @@ def _fetch_news(source: ClsNewsSource | None) -> tuple[list[dict[str, Any]], str
         return [], f"error: {exc}"
 
 
-def _fetch_concepts(source: ConceptBoardSource | None) -> tuple[list[dict[str, Any]], str]:
-    """返回 (概念异动榜按涨跌幅降序, 状态)；注入语义同 _fetch_news。"""
+def _fetch_concepts(
+    source: ConceptBoardSource | None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str]:
+    """返回 (概念异动榜按涨跌幅降序, 叙事归并榜, 状态)；注入语义同 ``_fetch_news``。
+
+    噪声标签在**排序与截断之前**剔除，否则它们会占掉 ``_CONCEPT_LIMIT`` 名额。
+    叙事归并基于**全量**（已过滤）标签，而不是只对前 20 名归并 —— 同一个主线
+    可能有 5 个标签散落在 20 名开外，只对前 20 归并会把主线切碎。
+    """
     try:
         if source is None:
             items = ConceptBoardSource().load(force=True)
         else:
             items = source.items()
-        ranked = sorted(items, key=lambda item: item.change_pct, reverse=True)
-        return [
+        kept = [item for item in items if not is_noise_label(item.board_name)]
+        ranked = sorted(kept, key=lambda item: item.change_pct, reverse=True)
+        concepts = [
             {
                 "board_code": item.board_code,
                 "board_name": item.board_name,
@@ -69,11 +87,25 @@ def _fetch_concepts(source: ConceptBoardSource | None) -> tuple[list[dict[str, A
                 "change_pct": item.change_pct,
                 "main_net_inflow": item.main_net_inflow,
                 "main_net_ratio": item.main_net_ratio,
+                "narrative": narrative_for(item.board_name),
             }
             for item in ranked[:_CONCEPT_LIMIT]
-        ], "ok"
+        ]
+        narratives = [
+            {
+                "name": bucket.name,
+                "labels": list(bucket.labels),
+                "label_count": bucket.label_count,
+                "mean_change_pct": bucket.mean_change_pct,
+                "max_change_pct": bucket.max_change_pct,
+            }
+            for bucket in merge_narratives(
+                (item.board_name, item.change_pct) for item in ranked
+            )[:_NARRATIVE_LIMIT]
+        ]
+        return concepts, narratives, "ok"
     except Exception as exc:  # noqa: BLE001 - 单源失败降级
-        return [], f"error: {exc}"
+        return [], [], f"error: {exc}"
 
 
 def get_info_stream(
@@ -89,11 +121,12 @@ def get_info_stream(
             if _cache is not None and (time.monotonic() - _cache_at) < _TTL_SECONDS:
                 return _cache
     news, news_status = _fetch_news(news_source)
-    concepts, concept_status = _fetch_concepts(concept_source)
+    concepts, narratives, concept_status = _fetch_concepts(concept_source)
     payload: dict[str, Any] = {
         "generated_at": now_shanghai().isoformat(),
         "news": news,
         "concepts": concepts,
+        "narratives": narratives,
         "sources": {"cls_news": news_status, "concept_board": concept_status},
     }
     if news_source is None and concept_source is None:
