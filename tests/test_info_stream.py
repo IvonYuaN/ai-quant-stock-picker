@@ -79,3 +79,66 @@ def test_info_stream_degrades_single_source_with_explicit_error():
     assert payload["sources"]["cls_news"].startswith("error:")
     assert payload["sources"]["concept_board"] == "ok"
     assert len(payload["concepts"]) == 1
+
+
+def test_info_stream_drops_noise_concept_labels_before_ranking():
+    """噪声标签（指数成分/交易机制）必须被剔除，且不得占掉异动榜名额。"""
+    payload = info_stream.get_info_stream(
+        force=True,
+        news_source=ClsNewsSource().from_items([_news_item()]),
+        concept_source=ConceptBoardSource().from_items(
+            [
+                _concept_item("融资融券", 9.9),  # 噪声，涨得最猛也必须出局
+                _concept_item("沪深300_", 8.8),  # 噪声
+                _concept_item("光模块", 5.0),
+                _concept_item("种业", 3.0),
+            ]
+        ),
+    )
+    assert [c["board_name"] for c in payload["concepts"]] == ["光模块", "种业"]
+
+
+def test_info_stream_annotates_each_concept_with_its_narrative():
+    payload = info_stream.get_info_stream(
+        force=True,
+        news_source=ClsNewsSource().from_items([_news_item()]),
+        concept_source=ConceptBoardSource().from_items(
+            [_concept_item("光通信模块", 5.0), _concept_item("TOP贴片", 4.0)]
+        ),
+    )
+    by_name = {c["board_name"]: c["narrative"] for c in payload["concepts"]}
+    assert by_name["光通信模块"] == "光通信/CPO"
+    assert by_name["TOP贴片"] is None  # 未映射不等于噪声
+
+
+def test_info_stream_merges_synonym_concepts_into_one_narrative():
+    """同一主线的多个标签必须合成一条，而不是把主线切碎成 4 条。"""
+    payload = info_stream.get_info_stream(
+        force=True,
+        news_source=ClsNewsSource().from_items([_news_item()]),
+        concept_source=ConceptBoardSource().from_items(
+            [
+                _concept_item("CPO", 6.0),
+                _concept_item("光模块", 4.0),
+                _concept_item("光通信模块", 5.0),
+                _concept_item("种业", 3.0),
+            ]
+        ),
+    )
+    names = [n["name"] for n in payload["narratives"]]
+    assert names == ["光通信/CPO", "农业"]
+    cpo = payload["narratives"][0]
+    assert cpo["label_count"] == 3
+    assert cpo["max_change_pct"] == 6.0
+    assert cpo["mean_change_pct"] == 5.0
+
+
+def test_info_stream_narratives_are_empty_when_concept_source_fails():
+    payload = info_stream.get_info_stream(
+        force=True,
+        news_source=ClsNewsSource().from_items([_news_item()]),
+        concept_source=_FailingConceptSource(),
+    )
+    assert payload["concepts"] == []
+    assert payload["narratives"] == []
+    assert payload["sources"]["concept_board"].startswith("error:")

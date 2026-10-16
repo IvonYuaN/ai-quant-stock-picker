@@ -262,12 +262,25 @@ export interface InfoStreamConcept {
   change_pct: number;
   main_net_inflow: number;
   main_net_ratio: number;
+  /** 归属的交易叙事；未映射为 null（未映射 ≠ 噪声，噪声已在后端剔除） */
+  narrative: string | null;
+}
+
+/** 同一叙事下多个概念标签的归并结果（如 CPO / 光模块 / 光通信模块 → 光通信/CPO）。 */
+export interface InfoStreamNarrative {
+  name: string;
+  labels: readonly string[];
+  label_count: number;
+  mean_change_pct: number;
+  max_change_pct: number;
 }
 
 export interface InfoStreamData {
   generated_at: string;
   news: readonly InfoStreamNewsItem[];
   concepts: readonly InfoStreamConcept[];
+  /** 叙事归并榜（按平均涨跌幅降序）；概念源失败时为空数组 */
+  narratives: readonly InfoStreamNarrative[];
   /** "ok" 或 "error: ..."（缺材料显式可见） */
   sources: { cls_news: string; concept_board: string };
 }
