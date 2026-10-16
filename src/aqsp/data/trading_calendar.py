@@ -11,6 +11,7 @@ from aqsp.core.time import (
     _get_basic_next_trading_day,
     _is_basic_trading_day,
 )
+from aqsp.data.szse_calendar import SzseCalendarSource
 from aqsp.data.tushare_pit import (
     TusharePitClient,
     is_open_day_in_calendar,
@@ -42,6 +43,29 @@ def load_optional_trade_calendar(
         return pit_client.fetch_trade_calendar(start, end, exchange=exchange)
     except DataError:
         return None
+
+
+def load_szse_trade_calendar(
+    start: date,
+    end: date,
+    *,
+    anchor: date | None = None,
+    source: SzseCalendarSource | None = None,
+) -> pd.DataFrame | None:
+    """深交所官方日历（issue #314）—— Tushare 缺席时的运行时日历来源。
+
+    生产机没有 ``TUSHARE_TOKEN``，此前 ``_load_runtime_calendar`` 恒返回
+    ``None``，交易日判定只能退到「周末 + 手写休市名单」。深交所公开接口
+    不需要 token，可把运行时判定升级成交易所口径。
+
+    取数失败 / 锚点月未公布 ⇒ 返回 ``None``，由调用方回退静态日历。
+    本源**不抛异常**：日历源故障不得升级成选股链路故障。
+    """
+    try:
+        calendar_source = source or SzseCalendarSource()
+    except (OSError, ValueError):
+        return None
+    return calendar_source.as_frame(start, end, anchor=anchor)
 
 
 def resolve_is_trading_day(
@@ -221,9 +245,15 @@ def _load_runtime_calendar(
     exchange: str,
     window: TradingCalendarWindow | None,
 ) -> pd.DataFrame | None:
+    """运行时日历：Tushare 优先，缺席时回落到深交所官方日历。
+
+    静态休市名单仍是**硬覆盖**（见 ``resolve_is_trading_day`` 首段），本函数
+    只负责补「静态名单没写的年份/日子」。
+    """
     runtime_window = window or TradingCalendarWindow()
-    return load_optional_trade_calendar(
-        target - timedelta(days=runtime_window.before_days),
-        target + timedelta(days=runtime_window.after_days),
-        exchange=exchange,
-    )
+    start = target - timedelta(days=runtime_window.before_days)
+    end = target + timedelta(days=runtime_window.after_days)
+    tushare_calendar = load_optional_trade_calendar(start, end, exchange=exchange)
+    if tushare_calendar is not None:
+        return tushare_calendar
+    return load_szse_trade_calendar(start, end, anchor=target)
