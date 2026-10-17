@@ -1,6 +1,15 @@
 from __future__ import annotations
 
 from aqsp.regime.detector import RegimeDetector, MarketRegime, RegimeChange
+from aqsp.regime.emotion_cycle import (
+    EmotionAssessment,
+    EmotionModelConfig,
+    EmotionSnapshot,
+    PhaseVerdict,
+    assess as assess_emotion_cycle,
+    classify_phase as classify_emotion_phase,
+    load_emotion_model,
+)
 from aqsp.regime.runtime import (
     RuntimeRegimeContext,
     build_synthetic_regime_frame,
@@ -29,6 +38,13 @@ __all__ = [
     "RegimeDetector",
     "MarketRegime",
     "RegimeChange",
+    "EmotionAssessment",
+    "EmotionModelConfig",
+    "EmotionSnapshot",
+    "PhaseVerdict",
+    "assess_emotion_cycle",
+    "classify_emotion_phase",
+    "load_emotion_model",
     "RuntimeRegimeContext",
     "build_synthetic_regime_frame",
     "detect_runtime_regime",
