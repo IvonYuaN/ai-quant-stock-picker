@@ -100,6 +100,7 @@ RPS 相对强度、放量突破、均线缩量回踩、碗口反弹、低波趋�
 - **`risk/`** (1.5k, 5 文件)：熔断、动态止损、集中度上限。
 - **`regime/`** (973, 6 文件)：市场状态分类（`hmm_detector.py` 等）。
 - **`features/`** (946, 4 文件)：特征（含 `event_calendar.py`，其运行时数据根经 `aqsp.core.runtime.runtime_data_root` 回落 release 根、325 行 `except`）。
+  - 🆕 `theme_index.py`（零 I/O 纯逻辑）：题材指数日/周/月 K。**强制区分两种口径**——`kind=vendor`（东财板块日涨跌幅复利链，市值加权、**不可交易**）与 `kind=reference`（成分股日收益等权合成，**当前算不出来**：AQSP 无「概念板块→成分股」成员源，东财 `push2 slist/get` 全出口被切见 #333）。缺数据日一律跳过、不补 0；`close_high/close_low` 是**收盘序列**极值，不是盘中高低（字段名刻意不叫 high/low）。历史输入来自 `aqsp.data.theme_history`（`pit_cache/theme_history.csv`，由 `scripts/data/fetch_concept_board.py` 每日盘后追加，**从首次积累日开始、不可回补**；中继路径下该文件随 `concept_board.csv` 一并从 runner 回流 prod）。
 - **`execution/`** (851, 4 文件)：虚拟盘执行（**非真实下单**）。
 - **`universe/`** (1.1k, 5 文件)：选股池构建（top-300 流动性池等）。
 - **`filters_lethal/`** (397, 3-6 文件)：排雷过滤器（跌停保护/公告关键词/股东户数/解禁等）。**历史「从未生效」根因：数据产出方缺位 → 一直空转；PR #225/#226 接入产出链路 + 响亮告警（data_missing 而非静默放行）。**✅ **数据产出方调度缺口已于 PR #234（2026-09-26 合并+发版）收口**：`daily_pipeline._step_refresh_risk_datasources` 每日调度落盘 `pit_cache/{holder_count,announcements,lockup}.csv`，过滤器从此读真实数据（缺数据显 `data_missing`）。

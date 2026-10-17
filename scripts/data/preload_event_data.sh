@@ -80,9 +80,19 @@ fetch_concept_board_via_runner() {
     # 常败、间隔重试可过）⇒ 带退避重试显著提高成功率；全败才回落本地直连。
     while [ "$attempt" -le "$max_attempts" ]; do
         if $relay_ssh "$RELAY_HOST" "$relay_cmd"; then
-            rsync -a -e "$relay_ssh" \
+            if rsync -a -e "$relay_ssh" \
                 "${RELAY_HOST}:${RELAY_ROOT}/pit_cache/concept_board.csv" \
-                "${RUNTIME_DATA_ROOT}/pit_cache/concept_board.csv" && return 0
+                "${RUNTIME_DATA_ROOT}/pit_cache/concept_board.csv"; then
+                # 题材历史库（features/theme_index 的输入）随截面一起回流。
+                # 中继路径下 fetch_concept_board.py 跑在 **runner** 上，历史行落在
+                # runner 的 pit_cache；不回流的话 prod 侧永远只有空历史。
+                # 历史库是增强项：首次部署时 runner 上还没有该文件 ⇒ 失败不算中继失败。
+                rsync -a -e "$relay_ssh" \
+                    "${RELAY_HOST}:${RELAY_ROOT}/pit_cache/theme_history.csv" \
+                    "${RUNTIME_DATA_ROOT}/pit_cache/theme_history.csv" \
+                    || log "[WARN] theme_history.csv 回流失败（增强项，不影响截面缓存）"
+                return 0
+            fi
         fi
         log "[WARN] concept_board runner 中继第 ${attempt}/${max_attempts} 次失败"
         if [ "$attempt" -lt "$max_attempts" ]; then
