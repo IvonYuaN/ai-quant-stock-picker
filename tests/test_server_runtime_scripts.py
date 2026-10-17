@@ -1682,3 +1682,26 @@ def test_bt_task_event_data_action_wires_preload_script() -> None:
     assert "event-data)" in script
     assert "scripts/preload_event_data.sh" in script
     assert 'AQSP_RUN_TASK_ID="event_data"' in script
+
+
+def test_preload_event_data_kaipanla_theme_relay() -> None:
+    """kaipanla_theme 走 runner 中继（#404）：开盘啦出口画像与东财同类——
+    Mac 走代理 403、prod 不可靠，runner 直连 200（#398 复验）。
+
+    守卫重点：
+    - SOURCES 挂载 + 中继可停用（KAIPANLA_THEME_RELAY=0）+ 失败回落本地直连；
+    - 两张表都回流（rotation + leaders；源层保证全占位日也建空表文件）；
+    - rc=2（数据已落盘但带 schema 漂移告警）按成功回流——否则 rsync 永远收不到
+      带告警的有效数据，且中继会徒劳重试 4 次再回落一个必然失败的本地直连。
+    """
+    script = (PROJECT_ROOT / "scripts" / "preload_event_data.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "kaipanla_theme:scripts/fetch_kaipanla_theme.py" in script
+    assert "KAIPANLA_THEME_RELAY" in script
+    assert "fetch_kaipanla_theme_via_runner" in script
+    assert "kaipanla_theme_rotation.csv" in script
+    assert "kaipanla_theme_leaders.csv" in script
+    # rc=2 特殊处理：schema 漂移 ≠ 失败（数据已落盘，仍回流）
+    assert 'rc" -eq 2' in script or 'rc=$?;' in script
+    assert "回落本地直连" in script

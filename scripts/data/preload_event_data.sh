@@ -55,6 +55,7 @@ SOURCES=(
     "cls_news:scripts/fetch_cls_news.py"
     "concept_board:scripts/fetch_concept_board.py"
     "event_data:scripts/fetch_event_data.py"
+    "kaipanla_theme:scripts/fetch_kaipanla_theme.py"
 )
 
 # ---------------------------------------------------------------------------
@@ -103,6 +104,47 @@ fetch_concept_board_via_runner() {
     return 1
 }
 
+# ---------------------------------------------------------------------------
+# kaipanla_theme runner 中继（#404）：开盘啦 duanxianxia.com 的出口画像与东财
+# 同类——Mac 走代理 403、prod 出口不可靠，runner 直连 200（#398 复验）。
+# 与 concept_board 同款模式：runner 代抓 + rsync 回流两张独立表。
+# 退出码口径：0=成功；2=数据已落盘但带 schema 漂移告警（按成功回流）；
+# 其余=失败（重试后回落本地直连）。设 KAIPANLA_THEME_RELAY=0 可停用中继。
+# ---------------------------------------------------------------------------
+KAIPANLA_THEME_RELAY="${KAIPANLA_THEME_RELAY:-1}"
+KAIPANLA_THEME_RELAY_TIMEOUT="${KAIPANLA_THEME_RELAY_TIMEOUT:-300}"
+
+fetch_kaipanla_theme_via_runner() {
+    local relay_ssh="ssh -p ${RELAY_PORT} -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=accept-new"
+    local relay_cmd="PYTHONPATH=${RELAY_ROOT}/aqsp-scheduler-current/src AQSP_RUNTIME_DATA_ROOT=${RELAY_ROOT} timeout ${KAIPANLA_THEME_RELAY_TIMEOUT} ${RELAY_ROOT}/venv/bin/python ${RELAY_ROOT}/aqsp-scheduler-current/scripts/fetch_kaipanla_theme.py"
+    local attempt=1
+    local max_attempts="${KAIPANLA_THEME_RELAY_ATTEMPTS:-4}"
+    while [ "$attempt" -le "$max_attempts" ]; do
+        local rc=0
+        $relay_ssh "$RELAY_HOST" "$relay_cmd" >>"$RESULT_LOG" 2>&1 || rc=$?
+        # rc=0 成功；rc=2 = 数据已落盘但有 schema 漂移告警（仍回流，日志留痕）
+        if [ "$rc" -eq 0 ] || [ "$rc" -eq 2 ]; then
+            if rsync -a -e "$relay_ssh" \
+                "${RELAY_HOST}:${RELAY_ROOT}/pit_cache/kaipanla_theme_rotation.csv" \
+                "${RUNTIME_DATA_ROOT}/pit_cache/kaipanla_theme_rotation.csv" \
+                && rsync -a -e "$relay_ssh" \
+                "${RELAY_HOST}:${RELAY_ROOT}/pit_cache/kaipanla_theme_leaders.csv" \
+                "${RUNTIME_DATA_ROOT}/pit_cache/kaipanla_theme_leaders.csv"; then
+                if [ "$rc" -eq 2 ]; then
+                    log "[WARN] kaipanla_theme 数据已回流但带 schema 漂移告警（见 ${RESULT_LOG}）"
+                fi
+                return 0
+            fi
+        fi
+        log "[WARN] kaipanla_theme runner 中继第 ${attempt}/${max_attempts} 次失败（rc=${rc}）"
+        if [ "$attempt" -lt "$max_attempts" ]; then
+            sleep "${KAIPANLA_THEME_RELAY_RETRY_SLEEP:-20}"
+        fi
+        attempt=$((attempt + 1))
+    done
+    return 1
+}
+
 log "开始事件数据预加载"
 ATTEMPTED=0
 FAILED=0
@@ -119,6 +161,13 @@ for entry in "${SOURCES[@]}"; do
     if [ "$name" = "concept_board" ] && [ "$CONCEPT_BOARD_RELAY" = "1" ]; then
         if fetch_concept_board_via_runner >>"$RESULT_LOG" 2>&1; then
             log "[OK] ${name} -> pit_cache（经 runner 中继）"
+            continue
+        fi
+        log "[WARN] ${name} runner 中继失败，回落本地直连"
+    fi
+    if [ "$name" = "kaipanla_theme" ] && [ "$KAIPANLA_THEME_RELAY" = "1" ]; then
+        if fetch_kaipanla_theme_via_runner; then
+            log "[OK] ${name} -> pit_cache 两张表（经 runner 中继）"
             continue
         fi
         log "[WARN] ${name} runner 中继失败，回落本地直连"
