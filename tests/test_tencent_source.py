@@ -192,6 +192,13 @@ def test_tencent_quote_fields_mapping(tencent_source, mock_tencent_quote_respons
     assert "ts" in quote
 
 
+# 以下 5 个用例真实联网（腾讯行情接口），必须打 `@pytest.mark.live`：
+# CI runner 在境外，未标 live 的联网用例会被默认 `-m 'not live'` 跑起来，
+# 最坏每个 ≈45s 纯等待，且 read_timeout 逐次 recv 生效 ⇒ 偶发把整个 shard
+# 挂死（与 SZSE 事故同类，见 #391）。保留 `pytest -m live` 的人工冒烟能力。
+
+
+@pytest.mark.live
 def test_tencent_quote_uses_real_limits(tencent_source):
     quote = tencent_source._fetch_tencent_quote("600000")
     if quote is not None:
@@ -201,6 +208,7 @@ def test_tencent_quote_uses_real_limits(tencent_source):
             assert isinstance(quote["limit_down"], float)
 
 
+@pytest.mark.live
 def test_fetch_daily_returns_dict(tencent_source):
     try:
         result = tencent_source.fetch_daily(
@@ -777,6 +785,7 @@ def test_tencent_intraday_volume_normalizes_lots_row_by_row() -> None:
     assert normalized["volume"].tolist() == [100_000.0, 100_000.0]
 
 
+@pytest.mark.live
 def test_fetch_intraday_returns_dict(tencent_source):
     try:
         result = tencent_source.fetch_intraday(
@@ -788,6 +797,7 @@ def test_fetch_intraday_returns_dict(tencent_source):
     assert isinstance(result, dict)
 
 
+@pytest.mark.live
 def test_fetch_realtime_quote_returns_dict(tencent_source):
     try:
         result = tencent_source.fetch_realtime_quote(
@@ -798,6 +808,7 @@ def test_fetch_realtime_quote_returns_dict(tencent_source):
     assert isinstance(result, dict)
 
 
+@pytest.mark.live
 def test_fetch_index_returns_dict(tencent_source):
     try:
         result = tencent_source.fetch_index(
