@@ -13,7 +13,7 @@
     # 复核指定年份
     python scripts/data/generate_trading_holidays.py --year 2027
 
-    # 确认 diff 无误后落盘（替换该年份条目，其他年份保留）
+    # 确认 diff 无误后落盘（只补缺失条目，**不删**任何既有条目）
     python scripts/data/generate_trading_holidays.py --year 2027 --write
 
     # 机器可读（CI / 报告用）
@@ -33,19 +33,21 @@
 ------------------------------
 1. `python scripts/data/generate_trading_holidays.py --year <次年>`
    —— 交易所通常 12 月公布下一年日历；若返回退出码 2 说明还没公布，过几天再来。
-2. **人工复核 diff**：重点看「新增」里是否包含法定长假的工作日，
-   以及「删除」是否为 0（不该删掉已确认的休市日）。
-3. `--write` 落盘 → `pytest tests/test_core_time.py tests/test_trading_holidays_generator.py`
+2. **人工复核报告**：
+   - 「待补」里应当是法定长假的工作日；核对是否与交易所公告一致；
+   - 「冲突」**必须**为 0 —— 非 0 说明文件里有条目被交易所判为开市（#310 那类
+     事实错误），要人工改文件，本工具**不自动删**；
+   - 「文件中的周末条目」是人工补的**窗口内周末**（#314 要求列上），自动生成
+     不会覆盖，也**不需要**核对。
+3. **人工补窗口内周末**：深交所接口没有节假日名称字段，机器分不清「窗口内周末」
+   与「普通周末」⇒ 按交易所公告把每个节日窗口内的周六/周日补进 `holidays`
+   （例：2026 春节窗口 02-15 周日 ~ 02-23 周一，其中 02-15/02-21/02-22 是周末）。
+   同时按 #314 待办第 2 条给 `check_before_live.py` 的 `critical_holidays` 补该年窗口。
+4. `--write` 落盘 → `pytest tests/test_core_time.py tests/test_trading_holidays_generator.py`
    → 提 PR（`config/**` 会触发 CI）。
 
-🔴 临时约束：**只对新年份执行 `--write`**（issue #392）
-----------------------------------------------------
-覆盖门 `scripts/monitor/check_before_live.py::_check_trading_calendar_coverage` 的
-`critical_holidays` 仍硬编码要求 `2026-02-15` / `2026-02-21` / `2026-02-22` 在名单里，
-而它们是**周末**、本工具的口径不写 ⇒ 对已覆盖年份落盘会把覆盖门打红。
-
-`merge_year_holidays` 只替换目标年份，因此 `--year <次年> --write` 不碰既有年份，
-是安全的。口径统一见 issue #392。
+⚠️ `--write` 是**只增不删**：它不会移除任何既有条目（包括人工补的窗口内周末）。
+要删错误条目只能人工改文件。
 """
 
 from __future__ import annotations
@@ -163,6 +165,17 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return EXIT_INCOMPLETE
+
+    if report.has_conflicts:
+        # 本工具只增不删 ⇒ 冲突条目会被**保留**下来。必须响亮提示人工去改文件，
+        # 否则 #310 那类事实错误（把交易日误列成休市）会一直留在生产名单里。
+        print(
+            f"[generate-trading-holidays] ⚠️ {year} 年有 "
+            f"{len(report.conflicting_open_days)} 个条目被交易所判为**开市**，"
+            f"但仍在名单里（本工具不自动删，需人工改文件）: "
+            f"{[d.isoformat() for d in report.conflicting_open_days]}",
+            file=sys.stderr,
+        )
     return EXIT_OK
 
 

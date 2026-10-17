@@ -16,40 +16,34 @@
 这里只负责**生成**那个文件。取数走 ``allow_network=True`` 的显式入口，
 只能在离线批处理里调用。
 
-口径：只写「**工作日**休市日」
-------------------------------
-写入文件的集合 = 「交易所判定为休市、且当天**不是**周六/周日」的自然日。
+🔴 分工：机器管工作日，人管「窗口内周末」
+------------------------------------------
+本模块自动产出的集合 = 「交易所判定为休市、且当天**不是**周六/周日」的自然日。
 
-- 普通周末**不写**：``_is_basic_trading_day`` 已按 ``weekday() >= 5`` 判休市；
-- 调休上班日**不写**：它们一律落在周末，交易所照样休市（#312 语义）；
-- 落在节假日区间内的周末**也不写**。旧手写文件混进了 4 个这类条目
-  （2026-01-03 / 02-15 / 02-21 / 02-22）—— 它们对判定结果毫无影响
-  （周末本来就休市），只是手写维护时的噪声。统一成「工作日休市日」后，
-  文件可以**机器复现、可逐行 diff**。
+**为什么不能连周末一起生成**（尽管 #314 要求 ``holidays`` 覆盖完整放假窗口）：
+深交所 ``monthList`` 只返回 ``zrxh`` / ``jybz`` / ``jyrq`` 三个字段，**没有节假日
+名称**，因此无法区分
 
-⚠️ 因此本模块生成的集合**不等于**旧手写文件的字面内容（会少那几个周末条目），
-但 ``is_trading_day()`` 的判定结果**逐日一致** —— 这条等价性由
-``tests/test_trading_holidays_generator.py`` 的守卫钉住。
+- 「节假日窗口内的周末」——例如 ``2026-02-15``（周日，属春节 9 天窗口）；
+- 「普通周末」——例如 ``2026-02-14``（周六，紧邻窗口但不属窗口）。
+
+两者 ``jybz`` 都是 ``"0"``。实测（2026-10-16，365 天全覆盖）：2026 年 123 个
+休市日里只有 19 个是工作日休市日，其余 104 个都是普通周末 —— 而「哪几个周末
+属于窗口」只写在交易所公告原文里（#314 待办第 2 条的「逐字照抄」正指这个）。
+
+⇒ 因此 :func:`merge_year_holidays` 是**只增不删**：人工补的窗口内周末
+（以及任何既有条目）**永不**被自动生成覆盖掉。机器负责「不漏掉任何工作日
+休市日」，人负责「把窗口内周末补上」。
+
+⚠️ 若文件里有条目被交易所判为**开市**，那是真错误（如 #310 把 ``2026-10-08``
+误列进名单），报告会单列为 ``conflicting_open_days`` 并在 CLI 的 stderr 响亮
+提示 —— 但本模块**不自动删**：删哪一条属于人工复核的判断。
 
 为什么输出 schema 保持 ``{"holidays": [...]}`` 不变
 ----------------------------------------------------
 ``_load_basic_trading_calendar`` 只读 ``payload["holidays"]``，任何新增字段都会被忽略。
 更关键的是：**不要把 ``generated_at`` 写进被提交的文件** —— 那会让每次重生成都产生
 一条无意义 diff，掩盖真正的内容变更。出处信息写在 CLI 输出与 commit message 里。
-
-🔴 临时约束：**只对新年份执行落盘**（issue #392）
-------------------------------------------------
-``scripts/monitor/check_before_live.py::_check_trading_calendar_coverage`` 的
-``critical_holidays`` 目前**硬编码**要求 ``2026-02-15``（周日）/ ``2026-02-21``（周六）
-/ ``2026-02-22``（周日）出现在名单里 —— 这三个都是周末，而本模块的口径**不写**周末。
-
-⇒ 对**已覆盖的年份**（如 2026）执行 ``--write`` 会把它们删掉，把覆盖门打红。
-   ``merge_year_holidays`` 只替换目标年份，所以 ``--year <次年> --write`` 不会碰到
-   既有年份，是安全的用法；口径统一见 issue #392。
-
-⚠️ 旧手写文件本身是自相矛盾的：它有 ``2026-01-03`` / ``02-15`` / ``02-21`` / ``02-22``
-（节假日窗口内的周末），却没有 ``2026-10-03`` / ``10-04``（国庆窗口内的周六周日）
-⇒ 找不到能复现它的规则。「工作日休市日」是唯一可机器复现的口径。
 """
 
 from __future__ import annotations
@@ -74,7 +68,8 @@ def holidays_from_days(
     """把交易所逐日标志折算成「工作日休市日」集合（纯函数）。
 
     - 只取 ``is_open=False``；
-    - 丢掉周六/周日（周末本来就是休市，写进去是噪声，见模块 docstring）；
+    - 丢掉周六/周日：机器无法区分「窗口内周末」与「普通周末」（见模块 docstring），
+      窗口内周末由人工补，:func:`merge_year_holidays` 只增不删；
     - 只保留 ``year`` 年（防上游串月/串年）；
     - 升序、去重。
     """
@@ -131,10 +126,18 @@ def render_holiday_config(holidays: Iterable[date]) -> str:
 def merge_year_holidays(
     existing: Iterable[date], *, year: int, holidays: Iterable[date]
 ) -> tuple[date, ...]:
-    """用新集合**替换**目标年份的条目，其他年份原样保留。"""
-    kept = {day for day in existing if day.year != year}
-    kept.update(day for day in holidays if day.year == year)
-    return tuple(sorted(kept))
+    """把交易所口径的「工作日休市日」并入既有条目 —— **只增不删**。
+
+    为什么不是「替换目标年份」（#314）：``holidays`` 要求覆盖完整放假窗口
+    （**周末日也列上**），而窗口内周末无法从交易所接口推导、只能人工按公告补。
+    若做替换，这些人工条目会被当成噪声删掉。
+
+    因此本函数**只补缺失**：``existing ∪ holidays``（``holidays`` 只取 ``year``）。
+    要删条目必须人工改文件 —— 删哪一条属于复核判断，不是机器的活。
+    """
+    merged = set(existing)
+    merged.update(day for day in holidays if day.year == year)
+    return tuple(sorted(merged))
 
 
 @dataclass(frozen=True)
@@ -145,8 +148,8 @@ class HolidayRefreshReport:
     holidays: tuple[date, ...]
     existing: tuple[date, ...]
     added: tuple[date, ...]
-    removed: tuple[date, ...]
-    legacy_weekend_entries: tuple[date, ...]
+    conflicting_open_days: tuple[date, ...]
+    weekend_entries: tuple[date, ...]
     open_days: int
     available_months: tuple[str, ...]
     missing_months: tuple[str, ...]
@@ -160,18 +163,24 @@ class HolidayRefreshReport:
     def existing_for_year(self) -> tuple[date, ...]:
         return tuple(day for day in self.existing if day.year == self.year)
 
+    @property
+    def has_conflicts(self) -> bool:
+        """文件里有条目被交易所判为开市 ⇒ 必须人工复核。"""
+        return bool(self.conflicting_open_days)
+
     def as_dict(self) -> dict[str, object]:
         return {
             "year": self.year,
             "complete": self.complete,
+            "has_conflicts": self.has_conflicts,
             "holidays": [d.isoformat() for d in self.holidays],
             "holidays_count": len(self.holidays),
             "open_days": self.open_days,
             "added": [d.isoformat() for d in self.added],
-            "removed": [d.isoformat() for d in self.removed],
-            "legacy_weekend_entries": [
-                d.isoformat() for d in self.legacy_weekend_entries
+            "conflicting_open_days": [
+                d.isoformat() for d in self.conflicting_open_days
             ],
+            "weekend_entries": [d.isoformat() for d in self.weekend_entries],
             "available_months": list(self.available_months),
             "missing_months": list(self.missing_months),
         }
@@ -207,6 +216,7 @@ def build_holiday_report(
 
     holidays = holidays_from_days(days, year=year)
     open_days = open_days_from_days(days, year=year)
+    open_set = set(open_days)
 
     path = Path(config_path) if config_path is not None else DEFAULT_CONFIG_PATH
     try:
@@ -215,18 +225,19 @@ def build_holiday_report(
         existing = ()
 
     existing_year = {day for day in existing if day.year == year}
-    new_set = set(holidays)
-    added = tuple(sorted(new_set - existing_year))
-    removed = tuple(sorted(existing_year - new_set))
-    legacy_weekend = tuple(sorted(day for day in removed if day.weekday() >= 5))
+    added = tuple(sorted(set(holidays) - existing_year))
+    # 文件说休市、交易所说开市 ⇒ 真错误（#310 那类）。交易所周末一律休市，
+    # 所以 open_set 里不会有周末 ⇒ 这里天然只列出工作日。
+    conflicting = tuple(sorted(day for day in existing_year if day in open_set))
+    weekend_entries = tuple(sorted(day for day in existing_year if day.weekday() >= 5))
 
     return HolidayRefreshReport(
         year=year,
         holidays=holidays,
         existing=existing,
         added=added,
-        removed=removed,
-        legacy_weekend_entries=legacy_weekend,
+        conflicting_open_days=conflicting,
+        weekend_entries=weekend_entries,
         open_days=len(open_days),
         available_months=tuple(available),
         missing_months=tuple(missing),
@@ -250,12 +261,17 @@ def render_report(report: HolidayRefreshReport, *, generated_at: datetime) -> st
     ]
     if report.existing_for_year:
         lines.append(f"现有文件该年条目: {len(report.existing_for_year)} 天")
-    lines.append(f"  新增 {len(report.added)}: {[d.isoformat() for d in report.added]}")
-    lines.append(f"  删除 {len(report.removed)}: {[d.isoformat() for d in report.removed]}")
-    if report.legacy_weekend_entries:
+    lines.append(f"  待补 {len(report.added)}: {[d.isoformat() for d in report.added]}")
+    lines.append(
+        f"  冲突 {len(report.conflicting_open_days)}"
+        "（文件说休市、交易所说开市，必须人工核）: "
+        f"{[d.isoformat() for d in report.conflicting_open_days]}"
+    )
+    if report.weekend_entries:
         lines.append(
-            "  ⚠️ 其中落在周末的旧条目（生成口径不含，判定结果不受影响）: "
-            f"{[d.isoformat() for d in report.legacy_weekend_entries]}"
+            f"  文件中的周末条目 {len(report.weekend_entries)}"
+            "（节假日窗口内的周末，自动生成不覆盖，见 #314）: "
+            f"{[d.isoformat() for d in report.weekend_entries]}"
         )
     if not report.complete:
         lines.append("🔴 有月份未取到交易所数据 ⇒ **结果不可信，拒绝落盘**")

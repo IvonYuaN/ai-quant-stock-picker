@@ -2,15 +2,21 @@
 
 覆盖两层：
 
-- **纯逻辑层** ``aqsp.data.trading_holidays``：口径（只写工作日休市日）、
-  schema 往返、按年合并、报告 diff；
+- **纯逻辑层** ``aqsp.data.trading_holidays``：口径（自动生成「工作日休市日」）、
+  schema 往返、**只增不删**的合并、报告 diff；
 - **CLI** ``scripts/data/generate_trading_holidays.py``：dry-run / 落盘 /
-  缺月拒绝落盘 / 退出码 / 默认路径锚点。
+  缺月拒绝落盘 / 冲突告警 / 退出码 / 默认路径锚点。
 
-🔴 最关键的是 :func:`test_regenerated_calendar_preserves_trading_day_verdicts`：
-它把「交易所给出的休市日全集」（含周末）喂给生成器，再让**真实消费方**
-``resolve_is_trading_day`` 对 2026 全年逐日判定，断言与手写文件**零差异**。
-这条守卫保证「换掉生成口径」不会悄悄改变选股链路的交易日判定。
+🔴 两条核心守卫：
+
+1. :func:`test_merging_real_config_is_a_no_op` —— 用真实文件自身推出来的交易所
+   口径去合并，生产文件必须**一字不改**（「只增不删」的核心保证）；
+2. :func:`test_regenerated_calendar_preserves_trading_day_verdicts` —— 把「交易所
+   给出的休市日全集」（含周末）喂给生成器后，真实消费方 ``resolve_is_trading_day``
+   对 2026 全年逐日判定与手写文件**零差异**。
+
+分工口径（#314）：机器负责「不漏任何工作日休市日」，**窗口内周末由人工按公告补**
+—— 深交所接口没有节假日名称字段，机器无法区分「窗口内周末」与「普通周末」。
 
 本文件全部使用测试替身，**不联网**（``build_holiday_report`` 的取数入口被替换）。
 """
@@ -36,9 +42,10 @@ from scripts.data.generate_trading_holidays import (
 REPO_ROOT = Path(__file__).resolve().parents[1]
 REAL_CONFIG = REPO_ROOT / "config" / "trading_holidays.json"
 
-# 真实文件在 2026-10-16 核对深交所后确认混进的 4 个「节假日区间内的周末」条目。
-# 生成口径会丢掉它们；它们对判定结果毫无影响（周末本来就休市）。
-LEGACY_WEEKEND_ENTRIES = (
+# 手写文件里**落在周末**的 4 个条目。它们不是噪声：按 #314 待办第 2 条，
+# `holidays` 要覆盖「完整放假窗口（周末日也列上）」，这 4 天正是元旦/春节窗口
+# 内的周末（01-03 周六；02-15 周日、02-21 周六、02-22 周日）。
+WINDOW_WEEKEND_ENTRIES = (
     date(2026, 1, 3),
     date(2026, 2, 15),
     date(2026, 2, 21),
@@ -104,7 +111,7 @@ def _patch_fetch_months(
     """替换 ``trading_holidays.fetch_months`` —— 生成侧唯一联网入口。
 
     签名必须与真实 ``fetch_months(months, *, source=None, cache_dir=None)`` 一致，
-    否则 CLI 的调用点会静默走偏（本函数替换后无法再从返回值察觉）。
+    否则 CLI 的调用点会静默走偏（替换后无法再从返回值察觉）。
     """
 
     def _fake(months, *, source=None, cache_dir=None):
@@ -129,7 +136,7 @@ def test_holidays_from_days_drops_weekends_and_keeps_weekday_closures():
         closed={date(2026, 10, 1), date(2026, 10, 2), date(2026, 10, 3)},
     )
     holidays = th.holidays_from_days(days, year=2026)
-    # 10-03 是周六 ⇒ 按口径丢掉；10-01/10-02 是周四/周五 ⇒ 保留。
+    # 10-03 是周六 ⇒ 机器不写（窗口内周末由人工补）；10-01/10-02 是周四/周五 ⇒ 保留。
     assert holidays == (date(2026, 10, 1), date(2026, 10, 2))
 
 
@@ -226,16 +233,29 @@ def test_real_config_is_parsable_and_covers_2026():
 
 
 # ---------------------------------------------------------------------------
-# 纯逻辑：merge_year_holidays / next_year
+# 纯逻辑：merge_year_holidays（只增不删）/ next_year
 # ---------------------------------------------------------------------------
 
 
-def test_merge_year_holidays_replaces_only_target_year():
-    existing = [date(2025, 10, 1), date(2026, 10, 1), date(2026, 10, 2)]
+def test_merge_year_holidays_adds_missing_entries():
     merged = th.merge_year_holidays(
-        existing, year=2026, holidays=[date(2026, 1, 1)]
+        [date(2026, 10, 1)], year=2026, holidays=[date(2026, 10, 1), date(2026, 10, 2)]
     )
-    assert merged == (date(2025, 10, 1), date(2026, 1, 1))
+    assert merged == (date(2026, 10, 1), date(2026, 10, 2))
+
+
+def test_merge_year_holidays_never_drops_existing_entries():
+    """🔴 核心语义：既有条目**永不**被删（窗口内周末是人工补的，不是噪声）。"""
+    existing = [date(2026, 2, 15), date(2026, 10, 8), date(2025, 10, 1)]
+    merged = th.merge_year_holidays(
+        existing, year=2026, holidays=[date(2026, 10, 1)]
+    )
+    assert merged == (
+        date(2025, 10, 1),
+        date(2026, 2, 15),
+        date(2026, 10, 1),
+        date(2026, 10, 8),
+    )
 
 
 def test_merge_year_holidays_is_idempotent():
@@ -269,6 +289,7 @@ def test_build_report_marks_complete_when_all_months_present(tmp_path, monkeypat
     assert len(report.available_months) == 12
     assert report.holidays == (date(2026, 10, 1),)
     assert report.existing == ()
+    assert report.has_conflicts is False
 
 
 def test_build_report_marks_incomplete_when_fetch_failed(tmp_path, monkeypatch):
@@ -299,35 +320,38 @@ def test_build_report_uses_explicit_network_entry_point(tmp_path):
     assert {flag for _, flag in source.calls} == {True}
 
 
-def test_build_report_diffs_against_existing_file(tmp_path, monkeypatch):
+def test_build_report_diffs_added_without_removing(tmp_path, monkeypatch):
     config = tmp_path / "trading_holidays.json"
     config.write_text(
         th.render_holiday_config(
-            [date(2025, 10, 1), date(2026, 10, 1), date(2026, 5, 4)]
+            [date(2025, 10, 1), date(2026, 10, 1), date(2026, 10, 3)]
         ),
         encoding="utf-8",
     )
     _patch_fetch_months(
-        monkeypatch, _month_mapping(2026, closed={date(2026, 10, 1), date(2026, 10, 2)})
+        monkeypatch,
+        _month_mapping(2026, closed={date(2026, 10, 1), date(2026, 10, 2)}),
     )
     report = th.build_holiday_report(2026, config_path=config)
-    assert report.existing_for_year == (date(2026, 5, 4), date(2026, 10, 1))
+    assert report.existing_for_year == (date(2026, 10, 1), date(2026, 10, 3))
     assert report.added == (date(2026, 10, 2),)
-    assert report.removed == (date(2026, 5, 4),)
-    assert report.legacy_weekend_entries == ()
+    assert report.conflicting_open_days == ()
+    assert report.weekend_entries == (date(2026, 10, 3),)
 
 
-def test_build_report_flags_legacy_weekend_entries(tmp_path, monkeypatch):
-    """被删掉的条目若落在周末，单列为「旧噪声」而不是普通「删除」。"""
+def test_build_report_flags_conflicting_open_days(tmp_path, monkeypatch):
+    """文件说休市、交易所说开市 ⇒ 真错误（#310 那类），单列并响亮提示。"""
     config = tmp_path / "trading_holidays.json"
     config.write_text(
-        th.render_holiday_config([date(2026, 10, 1), date(2026, 10, 3)]),
+        th.render_holiday_config([date(2026, 10, 1), date(2026, 10, 8)]),
         encoding="utf-8",
     )
     _patch_fetch_months(monkeypatch, _month_mapping(2026, closed={date(2026, 10, 1)}))
     report = th.build_holiday_report(2026, config_path=config)
-    assert report.removed == (date(2026, 10, 3),)
-    assert report.legacy_weekend_entries == (date(2026, 10, 3),)
+    # 2026-10-08 是周四，交易所判开市 ⇒ 冲突；且**不会**被自动删。
+    assert report.conflicting_open_days == (date(2026, 10, 8),)
+    assert report.has_conflicts is True
+    assert date(2026, 10, 8) in report.existing_for_year
 
 
 def test_build_report_tolerates_missing_config_file(tmp_path, monkeypatch):
@@ -343,8 +367,11 @@ def test_report_as_dict_is_json_serialisable(tmp_path, monkeypatch):
     payload = json.loads(json.dumps(report.as_dict(), ensure_ascii=False))
     assert payload["year"] == 2026
     assert payload["complete"] is True
+    assert payload["has_conflicts"] is False
     assert payload["holidays"] == ["2026-01-01"]
     assert payload["holidays_count"] == 1
+    assert payload["conflicting_open_days"] == []
+    assert payload["weekend_entries"] == []
     assert payload["missing_months"] == []
 
 
@@ -359,20 +386,41 @@ def test_render_report_mentions_refusal_when_incomplete(tmp_path, monkeypatch):
     assert "拒绝落盘" in text
 
 
-def test_render_report_lists_legacy_weekend_entries(tmp_path, monkeypatch):
+def test_render_report_lists_window_weekend_entries(tmp_path, monkeypatch):
     config = tmp_path / "trading_holidays.json"
-    config.write_text(
-        th.render_holiday_config([date(2026, 1, 3)]), encoding="utf-8"
-    )
+    config.write_text(th.render_holiday_config([date(2026, 1, 3)]), encoding="utf-8")
     _patch_fetch_months(monkeypatch, _month_mapping(2026))
     report = th.build_holiday_report(2026, config_path=config)
     text = th.render_report(report, generated_at=datetime(2026, 12, 1, 9, 0, 0))
     assert "2026-01-03" in text
-    assert "旧条目" in text
+    assert "周末条目" in text
 
 
 # ---------------------------------------------------------------------------
-# 🔴 等价性守卫：换生成口径不得改变交易日判定
+# 🔴 核心守卫 1：真实文件上「只增不删」是 no-op
+# ---------------------------------------------------------------------------
+
+
+def test_merging_real_config_is_a_no_op():
+    """用真实文件自身推出的交易所口径去合并，生产文件必须**一字不改**。
+
+    实测（2026-10-16，深交所 365 天全覆盖）：2026 年手写文件的 19 个工作日休市日
+    ⊂ 交易所口径（零缺失），而 4 个窗口内周末不会被删 ⇒ 落盘是 no-op。
+    这条守卫钉住「重新生成不会偷偷改动生产名单」。
+    """
+    real = th.parse_holiday_config(REAL_CONFIG.read_text(encoding="utf-8"))
+    generated = th.holidays_from_days(
+        [SzseCalendarDay(trade_date=day, is_open=False) for day in real], year=2026
+    )
+    assert generated, "前置断言：生成口径应当有工作日休市日（否则本守卫空转）"
+
+    merged = th.merge_year_holidays(real, year=2026, holidays=generated)
+    assert merged == real
+    assert th.render_holiday_config(merged) == REAL_CONFIG.read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# 🔴 核心守卫 2：换生成口径不得改变交易日判定
 # ---------------------------------------------------------------------------
 
 
@@ -444,21 +492,15 @@ def test_regenerated_calendar_preserves_trading_day_verdicts(monkeypatch):
     assert mismatches == [], f"生成口径改变了以下日期的交易日判定：{mismatches}"
 
 
-def test_real_config_legacy_entries_are_exactly_the_weekend_noise():
-    """真实文件的 2026 条目里，落周末的**不会超出**那 4 个已知噪声条目。
-
-    用 ``<=`` 而不是 ``==``：文件若按新口径重新生成，周末条目会归零，
-    本断言仍成立（手写时代的 4 个噪声条目见 ``LEGACY_WEEKEND_ENTRIES``）。
-    真正要拦的是「有人又手写进一个周末休市日」。
-    """
-    real_year = _real_config_2026()
-    weekend_entries = {day for day in real_year if day.weekday() >= 5}
-    assert all(day.weekday() >= 5 for day in LEGACY_WEEKEND_ENTRIES)
-    assert weekend_entries <= set(LEGACY_WEEKEND_ENTRIES)
+def test_real_config_weekend_entries_are_within_known_window_weekends():
+    """真实文件里落周末的条目，必须都是已知的「窗口内周末」（#314 要求列上）。"""
+    weekend_entries = {day for day in _real_config_2026() if day.weekday() >= 5}
+    assert all(day.weekday() >= 5 for day in WINDOW_WEEKEND_ENTRIES)
+    assert weekend_entries == set(WINDOW_WEEKEND_ENTRIES)
 
 
 def test_real_config_weekday_entries_are_all_preserved_by_generator():
-    """手写文件里的**工作日**休市日必须一条不落地被生成口径保留。"""
+    """手写文件里的**工作日**休市日必须一条不落地被生成口径产出。"""
     real_year = _real_config_2026()
     weekday_entries = {day for day in real_year if day.weekday() < 5}
     generated = set(
@@ -480,18 +522,16 @@ def test_real_config_is_readable_by_runtime_loader():
 
 
 # ---------------------------------------------------------------------------
-# 与 check_before_live 覆盖门的口径一致性（issue #392）
+# 与 check_before_live 覆盖门的关系
 # ---------------------------------------------------------------------------
 
 
 def test_real_config_satisfies_check_before_live_coverage_gate():
     """真实 config 必须满足 `check_before_live` 的交易日历覆盖门。
 
-    🔴 本守卫钉住 issue #392 的口径一致性：生成侧口径是「只写工作日休市日」，
-    而覆盖门的 `critical_holidays` 仍硬编码要求 3 个**周末**日期（2026-02-15 /
-    02-21 / 02-22）在名单里。两者目前靠「不对已覆盖年份落盘」共存 ——
-    若有人对 2026 执行 `--write`，本用例会立刻变红（见下一个用例的证据），
-    而不是让覆盖门在生产里静默打红。
+    覆盖门的 `critical_holidays` 要求 `2026-02-15` / `02-21` / `02-22`（都是周末）
+    在名单里 —— 这正是 #314 要求的「完整放假窗口（周末日也列上）」。
+    本工具**只增不删**，所以这些条目不会被自动生成删掉。
     """
     from scripts.monitor.check_before_live import _check_trading_calendar_coverage
 
@@ -499,11 +539,11 @@ def test_real_config_satisfies_check_before_live_coverage_gate():
     assert finding.ok is True, finding.detail
 
 
-def test_coverage_gate_would_reject_the_pruned_calendar(tmp_path):
-    """反向验证（issue #392 的证据）：按生成口径剪掉周末条目的日历**会**被覆盖门拒绝。
+def test_pruning_window_weekends_would_break_the_coverage_gate(tmp_path):
+    """反向验证：若按「只写工作日」的口径剪掉周末条目，覆盖门**会**变红。
 
-    ⚠️ #392 若按「方案 A」（覆盖门只校验工作日）收口，本用例会失败 ——
-    那时请连同 `_check_trading_calendar_coverage.critical_holidays` 一起改掉。
+    这条用例解释「为什么合并必须是只增不删」—— 不是风格偏好，而是覆盖门
+    （#314 待办第 2 条）要求窗口内周末必须在名单里。
     """
     from scripts.monitor.check_before_live import _check_trading_calendar_coverage
 
@@ -548,21 +588,23 @@ def test_cli_dry_run_writes_nothing(tmp_path, monkeypatch, capsys):
     assert "2026-10-01" in out
 
 
-def test_cli_write_merges_target_year_and_is_idempotent(tmp_path, monkeypatch, capsys):
+def test_cli_write_adds_missing_and_keeps_window_weekends(tmp_path, monkeypatch, capsys):
     config = tmp_path / "trading_holidays.json"
     config.write_text(
         th.render_holiday_config([date(2025, 10, 1), date(2026, 10, 3)]),
         encoding="utf-8",
     )
-    _patch_fetch_months(
-        monkeypatch, _month_mapping(2026, closed={date(2026, 10, 1)})
-    )
+    _patch_fetch_months(monkeypatch, _month_mapping(2026, closed={date(2026, 10, 1)}))
 
     assert main(["--year", "2026", "--config", str(config), "--write"]) == EXIT_OK
     first = config.read_text(encoding="utf-8")
     capsys.readouterr()
-    # 2025 保留、2026 替换（10-03 这个周末噪声被清掉）
-    assert th.parse_holiday_config(first) == (date(2025, 10, 1), date(2026, 10, 1))
+    # 2025 保留、2026 补上 10-01，**且窗口内周末 10-03 不被删**。
+    assert th.parse_holiday_config(first) == (
+        date(2025, 10, 1),
+        date(2026, 10, 1),
+        date(2026, 10, 3),
+    )
 
     assert main(["--year", "2026", "--config", str(config), "--write"]) == EXIT_OK
     out = capsys.readouterr().out
@@ -572,9 +614,7 @@ def test_cli_write_merges_target_year_and_is_idempotent(tmp_path, monkeypatch, c
 
 def test_cli_refuses_to_write_when_a_month_is_unavailable(tmp_path, monkeypatch, capsys):
     config = tmp_path / "trading_holidays.json"
-    config.write_text(
-        th.render_holiday_config([date(2025, 10, 1)]), encoding="utf-8"
-    )
+    config.write_text(th.render_holiday_config([date(2025, 10, 1)]), encoding="utf-8")
     before = config.read_text(encoding="utf-8")
     mapping = _month_mapping(2026)
     mapping["2026-11"] = None
@@ -588,6 +628,25 @@ def test_cli_refuses_to_write_when_a_month_is_unavailable(tmp_path, monkeypatch,
     assert "不落盘" in captured.err
 
 
+def test_cli_warns_loudly_on_conflicting_open_days(tmp_path, monkeypatch, capsys):
+    config = tmp_path / "trading_holidays.json"
+    config.write_text(
+        th.render_holiday_config([date(2026, 10, 1), date(2026, 10, 8)]),
+        encoding="utf-8",
+    )
+    _patch_fetch_months(monkeypatch, _month_mapping(2026, closed={date(2026, 10, 1)}))
+
+    code = main(["--year", "2026", "--config", str(config), "--write"])
+    captured = capsys.readouterr()
+    assert code == EXIT_OK
+    assert "2026-10-08" in captured.err
+    assert "开市" in captured.err
+    # 冲突条目**不会**被自动删 —— 删哪一条属于人工复核。
+    assert date(2026, 10, 8) in set(
+        th.parse_holiday_config(config.read_text(encoding="utf-8"))
+    )
+
+
 def test_cli_json_reports_shape(tmp_path, monkeypatch, capsys):
     code, _ = _run_cli(
         tmp_path, monkeypatch, closed={date(2026, 10, 1)}, argv_extra=("--json",)
@@ -596,8 +655,11 @@ def test_cli_json_reports_shape(tmp_path, monkeypatch, capsys):
     assert code == EXIT_OK
     assert payload["year"] == 2026
     assert payload["complete"] is True
+    assert payload["has_conflicts"] is False
     assert payload["written"] is False
     assert payload["holidays"] == ["2026-10-01"]
+    assert payload["conflicting_open_days"] == []
+    assert payload["weekend_entries"] == []
     assert payload["config_path"].endswith("trading_holidays.json")
 
 
