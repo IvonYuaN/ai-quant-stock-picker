@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from urllib.parse import quote
-from typing import Any
+from typing import Any, Callable
 
 import requests
 
@@ -11,6 +11,11 @@ from aqsp.core.http import HttpClientConfig, build_http_session, get_http_config
 from aqsp.core.time import today_shanghai
 from aqsp.data.source_health import notification_level_for_health_label
 from aqsp.notification_style import compact_notification_markdown
+from aqsp.notify_chunk import DEFAULT_CHUNK_LIMIT, ensure_dingtalk_keyword, split_markdown
+
+#: 单段上限。各渠道真实上限：微信 3800 / 钉钉 3800 / Telegram 3900。
+#: 统一取 3500（含分段前缀余量），超出则分段发送而**不是**截断。
+_NOTIFY_CHUNK_LIMIT = DEFAULT_CHUNK_LIMIT
 
 
 @dataclass(frozen=True)
@@ -245,6 +250,35 @@ def _notify_with_senders(
     return results
 
 
+def _post_chunked(
+    channel: str,
+    url: str,
+    markdown: str,
+    build: Callable[[str], dict[str, Any]],
+) -> NotifyResult:
+    """按 :data:`_NOTIFY_CHUNK_LIMIT` 分段发送，任一段失败即停并报出段号。
+
+    历史行为是 ``markdown[:3800]`` —— 超长正文被**静默截断**，用户看到一份
+    从中间断掉却毫无提示的报告。改为分段后，正文完整送达；段数超出上限时
+    末段会明确写出「余下 N 段未发送」（见 :func:`aqsp.notify_chunk.split_markdown`）。
+
+    段间失败**不继续发后续段**：渠道多半是限流或鉴权问题，继续发只会加剧，
+    而且半份报告比完整报告更误导。
+    """
+    chunks = split_markdown(markdown, limit=_NOTIFY_CHUNK_LIMIT)
+    total = len(chunks)
+    result: NotifyResult | None = None
+    for index, chunk in enumerate(chunks, start=1):
+        result = _post(channel, url, json=build(chunk))
+        if not result.ok:
+            return NotifyResult(channel, False, f"segment {index}/{total}: {result.detail}")
+    if result is None:  # pragma: no cover - split_markdown 至少返回一段
+        return NotifyResult(channel, False, "no segment produced")
+    if total == 1:
+        return result
+    return NotifyResult(channel, True, f"{total} segments ({result.detail})")
+
+
 def _send_telegram(markdown: str) -> NotifyResult | None:
     markdown = compact_notification_markdown(markdown)
     token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
@@ -252,8 +286,12 @@ def _send_telegram(markdown: str) -> NotifyResult | None:
     if not token or not chat_id:
         return None
     url = f"https://api.telegram.org/bot{token}/sendMessage"
-    payload = {"chat_id": chat_id, "text": markdown[:3900], "parse_mode": "Markdown"}
-    return _post("telegram", url, json=payload)
+    return _post_chunked(
+        "telegram",
+        url,
+        markdown,
+        lambda chunk: {"chat_id": chat_id, "text": chunk, "parse_mode": "Markdown"},
+    )
 
 
 def _send_wechat(markdown: str) -> NotifyResult | None:
@@ -261,8 +299,12 @@ def _send_wechat(markdown: str) -> NotifyResult | None:
     url = os.getenv("WECHAT_WEBHOOK_URL", "").strip()
     if not url:
         return None
-    payload = {"msgtype": "markdown", "markdown": {"content": markdown[:3800]}}
-    return _post("wechat", url, json=payload)
+    return _post_chunked(
+        "wechat",
+        url,
+        markdown,
+        lambda chunk: {"msgtype": "markdown", "markdown": {"content": chunk}},
+    )
 
 
 def _send_serverchan(markdown: str) -> NotifyResult | None:
@@ -294,10 +336,8 @@ def _send_dingtalk(markdown: str) -> NotifyResult | None:
     if not url:
         return None
     title = _notification_title(markdown)
-    payload = {
-        "msgtype": "markdown",
-        "markdown": {"title": title, "text": markdown[:3800]},
-    }
+    # 「自定义关键词」安全模式：正文必须含关键词，否则服务端拒收（errcode 310000）。
+    keyword = os.getenv("DINGTALK_KEYWORD", "").strip()
     if secret:
         import time
         import hmac
@@ -313,7 +353,15 @@ def _send_dingtalk(markdown: str) -> NotifyResult | None:
         ).digest()
         sign = base64.b64encode(hmac_code).decode("utf-8")
         url = f"{url}&timestamp={timestamp}&sign={sign}"
-    return _post("dingtalk", url, json=payload)
+    return _post_chunked(
+        "dingtalk",
+        url,
+        markdown,
+        lambda chunk: {
+            "msgtype": "markdown",
+            "markdown": {"title": title, "text": ensure_dingtalk_keyword(chunk, keyword)},
+        },
+    )
 
 
 def _send_bark(markdown: str) -> NotifyResult | None:
