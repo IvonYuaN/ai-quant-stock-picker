@@ -54,6 +54,19 @@ src/
   types/          快照契约类型
 ```
 
+## 样式
+
+Tailwind v4（CSS-first，无 JS 配置文件）。`src/index.css` 是唯一样式入口：
+
+- `@theme inline` 定义语义色（`--color-background` 等 = `hsl(var(--background))` 间接层），
+  实际值在 `:root` / `.light` 两套变量里，切亮色只换变量不动工具类。
+- 设计系统是自建组件层（`aq-*` 前缀，三千余行）：业务样式**一律加在 index.css 的
+  `@layer components`**，不要在 TSX 里堆工具类——一是保持一个前缀体系，二是组件类
+  不受内容检测影响（v3 曾 purge 掉动态拼接类，v4 不再 purge 自建 CSS）。
+- 少量工具类（`index.html` 的 `bg-background` 等）来自 `@theme` 语义色。
+- v4 preflight 移除了 v3 的 `button{cursor:pointer}` 与 placeholder 弱化色，
+  已在 base 层显式补回（见 index.css 注释），改动样式时勿删。
+
 **核心约定：页面不自己写业务判断。** 任何派生（门禁定性、候选是否可复核、空态原因）
 都来自 `lib/*-view.ts`，否则同一件事在不同页会显示成不同结论。
 
@@ -65,8 +78,9 @@ src/
 2. **`api.ts` 里上游原始负载的类型是宽松的**（可选字段 + 索引签名）。
    后端给过 `change_pct: "-"`、K 线用 `datetime`/`vol` 而不是 `date`/`volume`。
    严格性交给归一化后的视图类型，别照字面写死。
-3. **Tailwind 类名禁止模板拼接。** `cn("aq-badge", \`aq-badge-${tone}\`)` 会被 purge 掉，
-   样式静默失效。必须写成显式字面量映射（见 `primitives.tsx` 顶部的 `*_TONE` 对象）。
+3. **Tailwind 类名禁止模板拼接。** 动态拼接的**工具类**（`bg-${color}-500`）v4 不会生成；
+   自建组件类（`aq-*`）虽不再被 purge，但依赖运行时拼接本身就是脆弱模式。
+   必须写成显式字面量映射（见 `primitives.tsx` 顶部的 `*_TONE` 对象）。
 4. **重依赖必须按需加载。** echarts 打进主包曾让产物 360 kB → 1020 kB。
    `EChart`、`MarkdownView`、以及每个路由都走运行时 `import()`。
    接重依赖前后都要看 `vite build` 的 chunk 体积。
