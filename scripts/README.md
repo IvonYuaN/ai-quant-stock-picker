@@ -128,6 +128,7 @@ check_release_consistency.py
 - `fetch_cls_news.py` - 财联社新闻
 - `fetch_concept_board.py` - 概念板块
 - `fetch_event_data.py` - 事件数据
+- `fetch_kaipanla_theme.py` - 开盘啦题材轮动 + 龙头梯队（runner 中继抓取，落 `kaipanla_theme_rotation.csv` / `kaipanla_theme_leaders.csv`；热度为带符号独立口径，存原值禁跨板块比较，见 #398/#404）
 - `fetch_longhubang.py` - 龙虎榜数据
 - `preload_event_data.sh` - 预加载事件数据
 
