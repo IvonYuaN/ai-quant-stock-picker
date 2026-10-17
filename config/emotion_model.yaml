@@ -1,0 +1,70 @@
+version: "1.0.0"
+effective_from: "2026-10-17"
+description: >-
+  短线情绪周期模型（phase 状态机 + 四维评分）的阈值单一来源。
+  刻意**不**放进 thresholds.yaml：后者是策略选股阈值，改动必须走 walk-forward；
+  本文件只影响看板上的情绪展示与解释，不参与选股打分、不影响候选池。
+
+# 四维归一化：每个指标给 [floor, ceil]，分段线性映射到 0–100，再按 weight 加权。
+# invert: true 表示「数值越小越严重」（例如高标平均跌幅越负，亏钱效应越强）。
+dimensions:
+  profit:
+    label: "赚钱效应"
+    weight: 0.35
+    metrics:
+      yzt_feedback:    {floor: -3.0, ceil: 6.0,  weight: 0.40}
+      yzt_up_ratio:    {floor: 0.20, ceil: 0.80, weight: 0.20}
+      seal_rate:       {floor: 0.45, ceil: 0.90, weight: 0.20}
+      promotion_rate:  {floor: 0.05, ceil: 0.40, weight: 0.20}
+  loss:
+    label: "亏钱效应"
+    weight: 0.30
+    metrics:
+      break_rate:      {floor: 0.10, ceil: 0.60, weight: 0.40}
+      dt_pressure:     {floor: 0.05, ceil: 0.50, weight: 0.30}
+      high_board_pct:  {floor: -8.0, ceil: 0.0,  weight: 0.30, invert: true}
+  breadth:
+    label: "市场宽度"
+    weight: 0.20
+    metrics:
+      up_ratio:        {floor: 0.25, ceil: 0.75, weight: 1.00}
+  focus:
+    label: "题材聚焦度"
+    weight: 0.15
+    metrics:
+      top_theme_share: {floor: 0.10, ceil: 0.45, weight: 0.60}
+      hhi:             {floor: 0.02, ceil: 0.20, weight: 0.40}
+
+# phase 判定：自上而下 **first-match**，命中即停。
+# 每条规则必须能被一句话解释（`description` 会原样回传给前端做解释）。
+# 任何一条 when 里的指标为 None ⇒ 该规则不成立（fail-closed，绝不猜）。
+phase_rules:
+  - name: freezing
+    label: "冰点"
+    description: "赚钱效应 ≤ 25 —— 打板必亏、无人接力"
+    when: {profit_at_most: 25}
+
+  - name: climax
+    label: "高潮"
+    description: "赚钱效应 ≥ 80，且涨停 ≥ 80 家、最高板 ≥ 5 —— 一致性加速"
+    when: {profit_at_least: 80, zt_count_at_least: 80, max_boards_at_least: 5}
+
+  - name: ebbing
+    label: "退潮"
+    description: "亏钱效应 ≥ 70 且赚钱效应 < 55 —— 炸板/跌停主导"
+    when: {loss_at_least: 70, profit_below: 55}
+
+  - name: fermenting
+    label: "发酵"
+    description: "赚钱效应 ≥ 55 且晋级率 ≥ 0.25 —— 接力顺畅、主线扩散"
+    when: {profit_at_least: 55, promotion_rate_at_least: 0.25}
+
+  - name: repairing
+    label: "修复"
+    description: "赚钱效应 40–55 且晋级率 ≥ 0.20 —— 冰点后的第一波修复"
+    when: {profit_at_least: 40, profit_below: 55, promotion_rate_at_least: 0.20}
+
+  - name: diverging
+    label: "分歧"
+    description: "其余情形 —— 多空僵持，方向待定"
+    when: {}

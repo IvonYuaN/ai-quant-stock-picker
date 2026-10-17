@@ -271,7 +271,7 @@ def _emotion() -> dict:
     # 晋级率＝今日 2 板+（＝昨涨停今又停）÷ 昨日涨停家数
     promotion_rate = round(len(lianban) / yzt_count, 3) if yzt_count else None
 
-    return {
+    payload = {
         "date": f"{resolved[:4]}-{resolved[4:6]}-{resolved[6:]}",
         "zt_count": zt_count,
         "dt_count": len(dt),
@@ -285,6 +285,95 @@ def _emotion() -> dict:
         "promotion_rate": promotion_rate,
         "yzt_count": yzt_count,
     }
+
+    # ---- 情绪周期评估（phase + 四维评分）----------------------------------
+    # 纯逻辑在 ``aqsp.regime.emotion_cycle``（可单测、零 I/O），本函数只负责把
+    # 涨停四池折算成快照。评估失败**不得**拖垮接口 —— 只是少一个展示字段，
+    # 涨跌停/连板/炸板率这些核心数据必须照常返回（fail-soft）。
+    assessment = _emotion_assessment(
+        resolved=resolved,
+        zt=zt,
+        zb_count=zb_count,
+        dt_count=len(dt),
+        yzt=yzt,
+        boards=boards,
+        lianban_count=len(lianban),
+        yzt_count=yzt_count,
+        seal_rate=seal_rate,
+        break_rate=break_rate,
+        promotion_rate=promotion_rate,
+    )
+    if assessment:
+        payload["emotion_model"] = assessment
+    return payload
+
+
+def _emotion_assessment(
+    *,
+    resolved: str,
+    zt: list[dict],
+    zb_count: int,
+    dt_count: int,
+    yzt: list[dict],
+    boards: list[int],
+    lianban_count: int,
+    yzt_count: int,
+    seal_rate: float | None,
+    break_rate: float | None,
+    promotion_rate: float | None,
+) -> dict:
+    """把涨停四池折算成 ``EmotionSnapshot`` 并跑情绪周期模型。
+
+    任何一步失败都返回 ``{}``（调用方据此跳过该字段），绝不向上抛异常。
+    """
+    try:
+        from aqsp.regime.emotion_cycle import (
+            EmotionSnapshot,
+            assess,
+            theme_shares_from_industries,
+        )
+
+        # 昨日涨停股今日表现 —— 赚钱效应最直接的观测。
+        yzt_pcts = [v for v in (astock._numf(p.get("zdp")) for p in yzt) if v is not None]
+        # 高标杀跌：只看最高板那一档的今日表现。
+        high_boards = max(boards) if boards else 0
+        high_pcts = [
+            v
+            for v in (
+                astock._numf(p.get("zdp"))
+                for p in zt
+                if (_num(p.get("lbc")) or 1) == high_boards
+            )
+            if v is not None
+        ]
+        breadth = _sentiment()  # 失败返回 {}，宽度维度自然降级为 None
+        snapshot = EmotionSnapshot(
+            trade_date=f"{resolved[:4]}-{resolved[4:6]}-{resolved[6:]}",
+            zt_count=len(zt),
+            dt_count=dt_count,
+            zb_count=zb_count,
+            max_boards=high_boards,
+            lianban_count=lianban_count,
+            yzt_count=yzt_count,
+            yzt_feedback=(sum(yzt_pcts) / len(yzt_pcts)) if yzt_pcts else None,
+            yzt_up_ratio=(
+                sum(1 for v in yzt_pcts if v > 0) / len(yzt_pcts)
+                if yzt_pcts
+                else None
+            ),
+            high_board_pct=(sum(high_pcts) / len(high_pcts)) if high_pcts else None,
+            seal_rate=seal_rate,
+            break_rate=break_rate,
+            promotion_rate=promotion_rate,
+            up_count=_num(breadth.get("up")),
+            down_count=_num(breadth.get("down")),
+            theme_shares=theme_shares_from_industries(
+                str(p.get("hybk") or "") for p in zt
+            ),
+        )
+        return assess(snapshot).as_dict()
+    except Exception:
+        return {}
 
 
 def get_short_term_emotion() -> dict:
