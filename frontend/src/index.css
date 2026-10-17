@@ -1,6 +1,37 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+
+/* ============================================================
+   Tailwind v4 主题（CSS-first，替代原 tailwind.config.ts）
+   ------------------------------------------------------------
+   语义色 = hsl(var(--x)) 间接层：实际值由下面 :root / .light 提供，
+   切亮色只需改 :root 上的变量，工具类与 @apply 自动跟随。
+   inline 关键字让工具类直接展开 hsl(var(--x))，避免多一层 var 间接。
+   ============================================================ */
+@theme inline {
+  --color-border: hsl(var(--border));
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-accent: hsl(var(--accent));
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+  --color-success: hsl(var(--success));
+  --color-danger: hsl(var(--danger));
+  --color-warning: hsl(var(--warning));
+  --color-info: hsl(var(--info));
+  --font-sans: "Inter", "system-ui", "sans-serif";
+  --font-mono: "JetBrains Mono", "ui-monospace", "monospace";
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 4px);
+  --radius-sm: calc(var(--radius) - 8px);
+  --shadow-glass: 0 12px 30px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  --shadow-glow: 0 0 0 1px hsl(var(--primary) / 0.25), 0 0 24px hsl(var(--primary) / 0.18);
+}
 
 /* ============================================================
    AQSP · 量化研究工作台样式
@@ -90,13 +121,19 @@
       radial-gradient(980px 720px at 108% 112%, hsl(220 65% 60% / 0.06), transparent 55%);
   }
 
-  .prose table {
-    border-collapse: collapse;
-    width: 100%;
+  /* v4 preflight 相对 v3 移除/变更了两条本项目依赖的规则，在此显式补回：
+     ① button/[role=button] 的 cursor:pointer（v4 已删；.aq-btn 等大量可点元素
+        不自带 cursor，靠这条兜底——没有它按钮悬停显示默认箭头）；
+     ② placeholder 颜色（v4 改成 currentColor＝前景色；沿用 v3 的弱化语义，
+        取设计系统的 muted-foreground，与 v3 的 gray-400 观感一致）。 */
+  button,
+  [role="button"] {
+    cursor: pointer;
   }
-  .prose th,
-  .prose td {
-    border: 1px solid hsl(var(--border));
+
+  input::placeholder,
+  textarea::placeholder {
+    color: hsl(var(--muted-foreground));
   }
 
   ::-webkit-scrollbar {
