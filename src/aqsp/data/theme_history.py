@@ -7,8 +7,9 @@
 **无法回答**——不是算法缺，是数据没有历史。
 
 本模块把每日截面追加成历史表，供 :mod:`aqsp.features.theme_index` 聚合成
-日 / 周 / 月 K。历史**从首次积累日开始，不可回补**（东财不提供板块历史接口，
-``push2`` 全出口被切，见 #333）。
+日 / 周 / 月 K。历史**从首次积累日开始**积累；2026-10-17 起支持**冷启动回补**
+（:func:`append_backfill_rows`，push2his 板块日 K 补 change_pct 列，
+口径与当日快照逐一核对一致，见 #406）。
 
 存储约定
 --------
@@ -31,6 +32,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Iterable, Optional
@@ -173,6 +175,100 @@ def append_board_snapshot(
     return len(rows)
 
 
+def append_backfill_rows(
+    rows: Iterable[tuple[object, object, object]],
+    *,
+    path: Optional[os.PathLike[str] | str] = None,
+    min_boards: int = MIN_BOARDS_PER_SNAPSHOT,
+    force: bool = False,
+) -> int:
+    """冷启动回补：写入「只有 change_pct、三截面字段为空（NaN）」的历史行（#406）。
+
+    与 :func:`append_board_snapshot` 的两点区别：
+
+    1. **三截面字段写 NaN 而非 0**——「0 家上涨」与「无数据」是两种语义，
+       回补来源（push2his 板块日 K）没有 up_count / down_count / main_net_inflow；
+    2. **只补空洞**——按 ``(trade_date, board_name)`` 粒度，已有行一律优先：
+       当日 cron 快照（全字段）永不被回补的半字段行覆盖；分批回补可累积。
+
+    :param rows: ``(trade_date, board_name, change_pct)`` 元组序列。
+        脏行（非法日期 / 空板块名 / 不可解析或 NaN 的涨跌幅）静默跳过——
+        与 :func:`board_change_series` 的容错口径一致，不阻断整批回补。
+    :param min_boards: 每个交易日的板块数下限（同快照口径）。
+    :param force: 绕过板块数门槛（人工确认过的残缺回补场景）。
+    :return: 实际写入的行数（全部为空洞则返回 0，不报错——重跑幂等）。
+    """
+    parsed: list[dict[str, object]] = []
+    skipped = 0
+    for raw in rows:
+        try:
+            day = _normalize_trade_date(raw[0])
+            name = str(raw[1] or "").strip()
+            pct = float(raw[2])
+        except (IndexError, TypeError, ValueError, DataError):
+            skipped += 1
+            continue
+        if not name or math.isnan(pct):
+            skipped += 1
+            continue
+        parsed.append(
+            {
+                "trade_date": day,
+                "board_name": name,
+                "change_pct": pct,
+                "up_count": None,
+                "down_count": None,
+                "main_net_inflow": None,
+            }
+        )
+    if not parsed:
+        raise DataError(f"theme_history: 回补行全部无效（跳过 {skipped} 行），拒绝写入")
+
+    by_day: dict[str, int] = {}
+    for row in parsed:
+        day = str(row["trade_date"])
+        by_day[day] = by_day.get(day, 0) + 1
+    thin = {day: count for day, count in by_day.items() if count < min_boards}
+    if thin and not force:
+        detail = "、".join(f"{day}({count})" for day, count in sorted(thin.items()))
+        raise DataError(
+            f"theme_history: {len(thin)} 个交易日板块数低于门槛 {min_boards}：{detail}"
+            "（确需写入请传 force=True）"
+        )
+
+    target = _resolve_path(path)
+    existing = load_board_history(path=target)
+    filled: set[tuple[str, str]] = set()
+    if not existing.empty:
+        filled = {
+            (str(day)[:_DATE_TEXT_LENGTH], str(name).strip())
+            for day, name in zip(existing["trade_date"], existing["board_name"])
+        }
+    new_rows = [
+        row
+        for row in parsed
+        if (str(row["trade_date"]), str(row["board_name"])) not in filled
+    ]
+    if not new_rows:
+        return 0
+
+    merged = pd.concat(
+        [existing, pd.DataFrame(new_rows, columns=list(COLUMNS))], ignore_index=True
+    )
+    merged = merged.sort_values(["trade_date", "board_name"], kind="stable").reset_index(
+        drop=True
+    )
+
+    tmp = target.with_suffix(target.suffix + ".tmp")
+    try:
+        merged.to_csv(tmp, index=False)
+        os.replace(tmp, target)
+    except Exception as exc:  # noqa: BLE001
+        tmp.unlink(missing_ok=True)
+        raise DataError(f"theme_history: 写入失败 {target}（{exc}）") from exc
+    return len(new_rows)
+
+
 def board_change_series(
     history: pd.DataFrame,
     board_name: str,
@@ -204,6 +300,7 @@ __all__ = [
     "COLUMNS",
     "HISTORY_FILENAME",
     "MIN_BOARDS_PER_SNAPSHOT",
+    "append_backfill_rows",
     "append_board_snapshot",
     "board_change_series",
     "empty_history",
