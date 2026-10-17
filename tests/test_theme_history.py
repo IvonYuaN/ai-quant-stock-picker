@@ -20,6 +20,7 @@ from aqsp.data.theme_history import (
     COLUMNS,
     HISTORY_FILENAME,
     MIN_BOARDS_PER_SNAPSHOT,
+    append_backfill_rows,
     append_board_snapshot,
     board_change_series,
     empty_history,
@@ -252,3 +253,136 @@ def test_board_change_series_keeps_none_for_dirty_values(tmp_path: Path) -> None
     pairs = board_change_series(load_board_history(path=target), "AI应用")
 
     assert pairs == (("2026-10-12", 1.5), ("2026-10-13", None))
+
+
+# ---------------------------------------------------------------------------
+# 冷启动回补（#406）：半字段（NaN）行 + 只补空洞
+# ---------------------------------------------------------------------------
+
+
+def _backfill_rows(
+    *,
+    days: int = 2,
+    names: tuple[str, ...] = ("AI应用", "低空经济"),
+) -> list[tuple[str, str, float]]:
+    return [
+        (f"2026-10-{12 + day:02d}", name, 1.0 + day)
+        for day in range(days)
+        for name in names
+    ]
+
+
+def test_backfill_writes_nan_columns(tmp_path: Path) -> None:
+    """半字段行：change_pct 有值，三截面字段**为空（NaN）而非 0**。
+
+    「0 家上涨」与「无数据」是两种语义——回补来源没有这三列，填 0 会
+    把缺数伪装成真实统计。
+    """
+    target = tmp_path / "theme_history.csv"
+
+    written = append_backfill_rows(_backfill_rows(), path=target, force=True)
+
+    assert written == 4
+    frame = pd.read_csv(target)
+    assert tuple(frame.columns) == COLUMNS
+    assert frame["change_pct"].notna().all()
+    for column in ("up_count", "down_count", "main_net_inflow"):
+        assert frame[column].isna().all(), f"{column} 应为 NaN（无数据），不是 0"
+
+
+def test_backfill_does_not_overwrite_full_snapshot(tmp_path: Path) -> None:
+    """已有全字段快照的行优先：回补的半字段行永不覆盖当日 cron 快照。"""
+    target = tmp_path / "theme_history.csv"
+    append_board_snapshot([_item("AI应用", 5.0)], trade_date="2026-10-12", path=target, force=True)
+
+    written = append_backfill_rows(
+        [("2026-10-12", "AI应用", 99.0)], path=target, force=True
+    )
+
+    assert written == 0
+    frame = pd.read_csv(target)
+    assert len(frame) == 1
+    assert frame.loc[0, "change_pct"] == pytest.approx(5.0)
+    assert frame.loc[0, "up_count"] == 10  # 全字段行的截面统计未被 NaN 洗掉
+
+
+def test_backfill_skips_dirty_rows_but_keeps_valid(tmp_path: Path) -> None:
+    """脏行（非法日期 / 空名 / NaN 涨跌幅）静默跳过，不阻断整批回补。"""
+    target = tmp_path / "theme_history.csv"
+    rows = [
+        ("2026-10-12", "AI应用", 1.5),
+        ("bad-date", "坏日期", 1.0),
+        ("2026-10-12", "  ", 1.0),
+        ("2026-10-12", "NaN板块", float("nan")),
+    ]
+
+    written = append_backfill_rows(rows, path=target, force=True)
+
+    assert written == 1
+    frame = pd.read_csv(target)
+    assert len(frame) == 1
+    assert frame.loc[0, "board_name"] == "AI应用"
+
+
+def test_backfill_all_invalid_raises(tmp_path: Path) -> None:
+    target = tmp_path / "theme_history.csv"
+
+    with pytest.raises(DataError, match="全部无效"):
+        append_backfill_rows([("bad", "坏", 1.0)], path=target, force=True)
+
+
+def test_backfill_thin_day_raises_and_force_bypasses(tmp_path: Path) -> None:
+    """某交易日板块数低于门槛 ⇒ 抛错（残缺快照不静默落盘）；force 可绕过。"""
+    target = tmp_path / "theme_history.csv"
+    rows = [("2026-10-12", f"板块{idx:03d}", 1.0) for idx in range(3)]
+
+    with pytest.raises(DataError, match="板块数低于门槛"):
+        append_backfill_rows(rows, path=target, min_boards=MIN_BOARDS_PER_SNAPSHOT)
+
+    written = append_backfill_rows(
+        rows, path=target, min_boards=MIN_BOARDS_PER_SNAPSHOT, force=True
+    )
+    assert written == 3
+
+
+def test_backfill_noop_when_all_filled(tmp_path: Path) -> None:
+    """重跑幂等：全部为空洞已填 ⇒ 返回 0，不报错、不改文件。"""
+    target = tmp_path / "theme_history.csv"
+    append_backfill_rows(_backfill_rows(), path=target, force=True)
+    before = target.read_bytes()
+
+    written = append_backfill_rows(_backfill_rows(), path=target, force=True)
+
+    assert written == 0
+    assert target.read_bytes() == before
+
+
+def test_backfill_merges_into_existing_history_sorted(tmp_path: Path) -> None:
+    """回补行与当日快照行合并后仍按 (trade_date, board_name) 排序。"""
+    target = tmp_path / "theme_history.csv"
+    append_board_snapshot(
+        [_item("AAA板块", 2.0), _item("ZZZ板块", 3.0)],
+        trade_date="2026-10-15",
+        path=target,
+        force=True,
+    )
+
+    append_backfill_rows(
+        [("2026-10-13", "BBB板块", 1.0), ("2026-10-13", "AAA板块", 0.5)],
+        path=target,
+        force=True,
+    )
+
+    frame = pd.read_csv(target)
+    assert frame["trade_date"].tolist() == ["2026-10-13", "2026-10-13", "2026-10-15", "2026-10-15"]
+    assert frame["board_name"].tolist() == ["AAA板块", "BBB板块", "AAA板块", "ZZZ板块"]
+
+
+def test_backfill_rows_feed_board_change_series(tmp_path: Path) -> None:
+    """回补行的 change_pct 必须能被 vendor 序列消费（board_change_series 只取这两列）。"""
+    target = tmp_path / "theme_history.csv"
+    append_backfill_rows(_backfill_rows(names=("AI应用",)), path=target, force=True)
+
+    pairs = board_change_series(load_board_history(path=target), "AI应用")
+
+    assert pairs == (("2026-10-12", 1.0), ("2026-10-13", 2.0))
