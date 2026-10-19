@@ -15,6 +15,8 @@
 
 from __future__ import annotations
 
+import time
+
 import astock
 
 _UA_H = {"User-Agent": astock.UA}
@@ -98,31 +100,62 @@ def _quote_from(d: dict) -> dict:
     }
 
 
+_INDEX_FIELDS = "f43,f57,f58,f59,f60,f170,f86"
+# 缺项补取的间隔。东财 stock/get 会**整批**抖空（prod 实测：同一轮 dji/spx/ndx
+# 三个全空，3 秒后全恢复），所以缺项值得补一次，而不是让面板少几个指数。
+_INDEX_RETRY_SLEEP = 0.3
+
+
+def _index_row(idx: dict, d: dict) -> dict:
+    chg = d.get("f170")
+    return {
+        "key": idx["key"],
+        "name": idx["name"],
+        "region": idx["region"],
+        "price": _price(d, "f43"),
+        "change_pct": round(chg / 100, 2) if isinstance(chg, (int, float)) else None,
+        "as_of": _epoch_iso(d.get("f86")),
+    }
+
+
+def is_complete(rows: object) -> bool:
+    """5 个指数是否全部拿到。
+
+    缓存层用它判断「部分缺失」：``valid=bool`` 会把 2/5 当有效结果锁满 5 分钟，
+    面板上就只剩两个指数，看起来像「源只有这两个」。部分缺失应当走负缓存（60s），
+    尽快重试。
+    """
+    return isinstance(rows, list) and len(rows) >= len(_INDICES)
+
+
 def global_indices() -> list[dict]:
     """全球指数快照（道指 / 标普500 / 纳斯达克 / 恒生 / 恒生科技）。源无的档跳过。
 
     ``as_of`` 取自 push2 的 ``f86``（该行行情的更新时间，Unix 秒），是**源给的
     真实时间**而非取数时刻：美股档会是上一个美股收盘时间，港股档是港股收盘时间，
     二者本来就不该相同。字段缺失时 ``as_of=None``，由接口层汇总成「无数据时间」。
+
+    某一档取不到时会**补取一次**（仅补缺的那些），补不到才如实少一档；顺序始终
+    按 ``_INDICES``，不因补取而乱。
     """
-    out = []
+    out: list[dict] = []
+    missing: list[dict] = []
     for idx in _INDICES:
-        d = _push2_stock_get(idx["secid"], "f43,f57,f58,f59,f60,f170,f86")
-        if not d:
-            continue
-        chg = d.get("f170")
-        out.append(
-            {
-                "key": idx["key"],
-                "name": idx["name"],
-                "region": idx["region"],
-                "price": _price(d, "f43"),
-                "change_pct": round(chg / 100, 2)
-                if isinstance(chg, (int, float))
-                else None,
-                "as_of": _epoch_iso(d.get("f86")),
-            }
-        )
+        d = _push2_stock_get(idx["secid"], _INDEX_FIELDS)
+        if d:
+            out.append(_index_row(idx, d))
+        else:
+            missing.append(idx)
+
+    if missing:
+        time.sleep(_INDEX_RETRY_SLEEP)
+        for idx in missing:
+            d = _push2_stock_get(idx["secid"], _INDEX_FIELDS)
+            if d:
+                out.append(_index_row(idx, d))
+
+    order = {idx["key"]: n for n, idx in enumerate(_INDICES)}
+    out.sort(key=lambda r: order.get(r["key"], len(_INDICES)))
     return out
 
 
