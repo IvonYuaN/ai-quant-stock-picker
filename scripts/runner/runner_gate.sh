@@ -29,7 +29,10 @@ RUNNER_ROOT="${RUNNER_ROOT:-/opt/aqsp-runner}"
 RELEASE="$RUNNER_ROOT/aqsp-scheduler-current"
 VENV="${VENV:-$RUNNER_ROOT/venv}"
 DATA="$RUNNER_ROOT/data/astocks_raw.db"
-OUT="$RUNNER_ROOT/gate_run"
+# OUT 可覆盖：多组研究对照实验各占一个目录，避免互相覆盖 walkforward_gate.json，
+# 也避免把研究口径的 gate 结果写进生产 gate_run/（那里有 RESULT_READY，
+# prod 的 runner_fetch.sh 会把它当周度生产判决拉走）。默认仍是生产目录。
+OUT="${OUT:-$RUNNER_ROOT/gate_run}"
 
 GRID_PROFILE="${GRID_PROFILE:-stable_plus}"
 LOOKBACK_YEARS="${LOOKBACK_YEARS:-3}"
