@@ -149,6 +149,23 @@ def parse_gtimg_time(raw: object) -> str | None:
         return None
 
 
+def epoch_iso(raw: object) -> str | None:
+    """东财的 Unix 秒时间戳 → 上海时区 ISO；0/负数/非数值/不可换算一律 ``None``。
+
+    ⚠️ **同一个字段编号在不同端点上含义不同，不要跨端点套用**（prod 实测）：
+    - ``stock/get``（单只/单指数）：时间在 ``f86``，``f124`` 恒为 0；
+    - ``clist/get``（榜单）：时间在 ``f124``，``f86`` 是个比值（如 11.64 / 29.02）。
+
+    东财未填充时给 0，故 0 必须当「没有」而不是 1970。
+    """
+    if not isinstance(raw, (int, float)) or raw <= 0:
+        return None
+    try:
+        return datetime.fromtimestamp(raw, _SHANGHAI_TZ).isoformat()
+    except (OSError, OverflowError, ValueError):
+        return None
+
+
 def latest_as_of(values: object) -> str | None:
     """取一组 ISO 时间字符串里最新的一个；不可解析的跳过，全空/全坏返回 ``None``。
 
@@ -808,7 +825,7 @@ def market_turnover_rank(n: int = 20) -> list[dict]:
 
     东财行情中心 clist。**push2(实时) 不可达时降级 push2delay(延迟行情，日榜场景足够)**。
     返回每只: code / name / price / pct / amount(成交额,元) / mcap(总市值,元) /
-    float_cap(流通市值,元) / industry。
+    float_cap(流通市值,元) / industry / as_of(该行行情时间,ISO)。
     ⚠️ 这是客观公开榜单数据（东财/同花顺同款），产品侧只做客观展示——非推荐、非预测、不评分。
     """
     params = {
@@ -820,7 +837,9 @@ def market_turnover_rank(n: int = 20) -> list[dict]:
         "invt": 2,
         "fid": "f6",
         "fs": "m:0 t:6,m:0 t:80,m:1 t:2,m:1 t:23,m:0 t:81 s:2048",
-        "fields": "f12,f14,f2,f3,f6,f20,f21,f100",
+        # f124 = 该行行情更新时间（Unix 秒）。⚠️ 这个端点上时间字段是 f124，
+        # 不是 f86（f86 在 clist 上是比值）—— 详见 epoch_iso() 的说明。
+        "fields": "f12,f14,f2,f3,f6,f20,f21,f100,f124",
     }
     diff: list[dict] = []
     for host in ("push2.eastmoney.com", "push2delay.eastmoney.com"):
@@ -846,6 +865,8 @@ def market_turnover_rank(n: int = 20) -> list[dict]:
             "mcap": _numf(d.get("f20")),
             "float_cap": _numf(d.get("f21")),
             "industry": d.get("f100", "") or "",
+            # 源没给就是 None，绝不拿取数时刻顶替（W3 证据链红线）。
+            "as_of": epoch_iso(d.get("f124")),
         }
         for d in diff
     ]

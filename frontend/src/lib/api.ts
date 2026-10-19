@@ -206,6 +206,8 @@ export interface TurnoverStock {
   code: string; name: string;
   price: number | null; pct: number | null;
   amount: number | null; mcap: number | null; float_cap: number | null; industry: string;
+  /** 该行行情时间（ISO，东财 f124）；null = 源未给。 */
+  as_of?: string | null;
 }
 export interface TurnoverTop { stocks: TurnoverStock[]; updated: string }
 

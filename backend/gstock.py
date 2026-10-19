@@ -15,12 +15,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
-
 import astock
-
-# 与 astock 同一时区口径（本项目所有行情时间都是上海时区）
-_SHANGHAI_TZ = astock._SHANGHAI_TZ
 
 _UA_H = {"User-Agent": astock.UA}
 _GS_HOSTS = ("push2.eastmoney.com", "push2delay.eastmoney.com")
@@ -67,17 +62,9 @@ def _push2_stock_get(secid: str, fields: str) -> dict | None:
     return None
 
 
-def _epoch_iso(raw: object) -> str | None:
-    """push2 的 ``f86``（行情更新时间，Unix 秒）→ ISO 8601（+08:00）。
-
-    非数值、≤0 或越界一律返回 ``None`` —— 宁可不显示数据时间，也不拿取数时刻冒充。
-    """
-    if not isinstance(raw, (int, float)) or raw <= 0:
-        return None
-    try:
-        return datetime.fromtimestamp(raw, _SHANGHAI_TZ).isoformat()
-    except (OSError, OverflowError, ValueError):
-        return None
+# 行情时间换算与 A 股侧共用一份实现（`astock.epoch_iso`），避免两处各写一遍
+# 后对「0 = 未填充」这类细节产生分歧。本模块的字段是 ``stock/get`` 的 f86。
+_epoch_iso = astock.epoch_iso
 
 
 def _price(d: dict, key: str):
