@@ -120,7 +120,11 @@ export interface MarketView {
   sectorsBottom: SectorFlowRow[];
   emotion: EmotionView | null;
   turnover: TurnoverRow[];
-  /** 成交额榜的取数时间（后端东财源，非页面刷新时刻）；空串 = 源未标注。 */
+  /**
+   * 成交额榜的**数据时间**：后端从东财 clist 的 `f124`（逐行行情时间）取最新一条，
+   * 不是取数时刻。盘中比当前时间晚几秒，收盘后停在收盘时刻，盘前停在上一交易日。
+   * 空串 = 源未标注（后端不会用取数时刻兜底）。
+   */
   turnoverUpdated: string;
   /**
    * 大盘指数的**数据时间**（该组里最新的一条行情时间）；空串 = 源未给。
@@ -141,7 +145,7 @@ export interface MarketInput {
   overview?: MarketOverview | null;
   emotion?: ShortTermEmotion | null;
   turnover?: readonly TurnoverStock[];
-  /** turnover 接口自带的取数时间（W3 证据链：榜单逐块标注数据日期）。 */
+  /** turnover 接口自带的**数据时间**（W3 证据链：榜单逐块标注数据日期）。 */
   turnoverUpdated?: string;
   industry?: IndustryData | null;
 }

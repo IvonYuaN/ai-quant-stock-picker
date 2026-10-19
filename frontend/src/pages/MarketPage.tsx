@@ -369,7 +369,9 @@ export function MarketPage() {
           </p>
           <div className="aq-title-row">
             <h1>市场环境</h1>
-            {view?.updated ? <strong>{view.updated}</strong> : null}
+            {/* 这是**取数时刻**，不是数据时间。各板块的数据时间在各自区头标注
+                （指数/外围/成交额榜），没有的就写「未标注」——不要用这个时间兜底。 */}
+            {view?.updated ? <strong>取数 {view.updated}</strong> : null}
           </div>
           <p className="aq-page-sub">指数 · 涨跌家数 · 短线情绪 · 成交额榜 · 行业榜 · 隔夜外围</p>
         </div>
@@ -432,7 +434,7 @@ export function MarketPage() {
 
           {section({
             title: "成交额榜",
-            description: `全市场成交额 Top20 · 客观榜单，非推荐${view.turnoverUpdated ? ` · 数据时间 ${formatEvidenceTime(view.turnoverUpdated)}` : ""}`,
+            description: `全市场成交额 Top20 · 客观榜单，非推荐${view.turnoverUpdated ? ` · 数据时间 ${formatEvidenceTime(view.turnoverUpdated)}` : " · 数据时间未标注"}`,
             icon: Layers,
             available: availability.turnover,
             emptyTitle: "成交额榜未返回",

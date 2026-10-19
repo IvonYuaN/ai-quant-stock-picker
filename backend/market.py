@@ -382,12 +382,19 @@ def get_short_term_emotion() -> dict:
 
 
 def get_turnover_top() -> dict:
-    """全市场成交额榜 Top20（客观公开榜单，含缓存 5 分钟）。"""
+    """全市场成交额榜 Top20（客观公开榜单，含缓存 5 分钟）。
+
+    ``updated`` 是**源给的行情时间**（clist 的 f124），不是取数时刻：盘中它比当前
+    时间晚几秒，收盘后停在收盘时刻，盘前停在上一交易日 —— 后者正是 ``now()`` 会
+    撒谎的场景（08:00 打开页面，榜单其实是昨天收盘的，却显示 08:00）。
+    源未标注时留空串，由前端显示「未标注」，**不回退到取数时刻**。
+    """
 
     def build():
+        stocks = astock.market_turnover_rank(20)
         return {
-            "stocks": astock.market_turnover_rank(20),
-            "updated": datetime.now(BEIJING).strftime("%Y-%m-%d %H:%M"),
+            "stocks": stocks,
+            "updated": astock.latest_as_of(s.get("as_of") for s in stocks) or "",
         }
 
     return _cached("turnover_top", build, valid=lambda v: bool(v.get("stocks")))
