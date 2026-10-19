@@ -65,6 +65,22 @@ export const sourceHealthContract = {
   namesAtMostThree: four?.unhealthy === 4,
   collapsesTheRest: four?.detail.includes("等 4 个源") === true,
 
+  /* ---- 人话标签覆盖台账里会出现的每个主机 ---- */
+  // 这些键必须与 backend 实际请求的主机一致；漏一个的后果只是显示原始域名，
+  // 但「东财行情（…）」这种说法能让非运维用户也知道是哪块面板受影响。
+  labelsCoverAllEastmoneyHosts: [
+    "push2.eastmoney.com",
+    "push2his.eastmoney.com",
+    "push2delay.eastmoney.com",
+    "push2ex.eastmoney.com",
+    "datacenter-web.eastmoney.com",
+    "searchapi.eastmoney.com",
+  ].every((host) => (summarizeSourceHealth([row({ source: host })])?.detail ?? "").includes("东财")),
+  labelsCoverAkshareHosts: [
+    "legulegu.com",
+    "data.10jqka.com.cn",
+  ].every((host) => (summarizeSourceHealth([row({ source: host })])?.detail ?? "").length > 0),
+
   /* ---- 必须纠正那句假陈述 ---- */
   saysEmptyIsNotNoData: single?.detail.includes("不代表今天没有数据") === true,
 };

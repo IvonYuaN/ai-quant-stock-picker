@@ -396,7 +396,10 @@ const SOURCE_LABELS: Readonly<Record<string, string>> = {
   "push2delay.eastmoney.com": "东财延时行情",
   "push2ex.eastmoney.com": "东财涨停板",
   "datacenter-web.eastmoney.com": "东财数据中心",
+  "searchapi.eastmoney.com": "东财代码搜索",
   "qt.gtimg.cn": "腾讯行情",
+  "legulegu.com": "乐咕乐股（涨跌家数）",
+  "data.10jqka.com.cn": "同花顺（板块资金流）",
 };
 
 export interface SourceHealthNotice {
