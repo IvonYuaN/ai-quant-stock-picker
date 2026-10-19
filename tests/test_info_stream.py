@@ -142,3 +142,46 @@ def test_info_stream_narratives_are_empty_when_concept_source_fails():
     assert payload["concepts"] == []
     assert payload["narratives"] == []
     assert payload["sources"]["concept_board"].startswith("error:")
+
+
+# --------------------------------------------------------------------------
+# 证据链（#317 W3）：快讯区的「数据时间」必须来自各条 ctime，不是取数时刻
+# --------------------------------------------------------------------------
+
+
+def _news_item_at(item_id: str, ctime: str) -> ClsNewsItem:
+    return ClsNewsItem(
+        item_id=item_id,
+        title=f"快讯{item_id}",
+        summary="正文",
+        ctime=ctime,
+        level="A",
+        subjects=(),
+    )
+
+
+def test_news_latest_ctime_is_newest_item_time():
+    payload = info_stream.get_info_stream(
+        force=True,
+        news_source=ClsNewsSource().from_items(
+            [
+                _news_item_at("1", "2026-10-19T09:15:00+08:00"),
+                _news_item_at("2", "2026-10-19T11:42:00+08:00"),
+                _news_item_at("3", "2026-10-18T22:00:00+08:00"),
+            ]
+        ),
+        concept_source=ConceptBoardSource().from_items([_concept_item()]),
+    )
+    assert payload["news_latest_ctime"] == "2026-10-19T11:42:00+08:00"
+    # 与 generated_at（取数时刻）不是一回事：停更时前者会停在旧日期
+    assert payload["generated_at"] != payload["news_latest_ctime"]
+
+
+def test_news_latest_ctime_is_null_when_news_source_fails():
+    payload = info_stream.get_info_stream(
+        force=True,
+        news_source=_FailingNewsSource(),
+        concept_source=ConceptBoardSource().from_items([_concept_item()]),
+    )
+    assert payload["news"] == []
+    assert payload["news_latest_ctime"] is None  # 不拿 generated_at 顶替

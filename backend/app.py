@@ -927,7 +927,10 @@ def market_turnover_top():
 def global_indices():
     """全球指数快照（道指 / 标普500 / 纳斯达克 / 恒生 / 恒生科技）—— A 股看隔夜外围脸色。缓存 5 分钟。"""
     try:
-        return {"data": market.get_global_indices()}
+        rows = market.get_global_indices()
+        # 证据链（#317 W3）：as_of 取各行行情自身的更新时间里最新的一个。
+        # 美股档与港股档本来就不是同一时刻，故只给「最新」这一个汇总值。
+        return {"data": rows, "as_of": astock.latest_as_of(r.get("as_of") for r in rows)}
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"全球指数异常：{e}") from e
 
@@ -984,7 +987,9 @@ def global_stock(symbol: str = Query(..., min_length=1, max_length=16, descripti
 def indices():
     """A股大盘指数实时行情（上证/深证成指/创业板指/沪深300）。仅标准库。"""
     try:
-        return {"data": astock.index_quote()}
+        rows = astock.index_quote()
+        # 证据链（#317 W3）：as_of 是行情源自带的成交时间，None = 源没给（不伪造）
+        return {"data": rows, "as_of": astock.latest_as_of(r.get("as_of") for r in rows)}
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"指数行情异常：{e}") from e
 

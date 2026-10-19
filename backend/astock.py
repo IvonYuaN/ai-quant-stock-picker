@@ -124,8 +124,52 @@ def _parse_gtimg(data: str) -> dict[str, dict]:
             "limit_down": num(48),
             "vol_ratio": num(49),
             "pe_static": num(52),
+            # 第 30 字段是**行情自身的成交时间**（YYYYMMDDHHMMSS），不是请求时刻。
+            # 原始字符串保留，由 parse_gtimg_time() 转 ISO —— 解析失败即「无数据时间」。
+            "quote_time": vals[30] if len(vals) > 30 else "",
         }
     return result
+
+
+def parse_gtimg_time(raw: object) -> str | None:
+    """腾讯行情第 30 字段（``YYYYMMDDHHMMSS``）→ ISO 8601（+08:00）。
+
+    🔴 这是**行情自带的成交时间**，不是请求时刻。字段缺失、长度不符或非法日期
+    一律返回 ``None`` —— 页面据此显示「无数据时间」，绝不拿取数时刻冒充证据。
+    """
+    if not isinstance(raw, str) or len(raw) != 14 or not raw.isdigit():
+        return None
+    try:
+        return (
+            datetime.strptime(raw, "%Y%m%d%H%M%S")
+            .replace(tzinfo=_SHANGHAI_TZ)
+            .isoformat()
+        )
+    except ValueError:
+        return None
+
+
+def latest_as_of(values: object) -> str | None:
+    """取一组 ISO 时间字符串里最新的一个；不可解析的跳过，全空/全坏返回 ``None``。
+
+    同一份载荷里的时间来自同一个源、同一时区，但「最新」仍按解析后的 datetime
+    比较而不是字符串比较 —— 后者在偏移量写法不一致时会给出错误答案。
+    无时区的值按上海时区解释（本项目所有行情时间的口径）。
+    """
+    best: str | None = None
+    best_dt: datetime | None = None
+    for raw in values:  # type: ignore[union-attr]
+        if not isinstance(raw, str) or not raw:
+            continue
+        try:
+            dt = datetime.fromisoformat(raw)
+        except ValueError:
+            continue
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=_SHANGHAI_TZ)
+        if best_dt is None or dt > best_dt:
+            best, best_dt = raw, dt
+    return best
 
 
 def tencent_quote(codes: list[str]) -> dict[str, dict]:
@@ -151,6 +195,8 @@ def index_quote() -> list[dict]:
                     "price": q["price"],
                     "change_pct": q["change_pct"],
                     "change_amt": q["change_amt"],
+                    # 证据链（#317 W3）：这一行的行情时间，None = 源未给，不猜
+                    "as_of": parse_gtimg_time(q.get("quote_time")),
                 }
             )
     return out
