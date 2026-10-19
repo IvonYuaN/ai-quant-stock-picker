@@ -301,12 +301,38 @@ def test_cached_negative_caches_empty(tmp_path, monkeypatch):
 
 
 def test_market_degrades_without_akshare(monkeypatch):
+    """akshare 未安装：依赖它的板块资金流降级为空，不挡服务。
+
+    #417 起涨跌家数/涨停池都改走东财 ⇒ ``_sentiment`` **不再依赖 akshare**：
+    - akshare 挂了 sentiment 照常出数（用桩喂固定输入，零网络——CI 里曾因
+      旧断言真连东财取到 up:100 而误报）；
+    - sentiment 自己的源（东财 breadth）失败时才降级为 ``{}``（三态纪律，
+      绝不拿 0 冒充「全市场平盘」）。
+    """
     def boom():
         raise astock.DependencyMissing("akshare 未安装")
 
     monkeypatch.setattr(astock, "_akshare", boom)
-    assert market._sentiment() == {}
     assert market._sectors() == []
+
+    # sentiment 与 akshare 无关：akshare 挂了照样出数（桩喂固定输入）
+    monkeypatch.setattr(
+        market,
+        "_breadth_counts",
+        lambda: {"up": 100, "down": 50, "flat": 30, "total": 180},
+    )
+    monkeypatch.setattr(
+        market,
+        "get_short_term_emotion",
+        lambda: {"date": "2026-10-19", "zt_count": 12, "dt_count": 3},
+    )
+    got = market._sentiment()
+    assert got["up"] == 100
+    assert got["zt"] == 12
+
+    # sentiment 自己的源失败 ⇒ {}（源故障 ≠ 全市场平盘）
+    monkeypatch.setattr(market, "_breadth_counts", lambda: None)
+    assert market._sentiment() == {}
 
 
 # ── 流式工具调用：非标网关不带 index 时按 id 归位、不串参数 ──────────
