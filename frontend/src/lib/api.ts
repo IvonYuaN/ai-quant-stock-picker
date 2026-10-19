@@ -211,6 +211,32 @@ export interface TurnoverStock {
 }
 export interface TurnoverTop { stocks: TurnoverStock[]; updated: string }
 
+/**
+ * 一个数据源的运行状态（后端 `backend/source_health.py` 的台账行）。
+ *
+ * ⚠️ 这是**观测**，不是数据本身：`healthy=false` 说明这个主机最近的请求都失败了，
+ * 因此**由它供数的板块为空不代表「今天没有数据」**。二者在界面上必须能分开。
+ */
+export interface DataSourceHealthRow {
+  source: string;
+  healthy: boolean;
+  consecutive_errors: number;
+  ok_count: number;
+  error_count: number;
+  last_ok_at: string | null;
+  last_error_at: string | null;
+  last_error: string;
+  down_since: string | null;
+}
+
+export interface HealthPayload {
+  ok: boolean;
+  service: string;
+  version: string;
+  release_sha: string;
+  sources: DataSourceHealthRow[];
+}
+
 /** 单条解禁预警（后端 `GET /api/events` 的 `data.upcoming_unlocks` 元素）。 */
 export interface UpcomingUnlockEvent {
   symbol: string; name: string; event_type: string; event_date: string;
@@ -462,6 +488,8 @@ export const api = {
   emotion: () => get<ShortTermEmotion>("/market/emotion"),
   turnoverTop: () => get<TurnoverTop>("/market/turnover-top"),
   globalIndices: () => get<GlobalIndex[]>("/global/indices"),
+  /** 数据源健康台账（进程内、重启清空）。只做观测，不影响 `ok`。 */
+  health: () => get<HealthPayload>("/health"),
   events: (code: string) => get<EventCalendarData>(`/events?code=${code}`),
   catalyst: () => get<CatalystData>("/catalyst"),
   portfolio: () => get<PortfolioData>("/portfolio"),
