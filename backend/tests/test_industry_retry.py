@@ -83,7 +83,7 @@ def test_gives_up_after_max_attempts(monkeypatch, no_sleep) -> None:
 
 
 # --------------------------------------------------------------------------
-# /api/industry：空结果不缓存（否则抖动会污染 5 分钟）
+# /api/industry：空结果只占 60 秒负缓存，不占满 5 分钟
 # --------------------------------------------------------------------------
 
 
@@ -94,7 +94,14 @@ def client() -> TestClient:
     app_module._DC_CACHE.clear()
 
 
-def test_endpoint_does_not_cache_empty_result(client, monkeypatch, no_sleep) -> None:
+def _age_cache(key: tuple[str, str], seconds: float) -> None:
+    """把某条缓存的时间戳往前推，模拟已经过了 N 秒（不真睡）。"""
+    ts, val = app_module._DC_CACHE[key]
+    app_module._DC_CACHE[key] = (ts - seconds, val)
+
+
+def test_empty_result_does_not_hold_full_ttl(client, monkeypatch, no_sleep) -> None:
+    """空结果按 60s 过期：源恢复后不该再等满 5 分钟。"""
     seq = [_EMPTY, _rows(5)]
 
     def fake(top_n):
@@ -102,15 +109,30 @@ def test_endpoint_does_not_cache_empty_result(client, monkeypatch, no_sleep) -> 
 
     monkeypatch.setattr(astock, "industry_comparison", fake)
 
-    first = client.get("/api/industry?top=5").json()
-    assert first["data"]["total"] == 0
+    assert client.get("/api/industry?top=5").json()["data"]["total"] == 0
 
-    # 源已恢复：必须立刻拿到真数据，而不是等 300s 缓存过期
-    second = client.get("/api/industry?top=5").json()
-    assert second["data"]["total"] == 5
+    # 刚过负缓存 TTL，必须重新取数并拿到真数据
+    _age_cache(("industry", "5"), app_module._INDUSTRY_NEG_TTL + 1)
+    assert client.get("/api/industry?top=5").json()["data"]["total"] == 5
 
 
-def test_endpoint_caches_non_empty_result(client, monkeypatch, no_sleep) -> None:
+def test_empty_result_still_negatively_cached(client, monkeypatch, no_sleep) -> None:
+    """空结果仍进负缓存：源真故障时不能每次请求都透传上游。"""
+    calls: list[int] = []
+
+    def fake(top_n):
+        calls.append(top_n)
+        return _EMPTY
+
+    monkeypatch.setattr(astock, "industry_comparison", fake)
+
+    client.get("/api/industry?top=5")
+    client.get("/api/industry?top=5")
+    assert len(calls) == 1  # 60s 内第二次命中负缓存
+
+
+def test_non_empty_result_holds_full_ttl(client, monkeypatch, no_sleep) -> None:
+    """非空结果照旧吃满 5 分钟，负缓存改动不能把正常路径也缩短。"""
     calls: list[int] = []
 
     def fake(top_n):
@@ -120,8 +142,15 @@ def test_endpoint_caches_non_empty_result(client, monkeypatch, no_sleep) -> None
     monkeypatch.setattr(astock, "industry_comparison", fake)
 
     client.get("/api/industry?top=5")
+    # 已过 60s 负缓存 TTL，但非空结果应继续命中 300s 缓存
+    _age_cache(("industry", "5"), app_module._INDUSTRY_NEG_TTL + 1)
     client.get("/api/industry?top=5")
-    assert len(calls) == 1  # 第二次命中缓存，不打上游
+    assert len(calls) == 1
+
+
+def test_negative_ttl_is_shorter_than_normal(client) -> None:
+    """常量关系本身要守住：负缓存必须比正常 TTL 短，否则这次修复就是空转。"""
+    assert app_module._INDUSTRY_NEG_TTL < app_module._INDUSTRY_TTL
 
 
 def test_endpoint_keeps_cache_key_per_top(client, monkeypatch, no_sleep) -> None:

@@ -1555,6 +1555,16 @@ def investor_qa(code: str = Query(..., description="6位股票代码")):
         raise HTTPException(502, f"互动易异常：{e}") from e
 
 
+# 行业榜缓存 TTL：正常结果 5 分钟，空结果只留 60 秒负缓存。
+#
+# 与 market.py 的 _TTL / _NEG_TTL 同一语义：空值不能按正常 TTL 占坑——东财
+# clist 偶发返回空 diff（prod 实测约 1/4 概率），一次抖动就会让「行业涨跌榜」
+# 空满 5 分钟，而前端正好每 5 分钟刷一次，会反复命中这份被污染的缓存。但也不能
+# 完全不缓存：源真故障时每次请求都透传到上游，等于自己制造请求风暴。
+_INDUSTRY_TTL = 300
+_INDUSTRY_NEG_TTL = 60
+
+
 @app.get(
     "/api/industry",
     tags=["板块概念"],
@@ -1571,20 +1581,16 @@ def investor_qa(code: str = Query(..., description="6位股票代码")):
     """,
 )
 def industry(top: int = Query(20, ge=5, le=50, description="返回前 N 个行业")):
-    """全行业涨跌幅排名（东财行业板块，板块级、零个股名单）。缓存 5 分钟，空结果不缓存。"""
+    """全行业涨跌幅排名（东财行业板块，板块级、零个股名单）。正常结果缓存 5 分钟，空结果 60 秒。"""
     key = ("industry", str(top))
     hit = _DC_CACHE.get(key)
-    if hit and _time.time() - hit[0] < 300:
-        return {"data": hit[1]}
+    if hit:
+        ttl = _INDUSTRY_TTL if hit[1].get("total") else _INDUSTRY_NEG_TTL
+        if _time.time() - hit[0] < ttl:
+            return {"data": hit[1]}
     try:
         data = astock.industry_comparison(top_n=top)
-        # 🔴 空结果不进缓存：东财 clist 偶发返回空 diff（prod 实测约 1/4 概率）。
-        # 若把 total=0 也缓存 300s，一次抖动就能让「行业涨跌榜」整整 5 分钟显示
-        # 「未返回」，而源其实早已恢复；前端又正好每 5 分钟刷一次，会反复命中
-        # 这份被污染的缓存。与 market._cached(valid=...) 的既有约定一致
-        # （成交额榜 valid=bool(stocks)、全球指数 valid=bool 都不缓存空值）。
-        if data.get("total"):
-            _DC_CACHE[key] = (_time.time(), data)
+        _DC_CACHE[key] = (_time.time(), data)
         return {"data": data}
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"行业排名异常：{e}") from e
