@@ -15,7 +15,12 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 import astock
+
+# 与 astock 同一时区口径（本项目所有行情时间都是上海时区）
+_SHANGHAI_TZ = astock._SHANGHAI_TZ
 
 _UA_H = {"User-Agent": astock.UA}
 _GS_HOSTS = ("push2.eastmoney.com", "push2delay.eastmoney.com")
@@ -62,6 +67,19 @@ def _push2_stock_get(secid: str, fields: str) -> dict | None:
     return None
 
 
+def _epoch_iso(raw: object) -> str | None:
+    """push2 的 ``f86``（行情更新时间，Unix 秒）→ ISO 8601（+08:00）。
+
+    非数值、≤0 或越界一律返回 ``None`` —— 宁可不显示数据时间，也不拿取数时刻冒充。
+    """
+    if not isinstance(raw, (int, float)) or raw <= 0:
+        return None
+    try:
+        return datetime.fromtimestamp(raw, _SHANGHAI_TZ).isoformat()
+    except (OSError, OverflowError, ValueError):
+        return None
+
+
 def _price(d: dict, key: str):
     """f43 等价格字段：除以 10^f59 还原。'-' / None → None。"""
     v = d.get(key)
@@ -94,10 +112,15 @@ def _quote_from(d: dict) -> dict:
 
 
 def global_indices() -> list[dict]:
-    """全球指数快照（道指 / 标普500 / 纳斯达克 / 恒生 / 恒生科技）。源无的档跳过。"""
+    """全球指数快照（道指 / 标普500 / 纳斯达克 / 恒生 / 恒生科技）。源无的档跳过。
+
+    ``as_of`` 取自 push2 的 ``f86``（该行行情的更新时间，Unix 秒），是**源给的
+    真实时间**而非取数时刻：美股档会是上一个美股收盘时间，港股档是港股收盘时间，
+    二者本来就不该相同。字段缺失时 ``as_of=None``，由接口层汇总成「无数据时间」。
+    """
     out = []
     for idx in _INDICES:
-        d = _push2_stock_get(idx["secid"], "f43,f57,f58,f59,f60,f170")
+        d = _push2_stock_get(idx["secid"], "f43,f57,f58,f59,f60,f170,f86")
         if not d:
             continue
         chg = d.get("f170")
@@ -110,6 +133,7 @@ def global_indices() -> list[dict]:
                 "change_pct": round(chg / 100, 2)
                 if isinstance(chg, (int, float))
                 else None,
+                "as_of": _epoch_iso(d.get("f86")),
             }
         )
     return out

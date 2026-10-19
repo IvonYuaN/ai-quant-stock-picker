@@ -25,6 +25,8 @@ from aqsp.features.narrative import (
     narrative_for,
 )
 
+import astock
+
 _TTL_SECONDS = 300
 _NEWS_LIMIT = 30
 _CONCEPT_LIMIT = 20
@@ -124,6 +126,10 @@ def get_info_stream(
     concepts, narratives, concept_status = _fetch_concepts(concept_source)
     payload: dict[str, Any] = {
         "generated_at": now_shanghai().isoformat(),
+        # 证据链（#317 W3）：快讯区最新的**发布时间**（来自各条 ctime，源给的），
+        # 与 generated_at（取数时刻）不同 —— 停更时后者照样新鲜，前者会停在旧日期。
+        # 概念异动榜的源载荷没有时间字段，故不给该区任何日期，不伪造。
+        "news_latest_ctime": astock.latest_as_of(item.get("ctime") for item in news),
         "news": news,
         "concepts": concepts,
         "narratives": narratives,
