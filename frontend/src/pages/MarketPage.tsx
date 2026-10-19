@@ -408,18 +408,23 @@ export function MarketPage() {
           })}
 
           {section({
-            title: "市场宽度与板块资金",
-            description: "涨跌家数 · 涨跌停 · 活跃度 · 行业资金净流入",
+            title: "市场宽度",
+            description: "涨跌家数 · 涨跌停 · 宽度分档",
             icon: BarChart3,
             available: availability.breadth,
             emptyTitle: "涨跌家数未返回",
-            emptyDetail: "市场活跃度数据源本次未返回；成交额榜与行业榜不受影响。",
-            children: (
-              <>
-                <BreadthBlock view={view} />
-                <SectorFlowBlock view={view} />
-              </>
-            ),
+            emptyDetail: "市场活跃度数据源本次未返回；成交额榜、行业榜与板块资金流不受影响。",
+            children: <BreadthBlock view={view} />,
+          })}
+
+          {section({
+            title: "板块资金流",
+            description: "行业资金净流入 / 净流出前列",
+            icon: BarChart3,
+            available: availability.sectors,
+            emptyTitle: "板块资金流未返回",
+            emptyDetail: "行业资金流数据源本次未返回；涨跌家数不受影响。",
+            children: <SectorFlowBlock view={view} />,
           })}
 
           {section({

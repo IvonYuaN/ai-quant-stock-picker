@@ -243,6 +243,14 @@ function buildBreadth(overview: MarketOverview | null | undefined): BreadthView 
   if (!s) return null;
   const up = s.up ?? 0;
   const down = s.down ?? 0;
+  const flat = s.flat ?? 0;
+  // 全 0 视为「源没给数据」，返回 null 让页面显示「未返回」。
+  //
+  // 后端在源失败时返回的是**空对象** `{}`（不是 null），而 `{}` 是真值 ⇒ 下面的
+  // `?? 0` 会把每个字段兜成 0，页面就渲染成「上涨 0 / 下跌 0 / 平盘 0」。
+  // 那不是「没有数据」，而是一句**关于市场的假陈述**（读起来像全市场平盘），
+  // 比什么都不显示更糟。真实交易日不可能 0 家上涨、0 家下跌、0 家平盘。
+  if (up === 0 && down === 0 && flat === 0) return null;
   return {
     up,
     down,
@@ -353,6 +361,8 @@ export function marketStripSummary(view: MarketView | null): MarketStripSummary 
 export interface SectionAvailability {
   indices: boolean;
   breadth: boolean;
+  /** 板块资金流。**必须与 breadth 分开**：二者来自不同源，一块空了不该连坐另一块。 */
+  sectors: boolean;
   emotion: boolean;
   turnover: boolean;
   industry: boolean;
@@ -363,6 +373,7 @@ export function sectionAvailability(view: MarketView): SectionAvailability {
   return {
     indices: view.indices.length > 0,
     breadth: view.breadth !== null,
+    sectors: view.sectorsTop.length > 0 || view.sectorsBottom.length > 0,
     emotion: view.emotion !== null,
     turnover: view.turnover.length > 0,
     industry: view.industryTop.length > 0 || view.industryBottom.length > 0,
