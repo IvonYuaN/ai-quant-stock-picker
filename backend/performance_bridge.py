@@ -143,6 +143,17 @@ def _freshness_unavailable() -> dict[str, Any]:
     }
 
 
+def _generated_at() -> str:
+    """载荷生成时刻（给人看的本地时间字符串）。
+
+    ⚠️ 必须走 `now_shanghai()`，不能用裸 `datetime.now()`（AGENTS.md §3.4）：
+    本模块曾在 `_unavailable()` 与正常分支各写一遍裸 `datetime.now()`，而
+    `now_shanghai` 明明已经导入了。在 UTC 时区的机器上（runner 就是 UTC），
+    那会把 UTC 时间当成北京时间显示，差 8 小时。两处共用这一个函数。
+    """
+    return now_shanghai().strftime("%Y-%m-%d %H:%M")
+
+
 def _unavailable(reason: str) -> dict[str, Any]:
     """台账不可用时的诚实返回。
 
@@ -150,7 +161,7 @@ def _unavailable(reason: str) -> dict[str, Any]:
     """
     return {
         "schema_version": PERFORMANCE_SCHEMA_VERSION,
-        "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "generated_at": _generated_at(),
         "available": False,
         "reason": reason,
         "cold_start": {
@@ -394,7 +405,7 @@ def performance_payload() -> dict[str, Any]:
 
     return {
         "schema_version": PERFORMANCE_SCHEMA_VERSION,
-        "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "generated_at": _generated_at(),
         "available": True,
         "reason": "",
         "cold_start": {
