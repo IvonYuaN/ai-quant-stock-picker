@@ -168,6 +168,23 @@ def run_one(spec: Spec, out_root: Path, runner_root: Path, gate_script: Path) ->
     return 0
 
 
+def supports_out_override(gate_script: Path) -> bool:
+    """``runner_gate.sh`` 是否把 ``OUT`` 做成可覆盖（``${OUT:-...}``）。
+
+    老 release 里 ``OUT="$RUNNER_ROOT/gate_run"`` 是硬编码的，驱动传进去的
+    ``OUT`` 会被无视：gate 仍然写生产 ``gate_run/``，本驱动找不到产物，
+    于是白跑一次 ~11.5h 才报错。跑之前先查这一行，比跑完再发现便宜得多。
+    """
+    try:
+        text = gate_script.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return any(
+        line.lstrip().startswith("OUT=") and "${OUT:-" in line
+        for line in text.splitlines()
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run the #199 control experiments.")
     parser.add_argument(
@@ -212,6 +229,14 @@ def main(argv: list[str] | None = None) -> int:
     gate_script = args.runner_root / "aqsp-scheduler-current" / GATE_SCRIPT
     if not gate_script.exists():
         print(f"missing gate script: {gate_script}", file=sys.stderr)
+        return 1
+    if not supports_out_override(gate_script):
+        print(
+            f"{gate_script} 的 OUT 仍是硬编码（缺少 ${{OUT:-...}}），本驱动传的 "
+            "OUT 会被无视 —— 每组结果都会落进生产 gate_run/ 并互相覆盖。\n"
+            "需要先部署含该改动的 release，或改用 runner_gate.sh 原生环境变量跑单组。",
+            file=sys.stderr,
+        )
         return 1
 
     for spec in todo:

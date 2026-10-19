@@ -38,11 +38,14 @@ def _load_module():
 rce = _load_module()
 
 
-def _fake_gate(runner_root: Path, body: str) -> Path:
+def _fake_gate(runner_root: Path, body: str, *, out_override: bool = True) -> Path:
     """Install a stand-in runner_gate.sh at the path the driver expects."""
     script = runner_root / "aqsp-scheduler-current" / rce.GATE_SCRIPT
     script.parent.mkdir(parents=True, exist_ok=True)
-    script.write_text("#!/usr/bin/env bash\nset -eu\n" + body, encoding="utf-8")
+    header = "#!/usr/bin/env bash\nset -eu\n"
+    if out_override:
+        header += 'OUT="${OUT:-/nonexistent/gate_run}"\n'
+    script.write_text(header + body, encoding="utf-8")
     return script
 
 
@@ -229,3 +232,59 @@ def test_main_execute_requires_gate_script(tmp_path: Path) -> None:
         ["--execute", "--runner-root", str(tmp_path), "--out", str(tmp_path / "o")]
     )
     assert rc == 1
+
+
+# --------------------------------------------------------------------------
+# 旧 release 守卫：OUT 不可覆盖时必须在开跑前拒绝，而不是白跑 11.5h
+# --------------------------------------------------------------------------
+
+
+def test_supports_out_override_detects_default_form(tmp_path: Path) -> None:
+    script = _fake_gate(tmp_path, "exit 0\n", out_override=True)
+    assert rce.supports_out_override(script) is True
+
+
+def test_supports_out_override_rejects_hardcoded_form(tmp_path: Path) -> None:
+    script = _fake_gate(tmp_path, "exit 0\n", out_override=False)
+    script.write_text(
+        '#!/usr/bin/env bash\nRUNNER_ROOT=/opt/aqsp-runner\nOUT="$RUNNER_ROOT/gate_run"\n',
+        encoding="utf-8",
+    )
+    assert rce.supports_out_override(script) is False
+
+
+def test_supports_out_override_ignores_mention_in_comment(tmp_path: Path) -> None:
+    """注释里出现 ${OUT:-...} 不算支持 —— 只看真正赋值的那一行。"""
+    script = _fake_gate(tmp_path, "exit 0\n", out_override=False)
+    script.write_text(
+        '#!/usr/bin/env bash\n# 曾经写成 OUT="${OUT:-x}"，现在是硬编码\n'
+        'OUT="$RUNNER_ROOT/gate_run"\n',
+        encoding="utf-8",
+    )
+    assert rce.supports_out_override(script) is False
+
+
+def test_supports_out_override_missing_file(tmp_path: Path) -> None:
+    assert rce.supports_out_override(tmp_path / "nope.sh") is False
+
+
+def test_main_execute_refuses_old_release_before_running(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """旧 release 上必须开跑前就返回 1，且一次 gate 都不启动。"""
+    script = _fake_gate(tmp_path, "exit 0\n", out_override=False)
+    script.write_text(
+        '#!/usr/bin/env bash\nOUT="$RUNNER_ROOT/gate_run"\n', encoding="utf-8"
+    )
+    started: list[str] = []
+
+    def _spy(spec, *a, **k):  # pragma: no cover - 不该被调用
+        started.append(spec.name)
+        return 0
+
+    monkeypatch.setattr(rce, "run_one", _spy)
+    rc = rce.main(
+        ["--execute", "--runner-root", str(tmp_path), "--out", str(tmp_path / "o")]
+    )
+    assert rc == 1
+    assert started == []
