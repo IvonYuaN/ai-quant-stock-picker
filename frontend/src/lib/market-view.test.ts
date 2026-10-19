@@ -39,6 +39,24 @@ const overviewFixture = {
   updated: "2026-09-11 15:30",
 } satisfies MarketOverview;
 
+/**
+ * 源失败时后端返回的**真实形状**：`sentiment: {}`（不是 null）。
+ * 前端 `?? 0` 会把每个字段兜成 0，必须当「没数据」而不是「全市场平盘」。
+ */
+const emptySentiment = {
+  up: 0,
+  down: 0,
+  flat: 0,
+  zt: 0,
+  zt_real: 0,
+  dt: 0,
+  dt_real: 0,
+  active: "",
+  breadth: "",
+  speculation: "",
+  date: "",
+} satisfies MarketOverview["sentiment"];
+
 const emotionFixture = {
   date: "2026-09-11",
   zt_count: 88,
@@ -143,6 +161,33 @@ export const marketViewContract = {
   /* ---- 接口失败 vs 数据源没覆盖 ---- */
   availabilityIsAllFalseForEmptyView: Object.values(sectionAvailability(buildMarketView({}))).every((value) => value === false),
   availabilityIsAllTrueForFullView: Object.values(sectionAvailability(full)).every((value) => value === true),
+
+  /* ---- 板块资金流不能因涨跌家数缺失而连坐 ----
+     两块来自不同源（涨跌家数＝乐咕/东财聚合，板块资金流＝东财行业资金）。
+     prod 曾出现 sentiment 恒空而 sectors 有 90 行，页面把两者放进同一个 section
+     ⇒ 整块被「涨跌家数未返回」的空态替换，90 行正常数据一起消失。 */
+  breadthIsNullWhenSentimentIsAllZero: (() => {
+    // 后端在源失败时返回空对象 `{}`，经 `?? 0` 兜成全 0 —— 必须当「没数据」。
+    const v = buildMarketView({ overview: { ...overviewFixture, sentiment: emptySentiment } });
+    return v.breadth === null && sectionAvailability(v).breadth === false;
+  })(),
+  sectorsAvailableWithoutBreadth: (() => {
+    const v = buildMarketView({ overview: { ...overviewFixture, sentiment: emptySentiment } });
+    const a = sectionAvailability(v);
+    return a.breadth === false && a.sectors === true;
+  })(),
+  breadthAvailableWithoutSectors: (() => {
+    const v = buildMarketView({ overview: { ...overviewFixture, sectors: [] } });
+    const a = sectionAvailability(v);
+    return a.breadth === true && a.sectors === false;
+  })(),
+  breadthKeptWhenOnlyOneSideIsNonZero: (() => {
+    // 单边为 0 是真实情况（涨停潮 / 全跌），不能被「全 0」规则误判成没数据。
+    const v = buildMarketView({
+      overview: { ...overviewFixture, sentiment: { ...overviewFixture.sentiment, down: 0, flat: 0 } },
+    });
+    return v.breadth !== null && v.breadth.up > 0;
+  })(),
 
   /* ---- 顶部环境条摘要 ---- */
   stripIsNullWithoutAnyData: marketStripSummary(buildMarketView({})) === null,
