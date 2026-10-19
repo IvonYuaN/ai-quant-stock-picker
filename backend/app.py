@@ -1571,14 +1571,20 @@ def investor_qa(code: str = Query(..., description="6位股票代码")):
     """,
 )
 def industry(top: int = Query(20, ge=5, le=50, description="返回前 N 个行业")):
-    """全行业涨跌幅排名（东财行业板块，板块级、零个股名单）。缓存 5 分钟。"""
+    """全行业涨跌幅排名（东财行业板块，板块级、零个股名单）。缓存 5 分钟，空结果不缓存。"""
     key = ("industry", str(top))
     hit = _DC_CACHE.get(key)
     if hit and _time.time() - hit[0] < 300:
         return {"data": hit[1]}
     try:
         data = astock.industry_comparison(top_n=top)
-        _DC_CACHE[key] = (_time.time(), data)
+        # 🔴 空结果不进缓存：东财 clist 偶发返回空 diff（prod 实测约 1/4 概率）。
+        # 若把 total=0 也缓存 300s，一次抖动就能让「行业涨跌榜」整整 5 分钟显示
+        # 「未返回」，而源其实早已恢复；前端又正好每 5 分钟刷一次，会反复命中
+        # 这份被污染的缓存。与 market._cached(valid=...) 的既有约定一致
+        # （成交额榜 valid=bool(stocks)、全球指数 valid=bool 都不缓存空值）。
+        if data.get("total"):
+            _DC_CACHE[key] = (_time.time(), data)
         return {"data": data}
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"行业排名异常：{e}") from e

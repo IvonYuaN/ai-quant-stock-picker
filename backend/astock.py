@@ -1267,8 +1267,14 @@ def investor_qa(code: str, page_size: int = 30) -> list[dict]:
     return out
 
 
-def industry_comparison(top_n: int = 20) -> dict:
-    """全行业涨跌幅排名（东财行业板块，~100 个行业）：板块级涨跌 / 涨跌家数 / 领涨。"""
+# 行业榜取数的尝试次数。东财 clist 偶发返回空 diff（prod 实测约 1/4 概率，
+# 相邻两次请求一次空一次正常），单次失败就把整块面板判死太脆，故重试一次。
+_INDUSTRY_ATTEMPTS = 2
+_INDUSTRY_RETRY_SLEEP = 0.3
+
+
+def _industry_comparison_once(top_n: int) -> dict:
+    """单次取数。失败/空 diff 一律返回 total=0，不抛异常（fail-soft）。"""
     params = {
         "pn": "1",
         "pz": "100",
@@ -1306,3 +1312,20 @@ def industry_comparison(top_n: int = 20) -> dict:
         for i, it in enumerate(items)
     ]
     return {"top": rows[:top_n], "bottom": rows[-top_n:], "total": len(rows)}
+
+
+def industry_comparison(top_n: int = 20) -> dict:
+    """全行业涨跌幅排名（东财行业板块，~100 个行业）：板块级涨跌 / 涨跌家数 / 领涨。
+
+    东财 clist 会偶发返回空 ``diff``（prod 实测：同一分钟内 ``top=21`` 空、
+    ``top=22/23/24`` 正常）。单次空就判定「源没数据」会把整块面板误报成不可用，
+    故空结果重试一次；两次都空才如实返回 ``total=0``（调用方据此不缓存）。
+    """
+    data: dict = {"top": [], "bottom": [], "total": 0}
+    for attempt in range(_INDUSTRY_ATTEMPTS):
+        data = _industry_comparison_once(top_n)
+        if data.get("total"):
+            return data
+        if attempt + 1 < _INDUSTRY_ATTEMPTS:
+            time.sleep(_INDUSTRY_RETRY_SLEEP)
+    return data
