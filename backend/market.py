@@ -401,5 +401,10 @@ def get_turnover_top() -> dict:
 
 
 def get_global_indices() -> list[dict]:
-    """全球指数快照（美股 / 港股，含缓存 5 分钟）。空结果不缓存。"""
-    return _cached("global_indices", gstock.global_indices, valid=bool)
+    """全球指数快照（美股 / 港股，含缓存 5 分钟）。
+
+    完整性用 ``gstock.is_complete`` 判定，不是 ``bool``：``bool`` 会把「2/5」当有效
+    结果锁满 5 分钟（prod 实测 stock/get 会整批抖空），面板上就只剩两个指数，
+    看起来像「源只有这两个」。部分缺失走 60s 负缓存，尽快重试。
+    """
+    return _cached("global_indices", gstock.global_indices, valid=gstock.is_complete)
