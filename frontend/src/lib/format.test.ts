@@ -1,5 +1,5 @@
 // 数值格式化与 A 股涨跌配色的契约断言（由 npm test 真正执行）。
-import { changeClass, changeTone, formatMoney, formatRate, formatSignedPct, formatYi } from "./format";
+import { changeClass, changeTone, formatEvidenceTime, formatMoney, formatRate, formatSignedPct, formatYi } from "./format";
 
 export const formatContract = {
   /* ---- 亿：成交额 / 市值 ---- */
@@ -29,4 +29,17 @@ export const formatContract = {
   negativeClassIsDown: changeClass(-1) === "aq-tone-down",
   zeroClassIsEmpty: changeClass(0) === "",
   nullClassIsEmpty: changeClass(null) === "",
+
+  /* ---- 证据时间（#317 W3）：数据时间 ≠ 取数时刻 ---- */
+  evidenceTimeKeepsDateAndMinute: formatEvidenceTime("2026-10-19T10:58:06+08:00") === "10-19 10:58",
+  // 隔夜外围停在上一交易日：必须带日期，否则看起来像刚刚更新
+  evidenceTimeKeepsPriorDay: formatEvidenceTime("2026-10-17T04:00:00+08:00") === "10-17 04:00",
+  evidenceTimeEmptyForNull: formatEvidenceTime(null) === "",
+  evidenceTimeEmptyForUndefined: formatEvidenceTime(undefined) === "",
+  evidenceTimeEmptyForBlank: formatEvidenceTime("") === "",
+  // 成交额榜的 updated 是空格分隔（后端 "%Y-%m-%d %H:%M"），也必须归一，
+  // 否则同一页两块面板一个显示 "10-19 15:30"、一个显示 "2026-10-19 15:30"
+  evidenceTimeAcceptsSpaceSeparator: formatEvidenceTime("2026-10-19 15:30") === "10-19 15:30",
+  // 认不出的格式原样返回 —— 宁可难看，不可失真
+  evidenceTimePassesUnknownThrough: formatEvidenceTime("2026/10/19 10:58") === "2026/10/19 10:58",
 };

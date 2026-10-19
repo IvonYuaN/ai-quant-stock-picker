@@ -168,4 +168,35 @@ export const marketViewContract = {
   stripFallsBackToIndices:
     marketStripSummary(buildMarketView({ indices: indicesFixture }))?.headline.includes("2 个指数中 1 个上涨") === true,
   stripHeadlineCountsBreadth: marketStripSummary(full)?.headline.includes("上涨 3200") === true,
+
+  /* ---- 证据链（#317 W3）：数据时间取该组最新的一条，不是取数时刻 ---- */
+  indicesUpdatedPicksNewest: buildMarketView({
+    indices: [
+      { ...indicesFixture[0], as_of: "2026-10-19T10:58:06+08:00" },
+      { ...indicesFixture[1], as_of: "2026-10-19T10:58:03+08:00" },
+    ],
+  }).indicesUpdated === "2026-10-19T10:58:06+08:00",
+  // 偏移量写法不同时按瞬时比较：02:00Z (=10:00 上海) 比 09:00+08:00 更晚
+  indicesUpdatedComparesByInstant: buildMarketView({
+    indices: [
+      { ...indicesFixture[0], as_of: "2026-10-19T09:00:00+08:00" },
+      { ...indicesFixture[1], as_of: "2026-10-19T02:00:00+00:00" },
+    ],
+  }).indicesUpdated === "2026-10-19T02:00:00+00:00",
+  // 源没给就是空串，页面据此显示「未标注」，绝不拿 now() 顶替
+  indicesUpdatedEmptyWhenSourceSilent: buildMarketView({ indices: indicesFixture }).indicesUpdated === "",
+  indicesUpdatedSkipsUnparseable: buildMarketView({
+    indices: [
+      { ...indicesFixture[0], as_of: "not-a-time" },
+      { ...indicesFixture[1], as_of: "2026-10-19T10:58:03+08:00" },
+    ],
+  }).indicesUpdated === "2026-10-19T10:58:03+08:00",
+  globalUpdatedKeepsPriorSession:
+    buildMarketView({
+      global: [
+        { ...globalFixture[0], as_of: "2026-10-17T04:00:00+08:00" },
+        { ...globalFixture[1], as_of: "2026-10-16T16:08:38+08:00" },
+      ],
+    }).globalUpdated === "2026-10-17T04:00:00+08:00",
+  globalUpdatedEmptyWhenSourceSilent: buildMarketView({ global: globalFixture }).globalUpdated === "",
 };

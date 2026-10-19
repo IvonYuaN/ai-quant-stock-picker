@@ -122,6 +122,13 @@ export interface MarketView {
   turnover: TurnoverRow[];
   /** 成交额榜的取数时间（后端东财源，非页面刷新时刻）；空串 = 源未标注。 */
   turnoverUpdated: string;
+  /**
+   * 大盘指数的**数据时间**（该组里最新的一条行情时间）；空串 = 源未给。
+   * 与 `updated`（取数时刻）不是一回事：盘中它是成交时间，收盘后它停在收盘时刻。
+   */
+  indicesUpdated: string;
+  /** 隔夜外围的**数据时间**（美股档是上一交易日收盘、港股档是港股收盘）。 */
+  globalUpdated: string;
   industryTop: IndustryRowView[];
   industryBottom: IndustryRowView[];
   industryTotal: number;
@@ -159,6 +166,29 @@ function toGlobalRow(item: GlobalIndex): GlobalIndexRow {
     price: item.price,
     changePct: item.change_pct,
   };
+}
+
+/**
+ * 一组行情行里最新的 `as_of`（#317 W3）；全都缺失返回空串。
+ *
+ * 按 `Date.parse` 得到的**瞬时**比较，不按字符串比较：偏移量写法不同时
+ * （`09:00+08:00` vs `02:00+00:00`）字符串比较会给出错误答案。
+ * 解析不出的值直接跳过 —— 宁可少标注一条，也不把无法解释的字符串当时间用。
+ */
+function latestAsOf(rows: readonly { as_of?: string | null }[]): string {
+  let best = "";
+  let bestTs = Number.NEGATIVE_INFINITY;
+  for (const row of rows) {
+    const raw = row.as_of;
+    if (!raw) continue;
+    const ts = Date.parse(raw);
+    if (!Number.isFinite(ts)) continue;
+    if (ts > bestTs) {
+      bestTs = ts;
+      best = raw;
+    }
+  }
+  return best;
 }
 
 function toSectorRow(item: SectorFlow): SectorFlowRow {
@@ -259,6 +289,8 @@ export function buildMarketView(input: MarketInput): MarketView {
     emotion: buildEmotion(input.emotion),
     turnover: asArray<TurnoverStock>(input.turnover).map(toTurnoverRow),
     turnoverUpdated: input.turnoverUpdated ?? "",
+    indicesUpdated: latestAsOf(asArray<IndexQuote>(input.indices)),
+    globalUpdated: latestAsOf(asArray<GlobalIndex>(input.global)),
     industryTop: asArray<IndustryRow>(input.industry?.top).map(toIndustryRow),
     industryBottom: asArray<IndustryRow>(input.industry?.bottom)
       .map(toIndustryRow)

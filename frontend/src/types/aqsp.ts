@@ -277,6 +277,12 @@ export interface InfoStreamNarrative {
 
 export interface InfoStreamData {
   generated_at: string;
+  /**
+   * 证据链（#317 W3）：快讯区最新的**发布时间**（各条 ctime 的最大值）。
+   * 与 `generated_at`（取数时刻）不是一回事 —— 源停更时后者照样新鲜。
+   * null = 快讯源本次失败，没有可展示的数据时间（不拿取数时刻顶替）。
+   */
+  news_latest_ctime: string | null;
   news: readonly InfoStreamNewsItem[];
   concepts: readonly InfoStreamConcept[];
   /** 叙事归并榜（按平均涨跌幅降序）；概念源失败时为空数组 */
