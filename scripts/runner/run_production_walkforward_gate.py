@@ -266,13 +266,24 @@ def _effective_timeout_seconds(
     *,
     effective_symbols: int,
     min_production_symbols: int,
+    n_variants: int = 1,
+    n_windows: int = 1,
 ) -> int:
     requested = int(requested_timeout_seconds or 0)
     if requested <= 0 or effective_symbols < min_production_symbols:
         return requested
+    # #305：网格跑批的墙钟耗时 ≈ Σ_臂(窗数 × 单窗耗时)——只按标的数线性缩放会
+    # **系统性低估**（10-06 全库 4412 标的预算 8824s、真需 ≈9.8h ⇒ 18/19 窗超时；
+    # 10-08 3/8 臂超时；第 3 行小规模跑得动不是代码修好，是预算与真需同比例缩小）。
+    # 生产默认 stable_plus(N=8) 在同样标的池下真需约 8 倍，旧口径预算只 1 倍。
+    # 臂数唯一事实源 = aqsp.cli._walkforward_grid_variants（wrapper 不复制映射）；
+    # 窗数枚举埋在 CLI 里，wrapper 不复制该逻辑 ⇒ 由调用方按需显式给（--timeout-windows）。
+    variants = max(1, int(n_variants or 1))
+    windows = max(1, int(n_windows or 1))
+    workload = int(effective_symbols) * variants * windows
     scaled_floor = max(
         PRODUCTION_TIMEOUT_FLOOR_SECONDS,
-        int(effective_symbols) * PRODUCTION_TIMEOUT_SECONDS_PER_SYMBOL,
+        workload * PRODUCTION_TIMEOUT_SECONDS_PER_SYMBOL,
     )
     return max(requested, scaled_floor)
 
@@ -280,16 +291,37 @@ def _effective_timeout_seconds(
 def _timeout_guard_detail(
     requested_timeout_seconds: int,
     effective_timeout_seconds: int,
+    *,
+    workload_multiplier: int = 1,
 ) -> str:
     if (
         requested_timeout_seconds > 0
         and effective_timeout_seconds > requested_timeout_seconds
     ):
+        # #305：带上工作量倍率（臂数 × 窗数），否则日志里只看得到数字翻倍、
+        # 看不到「为什么翻倍」——10-08 误判「预算与真需同比例缩小」就是这么来的。
+        multiplier_note = (
+            f" (workload x{workload_multiplier}: arms x windows)"
+            if workload_multiplier > 1
+            else ""
+        )
         return (
             f"timeout auto-raised from {requested_timeout_seconds}s "
             f"to {effective_timeout_seconds}s for production coverage"
+            f"{multiplier_note}"
         )
     return ""
+
+
+def _grid_variant_count(grid_profile: str) -> int:
+    """#305：数出 grid profile 的臂数（事实源在 aqsp.cli，本函数不复制映射）。
+
+    硬依赖：import 失败必须让 gate 响亮地挂掉，而不是静默回退 1——静默回退
+    等于把 #305 的修复悄悄关掉。
+    """
+    from aqsp.cli import _walkforward_grid_variants
+
+    return max(1, len(_walkforward_grid_variants(str(grid_profile or "stable"))))
 
 
 def _total_memory_gib() -> float | None:
@@ -2072,6 +2104,15 @@ def main() -> int:
         default=7200,
         help="stop the production walk-forward run if it hangs during data loading/backtest",
     )
+    parser.add_argument(
+        "--timeout-windows",
+        type=int,
+        default=0,
+        help="explicit walk-forward window count for timeout scaling (#305): a grid "
+        "run's wall clock is proportional to arms x windows; the arm count is derived "
+        "from --grid-profile, windows are only known to the caller. 0 = scale by "
+        "arms only.",
+    )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument(
         "--coverage-mode",
@@ -2506,17 +2547,25 @@ def main() -> int:
         warn_if_report_path_not_writable(Path(args.report))
         preserve_formal_report_snapshot(Path(args.report))
         requested_timeout_seconds = int(args.timeout_seconds or 0)
+        # #305：预算要按「臂数 × 窗数」缩放。臂数从 grid profile 数出来；窗数枚举
+        # 埋在 CLI 里，wrapper 不复制该逻辑 ⇒ 显式入参（0/缺省 = 只按臂数缩放）。
+        n_variants = _grid_variant_count(args.grid_profile)
+        n_windows = max(1, int(getattr(args, "timeout_windows", 0) or 1))
         effective_timeout_seconds = _effective_timeout_seconds(
             requested_timeout_seconds,
             effective_symbols=len(covered_symbols),
             min_production_symbols=args.min_symbols,
+            n_variants=n_variants,
+            n_windows=n_windows,
         )
         if effective_timeout_seconds != requested_timeout_seconds:
             args.timeout_seconds = effective_timeout_seconds
             print(
                 "production gate timeout auto-raised: "
                 f"{requested_timeout_seconds}s -> {effective_timeout_seconds}s "
-                f"for {len(covered_symbols)} symbols"
+                f"for {len(covered_symbols)} symbols "
+                f"(arms={n_variants} x windows={n_windows})",
+                flush=True,
             )
         try:
             child_exit_code, child_pid = _execute_child_walkforward(

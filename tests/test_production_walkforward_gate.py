@@ -1334,12 +1334,15 @@ def test_production_walkforward_gate_passes_raw_db_to_child_process(
     )
 
     assert gate.main() == 0
+    # #305：默认 grid profile = stable_plus（8 臂）⇒ 子进程超时从 7200 抬到
+    # 3200 × 2s × 8 = 51200（旧口径只按标的数缩放，8 臂串行的真需约 8 倍会被
+    # 系统性超时杀）。窗数枚举埋在 CLI 里，wrapper 不复制 ⇒ 默认只按臂数缩放。
     assert seen == {
         "command": ["python", "-m", "aqsp"],
         "db": str(db),
         "pythonhashseed": "0",
         "cwd": gate.PROJECT_ROOT,
-        "timeout": 7200,
+        "timeout": 51200,
         "status_path": status_path,
         "effective_symbols": 3200,
     }
@@ -2544,3 +2547,90 @@ def test_gate_and_cli_lookback_defaults_are_aligned() -> None:
 
     assert gate.DEFAULT_LOOKBACK_YEARS == cli_mod.DEFAULT_WALKFORWARD_LOOKBACK_YEARS
     assert gate.DEFAULT_LOOKBACK_YEARS >= 5
+
+
+# ── #305：超时预算必须按「臂数 × 窗数」缩放────────────────────────────────
+# 10-06/10-08 实测：网格跑批（多臂串行）的墙钟耗时 ≈ Σ_臂(窗数 × 单窗耗时)，
+# 旧口径只按标的数缩放 ⇒ 4412 标的预算 8824s、真需 ≈9.8h，18/19 窗超时；
+# 小规模跑得动不是修好了，是预算与真需同比例缩小。以下锁死新口径。
+
+
+def test_effective_timeout_seconds_scales_with_arms_and_windows() -> None:
+    import scripts.run_production_walkforward_gate as gate
+
+    single = gate._effective_timeout_seconds(
+        1500,
+        effective_symbols=5209,
+        min_production_symbols=3000,
+    )
+    assert single == 10418  # 旧口径基线：5209 × 2s（保持不变，向后兼容）
+    eight_arms = gate._effective_timeout_seconds(
+        1500,
+        effective_symbols=5209,
+        min_production_symbols=3000,
+        n_variants=8,
+    )
+    assert eight_arms == 10418 * 8  # stable_plus(N=8) 真需约 8 倍 ⇒ 预算也 8 倍
+    with_windows = gate._effective_timeout_seconds(
+        1500,
+        effective_symbols=5209,
+        min_production_symbols=3000,
+        n_variants=8,
+        n_windows=20,
+    )
+    assert with_windows == 10418 * 8 * 20
+
+
+def test_effective_timeout_seconds_clamps_non_positive_arm_window_counts() -> None:
+    import scripts.run_production_walkforward_gate as gate
+
+    assert (
+        gate._effective_timeout_seconds(
+            1500,
+            effective_symbols=5209,
+            min_production_symbols=3000,
+            n_variants=0,
+            n_windows=-3,
+        )
+        == 10418
+    )
+
+
+def test_effective_timeout_seconds_never_lowers_requested_budget() -> None:
+    import scripts.run_production_walkforward_gate as gate
+
+    # runner_gate.sh 显式传 57600（按 9 次串行回测实测调过）：缩放只做下限。
+    assert (
+        gate._effective_timeout_seconds(
+            57600,
+            effective_symbols=1200,
+            min_production_symbols=3000,
+            n_variants=8,
+        )
+        == 57600
+    )
+
+
+def test_grid_variant_count_matches_profile_table() -> None:
+    import scripts.run_production_walkforward_gate as gate
+
+    # 唯一事实源是 aqsp.cli._walkforward_grid_variants（N 值以其为准）
+    assert gate._grid_variant_count("stable") == 5
+    assert gate._grid_variant_count("stable_plus") == 8
+    assert gate._grid_variant_count("exploratory") == 13
+    assert gate._grid_variant_count("htf_mr") == 8
+    assert gate._grid_variant_count("planb_v1") == 8
+    assert gate._grid_variant_count("") == 5  # 空 profile 落 stable 默认
+    assert gate._grid_variant_count("nonsense") == 5  # 未知 profile 落 stable 默认
+
+
+def test_timeout_guard_detail_reports_workload_multiplier() -> None:
+    import scripts.run_production_walkforward_gate as gate
+
+    detail = gate._timeout_guard_detail(1500, 83344, workload_multiplier=8)
+    assert "workload x8" in detail
+    assert "arms x windows" in detail
+    # 无倍率时文案与旧口径逐字节一致（不破坏既有消费方）
+    assert gate._timeout_guard_detail(1500, 10418) == (
+        "timeout auto-raised from 1500s to 10418s for production coverage"
+    )
