@@ -132,36 +132,63 @@ def _num(v) -> int:
         return 0
 
 
-# 本模块两个 akshare 源的**上游主机**（`akshare.xxx` 只是包装，真正打的是这些域）。
-# 接进台账的理由：这两个源失败时返回的是**空载荷**而不是抛异常 ——
-# `/api/market/overview` 照样回 200，前端显示「未返回」，从外部分不出
-# 「源挂了」和「今天没数据」。10-19 的乐咕反爬（#417）就是这么躺过去的。
-_AK_LEGU_HOST = "legulegu.com"              # akshare.stock_market_activity_legu
+# 本模块的 akshare 源（板块资金流）的**上游主机**（`akshare.xxx` 只是包装，
+# 真正打的是这个域）。接进台账的理由：这个源失败时返回的是**空载荷**而不是抛
+# 异常 —— `/api/market/overview` 照样回 200，前端显示「未返回」，从外部分不出
+# 「源挂了」和「今天没数据」。（乐咕乐股那个源已在 #417 换成东财口径，不再使用。）
 _AK_FUND_FLOW_HOST = "data.10jqka.com.cn"   # akshare.stock_fund_flow_industry
 
+# 进程内涨跌家数记忆（30s）。overview 一次构建里 `_sentiment` 与情绪模型的宽度维度
+# 会各取一次全 A 快照，同一请求打两遍东财纯属浪费；记忆只活在进程内、多 worker 各记
+# 各的（跨 worker 共享由 `_cached` 的盘缓存负责，本记忆刻意不做全局共享状态）。
+_BREADTH_MEMO_TTL = 30.0
+_breadth_memo: tuple[float, dict | None] | None = None
+_breadth_memo_lock = threading.Lock()
 
-def _sentiment() -> dict:
-    """市场情绪：涨跌家数/涨停跌停/活跃度 + 大盘宽度、题材投机（客观数据机械分档）。
 
-    ⚠️ **不要改用「东财行业板块 f104/f105/f106 求和」来算涨跌家数** ——
-    2026-10-19 已实测否证：行业板块是带层级的树（同一批成分股在 Ⅱ/Ⅲ 层各算
-    一遍，返回行里 `f2`/`f4` 完全相同可证）。只取 200/496 个板块，三字段合计
-    就达 6064 只，已超过全 A 约 5400 只的总量 ⇒ 必然重复计数，会得到偏大的
-    家数（涨幅榜场景尤其虚高），那是比「整块空」更糟的假陈述。
-    忠实的替代口径是全市场逐只 `f3` 计数（`fs=m:0 t:6,m:0 t:80,m:1 t:2,...`，
-    `fields=f3`，一次请求 ~5400 行）——换源方案见 #417。
+def _breadth_counts() -> dict | None:
+    """全市场涨跌家数（进程内 30s 记忆；None = 源侧取数失败，调用方必须区分）。"""
+    global _breadth_memo
+    with _breadth_memo_lock:
+        if (
+            _breadth_memo is not None
+            and time.time() - _breadth_memo[0] < _BREADTH_MEMO_TTL
+        ):
+            return _breadth_memo[1]
+    counts = astock.market_breadth_counts()
+    with _breadth_memo_lock:
+        _breadth_memo = (time.time(), counts)
+    return counts
+
+
+def _sentiment(emotion: dict | None = None) -> dict:
+    """市场情绪：涨跌家数/涨停跌停/宽度（#417 起改东财口径）。
+
+    **为什么换源**：乐咕乐股 2026-10-19 起把页面换成反爬 JS 挑战页（akshare 默认
+    UA / Chrome UA 均只拿到「安全验证」页，无 UA 403），`stock_market_activity_legu`
+    再也解析不出表 ⇒ 整块 sentiment 恒空、前端 BreadthBlock 直接消失（#417）。
+
+    新口径（全部来自东财，与既有板块/涨停池同源）：
+    - 涨跌家数：全 A **逐只 f3 计数**（`astock.market_breadth_counts`）；
+    - 涨停/跌停：复用东财涨停板四池的 `zt_count`/`dt_count`（调用方传入 emotion，
+      避免重复打池子；未传入时本函数自取，有 5min 缓存）；
+    - `zt_real`/`dt_real`：乐咕专有口径无法忠实复现 ⇒ **置 0 而不是编一个数**
+      （前端 `ztReal || zt` 自动回退到原始家数）；
+    - `active`：乐咕专有口径 ⇒ 空串（前端不显示该行）；
+    - `speculation`：原阈值是按「真实涨停」调的，输入换成涨停家数后语义已变 ⇒
+      **空串**，等阈值口径重议后再上（阈值改动是红线，不偷偷沿用旧档位）；
+    - `date`：涨停池 resolve 出的交易日（W3 证据链：数据时间，非取数时刻）。
     """
-    try:
-        # akshare 惰性导入（同 astock 模式）：未装时降级返回空，不挡整个服务启动
-        df = astock._akshare().stock_market_activity_legu()
-        d = {row["item"]: row["value"] for _, row in df.iterrows()}
-    except Exception as exc:
-        source_health.record_error(_AK_LEGU_HOST, exc)
+    counts = _breadth_counts()
+    if not counts or (counts.get("up", 0) + counts.get("down", 0) + counts.get("flat", 0)) <= 0:
+        # None = 源取数失败；全 0 = 真实交易日的不可能事件。二者都不是「全市场平盘」，
+        # 一律以空对象交「未返回」，绝不拿 0 冒充（#417 / #419 同款三态纪律）。
         return {}
-    source_health.record_ok(_AK_LEGU_HOST)
-    up, down, flat = _num(d.get("上涨")), _num(d.get("下跌")), _num(d.get("平盘"))
-    zt, zt_real = _num(d.get("涨停")), _num(d.get("真实涨停"))
-    dt, dt_real = _num(d.get("跌停")), _num(d.get("真实跌停"))
+    up, down, flat = counts["up"], counts["down"], counts["flat"]
+    if emotion is None:
+        emotion = get_short_term_emotion() or {}
+    zt = emotion.get("zt_count")
+    dt = emotion.get("dt_count")
     r = up / max(down, 1)
     if up < 600:
         breadth = "冰点"
@@ -173,27 +200,18 @@ def _sentiment() -> dict:
         breadth = "偏强"
     else:
         breadth = "普涨"
-    speculation = (
-        "亢奋"
-        if zt_real >= 100
-        else "活跃"
-        if zt_real >= 60
-        else "普通"
-        if zt_real >= 30
-        else "冰点"
-    )
     return {
         "up": up,
         "down": down,
         "flat": flat,
         "zt": zt,
-        "zt_real": zt_real,
+        "zt_real": 0,
         "dt": dt,
-        "dt_real": dt_real,
-        "active": str(d.get("活跃度", "")),
+        "dt_real": 0,
+        "active": "",
         "breadth": breadth,
-        "speculation": speculation,
-        "date": str(d.get("统计日期", "")),
+        "speculation": "",
+        "date": str(emotion.get("date") or ""),
     }
 
 
@@ -226,7 +244,9 @@ def get_overview() -> dict:
 
     def build():
         return {
-            "sentiment": _sentiment(),
+            # #417：emotion 与 sentiment 都要用东财涨停池 ⇒ overview 一次构建里
+            # 把 emotion 传进去，池子只打一遍（get_short_term_emotion 自带 5min 缓存）。
+            "sentiment": _sentiment(get_short_term_emotion()),
             "sectors": _sectors(),
             "updated": datetime.now(BEIJING).strftime("%Y-%m-%d %H:%M"),
         }
@@ -379,7 +399,9 @@ def _emotion_assessment(
             )
             if v is not None
         ]
-        breadth = _sentiment()  # 失败返回 {}，宽度维度自然降级为 None
+        # 宽度维度：#417 起走东财全 A 逐只 f3 计数（乐咕换源）。取数失败时
+        # `_breadth_counts()` 返回 None ⇒ 归一成 {}，0/0 让该维度降级为 None。
+        breadth = _breadth_counts() or {}
         snapshot = EmotionSnapshot(
             trade_date=f"{resolved[:4]}-{resolved[4:6]}-{resolved[6:]}",
             zt_count=len(zt),

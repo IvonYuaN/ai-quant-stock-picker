@@ -175,7 +175,12 @@ export interface IndexQuote {
 }
 
 export interface MarketSentiment {
-  up: number; down: number; flat: number; zt: number; zt_real: number; dt: number; dt_real: number;
+  up: number; down: number; flat: number;
+  /**
+   * 涨停/跌停家数（东财涨停池口径）。null = 池子取数失败 —— 不是「0 家涨停」，
+   * 前端必须显示「—」而不是 0（三态纪律：#417 换源后二者来源不同，失败不互相冒充）。
+   */
+  zt: number | null; zt_real: number; dt: number | null; dt_real: number;
   active: string; breadth: string; speculation: string; date: string;
 }
 export interface SectorFlow {

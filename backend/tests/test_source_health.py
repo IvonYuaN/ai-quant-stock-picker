@@ -337,15 +337,6 @@ def test_health_endpoint_exposes_sources():
 # 接线：市场页的两个 akshare 源（失败时返回空载荷，不是抛异常）
 # --------------------------------------------------------------------------
 
-_LEGU_ROWS = [
-    {"item": "上涨", "value": "3200"},
-    {"item": "下跌", "value": "1500"},
-    {"item": "平盘", "value": "210"},
-    {"item": "涨停", "value": "88"},
-    {"item": "真实涨停", "value": "72"},
-]
-
-
 def _fake_akshare(legu=None, fund_flow=None):
     """最小 akshare 替身：只提供这两个函数，其余属性缺省。"""
     import types
@@ -357,51 +348,66 @@ def _fake_akshare(legu=None, fund_flow=None):
     return mod
 
 
-def _df_rows(rows):
-    class _Df:
-        def iterrows(self):
-            return list(enumerate(rows))
+class _FakeResp:
+    """最小 requests.Response 替身：market_breadth_counts 只用 .json()。"""
 
-    return _Df()
+    def __init__(self, payload: dict) -> None:
+        self._payload = payload
+
+    def json(self) -> dict:
+        return self._payload
 
 
-def test_sentiment_failure_records_legu(monkeypatch):
-    """乐咕反爬（#417）：`pd.read_html` 抛错被 `except` 吞成 `{}`，台账必须留痕。"""
-    def _boom():
-        raise ValueError("No tables found")
+def test_sentiment_failure_records_eastmoney_host(monkeypatch):
+    """#417 换源后：涨跌家数走东财 clist，取数失败台账记的是 push2 主机。
 
-    monkeypatch.setattr(astock, "_akshare", lambda: _fake_akshare(legu=_boom))
-    assert market._sentiment() == {}
-    row = source_health.snapshot()[0]
-    assert row["source"] == market._AK_LEGU_HOST
+    替身必须复刻 em_get 的契约：**先记账再抛**（em_get 的 except 分支就是
+    `_note_error(host, exc); raise`）。直接裸抛的替身会让台账静默留空，
+    测的是个假的世界。
+    """
+    def _boom(url, params=None, headers=None, timeout=15):
+        exc = RuntimeError("connection reset")
+        astock._note_error(astock._EM_PUSH2_HOST, exc)
+        raise exc
+
+    monkeypatch.setattr(astock, "em_get", _boom)
+    assert market._sentiment(emotion={"date": "2026-10-19"}) == {}
+    row = next(r for r in source_health.snapshot() if r["source"] == astock._EM_PUSH2_HOST)
     assert row["healthy"] is False
-    assert "No tables found" in row["last_error"]
+    assert "connection reset" in row["last_error"]
 
 
-def test_sentiment_success_records_legu(monkeypatch):
-    def _ok():
-        return _df_rows(_LEGU_ROWS)
+def test_sentiment_success_records_eastmoney_host(monkeypatch):
+    """干净取到涨跌家数时，东财主机记 healthy。
 
-    monkeypatch.setattr(astock, "_akshare", lambda: _fake_akshare(legu=_ok))
-    got = market._sentiment()
-    assert got["up"] == 3200
-    row = source_health.snapshot()[0]
-    assert row["source"] == market._AK_LEGU_HOST
+    替身复刻 em_get 的契约：**成功分支先记账（`_note_response`）再返回响应**
+    （em_get 第 831 行就是这么做的）。直接裸返回会绕过记账 ⇒ 测的是假世界。
+    后续页返回空 diff 让 `market_breadth_counts` 的分页在首页后停止，计数即 1/1/1。
+    """
+    _pages = {"n": 0}
+
+    def _ok(url, params=None, headers=None, timeout=15):
+        _pages["n"] += 1
+        payload = (
+            {"data": {"diff": [{"f3": 1.5}, {"f3": -0.5}, {"f3": 0}]}}
+            if _pages["n"] == 1
+            else {"data": {"diff": []}}
+        )
+        resp = _FakeResp(payload)
+        astock._note_response(astock._EM_PUSH2_HOST, resp)
+        return resp
+
+    monkeypatch.setattr(astock, "em_get", _ok)
+    got = market._sentiment(emotion={"date": "2026-10-19", "zt_count": 12, "dt_count": 3})
+    assert got["up"] == 1
+    assert got["down"] == 1
+    assert got["flat"] == 1
+    row = next(r for r in source_health.snapshot() if r["source"] == astock._EM_PUSH2_HOST)
     assert row["healthy"] is True
 
 
-def test_sentiment_missing_dependency_still_records(monkeypatch):
-    """akshare 未装也算「这个源现在拿不到」，不能因为异常类型不同就不记。"""
-    def _boom():
-        raise astock.DependencyMissing("akshare 未安装")
-
-    monkeypatch.setattr(astock, "_akshare", lambda: _fake_akshare(legu=_boom))
-    assert market._sentiment() == {}
-    assert source_health.snapshot()[0]["healthy"] is False
-
-
 def test_sectors_records_fund_flow_host(monkeypatch):
-    """板块资金流是同花顺源，与乐咕不同主机——两块不能记到同一个键上。"""
+    """板块资金流是同花顺源，与东财不同主机——两块不能记到同一个键上。"""
     def _boom():
         raise RuntimeError("timeout")
 
@@ -409,7 +415,7 @@ def test_sectors_records_fund_flow_host(monkeypatch):
     assert market._sectors() == []
     rows = {r["source"]: r for r in source_health.snapshot()}
     assert rows[market._AK_FUND_FLOW_HOST]["healthy"] is False
-    assert market._AK_LEGU_HOST not in rows
+    assert astock._EM_PUSH2_HOST not in rows
 
 
 def test_sectors_success_records_ok(monkeypatch):

@@ -86,9 +86,11 @@ export interface BreadthView {
   up: number;
   down: number;
   flat: number;
-  zt: number;
+  /** 涨停家数（东财涨停池口径）；null = 池子取数失败，不是「0 家涨停」。 */
+  zt: number | null;
   ztReal: number;
-  dt: number;
+  /** 跌停家数；null = 池子取数失败，不是「0 家跌停」。 */
+  dt: number | null;
   dtReal: number;
   active: string;
   breadth: string;
@@ -256,9 +258,9 @@ function buildBreadth(overview: MarketOverview | null | undefined): BreadthView 
     up,
     down,
     flat: s.flat ?? 0,
-    zt: s.zt ?? 0,
+    zt: s.zt ?? null,
     ztReal: s.zt_real ?? 0,
-    dt: s.dt ?? 0,
+    dt: s.dt ?? null,
     dtReal: s.dt_real ?? 0,
     active: s.active ?? "",
     breadth: s.breadth ?? "",
