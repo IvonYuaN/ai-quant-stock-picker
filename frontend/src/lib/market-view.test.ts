@@ -189,6 +189,18 @@ export const marketViewContract = {
     return v.breadth !== null && v.breadth.up > 0;
   })(),
 
+  breadthKeepsNullLimitCounts: (() => {
+    // #417：涨停池取数失败时后端 zt/dt 是 null（不是 0）⇒ 涨跌家数照常显示，
+    // 涨停/跌停保持 null（页面渲染「—」），绝不把取数失败讲成「0 家涨停」。
+    const v = buildMarketView({
+      overview: {
+        ...overviewFixture,
+        sentiment: { ...overviewFixture.sentiment, zt: null, dt: null },
+      },
+    });
+    return v.breadth !== null && v.breadth.zt === null && v.breadth.dt === null;
+  })(),
+
   /* ---- 顶部环境条摘要 ---- */
   stripIsNullWithoutAnyData: marketStripSummary(buildMarketView({})) === null,
   stripIsNullForNullView: marketStripSummary(null) === null,

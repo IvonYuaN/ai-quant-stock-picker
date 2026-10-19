@@ -24,6 +24,8 @@ from zoneinfo import ZoneInfo
 import source_health
 
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+# 东财 push2 行情主机的名字（ ledger / 前端标签共用；涨跌家数、行业榜、指数都在这个域）
+_EM_PUSH2_HOST = "push2.eastmoney.com"
 
 try:
     _SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
@@ -1357,6 +1359,95 @@ def investor_qa(code: str, page_size: int = 30) -> list[dict]:
 # 相邻两次请求一次空一次正常），单次失败就把整块面板判死太脆，故重试一次。
 _INDUSTRY_ATTEMPTS = 2
 _INDUSTRY_RETRY_SLEEP = 0.3
+
+# 全市场涨跌家数的分页口径（#417）。与行业榜**同一个 clist 端点**，只是 fs 换成
+# 全 A 股本（沪A+深A+创业+科创+北证），fields 只要 f3（涨跌幅）。
+# 🔴 fs 分隔符必须按字面 `+` 发（requests 会编码成 %2B，正是东财认的形态）——
+#    2026-10-19 实测：手工换成 %20（空格）时同一 fs 返回个股而非板块（见 #426）。
+_BREADTH_FS = "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048"
+_BREADTH_PAGE_SIZE = 1000
+_BREADTH_MAX_PAGES = 8  # 8 页 × 1000 = 8000 行，覆盖全 A 约 5400 只仍有余量
+_BREADTH_FIRST_PAGE_ATTEMPTS = 3  # 首页空 diff 的抖空重试（同行业榜的 #415 教训）
+
+
+def _breadth_page(pn: int) -> list | None:
+    """单页全 A 快照（只取 f3）。网络/解析失败 ⇒ None（区分「源挂了」与「没数据」）。"""
+    params = {
+        "pn": str(pn),
+        "pz": str(_BREADTH_PAGE_SIZE),
+        "po": "1",
+        "np": "1",
+        "fltt": "2",
+        "invt": "2",
+        "fid": "f3",
+        "fs": _BREADTH_FS,
+        "fields": "f3",
+    }
+    try:
+        d = em_get(
+            "https://push2.eastmoney.com/api/qt/clist/get",
+            params=params,
+            headers={"User-Agent": UA},
+            timeout=15,
+        ).json()
+    except Exception:
+        return None
+    items = d.get("data", {}).get("diff", [])
+    if isinstance(items, dict):
+        items = list(items.values())
+    return items
+
+
+def market_breadth_counts() -> dict | None:
+    """全市场涨跌家数：东财全 A **逐只 f3 计数**（#417，乐咕乐股反爬后的换源口径）。
+
+    🔴 **不要**改用「行业板块 f104/f105/f106 求和」：行业板块是带层级的树，同一批
+    成分股在 Ⅱ/Ⅲ 层各算一遍（返回行 f2/f4 完全相同可证）⇒ 只取 200/496 个板块
+    三字段合计就达 6064 只，已超过全 A 约 5400 只的总量，必然重复计数
+    （2026-10-19 实测否证，详见 market._sentiment 注释与 PR #426）。
+    逐只计数下每只 A 股在 fs 里只出现一次，是唯一不会重复计数的口径。
+
+    计数口径：f3 > 0 上涨、< 0 下跌、== 0 平盘、'-'（停牌/无行情）不计入任何一档
+    但计入 total —— 停牌股不是「平盘」，把它算进平盘是编数。
+    任一页取数失败 ⇒ None；调用方必须区分 None（源故障）与全 0（真实交易日的
+    不可能事件 ⇒ 前端显示「未返回」而不是「全市场平盘」的假陈述）。
+    """
+    up = down = flat = total = 0
+    for pn in range(1, _BREADTH_MAX_PAGES + 1):
+        items = _breadth_page(pn)
+        if items is None:
+            return None
+        if not items:
+            if pn == 1:
+                # 首页空 diff：clist 抖空（adjacent 请求一次空一次正常，实测约 1/4），
+                # 直接判「没数据」会把整天误报成不可用 ⇒ 短重试。
+                recovered = False
+                for _ in range(_BREADTH_FIRST_PAGE_ATTEMPTS - 1):
+                    time.sleep(_INDUSTRY_RETRY_SLEEP)
+                    items = _breadth_page(pn)
+                    if items is None:
+                        return None
+                    if items:
+                        recovered = True
+                        break
+                if not recovered:
+                    return None  # 重试仍空 ⇒ 源侧不可用，不拿 0 冒充
+            else:
+                break
+        for it in items:
+            total += 1
+            v = _numf(it.get("f3"))
+            if v is None:
+                continue
+            if v > 0:
+                up += 1
+            elif v < 0:
+                down += 1
+            else:
+                flat += 1
+        if len(items) < _BREADTH_PAGE_SIZE:
+            break
+    return {"up": up, "down": down, "flat": flat, "total": total}
 
 
 def _industry_comparison_once(top_n: int) -> dict:

@@ -90,7 +90,7 @@ def _stub(monkeypatch, handler):
         return handler(endpoint, date)
 
     monkeypatch.setattr(market.astock, "em_zt_topic_pool", fake)
-    monkeypatch.setattr(market, "_sentiment", lambda: {})
+    monkeypatch.setattr(market, "_breadth_counts", lambda: None)
     return dates
 
 

@@ -155,7 +155,9 @@ def test_emotion_attaches_model_field(monkeypatch):
         "em_zt_topic_pool",
         _pools(zt=_HOT_ZT, zb=[{"c": "X"}, {"c": "Y"}], yzt=_HOT_YZT),
     )
-    monkeypatch.setattr(market, "_sentiment", lambda: {"up": 4000, "down": 900})
+    monkeypatch.setattr(
+        market, "_breadth_counts", lambda: {"up": 4000, "down": 900, "flat": 0, "total": 4900}
+    )
 
     payload = market._emotion()
     assert payload["zt_count"] == 5
@@ -175,7 +177,7 @@ def test_emotion_keeps_core_fields_when_model_fails(monkeypatch):
         "em_zt_topic_pool",
         _pools(zt=_HOT_ZT, zb=[{"c": "X"}], yzt=_HOT_YZT),
     )
-    monkeypatch.setattr(market, "_sentiment", lambda: {})
+    monkeypatch.setattr(market, "_breadth_counts", lambda: None)
 
     def _boom(*args, **kwargs):
         raise RuntimeError("model exploded")
