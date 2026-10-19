@@ -47,6 +47,7 @@ import portfolio as pf
 import market
 import myreports as mr
 import performance_bridge
+import source_health
 import tenant as _tenant
 
 app = FastAPI(
@@ -336,6 +337,13 @@ def _gate_freshness() -> dict:
 - `release_sha`: 部署时的 Git commit SHA（用于部署自检）
 - `radar`: 资讯雷达缓存新鲜度
 - `gate`: 生产 gate 判定新鲜度
+- `sources`: 各数据源健康台账（**不健康的排前面**）
+
+⚠️ `sources` 只做**观测**，不影响 `ok`：源站临时不可达不等于本服务挂了，
+把它算进存活判定会让健康检查在源故障时误报。
+
+⚠️ 台账在**进程内内存**里，重启即清空；官方部署是 uvicorn 单 worker，
+所以一个实例的状态就是全局状态（多 worker 时会各记各的）。
     """,
     response_description="服务健康状态与元信息",
 )
@@ -347,6 +355,7 @@ def health():
         "release_sha": _release_sha(),
         "radar": _radar_freshness(),
         "gate": _gate_freshness(),
+        "sources": source_health.snapshot(),
     }
 
 

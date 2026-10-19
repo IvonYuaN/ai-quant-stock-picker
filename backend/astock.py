@@ -18,7 +18,10 @@ import random
 import time
 import urllib.request
 from datetime import datetime, timedelta
+from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
+
+import source_health
 
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
 
@@ -751,6 +754,44 @@ def _em_session(direct: bool):
     return s
 
 
+def _em_host(url: str) -> str:
+    """URL → 主机名，用作健康台账的键。解析不出来就返回空串（不记账）。"""
+    try:
+        return urlparse(url).hostname or ""
+    except Exception:  # noqa: BLE001 —— 记账辅助，绝不抛
+        return ""
+
+
+def _note_response(host: str, resp: object) -> None:
+    """按**响应**记账。
+
+    ⚠️ 只看「有没有抛异常」是不够的：`requests` 不会因 4xx/5xx 抛错，所以
+    源站返回 403/502 时调用方拿到的是正常响应对象，`except` 分支永远不触发。
+    而 prod 被东财封禁的现场正是这类——**源可达但拒绝服务**，必须单独记成失败，
+    否则台账会把一个正在拒绝所有请求的源显示成健康。
+    """
+    if not host:
+        return
+    try:
+        status = getattr(resp, "status_code", None)
+        if isinstance(status, int) and status >= 400:
+            source_health.record_error(host, f"HTTP {status}")
+        else:
+            source_health.record_ok(host)
+    except Exception:  # noqa: BLE001 —— 记账绝不能拖垮取数
+        return
+
+
+def _note_error(host: str, exc: object) -> None:
+    """按**异常**记账（同样不许把异常带出来）。"""
+    if not host:
+        return
+    try:
+        source_health.record_error(host, exc)
+    except Exception:  # noqa: BLE001
+        return
+
+
 def em_get(
     url: str, params: dict | None = None, headers: dict | None = None, timeout: int = 15
 ):
@@ -758,29 +799,38 @@ def em_get(
 
     第一次请求探测：先直连（短超时、不重试），成功即固定走直连；失败则降级走系统代理并固定。
     探测结果整个进程复用，避免每次重试。`VR_DATA_PROXY=1` 可跳过探测、强制走代理。
+
+    每次请求的最终结果会记进 `source_health`（键=主机名），供 `/api/health` 暴露。
+    **只记最终结果**：auto 模式下直连失败、代理成功，记的是成功——中间那次探测失败
+    不代表这个源对本站不可用，记下来只会让台账长期挂着一条假故障。
     """
+    host = _em_host(url)
     wait = _EM_MIN_INTERVAL - (time.time() - _em_last_call[0])
     if wait > 0:
         time.sleep(wait + random.uniform(0.1, 0.5))
     try:
         mode = _em_mode[0]
         if mode != "auto":
-            return _em_session(mode == "direct").get(
+            resp = _em_session(mode == "direct").get(
                 url, params=params, headers=headers, timeout=timeout
             )
-        # auto：先直连，成功固定 direct；直连失败再走系统代理、成功固定 proxy。
-        try:
-            r = _em_session(True).get(
-                url, params=params, headers=headers, timeout=min(timeout, 8)
-            )
-            _em_mode[0] = "direct"
-            return r
-        except Exception:
-            r = _em_session(False).get(
-                url, params=params, headers=headers, timeout=timeout
-            )
-            _em_mode[0] = "proxy"
-            return r
+        else:
+            # auto：先直连，成功固定 direct；直连失败再走系统代理、成功固定 proxy。
+            try:
+                resp = _em_session(True).get(
+                    url, params=params, headers=headers, timeout=min(timeout, 8)
+                )
+                _em_mode[0] = "direct"
+            except Exception:
+                resp = _em_session(False).get(
+                    url, params=params, headers=headers, timeout=timeout
+                )
+                _em_mode[0] = "proxy"
+        _note_response(host, resp)
+        return resp
+    except Exception as exc:
+        _note_error(host, exc)
+        raise
     finally:
         _em_last_call[0] = time.time()
 
