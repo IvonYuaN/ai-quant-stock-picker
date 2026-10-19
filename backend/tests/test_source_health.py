@@ -28,6 +28,7 @@ from types import SimpleNamespace
 import pytest
 
 import astock
+import market
 import source_health
 
 
@@ -330,3 +331,104 @@ def test_health_endpoint_exposes_sources():
     assert body["ok"] is True
     assert body["sources"][0]["source"] == "push2.eastmoney.com"
     assert body["sources"][0]["healthy"] is False
+
+
+# --------------------------------------------------------------------------
+# 接线：市场页的两个 akshare 源（失败时返回空载荷，不是抛异常）
+# --------------------------------------------------------------------------
+
+_LEGU_ROWS = [
+    {"item": "上涨", "value": "3200"},
+    {"item": "下跌", "value": "1500"},
+    {"item": "平盘", "value": "210"},
+    {"item": "涨停", "value": "88"},
+    {"item": "真实涨停", "value": "72"},
+]
+
+
+def _fake_akshare(legu=None, fund_flow=None):
+    """最小 akshare 替身：只提供这两个函数，其余属性缺省。"""
+    import types
+
+    mod = types.SimpleNamespace(
+        stock_market_activity_legu=legu,
+        stock_fund_flow_industry=fund_flow,
+    )
+    return mod
+
+
+def _df_rows(rows):
+    class _Df:
+        def iterrows(self):
+            return list(enumerate(rows))
+
+    return _Df()
+
+
+def test_sentiment_failure_records_legu(monkeypatch):
+    """乐咕反爬（#417）：`pd.read_html` 抛错被 `except` 吞成 `{}`，台账必须留痕。"""
+    def _boom():
+        raise ValueError("No tables found")
+
+    monkeypatch.setattr(astock, "_akshare", lambda: _fake_akshare(legu=_boom))
+    assert market._sentiment() == {}
+    row = source_health.snapshot()[0]
+    assert row["source"] == market._AK_LEGU_HOST
+    assert row["healthy"] is False
+    assert "No tables found" in row["last_error"]
+
+
+def test_sentiment_success_records_legu(monkeypatch):
+    def _ok():
+        return _df_rows(_LEGU_ROWS)
+
+    monkeypatch.setattr(astock, "_akshare", lambda: _fake_akshare(legu=_ok))
+    got = market._sentiment()
+    assert got["up"] == 3200
+    row = source_health.snapshot()[0]
+    assert row["source"] == market._AK_LEGU_HOST
+    assert row["healthy"] is True
+
+
+def test_sentiment_missing_dependency_still_records(monkeypatch):
+    """akshare 未装也算「这个源现在拿不到」，不能因为异常类型不同就不记。"""
+    def _boom():
+        raise astock.DependencyMissing("akshare 未安装")
+
+    monkeypatch.setattr(astock, "_akshare", lambda: _fake_akshare(legu=_boom))
+    assert market._sentiment() == {}
+    assert source_health.snapshot()[0]["healthy"] is False
+
+
+def test_sectors_records_fund_flow_host(monkeypatch):
+    """板块资金流是同花顺源，与乐咕不同主机——两块不能记到同一个键上。"""
+    def _boom():
+        raise RuntimeError("timeout")
+
+    monkeypatch.setattr(astock, "_akshare", lambda: _fake_akshare(fund_flow=_boom))
+    assert market._sectors() == []
+    rows = {r["source"]: r for r in source_health.snapshot()}
+    assert rows[market._AK_FUND_FLOW_HOST]["healthy"] is False
+    assert market._AK_LEGU_HOST not in rows
+
+
+def test_sectors_success_records_ok(monkeypatch):
+    def _ok(symbol=None):
+        rows = [
+            {"行业": "电池", "行业-涨跌幅": "3.2", "净额": "1.25e8", "流入资金": "3e8", "流出资金": "1.75e8", "公司家数": "62"},
+            {"行业": "银行", "行业-涨跌幅": "0.4", "净额": "2.1e8", "流入资金": "8e8", "流出资金": "5.9e8", "公司家数": "42"},
+        ]
+
+        class _Df:
+            def iterrows(self):
+                return list(enumerate(rows))
+
+            def sort_values(self, *_a, **_kw):
+                return self
+
+        return _Df()
+
+    monkeypatch.setattr(astock, "_akshare", lambda: _fake_akshare(fund_flow=_ok))
+    got = market._sectors()
+    assert [item["name"] for item in got] == ["电池", "银行"]
+    assert source_health.snapshot()[0]["healthy"] is True
