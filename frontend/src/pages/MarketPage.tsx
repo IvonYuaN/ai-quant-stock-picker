@@ -432,7 +432,7 @@ export function MarketPage() {
 
           {section({
             title: "成交额榜",
-            description: `全市场成交额 Top20 · 客观榜单，非推荐${view.turnoverUpdated ? ` · 数据时间 ${view.turnoverUpdated}` : ""}`,
+            description: `全市场成交额 Top20 · 客观榜单，非推荐${view.turnoverUpdated ? ` · 数据时间 ${formatEvidenceTime(view.turnoverUpdated)}` : ""}`,
             icon: Layers,
             available: availability.turnover,
             emptyTitle: "成交额榜未返回",

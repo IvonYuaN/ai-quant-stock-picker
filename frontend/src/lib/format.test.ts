@@ -37,6 +37,9 @@ export const formatContract = {
   evidenceTimeEmptyForNull: formatEvidenceTime(null) === "",
   evidenceTimeEmptyForUndefined: formatEvidenceTime(undefined) === "",
   evidenceTimeEmptyForBlank: formatEvidenceTime("") === "",
+  // 成交额榜的 updated 是空格分隔（后端 "%Y-%m-%d %H:%M"），也必须归一，
+  // 否则同一页两块面板一个显示 "10-19 15:30"、一个显示 "2026-10-19 15:30"
+  evidenceTimeAcceptsSpaceSeparator: formatEvidenceTime("2026-10-19 15:30") === "10-19 15:30",
   // 认不出的格式原样返回 —— 宁可难看，不可失真
   evidenceTimePassesUnknownThrough: formatEvidenceTime("2026/10/19 10:58") === "2026/10/19 10:58",
 };

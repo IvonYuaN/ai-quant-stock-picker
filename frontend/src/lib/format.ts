@@ -50,9 +50,12 @@ export function changeClass(value: number | null | undefined): string {
  * - 空值返回空串，由调用方决定怎么措辞（榜单后缀直接省略，快讯区写「时间未记录」）；
  * - 跨天/跨节假日必须带日期 —— 只显示 `HH:MM` 会让隔夜外围看起来像刚刚更新；
  * - 格式认不出就**原样返回**，不猜、不补零（宁可难看，不可失真）。
+ *
+ * 两种真实形态都要认：ISO 是 `2026-10-19T10:58`（`as_of`），而成交额榜的
+ * `updated` 是 `2026-10-19 15:30`（空格分隔）。只认 `T` 会让两块面板显示不一致。
  */
 export function formatEvidenceTime(value: string | null | undefined): string {
   if (!value) return "";
-  const match = value.match(/(\d{2}-\d{2})T(\d{2}:\d{2})/);
+  const match = value.match(/(\d{2}-\d{2})[T ](\d{2}:\d{2})/);
   return match ? `${match[1]} ${match[2]}` : value;
 }
