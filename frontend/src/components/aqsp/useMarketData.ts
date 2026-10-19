@@ -4,6 +4,7 @@
 // 这是刻意的 —— 行情源（东财/百度/腾讯）各挂各的，串行 + 单点失败会让整页空白。
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/lib/api";
+import type { DataSourceHealthRow } from "@/lib/api";
 import { buildMarketView, type MarketInput, type MarketView } from "@/lib/market-view";
 
 /** 后端各接口缓存 5 分钟，前端同频刷新即可。 */
@@ -86,4 +87,41 @@ export function useMarketData(): MarketDataState {
   const refresh = useCallback(() => setReloadKey((value) => value + 1), []);
 
   return useMemo(() => ({ view, loading, failedSections, refresh }), [view, loading, failedSections, refresh]);
+}
+
+/**
+ * 数据源健康（后端进程内台账，重启清空）。
+ *
+ * 单独一个 hook 而不是并进 `useMarketData`：台账与行情数据是**两件事**，
+ * 它失败不该让任何板块消失，行情成功也不代表源健康。
+ *
+ * 取不到就返回 `null`（不提示）——健康信息本身失败时，静默比误报好：
+ * 编一条「数据源不可达」出来，比不提示更糟。
+ */
+export function useSourceHealth(): DataSourceHealthRow[] | null {
+  const [sources, setSources] = useState<DataSourceHealthRow[] | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    const load = () => {
+      api
+        .health()
+        .then((payload) => {
+          if (!active) return;
+          // `sources` 缺失（旧版后端）按「没有台账」处理，不编造空对象
+          setSources(Array.isArray(payload?.sources) ? payload.sources : null);
+        })
+        .catch(() => {
+          if (active) setSources(null);
+        });
+    };
+    load();
+    const timer = window.setInterval(load, MARKET_REFRESH_INTERVAL_MS);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  return sources;
 }

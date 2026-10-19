@@ -19,8 +19,8 @@ import { cn } from "@/lib/utils";
 import { changeClass, formatEvidenceTime, formatRate, formatSignedPct, formatYi } from "@/lib/format";
 import { industryOption, ladderOption, sectorFlowOption } from "@/lib/chart-options";
 import { useThemeMode } from "@/lib/theme-mode";
-import { sectionAvailability, type MarketView } from "@/lib/market-view";
-import { useMarketData } from "@/components/aqsp/useMarketData";
+import { sectionAvailability, summarizeSourceHealth, type MarketView } from "@/lib/market-view";
+import { useMarketData, useSourceHealth } from "@/components/aqsp/useMarketData";
 import { StockDetailDrawer } from "@/components/aqsp/StockDetailDrawer";
 
 function IndexCards({ view }: { view: MarketView }) {
@@ -335,6 +335,8 @@ function GlobalBlock({ view }: { view: MarketView }) {
 
 export function MarketPage() {
   const { view, loading, failedSections, refresh } = useMarketData();
+  const sources = useSourceHealth();
+  const sourceNotice = summarizeSourceHealth(sources);
   const [picked, setPicked] = useState<string | null>(null);
   const availability = view ? sectionAvailability(view) : null;
 
@@ -387,6 +389,13 @@ export function MarketPage() {
           title="部分数据源本次未取到"
           detail={`${failedSections.join("、")} 读取失败，其余板块照常显示。可点「刷新」重试。`}
         />
+      ) : null}
+
+      {/* 「接口成功但源不可达」这一档：上面的 failedSections 覆盖不到它，
+          因为后端在这种情况下返回的是 200 + 空载荷。没有这条提示，
+          空面板会被读成「今天没数据」——那是一句关于市场的假陈述。 */}
+      {sourceNotice ? (
+        <ToneCallout tone="warn" title={sourceNotice.title} detail={sourceNotice.detail} />
       ) : null}
 
       {loading && !view ? <LoadingState label="正在读取市场环境数据…" /> : null}

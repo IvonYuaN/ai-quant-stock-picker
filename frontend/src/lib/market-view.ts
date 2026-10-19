@@ -6,6 +6,7 @@
 // 这里把它们收敛成一个 `MarketView`，并显式区分「接口失败」与「接口返回空」：
 // 两个都表现为空数组/ null，但前者要提示可重试、后者要说明数据源没覆盖，不能混为一谈。
 import type {
+  DataSourceHealthRow,
   GlobalIndex,
   IndexQuote,
   IndustryData,
@@ -378,5 +379,71 @@ export function sectionAvailability(view: MarketView): SectionAvailability {
     turnover: view.turnover.length > 0,
     industry: view.industryTop.length > 0 || view.industryBottom.length > 0,
     global: view.global.length > 0,
+  };
+}
+
+/* ------------------------------------------------------- 数据源健康（为什么空） */
+
+/**
+ * 主机 → 人话标签。只影响**展示**，不参与任何判断；认不出的主机原样显示。
+ *
+ * 为什么要这张表：页面上「行业榜为空」有两种完全不同的原因 ——
+ * ①今天真的没数据；②这个源连不上。用户看到的却是同一句「未返回」。
+ */
+const SOURCE_LABELS: Readonly<Record<string, string>> = {
+  "push2.eastmoney.com": "东财行情（指数 / 榜单 / 外围）",
+  "push2his.eastmoney.com": "东财板块日K",
+  "push2delay.eastmoney.com": "东财延时行情",
+  "push2ex.eastmoney.com": "东财涨停板",
+  "datacenter-web.eastmoney.com": "东财数据中心",
+  "qt.gtimg.cn": "腾讯行情",
+};
+
+export interface SourceHealthNotice {
+  /** 不可达的源数量（不是展示出来的条数，可能更多）。 */
+  unhealthy: number;
+  title: string;
+  detail: string;
+}
+
+/** 最多点名几个源；再多就只报个数，避免把提示条撑成一段日志。 */
+const MAX_NAMED_SOURCES = 3;
+
+function sourceLabel(source: string): string {
+  return SOURCE_LABELS[source] ?? source;
+}
+
+function shortStamp(iso: string | null): string {
+  // 后端给的是带 +08:00 的 ISO（上海时区）。这里只取「MM-DD HH:MM」，
+  // 不做时区换算——换算会引入浏览器本地时区，反而可能把北京时间挪走。
+  const match = (iso ?? "").match(/(\d{2}-\d{2})[T ](\d{2}:\d{2})/);
+  return match ? `${match[1]} ${match[2]}` : "";
+}
+
+/**
+ * 把后端台账收敛成一条提示；全健康（或还没记过任何源）时返回 `null`。
+ *
+ * ⚠️ 这条提示的**唯一职责**是纠正一句假陈述：面板为空 ≠ 今天没数据。
+ * 所以文案里必须同时出现「哪个源坏了」和「所以空不代表没数据」两件事，
+ * 只说前者，用户仍会以为是行情本身的问题。
+ */
+export function summarizeSourceHealth(
+  rows: readonly DataSourceHealthRow[] | null | undefined,
+): SourceHealthNotice | null {
+  const unhealthy = (rows ?? []).filter((row) => row && !row.healthy);
+  if (unhealthy.length === 0) return null;
+
+  const named = unhealthy.slice(0, MAX_NAMED_SOURCES).map((row) => {
+    const since = shortStamp(row.down_since);
+    const times = row.consecutive_errors > 0 ? `连续 ${row.consecutive_errors} 次失败` : "失败";
+    return `${sourceLabel(row.source)}（${times}${since ? `，自 ${since}` : ""}）`;
+  });
+  const rest = unhealthy.length - named.length;
+  const list = rest > 0 ? `${named.join("、")} 等 ${unhealthy.length} 个源` : named.join("、");
+
+  return {
+    unhealthy: unhealthy.length,
+    title: "数据源不可达",
+    detail: `${list} 取数失败。由它们供数的板块为空是源侧原因，不代表今天没有数据；可稍后刷新重试。`,
   };
 }
