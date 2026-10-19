@@ -15,6 +15,7 @@ from datetime import datetime, timezone, timedelta
 
 import astock
 import gstock
+import source_health
 
 BEIJING = timezone(timedelta(hours=8))
 
@@ -131,14 +132,24 @@ def _num(v) -> int:
         return 0
 
 
+# 本模块两个 akshare 源的**上游主机**（`akshare.xxx` 只是包装，真正打的是这些域）。
+# 接进台账的理由：这两个源失败时返回的是**空载荷**而不是抛异常 ——
+# `/api/market/overview` 照样回 200，前端显示「未返回」，从外部分不出
+# 「源挂了」和「今天没数据」。10-19 的乐咕反爬（#417）就是这么躺过去的。
+_AK_LEGU_HOST = "legulegu.com"              # akshare.stock_market_activity_legu
+_AK_FUND_FLOW_HOST = "data.10jqka.com.cn"   # akshare.stock_fund_flow_industry
+
+
 def _sentiment() -> dict:
     """市场情绪：涨跌家数/涨停跌停/活跃度 + 大盘宽度、题材投机（客观数据机械分档）。"""
     try:
         # akshare 惰性导入（同 astock 模式）：未装时降级返回空，不挡整个服务启动
         df = astock._akshare().stock_market_activity_legu()
         d = {row["item"]: row["value"] for _, row in df.iterrows()}
-    except Exception:
+    except Exception as exc:
+        source_health.record_error(_AK_LEGU_HOST, exc)
         return {}
+    source_health.record_ok(_AK_LEGU_HOST)
     up, down, flat = _num(d.get("上涨")), _num(d.get("下跌")), _num(d.get("平盘"))
     zt, zt_real = _num(d.get("涨停")), _num(d.get("真实涨停"))
     dt, dt_real = _num(d.get("跌停")), _num(d.get("真实跌停"))
@@ -182,8 +193,10 @@ def _sectors() -> list[dict]:
     try:
         f = astock._akshare().stock_fund_flow_industry(symbol="即时")
         f = f.sort_values("净额", ascending=False)
-    except Exception:
+    except Exception as exc:
+        source_health.record_error(_AK_FUND_FLOW_HOST, exc)
         return []
+    source_health.record_ok(_AK_FUND_FLOW_HOST)
     out = []
     for _, row in f.iterrows():
         out.append(
