@@ -793,11 +793,23 @@ def em_get(
 _ZTB_UT = "7eea3edcaed734bea9cbfc24409ed989"
 
 
-def em_zt_topic_pool(endpoint: str, date: str, sort: str = "fbt:asc") -> list[dict]:
+_POOL_ATTEMPTS = 2
+_POOL_RETRY_SLEEP = 0.3
+
+
+def em_zt_topic_pool(endpoint: str, date: str, sort: str = "fbt:asc") -> list[dict] | None:
     """东财涨停板行情中心原始池（push2ex）。
     endpoint: getTopicZTPool(涨停) / getTopicZBPool(炸板) / getTopicDTPool(跌停) / getYesterdayZTPool(昨涨停)
-    date: YYYYMMDD 交易日。非交易日 / 参数错 → []。
-    池内每项字段含 lbc(连板数) / zbc(炸板次数) / hybk(行业) 等。"""
+    date: YYYYMMDD 交易日。池内每项字段含 lbc(连板数) / zbc(炸板次数) / hybk(行业) 等。
+
+    🔴 返回值三态，**必须区分**：
+    - ``list``（可能为空）—— 请求成功。空表示该日确实没有这只池：非交易日、
+      盘前未生成，或当天真没有涨停/跌停（强势日跌停池为空是常态）。
+    - ``None`` —— **取数失败**（网络/解析）。调用方不能把它当 ``[]``。
+
+    把失败当 ``[]`` 会造成两类假陈述：①页面把「跌停 0 家」当成事实；
+    ②``_emotion`` 的「往前回溯找最近交易日」逻辑会把**上一交易日**的池当成今天的。
+    """
     url = f"https://push2ex.eastmoney.com/{endpoint}"
     params = {
         "ut": _ZTB_UT,
@@ -808,11 +820,14 @@ def em_zt_topic_pool(endpoint: str, date: str, sort: str = "fbt:asc") -> list[di
         "date": date,
     }
     headers = {"User-Agent": UA, "Referer": "https://quote.eastmoney.com/"}
-    try:
-        r = em_get(url, params=params, headers=headers, timeout=10)
-        return (r.json().get("data") or {}).get("pool") or []
-    except Exception:
-        return []
+    for attempt in range(_POOL_ATTEMPTS):
+        try:
+            r = em_get(url, params=params, headers=headers, timeout=10)
+            return (r.json().get("data") or {}).get("pool") or []
+        except Exception:
+            if attempt + 1 < _POOL_ATTEMPTS:
+                time.sleep(_POOL_RETRY_SLEEP)
+    return None
 
 
 def _numf(v):

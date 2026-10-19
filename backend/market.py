@@ -221,13 +221,17 @@ def _emotion() -> dict:
     **不输出任何个股 code/name**——守产品「零标的」红线（个股清单是甩名单，不做）。
     """
     # 定位最近交易日：从今天往前回溯，第一日有涨停池即取（非交易日/盘前返空则继续回溯）。
+    # 🔴 回溯只对「成功但空」的日期进行。取数失败（None）时**必须停**：否则会把
+    # 上一交易日的池当成今天的，页面标着「今天」却是一周前的连板梯队。
     today = datetime.now(BEIJING).date()
     resolved, zt = "", []
     for back in range(8):
         d = (today - timedelta(days=back)).strftime("%Y%m%d")
-        zt = astock.em_zt_topic_pool("getTopicZTPool", d, "fbt:asc")
-        if zt:
-            resolved = d
+        pool = astock.em_zt_topic_pool("getTopicZTPool", d, "fbt:asc")
+        if pool is None:
+            return {}
+        if pool:
+            resolved, zt = d, pool
             break
     if not resolved:
         return {}
@@ -235,6 +239,13 @@ def _emotion() -> dict:
     zb = astock.em_zt_topic_pool("getTopicZBPool", resolved, "fbt:asc")  # 炸板池
     dt = astock.em_zt_topic_pool("getTopicDTPool", resolved, "fund:asc")  # 跌停池
     yzt = astock.em_zt_topic_pool("getYesterdayZTPool", resolved, "zs:desc")  # 昨涨停池
+
+    # 炸板池/跌停池取不到就整块标「未返回」，不拿 0 冒充：
+    # 「跌停 0 家」在强势日是事实，在取数失败时是假话，二者不能混。
+    # 昨涨停池只影响晋级率，缺失时降级为 None 而不是抹掉整块。
+    if zb is None or dt is None:
+        return {}
+    yzt = yzt or []
 
     boards = [_num(p.get("lbc")) or 1 for p in zt]  # 每只连板数（缺省按 1 板）
     lianban = [b for b in boards if b >= 2]  # 2 板及以上（连板）
