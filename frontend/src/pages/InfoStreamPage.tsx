@@ -127,7 +127,7 @@ export function InfoStreamPage() {
       <SectionHeader
         icon={Zap}
         title="小道信息"
-        description="财联社快讯 · 概念异动榜 —— 每条自带来源与时间证据"
+        description="财联社快讯 · 概念异动榜 —— 快讯逐条带发布时间；概念榜源无日期字段（已在区头注明）"
       >
         <button
           type="button"
@@ -155,7 +155,14 @@ export function InfoStreamPage() {
           ) : null}
 
           <section className="aq-section">
-            <SectionHeader title="概念异动榜" description="当日涨幅榜 · 涨跌家数 · 主力净流入" count={data.concepts.length} />
+            <SectionHeader
+              title="概念异动榜"
+              // 证据链（#317 W3）：东财 bkzj 载荷里没有任何日期字段（已核，
+              // 顶层 lt 是服务端响应时刻，不是数据日期）。这里显式说明「源未提供」，
+              // 而不是让读者以为榜是实时的、也不是编一个日期出来。
+              description="当日涨幅榜 · 涨跌家数 · 主力净流入 · 数据时间未提供（源无日期字段）"
+              count={data.concepts.length}
+            />
             {conceptFailed || data.concepts.length === 0 ? (
               <EmptyState title="暂无概念异动数据" detail={conceptFailed ? data.sources.concept_board : "源正常但未返回板块"} />
             ) : (
