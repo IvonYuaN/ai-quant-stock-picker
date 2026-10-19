@@ -14,7 +14,7 @@ import {
   ToneCallout,
 } from "@/components/ui/primitives";
 import { api } from "@/lib/api";
-import { changeClass, formatSignedPct, formatYi } from "@/lib/format";
+import { changeClass, formatEvidenceTime, formatSignedPct, formatYi } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { InfoStreamData, InfoStreamNewsItem } from "@/types/aqsp";
 
@@ -22,17 +22,14 @@ function extractMessage(reason: unknown): string {
   return reason instanceof Error ? reason.message : "读取失败";
 }
 
-/** 快讯时间展示：优先取 ISO 串的 月-日 时:分；解析失败原样返回（证据不造假）。 */
+/**
+ * 快讯时间展示：优先取 ISO 串的 月-日 时:分；解析失败原样返回（证据不造假）。
+ *
+ * 聚合时间与单条时间用同一个格式化函数 —— 曾经是两份各自实现的正则，
+ * 其中一份把「取数时刻」标成了「数据时间」（#317 W3 修正）。
+ */
 function newsTime(ctime: string): string {
-  if (!ctime) return "时间未记录";
-  const match = ctime.match(/(\d{2}-\d{2})T(\d{2}:\d{2})/);
-  return match ? `${match[1]} ${match[2]}` : ctime;
-}
-
-/** 聚合数据时间：ISO 串取 月-日 时:分（跨天/节假日打开时不误导）；格式异常原样返回。 */
-function aggregateTime(generatedAt: string): string {
-  const match = generatedAt.match(/(\d{2}-\d{2})T(\d{2}:\d{2})/);
-  return match ? `${match[1]} ${match[2]}` : generatedAt;
+  return formatEvidenceTime(ctime) || "时间未记录";
 }
 
 function SourceHealthBar({ data }: { data: InfoStreamData }) {
@@ -51,7 +48,15 @@ function SourceHealthBar({ data }: { data: InfoStreamData }) {
           </Tag>
         );
       })}
-      <span className="aq-hint">数据时间 {aggregateTime(data.generated_at)}</span>
+      {/*
+        🔴 「数据时间」必须是最新一条快讯的发布时间，不是取数时刻（#317 W3）。
+        源停更时取数时刻照样新鲜，用它当数据时间等于把「我刚拉过」说成「数据是新的」。
+        取数时刻单独标注为「取数」，两者并列，读者自己判断数据有多旧。
+      */}
+      <span className="aq-hint">
+        数据时间 {data.news_latest_ctime ? formatEvidenceTime(data.news_latest_ctime) : "未记录"}
+      </span>
+      <span className="aq-hint">取数 {formatEvidenceTime(data.generated_at)}</span>
     </div>
   );
 }

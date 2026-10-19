@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/primitives";
 import { EChart } from "@/components/ui/EChart";
 import { cn } from "@/lib/utils";
-import { changeClass, formatRate, formatSignedPct, formatYi } from "@/lib/format";
+import { changeClass, formatEvidenceTime, formatRate, formatSignedPct, formatYi } from "@/lib/format";
 import { industryOption, ladderOption, sectorFlowOption } from "@/lib/chart-options";
 import { useThemeMode } from "@/lib/theme-mode";
 import { sectionAvailability, type MarketView } from "@/lib/market-view";
@@ -397,7 +397,7 @@ export function MarketPage() {
         <>
           {section({
             title: "大盘指数",
-            description: "上证 / 深证成指 / 创业板指 / 沪深300",
+            description: `上证 / 深证成指 / 创业板指 / 沪深300${view.indicesUpdated ? ` · 数据时间 ${formatEvidenceTime(view.indicesUpdated)}` : " · 数据时间未标注"}`,
             icon: TrendingUp,
             available: availability.indices,
             emptyTitle: "指数行情未返回",
@@ -452,7 +452,7 @@ export function MarketPage() {
 
           {section({
             title: "隔夜外围",
-            description: "美股 / 港股指数 —— A 股开盘前的外部环境",
+            description: `美股 / 港股指数 —— A 股开盘前的外部环境${view.globalUpdated ? ` · 数据时间 ${formatEvidenceTime(view.globalUpdated)}` : " · 数据时间未标注"}`,
             icon: Globe2,
             available: availability.global,
             emptyTitle: "外围指数未返回",

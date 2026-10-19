@@ -170,6 +170,8 @@ export interface Quote {
 
 export interface IndexQuote {
   name: string; price: number; change_pct: number; change_amt: number;
+  /** 证据链（#317 W3）：该行行情的成交时间（源给，非取数时刻）；null = 源未给 */
+  as_of?: string | null;
 }
 
 export interface MarketSentiment {
@@ -311,6 +313,8 @@ export interface IndustryData { top: IndustryRow[]; bottom: IndustryRow[]; total
 export interface GlobalIndex {
   key: string; name: string; region: string;
   price: number | null; change_pct: number | null;
+  /** 证据链（#317 W3）：该行行情的更新时间；美股档是上一交易日收盘、港股档是港股收盘 */
+  as_of?: string | null;
 }
 
 /** 单个策略的表现（后端复用 ledger learner 计算，口径唯一）。 */
