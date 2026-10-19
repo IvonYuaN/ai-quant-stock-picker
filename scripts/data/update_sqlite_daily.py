@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import inspect
+import json
 import re
 import signal
 import sqlite3
@@ -29,8 +30,14 @@ if __package__ in {None, ""}:
     # only worked when PYTHONPATH happened to be set by the caller.)
     sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
-from aqsp.core.time import get_previous_trading_day, is_trading_day, today_shanghai
+from aqsp.core.time import (
+    get_previous_trading_day,
+    is_trading_day,
+    now_shanghai,
+    today_shanghai,
+)
 from aqsp.data.sqlite_db_source import SqliteDbSource
+from aqsp.utils.jsonl_io import atomic_write_text
 
 _QUERY_RETRY_LIMIT = 2
 _QUERY_RETRY_BASE_SLEEP_SECONDS = 0.2
@@ -68,6 +75,19 @@ _SESSION_ERROR_CODES = frozenset(
         "10001001",  # BSERR_NO_LOGIN：用户未登录（会话被服务端清掉）
     }
 )
+
+# 🔴 2026-10-19（#402）：**回退路径的总预算**。#379 只给「重新登录」设了上限
+# （_SESSION_RELOGIN_LIMIT），但超限后的「纯冷却重试」没有任何总量约束 ⇒ 上游
+# 持续故障时日更死循环：10-14~10-16 实测连续失败从 286 涨到 677、占 flock
+# 2.5 天，直到周六推库把库换掉才以 malformed 崩溃——**终止条件是意外，不是
+# 设计**。现在按两个维度封顶，任一超限即 fail-closed 退出（释放 flock，让
+# 下一次日更接管；与覆盖门一致的哲学：宁可不更新，不要霸锁）：
+#   ① 累计失败符号数（默认 50）：健康全市场运行的失败量级在个位数；
+#   ② 最长无进展时长（默认 1800s）：任何一次成功查询（含 0 行的停牌空响应——
+#      它证明上游活着）即重置；卡死在 recv 或持续失败都会触发。
+# 默认值非 0 ⇒ 现有 cron（不显式传参）自动获得保护，无需改 cron 行。
+_TOTAL_FAILURE_BUDGET_DEFAULT = 50
+_NO_PROGRESS_BUDGET_SECONDS_DEFAULT = 1800.0
 
 
 def _looks_like_session_failure(error_code: str, consecutive_failures: int) -> bool:
@@ -125,6 +145,10 @@ class UpdateSummary:
     coverage_error: str | None = None
     processed_symbols: int = 0
     budget_exhausted: bool = False
+    # #402：fail-closed 中止的原因（总失败预算 / 无进展预算触发）；None = 未被
+    # 预算中止。与 budget_exhausted 的区别：后者含「排程批次正常跑完时长预算」
+    # （调用方 coordinator 自己校验覆盖度），前者一律是失败，main() 必须返回 1。
+    budget_abort_reason: str | None = None
     already_current_symbols: int = 0
     empty_response_symbols: int = 0
     # #378：本次运行发生「断线重登录」的次数（连接类失败后重建会话）。
@@ -580,6 +604,41 @@ def _target_coverage_error(
     return None
 
 
+def _success_stamp_path(db_path: Path) -> Path:
+    """「上次成功日更」印章路径（紧贴 DB，随 DB 被换掉而失配 ⇒ 正是信号）。"""
+    return db_path.with_name(db_path.name + ".update_stamp.json")
+
+
+def _write_success_stamp(db_path: Path, *, summary: UpdateSummary) -> bool:
+    """#402：让 freshness 能区分「数据来自日更」与「数据来自推库」。
+
+    只在**干净成功**（无失败符号、无覆盖缺口、未被预算中止）时写；否则旧印章
+    原样保留 ⇒  freshness 看到的就是「最近一次真的成功的日更」。周六推库只
+    rsync 主库文件、不搬印章 ⇒ 推库后 stamp_db_max 与库内 MAX(trade_date)
+    失配，即可观测地点亮「数据是推库换来的，不是日更」。
+    原子写（tmp + replace）：崩溃不能留下半个 json。
+    """
+    payload = {
+        "finished_at": now_shanghai().isoformat(timespec="seconds"),
+        "target_day": summary.target_day.isoformat(),
+        "db_max_trade_date": (
+            summary.raw_max_trade_date.isoformat()
+            if summary.raw_max_trade_date
+            else None
+        ),
+        "updated_rows": summary.updated_rows,
+        "processed": f"{summary.processed_symbols}/{summary.total_symbols}",
+    }
+    try:
+        atomic_write_text(
+            _success_stamp_path(db_path),
+            json.dumps(payload, ensure_ascii=False) + "\n",
+        )
+    except OSError:
+        return False
+    return True
+
+
 def update_sqlite_daily(
     db_path: Path,
     *,
@@ -597,6 +656,8 @@ def update_sqlite_daily(
     require_target_coverage: bool = True,
     rate_limit_cooldown_seconds: float = _RATE_LIMIT_COOLDOWN_BASE_SECONDS,
     max_consecutive_failures: int = 0,
+    max_total_failures: int = _TOTAL_FAILURE_BUDGET_DEFAULT,
+    max_no_progress_seconds: float = _NO_PROGRESS_BUDGET_SECONDS_DEFAULT,
 ) -> UpdateSummary:
     # 既有库的价基必须是 raw：验证链路（gate/walk-forward）以 ``adjust=""`` 读
     # ``open/high/low/close``，把这些列写成前复权价会**静默污染验证价基**（比 qfq 列
@@ -649,6 +710,8 @@ def update_sqlite_daily(
             )
             processed_symbols = 0
             budget_exhausted = False
+            budget_abort_reason: str | None = None
+            last_progress_at = time.monotonic()
             for index, ts_code in enumerate(selected_symbols, start=1):
                 if deadline is not None and time.monotonic() >= deadline:
                     budget_exhausted = True
@@ -656,6 +719,30 @@ def update_sqlite_daily(
                         f"运行预算耗尽: processed={processed_symbols}/{len(selected_symbols)}",
                         flush=True,
                     )
+                    break
+                # #402 总预算（回退路径的灵魂修复）：累计失败数 / 最长无进展时长
+                # 任一超限即 fail-closed 退出并释放 flock，让下一次日更接管——
+                # 绝不再出现「上游持续故障 ⇒ 冷却重试死循环数天占锁」。
+                if max_total_failures > 0 and failed >= max_total_failures:
+                    budget_abort_reason = (
+                        f"累计失败 {failed} 次达到总预算 {max_total_failures} 次"
+                        "（疑似上游持续不可用；fail-closed 退出以释放 flock，"
+                        "让下一次日更接管）"
+                    )
+                    budget_exhausted = True
+                    print(f"[ABORT] {budget_abort_reason}", flush=True)
+                    break
+                if (
+                    max_no_progress_seconds > 0
+                    and time.monotonic() - last_progress_at >= max_no_progress_seconds
+                ):
+                    budget_abort_reason = (
+                        f"{max_no_progress_seconds:.0f}s 无任何成功查询"
+                        "（疑似卡死或上游不可达；fail-closed 退出以释放 flock，"
+                        "让下一次日更接管）"
+                    )
+                    budget_exhausted = True
+                    print(f"[ABORT] {budget_abort_reason}", flush=True)
                     break
                 processed_symbols = index
                 first, latest = _symbol_date_bounds(conn, ts_code)
@@ -733,6 +820,8 @@ def update_sqlite_daily(
                         time.sleep(cooldown)
                     continue
                 consecutive_failures = 0
+                # 成功查询（含 0 行停牌空响应）即视为有进展：它证明上游活着。
+                last_progress_at = time.monotonic()
                 inserted = 0
                 for row in rows:
                     if _insert_bar(conn, ts_code, row):
@@ -769,7 +858,7 @@ def update_sqlite_daily(
                 print(f"[ERROR] {coverage_error}", flush=True)
     finally:
         _logout_baostock_session(bs)
-    return UpdateSummary(
+    summary = UpdateSummary(
         updated_rows=updated_rows,
         skipped_symbols=skipped,
         failed_symbols=failed,
@@ -781,10 +870,19 @@ def update_sqlite_daily(
         coverage_error=coverage_error,
         processed_symbols=processed_symbols,
         budget_exhausted=budget_exhausted,
+        budget_abort_reason=budget_abort_reason,
         already_current_symbols=already_current,
         empty_response_symbols=empty_response,
         session_relogins=session_relogins,
     )
+    # #402：只有干净成功才写「上次成功日更」印章（freshness 靠它区分数据来源）。
+    if (
+        not summary.failed_symbols
+        and not summary.coverage_error
+        and not summary.budget_abort_reason
+    ):
+        _write_success_stamp(db_path, summary=summary)
+    return summary
 
 
 def main() -> int:
@@ -867,6 +965,21 @@ def main() -> int:
         help="abort the batch after this many consecutive symbol failures "
         "(e.g. hard rate-limit); 0 disables the abort",
     )
+    parser.add_argument(
+        "--max-total-failures",
+        type=int,
+        default=_TOTAL_FAILURE_BUDGET_DEFAULT,
+        help="abort the whole run after this many failed symbols in total "
+        "(#402 fail-closed budget: release the lock for the next run "
+        "instead of looping on a dead upstream); 0 disables",
+    )
+    parser.add_argument(
+        "--max-no-progress-seconds",
+        type=float,
+        default=_NO_PROGRESS_BUDGET_SECONDS_DEFAULT,
+        help="abort the whole run after this long without any successful query "
+        "(#402 fail-closed budget for stuck/dead upstream); 0 disables",
+    )
     args = parser.parse_args()
 
     if not args.db.exists():
@@ -883,6 +996,10 @@ def main() -> int:
         raise SystemExit("--offset must be non-negative")
     if args.max_runtime_seconds < 0:
         raise SystemExit("--max-runtime-seconds must be non-negative")
+    if args.max_total_failures < 0:
+        raise SystemExit("--max-total-failures must be non-negative")
+    if args.max_no_progress_seconds < 0:
+        raise SystemExit("--max-no-progress-seconds must be non-negative")
     print(
         f"sqlite daily backfill target={target.isoformat()} "
         f"start={start_day.isoformat() if start_day else 'incremental'} "
@@ -905,6 +1022,8 @@ def main() -> int:
         require_target_coverage=not args.allow_partial_target_coverage,
         rate_limit_cooldown_seconds=args.rate_limit_cooldown_seconds,
         max_consecutive_failures=args.max_consecutive_failures,
+        max_total_failures=args.max_total_failures,
+        max_no_progress_seconds=args.max_no_progress_seconds,
     )
     print(
         "sqlite daily backfill done: "
@@ -918,9 +1037,17 @@ def main() -> int:
         f"processed={summary.processed_symbols}/{summary.total_symbols} "
         f"budget_exhausted={summary.budget_exhausted}"
     )
+    if summary.budget_abort_reason:
+        print(f"[ABORT] {summary.budget_abort_reason}", flush=True)
     if summary.coverage_error:
         print(f"sqlite daily backfill blocked: {summary.coverage_error}")
-    return 1 if summary.failed_symbols or summary.coverage_error else 0
+    return (
+        1
+        if summary.failed_symbols
+        or summary.coverage_error
+        or summary.budget_abort_reason
+        else 0
+    )
 
 
 if __name__ == "__main__":

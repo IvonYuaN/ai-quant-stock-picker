@@ -236,3 +236,36 @@ def test_runner_integrity_check_fails_loud_after_sync() -> None:
     assert re.search(r"exit\s+1", text[qc_pos : qc_pos + 600]), (
         "quick_check 兜底不是 fail-loud（不过时未 exit 1）"
     )
+
+
+# ── 推库互斥（2026-10-19 新增，issue #402）─────────────────────────────────
+# 事故：10-16 周六推库 rsync 覆盖**运行中日更**的库 ⇒ 日更直到撞
+# `database disk image is malformed` 才崩（终止条件是意外，不是设计）；若日更
+# 恰在写库中段被换库，损坏面会更大。
+# 修法：推库前用 flock -n 探 runner 侧日更锁（与日更 cron 同一把
+# /tmp/aqsp_data_update_3y.lock），拿不到 ⇒ 拒绝换库（fail-closed）。
+
+
+def test_sync_knows_daily_update_lock() -> None:
+    """runner_sync.sh 必须知道 runner 日更的互斥锁路径，否则无从互斥。"""
+    text = SYNC_SCRIPT.read_text(encoding="utf-8")
+    assert "aqsp_data_update_3y.lock" in text, (
+        "runner_sync.sh 不知道 runner 日更的互斥锁 ⇒ 推库可与运行中的日更竞态换库"
+    )
+    assert re.search(r"flock\s+-n\s+'?\$\{?RUNNER_UPDATE_LOCK", text), (
+        "缺少 flock -n 探测日更锁：拿不到锁时无法识别「日更正在跑」"
+    )
+
+
+def test_update_lock_check_fails_closed_before_db_overwrite() -> None:
+    """锁探测必须早于任何换库动作，且失败分支 exit（fail-closed）。"""
+    text = SYNC_SCRIPT.read_text(encoding="utf-8")
+    lock_pos = _first_code_offset(text, "flock -n")
+    rm_pos = _first_code_offset(text, "rm -f '$RUNNER_ROOT/data/astocks_raw.db-wal'")
+    assert lock_pos < rm_pos, (
+        "日更锁探测排在清理侧车/覆盖主库之后：探测到锁为时已晚（库已被换）"
+    )
+    fail_branch = text[lock_pos : lock_pos + 900]
+    assert re.search(r"exit\s+1", fail_branch), (
+        "日更锁探测失败分支缺少 exit 1：日更运行中仍会继续换库"
+    )

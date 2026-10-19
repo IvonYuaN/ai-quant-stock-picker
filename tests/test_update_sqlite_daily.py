@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 import sys
 import time
@@ -795,3 +796,248 @@ def test_repeated_business_failures_also_attempt_bounded_relogin(
         )
         is True
     )
+
+
+# ── #402：回退路径总预算（fail-closed，释放 flock）─────────────────────────
+# 10-14~10-16 事故：#379 只封顶「重新登录」，超限后的纯冷却重试无任何总量约束
+# ⇒ 上游持续故障时日更连续失败 677 次、占 flock 2.5 天。以下用例锁死两个维度
+# 的总预算 + 「干净成功才写印章」契约。
+
+
+def _always_failing_bs():
+    class FakeBs:
+        def login(self):
+            return type("L", (), {"error_code": "0", "error_msg": ""})()
+
+        def logout(self) -> None:
+            return None
+
+    return FakeBs()
+
+
+def test_total_failure_budget_aborts_fail_closed(monkeypatch, tmp_path: Path) -> None:
+    """累计失败达到总预算必须立即 fail-closed 中止（绝不无限霸锁）。"""
+    db = tmp_path / "astocks_raw.db"
+    monkeypatch.setattr(update_sqlite_daily, "_load_baostock", lambda: _always_failing_bs())
+    monkeypatch.setattr(
+        update_sqlite_daily,
+        "_sync_stock_list_compat",
+        lambda _c, _b, preserve_existing=True: ["A.SH", "B.SH", "C.SH", "D.SH", "E.SH"],
+    )
+    monkeypatch.setattr(
+        update_sqlite_daily, "_query_history_rows", lambda **_k: ("1000001", [])
+    )
+    monkeypatch.setattr(update_sqlite_daily.time, "sleep", lambda _s: None)
+
+    summary = update_sqlite_daily.update_sqlite_daily(
+        db,
+        target_day=date(2026, 6, 18),
+        sleep_seconds=0.0,
+        limit=0,
+        price_mode="raw",
+        max_total_failures=3,
+    )
+
+    assert summary.failed_symbols == 3
+    assert summary.budget_exhausted is True
+    assert summary.budget_abort_reason is not None
+    assert "总预算" in summary.budget_abort_reason
+    assert summary.processed_symbols == 3
+    assert summary.total_symbols == 5
+    # fail-closed：失败/被预算中止的运行绝不写「上次成功日更」印章
+    assert not update_sqlite_daily._success_stamp_path(db).exists()
+
+
+def test_no_progress_budget_aborts_fail_closed(monkeypatch, tmp_path: Path) -> None:
+    """长时间没有任何成功查询必须 fail-closed 中止（卡死 / 上游不可达）。"""
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(update_sqlite_daily.time, "monotonic", lambda: clock["t"])
+    monkeypatch.setattr(update_sqlite_daily.time, "sleep", lambda _s: None)
+
+    db = tmp_path / "astocks_raw.db"
+    monkeypatch.setattr(update_sqlite_daily, "_load_baostock", lambda: _always_failing_bs())
+    monkeypatch.setattr(
+        update_sqlite_daily,
+        "_sync_stock_list_compat",
+        lambda _c, _b, preserve_existing=True: ["A.SH", "B.SH", "C.SH"],
+    )
+
+    def stalled_query(**_kwargs):
+        # 查询期间时钟前进（等价于卡在慢/死的上游），始终不成功
+        clock["t"] += 100.0
+        return ("1000001", [])
+
+    monkeypatch.setattr(update_sqlite_daily, "_query_history_rows", stalled_query)
+
+    summary = update_sqlite_daily.update_sqlite_daily(
+        db,
+        target_day=date(2026, 6, 18),
+        sleep_seconds=0.0,
+        limit=0,
+        price_mode="raw",
+        max_no_progress_seconds=250.0,
+    )
+
+    assert summary.budget_abort_reason is not None
+    assert "无任何成功查询" in summary.budget_abort_reason
+    assert summary.failed_symbols >= 1
+    assert not update_sqlite_daily._success_stamp_path(db).exists()
+
+
+def test_successful_query_resets_no_progress_clock(monkeypatch, tmp_path: Path) -> None:
+    """一次成功查询（含 0 行停牌空响应）即重置无进展时钟 ⇒ 慢上游不误杀。"""
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(update_sqlite_daily.time, "monotonic", lambda: clock["t"])
+    monkeypatch.setattr(update_sqlite_daily.time, "sleep", lambda _s: None)
+
+    db = tmp_path / "astocks_raw.db"
+    monkeypatch.setattr(update_sqlite_daily, "_load_baostock", lambda: _always_failing_bs())
+    monkeypatch.setattr(
+        update_sqlite_daily,
+        "_sync_stock_list_compat",
+        lambda _c, _b, preserve_existing=True: ["A.SH", "B.SH", "C.SH"],
+    )
+    state = {"n": 0}
+
+    def flaky_query(**_kwargs):
+        state["n"] += 1
+        clock["t"] += 200.0  # 每次都超过 250s 预算的一半
+        if state["n"] == 1:
+            return "0", []  # 停牌空响应也算进展
+        return "0", [["2026-06-18", "1", "2", "0.5", "1.5", "100", "200"]]
+
+    monkeypatch.setattr(update_sqlite_daily, "_query_history_rows", flaky_query)
+
+    summary = update_sqlite_daily.update_sqlite_daily(
+        db,
+        target_day=date(2026, 6, 18),
+        sleep_seconds=0.0,
+        limit=0,
+        price_mode="raw",
+        max_no_progress_seconds=250.0,
+        require_target_coverage=False,
+    )
+
+    assert summary.budget_abort_reason is None
+    assert summary.budget_exhausted is False
+    assert summary.processed_symbols == 3
+
+
+def test_success_stamp_records_last_successful_update(monkeypatch, tmp_path: Path) -> None:
+    """干净成功必须写印章（freshness 靠它区分「日更写的」与「推库换的」）。"""
+
+    class FakeBs:
+        def login(self):
+            return type("L", (), {"error_code": "0", "error_msg": ""})()
+
+        def logout(self) -> None:
+            return None
+
+    db = tmp_path / "astocks_raw.db"
+    monkeypatch.setattr(update_sqlite_daily, "_load_baostock", lambda: FakeBs())
+    monkeypatch.setattr(
+        update_sqlite_daily,
+        "_sync_stock_list_compat",
+        lambda _c, _b, preserve_existing=True: ["600000.SH"],
+    )
+    monkeypatch.setattr(
+        update_sqlite_daily,
+        "_query_history_rows",
+        lambda **_k: ("0", [["2026-06-18", "1", "2", "0.5", "1.5", "100", "200"]]),
+    )
+    monkeypatch.setattr(update_sqlite_daily.time, "sleep", lambda _s: None)
+
+    summary = update_sqlite_daily.update_sqlite_daily(
+        db,
+        target_day=date(2026, 6, 18),
+        sleep_seconds=0.0,
+        limit=0,
+        price_mode="raw",
+    )
+
+    assert summary.coverage_error is None
+    stamp_path = update_sqlite_daily._success_stamp_path(db)
+    assert stamp_path.is_file()
+    payload = json.loads(stamp_path.read_text(encoding="utf-8"))
+    assert payload["target_day"] == "2026-06-18"
+    assert payload["db_max_trade_date"] == "2026-06-18"
+    assert payload["updated_rows"] == 1
+
+
+def test_failed_run_keeps_previous_success_stamp(monkeypatch, tmp_path: Path) -> None:
+    """失败运行绝不刷新印章 ⇒ freshness 看到的仍是「上次真的成功」。"""
+    db = tmp_path / "astocks_raw.db"
+    stamp_path = update_sqlite_daily._success_stamp_path(db)
+    stamp_path.write_text(
+        json.dumps({"finished_at": "2026-10-16T16:00:32+08:00"}) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(update_sqlite_daily, "_load_baostock", lambda: _always_failing_bs())
+    monkeypatch.setattr(
+        update_sqlite_daily,
+        "_sync_stock_list_compat",
+        lambda _c, _b, preserve_existing=True: ["600000.SH"],
+    )
+    monkeypatch.setattr(
+        update_sqlite_daily, "_query_history_rows", lambda **_k: ("1000001", [])
+    )
+    monkeypatch.setattr(update_sqlite_daily.time, "sleep", lambda _s: None)
+
+    update_sqlite_daily.update_sqlite_daily(
+        db,
+        target_day=date(2026, 6, 18),
+        sleep_seconds=0.0,
+        limit=0,
+        price_mode="raw",
+    )
+
+    payload = json.loads(stamp_path.read_text(encoding="utf-8"))
+    assert payload["finished_at"] == "2026-10-16T16:00:32+08:00"
+
+
+def test_budget_defaults_are_enabled_for_unparameterized_cron() -> None:
+    """线上 cron 只传 --sleep-seconds ⇒ 两个预算默认值必须非 0（否则保护落空）。"""
+    assert update_sqlite_daily._TOTAL_FAILURE_BUDGET_DEFAULT > 0
+    assert update_sqlite_daily._NO_PROGRESS_BUDGET_SECONDS_DEFAULT > 0
+
+
+def test_cli_exposes_total_budget_flags() -> None:
+    text = Path("scripts/update_sqlite_daily.py").read_text(encoding="utf-8")
+
+    assert "--max-total-failures" in text
+    assert "--max-no-progress-seconds" in text
+    assert "default=_TOTAL_FAILURE_BUDGET_DEFAULT" in text
+    assert "default=_NO_PROGRESS_BUDGET_SECONDS_DEFAULT" in text
+
+
+def test_cli_returns_nonzero_when_budget_aborted(monkeypatch, tmp_path: Path) -> None:
+    """预算中止必须体现在退出码上（cron 日志/监控才能看见）。"""
+    db = tmp_path / "astocks_raw.db"
+    db.touch()
+    monkeypatch.setattr(
+        update_sqlite_daily,
+        "_target_trade_day",
+        lambda _raw: date(2026, 6, 18),
+    )
+    monkeypatch.setattr(
+        update_sqlite_daily,
+        "update_sqlite_daily",
+        lambda *args, **kwargs: update_sqlite_daily.UpdateSummary(
+            updated_rows=0,
+            skipped_symbols=0,
+            failed_symbols=50,
+            target_day=date(2026, 6, 18),
+            price_mode="raw",
+            target_day_symbol_count=0,
+            total_symbols=5400,
+            budget_exhausted=True,
+            budget_abort_reason="累计失败 50 次达到总预算 50 次",
+        ),
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["update_sqlite_daily.py", str(db), "--price-mode", "raw"],
+    )
+
+    assert update_sqlite_daily.main() == 1

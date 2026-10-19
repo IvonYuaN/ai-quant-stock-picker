@@ -21,6 +21,9 @@ GATE_DIR="${GATE_DIR:-/opt/aqsp/data/gate_run}"
 # 日常同步靠 rsync 增量（只传变化块）即可，别再传这 894MB。
 SYNC_CACHE="${SYNC_CACHE:-0}"
 RELEASE_LINK="${RELEASE_LINK:-/opt/aqsp-releases/aqsp-scheduler-current}"
+# runner 侧日更 cron 持的互斥锁（与 `flock -xn /tmp/aqsp_data_update_3y.lock` 同一把；
+# 日更入口：scripts/data/update_sqlite_daily.py，每周一至五 16:00 北京）。
+RUNNER_UPDATE_LOCK="${RUNNER_UPDATE_LOCK:-/tmp/aqsp_data_update_3y.lock}"
 
 RSYNC_SSH="ssh -p ${RUNNER_PORT} -o StrictHostKeyChecking=accept-new -o BatchMode=yes"
 log() { printf '[sync %s] %s\n' "$(date '+%F %T')" "$*"; }
@@ -104,6 +107,16 @@ log "✅ 已切链 → $SHA（rsync 成功 + 完整性体检通过）"
 #    主库，且不再同步任何 -wal；③ 同步后在 runner 侧 quick_check 兜底，不过即 fail-loud。
 RAW_DB="$(readlink -f /opt/market-data/astocks_raw.db)"
 log "同步数据 $(basename "$RAW_DB")"
+
+# 🔴 2026-10-19（#402）推库互斥：runner 日更持有 RUNNER_UPDATE_LOCK 时**绝不换库**。
+#    10-16 事故：推库 rsync 覆盖运行中进程的库 ⇒ 运行中的日更直到撞
+#    `database disk image is malformed` 才崩（终止条件是意外，不是设计）；若日更
+#    恰在写库中段被换库，损坏面会更大。用 flock -n 探同一把锁：拿不到 ⇒ 有人在跑。
+if ! $RSYNC_SSH "$RUNNER_HOST" "flock -n '${RUNNER_UPDATE_LOCK}' -c true"; then
+  log "❌ runner 上日更进程正持有 ${RUNNER_UPDATE_LOCK} ⇒ **拒绝换库**（避免把运行中进程的库换成 malformed）"
+  log "   处理：等日更结束（16:00 北京起，约 1~1.5h）后重跑本脚本；或先人工确认日更进程状态"
+  exit 1
+fi
 
 # ① prod 侧 checkpoint：把 WAL 内容并回主库并截断，保证「主库文件单独可复制」。
 CHECKPOINT_PY='import sqlite3, sys
