@@ -335,6 +335,57 @@ def test_composite_strategy_detailed_momentum_only():
     assert "value" not in detailed["600000"]
 
 
+def test_composite_detailed_total_matches_main_score_under_production_config():
+    """TD-0 不变量：明细版 total 必须恒等于主版打分。
+
+    用**生产配置** `load_thresholds()`（pvc 权重 0.3、momentum 0.3）锁死
+    ``detailed[s]["total"] ≡ calculate_score(s)``。现有 CI 测试用
+    ``Thresholds()`` dataclass 默认（pvc 权重 0），两版恰好退化到相同维度集
+    才相等——一旦生产启用 pvc（权重 0.3），旧实现下明细版漏算 pvc ⇒ 两版分叉。
+    本测试确保重构后单一事实源 ``_dimension_specs`` 使两版在任何 thresholds 下逐位一致。
+    """
+    thresholds = load_thresholds()
+    # 生产 pvc 权重必须 > 0，否则本测试形同虚设（退化回 dataclass 默认盲区）
+    assert thresholds.composite.price_volume_corr_weight > 0
+    assert thresholds.composite.momentum_weight > 0
+
+    strategy = CompositeStrategy(StrategyConfig(name="composite"), thresholds=thresholds)
+
+    dates = pd.date_range("2026-01-01", periods=60, freq="D")
+    data = {}
+    for i in range(5):
+        prices = np.linspace(10, 10 + i * 0.7, 60)
+        data[f"6000{i:02d}"] = pd.DataFrame(
+            {
+                "date": dates.strftime("%Y-%m-%d"),
+                "close": prices,
+                "open": prices,
+                "high": prices * 1.01,
+                "low": prices * 0.99,
+                "volume": 100000 + i * 1000,
+            }
+        )
+
+    for regime in ("unknown", "stable_bull", "volatile_bear"):
+        main = strategy.calculate_score(data, regime=regime)
+        detailed = strategy.calculate_detailed_scores(data, regime=regime)
+        # 标的并集一致
+        assert set(main.keys()) == set(detailed.keys())
+        for symbol in main:
+            assert detailed[symbol]["total"] == pytest.approx(main[symbol])
+            # pvc 维度在生产配置下必须进入明细（正是旧实现漏掉的维度）
+            assert "price_volume_corr" in detailed[symbol]
+            # total 是明细各维加权归一（与主版同源）
+            specs = strategy._dimension_specs(data, regime)
+            total = 0.0
+            w_sum = 0.0
+            for _key, sd, w, d in specs:
+                total += sd.get(symbol, d) * w
+                w_sum += w
+            expect = max(0.0, min(1.0, total / w_sum if w_sum > 0 else 0.0))
+            assert detailed[symbol]["total"] == pytest.approx(expect)
+
+
 def test_composite_strategy_does_not_apply_regime_adjustment_to_total_score():
     from dataclasses import replace
 

@@ -368,145 +368,101 @@ class CompositeStrategy(BaseStrategy):
         blended = base.base_blend_weight + base.regime_blend_weight * mult
         return base.amount_ratio_weight * blended
 
+    def _dimension_specs(
+        self, data: Dict[str, pd.DataFrame], regime: str
+    ) -> List[tuple[str, Dict[str, float], float, float]]:
+        """打分维度**单一事实源**：`calculate_score` 与 `calculate_detailed_scores` 共用。
+
+        每项为 ``(key, score_dict, weight, missing_default)`` 四元组，按累加顺序
+        排列。两版共用本清单 ⇒ 维度集 / 权重 / 兜底值 / 标的并集**逐位一致**，
+        从而 ``detailed[s]["total"] ≡ calculate_score(s)``（在**任何** thresholds 下
+        恒成立，不再依赖 dataclass 默认值恰好让两版退化到相同维度集）。
+
+        行为约束（与原实现逐行对齐，零打分数值变化）：
+        - momentum 恒在首位（即使权重为 0 也参与累加）
+        - 其余维度仅当 ``_has_*()`` 为真时纳入（与原 gate 一致）
+        - 兜底值：volume_surge 缺失取 ``0.0``（量能冲击语义），其余取 ``0.5``（中性）
+        """
+        mw, qw, vw, volw, mrw, trw, htfw = self.get_regime_adjusted_weights(regime)
+        specs: List[tuple[str, Dict[str, float], float, float]] = [
+            ("momentum", self.momentum_strategy.calculate_score(data), mw, 0.5),
+        ]
+
+        if self._has_quality():
+            specs.append(("quality", self.quality_strategy.calculate_score(data), qw, 0.5))
+        if self._has_value():
+            specs.append(("value", self.value_strategy.calculate_score(data), vw, 0.5))
+        if self._has_volume():
+            specs.append(("volume", self.volume_strategy.calculate_score(data), volw, 0.5))
+        if self._has_mr():
+            specs.append(("mean_reversion", self.mean_reversion_strategy.calculate_score(data), mrw, 0.5))
+        if self._has_tr():
+            specs.append(("triple_rise", self.triple_rise_strategy.calculate_score(data), trw, 0.5))
+        if self._has_htf():
+            specs.append(("high_tight_flag", self.htf_strategy.calculate_score(data), htfw, 0.5))
+        if self._has_price_volume_corr():
+            specs.append(
+                (
+                    "price_volume_corr",
+                    self.price_volume_corr_strategy.calculate_score(data),
+                    self.price_volume_corr_weight_for(regime),
+                    0.5,
+                )
+            )
+        if self._has_volume_surge():
+            specs.append(
+                (
+                    "volume_surge",
+                    self.volume_surge_strategy.calculate_score(data),
+                    self.volume_surge_weight_for(regime),
+                    0.0,  # 量能冲击：缺失取 0.0（与原实现一致）
+                )
+            )
+        if self._has_volatility_position():
+            specs.append(
+                (
+                    "volatility_position",
+                    self.volatility_position_strategy.calculate_score(data),
+                    self.volatility_position_weight_for(regime),
+                    0.5,
+                )
+            )
+        if self._has_macd_hist():
+            specs.append(
+                (
+                    "macd_hist",
+                    self.macd_hist_strategy.calculate_score(data),
+                    self.macd_hist_weight_for(regime),
+                    0.5,
+                )
+            )
+        if self._has_lower_shadow_ratio():
+            specs.append(
+                (
+                    "lower_shadow_ratio",
+                    self.lower_shadow_ratio_strategy.calculate_score(data),
+                    self.lower_shadow_ratio_weight_for(regime),
+                    0.5,
+                )
+            )
+        return specs
+
     def calculate_score(
         self, data: Dict[str, pd.DataFrame], regime: str = "unknown"
     ) -> Dict[str, float]:
-        momentum_scores = self.momentum_strategy.calculate_score(data)
-
-        quality_scores: Dict[str, float] = {}
-        if self._has_quality():
-            quality_scores = self.quality_strategy.calculate_score(data)
-
-        value_scores: Dict[str, float] = {}
-        if self._has_value():
-            value_scores = self.value_strategy.calculate_score(data)
-
-        volume_scores: Dict[str, float] = {}
-        if self._has_volume():
-            volume_scores = self.volume_strategy.calculate_score(data)
-
-        mr_scores: Dict[str, float] = {}
-        if self._has_mr():
-            mr_scores = self.mean_reversion_strategy.calculate_score(data)
-
-        tr_scores: Dict[str, float] = {}
-        if self._has_tr():
-            tr_scores = self.triple_rise_strategy.calculate_score(data)
-
-        htf_scores: Dict[str, float] = {}
-        if self._has_htf():
-            htf_scores = self.htf_strategy.calculate_score(data)
-
-        pvc_scores: Dict[str, float] = {}
-        if self._has_price_volume_corr():
-            pvc_scores = self.price_volume_corr_strategy.calculate_score(data)
-
-        vsurge_scores: Dict[str, float] = {}
-        if self._has_volume_surge():
-            vsurge_scores = self.volume_surge_strategy.calculate_score(data)
-
-        vp_scores: Dict[str, float] = {}
-        if self._has_volatility_position():
-            vp_scores = self.volatility_position_strategy.calculate_score(data)
-
-        mh_scores: Dict[str, float] = {}
-        if self._has_macd_hist():
-            mh_scores = self.macd_hist_strategy.calculate_score(data)
-
-        lsr_scores: Dict[str, float] = {}
-        if self._has_lower_shadow_ratio():
-            lsr_scores = self.lower_shadow_ratio_strategy.calculate_score(data)
-
-        all_symbols = set(momentum_scores.keys())
-        all_symbols |= set(quality_scores.keys())
-        all_symbols |= set(value_scores.keys())
-        all_symbols |= set(volume_scores.keys())
-        all_symbols |= set(mr_scores.keys())
-        all_symbols |= set(tr_scores.keys())
-        all_symbols |= set(htf_scores.keys())
-        all_symbols |= set(pvc_scores.keys())
-        all_symbols |= set(vsurge_scores.keys())
-        all_symbols |= set(vp_scores.keys())
-        all_symbols |= set(mh_scores.keys())
-        all_symbols |= set(lsr_scores.keys())
-
-        # 使用市场状态调整后的权重
-        mw, qw, vw, volw, mrw, trw, htfw = self.get_regime_adjusted_weights(regime)
-        pvcw = self.price_volume_corr_weight_for(regime)  # 与其余维度同源 regime 语义
-        vsurgew = self.volume_surge_weight_for(regime)
-        vpw = self.volatility_position_weight_for(regime)
-        mhw = self.macd_hist_weight_for(regime)
-        lsrw = self.lower_shadow_ratio_weight_for(regime)
+        specs = self._dimension_specs(data, regime)
+        all_symbols = set()
+        for _key, score_dict, _weight, _default in specs:
+            all_symbols |= set(score_dict.keys())
 
         final_scores = {}
         for symbol in all_symbols:
             total = 0.0
             w_sum = 0.0
-
-            m = momentum_scores.get(symbol, 0.5)
-            total += m * mw
-            w_sum += mw
-
-            if self._has_quality():
-                q = quality_scores.get(symbol, 0.5)
-                total += q * qw
-                w_sum += qw
-
-            if self._has_value():
-                v = value_scores.get(symbol, 0.5)
-                total += v * vw
-                w_sum += vw
-
-            if self._has_volume():
-                vol = volume_scores.get(symbol, 0.5)
-                total += vol * volw
-                w_sum += volw
-
-            if self._has_mr():
-                mr = mr_scores.get(symbol, 0.5)
-                total += mr * mrw
-                w_sum += mrw
-
-            if self._has_tr():
-                tr = tr_scores.get(symbol, 0.5)
-                total += tr * trw
-                w_sum += trw
-
-            if self._has_htf():
-                htf = htf_scores.get(symbol, 0.5)
-                total += htf * htfw
-                w_sum += htfw
-
-            # 🔴 修复 5：价量水平相关（regime 同源权重）
-            if self._has_price_volume_corr():
-                pvc = pvc_scores.get(symbol, 0.5)
-                total += pvc * pvcw
-                w_sum += pvcw
-
-            # 🔴 量能冲击（`volume` 最强子分；regime 同源权重）
-            if self._has_volume_surge():
-                vs = vsurge_scores.get(symbol, 0.0)
-                total += vs * vsurgew
-                w_sum += vsurgew
-
-            # 🔴 波动/位置维度（regime 同源权重）
-            if self._has_volatility_position():
-                vp = vp_scores.get(symbol, 0.5)
-                total += vp * vpw
-                w_sum += vpw
-
-            # 🔴 MACD 柱维度（regime 同源权重）
-            if self._has_macd_hist():
-                mh = mh_scores.get(symbol, 0.5)
-                total += mh * mhw
-                w_sum += mhw
-
-            # 🔴 下影线比维度（regime 同源权重）
-            if self._has_lower_shadow_ratio():
-                lsr = lsr_scores.get(symbol, 0.5)
-                total += lsr * lsrw
-                w_sum += lsrw
-
+            for _key, score_dict, weight, default in specs:
+                val = score_dict.get(symbol, default)
+                total += val * weight
+                w_sum += weight
             base_score = total / w_sum if w_sum > 0 else 0.0
             final_scores[symbol] = max(0.0, min(1.0, base_score))
 
@@ -515,86 +471,21 @@ class CompositeStrategy(BaseStrategy):
     def calculate_detailed_scores(
         self, data: Dict[str, pd.DataFrame], regime: str = "unknown"
     ) -> Dict[str, Dict[str, float]]:
-        momentum_scores = self.momentum_strategy.calculate_score(data)
+        specs = self._dimension_specs(data, regime)
+        all_symbols = set()
+        for _key, score_dict, _weight, _default in specs:
+            all_symbols |= set(score_dict.keys())
 
-        quality_scores: Dict[str, float] = {}
-        if self._has_quality():
-            quality_scores = self.quality_strategy.calculate_score(data)
-
-        value_scores: Dict[str, float] = {}
-        if self._has_value():
-            value_scores = self.value_strategy.calculate_score(data)
-
-        volume_scores: Dict[str, float] = {}
-        if self._has_volume():
-            volume_scores = self.volume_strategy.calculate_score(data)
-
-        mr_scores: Dict[str, float] = {}
-        if self._has_mr():
-            mr_scores = self.mean_reversion_strategy.calculate_score(data)
-
-        tr_scores: Dict[str, float] = {}
-        if self._has_tr():
-            tr_scores = self.triple_rise_strategy.calculate_score(data)
-
-        htf_scores: Dict[str, float] = {}
-        if self._has_htf():
-            htf_scores = self.htf_strategy.calculate_score(data)
-
-        all_symbols = set(momentum_scores.keys())
-        all_symbols |= set(quality_scores.keys())
-        all_symbols |= set(value_scores.keys())
-        all_symbols |= set(volume_scores.keys())
-        all_symbols |= set(mr_scores.keys())
-        all_symbols |= set(tr_scores.keys())
-        all_symbols |= set(htf_scores.keys())
-
-        # 使用市场状态调整后的权重
-        mw, qw, vw, volw, mrw, trw, htfw = self.get_regime_adjusted_weights(regime)
-
-        detailed = {}
+        detailed: Dict[str, Dict[str, float]] = {}
         for symbol in all_symbols:
-            m = momentum_scores.get(symbol, 0.5)
-            entry: Dict[str, float] = {"momentum": m}
-            total = m * mw
-            w_sum = mw
-
-            if self._has_quality():
-                q = quality_scores.get(symbol, 0.5)
-                entry["quality"] = q
-                total += q * qw
-                w_sum += qw
-
-            if self._has_value():
-                v = value_scores.get(symbol, 0.5)
-                entry["value"] = v
-                total += v * vw
-                w_sum += vw
-
-            if self._has_volume():
-                vol = volume_scores.get(symbol, 0.5)
-                entry["volume"] = vol
-                total += vol * volw
-                w_sum += volw
-
-            if self._has_mr():
-                mr = mr_scores.get(symbol, 0.5)
-                entry["mean_reversion"] = mr
-                total += mr * mrw
-                w_sum += mrw
-
-            if self._has_tr():
-                tr = tr_scores.get(symbol, 0.5)
-                entry["triple_rise"] = tr
-                total += tr * trw
-                w_sum += trw
-
-            if self._has_htf():
-                htf = htf_scores.get(symbol, 0.5)
-                entry["high_tight_flag"] = htf
-                total += htf * htfw
-                w_sum += htfw
-
+            total = 0.0
+            w_sum = 0.0
+            entry: Dict[str, float] = {}
+            for key, score_dict, weight, default in specs:
+                val = score_dict.get(symbol, default)
+                total += val * weight
+                w_sum += weight
+                entry[key] = val
             base_total = total / w_sum if w_sum > 0 else 0.0
             entry["total"] = max(0.0, min(1.0, base_total))
             detailed[symbol] = entry
