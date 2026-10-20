@@ -28,7 +28,7 @@ import time
 import traceback
 from pathlib import Path
 
-PROJECT = Path(__file__).resolve().parents[2]  # scripts/demos/xxx.py ⇒ 项目根
+PROJECT = Path(__file__).resolve().parents[2]  # 本文件在 scripts/demos 下，parents[2] 即项目根
 SCRATCH = PROJECT / ".workbuddy" / "scratch"
 SCRATCH.mkdir(parents=True, exist_ok=True)
 DRILL_DIR = SCRATCH / f"alert-drill-{int(time.time())}"
