@@ -116,7 +116,7 @@ function errorDetail(payload: unknown): string | undefined {
 
 async function requestPayload(
   path: string,
-  method: "GET" | "POST" | "PUT" | "DELETE" = "GET",
+  method: "GET" | "POST" | "PUT" | "DELETE" | "PATCH" = "GET",
   body?: unknown,
   options?: AqspRequestOptions,
 ): Promise<unknown> {
@@ -151,7 +151,7 @@ async function requestPayload(
 
 async function request<T>(
   path: string,
-  method: "GET" | "POST" | "PUT" | "DELETE" = "GET",
+  method: "GET" | "POST" | "PUT" | "DELETE" | "PATCH" = "GET",
   body?: unknown,
 ): Promise<T> {
   const payload = await requestPayload(path, method, body);
@@ -338,6 +338,38 @@ export interface PortfolioData {
   updated: string; last_refresh: string | null;
 }
 
+// P0-2 该卖提醒（后端 `backend/alert_events.py`，PRD 7.2 alert_event）
+/** 单条该卖提醒事件（收件箱数据源；站内红点 = status===OPEN）。 */
+export interface AlertEvent {
+  id: string;
+  level: string;            // "L1" | "L5"
+  symbol: string;
+  position_id: string | null;
+  trigger_at: number;      // 现价
+  threshold_at: number;    // 止损位
+  pnl_pct: number;
+  sellable_now: boolean;   // T+1 下今日能否执行
+  action_hint: string;     // "该卖" | "明日生效" | "观察"
+  t1_note: string;
+  basis_json: { rule: string; actual: string; evidence: string };
+  status: "OPEN" | "HANDLED" | "IGNORED" | "EXPIRED";
+  ignore_streak: number;
+  created_at: string;
+  updated_at: string;
+}
+/** `GET /api/alerts` 的 `data`。 */
+export interface AlertData {
+  events: AlertEvent[];
+  open_count: number;
+}
+/** `POST /api/live-risk/check` 的 `data`。 */
+export interface LiveRiskCheckResult {
+  reminders: Array<Record<string, unknown>>;
+  new_events: AlertEvent[];
+  notify: string[];
+  notify_suppressed: boolean;
+}
+
 // 行业涨跌幅：东财对停牌/无数据的板块会给 "-" 占位串，故不能只声明 number。
 export interface IndustryRow { rank: number; name: string; change_pct: number | string; code: string; up_count: number; down_count: number }
 export interface IndustryData { top: IndustryRow[]; bottom: IndustryRow[]; total: number }
@@ -504,6 +536,22 @@ export const api = {
   closePosition: (code: string, date: string, price: number, shares: number, cost: number) =>
     request<PortfolioData>("/portfolio/close", "POST", { code, date, price, shares, cost }),
   removeClosed: (index: number) => request<PortfolioData>(`/portfolio/close?index=${index}`, "DELETE"),
+
+  // ---- P0-2 该卖提醒（LIVE 风控 → alert_event → 站内收件箱 + 外发）----
+  alerts: (opts?: { status?: string; symbol?: string }): Promise<AlertData> => {
+    const qs = new URLSearchParams();
+    if (opts?.status) qs.set("status", opts.status);
+    if (opts?.symbol) qs.set("symbol", opts.symbol);
+    const q = qs.toString();
+    return get<AlertData>(q ? `/alerts?${q}` : "/alerts");
+  },
+  alertTransition: (id: string, action: "handled" | "ignored", note = "") =>
+    request<AlertEvent>(
+      `/alerts/${encodeURIComponent(id)}?action=${action}&note=${encodeURIComponent(note)}`,
+      "PATCH",
+    ),
+  runLiveRiskCheck: (holding_days?: Record<string, number>, notify = true) =>
+    request<LiveRiskCheckResult>("/live-risk/check", "POST", { holding_days, notify }),
   quote: (codes: string) => get<Record<string, Quote>>(`/quote?codes=${codes}`),
   industry: (top = 20) => get<IndustryData>(`/industry?top=${top}`),
   myReports: () => get<MyReport[]>("/myreports"),

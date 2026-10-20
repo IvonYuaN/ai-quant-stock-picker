@@ -518,6 +518,82 @@
     padding: 0.35rem;
   }
 
+  /* ---------------------------------------------------------- P0-2 该卖提醒收件箱 */
+  .aq-muted {
+    color: hsl(var(--muted-foreground));
+  }
+  .aq-alert-inbox {
+    margin-bottom: 1rem;
+  }
+  .aq-alert-inbox-card {
+    margin-bottom: 1rem;
+  }
+  .aq-alert-count b {
+    color: hsl(var(--foreground));
+  }
+  .aq-alert-group + .aq-alert-group {
+    margin-top: 0.75rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid hsl(var(--border) / 0.7);
+  }
+  .aq-alert-group-label {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: hsl(var(--foreground));
+    margin: 0 0 0.5rem;
+  }
+  .aq-alert-group-label svg {
+    height: 0.95rem;
+    width: 0.95rem;
+  }
+  .aq-alert-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.6rem;
+    padding: 0.55rem 0.65rem;
+    border: 1px solid hsl(var(--border) / 0.7);
+    border-radius: 0.55rem;
+    background: hsl(var(--background));
+    margin-bottom: 0.5rem;
+  }
+  .aq-alert-row:last-child {
+    margin-bottom: 0;
+  }
+  .aq-alert-row-main {
+    flex: 1;
+    min-width: 0;
+  }
+  .aq-alert-row-title {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  .aq-alert-row-title b {
+    font-size: 0.98rem;
+  }
+  .aq-alert-basis {
+    margin: 0.25rem 0 0;
+    font-size: 0.85rem;
+    color: hsl(var(--foreground));
+    line-height: 1.4;
+  }
+  .aq-alert-basis.aq-muted {
+    margin-top: 0.15rem;
+  }
+  .aq-alert-basis span {
+    display: inline-block;
+  }
+  .aq-alert-row-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    align-self: center;
+  }
+
   .aq-input {
     min-width: 10rem;
     flex: 1;

@@ -28,6 +28,7 @@ import { StockDetailDrawer, type StockIntro } from "./StockDetailDrawer";
 import { CandidateSection } from "./sections/CandidateSection";
 import { MessageSection } from "./sections/MessageSection";
 import { DiscussionSection } from "./sections/DiscussionSection";
+import { AlertInbox } from "./AlertInbox";
 import type { AqspSnapshot } from "@/types/aqsp";
 
 function TodayHeader({
@@ -350,6 +351,10 @@ export function TodayWorkspace() {
       />
 
       <OnboardingBanner />
+
+      {/* 实盘该卖提醒（#431）：读的是实盘持仓的 LIVE 风控触发，与研究历史日期解耦——
+          切日期 / 本地快照缺失都不该让"今天能不能卖"这条风控提醒消失，故置于主分支外、最靠上。 */}
+      <AlertInbox />
 
       {data ? <DatePicker snapshot={data} /> : null}
 
