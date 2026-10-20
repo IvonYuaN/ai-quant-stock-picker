@@ -902,3 +902,40 @@ def test_n_rebound_strategy_scores_detected_pattern() -> None:
     scores = strategy.calculate_score({"600000": _make_n_rebound_df()})
 
     assert 0.0 < scores["600000"] <= 1.0
+
+
+# ---- PRD v4 P2-9 不变量（2026-10-20）：不应再存在「已实例化但从不调用」的策略对象 ----
+
+
+def test_no_instantiated_but_never_called_strategy_objects() -> None:
+    """__init__ 里赋值的每个 self.*_strategy 必须在类其余方法中被引用。
+
+    amount_ratio 曾是第 7 个独立缺陷：实例化(80)/_has_amount_ratio(168)/
+    amount_ratio_weight_for(348) 齐备，但 calculate_score 从未调用 ⇒ 僵尸对象
+    误导读码人（文档债比技术债更贵）。本测试对**未来新增策略同样生效**：
+    新增实例化却忘记接线进 _dimension_specs 时，这里必红。
+    """
+    import inspect
+    import re
+
+    src = inspect.getsource(CompositeStrategy)
+    init_src = inspect.getsource(CompositeStrategy.__init__)
+    rest = src.replace(init_src, "", 1)
+    assigned = sorted(set(re.findall(r"self\.(\w+_strategy)\s*=", init_src)))
+    assert assigned, "应至少实例化一个子策略（回归护栏自身有效性）"
+    zombies = [name for name in assigned if name not in rest]
+    assert not zombies, f"已实例化但从不调用的僵尸策略对象: {zombies}"
+    # 构造健康检查：删除后 import/实例化路径不得被破坏
+    CompositeStrategy()
+
+
+def test_amount_ratio_zombie_fully_removed() -> None:
+    """回归钉：amount_ratio 僵尸维度（阈值字段/dataclass/parse/模块）不得复活。"""
+    import aqsp.strategies.thresholds as th_mod
+    from aqsp.strategies.thresholds import Thresholds
+
+    assert not hasattr(th_mod, "AmountRatioThresholds")
+    assert not hasattr(th_mod, "_parse_amount_ratio")
+    th = Thresholds()
+    assert not hasattr(th.composite, "amount_ratio_weight")
+    assert not hasattr(th, "amount_ratio")
