@@ -117,8 +117,22 @@ def _save(d: dict) -> None:
     os.replace(tmp, _pf_file())
 
 
-def add_holding(code: str, shares: float, cost: float) -> dict:
-    """加一笔持仓；同代码则按加权平均成本合并（加仓）。"""
+def add_holding(
+    code: str, shares: float, cost: float, opened_at: str | None = None
+) -> dict:
+    """加一笔持仓；同代码则按加权平均成本合并（加仓）。
+
+    Args:
+        code: 6 位股票代码。
+        shares: 持仓数量（> 0）。
+        cost: 成本价（可负：融券 / 返息 / 摊薄场景，见 portfolio_add）。
+        opened_at: 开仓日期 ``YYYY-MM-DD``（上海时区），缺省今天。用于 LIVE 风控的
+            T+1 可卖性推导（当日买入今日不可卖，Q3=A）；P2-8 前录入的老持仓无此字段，
+            按老仓（即时可卖）处理，不误伤。同代码合并时保留最早的 opened_at
+            （加仓不改动原仓的开仓基准；合并行按老仓可卖，不把老仓误判成当日买入）。
+    """
+    if not opened_at:
+        opened_at = datetime.now(BEIJING).strftime("%Y-%m-%d")
     with _LOCK:
         d = _load()
         for h in d["holdings"]:
@@ -131,9 +145,15 @@ def add_holding(code: str, shares: float, cost: float) -> dict:
                     else cost
                 )
                 h["shares"] = total
+                # 合并保留最早开仓日：老数据无 opened_at 时保持缺省（老仓可卖），
+                # 两边都有时取更早的一个（保守：不把老仓误降成「当日买入」）。
+                prior = h.get("opened_at")
+                h["opened_at"] = min(prior, opened_at) if prior else prior
                 break
         else:
-            d["holdings"].append({"code": code, "shares": shares, "cost": cost})
+            d["holdings"].append(
+                {"code": code, "shares": shares, "cost": cost, "opened_at": opened_at}
+            )
         _save(d)
     return get_portfolio()
 
@@ -208,6 +228,7 @@ def get_portfolio() -> dict:
                     "price": price,
                     "shares": h["shares"],
                     "cost": h["cost"],
+                    "opened_at": h.get("opened_at"),
                     "market_value": round(mv, 2),
                     "pnl": round(pnl, 2),
                     "pnl_pct": round(pnl / cv * 100, 2) if cv else 0.0,

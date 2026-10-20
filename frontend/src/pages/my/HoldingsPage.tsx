@@ -39,6 +39,9 @@ export function HoldingsPage() {
   const [code, setCode] = useState("");
   const [shares, setShares] = useState("");
   const [cost, setCost] = useState("");
+  // P2-8：开仓日期决定 T+1 可卖性（当日买入今日不可卖，Q3=A）。缺省今天 = 今天录入即今天开仓；
+  // 补录历史持仓时改成实际开仓日。useState(today) 把 today 当惰性初始化，挂载时求值一次。
+  const [openedAt, setOpenedAt] = useState(today);
   const [closing, setClosing] = useState<{ code: string; date: string; price: string; shares: string; cost: string } | null>(
     null,
   );
@@ -147,7 +150,10 @@ export function HoldingsPage() {
       ) : null}
 
       <section className="aq-section">
-        <SectionHeader title="加一笔持仓" description="同代码按加权平均成本合并（加仓）" />
+        <SectionHeader
+          title="加一笔持仓"
+          description="同代码按加权平均成本合并（加仓）；开仓日期决定 T+1 可卖性（当日买入今日不可卖）"
+        />
         <div className="aq-toolbar">
           <input
             className="aq-input"
@@ -170,6 +176,13 @@ export function HoldingsPage() {
             placeholder="成本价"
             inputMode="decimal"
           />
+          <input
+            className="aq-input"
+            type="date"
+            value={openedAt}
+            onChange={(event) => setOpenedAt(event.target.value)}
+            aria-label="开仓日期"
+          />
           <button
             type="button"
             className="aq-btn aq-btn-primary"
@@ -178,13 +191,16 @@ export function HoldingsPage() {
               const parsedCode = code.trim();
               const parsedShares = Number(shares);
               const parsedCost = Number(cost);
+              const parsedOpenedAt = normalizeDate(openedAt.trim());
               if (!/^\d{6}$/.test(parsedCode)) return toast.error("代码必须是 6 位数字");
               if (!Number.isFinite(parsedShares) || parsedShares <= 0) return toast.error("股数必须大于 0");
               if (!Number.isFinite(parsedCost)) return toast.error("成本价必须是数字");
-              void run(() => api.addHolding(parsedCode, parsedShares, parsedCost), `已录入 ${parsedCode}`).then(() => {
+              if (!/^\d{4}-\d{2}-\d{2}$/.test(parsedOpenedAt)) return toast.error("开仓日期格式应为 YYYY-MM-DD");
+              void run(() => api.addHolding(parsedCode, parsedShares, parsedCost, parsedOpenedAt), `已录入 ${parsedCode}`).then(() => {
                 setCode("");
                 setShares("");
                 setCost("");
+                setOpenedAt(today());
               });
             }}
           >
@@ -207,6 +223,7 @@ export function HoldingsPage() {
             <thead>
               <tr>
                 <th>代码 / 名称</th>
+                <th>开仓日</th>
                 <th className="aq-num">股数</th>
                 <th className="aq-num">成本价</th>
                 <th className="aq-num">现价</th>
@@ -229,6 +246,14 @@ export function HoldingsPage() {
                         </Badge>
                       ) : (
                         <Badge tone="neutral">今日不在候选</Badge>
+                      )}
+                    </td>
+                    <td>
+                      {/* P2-8：开仓日 = T+1 可卖性依据；老仓（无 opened_at）明示，不当当日买入误伤 */}
+                      {row.opened_at ? (
+                        <span className="aq-code">{row.opened_at}</span>
+                      ) : (
+                        <Badge tone="neutral">老仓</Badge>
                       )}
                     </td>
                     <td className="aq-num">{row.shares}</td>
@@ -269,7 +294,7 @@ export function HoldingsPage() {
                   </tr>
                   {closing?.code === row.code ? (
                     <tr>
-                      <td colSpan={8}>
+                      <td colSpan={9}>
                         <div className="aq-closing-form">
                           <p className="aq-label">记一笔清仓（计入已实现盈亏）</p>
                           <div className="aq-toolbar">

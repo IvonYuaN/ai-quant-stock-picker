@@ -15,6 +15,8 @@ function normalizeHolding(raw: unknown): Holding {
     price: asNumber(record.price),
     shares: asNumber(record.shares),
     cost: asNumber(record.cost),
+    // P2-8：开仓日期。P2-8 前录入的老持仓后端给 null/缺 ⇒ 归一成 ""（按老仓可卖，不误伤）。
+    opened_at: asString(record.opened_at),
     market_value: asNumber(record.market_value),
     pnl: asNumber(record.pnl),
     pnl_pct: asNumber(record.pnl_pct),

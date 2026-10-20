@@ -324,6 +324,8 @@ export interface CatalystData {
 
 export interface Holding {
   code: string; name: string; price: number; shares: number; cost: number;
+  /** 开仓日期 YYYY-MM-DD（P2-8；P2-8 前录入的老持仓无此字段 ⇒ ""）。T+1 可卖性据此推导。 */
+  opened_at: string;
   market_value: number; pnl: number; pnl_pct: number;
 }
 export interface ClosedPosition {
@@ -530,7 +532,7 @@ export const api = {
   events: (code: string) => get<EventCalendarData>(`/events?code=${code}`),
   catalyst: () => get<CatalystData>("/catalyst"),
   portfolio: () => get<PortfolioData>("/portfolio"),
-  addHolding: (code: string, shares: number, cost: number) => request<PortfolioData>("/portfolio/holding", "POST", { code, shares, cost }),
+  addHolding: (code: string, shares: number, cost: number, opened_at?: string) => request<PortfolioData>("/portfolio/holding", "POST", { code, shares, cost, opened_at }),
   removeHolding: (code: string) => request<PortfolioData>(`/portfolio/holding?code=${code}`, "DELETE"),
   refreshPortfolio: () => request<PortfolioData>("/portfolio/refresh", "POST"),
   closePosition: (code: string, date: string, price: number, shares: number, cost: number) =>
