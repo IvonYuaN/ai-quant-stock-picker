@@ -644,6 +644,153 @@ def portfolio_refresh():
         raise HTTPException(502, f"刷新失败：{e}") from e
 
 
+# ---------------------------------------------------------------------------
+# P0-2 该卖提醒（LIVE 风控 → alert_event → 站内红点 + 外发推送）
+# ---------------------------------------------------------------------------
+
+
+class LiveRiskCheckIn(BaseModel):
+    """LIVE 风控检查入参。
+
+    - ``holding_days``: ``{code: 持有交易日数}``，缺省按老仓 1 天处理；
+      0 = 当日买入 ⇒ T+1 降格（L1 明日生效 / L5 观察，Q3=A 拍板语义）。
+      持仓簿 v1 无 ``opened_at``，该值由前端持仓录入界面暂存透传（P2 再进 schema）。
+    - ``notify``: 是否外发（默认 True；站内入库不受此开关影响）。
+    """
+
+    holding_days: dict | None = None
+    notify: bool = True
+
+
+def _live_risk_alert_markdown(new_events: list[dict]) -> str:
+    """该卖提醒外发正文（复用 notifier 10 通道；无依据行不发出）。"""
+    lines = [f"# 该卖提醒-{len(new_events)} 条", ""]
+    for e in new_events:
+        basis = e.get("basis_json") or {}
+        rule = basis.get("rule", "")
+        actual = basis.get("actual", "")
+        t1 = f"｜{e.get('t1_note')}" if e.get("t1_note") else ""
+        lines.append(
+            f"- **{e.get('level')}｜{e.get('symbol')}** {e.get('action_hint')}"
+            f"（{rule}；{actual}）{t1}"
+        )
+    return "\n".join(lines)
+
+
+@app.post(
+    "/api/live-risk/check",
+    tags=["该卖提醒"],
+    summary="对实盘持仓跑 LIVE 风控，产该卖提醒（站内入库 + 外发）",
+    description="""
+P0-2 该卖提醒（Q3=A T+1 语义）：
+
+- 读本地持仓 + 实时行情，复用现成风控引擎（L1 硬止损 / L5 动态止损）
+- 触发的事件写入本地 alert_event 簿（去重键 = 代码|级别|止损位）
+- 新增事件可选外发（复用现成通知通道；未配置任何通道时自动跳过，不报错）
+
+**参数：**
+- `holding_days`（可选）: 代码→持有交易日数；缺省老仓，0=当日买入（T+1 降格）
+- `notify`（可选）: 是否外发，默认 true
+""",
+)
+def live_risk_check(body: LiveRiskCheckIn = LiveRiskCheckIn()):
+    try:
+        pf_data = pf.get_portfolio()
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"持仓读取异常：{e}") from e
+
+    holdings = [
+        {"code": h["code"], "shares": h["shares"], "cost": h["cost"]}
+        for h in pf_data.get("holdings", [])
+    ]
+    prices = {h["code"]: h["price"] for h in pf_data.get("holdings", []) if h.get("price")}
+
+    from aqsp.risk.live_risk import run_live_risk_check
+
+    reminders = run_live_risk_check(
+        holdings,
+        prices,
+        holding_days=body.holding_days,
+        stop_config=None,  # 生产 thresholds（L1 8% / L5 ATR×2.0）
+    )
+    import alert_events
+
+    new_events = alert_events.upsert_from_reminders([r.to_dict() for r in reminders])
+
+    notify_results: list[str] = []
+    suppressed = False
+    if body.notify and new_events:
+        from aqsp.notification_runtime import dispatch_notification_once
+        import portfolio as _pf
+
+        markdown = _live_risk_alert_markdown(new_events)
+        state_path = os.path.join(_pf.CACHE_DIR, "notify-state-live-risk.json")
+        for e in new_events:
+            threshold = round(float(e.get("threshold_at") or 0), 2)
+            kind = f"live-risk|{e.get('symbol')}|{e.get('level')}|{threshold}"
+            results = dispatch_notification_once(
+                markdown,
+                mode="summary",
+                prefix="live-risk",
+                kind=kind,
+                state_path=state_path,
+            )
+            if not results:
+                suppressed = True
+            notify_results.extend(results)
+    return {
+        "data": {
+            "reminders": [r.to_dict() for r in reminders],
+            "new_events": new_events,
+            "notify": notify_results,
+            "notify_suppressed": suppressed,
+        }
+    }
+
+
+@app.get(
+    "/api/alerts",
+    tags=["该卖提醒"],
+    summary="该卖提醒收件箱（站内红点数据源）",
+    description="读本地 alert_event 簿，支持 status / symbol 过滤，按时间倒序。",
+)
+def alerts_list(
+    status: str = Query("", description="OPEN|HANDLED|IGNORED|EXPIRED，空=全部"),
+    symbol: str = Query("", description="6位代码，空=全部"),
+):
+    import alert_events
+
+    events = alert_events.list_events(
+        status=status or None, symbol=symbol or None
+    )
+    open_count = sum(1 for e in events if e.get("status") == "OPEN")
+    return {"data": {"events": events, "open_count": open_count}}
+
+
+@app.patch(
+    "/api/alerts/{event_id}",
+    tags=["该卖提醒"],
+    summary="处理一条该卖提醒（已处理 / 已忽略）",
+    description="""
+OPEN → HANDLED（`action=handled`）或 OPEN → IGNORED（`action=ignored`，
+ignore_streak+1 供 P1-2 灵敏度自适应）。非 OPEN 状态返回 409。
+""",
+)
+def alerts_transition(
+    event_id: str,
+    action: str = Query(..., description="handled | ignored"),
+    note: str = Query("", description="处理备注（可选）"),
+):
+    import alert_events
+
+    if action not in ("handled", "ignored"):
+        raise HTTPException(400, "action 必须是 handled 或 ignored")
+    updated = alert_events.transition(event_id, action, note)
+    if updated is None:
+        raise HTTPException(409, "事件不存在或已处于终态")
+    return {"data": updated}
+
+
 @app.get(
     "/api/radar",
     tags=["资讯雷达"],
