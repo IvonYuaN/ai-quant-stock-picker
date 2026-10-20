@@ -594,6 +594,43 @@
     align-self: center;
   }
 
+  /* 侧栏常驻角标：该卖提醒未处理数量（openCount>0 才渲染，#431 未部署时静默隐藏） */
+  .aq-alert-badge {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.45rem 0.65rem;
+    margin: 0 0.65rem 0.5rem;
+    border: 1px solid hsl(var(--destructive) / 0.4);
+    border-radius: 0.55rem;
+    background: hsl(var(--destructive) / 0.1);
+    color: hsl(var(--destructive));
+    font-size: 0.88rem;
+    font-weight: 600;
+    transition: background 140ms ease, border-color 140ms ease;
+  }
+  .aq-alert-badge:hover {
+    background: hsl(var(--destructive) / 0.18);
+    border-color: hsl(var(--destructive) / 0.6);
+  }
+  .aq-alert-badge svg {
+    height: 1rem;
+    width: 1rem;
+    flex-shrink: 0;
+  }
+  .aq-alert-badge-count {
+    margin-left: auto;
+    min-width: 1.25rem;
+    padding: 0.05rem 0.35rem;
+    border-radius: 0.5rem;
+    background: hsl(var(--destructive));
+    color: hsl(var(--background));
+    font-size: 0.78rem;
+    font-weight: 700;
+    text-align: center;
+    line-height: 1.4;
+  }
+
   .aq-input {
     min-width: 10rem;
     flex: 1;
