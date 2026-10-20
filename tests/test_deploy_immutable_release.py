@@ -280,3 +280,153 @@ test -f "%s/data/f.txt" && echo INHERIT_LEAK || echo INHERIT_SKIPPED
         r = subprocess.run(["bash", "-c", bash], capture_output=True, text=True)
         assert r.returncode == 0, r.stderr
         assert "INHERIT_SKIPPED" in r.stdout
+
+
+# ---- 2026-10-20 发版事故硬化：node 堆上限 + stage 确定化/复用 ----
+
+
+@requires_script
+def test_frontend_build_gets_node_heap_cap():
+    """vite build 必须带 node 堆上限（1.6G prod 机上不设限 = OOM，事故根因）。
+
+    用假 npm 探针抓取 NODE_OPTIONS：默认 --max-old-space-size=512；
+    AQSP_DEPLOY_NODE_OPTIONS=none ⇒ 不注入。
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        base = Path(tmp)
+        fake_npm = base / "npm"
+        fake_npm.write_text(
+            "#!/usr/bin/env bash\n"
+            'echo "NODE_OPTIONS=${NODE_OPTIONS-<unset>}"\n'
+            "exit 0\n"
+        )
+        fake_npm.chmod(0o755)
+        # 假 python 桩：check_frontend_audit.py 必须“通过”
+        fake_py = base / "py"
+        fake_py.write_text("#!/usr/bin/env bash\nexit 0\n")
+        fake_py.chmod(0o755)
+        rel = base / "release"
+        (rel / "frontend").mkdir(parents=True)
+        (rel / "frontend" / "package-lock.json").write_text("{}")
+        (rel / "scripts").mkdir(parents=True)
+        bash = """
+set -e
+export AQSP_DEPLOY_LIB=1
+source "%s"
+FRONTEND_NODE_OPTIONS="${AQSP_DEPLOY_NODE_OPTIONS:---max-old-space-size=512}"
+NPM_BIN="%s"
+PYTHON_BIN="%s"
+build_frontend "%s"
+""" % (SCRIPT, fake_npm, fake_py, rel)
+        env = dict(os.environ)
+        env.pop("AQSP_DEPLOY_NODE_OPTIONS", None)
+        r = subprocess.run(["bash", "-c", bash], capture_output=True, text=True, env=env)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "--max-old-space-size=512" in r.stdout, r.stdout
+
+        # "none" ⇒ 不注入堆上限（但**保留**调用方环境里已有的 NODE_OPTIONS）
+        env2 = dict(os.environ)
+        env2["AQSP_DEPLOY_NODE_OPTIONS"] = "none"
+        r2 = subprocess.run(["bash", "-c", bash], capture_output=True, text=True, env=env2)
+        assert r2.returncode == 0, r2.stdout + r2.stderr
+        assert "--max-old-space-size" not in r2.stdout, r2.stdout
+        assert "node default heap" in r2.stdout, r2.stdout
+
+
+@requires_script
+def test_stage_dir_is_deterministic_per_commit():
+    """stage 路径按 commit 确定化 ⇒ 失败产物可被下次部署复用。"""
+    bash = """
+set -e
+export AQSP_DEPLOY_LIB=1
+source "%s"
+RELEASES_ROOT="/opt/aqsp-releases"
+a="$(stage_dir_for "abc123")"
+b="$(stage_dir_for "abc123")"
+c="$(stage_dir_for "def456")"
+test "$a" = "$b" && test "$a" != "$c" && echo STAGE_DET_OK || echo STAGE_DET_FAIL
+""" % (SCRIPT,)
+    r = subprocess.run(["bash", "-c", bash], capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "STAGE_DET_OK" in r.stdout
+
+
+@requires_script
+def test_stage_reuse_requires_complete_frontend_artifacts():
+    """只有 node_modules + dist 齐全的 stage 才算可复用；残缺 stage 必须重建。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        base = Path(tmp)
+        empty = base / "empty"
+        empty.mkdir()
+        partial = base / "partial"
+        (partial / "frontend" / "node_modules").mkdir(parents=True)
+        complete = base / "complete"
+        (complete / "frontend" / "node_modules").mkdir(parents=True)
+        (complete / "frontend" / "dist").mkdir(parents=True)
+        bash = """
+set -e
+export AQSP_DEPLOY_LIB=1
+source "%s"
+if stage_is_reusable "%s"; then echo EMPTY_REUSABLE; else echo EMPTY_NOT_REUSABLE; fi
+if stage_is_reusable "%s"; then echo PARTIAL_REUSABLE; else echo PARTIAL_NOT_REUSABLE; fi
+if stage_is_reusable "%s"; then echo COMPLETE_REUSABLE; else echo COMPLETE_NOT_REUSABLE; fi
+""" % (SCRIPT, empty, partial, complete)
+        r = subprocess.run(["bash", "-c", bash], capture_output=True, text=True)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "EMPTY_NOT_REUSABLE" in r.stdout, r.stdout
+        assert "PARTIAL_NOT_REUSABLE" in r.stdout, r.stdout
+        assert "COMPLETE_REUSABLE" in r.stdout, r.stdout
+
+
+@requires_script
+def test_failed_build_keeps_stage_dir_for_reuse():
+    """构建失败时 stage 目录必须被保留（重跑可复用），且脚本以非零码退出。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        base = Path(tmp)
+        releases = base / "releases"
+        repo = base / "repo"
+        (repo / ".git").mkdir(parents=True)
+        # 假 git：archive 产出一个含 frontend/package-lock.json 的最小树
+        fake_bin = base / "bin"
+        fake_bin.mkdir()
+        fake_git = fake_bin / "git"
+        fake_git.write_text(
+            "#!/usr/bin/env bash\n"
+            'if [ "$1" = "archive" ]; then\n'
+            '  tar -cf - -C "%s" frontend scripts\n'
+            'elif [ "$1" = "rev-parse" ]; then\n'
+            "  echo deadbeefdeadbeefdeadbeefdeadbeefdeadbeef\n"
+            "else\n"
+            "  exit 0\n"
+            "fi\n" % (base / "src")
+        )
+        fake_git.chmod(0o755)
+        # 造最小 frontend + scripts
+        (base / "src" / "frontend").mkdir(parents=True)
+        (base / "src" / "frontend" / "package-lock.json").write_text("{}")
+        (base / "src" / "scripts").mkdir(parents=True)
+        # 假 npm：ci 成功，build 失败 ⇒ 触发失败路径
+        fake_npm = fake_bin / "npm"
+        fake_npm.write_text(
+            "#!/usr/bin/env bash\n"
+            'if [ "$1" = "run" ]; then echo "boom" >&2; exit 1; fi\n'
+            "exit 0\n"
+        )
+        fake_npm.chmod(0o755)
+        env = dict(os.environ)
+        env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+        env["AQSP_REPO_ROOT"] = str(repo)
+        env["AQSP_RELEASES_ROOT"] = str(releases)
+        env["AQSP_NPM_BIN"] = str(fake_npm)
+        env["AQSP_RUNTIME_PYTHON"] = PYTHON_BIN
+        env["AQSP_GIT_REMOTE"] = "origin"
+        env["AQSP_GIT_BRANCH"] = "main"
+        env["AQSP_RELEASE_REF"] = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+        r = subprocess.run(
+            ["bash", str(SCRIPT), "--target", "prod", "--ref", "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"],
+            capture_output=True, text=True, env=env, cwd=str(base),
+        )
+        assert r.returncode != 0, "构建失败必须非零退出"
+        stages = list(releases.glob(".stage-*")) if releases.exists() else []
+        assert stages, f"失败后 stage 目录必须保留（实际 releases={list(releases.glob('*')) if releases.exists() else 'none'}）"
+        assert "kept for reuse" in (r.stdout + r.stderr), r.stdout + r.stderr
