@@ -280,3 +280,134 @@ test -f "%s/data/f.txt" && echo INHERIT_LEAK || echo INHERIT_SKIPPED
         r = subprocess.run(["bash", "-c", bash], capture_output=True, text=True)
         assert r.returncode == 0, r.stderr
         assert "INHERIT_SKIPPED" in r.stdout
+
+
+# ---- 2026-10-20 发版事故硬化：node 堆上限 + stage 确定化/复用 ----
+
+
+@requires_script
+def test_frontend_build_gets_node_heap_cap():
+    """vite build 必须带 node 堆上限（1.6G prod 机上不设限 = OOM，事故根因）。
+
+    用假 npm 探针抓取 NODE_OPTIONS：默认 --max-old-space-size=512；
+    AQSP_DEPLOY_NODE_OPTIONS=none ⇒ 不注入。
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        base = Path(tmp)
+        fake_npm = base / "npm"
+        fake_npm.write_text(
+            "#!/usr/bin/env bash\n"
+            'echo "NODE_OPTIONS=${NODE_OPTIONS-<unset>}"\n'
+            "exit 0\n"
+        )
+        fake_npm.chmod(0o755)
+        # 假 python 桩：check_frontend_audit.py 必须“通过”
+        fake_py = base / "py"
+        fake_py.write_text("#!/usr/bin/env bash\nexit 0\n")
+        fake_py.chmod(0o755)
+        rel = base / "release"
+        (rel / "frontend").mkdir(parents=True)
+        (rel / "frontend" / "package-lock.json").write_text("{}")
+        (rel / "scripts").mkdir(parents=True)
+        bash = """
+set -e
+export AQSP_DEPLOY_LIB=1
+source "%s"
+FRONTEND_NODE_OPTIONS="${AQSP_DEPLOY_NODE_OPTIONS:---max-old-space-size=512}"
+NPM_BIN="%s"
+PYTHON_BIN="%s"
+build_frontend "%s"
+""" % (SCRIPT, fake_npm, fake_py, rel)
+        env = dict(os.environ)
+        env.pop("AQSP_DEPLOY_NODE_OPTIONS", None)
+        r = subprocess.run(["bash", "-c", bash], capture_output=True, text=True, env=env)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "--max-old-space-size=512" in r.stdout, r.stdout
+
+        # "none" ⇒ 不注入堆上限（但**保留**调用方环境里已有的 NODE_OPTIONS）
+        env2 = dict(os.environ)
+        env2["AQSP_DEPLOY_NODE_OPTIONS"] = "none"
+        r2 = subprocess.run(["bash", "-c", bash], capture_output=True, text=True, env=env2)
+        assert r2.returncode == 0, r2.stdout + r2.stderr
+        assert "--max-old-space-size" not in r2.stdout, r2.stdout
+        assert "node default heap" in r2.stdout, r2.stdout
+
+
+@requires_script
+def test_stage_dir_is_deterministic_per_commit():
+    """stage 路径按 commit 确定化 ⇒ 失败产物可被下次部署复用。"""
+    bash = """
+set -e
+export AQSP_DEPLOY_LIB=1
+source "%s"
+RELEASES_ROOT="/opt/aqsp-releases"
+a="$(stage_dir_for "abc123")"
+b="$(stage_dir_for "abc123")"
+c="$(stage_dir_for "def456")"
+test "$a" = "$b" && test "$a" != "$c" && echo STAGE_DET_OK || echo STAGE_DET_FAIL
+""" % (SCRIPT,)
+    r = subprocess.run(["bash", "-c", bash], capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "STAGE_DET_OK" in r.stdout
+
+
+@requires_script
+def test_stage_reuse_requires_complete_frontend_artifacts():
+    """只有 node_modules + dist 齐全的 stage 才算可复用；残缺 stage 必须重建。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        base = Path(tmp)
+        empty = base / "empty"
+        empty.mkdir()
+        partial = base / "partial"
+        (partial / "frontend" / "node_modules").mkdir(parents=True)
+        complete = base / "complete"
+        (complete / "frontend" / "node_modules").mkdir(parents=True)
+        (complete / "frontend" / "dist").mkdir(parents=True)
+        bash = """
+set -e
+export AQSP_DEPLOY_LIB=1
+source "%s"
+if stage_is_reusable "%s"; then echo EMPTY_REUSABLE; else echo EMPTY_NOT_REUSABLE; fi
+if stage_is_reusable "%s"; then echo PARTIAL_REUSABLE; else echo PARTIAL_NOT_REUSABLE; fi
+if stage_is_reusable "%s"; then echo COMPLETE_REUSABLE; else echo COMPLETE_NOT_REUSABLE; fi
+""" % (SCRIPT, empty, partial, complete)
+        r = subprocess.run(["bash", "-c", bash], capture_output=True, text=True)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "EMPTY_NOT_REUSABLE" in r.stdout, r.stdout
+        assert "PARTIAL_NOT_REUSABLE" in r.stdout, r.stdout
+        assert "COMPLETE_REUSABLE" in r.stdout, r.stdout
+
+
+@requires_script
+def test_cleanup_keeps_stage_on_failure_and_removes_on_success(tmp_path):
+    """失败必须**保留** stage 产物（重跑可复用）；成功路径必须清掉。
+
+    行为级单测（不搭 git/npm 假桩）：源码脚本后直接调 cleanup()，
+    显式传 rc ⇒ 不依赖 $? 的时序，CI/本地结果一致。
+    """
+    stage = tmp_path / ".stage-abc"
+    stage.mkdir()
+    bash = """
+export AQSP_DEPLOY_LIB=1
+source "%s"
+set +e
+STAGE_DIR="%s"
+cleanup 1
+[ -d "$STAGE_DIR" ] && echo KEPT || echo DELETED
+""" % (SCRIPT, stage)
+    r = subprocess.run(["bash", "-c", bash], capture_output=True, text=True)
+    assert "KEPT" in r.stdout, r.stdout + r.stderr
+    assert "kept for reuse" in r.stdout, r.stdout + r.stderr
+
+    stage2 = tmp_path / ".stage-def"
+    stage2.mkdir()
+    bash2 = """
+export AQSP_DEPLOY_LIB=1
+source "%s"
+set +e
+STAGE_DIR="%s"
+cleanup 0
+[ -d "$STAGE_DIR" ] && echo KEPT || echo DELETED
+""" % (SCRIPT, stage2)
+    r2 = subprocess.run(["bash", "-c", bash2], capture_output=True, text=True)
+    assert "DELETED" in r2.stdout, r2.stdout + r2.stderr

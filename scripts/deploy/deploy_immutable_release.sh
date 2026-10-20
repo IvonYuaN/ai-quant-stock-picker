@@ -39,6 +39,10 @@ ROLLBACK_LINK="${AQSP_RELEASE_ROLLBACK_LINK:-${RELEASES_ROOT}/aqsp-scheduler-rol
 SHARED_VENV_DIR="${SHARED_VENV_DIR:-${AQSP_SHARED_VENV_DIR:-/opt/aqsp-vibe-venv}}"
 PYTHON_BIN="${AQSP_RUNTIME_PYTHON:-${SHARED_VENV_DIR}/bin/python3}"
 NPM_BIN="${AQSP_NPM_BIN:-/usr/bin/npm}"
+# 🔴 小机防 OOM：node 堆上限。1.6G 的 prod 机上不设限时 vite/tsc 会吃满内存
+# （2026-10-20 发版事故根因：孤儿 vite 构建把 api 压到 OOM）。
+# 置空或 "none" ⇒ 不注入 NODE_OPTIONS（交给 node 默认）。
+FRONTEND_NODE_OPTIONS="${AQSP_DEPLOY_NODE_OPTIONS:---max-old-space-size=512}"
 REMOTE="${AQSP_GIT_REMOTE:-origin}"
 BRANCH="${AQSP_GIT_BRANCH:-main}"
 REF="${AQSP_RELEASE_REF:-$BRANCH}"
@@ -89,6 +93,21 @@ content, then prunes only unprotected release residuals.
 Idle-window guard (--force to override):
   * refuses while a gate/walkforward process is running locally
   * refuses outside AQSP_DEPLOY_ALLOWED_WINDOW (HH:MM-HH:MM, local tz)
+
+Env knobs:
+  AQSP_DEPLOY_NODE_OPTIONS   node heap cap for npm ci / vite build
+                             (default --max-old-space-size=512; empty or "none"
+                             => use node defaults). 1.6G prod boxes OOM without it.
+  AQSP_DEPLOY_ALLOWED_WINDOW HH:MM-HH:MM local-tz window allowed for cut-over
+  AQSP_DEPLOY_KEEP_STAGE_ON_FAILURE
+                             true (default) keeps the staged release when a
+                             build/deploy fails, so a re-run reuses it;
+                             false deletes it.
+
+Staging: the stage dir is deterministic per commit (<releases>/.stage-<commit>).
+A failed build KEEPS it, so re-running the same command reuses the already
+built frontend artifacts (npm ci is not repeated); an incomplete stage is
+discarded and rebuilt.
 USAGE
 }
 
@@ -99,6 +118,24 @@ log() {
 fail() {
     printf 'immutable release deploy failed: %s\n' "$*" >&2
     exit 1
+}
+
+# stage 目录（构建失败时保留产物，重跑可复用）。定义放在 library 早退之前，
+# 使 AQSP_DEPLOY_LIB=1 下也能单测 cleanup 的保留/删除行为。
+STAGE_DIR=""
+# 🔴 构建/部署失败时**保留** stage 产物（重跑可复用，npm ci 不用重做）；
+#    成功切链后 STAGE_DIR 已被 mv 走，这里不会误删任何 release。
+KEEP_STAGE_ON_FAILURE="${AQSP_DEPLOY_KEEP_STAGE_ON_FAILURE:-true}"
+cleanup() {
+    local rc="${1:-$?}"
+    if [ -n "$STAGE_DIR" ] && [ "$rc" -ne 0 ] && [ "$KEEP_STAGE_ON_FAILURE" = "true" ]; then
+        log "deploy failed (rc=$rc); staged release kept for reuse: $STAGE_DIR"
+        log "  re-run the same command to reuse it (frontend artifacts already built); remove it manually to force a clean rebuild"
+    elif [ -n "$STAGE_DIR" ]; then
+        rm -rf -- "$STAGE_DIR"
+    fi
+    rmdir "$LOCK_FILE" 2>/dev/null || true
+    return $rc
 }
 
 quote() {
@@ -207,16 +244,48 @@ resolve_commit() {
     fi
 }
 
+# stage 目录按 commit **确定化**（不再 mktemp 随机名）：构建失败时产物得以保留，
+# 下次部署同一 commit 可直接复用（npm ci 不用重做）；不完整则丢弃重建。
+stage_dir_for() {
+    printf '%s/.stage-%s' "$RELEASES_ROOT" "$1"
+}
+
+# 可复用 = stage 存在且前端构建产物齐全（node_modules + dist）。
+stage_is_reusable() {
+    local stage="$1"
+    [ -d "$stage" ] || return 1
+    [ -d "$stage/frontend/node_modules" ] || return 1
+    [ -d "$stage/frontend/dist" ] || return 1
+    return 0
+}
+
 build_frontend() {
     local root="$1"
     [ -d "$root/frontend" ] || fail "frontend directory missing in release: $root/frontend"
     [ -f "$root/frontend/package-lock.json" ] || fail "frontend package-lock.json missing"
+    # 堆上限注入（npm ci 与 vite build 都会吃内存）
+    if [ -n "$FRONTEND_NODE_OPTIONS" ] && [ "$FRONTEND_NODE_OPTIONS" != "none" ]; then
+        log "frontend node options: $FRONTEND_NODE_OPTIONS"
+    else
+        log "frontend node options: <unset> (node default heap)"
+    fi
     log "install frontend dependencies"
-    (cd "$root/frontend" && "$NPM_BIN" ci)
+    (cd "$root/frontend" && _with_node_options "$NPM_BIN" ci)
     log "build frontend dist"
-    (cd "$root/frontend" && "$NPM_BIN" run build)
+    (cd "$root/frontend" && _with_node_options "$NPM_BIN" run build)
     log "check frontend audit"
     "$PYTHON_BIN" "$root/scripts/check_frontend_audit.py" --frontend-dir "$root/frontend"
+}
+
+# 以受限 node 堆执行命令（NODE_OPTIONS 为空/none 时不注入）。
+# 🔴 **追加**而非覆盖：保留调用方已有的 NODE_OPTIONS（如 CI 注入的 --require shim），
+#    只额外加堆上限；覆盖会打断外部注入。
+_with_node_options() {
+    if [ -n "$FRONTEND_NODE_OPTIONS" ] && [ "$FRONTEND_NODE_OPTIONS" != "none" ]; then
+        NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }$FRONTEND_NODE_OPTIONS" "$@"
+    else
+        "$@"
+    fi
 }
 
 stamp_manifest() {
@@ -650,11 +719,6 @@ assert_idle_window
 if ! mkdir "$LOCK_FILE" 2>/dev/null; then
     fail "another immutable release deployment is running: $LOCK_FILE"
 fi
-STAGE_DIR=""
-cleanup() {
-    [ -n "$STAGE_DIR" ] && rm -rf -- "$STAGE_DIR"
-    rmdir "$LOCK_FILE" 2>/dev/null || true
-}
 trap cleanup EXIT
 
 COMMIT="$(resolve_commit)"
@@ -668,10 +732,19 @@ if [ "$SKIP_FRONTEND_BUILD" = "true" ] && { [ ! -d "$RELEASE_DIR/frontend/node_m
 fi
 
 if [ ! -d "$RELEASE_DIR" ]; then
-    STAGE_DIR="$(mktemp -d "${RELEASES_ROOT}/.stage-${COMMIT}.XXXXXX")"
-    (cd "$REPO_ROOT" && git archive --format=tar "$COMMIT") | tar -x -C "$STAGE_DIR"
-    if [ "$SKIP_FRONTEND_BUILD" != "true" ]; then
-        build_frontend "$STAGE_DIR"
+    STAGE_DIR="$(stage_dir_for "$COMMIT")"
+    if stage_is_reusable "$STAGE_DIR"; then
+        log "reusing staged release with complete frontend artifacts: $STAGE_DIR"
+    else
+        if [ -e "$STAGE_DIR" ]; then
+            log "discarding incomplete staged release: $STAGE_DIR"
+            rm -rf -- "$STAGE_DIR"
+        fi
+        mkdir -p "$STAGE_DIR"
+        (cd "$REPO_ROOT" && git archive --format=tar "$COMMIT") | tar -x -C "$STAGE_DIR"
+        if [ "$SKIP_FRONTEND_BUILD" != "true" ]; then
+            build_frontend "$STAGE_DIR"
+        fi
     fi
     inherit_runtime_data "$STAGE_DIR"
     normalize_release_modes "$STAGE_DIR"
