@@ -12,6 +12,7 @@ const fullFixture = {
       price: 218.2,
       shares: 200,
       cost: 205.5,
+      opened_at: "2026-10-09",
       market_value: 43640,
       pnl: 2540,
       pnl_pct: 6.18,
@@ -39,6 +40,8 @@ export const portfolioViewContract = {
   realizedPnlIsKept: full.realized_pnl === 2500,
   updatedIsKept: full.updated === "2026-09-11 15:30",
   lastRefreshIsKept: full.last_refresh === "2026-09-11 15:00",
+  // P2-8：开仓日期原样通过（T+1 可卖性据此推导）
+  openedAtIsKept: full.holdings[0].opened_at === "2026-10-09",
 
   /* ---- 空 / 异常负载不得崩 ---- */
   emptyObjectYieldsEmptyLists: emptyFromObject.holdings.length === 0 && emptyFromObject.closed.length === 0,
@@ -54,6 +57,9 @@ export const portfolioViewContract = {
   missingNameFallsBackToCode: normalizePortfolio({ holdings: [{ code: "300750" }] }).holdings[0].name === "300750",
   // 明细字段缺失时用 0 而不是 NaN
   missingNumbersBecomeZero: normalizePortfolio({ holdings: [{ code: "300750" }] }).holdings[0].price === 0,
+  // P2-8：老持仓（P2-8 前录入）无 opened_at / 后端给 null ⇒ 归一成 ""（按老仓可卖，不误伤）
+  missingOpenedAtBecomesEmpty: normalizePortfolio({ holdings: [{ code: "300750" }] }).holdings[0].opened_at === "",
+  nullOpenedAtBecomesEmpty: normalizePortfolio({ holdings: [{ code: "300750", opened_at: null }] }).holdings[0].opened_at === "",
   // 后端没给汇总时用明细自己算，而不是显示 0（0 会被误读成"没亏没赚"）
   totalsAreDerivedWhenMissing:
     normalizePortfolio({
