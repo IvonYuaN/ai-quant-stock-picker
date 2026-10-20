@@ -99,6 +99,10 @@ Env knobs:
                              (default --max-old-space-size=512; empty or "none"
                              => use node defaults). 1.6G prod boxes OOM without it.
   AQSP_DEPLOY_ALLOWED_WINDOW HH:MM-HH:MM local-tz window allowed for cut-over
+  AQSP_DEPLOY_KEEP_STAGE_ON_FAILURE
+                             true (default) keeps the staged release when a
+                             build/deploy fails, so a re-run reuses it;
+                             false deletes it.
 
 Staging: the stage dir is deterministic per commit (<releases>/.stage-<commit>).
 A failed build KEEPS it, so re-running the same command reuses the already
@@ -114,6 +118,24 @@ log() {
 fail() {
     printf 'immutable release deploy failed: %s\n' "$*" >&2
     exit 1
+}
+
+# stage 目录（构建失败时保留产物，重跑可复用）。定义放在 library 早退之前，
+# 使 AQSP_DEPLOY_LIB=1 下也能单测 cleanup 的保留/删除行为。
+STAGE_DIR=""
+# 🔴 构建/部署失败时**保留** stage 产物（重跑可复用，npm ci 不用重做）；
+#    成功切链后 STAGE_DIR 已被 mv 走，这里不会误删任何 release。
+KEEP_STAGE_ON_FAILURE="${AQSP_DEPLOY_KEEP_STAGE_ON_FAILURE:-true}"
+cleanup() {
+    local rc="${1:-$?}"
+    if [ -n "$STAGE_DIR" ] && [ "$rc" -ne 0 ] && [ "$KEEP_STAGE_ON_FAILURE" = "true" ]; then
+        log "deploy failed (rc=$rc); staged release kept for reuse: $STAGE_DIR"
+        log "  re-run the same command to reuse it (frontend artifacts already built); remove it manually to force a clean rebuild"
+    elif [ -n "$STAGE_DIR" ]; then
+        rm -rf -- "$STAGE_DIR"
+    fi
+    rmdir "$LOCK_FILE" 2>/dev/null || true
+    return $rc
 }
 
 quote() {
@@ -697,20 +719,6 @@ assert_idle_window
 if ! mkdir "$LOCK_FILE" 2>/dev/null; then
     fail "another immutable release deployment is running: $LOCK_FILE"
 fi
-STAGE_DIR=""
-cleanup() {
-    local rc=$?
-    if [ -n "$STAGE_DIR" ] && [ "$rc" -ne 0 ]; then
-        # 🔴 构建/部署失败时**保留** stage 产物（重跑可复用，npm ci 不用重做）；
-        #    成功切链后 STAGE_DIR 已被 mv 走，这里不会误删任何 release。
-        log "deploy failed (rc=$rc); staged release kept for reuse: $STAGE_DIR"
-        log "  re-run the same command to reuse it (frontend artifacts already built); remove it manually to force a clean rebuild"
-    elif [ -n "$STAGE_DIR" ]; then
-        rm -rf -- "$STAGE_DIR"
-    fi
-    rmdir "$LOCK_FILE" 2>/dev/null || true
-    return $rc
-}
 trap cleanup EXIT
 
 COMMIT="$(resolve_commit)"

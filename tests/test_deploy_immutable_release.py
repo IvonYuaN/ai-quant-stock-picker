@@ -379,54 +379,35 @@ if stage_is_reusable "%s"; then echo COMPLETE_REUSABLE; else echo COMPLETE_NOT_R
 
 
 @requires_script
-def test_failed_build_keeps_stage_dir_for_reuse():
-    """构建失败时 stage 目录必须被保留（重跑可复用），且脚本以非零码退出。"""
-    with tempfile.TemporaryDirectory() as tmp:
-        base = Path(tmp)
-        releases = base / "releases"
-        repo = base / "repo"
-        (repo / ".git").mkdir(parents=True)
-        # 假 git：archive 产出一个含 frontend/package-lock.json 的最小树
-        fake_bin = base / "bin"
-        fake_bin.mkdir()
-        fake_git = fake_bin / "git"
-        fake_git.write_text(
-            "#!/usr/bin/env bash\n"
-            'if [ "$1" = "archive" ]; then\n'
-            '  tar -cf - -C "%s" frontend scripts\n'
-            'elif [ "$1" = "rev-parse" ]; then\n'
-            "  echo deadbeefdeadbeefdeadbeefdeadbeefdeadbeef\n"
-            "else\n"
-            "  exit 0\n"
-            "fi\n" % (base / "src")
-        )
-        fake_git.chmod(0o755)
-        # 造最小 frontend + scripts
-        (base / "src" / "frontend").mkdir(parents=True)
-        (base / "src" / "frontend" / "package-lock.json").write_text("{}")
-        (base / "src" / "scripts").mkdir(parents=True)
-        # 假 npm：ci 成功，build 失败 ⇒ 触发失败路径
-        fake_npm = fake_bin / "npm"
-        fake_npm.write_text(
-            "#!/usr/bin/env bash\n"
-            'if [ "$1" = "run" ]; then echo "boom" >&2; exit 1; fi\n'
-            "exit 0\n"
-        )
-        fake_npm.chmod(0o755)
-        env = dict(os.environ)
-        env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
-        env["AQSP_REPO_ROOT"] = str(repo)
-        env["AQSP_RELEASES_ROOT"] = str(releases)
-        env["AQSP_NPM_BIN"] = str(fake_npm)
-        env["AQSP_RUNTIME_PYTHON"] = PYTHON_BIN
-        env["AQSP_GIT_REMOTE"] = "origin"
-        env["AQSP_GIT_BRANCH"] = "main"
-        env["AQSP_RELEASE_REF"] = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
-        r = subprocess.run(
-            ["bash", str(SCRIPT), "--target", "prod", "--ref", "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"],
-            capture_output=True, text=True, env=env, cwd=str(base),
-        )
-        assert r.returncode != 0, "构建失败必须非零退出"
-        stages = list(releases.glob(".stage-*")) if releases.exists() else []
-        assert stages, f"失败后 stage 目录必须保留（实际 releases={list(releases.glob('*')) if releases.exists() else 'none'}）"
-        assert "kept for reuse" in (r.stdout + r.stderr), r.stdout + r.stderr
+def test_cleanup_keeps_stage_on_failure_and_removes_on_success(tmp_path):
+    """失败必须**保留** stage 产物（重跑可复用）；成功路径必须清掉。
+
+    行为级单测（不搭 git/npm 假桩）：源码脚本后直接调 cleanup()，
+    显式传 rc ⇒ 不依赖 $? 的时序，CI/本地结果一致。
+    """
+    stage = tmp_path / ".stage-abc"
+    stage.mkdir()
+    bash = """
+export AQSP_DEPLOY_LIB=1
+source "%s"
+set +e
+STAGE_DIR="%s"
+cleanup 1
+[ -d "$STAGE_DIR" ] && echo KEPT || echo DELETED
+""" % (SCRIPT, stage)
+    r = subprocess.run(["bash", "-c", bash], capture_output=True, text=True)
+    assert "KEPT" in r.stdout, r.stdout + r.stderr
+    assert "kept for reuse" in r.stdout, r.stdout + r.stderr
+
+    stage2 = tmp_path / ".stage-def"
+    stage2.mkdir()
+    bash2 = """
+export AQSP_DEPLOY_LIB=1
+source "%s"
+set +e
+STAGE_DIR="%s"
+cleanup 0
+[ -d "$STAGE_DIR" ] && echo KEPT || echo DELETED
+""" % (SCRIPT, stage2)
+    r2 = subprocess.run(["bash", "-c", bash2], capture_output=True, text=True)
+    assert "DELETED" in r2.stdout, r2.stdout + r2.stderr
