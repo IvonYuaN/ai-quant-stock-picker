@@ -1,10 +1,11 @@
 import { Suspense, useEffect, useRef, useState } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
-import { Download, LineChart, Moon, PanelLeftClose, PanelLeftOpen, Search, Sun, Upload } from "lucide-react";
+import { Download, LineChart, Moon, PanelLeftClose, PanelLeftOpen, Search, Sun, Upload, BellRing } from "lucide-react";
 import { Toaster, toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { NAV_LINES } from "@/lib/ia";
 import { useDarkMode } from "@/hooks/useDarkMode";
+import { useAlertOpenCount } from "@/hooks/useAlertOpenCount";
 import { AqspWorkspaceProvider, useAqspSnapshot } from "@/components/aqsp/useAqspSnapshot";
 import { downloadVault, importVault } from "@/lib/vault";
 import { LoadingState } from "@/components/ui/primitives";
@@ -33,6 +34,7 @@ function WorkspaceLayout() {
   const { pathname } = useLocation();
   const { dark, toggle } = useDarkMode();
   const { data, loading } = useAqspSnapshot();
+  const { openCount: openAlerts, refetch: refetchAlerts } = useAlertOpenCount();
   const [collapsed, setCollapsed] = useState(
     () => localStorage.getItem("aqsp-sidebar") === "collapsed",
   );
@@ -88,6 +90,19 @@ function WorkspaceLayout() {
           </div>
           {!collapsed ? <p className="aq-brand-sub">AI 自动产出 + 个人选股管理</p> : null}
         </div>
+
+        {openAlerts > 0 ? (
+          <Link
+            to="/today"
+            className="aq-alert-badge"
+            title={`${openAlerts} 条未处理的该卖提醒，点击查看`}
+            onClick={() => void refetchAlerts()}
+          >
+            <BellRing aria-hidden="true" />
+            {!collapsed ? <span>该卖提醒</span> : null}
+            <span className="aq-alert-badge-count">{openAlerts}</span>
+          </Link>
+        ) : null}
 
         <button
           type="button"
