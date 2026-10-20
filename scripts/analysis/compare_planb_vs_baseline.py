@@ -180,6 +180,24 @@ def build_table(
         f"{_gate_verdict(base_m['dsr'], base_m['pbo'])} |"
     )
 
+    # #301 fail-closed（约束③）：候选 report 缺失 / 解析到 0 个候选前缀行 ⇒
+    # 绝不当「无候选 = 通过」，必须插「缺证据」行并让 main 退出码 2。
+    cand_missing = not candidate_report.exists()
+    cand_has_prefix = any(vid.startswith(candidate_prefix) for vid in cand_rows)
+    if cand_missing or not cand_has_prefix:
+        reason = "report 文件缺失" if cand_missing else "report 解析到 0 个候选变体行"
+        lines.append(
+            f"| 候选 | （{candidate_prefix}* 证据缺失） | — | — | — | — | — | — | "
+            f"— | — | ❌ 缺证据（{reason}） |"
+        )
+        data["candidates"].append(
+            {"variant": f"{candidate_prefix}*（证据缺失）", "sharpe": None,
+             "total_return": None, "d_sharpe": None, "d_total_return": None,
+             "weights": "—", "evidence": "missing" if cand_missing else "empty"}
+        )
+        data["candidate_evidence"] = "missing" if cand_missing else "empty"
+        return lines, data
+
     for vid, row in cand_rows.items():
         if not vid.startswith(candidate_prefix):
             continue
@@ -199,6 +217,7 @@ def build_table(
              "d_sharpe": d_sh, "d_total_return": d_tr,
              "weights": _weights_7d(row)}
         )
+    data["candidate_evidence"] = "ok"
     return lines, data
 
 
@@ -237,6 +256,16 @@ def main() -> int:
             print(f"候选 {c['variant']}  ΔSharpe={c['d_sharpe']}  Δ总收益={c['d_total_return']}")
     else:
         sys.stdout.write(text)
+
+    # #301 fail-closed（约束③）：候选证据缺失/0 行 ⇒ 表内已插「缺证据」行，
+    # 此处绝不默认通过，告警 stderr 并退出码 2。
+    if data.get("candidate_evidence") != "ok":
+        reason = "缺失" if data["candidate_evidence"] == "missing" else "解析为 0 行"
+        sys.stderr.write(
+            f"⚠️ #301 fail-closed：候选 report {args.candidate_report} {reason}，"
+            f"无法给出对照证据，已标「缺证据」行且退出码 2（绝不默认通过）。\n"
+        )
+        return 2
     return 0
 
 
