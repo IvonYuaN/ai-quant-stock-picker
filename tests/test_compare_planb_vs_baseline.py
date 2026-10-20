@@ -21,6 +21,7 @@ sys.path.insert(0, str(REPO_ROOT / "scripts" / "analysis"))
 from compare_planb_vs_baseline import (  # noqa: E402
     _gate_verdict,
     build_table,
+    main,
     parse_grid_metrics,
     parse_grid_table,
 )
@@ -157,3 +158,51 @@ def test_missing_baseline_report_fails_loudly(tmp_path: Path) -> None:
     missing = tmp_path / "nope.md"
     with pytest.raises(SystemExit):
         build_table(missing, c)
+
+
+# ---- #301 fail-closed：候选 report 缺失/0 行绝不能静默降级（约束③） ----
+
+
+def test_candidate_report_missing_inserts_missing_evidence_row_and_exit2(
+    tmp_path: Path, capsys
+) -> None:
+    """候选 report 文件缺失 ⇒ 表内插「缺证据」行 + stderr 告警 + 退出码 2。"""
+    b = _write(tmp_path, "b.md", BASELINE_MD)
+    missing = tmp_path / "candidate_missing.md"  # 故意不写
+    sys.argv = ["cmp", "--baseline-report", str(b), "--candidate-report", str(missing)]
+    rc = main()
+    assert rc == 2, "候选证据缺失必须退出码 2，绝不默认通过"
+    cap = capsys.readouterr()
+    assert "缺证据" in cap.err, "stderr 必须告警候选证据缺失（不静默）"
+    assert "证据缺失" in cap.out, "「缺证据」行必须出现在对照表里（给人看）"
+
+
+def test_candidate_report_zero_prefix_rows_is_fail_closed(tmp_path: Path, capsys) -> None:
+    """候选 report 存在但无 WB- 前缀行（解析 0 候选）⇒ 同样 fail-closed 退出 2。"""
+    b = _write(tmp_path, "b.md", BASELINE_MD)
+    c = _write(tmp_path, "c.md", BASELINE_MD)  # 只有 WF-*，没有 WB-*
+    sys.argv = ["cmp", "--baseline-report", str(b), "--candidate-report", str(c)]
+    rc = main()
+    assert rc == 2
+    cap = capsys.readouterr()
+    assert "缺证据" in cap.err
+
+
+def test_candidate_report_ok_returns_zero_without_stderr_warn(
+    tmp_path: Path, capsys
+) -> None:
+    """对照：候选正常时退出码 0，stderr 不出现 fail-closed 告警。"""
+    b = _write(tmp_path, "b.md", BASELINE_MD)
+    c = _write(tmp_path, "c.md", CANDIDATE_MD)
+    sys.argv = ["cmp", "--baseline-report", str(b), "--candidate-report", str(c)]
+    rc = main()
+    assert rc == 0
+    assert "缺证据" not in capsys.readouterr().err
+
+
+def test_build_table_marks_candidate_evidence_ok_in_data(tmp_path: Path) -> None:
+    """正常路径下 data['candidate_evidence'] == 'ok'（供调用方判定）。"""
+    b = _write(tmp_path, "b.md", BASELINE_MD)
+    c = _write(tmp_path, "c.md", CANDIDATE_MD)
+    _lines, data = build_table(b, c)
+    assert data["candidate_evidence"] == "ok"
