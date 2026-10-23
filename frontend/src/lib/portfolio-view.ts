@@ -6,6 +6,34 @@
 import type { ClosedPosition, Holding, PortfolioData } from "./api";
 import { asArray, asNumber, asNullableNumber, asRecord, asString } from "./safe";
 
+export function shanghaiDate(now = new Date()): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(now);
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((item) => item.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")}`;
+}
+
+export function holdingDateError(value: string, currentDay = shanghaiDate()): string {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return "请选择开仓日期";
+  const parsed = new Date(`${value}T00:00:00Z`);
+  if (!Number.isFinite(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value) {
+    return "开仓日期无效，请重新选择";
+  }
+  return value > currentDay ? "开仓日期不能晚于今天（北京时间）" : "";
+}
+
+export function holdingT1Status(openedAt: string, currentDay = shanghaiDate()): {
+  kind: "today" | "prior" | "legacy" | "invalid";
+  tone: "ok" | "warn" | "neutral";
+  label: string;
+} {
+  if (!openedAt) return { kind: "legacy", tone: "neutral", label: "未录日期 · 老仓" };
+  if (holdingDateError(openedAt, currentDay)) return { kind: "invalid", tone: "warn", label: "日期待核实" };
+  if (openedAt === currentDay) return { kind: "today", tone: "warn", label: "今日新仓 · T+1" };
+  return { kind: "prior", tone: "neutral", label: "往日开仓" };
+}
+
 function normalizeHolding(raw: unknown): Holding {
   const record = asRecord(raw);
   const code = asString(record.code);
@@ -15,8 +43,8 @@ function normalizeHolding(raw: unknown): Holding {
     price: asNumber(record.price),
     shares: asNumber(record.shares),
     cost: asNumber(record.cost),
-    // P2-8：开仓日期。P2-8 前录入的老持仓后端给 null/缺 ⇒ 归一成 ""（按老仓可卖，不误伤）。
-    opened_at: asString(record.opened_at),
+    // 仅 null/缺字段兼容旧仓；显式空串、数字等必须保留为异常，和后端 409 对齐。
+    opened_at: record.opened_at == null ? "" : asString(record.opened_at, "日期无效") || "日期无效",
     market_value: asNumber(record.market_value),
     pnl: asNumber(record.pnl),
     pnl_pct: asNumber(record.pnl_pct),

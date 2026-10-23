@@ -2,7 +2,26 @@
 //
 // 背景：`GET /api/portfolio` 在异常/降级时可能返回 `{}`，页面直接读
 // `data.holdings.length` 会当场抛错白屏 —— 本次实测确实崩了。这里把边界钉死。
-import { normalizePortfolio } from "./portfolio-view";
+import { holdingDateError, holdingT1Status, normalizePortfolio, shanghaiDate } from "./portfolio-view";
+
+export const holdingT1Contract = {
+  padsSingleDigitMonthAndDay: shanghaiDate(new Date("2026-01-02T01:00:00Z")) === "2026-01-02",
+  changesDateAtShanghaiMidnight: shanghaiDate(new Date("2026-10-22T16:00:00Z")) === "2026-10-23",
+  keepsDateBeforeShanghaiMidnight: shanghaiDate(new Date("2026-10-22T15:59:59Z")) === "2026-10-22",
+  acceptsLeapDay: holdingDateError("2024-02-29", "2026-10-23") === "",
+  rejectsImpossibleDay: holdingDateError("2026-02-30", "2026-10-23") !== "",
+  rejectsFutureDay: holdingDateError("2026-10-24", "2026-10-23") !== "",
+  rejectsEmptyDay: holdingDateError("", "2026-10-23") !== "",
+  rejectsUnpaddedDay: holdingDateError("2026-1-2", "2026-10-23") !== "",
+  newHoldingIsRestricted: holdingT1Status("2026-10-23", "2026-10-23").kind === "today",
+  priorHoldingIsIdentified: holdingT1Status("2026-10-22", "2026-10-23").kind === "prior",
+  missingDateKeepsLegacyMeaning: holdingT1Status("", "2026-10-23").kind === "legacy",
+  futureDateNeedsReview: holdingT1Status("2026-10-24", "2026-10-23").kind === "invalid",
+  storedEmptyDateNeedsReview: holdingT1Status(normalizePortfolio({ holdings: [{ opened_at: "" }] }).holdings[0].opened_at, "2026-10-23").kind === "invalid",
+  storedNumericDateNeedsReview: holdingT1Status(normalizePortfolio({ holdings: [{ opened_at: 20261023 }] }).holdings[0].opened_at, "2026-10-23").kind === "invalid",
+  storedNullDateKeepsLegacyMeaning: holdingT1Status(normalizePortfolio({ holdings: [{ opened_at: null }] }).holdings[0].opened_at, "2026-10-23").kind === "legacy",
+  storedMissingDateKeepsLegacyMeaning: holdingT1Status(normalizePortfolio({ holdings: [{}] }).holdings[0].opened_at, "2026-10-23").kind === "legacy",
+};
 
 const fullFixture = {
   holdings: [

@@ -46,6 +46,7 @@ Support: UX Architect, Reality Checker, Real-Time Data Reliability Engineer.
 
 ## Squad History
 
+- 2026-10-23: Backend reliability / T+1 reminder guards. Validate holding dates before persistence, derive every holding before per-code overrides, and stop invalid stored dates before alert creation. Verify offline API regressions and full pytest; production changes still need separate authorization.
 - 2026-05-29: Rerouted from prototype stock picker to local-first paper-trading system after user clarified the real objective and requested multi-agent execution.
 - 2026-06-04: Added unified notification-template substrate for daily run, briefing, monitor, morning breakout, closing premium, and closing review so future agent work lands on one reusable output layer.
 - 2026-06-26: Rerouted to launch-readiness reliability. Active blockers are real sample fill, formal production walk-forward, paper tracking sync, and notification spam guards; avoid cosmetic-only edits until these are green.

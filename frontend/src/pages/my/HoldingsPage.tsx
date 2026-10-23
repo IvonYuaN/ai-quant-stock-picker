@@ -8,7 +8,7 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { Plus, RefreshCw, ShieldCheck, Trash2, Wallet } from "lucide-react";
 import { toast } from "sonner";
 import { api, type PortfolioData } from "@/lib/api";
-import { normalizePortfolio } from "@/lib/portfolio-view";
+import { holdingDateError, holdingT1Status, normalizePortfolio, shanghaiDate } from "@/lib/portfolio-view";
 import {
   Badge,
   EmptyState,
@@ -22,7 +22,7 @@ import { cn } from "@/lib/utils";
 import { changeClass, formatMoney, formatSignedPct } from "@/lib/format";
 
 function today(): string {
-  return new Date().toLocaleDateString("zh-CN", { timeZone: "Asia/Shanghai" }).replace(/\//g, "-");
+  return shanghaiDate();
 }
 
 function normalizeDate(value: string): string {
@@ -77,14 +77,19 @@ export function HoldingsPage() {
     try {
       setData(normalizePortfolio(await action()));
       toast(successMessage);
+      return true;
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "操作失败");
+      return false;
     } finally {
       setBusy(false);
     }
   }
 
   const totals = data?.totals;
+  const currentDay = today();
+  const todayCount = data?.holdings.filter((row) => holdingT1Status(row.opened_at, currentDay).kind === "today").length ?? 0;
+  const invalidDateCount = data?.holdings.filter((row) => holdingT1Status(row.opened_at, currentDay).kind === "invalid").length ?? 0;
 
   return (
     <div className="aq-page">
@@ -149,40 +154,63 @@ export function HoldingsPage() {
         </div>
       ) : null}
 
+      <ToneCallout
+        tone={invalidDateCount > 0 || todayCount > 0 ? "warn" : "neutral"}
+        title={invalidDateCount > 0
+          ? `${invalidDateCount} 笔开仓日期待核实`
+          : todayCount > 0 ? `${todayCount} 笔今日新仓 · T+1 关注` : "按开仓日复核 T+1"}
+        detail={invalidDateCount > 0
+          ? "请先核对开仓日期，日期异常时暂停生成卖出提醒。"
+          : "当日新买入的股票今日不可卖出。老仓若有加仓，仍需按实际可卖数量复核。"}
+      />
+
       <section className="aq-section">
         <SectionHeader
           title="加一笔持仓"
           description="同代码按加权平均成本合并（加仓）；开仓日期决定 T+1 可卖性（当日买入今日不可卖）"
         />
-        <div className="aq-toolbar">
-          <input
-            className="aq-input"
-            value={code}
-            onChange={(event) => setCode(event.target.value)}
-            placeholder="6 位代码，如 600519"
-            inputMode="numeric"
-          />
-          <input
-            className="aq-input"
-            value={shares}
-            onChange={(event) => setShares(event.target.value)}
-            placeholder="股数"
-            inputMode="decimal"
-          />
-          <input
-            className="aq-input"
-            value={cost}
-            onChange={(event) => setCost(event.target.value)}
-            placeholder="成本价"
-            inputMode="decimal"
-          />
-          <input
-            className="aq-input"
-            type="date"
-            value={openedAt}
-            onChange={(event) => setOpenedAt(event.target.value)}
-            aria-label="开仓日期"
-          />
+        <div className="aq-holding-form">
+          <label className="aq-holding-field">
+            <span>股票代码</span>
+            <input
+              className="aq-input"
+              value={code}
+              onChange={(event) => setCode(event.target.value)}
+              placeholder="6 位代码，如 600519"
+              inputMode="numeric"
+            />
+          </label>
+          <label className="aq-holding-field">
+            <span>持仓股数</span>
+            <input
+              className="aq-input"
+              value={shares}
+              onChange={(event) => setShares(event.target.value)}
+              placeholder="股数"
+              inputMode="decimal"
+            />
+          </label>
+          <label className="aq-holding-field">
+            <span>成本价</span>
+            <input
+              className="aq-input"
+              value={cost}
+              onChange={(event) => setCost(event.target.value)}
+              placeholder="成本价"
+              inputMode="decimal"
+            />
+          </label>
+          <label className="aq-holding-field">
+            <span>开仓日期 <small>北京时间</small></span>
+            <input
+              className="aq-input"
+              type="date"
+              value={openedAt}
+              max={currentDay}
+              onChange={(event) => setOpenedAt(event.target.value)}
+              aria-label="开仓日期"
+            />
+          </label>
           <button
             type="button"
             className="aq-btn aq-btn-primary"
@@ -192,11 +220,13 @@ export function HoldingsPage() {
               const parsedShares = Number(shares);
               const parsedCost = Number(cost);
               const parsedOpenedAt = normalizeDate(openedAt.trim());
+              const dateError = holdingDateError(parsedOpenedAt, today());
               if (!/^\d{6}$/.test(parsedCode)) return toast.error("代码必须是 6 位数字");
               if (!Number.isFinite(parsedShares) || parsedShares <= 0) return toast.error("股数必须大于 0");
-              if (!Number.isFinite(parsedCost)) return toast.error("成本价必须是数字");
-              if (!/^\d{4}-\d{2}-\d{2}$/.test(parsedOpenedAt)) return toast.error("开仓日期格式应为 YYYY-MM-DD");
-              void run(() => api.addHolding(parsedCode, parsedShares, parsedCost, parsedOpenedAt), `已录入 ${parsedCode}`).then(() => {
+              if (!cost.trim() || !Number.isFinite(parsedCost)) return toast.error("成本价必须是数字");
+              if (dateError) return toast.error(dateError);
+              void run(() => api.addHolding(parsedCode, parsedShares, parsedCost, parsedOpenedAt), `已录入 ${parsedCode}`).then((saved) => {
+                if (!saved) return;
                 setCode("");
                 setShares("");
                 setCost("");
@@ -251,10 +281,13 @@ export function HoldingsPage() {
                     <td>
                       {/* P2-8：开仓日 = T+1 可卖性依据；老仓（无 opened_at）明示，不当当日买入误伤 */}
                       {row.opened_at ? (
-                        <span className="aq-code">{row.opened_at}</span>
+                        <div className="aq-code">{row.opened_at}</div>
                       ) : (
-                        <Badge tone="neutral">老仓</Badge>
+                        <div className="aq-code">未录入</div>
                       )}
+                      <Badge tone={holdingT1Status(row.opened_at, currentDay).tone}>
+                        {holdingT1Status(row.opened_at, currentDay).label}
+                      </Badge>
                     </td>
                     <td className="aq-num">{row.shares}</td>
                     <td className="aq-num">{row.cost.toFixed(4)}</td>
@@ -338,7 +371,7 @@ export function HoldingsPage() {
                                 void run(
                                   () => api.closePosition(row.code, date, price, qty, unitCost),
                                   `已记录 ${row.code} 清仓`,
-                                ).then(() => setClosing(null));
+                                ).then((saved) => { if (saved) setClosing(null); });
                               }}
                             >
                               确认清仓
