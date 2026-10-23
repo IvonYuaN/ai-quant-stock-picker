@@ -3479,7 +3479,10 @@
   .aq-selected-candidate { min-width: 0; padding: 1.1rem; border-top: 2px solid hsl(var(--primary)); }
   .aq-selected-candidate .aq-card-title h3 { font-size: 1.25rem; }
   .aq-selected-candidate .aq-card-summary { line-height: 1.7; }
+  .aq-selected-candidate .aq-metric-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 7.5rem), 1fr)); }
   .aq-selected-candidate .aq-metric-grid > div { box-shadow: none; background: hsl(var(--muted) / 0.3); }
+  .aq-selected-candidate .aq-metric-grid span,
+  .aq-selected-candidate .aq-metric-grid b { white-space: normal; overflow: visible; overflow-wrap: anywhere; }
   .aq-candidate-actions { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.8rem 0; }
   .aq-workspace-fold { min-width: 0; border-top: 1px solid hsl(var(--border)); }
   .aq-workspace-fold > summary { display: list-item; cursor: pointer; padding: 1rem 0; font-size: 0.9rem; font-weight: 600; }
