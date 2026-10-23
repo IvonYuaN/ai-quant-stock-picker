@@ -8,7 +8,7 @@ import os
 import pandas as pd
 import sys
 import traceback
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
@@ -1202,6 +1202,8 @@ def _refresh_home_snapshot(
         from write_home_snapshot import build_home_snapshot, build_home_snapshot_index
         from aqsp.web.data_provider import DashboardDataProvider
         from aqsp.web.home_snapshot import (
+            HomeSnapshotDay,
+            load_home_dashboard_snapshot,
             write_home_dashboard_snapshot,
             write_home_snapshot_index,
         )
@@ -1243,6 +1245,21 @@ def _refresh_home_snapshot(
             initial_snapshot=snapshot,
         )
         write_home_dashboard_snapshot(snapshot_path, snapshot)
+        # The index is the API's preferred surface. Seed it with the persisted
+        # roster so rebuilding an absent index cannot undo the daily freeze.
+        frozen_snapshot = load_home_dashboard_snapshot(snapshot_path)
+        if frozen_snapshot is None:
+            raise DataError("written home snapshot could not be read back")
+        index = replace(
+            index,
+            days=tuple(
+                HomeSnapshotDay(day.date, frozen_snapshot)
+                if day.date == frozen_snapshot.selected_date
+                else day
+                for day in index.days
+            ),
+        )
+        snapshot = frozen_snapshot
         write_home_snapshot_index(index_path, index)
         logger.info(
             "  首页快照已保存: %s (index=%s date=%s candidates=%d days=%d)",

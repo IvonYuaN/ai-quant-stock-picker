@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import sys
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -24,7 +26,7 @@ from aqsp.web.home_snapshot import (
     write_home_snapshot_index,
 )
 from backend.aqsp_bridge import _parse_snapshot
-from scripts import write_home_snapshot
+from scripts import daily_pipeline, write_home_snapshot
 
 
 def _candidate(symbol: str, score: float = 70.0) -> HomeSnapshotCandidate:
@@ -235,3 +237,45 @@ def test_snapshot_trading_date_observes_weekends_and_exchange_holidays(
 def test_snapshot_trading_date_rejects_invalid_date() -> None:
     with pytest.raises(ValueError):
         snapshot_trading_date("invalid")
+
+
+@pytest.mark.parametrize("existing_index", [False, True])
+def test_daily_pipeline_keeps_single_and_index_identical_when_roster_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, existing_index: bool
+) -> None:
+    single_path = tmp_path / "home_dashboard_snapshot.json"
+    index_path = tmp_path / "home_dashboard_snapshot_index.json"
+    first = _snapshot("2026-10-23", "09:15", ("600001", "600002"))
+    write_home_dashboard_snapshot(single_path, first)
+    if existing_index:
+        write_home_snapshot_index(index_path, _index(first))
+    changed = _snapshot("2026-10-23", "14:00", ("600003", "600002"))
+    monkeypatch.setenv("AQSP_HOME_SNAPSHOT_PATH", str(single_path))
+    monkeypatch.setenv("AQSP_HOME_SNAPSHOT_INDEX_PATH", str(index_path))
+    monkeypatch.syspath_prepend(str(tmp_path / "scripts"))
+    monkeypatch.setitem(
+        sys.modules,
+        "write_home_snapshot",
+        SimpleNamespace(
+            build_home_snapshot=lambda *args, **kwargs: changed,
+            build_home_snapshot_index=lambda *args, **kwargs: _index(changed),
+        ),
+    )
+    monkeypatch.setattr(
+        "aqsp.web.data_provider.DashboardDataProvider", lambda **kwargs: object()
+    )
+    config = SimpleNamespace(
+        project_root=tmp_path, ledger_path="ledger.jsonl", paper_ledger="paper.jsonl"
+    )
+    result = daily_pipeline._refresh_home_snapshot(config, logging.getLogger(__name__))
+    assert "error" not in result
+    single = load_home_dashboard_snapshot(single_path)
+    index = load_home_snapshot_index(index_path)
+    assert single is not None and index is not None
+    assert index.snapshot_for_date("2026-10-23") == single
+    assert [candidate.symbol for candidate in single.candidates] == ["600001", "600002"]
+    assert single.frozen_at == first.generated_at
+    assert [(change.symbol, change.status) for change in single.candidate_changes] == [
+        ("600001", "invalidated"),
+        ("600003", "added"),
+    ]
