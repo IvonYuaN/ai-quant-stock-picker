@@ -370,7 +370,7 @@ export interface AlertEvent {
   sellable_now: boolean;   // T+1 下今日能否执行
   action_hint: string;     // "该卖" | "明日生效" | "观察"
   t1_note: string;
-  basis_json: { rule: string; actual: string; evidence: string };
+  basis_json: { rule: string; actual: string; evidence: string; chart?: MacdChartEvidence };
   status: "OPEN" | "HANDLED" | "IGNORED" | "EXPIRED";
   ignore_streak: number;
   frequency_note?: string;
@@ -379,6 +379,14 @@ export interface AlertEvent {
   position_context?: PositionDecisionContext;
   created_at: string;
   updated_at: string;
+}
+export interface MacdChartEvidence {
+  kind: "macd_dead_cross";
+  price_adjustment: "none";
+  trigger_date: string;
+  source: string;
+  fast: number; slow: number; signal: number;
+  points: { date: string; close: number; dif: number; dea: number }[];
 }
 export interface DecisionEvidence {
   status: string; summary: string; as_of: string | null; source: string; evidence?: unknown;

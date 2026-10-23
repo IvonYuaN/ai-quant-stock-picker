@@ -39,6 +39,8 @@ function loadEcharts(): Promise<EchartsModule | null> {
         charts.LineChart,
         components.GridComponent,
         components.TooltipComponent,
+        components.MarkLineComponent,
+        components.MarkPointComponent,
         renderers.CanvasRenderer,
       ]);
       return core;
