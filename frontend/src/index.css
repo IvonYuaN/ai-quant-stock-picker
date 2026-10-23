@@ -2842,6 +2842,35 @@
 
   /* ---------------------------------------------------------- 我的持仓 */
 
+  .aq-holding-form {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(10rem, 1.3fr) auto;
+    align-items: end;
+    gap: 0.65rem;
+  }
+  .aq-holding-field {
+    display: grid;
+    min-width: 0;
+    gap: 0.35rem;
+    font-size: 0.8rem;
+  }
+  .aq-holding-field small {
+    margin-left: 0.3rem;
+    color: hsl(var(--muted-foreground));
+  }
+  .aq-holding-field .aq-input {
+    width: 100%;
+    min-width: 0;
+  }
+  @media (max-width: 760px) {
+    .aq-holding-form {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .aq-holding-form > .aq-btn {
+      grid-column: 1 / -1;
+    }
+  }
+
   .aq-total-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));

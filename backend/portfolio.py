@@ -17,7 +17,10 @@ import shutil
 import sys
 import threading
 import time
-from datetime import datetime, timezone, timedelta
+from datetime import date, timezone, timedelta
+
+from aqsp.core.errors import DataError
+from aqsp.core.time import now_shanghai, today_shanghai
 
 import astock
 import tenant as _tenant
@@ -75,7 +78,7 @@ _migrate_legacy()
 
 
 def _now() -> str:
-    return datetime.now(BEIJING).strftime("%Y-%m-%d %H:%M")
+    return now_shanghai().strftime("%Y-%m-%d %H:%M")
 
 
 # 已尝试过迁移的租户，避免每次读都 stat 旧文件
@@ -117,6 +120,48 @@ def _save(d: dict) -> None:
     os.replace(tmp, _pf_file())
 
 
+def _parse_opened_at(value: str, today: date) -> date:
+    """只接受不晚于上海当日的 YYYY-MM-DD，避免无效日期绕过 T+1。"""
+    if not isinstance(value, str):
+        raise ValueError("开仓日期必须为 YYYY-MM-DD")
+    try:
+        opened = date.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError("开仓日期必须为有效的 YYYY-MM-DD") from exc
+    if opened.isoformat() != value:
+        raise ValueError("开仓日期必须为 YYYY-MM-DD")
+    if opened > today:
+        raise ValueError("开仓日期不能晚于上海当日")
+    return opened
+
+
+def resolve_holding_days(
+    holdings: list[dict], overrides: dict[str, int] | None = None,
+) -> dict[str, int]:
+    """生成 T+1 判定所需的 0/1 标记，再按代码覆盖显式持有天数。
+
+    1 仅表示之前开仓，不表示实际持仓交易日数。缺日期的旧持仓按老仓兼容；
+    已存但无效或未来的日期抛 DataError，禁止降级成可卖提醒。
+    """
+    today = today_shanghai()
+    days: dict[str, int] = {}
+    for holding in holdings:
+        opened_at = holding.get("opened_at")
+        if opened_at is None:
+            continue
+        code = holding["code"]
+        try:
+            opened = _parse_opened_at(opened_at, today)
+        except ValueError as exc:
+            raise DataError(f"持仓 {code} 的{exc}，请修正后重试") from exc
+        days[code] = 0 if opened == today else 1
+    for code, value in (overrides or {}).items():
+        if type(value) is not int or value < 0:
+            raise ValueError("持有交易日数必须为非负整数")
+        days[code] = value
+    return days
+
+
 def add_holding(
     code: str, shares: float, cost: float, opened_at: str | None = None
 ) -> dict:
@@ -131,8 +176,11 @@ def add_holding(
             按老仓（即时可卖）处理，不误伤。同代码合并时保留最早的 opened_at
             （加仓不改动原仓的开仓基准；合并行按老仓可卖，不把老仓误判成当日买入）。
     """
-    if not opened_at:
-        opened_at = datetime.now(BEIJING).strftime("%Y-%m-%d")
+    today = today_shanghai()
+    opened_at = (
+        today.isoformat() if opened_at is None
+        else _parse_opened_at(opened_at, today).isoformat()
+    )
     with _LOCK:
         d = _load()
         for h in d["holdings"]:

@@ -13,11 +13,12 @@ import json
 import os
 import time as _time
 from datetime import datetime
+from typing import Annotated
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 import structlog
 
@@ -505,7 +506,10 @@ def portfolio_add(h: HoldingIn):
     if h.shares <= 0:
         raise HTTPException(400, "数量必须大于 0")
     # 成本价不限正负：融券 / 返息 / 摊薄后为负成本等情形按结果计算，用户想怎么输就怎么输。
-    return {"data": pf.add_holding(code, h.shares, h.cost, h.opened_at)}
+    try:
+        return {"data": pf.add_holding(code, h.shares, h.cost, h.opened_at)}
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @app.delete(
@@ -661,13 +665,13 @@ def portfolio_refresh():
 class LiveRiskCheckIn(BaseModel):
     """LIVE 风控检查入参。
 
-    - ``holding_days``: ``{code: 持有交易日数}``，**手动覆盖**用；缺省（None）时后端
+    - ``holding_days``: ``{code: 非负整数持有交易日数}``，按代码**手动覆盖**；未覆盖的代码
       从持仓 ``opened_at`` 自动推导（P2-8：opened_at == 今天 ⇒ 0 = 当日买入 ⇒ T+1
       降格 L1 明日生效 / L5 观察，Q3=A 拍板语义；之前开仓 ⇒ 老仓即时可卖）。
     - ``notify``: 是否外发（默认 True；站内入库不受此开关影响）。
     """
 
-    holding_days: dict | None = None
+    holding_days: dict[str, Annotated[int, Field(strict=True, ge=0)]] | None = None
     notify: bool = True
 
 
@@ -698,7 +702,7 @@ P0-2 该卖提醒（Q3=A T+1 语义）：
 - 新增事件可选外发（复用现成通知通道；未配置任何通道时自动跳过，不报错）
 
 **参数：**
-- `holding_days`（可选）: 代码→持有交易日数，**手动覆盖**；缺省后端从持仓 `opened_at` 自动推导（P2-8）
+- `holding_days`（可选）: 代码→非负整数持有交易日数，**按代码手动覆盖**；未覆盖的代码从持仓 `opened_at` 自动推导（P2-8）
 - `notify`（可选）: 是否外发，默认 true
 """,
 )
@@ -714,19 +718,14 @@ def live_risk_check(body: LiveRiskCheckIn = LiveRiskCheckIn()):
     ]
     prices = {h["code"]: h["price"] for h in pf_data.get("holdings", []) if h.get("price")}
 
-    # P2-8：T+1 可卖性从持仓 opened_at 自动推导（前端不再透传 holding_days）。
-    # 口径只需区分「今天开仓 vs 之前开仓」（T+1 卖不掉只对当日买入生效）：
-    # opened_at == 今天(上海) ⇒ 0 天当日买入；之前开仓 ⇒ ≥1 天可卖；
-    # P2-8 前录入、无 opened_at 的老持仓 ⇒ 不填，落到 live_risk 缺省 1（老仓可卖，不误伤）。
-    # 前端显式传 holding_days 时优先（向后兼容 + 手动覆盖）。
-    holding_days = body.holding_days
-    if holding_days is None:
-        today_iso = datetime.now(pf.BEIJING).strftime("%Y-%m-%d")
-        holding_days = {
-            h["code"]: (0 if str(h["opened_at"]) == today_iso else 1)
-            for h in pf_data.get("holdings", [])
-            if h.get("opened_at")
-        }
+    from aqsp.core.errors import DataError
+
+    try:
+        holding_days = pf.resolve_holding_days(
+            pf_data.get("holdings", []), body.holding_days,
+        )
+    except DataError as exc:
+        raise HTTPException(409, str(exc)) from exc
 
     from aqsp.risk.live_risk import run_live_risk_check
 
