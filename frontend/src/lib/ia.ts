@@ -42,12 +42,12 @@ export interface NavLine {
 // 进阶工具收进「进阶分析」一组，本机私有数据单独成「我的」。
 export const PRIMARY_LINE: NavLine = {
   id: "primary",
-  title: "每日选股",
-  subtitle: "AI 挑的票 · 能不能买",
+  title: "研究",
+  subtitle: "候选 · 证据 · 风险",
   scope: "public",
   items: [
-    { to: "/today", label: "今日选股", desc: "今天 AI 挑的几只 · 白话理由", icon: Compass },
-    { to: "/stream", label: "小道信息", desc: "财联社快讯 · 概念异动", icon: Zap },
+    { to: "/today", label: "今日研究", desc: "候选比较 · 依据与风险", icon: Compass },
+    { to: "/stream", label: "消息动态", desc: "财联社快讯 · 概念异动", icon: Zap },
     { to: "/market", label: "行情环境", desc: "大盘 · 情绪 · 涨跌家数", icon: Globe2 },
   ],
 };

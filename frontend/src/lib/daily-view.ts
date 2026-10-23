@@ -6,6 +6,7 @@
 //
 // 这里把原始 AqspSnapshot **只解析一次**，产出页面直接可渲染的结构；
 // 判断逻辑因此只有一份，页面退化成纯渲染。新增模块时只要改这里，不会漏掉某个入口。
+import { isAqspSnapshotStale } from "./snapshot-freshness";
 import type {
   AqspAgentResult,
   AqspCandidate,
@@ -426,7 +427,12 @@ export function buildDailyView(snapshot: AqspSnapshot): DailyView {
   const readyCount = candidates.filter((row) => row.ready).length;
   const total = candidates.length;
 
-  const gate = gateView(snapshot.recommendation_gate);
+  const sourceGate = gateView(snapshot.recommendation_gate);
+  const gate: ToneView = snapshot.meta?.historical
+    ? { tone: "neutral", label: "历史记录 · 仅供回看", detail: `以下为 ${snapshot.selected_date} 当时记录，不表示当前推荐状态。` }
+    : isAqspSnapshotStale(snapshot) && sourceGate.tone === "ok"
+      ? { tone: "warn", label: "快照过期 · 仅供观察", detail: "现有记录保留供研究，重新取得有效快照前不作为当前放行依据。" }
+      : sourceGate;
 
   const chainView: ToneView =
     total === 0

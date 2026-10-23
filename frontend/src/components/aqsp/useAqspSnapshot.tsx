@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { api, ApiError, isAqspAbortError, type AqspSnapshot } from "@/lib/api";
 import { normalizeSnapshot } from "@/lib/daily-view";
+export { isAqspSnapshotStale } from "@/lib/snapshot-freshness";
 
 export const AQSP_LIVE_REFRESH_INTERVAL_MS = 60_000;
 
@@ -135,13 +136,6 @@ export function useWorkspaceSnapshot(): AqspSnapshotState {
 
 export function useAqspSnapshot(): AqspSnapshotState {
   return useWorkspaceSnapshot();
-}
-
-export function isAqspSnapshotStale(snapshot: AqspSnapshot): boolean {
-  if (snapshot.meta) return snapshot.meta.historical || snapshot.meta.stale;
-  if (!snapshot.stale_after) return true;
-  const deadline = Date.parse(snapshot.stale_after);
-  return Number.isNaN(deadline) || Date.now() >= deadline;
 }
 
 export function formatAqspTime(value: string): string {

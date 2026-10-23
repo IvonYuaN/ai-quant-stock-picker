@@ -7,7 +7,7 @@
 //
 // 常驻块不随页签变化，所以"今天能不能动"永远第一眼可见；页签只承载细节。
 // 所有派生都在 daily-view 里完成，本文件不做业务判断。
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { CalendarDays, Compass, RefreshCw, Sparkles } from "lucide-react";
 import { Badge, HeroState, LoadingState, ToneCallout } from "@/components/ui/primitives";
@@ -52,14 +52,14 @@ function TodayHeader({
       <div>
         <p className="aq-eyebrow">
           <Compass aria-hidden="true" />
-          AQSP · 每日选股
+          AQSP · 研究工作台
         </p>
         <div className="aq-title-row">
-          <h1>今日选股</h1>
+          <h1>今日研究</h1>
           <strong>{date || "日期未记录"}</strong>
         </div>
         <p className="aq-page-sub">
-          每天用 AI 从全市场筛几只值得关注的股票，附白话理由和「今天能不能买」的判断。先看下面的候选，觉得好就加到自选慢慢观察。
+          候选、依据与风险，在同一研究日期下核对。
         </p>
         <div className="aq-meta-row">
           {snapshot ? <span>更新 {formatAqspTime(snapshot.generated_at)}</span> : null}
@@ -68,7 +68,7 @@ function TodayHeader({
               {historical ? "历史日期" : stale ? "当前快照已过期" : "当前数据"}
             </Badge>
           ) : null}
-          {freshness?.candidates === "fresh" ? <Badge tone="ok">行情新鲜</Badge> : null}
+          {!stale && !historical && freshness?.candidates === "fresh" ? <Badge tone="ok">行情新鲜</Badge> : null}
           {freshness?.messages === "stale" ? <Badge tone="warn">消息滞后</Badge> : null}
         </div>
       </div>
@@ -86,48 +86,6 @@ function TodayHeader({
         </button>
       </div>
     </header>
-  );
-}
-
-/** 首次打开时的白话引导：讲清「这个工具怎么用」，关掉后不再出现。 */
-function OnboardingBanner() {
-  const [show, setShow] = useState(() => {
-    try {
-      return localStorage.getItem("aqsp-onboarded") !== "1";
-    } catch {
-      return false;
-    }
-  });
-  if (!show) return null;
-  const dismiss = () => {
-    try {
-      localStorage.setItem("aqsp-onboarded", "1");
-    } catch {
-      /* ignore */
-    }
-    setShow(false);
-  };
-  return (
-    <div className="aq-onboard" role="note">
-      <div className="aq-onboard-head">
-        <strong>这个工具每天帮你做一件事：挑股票</strong>
-        <button type="button" className="aq-onboard-close" onClick={dismiss} aria-label="不再显示">
-          ×
-        </button>
-      </div>
-      <ol className="aq-onboard-steps">
-        <li>
-          <b>看今日选股</b>：AI 从全市场筛出几只值得关注的票，每张卡片都有<b>白话理由</b>和评分。
-        </li>
-        <li>
-          <b>看「今天能不能买」</b>：候选看过后，下面那块会直接说「可动」还是「仅观察」——观察日就别急着动。
-        </li>
-        <li>
-          <b>加自选慢慢看</b>：觉得好就点卡片加入自选，过几天回来对比，别一上来就重仓。
-        </li>
-      </ol>
-      <p className="aq-onboard-foot">这是研究参考，不是买卖指令。任何决策都要你自己拍板，亏赚自负。</p>
-    </div>
   );
 }
 
@@ -228,7 +186,6 @@ function PhaseStrip({ view }: { view: DailyView }) {
 function PersistentBlock({ view }: { view: DailyView }) {
   return (
     <div className="aq-persistent">
-      <MarketStrip />
       <CrossMarketStrip view={view} />
 
       <div className="aq-lead-grid">
@@ -260,12 +217,13 @@ function PersistentBlock({ view }: { view: DailyView }) {
 }
 
 function SectionTabs({ active, sections }: { active: string; sections: readonly SectionView[] }) {
+  const { search } = useLocation();
   return (
     <nav className="aq-tabs" aria-label="今日研究分段">
       {sections.map((section) => (
         <Link
           key={section.id}
-          to={`/today#${section.id}`}
+          to={`/today${search}#${section.id}`}
           className={cn("aq-tab", active === section.id && "aq-tab-active")}
         >
           <span className="aq-tab-label">{section.tabLabel}</span>
@@ -315,7 +273,7 @@ export function TodayWorkspace() {
   }, [searchParams, setSearchParams, symbolParam]);
 
   // 日期未对齐时不给页面任何"当前日期"的展示模型，从根上杜绝张冠李戴。
-  const view = useMemo(() => (data && !switching ? buildDailyView(data) : null), [data, switching]);
+  const view = data && !switching ? buildDailyView(data) : null;
 
   // 首屏即选股：候选段固定顶到最上面，其余段（为什么 / 多空观点）走下方页签。
   const candidateSection = view?.sections.find((section) => section.id === "candidates");
@@ -341,7 +299,7 @@ export function TodayWorkspace() {
     : undefined;
 
   return (
-    <div className="aq-page">
+    <div className="aq-page aq-today-workspace">
       <TodayHeader
         date={targetDate}
         snapshot={switching ? null : data}
@@ -350,20 +308,27 @@ export function TodayWorkspace() {
         actions={view ? <ReviewExportButton view={view} /> : null}
       />
 
-      <OnboardingBanner />
-
       {/* 实盘该卖提醒（#431）：读的是实盘持仓的 LIVE 风控触发，与研究历史日期解耦——
           切日期 / 本地快照缺失都不该让"今天能不能卖"这条风控提醒消失，故置于主分支外、最靠上。 */}
       <AlertInbox />
 
       {data ? <DatePicker snapshot={data} /> : null}
 
+      {error && data && !switching ? (
+        <div className="aq-refresh-warning" role="alert">
+          <strong>刷新失败，保留上次成功数据</strong>
+          <span>{error} · 上次更新 {formatAqspTime(data.generated_at)}</span>
+        </div>
+      ) : null}
+
       {/* 本地研究快照缺失/读取中时，仍然展示**直接读公开源**的实时市场环境
           （指数 / 涨跌家数 / 隔夜外围）。实时行情不该被本地重管线的产出卡住 ——
           快照是本机算出来的，市场环境是别人网站上现成的，两者解耦。 */}
       {!data ? <MarketStrip /> : null}
 
-      {switching ? (
+      {switching && error ? (
+        <HeroState tone="warn" title={`无法读取 ${selectedDate} 的研究记录`} detail={`${error}。保留日期选择，重试或切换其他日期。`} action={<button type="button" className="aq-btn aq-btn-primary" onClick={refresh}><RefreshCw aria-hidden="true" />重试该日期</button>} />
+      ) : switching ? (
         <LoadingState label={`正在读取 ${selectedDate} 的研究数据…`} />
       ) : error && !data ? (
         <HeroState
@@ -383,18 +348,37 @@ export function TodayWorkspace() {
         <LoadingState />
       ) : (
         <>
-          {/* 首屏即选股：候选卡直接顶到最上面，meta 块（门禁/市场环境/阶段）全部下沉。 */}
+          <section className="aq-workspace-summary" aria-label="当日研究摘要">
+            <div className="aq-workspace-verdict">
+              <Badge tone={view.gate.tone}>{view.gate.label}</Badge>
+              <strong>{view.conclusion || "等待当日研究结论"}</strong>
+              <p>{view.gate.detail}</p>
+            </div>
+            <dl className="aq-workspace-counts">
+              <div><dt>研究候选</dt><dd>{view.candidates.length}<small>只</small></dd></div>
+              <div><dt>关联消息</dt><dd>{view.messages.length}<small>条</small></dd></div>
+              <div><dt>多空复核</dt><dd>{view.debates.length}<small>只</small></dd></div>
+            </dl>
+          </section>
           {candidateSection ? (
             <CandidateSection view={view} section={candidateSection} onPick={setPicked} />
           ) : null}
-          <DecisionPanel snapshot={data} />
-          <PersistentBlock view={view} />
-          <ClosingReviewPanel />
-          {/* 页签只承载候选以外的细节（为什么 / 多空观点），候选已固定在首屏。 */}
-          <SectionTabs active={activeDetailId} sections={detailSections} />
-          <main className="aq-active-section" aria-live="polite">
-            <ActiveSection view={view} active={activeDetailId} />
-          </main>
+          <MarketStrip />
+          <details className="aq-workspace-fold" open={active !== "candidates" || undefined} key={active}>
+            <summary>消息证据与多空讨论 <span>{view.messages.length} 条消息 · {view.debates.length} 只复核</span></summary>
+            <div className="aq-workspace-fold-body">
+              <SectionTabs active={activeDetailId} sections={detailSections} />
+              <div className="aq-active-section" aria-live="polite"><ActiveSection view={view} active={activeDetailId} /></div>
+            </div>
+          </details>
+          <details className="aq-workspace-fold">
+            <summary>研究过程与门禁明细 <span>{view.chain.label}</span></summary>
+            <div className="aq-workspace-fold-body"><PersistentBlock view={view} /><DecisionPanel snapshot={data} /></div>
+          </details>
+          <details className="aq-workspace-fold">
+            <summary>收盘复盘与历史验证</summary>
+            <div className="aq-workspace-fold-body"><ClosingReviewPanel /></div>
+          </details>
         </>
       )}
 

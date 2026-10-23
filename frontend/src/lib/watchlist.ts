@@ -1,19 +1,22 @@
 // 关注股票（自选股）—— 只存本地 localStorage，不上传、不进仓库。
 // 行情复用 /api/quote；复盘时把关注股行情一并喂给用户自己的 AI。
 
-const KEY = "vr-watchlist";
+export const WATCHLIST_STORAGE_KEY = "vr-watchlist";
+export const WATCHLIST_CHANGED_EVENT = "aqsp-watchlist-changed";
 
 export function loadWatch(): string[] {
   try {
-    const v = JSON.parse(localStorage.getItem(KEY) || "[]");
+    const v = JSON.parse(localStorage.getItem(WATCHLIST_STORAGE_KEY) || "[]");
     return Array.isArray(v) ? v.filter((c) => /^\d{6}$/.test(c)) : [];
   } catch {
     return [];
   }
 }
 
-export function saveWatch(codes: string[]) {
-  localStorage.setItem(KEY, JSON.stringify(codes));
+export function saveWatch(codes: string[]): void {
+  localStorage.setItem(WATCHLIST_STORAGE_KEY, JSON.stringify(codes));
+  // storage only reaches other tabs; notify this workspace after persistence succeeds.
+  if (typeof window !== "undefined") window.dispatchEvent(new Event(WATCHLIST_CHANGED_EVENT));
 }
 
 // 从任意文本里抽取 6 位 A 股代码（逗号 / 空格 / 换行 / 顿号分隔都行，方便一次粘贴一串）。
