@@ -111,8 +111,13 @@ def test_release_consistency_rejects_overlay_from_another_release(
     assert any(item.code == "overlay_source_mismatch" for item in findings)
 
 
-def test_release_consistency_rejects_legacy_active_entry(tmp_path: Path) -> None:
+def test_release_consistency_rejects_legacy_active_entry(monkeypatch, tmp_path: Path) -> None:
     _manifest(tmp_path)
+    _fake_git(monkeypatch, {
+        ("rev-parse", "HEAD"): (True, SHA_A),
+        ("rev-parse", "--verify", "refs/remotes/origin/main"): (True, SHA_A),
+        ("status", "--porcelain=v1", "--untracked-files=all"): (True, ""),
+    })
     entry = tmp_path / "active.sh"
     entry.write_text("streamlit run old.py --server.port 8501\n", encoding="utf-8")
     findings = checker.audit(
