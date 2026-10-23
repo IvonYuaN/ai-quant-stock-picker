@@ -5,7 +5,8 @@ import { toast } from "sonner";
 import { api, type AlertEvent, type PortfolioData } from "@/lib/api";
 import { normalizePortfolio } from "@/lib/portfolio-view";
 import { normalizeAlerts } from "@/lib/alert-view";
-import { ALERTS_CHANGED_EVENT, PORTFOLIO_CHANGED_EVENT } from "@/lib/holding-view";
+import { ALERTS_CHANGED_EVENT, PORTFOLIO_CHANGED_EVENT, currentHoldingCandidates } from "@/lib/holding-view";
+import { isAqspSnapshotStale } from "@/lib/snapshot-freshness";
 import { Badge, LoadingState, SectionHeader, StatePanel, ToneCallout } from "@/components/ui/primitives";
 import { HoldingsWatchlist, openOperation } from "@/components/aqsp/HoldingsWatchlist";
 import { useAqspSnapshot } from "@/components/aqsp/useAqspSnapshot";
@@ -24,7 +25,7 @@ export function HoldingsPage({ renderRiskSettings }: { renderRiskSettings?: (cod
   const alertSequence = useRef(0);
   const snapshotState = useAqspSnapshot();
   const snapshot = snapshotState.data;
-  const currentCandidates = snapshot && !snapshot.meta?.historical && !snapshotState.switching ? snapshot.candidates : [];
+  const currentCandidates = !snapshotState.switching ? currentHoldingCandidates(snapshot) : [];
 
   const load = useCallback(async () => {
     const sequence = ++portfolioSequence.current;
@@ -92,6 +93,7 @@ export function HoldingsPage({ renderRiskSettings }: { renderRiskSettings?: (cod
     ? "今日候选读取中。"
     : snapshotState.error ? "今日候选暂不可用，不推断命中状态。"
     : snapshot?.meta?.historical ? `当前为 ${snapshot.selected_date} 历史记录，不作为今日命中。`
+    : snapshot && isAqspSnapshotStale(snapshot) ? "候选资料已过期，不作为今日命中。"
     : snapshot ? `候选对照 ${snapshot.selected_date}。` : "今日候选暂不可用。";
 
   return (

@@ -1,5 +1,6 @@
 import type { AlertEvent, AqspCandidate, Holding } from "./api";
-import { buildHoldingGroups, normalizeHoldingSectors } from "./holding-view";
+import { buildHoldingGroups, normalizeHoldingSectors, currentHoldingCandidates } from "./holding-view";
+import { dailyViewFixture } from "./daily-view.test";
 
 const holdingFixture = (code: string): Holding => ({
   code, name: code, price: 10, cost: 11, shares: 100, opened_at: "2026-10-22",
@@ -44,4 +45,9 @@ export const holdingGroupContract = {
   boardShapesNormalize: normalizeHoldingSectors({ concept_tags: ["白酒", ""], boards: [{ name: "白酒" }, { name: "食品" }, null] }).join() === "白酒,食品",
   invalidBoardsAreEmpty: normalizeHoldingSectors({ concept_tags: "bad", boards: [null, 1, { name: 3 }] }).length === 0,
   absentBoardsAreEmpty: normalizeHoldingSectors(null).length === 0,
+  missingSnapshotHasNoCurrentMatches: currentHoldingCandidates(null).length === 0,
+  expiredSnapshotHasNoCurrentMatches: currentHoldingCandidates({ ...dailyViewFixture, stale_after: "2026-10-22T10:00:00+08:00" }, Date.parse("2026-10-23T10:00:00+08:00")).length === 0,
+  historicalSnapshotHasNoCurrentMatches: currentHoldingCandidates({ ...dailyViewFixture, stale_after: "2099-10-23T10:00:00+08:00", meta: { ...dailyViewFixture.meta!, historical: true } }).length === 0,
+  invalidatedCandidateHasNoCurrentMatch: currentHoldingCandidates({ ...dailyViewFixture, stale_after: "2099-10-23T10:00:00+08:00", meta: { ...dailyViewFixture.meta!, historical: false, stale: false }, candidate_changes: [{ symbol: dailyViewFixture.candidates[0].symbol, display_name: "", status: "invalidated" }] }).every((row) => row.symbol !== dailyViewFixture.candidates[0].symbol),
+  freshCandidateRetainsMatch: currentHoldingCandidates({ ...dailyViewFixture, stale_after: "2099-10-23T10:00:00+08:00", meta: { ...dailyViewFixture.meta!, historical: false, stale: false }, candidate_changes: [] }).length === dailyViewFixture.candidates.length,
 };

@@ -1,8 +1,18 @@
 import type { AlertEvent, AqspCandidate, Holding, Quote } from "./api";
 import { ownedKind } from "./ownership";
+import type { AqspSnapshot } from "@/types/aqsp";
+import { isAqspSnapshotStale } from "./snapshot-freshness";
 
 export const PORTFOLIO_CHANGED_EVENT = "aqsp:portfolio-changed";
 export const ALERTS_CHANGED_EVENT = "aqsp:alerts-changed";
+
+/** 过期或已失效的冻结记录不代表当前候选命中。 */
+export function currentHoldingCandidates(snapshot: AqspSnapshot | null, now = Date.now()): AqspCandidate[] {
+  if (!snapshot || isAqspSnapshotStale(snapshot, now)) return [];
+  const invalidated = new Set((snapshot.candidate_changes ?? [])
+    .filter((change) => change.status === "invalidated").map((change) => change.symbol));
+  return snapshot.candidates.filter((candidate) => !invalidated.has(candidate.symbol));
+}
 
 export type HoldingGroupKind = "triggered" | "holding" | "candidate-watch" | "watch";
 

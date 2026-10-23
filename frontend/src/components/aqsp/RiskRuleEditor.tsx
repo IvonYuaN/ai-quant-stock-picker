@@ -18,7 +18,10 @@ function RuleForm({ rule, onSave }: { rule: PositionAlertRule; onSave: (value: P
     if (inFlight.current) return;
     inFlight.current = true; setBusy(true); setError("");
     try {
-      const updated = await api.updateRiskRule(rule.id, { enabled, freq_mode: frequency, param_value: percentage ? Number(value) / 100 : Number(value) });
+      const updated = await api.updateRiskRule(rule.id, {
+        enabled, freq_mode: frequency,
+        ...(rule.level === "L4" ? {} : { param_value: percentage ? Number(value) / 100 : Number(value) }),
+      });
       onSave(updated); window.dispatchEvent(new Event(ALERTS_CHANGED_EVENT));
     } catch (reason) { setError(reason instanceof Error ? reason.message : "保存规则失败，设置已保留"); }
     finally { inFlight.current = false; setBusy(false); }

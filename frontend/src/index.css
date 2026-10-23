@@ -585,10 +585,11 @@
   }
   .aq-alert-row-actions {
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
     gap: 0.25rem;
-    align-self: center;
+    align-self: flex-start;
   }
+  .aq-alert-row-actions .aq-btn-icon { width: 2.5rem; min-width: 2.5rem; padding: 0; justify-content: center; }
 
   /* 侧栏常驻角标：该卖提醒未处理数量（openCount>0 才渲染，#431 未部署时静默隐藏） */
   .aq-alert-badge {
