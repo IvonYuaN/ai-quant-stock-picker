@@ -44,6 +44,8 @@ Support: UX Architect, Reality Checker, Real-Time Data Reliability Engineer.
 
 生产前端验收禁止用 health、raw API 或 bundle 字符串代替可视结果。总览第一屏必须逐候选联动确定性评分、消息证据、Agent 讨论、历史变体和复核状态；缺失证据按候选阻断，不得用全局空态或模板结论掩盖。每次前端交付必须运行构建、相关测试、secret 扫描，并用 AQSP 独立无头浏览器实际检查桌面和移动截图。
 
+前端阶段部署授权（2026-10-23）：用户要求开发期间不定时部署，让线上可见进度。每完成一个可见功能单元，按既有测试、审查、CI 和 squash 合并门槛，在服务器空闲窗口部署并核对公网版本及桌面/手机实际页面；交付时附访问地址和可见变化。无需固定周期定时器，也不等全部开发结束才部署。此授权不扩展到策略阈值、cron、ACL 或服务器系统配置变更。
+
 ## Squad History
 
 - 2026-10-23: Backend reliability / T+1 reminder guards. Validate holding dates before persistence, derive every holding before per-code overrides, and stop invalid stored dates before alert creation. Verify offline API regressions and full pytest; production changes still need separate authorization.
