@@ -128,7 +128,8 @@ def test_t1_context_uses_actual_quote_name_date_and_risk_when_checked(workstatio
         assert context["assessment"]["stance"] == "risk_review"
         assert "-20.0%" in context["assessment"]["reason"]
         assert "不等于必须一次性清仓" in context["assessment"]["reason"]
-        assert context["assessment"]["t_plan"]["eligible"] is False
+        assert context["assessment"]["t_plan"]["eligible"] is None
+        assert "可记录做T观察意向" in context["assessment"]["t_plan"]["reason"]
 
 
 def test_t1_batch_receipt_keeps_newer_daily_time_when_recovered(workstation):

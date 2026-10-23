@@ -99,7 +99,9 @@ def test_decision_context_preserves_hard_risk_when_background_recovers():
     assert result.name == "真实源名称" and result.holding_trade_days == 4
     assert result.assessment.stance == "risk_review"
     assert "L1" in result.assessment.reason and "不能" in result.assessment.reason
-    assert result.assessment.t_plan.eligible is False
+    assert result.assessment.t_plan.eligible is None
+    assert "止损线触发本身都不是做T依据" in result.assessment.t_plan.reason
+    assert "同步走弱" not in result.assessment.title
     assert holding == original
     assert result.to_dict()["stock"]["status"] == "rising"
 
@@ -111,7 +113,21 @@ def test_decision_context_requires_same_session_weakness_when_reviewing_exit():
     assert result.assessment.stance == "exit_review"
     assert result.market.status == "weak"
     assert result.sector.status == result.stock.status == "falling"
-    assert result.assessment.t_plan.eligible is None
+    assert result.assessment.t_plan.eligible is False
+
+
+def test_decision_context_recommends_exit_review_only_when_hard_risk_and_all_contexts_weak():
+    result = context.build_position_context(
+        _holding(),
+        [{"symbol": "600001", "level": "L1", "position_id": "position-1"}],
+        quote=_quote(),
+        market_overview=_overview(),
+        checked_at=NOW,
+    )
+    assert result.assessment.stance == "risk_review"
+    assert "大盘、板块和个股走弱" in result.assessment.title
+    assert "三项同交易日弱势证据一致" in result.assessment.reason
+    assert result.assessment.t_plan.eligible is False
 
 
 def test_decision_context_keeps_options_when_only_loss_is_known():
@@ -123,7 +139,7 @@ def test_decision_context_keeps_options_when_only_loss_is_known():
     assert result.assessment.t_plan.eligible is None
     assert any("继续持有" in item for item in result.assessment.options)
     assert any("减仓" in item for item in result.assessment.options)
-    assert "亏损本身不是依据" in result.assessment.t_plan.reason
+    assert "亏损或止损线触发本身都不是做T依据" in result.assessment.t_plan.reason
 
 
 def test_decision_context_rejects_sector_assumption_when_membership_is_missing():
