@@ -168,7 +168,7 @@ export function StockResearchPage() {
           <button type="button" className="aq-btn aq-btn-primary" onClick={addToWatchlist} disabled={watched}>
             {watched ? <Check aria-hidden="true" /> : <Star aria-hidden="true" />}{watched ? "已在自选" : "加入自选"}
           </button>
-          <Link className="aq-btn" to={researchDate ? `/my/watchlist?date=${encodeURIComponent(researchDate)}` : "/my/watchlist"}>我的自选</Link>
+          <Link className="aq-btn" to={researchDate ? `/my/holdings?date=${encodeURIComponent(researchDate)}#watchlist` : "/my/holdings#watchlist"}>我的持仓与自选</Link>
           <button type="button" className="aq-btn aq-btn-icon" title="刷新研究与行情" aria-label="刷新研究与行情" onClick={() => { workspace.refresh(); setReload((value) => value + 1); }}><RefreshCw aria-hidden="true" /></button>
         </div>
       </header>

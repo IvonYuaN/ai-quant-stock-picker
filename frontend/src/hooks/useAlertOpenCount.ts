@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { api } from "@/lib/api";
 import { normalizeAlerts } from "@/lib/alert-view";
+import { ALERTS_CHANGED_EVENT } from "@/lib/operation";
 
 export function useAlertOpenCount() {
   const [openCount, setOpenCount] = useState(0);
@@ -23,6 +24,8 @@ export function useAlertOpenCount() {
 
   useEffect(() => {
     void refetch();
+    window.addEventListener(ALERTS_CHANGED_EVENT, refetch);
+    return () => window.removeEventListener(ALERTS_CHANGED_EVENT, refetch);
   }, [refetch, pathname]);
 
   return { openCount, refetch };

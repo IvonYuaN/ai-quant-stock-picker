@@ -329,6 +329,13 @@ class AQSPMarketContext:
 
 
 @dataclass(frozen=True)
+class AQSPCandidateChange:
+    symbol: str
+    display_name: str
+    status: str
+
+
+@dataclass(frozen=True)
 class AQSPSnapshot:
     schema_version: str
     generated_at: str
@@ -349,6 +356,8 @@ class AQSPSnapshot:
     variant_suite: AQSPVariantSuite = AQSPVariantSuite()
     variants: tuple[AQSPVariant, ...] = ()
     research_chain: AQSPResearchChain = AQSPResearchChain()
+    frozen_at: str = ""
+    candidate_changes: tuple[AQSPCandidateChange, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -972,6 +981,8 @@ def _parse_snapshot(payload: Mapping[str, Any]) -> AQSPSnapshot:
         "variant_suite",
         "variants",
         "research_chain",
+        "frozen_at",
+        "candidate_changes",
     }
     _check_keys(payload, required, "快照", optional)
     schema_version = _text(payload["schema_version"], "schema_version")
@@ -1016,6 +1027,14 @@ def _parse_snapshot(payload: Mapping[str, Any]) -> AQSPSnapshot:
     stale_after = _optional_text(payload.get("stale_after"), "stale_after")
     if stale_after:
         _timestamp(stale_after, "stale_after")
+    frozen_at = _optional_text(payload.get("frozen_at"), "frozen_at")
+    if frozen_at:
+        _timestamp(frozen_at, "frozen_at")
+    changes = tuple(
+        _parse_candidate_change(item)
+        for item in _list(payload.get("candidate_changes", []), "candidate_changes")
+    )
+    _check_limit(changes, MAX_CANDIDATES * 2, "candidate_changes")
     variants = tuple(
         _parse_variant(item) for item in _list(payload.get("variants", []), "variants")
     )
@@ -1045,6 +1064,22 @@ def _parse_snapshot(payload: Mapping[str, Any]) -> AQSPSnapshot:
         variant_suite=_parse_variant_suite(payload.get("variant_suite")),
         variants=variants,
         research_chain=_parse_research_chain(payload.get("research_chain")),
+        frozen_at=frozen_at,
+        candidate_changes=changes,
+    )
+
+
+def _parse_candidate_change(payload: object) -> AQSPCandidateChange:
+    item = _object(payload, "candidate_change")
+    _check_keys(item, {"symbol", "display_name", "status"}, "candidate_change")
+    status = _text(item["status"], "candidate_change.status")
+    symbol = _text(item["symbol"], "candidate_change.symbol")
+    if status not in {"added", "invalidated"} or not symbol.strip():
+        raise AQSPSnapshotUnavailable("candidate_change 必须记录新增/已失效标的")
+    return AQSPCandidateChange(
+        symbol=symbol,
+        display_name=_text(item["display_name"], "candidate_change.display_name"),
+        status=status,
     )
 
 

@@ -10,13 +10,13 @@ Python 3.10+，pandas/numpy/scipy，DataSource 抽象，多源行情，jsonl led
 
 ## Default Squad
 
-Primary: Frontend Developer.
+Primary: Product Delivery Engineer.
 
-Support: UX Architect, Reality Checker, Real-Time Data Reliability Engineer.
+Support: UX Architect, Backend Reliability Engineer, Reality Checker.
 
 ## Current Goal
 
-2026-10-23 当前完整交付：依 `docs/architecture.md` §7.1 与 `docs/research-workspace-delivery.md`，完成今日研究工作台、桌面/手机导航、同日个股依据、自选跟踪的完整闭环。Frontend Developer 负责真实页面实现，UX Architect 负责信息层级和响应式，Reality Checker 负责日期、门禁与失败路径；以构建、契约、全量回归、独立无头交互及线上版本/截图为验收。局部文案或提示调整不能代替本轮交付。
+2026-10-23 用户纠偏后的完整交付：执行 `docs/architecture.md` §7.1 所承接的 10 月 19 日 T+1 实盘决策工作台原 PRD（M0–M3）。首页中心对象为我的持仓风险提醒；全局我操作了、自动风险规则、持仓自选合一、候选交易日冻结及个人命中优先、四项导航、提醒频率及成交处置共同交付。前轮 `docs/research-workspace-delivery.md` 只代表研究页局部实现，不能充当原大改完成证明。逐项缺口与实际验证写入 `docs/t1-workstation-delivery.md`，真实持仓与长期观测未验证时不得宣称整体完成。
 
 将 AQSP 演进为面向短线决策研究的实时多源数据与多代理研判系统。实时数据优先于历史数据，历史数据只用于回测、walk-forward 验证和阈值冻结证据；盘中链路优先保证新鲜度、可成交性和信息时效。策略默认围绕短线/超短线机会检测，允许受控自动优化，但优化结果只能进入阈值与权重层，不能直接覆盖确定性评分与人工决策边界。
 
@@ -50,6 +50,7 @@ Support: UX Architect, Reality Checker, Real-Time Data Reliability Engineer.
 
 ## Squad History
 
+- 2026-10-23: 用户指出大改方向未处理。恢复原 T+1 产品 PRD，以持仓为中心做 M0–M3；禁止将自定局部交付范围、测试数量或健康检查作为原产品目标完成的替代。
 - 2026-10-23: Backend reliability / T+1 reminder guards. Validate holding dates before persistence, derive every holding before per-code overrides, and stop invalid stored dates before alert creation. Verify offline API regressions and full pytest; production changes still need separate authorization.
 - 2026-05-29: Rerouted from prototype stock picker to local-first paper-trading system after user clarified the real objective and requested multi-agent execution.
 - 2026-06-04: Added unified notification-template substrate for daily run, briefing, monitor, morning breakout, closing premium, and closing review so future agent work lands on one reusable output layer.

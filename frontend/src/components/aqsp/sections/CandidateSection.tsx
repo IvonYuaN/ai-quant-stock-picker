@@ -440,6 +440,7 @@ function CandidateControls({
     onlyReady?: boolean;
     strategy?: string | null;
     hideOwned?: boolean;
+    onlyOwned?: boolean;
   }) => void;
 }) {
   if (rows.length === 0) return null;
@@ -452,6 +453,7 @@ function CandidateControls({
           value={sort}
           onChange={(event) => onChange({ sort: event.target.value as CandidateSortKey })}
         >
+          <option value="personal">我的持仓 / 自选优先</option>
           <option value="score">评分高→低</option>
           <option value="ready">可复核优先</option>
           <option value="evidence">证据多→少</option>
@@ -472,7 +474,7 @@ function CandidateControls({
       <button
         type="button"
         className={cn("aq-btn", hideOwned && "aq-btn-primary")}
-        onClick={() => onChange({ hideOwned: !hideOwned })}
+        onClick={() => onChange({ hideOwned: !hideOwned, onlyOwned: false })}
         title="隐藏已经持有或已加入自选的候选，专注找新面孔"
       >
         {hideOwned ? "隐藏已持有 ✓" : "隐藏已持有"}
@@ -490,10 +492,11 @@ export function CandidateSection({
   section: SectionView;
   onPick?: (symbol: string) => void;
 }) {
-  const [sort, setSort] = useState<CandidateSortKey>("score");
+  const [sort, setSort] = useState<CandidateSortKey>("personal");
   const [onlyReady, setOnlyReady] = useState(false);
   const [strategy, setStrategy] = useState<string | null>(null);
   const [hideOwned, setHideOwned] = useState(false);
+  const [onlyOwned, setOnlyOwned] = useState(false);
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
   const ownership = useOwnership();
   // 历史复盘：看候选时同步看到「自己上次对这只票的判断」——决策时刻最有价值的镜子。
@@ -551,6 +554,8 @@ export function CandidateSection({
     sort,
     onlyReady,
     strategy,
+    ownership,
+    onlyOwned,
     exclude: hideOwned ? (row) => ownedKind(row.symbol, ownership) !== null : undefined,
   });
   const visible = selection.rows;
@@ -559,6 +564,10 @@ export function CandidateSection({
     view.candidates.map((row) => row.symbol),
     ownership,
   );
+  const invalidated = new Set(
+    (view.candidateChanges ?? []).filter((change) => change.status === "invalidated").map((change) => change.symbol),
+  );
+  const added = (view.candidateChanges ?? []).filter((change) => change.status === "added");
 
   // 并排对比的所选标的放在 URL 上（与所选交易日同一套原则），但用 replace ——
   // 这是视图微调，不该在浏览器历史里堆一串记录。
@@ -582,6 +591,13 @@ export function CandidateSection({
       >
         <Badge tone={view.chain.tone}>{view.chain.label}</Badge>
       </SectionHeader>
+
+      <div className="aq-tag-row">
+        {view.frozenAt ? <Tag title={view.frozenAt}>当日候选已冻结 · {new Date(view.frozenAt).toLocaleTimeString("zh-CN", { timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit", hour12: false })}</Tag> : <Tag>冻结信息尚未生成</Tag>}
+        <Tag tone={owned.holding + owned.watchlist > 0 ? "primary" : "neutral"}>命中我的持仓 {owned.holding} · 自选 {owned.watchlist}</Tag>
+        <button type="button" className={cn("aq-btn", onlyOwned && "aq-btn-primary")} aria-pressed={onlyOwned} onClick={() => { setOnlyOwned(!onlyOwned); setHideOwned(false); }}>只看我的命中</button>
+      </div>
+      {added.length > 0 ? <p className="aq-hint">盘中新增：{added.map((change) => `${change.display_name} ${change.symbol}`).join("、")}。保留初始名单，次一交易日重新冻结。</p> : null}
 
       {view.candidates.length === 0 ? (
         <EmptyState
@@ -610,6 +626,7 @@ export function CandidateSection({
               if (next.onlyReady !== undefined) setOnlyReady(next.onlyReady);
               if (next.strategy !== undefined) setStrategy(next.strategy);
               if (next.hideOwned !== undefined) setHideOwned(next.hideOwned);
+              if (next.onlyOwned !== undefined) setOnlyOwned(next.onlyOwned);
             }}
           />
           </details>
@@ -627,7 +644,7 @@ export function CandidateSection({
                   {visible.map((row, index) => (
                     <button key={row.symbol} type="button" className={cn("aq-candidate-choice", selected?.symbol === row.symbol && "aq-candidate-choice-active")} aria-pressed={selected?.symbol === row.symbol} onClick={() => setSelectedSymbol(row.symbol)}>
                       <span className="aq-candidate-rank">{String(index + 1).padStart(2, "0")}</span>
-                      <span className="aq-candidate-choice-body"><span className="aq-candidate-choice-title"><b>{row.name}</b><span className="aq-code">{row.symbol}</span></span><span>{statusLabel(row.status)} · {row.messageCount} 条消息 · {row.debateRounds !== null ? `${row.debateRounds} 轮复核` : "待复核"}</span><OwnerTag ownership={ownership} code={row.symbol} /></span>
+                      <span className="aq-candidate-choice-body"><span className="aq-candidate-choice-title"><b>{row.name}</b><span className="aq-code">{row.symbol}</span>{invalidated.has(row.symbol) ? <Tag tone="warn">已失效</Tag> : null}</span><span>{statusLabel(row.status)} · {row.messageCount} 条消息 · {row.debateRounds !== null ? `${row.debateRounds} 轮复核` : "待复核"}</span><OwnerTag ownership={ownership} code={row.symbol} /></span>
                       <strong className="aq-candidate-choice-score">{row.scoreText}</strong>
                     </button>
                   ))}

@@ -201,6 +201,12 @@ export const dailyViewContract = {
   repeatedSymbolPrefixIsRemoved: view.candidates[0].name === "宁德时代",
   singleSymbolPrefixIsRemoved: view.candidates[1].name === "招商银行",
   readyCandidateIsMarkedReady: view.candidates[0].ready === true,
+  frozenTimestampPassesIntoCandidateView:
+    buildDailyView({ ...dailyViewFixture, frozen_at: "2026-09-11T09:15:00+08:00" }).frozenAt === "2026-09-11T09:15:00+08:00",
+  invalidatedCandidateIsNeverReadyDespitePreviousEvidence:
+    buildDailyView({ ...dailyViewFixture, candidate_changes: [{ symbol: "300750", display_name: "宁德时代", status: "invalidated" }] }).candidates[0].ready === false,
+  intradayDifferencePassesIntoCandidateView:
+    buildDailyView({ ...dailyViewFixture, candidate_changes: [{ symbol: "600001", display_name: "测试", status: "added" }] }).candidateChanges?.[0].status === "added",
   candidateWithoutEvidenceIsNotReady: view.candidates[1].ready === false,
   chainIsWarnWhenPartiallyReady: view.chain.tone === "warn",
   chainDetailReportsRatio: view.chainDetail.includes("1/2"),

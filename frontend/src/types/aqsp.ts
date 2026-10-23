@@ -206,8 +206,17 @@ export interface AqspSnapshot {
   variant_suite?: AqspVariantSuite;
   variants?: readonly AqspVariant[];
   research_chain?: AqspResearchChain;
+  /** First nonempty roster of the selected trading session. */
+  frozen_at?: string;
+  candidate_changes?: readonly AqspCandidateChange[];
   /** Present after the HTTP envelope is normalized; absent in the raw data payload. */
   meta?: AqspSnapshotMeta;
+}
+
+export interface AqspCandidateChange {
+  symbol: string;
+  display_name: string;
+  status: "added" | "invalidated";
 }
 
 export interface AqspSnapshotMeta {

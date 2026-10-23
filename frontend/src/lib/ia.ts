@@ -1,19 +1,8 @@
-// 信息架构（IA）：把前端拆成「系统线」和「我的线」两条主线。
-//
-// 分线的依据不是功能模块，而是**数据的归属与读写性质**：
-//   - 系统线 = 服务端产出的公共只读数据。任何人打开看到的都一样，不需要隔离，也不该被个人改动。
-//   - 我的线 = 只属于当前浏览器的私有数据。它不上传服务端，因此天然不会与他人冲突。
-//
-// 这次改造把原来的「每日复盘」与「今日推荐」合并为单页「今日研究」：
-// 两者本来就是同一个交易日的同一份数据（推荐 = 门禁 + 候选，复盘 = 结论 + 证据 + 分歧），
-// 拆成两页只会让"今天到底能不能买"这个判断被割到两个入口里，还容易口径不一致。
-// 现在按**阅读顺序**在页内分段：结论 → 推荐 → 候选 → 证据 → 讨论。
+// T+1 工作台只有四个主入口。导航收敛不删除原数据与端点。
+// 持仓按服务端访客隔离，自选/笔记保留原浏览器存储。
 import {
   Compass,
-  FileText,
   Globe2,
-  NotebookPen,
-  Star,
   Wallet,
   Zap,
   type LucideIcon,
@@ -42,30 +31,28 @@ export interface NavLine {
 // 进阶工具收进「进阶分析」一组，本机私有数据单独成「我的」。
 export const PRIMARY_LINE: NavLine = {
   id: "primary",
-  title: "研究",
-  subtitle: "候选 · 证据 · 风险",
+  title: "T+1 决策",
+  subtitle: "持仓 · 风险 · 跟进",
   scope: "public",
   items: [
-    { to: "/today", label: "今日研究", desc: "候选比较 · 依据与风险", icon: Compass },
-    { to: "/stream", label: "消息动态", desc: "财联社快讯 · 概念异动", icon: Zap },
-    { to: "/market", label: "行情环境", desc: "大盘 · 情绪 · 涨跌家数", icon: Globe2 },
+    { to: "/today", label: "今日", desc: "持仓提醒 · 今日候选", icon: Compass },
+    { to: "/my/holdings", label: "我的持仓", desc: "持仓与自选 · 操作跟进", icon: Wallet },
+    { to: "/market", label: "大盘行情", desc: "大盘 · 情绪 · 涨跌家数", icon: Globe2 },
+    { to: "/stream", label: "小道消息", desc: "消息线索 · 事实核验", icon: Zap },
   ],
 };
 
 export const MY_LINE: NavLine = {
   id: "my",
   title: "我的",
-  subtitle: "只存本机 · 不上传服务端",
+  subtitle: "当前身份隔离保存",
   scope: "private",
   items: [
-    { to: "/my/watchlist", label: "自选", desc: "关注的票与行情", icon: Star },
-    { to: "/my/holdings", label: "持仓", desc: "台账与盈亏", icon: Wallet },
-    { to: "/my/notes", label: "笔记", desc: "投研沉淀", icon: NotebookPen },
-    { to: "/my/reports", label: "资料", desc: "私有资料", icon: FileText },
+    { to: "/my/holdings", label: "我的持仓", desc: "持仓与自选 · 操作跟进", icon: Wallet },
   ],
 };
 
-export const NAV_LINES: readonly NavLine[] = [PRIMARY_LINE, MY_LINE];
+export const NAV_LINES: readonly NavLine[] = [PRIMARY_LINE];
 
 export const DEFAULT_ROUTE = "/today";
 
@@ -102,4 +89,6 @@ export const LEGACY_ROUTES: Readonly<Record<string, string>> = {
   "/reviews": "/today",
   // 「我的测试」已升级为「我的持仓」；对照所需的额外列已并入「我的自选」。
   "/my/lab": "/my/holdings",
+  "/my/watchlist": "/my/holdings#watchlist",
+  "/concepts": "/stream",
 };

@@ -2,10 +2,19 @@ from __future__ import annotations
 
 import argparse
 import types
+import pytest
 
 from aqsp.monitor.checker import MonitorResult
 
 import aqsp.cli as cli
+
+
+@pytest.fixture(autouse=True)
+def isolate_user_position_monitor(monkeypatch) -> None:
+    """CLI alert-policy tests do not inspect real user position stores."""
+    import aqsp.monitor.live_positions as live_positions
+
+    monkeypatch.setattr(live_positions, "check_live_positions", lambda **kwargs: [])
 
 
 def test_run_monitor_notifies_critical_only_when_enabled(monkeypatch, capsys) -> None:

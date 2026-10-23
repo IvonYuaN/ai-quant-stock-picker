@@ -11,7 +11,8 @@ from pathlib import Path
 from typing import Any
 
 from aqsp.core.time import latest_completed_trading_day, now_shanghai, to_shanghai
-from aqsp.utils.jsonl_io import atomic_write_text
+from aqsp.portfolio.snapshot import snapshot_trading_date
+from aqsp.utils.jsonl_io import advisory_lock, atomic_write_text
 
 
 HOME_SNAPSHOT_SCHEMA_VERSION = "v1"
@@ -333,6 +334,15 @@ class HomeSnapshotUniverse:
     last_error: str = ""
 
 
+@dataclass(frozen=True)
+class HomeSnapshotCandidateChange:
+    """A current intraday difference, separate from the frozen roster."""
+
+    symbol: str
+    display_name: str
+    status: str
+
+
 @dataclass(frozen=True, init=False)
 class HomeDashboardSnapshot:
     """Small home-page payload that is safe to load without historical fan-out."""
@@ -357,6 +367,8 @@ class HomeDashboardSnapshot:
     variant_suite: HomeSnapshotVariantSuite = HomeSnapshotVariantSuite()
     variants: tuple[HomeSnapshotVariant, ...] = ()
     research_chain: HomeSnapshotResearchChain = HomeSnapshotResearchChain()
+    frozen_at: str = ""
+    candidate_changes: tuple[HomeSnapshotCandidateChange, ...] = ()
 
     def __init__(
         self,
@@ -381,6 +393,8 @@ class HomeDashboardSnapshot:
         variant_suite: HomeSnapshotVariantSuite | None = None,
         variants: tuple[HomeSnapshotVariant, ...] = (),
         research_chain: HomeSnapshotResearchChain | None = None,
+        frozen_at: str = "",
+        candidate_changes: tuple[HomeSnapshotCandidateChange, ...] = (),
     ) -> None:
         normalized_debates = tuple(debates or ())
         if debate is not None:
@@ -420,6 +434,8 @@ class HomeDashboardSnapshot:
         object.__setattr__(
             self, "research_chain", research_chain or HomeSnapshotResearchChain()
         )
+        object.__setattr__(self, "frozen_at", frozen_at)
+        object.__setattr__(self, "candidate_changes", tuple(candidate_changes))
         self.__post_init__()
 
     @property
@@ -530,40 +546,139 @@ def write_home_dashboard_snapshot(
     payload never turns the dashboard home route into an unbounded data reader.
     """
     snapshot = _normalize_snapshot_for_write(snapshot)
-    existing = load_home_dashboard_snapshot(path)
-    if (
-        existing is not None
-        and existing.selected_date > snapshot.selected_date
-        and not _may_replace_uncompleted_snapshot_date(
-            existing.selected_date, snapshot.selected_date
-        )
-    ):
-        raise ValueError("refusing to replace a newer home snapshot with an older date")
-    payload = f"{snapshot.to_json()}\n"
-    if len(payload.encode("utf-8")) > MAX_HOME_SNAPSHOT_BYTES:
-        raise ValueError("home snapshot exceeds the 1 MiB byte budget")
-    atomic_write_text(path, payload)
-    _set_runtime_snapshot_mode(path)
+    with advisory_lock(Path(path)):
+        existing = load_home_dashboard_snapshot(path)
+        if (
+            existing is not None
+            and existing.selected_date > snapshot.selected_date
+            and not _may_replace_uncompleted_snapshot_date(
+                existing.selected_date, snapshot.selected_date
+            )
+        ):
+            raise ValueError(
+                "refusing to replace a newer home snapshot with an older date"
+            )
+        snapshot = _freeze_home_candidates(snapshot, existing)
+        payload = f"{snapshot.to_json()}\n"
+        if len(payload.encode("utf-8")) > MAX_HOME_SNAPSHOT_BYTES:
+            raise ValueError("home snapshot exceeds the 1 MiB byte budget")
+        atomic_write_text(path, payload)
+        _set_runtime_snapshot_mode(path)
 
 
 def write_home_snapshot_index(path: str | Path, index: HomeSnapshotIndex) -> None:
     """Atomically persist a validated, bounded date index."""
     index = _normalize_index_for_write(index)
-    existing = load_home_snapshot_index(path)
-    if (
-        existing is not None
-        and existing.selected_date
-        and index.selected_date
-        and existing.selected_date > index.selected_date
-        and not _may_replace_uncompleted_snapshot_date(
-            existing.selected_date, index.selected_date
+    with advisory_lock(Path(path)):
+        existing = load_home_snapshot_index(path)
+        if (
+            existing is not None
+            and existing.selected_date
+            and index.selected_date
+            and existing.selected_date > index.selected_date
+            and not _may_replace_uncompleted_snapshot_date(
+                existing.selected_date, index.selected_date
+            )
+        ):
+            raise ValueError("refusing to replace a newer home snapshot index")
+        index = replace(
+            index,
+            days=tuple(
+                HomeSnapshotDay(
+                    date=day.date,
+                    snapshot=_freeze_home_candidates(
+                        day.snapshot,
+                        existing.snapshot_for_date(day.date) if existing else None,
+                    ),
+                )
+                for day in index.days
+            ),
         )
-    ):
-        raise ValueError("refusing to replace a newer home snapshot index")
-    index = _fit_index_to_byte_budget(index)
-    payload = f"{index.to_json()}\n"
-    atomic_write_text(path, payload)
-    _set_runtime_snapshot_mode(path)
+        index = _fit_index_to_byte_budget(index)
+        payload = f"{index.to_json()}\n"
+        atomic_write_text(path, payload)
+        _set_runtime_snapshot_mode(path)
+
+
+def _freeze_home_candidates(
+    current: HomeDashboardSnapshot,
+    existing: HomeDashboardSnapshot | None,
+) -> HomeDashboardSnapshot:
+    """Keep a trading session's roster while refreshing evidence and safety gates."""
+    # The producer passes the persisted single-file result into the date index.
+    # Reapplying a difference against that already-frozen roster would erase its
+    # added/invalidated markers, so a validated frozen payload is idempotent.
+    if current.frozen_at:
+        return current
+    same_session = (
+        existing is not None
+        and snapshot_trading_date(existing.selected_date)
+        == snapshot_trading_date(current.selected_date)
+        and bool(existing.candidates)
+    )
+    if not same_session or existing is None:
+        return replace(
+            current,
+            frozen_at=current.generated_at if current.candidates else "",
+            candidate_changes=(),
+        )
+    current_by_symbol = {
+        candidate.symbol: candidate for candidate in current.candidates
+    }
+    original_symbols = {candidate.symbol for candidate in existing.candidates}
+    candidates = tuple(
+        current_by_symbol.get(candidate.symbol)
+        or replace(
+            candidate,
+            research_status="日内已失效",
+            next_step="已不符合本轮候选条件，保留当日记录供复核",
+        )
+        for candidate in existing.candidates
+    )
+    changes = tuple(
+        HomeSnapshotCandidateChange(
+            candidate.symbol, candidate.display_name, "invalidated"
+        )
+        for candidate in candidates
+        if candidate.symbol not in current_by_symbol
+    ) + tuple(
+        HomeSnapshotCandidateChange(candidate.symbol, candidate.display_name, "added")
+        for candidate in current.candidates
+        if candidate.symbol not in original_symbols
+    )
+    # A new candidate cannot carry a debate into the frozen roster, and a removed
+    # candidate must not retain an old ready conclusion after its evidence vanished.
+    debates = tuple(
+        debate for debate in current.debates if debate.symbol in original_symbols
+    )
+    chain = current.research_chain
+    return replace(
+        current,
+        candidates=candidates,
+        debates=debates,
+        research_chain=replace(
+            chain,
+            candidate_symbols=tuple(candidate.symbol for candidate in candidates),
+            debated_symbols=tuple(debate.symbol for debate in debates),
+            pending_review_symbols=tuple(
+                symbol
+                for symbol in chain.pending_review_symbols
+                if symbol in original_symbols
+            ),
+            variant_candidate_symbols=tuple(
+                symbol
+                for symbol in chain.variant_candidate_symbols
+                if symbol in original_symbols
+            ),
+            variant_review_symbols=tuple(
+                symbol
+                for symbol in chain.variant_review_symbols
+                if symbol in original_symbols
+            ),
+        ),
+        frozen_at=existing.frozen_at or existing.generated_at,
+        candidate_changes=changes,
+    )
 
 
 def _set_runtime_snapshot_mode(path: str | Path) -> None:
@@ -921,6 +1036,8 @@ def _snapshot_from_dict(payload: object) -> HomeDashboardSnapshot:
             "variant_suite",
             "variants",
             "research_chain",
+            "frozen_at",
+            "candidate_changes",
         },
     )
     if "debates" in mapping:
@@ -977,6 +1094,21 @@ def _snapshot_from_dict(payload: object) -> HomeDashboardSnapshot:
             for item in _list(mapping.get("variants", ()), "variants")
         ),
         research_chain=_research_chain_from_dict(mapping.get("research_chain", {})),
+        frozen_at=_optional_text(mapping.get("frozen_at"), "frozen_at"),
+        candidate_changes=tuple(
+            _candidate_change_from_dict(item)
+            for item in _list(mapping.get("candidate_changes", ()), "candidate_changes")
+        ),
+    )
+
+
+def _candidate_change_from_dict(payload: object) -> HomeSnapshotCandidateChange:
+    item = _mapping(payload, "candidate_change")
+    _require_keys(item, {"symbol", "display_name", "status"}, "candidate_change")
+    return HomeSnapshotCandidateChange(
+        symbol=_text(item["symbol"], "candidate_change.symbol"),
+        display_name=_text(item["display_name"], "candidate_change.display_name"),
+        status=_text(item["status"], "candidate_change.status"),
     )
 
 
@@ -1607,6 +1739,22 @@ def _validate_snapshot(snapshot: HomeDashboardSnapshot) -> None:
     if not snapshot.generated_at.strip() or not snapshot.selected_date.strip():
         raise ValueError("home snapshot requires generated_at and selected_date")
     generated_at = _parse_timestamp(snapshot.generated_at, "generated_at")
+    if snapshot.frozen_at:
+        _parse_timestamp(snapshot.frozen_at, "frozen_at")
+    _validate_limit(
+        snapshot.candidate_changes,
+        MAX_HOME_SNAPSHOT_CANDIDATES * 2,
+        "candidate_changes",
+    )
+    if any(
+        not isinstance(change, HomeSnapshotCandidateChange)
+        or change.status not in {"added", "invalidated"}
+        or not change.symbol.strip()
+        for change in snapshot.candidate_changes
+    ):
+        raise ValueError(
+            "candidate_changes must contain added/invalidated symbol records"
+        )
     if snapshot.stale_after:
         stale_after = _parse_timestamp(snapshot.stale_after, "stale_after")
         if stale_after < generated_at:
