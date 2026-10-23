@@ -8,7 +8,7 @@ import os
 import inspect
 import subprocess
 import sys
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
@@ -1756,7 +1756,7 @@ def _runtime_weight_snapshot(
     strategy_weight_reasons: dict[str, str],
 ) -> dict[str, Any]:
     composite = thresholds.composite
-    return {
+    snapshot = {
         "source": "runtime_strategy_mix",
         "regime": regime,
         "strategy_weights": {
@@ -1771,6 +1771,20 @@ def _runtime_weight_snapshot(
         "regime_blend_weight": float(composite.regime_blend_weight),
         "thresholds_version": str(thresholds.version),
     }
+    from aqsp.portfolio.parameter_snapshot import build_parameter_snapshot
+
+    identity = build_parameter_snapshot(
+        thresholds,
+        {
+            **snapshot,
+            "strategy_weights": {
+                str(key): float(value) for key, value in strategy_weights.items()
+            },
+        },
+    )
+    if identity is not None:
+        snapshot["parameter_snapshot"] = asdict(identity)
+    return snapshot
 
 
 def _attach_runtime_weight_snapshot(
@@ -4766,6 +4780,13 @@ def run_screen(args: argparse.Namespace) -> int:
         screen_frames,
         realtime_source_name=actual_source,
     )[: args.limit]
+    picks = _attach_runtime_weight_snapshot(
+        picks,
+        thresholds=thresholds,
+        regime=regime,
+        strategy_weights=config.strategy_weights,
+        strategy_weight_reasons={},
+    )
     table = to_dataframe(picks)
     if table.empty:
         print("No candidates.")

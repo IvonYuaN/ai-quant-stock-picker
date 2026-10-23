@@ -179,6 +179,7 @@ export interface DailyView {
   dateLabel: { day: string; weekday: string };
   generatedAt: string;
   frozenAt?: string;
+  parameterSnapshot: ToneView;
   candidateChanges?: readonly AqspCandidateChange[];
   isHistorical: boolean;
 
@@ -425,6 +426,29 @@ export function normalizeSnapshot(raw: unknown): AqspSnapshot {
   };
 }
 
+export function parameterSnapshotView(snapshot: AqspSnapshot): ToneView {
+  const identity = snapshot.parameter_snapshot;
+  if (
+    !identity ||
+    typeof identity.version !== "string" ||
+    !identity.version.trim() ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(identity.effective_from) ||
+    identity.effective_from > snapshot.selected_date ||
+    !/^[0-9a-f]{64}$/.test(identity.fingerprint)
+  ) {
+    return {
+      tone: "neutral",
+      label: "参数快照待生成 · 未验证",
+      detail: "当前产物未记录完整参数身份，候选冻结时间不能代替参数快照。",
+    };
+  }
+  return {
+    tone: "neutral",
+    label: `参数快照已冻结生效 · ${identity.version} · 生效于 ${identity.effective_from} · 指纹 ${identity.fingerprint.slice(0, 12)}`,
+    detail: `参数指纹 SHA256 ${identity.fingerprint}；来自候选生成时的配置和运行权重。`,
+  };
+}
+
 export function buildDailyView(snapshot: AqspSnapshot): DailyView {
   const candidates = buildCandidateRows(snapshot);
   const messages = buildMessageRows(snapshot.messages);
@@ -519,6 +543,7 @@ export function buildDailyView(snapshot: AqspSnapshot): DailyView {
     dateLabel: formatDateParts(snapshot.selected_date),
     generatedAt: snapshot.generated_at,
     frozenAt: snapshot.frozen_at ?? "",
+    parameterSnapshot: parameterSnapshotView(snapshot),
     candidateChanges: snapshot.candidate_changes ?? [],
     isHistorical: snapshot.meta?.historical ?? false,
     conclusion: snapshotConclusion(snapshot),

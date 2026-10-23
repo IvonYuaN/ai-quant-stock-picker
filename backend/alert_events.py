@@ -14,7 +14,7 @@ alert_event schema（PRD 7.2 新增 2）：
     basis_json{rule, actual, evidence},
     status(OPEN|HANDLED|IGNORED|EXPIRED),
     handled_at, handled_note,
-    ignore_streak(int, 灵敏度自适应预留), created_at, updated_at
+    ignore_streak(int), freq_mode, frequency_note, created_at, updated_at
 
 去重键：持仓唯一 ID + 规则 ID + 显式设置/成本版本；兼容旧事件的代码/级别/位价键。
 同一持续条件只更新证据，按 once/daily/always 控制外发，不复活已处置条件。
@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+from collections.abc import Callable, Sequence
 from uuid import uuid4
 
 from aqsp.core.time import now_shanghai
@@ -176,6 +177,7 @@ def upsert_from_reminders(
                 "trigger_at": rem.get("current_price"),
                 "threshold_at": rem.get("threshold_price"),
                 "pnl_pct": rem.get("pnl_pct"),
+                "position_context": rem.get("position_context"),
                 "sellable_now": rem.get("sellable_now"),
                 "action_hint": rem.get("action_hint"),
                 "t1_note": rem.get("t1_note", ""),
@@ -201,6 +203,8 @@ def upsert_from_reminders(
                 # 同键 OPEN：只刷现价与证据，不新增
                 existing["trigger_at"] = base["trigger_at"]
                 existing["threshold_at"] = base["threshold_at"]
+                existing["pnl_pct"] = base["pnl_pct"]
+                existing["position_context"] = base["position_context"]
                 existing["sellable_now"] = base["sellable_now"]
                 existing["action_hint"] = base["action_hint"]
                 existing["t1_note"] = base["t1_note"]
@@ -247,12 +251,44 @@ def list_events(status: str | None = None, symbol: str | None = None) -> list[di
     return sorted(events, key=lambda e: str(e.get("created_at", "")), reverse=True)
 
 
-def transition(event_id: str, action: str, note: str = "") -> dict | None:
+def record_review_plan(event_id: str, choice: str) -> dict | None:
+    """Record a human review choice for this open position, without dismissing risk.
+
+    Returns None when the event is missing or terminal. Same-position rules share
+    one atomic choice; a reopened position must not inherit a previous choice.
+    """
+    if choice not in {"hold", "reduce", "t_watch"}:
+        raise ValueError("方案必须是 hold、reduce 或 t_watch")
+    with _LOCK, advisory_lock(_file()):
+        events = _load()
+        target = next((e for e in events if e.get("id") == event_id), None)
+        if target is None or target.get("status") != "OPEN":
+            return None
+        plan = {"choice": choice, "updated_at": _now_iso()}
+        for event in events:
+            if (event.get("status") == "OPEN"
+                and event.get("symbol") == target.get("symbol")
+                and event.get("position_id") == target.get("position_id")
+                and event.get("sellable_now") == target.get("sellable_now")):
+                event["review_plan"] = plan.copy()
+        _save(events)
+        return plan
+
+
+def transition(
+    event_id: str,
+    action: str,
+    note: str = "",
+    *,
+    before_commit: Callable[[dict, bool], dict | None] | None = None,
+) -> dict | None:
     """OPEN → HANDLED / IGNORED（终态）。
 
     - ``action``: ``handled`` | ``ignored``
     - ``ignored`` 时 ``ignore_streak`` +1（P1-2 灵敏度自适应的数据源）
     - 非 OPEN 状态的操作返回 None（前端据此 409）
+    - before_commit(event, recovery) 先持久化规则处置；失败保持 OPEN。
+      EXPIRED 只能凭已存在的同动作凭据恢复，不能新计数。
     """
     with _LOCK, advisory_lock(_file()):
         events = _load()
@@ -263,7 +299,10 @@ def transition(event_id: str, action: str, note: str = "") -> dict | None:
         if action not in {"handled", "ignored"}:
             raise ValueError("action 必须是 handled 或 ignored")
         dest = "HANDLED" if action == "handled" else "IGNORED"
-        if current not in _VALID_TRANSITIONS or dest not in _VALID_TRANSITIONS[current]:
+        recovery = current == "EXPIRED" and before_commit is not None
+        if not recovery and (
+            current not in _VALID_TRANSITIONS or dest not in _VALID_TRANSITIONS[current]
+        ):
             return None
         target["status"] = dest
         target["handled_at"] = _now_iso()
@@ -272,6 +311,12 @@ def transition(event_id: str, action: str, note: str = "") -> dict | None:
             target["ignore_streak"] = int(target.get("ignore_streak") or 0) + 1
         else:
             target["ignore_streak"] = 0
+        rule = before_commit(target.copy(), recovery) if before_commit else None
+        if recovery and rule is None:
+            return None
+        if rule is not None:
+            for key in ("ignore_streak", "freq_mode", "frequency_note"):
+                target[key] = rule[key]
         target["updated_at"] = _now_iso()
         _save(events)
         return target
@@ -327,6 +372,7 @@ def pending_notifications(eligible_rules: set[str] | None = None) -> list[dict]:
                         "basis_json",
                         "action_hint",
                         "t1_note",
+                        "position_context",
                     )
                 }
         _save(events)
@@ -341,6 +387,33 @@ def mark_notified(event_id: str) -> None:
             if event["id"] == event_id:
                 event["last_notified_at"] = _now_iso()
         _save(events)
+
+
+def mark_notified_many(event_ids: Sequence[str], *, notified_at: str) -> None:
+    """Atomically consume a delivered batch at its actual receipt timestamp.
+
+    A recovered old receipt cannot move today's daily allowance backwards or
+    consume a newer day. The caller must supply a confirmed delivery timestamp.
+    """
+    from datetime import datetime
+
+    parsed = datetime.fromisoformat(notified_at)
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("送达凭据时间必须包含时区")
+    wanted = set(event_ids)
+    with _LOCK, advisory_lock(_file()):
+        events = _load()
+        changed = False
+        for event in events:
+            if event.get("id") not in wanted:
+                continue
+            prior = event.get("last_notified_at")
+            if prior and datetime.fromisoformat(str(prior)) >= parsed:
+                continue
+            event["last_notified_at"] = notified_at
+            changed = True
+        if changed:
+            _save(events)
 
 
 def last_check() -> dict | None:

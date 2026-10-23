@@ -1,4 +1,5 @@
-import { addCodes, loadWatch, parseCodes, saveWatch, WATCHLIST_CHANGED_EVENT, WATCHLIST_STORAGE_KEY } from "./watchlist";
+import { addCodes, loadWatch, loadWatchRemovals, parseCodes, saveWatch, WATCHLIST_CHANGED_EVENT, WATCHLIST_REMOVAL_LIMIT, WATCHLIST_STORAGE_KEY } from "./watchlist";
+import { exportVault, importVault } from "./vault";
 
 const storageDescriptor = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
 const windowDescriptor = Object.getOwnPropertyDescriptor(globalThis, "window");
@@ -58,6 +59,51 @@ try {
   saveWatch([]);
   watchlistStorageContract.removingFinalCodePersistsEmptyArray = loadWatch().length === 0;
   watchlistStorageContract.removingFinalCodeNotifies = events === 2;
+  watchlistStorageContract.removalRecordsOnlyActuallyRemovedCodes = loadWatchRemovals()[0].codes.join(",") === "600519,000858";
+  watchlistStorageContract.removalTimestampHasTimezone = /Z$/.test(loadWatchRemovals()[0].removed_at);
+  const savedRemoval = values.get(WATCHLIST_STORAGE_KEY);
+  watchlistStorageContract.reloadPreservesRemovalRecord = JSON.parse(savedRemoval || "{}").removals.length === 1 && loadWatchRemovals().length === 1;
+  saveWatch([]);
+  saveWatch(["300750"]);
+  saveWatch(["300750"]);
+  watchlistStorageContract.additionsAndDuplicateSavesDoNotRecordRemoval = loadWatchRemovals().length === 1;
+  saveWatch(["000858", "300750"]);
+  saveWatch(["300750", "000858"]);
+  watchlistStorageContract.reorderingDoesNotRecordRemoval = loadWatchRemovals().length === 1;
+  saveWatch(["000858"]);
+  watchlistStorageContract.newRemovalIsNewestAndPreservesEarlierHistory = loadWatchRemovals().length === 2 && loadWatchRemovals()[0].codes.join(",") === "300750";
+
+  const backup = JSON.stringify(exportVault());
+  values.clear();
+  const imported = importVault(backup);
+  watchlistStorageContract.existingBackupRoundTripIncludesListAndRemovalHistory = imported.ok && loadWatch().join(",") === "000858" && loadWatchRemovals().length === 2;
+
+  const beforeFailedSave = values.get(WATCHLIST_STORAGE_KEY);
+  const beforeFailedEvents = events;
+  failWrite = true;
+  rejected = false;
+  try { saveWatch([]); } catch { rejected = true; }
+  failWrite = false;
+  watchlistStorageContract.failedRemovalIsAtomicAndDoesNotNotify = rejected && values.get(WATCHLIST_STORAGE_KEY) === beforeFailedSave && events === beforeFailedEvents && loadWatchRemovals().length === 2;
+  failRead = true;
+  rejected = false;
+  try { saveWatch([]); } catch { rejected = true; }
+  failRead = false;
+  watchlistStorageContract.failedReadDoesNotOverwriteOrInventHistory = rejected && values.get(WATCHLIST_STORAGE_KEY) === beforeFailedSave && events === beforeFailedEvents;
+
+  for (let index = 0; index <= WATCHLIST_REMOVAL_LIMIT; index++) {
+    const code = String(600000 + index);
+    saveWatch([code]);
+    saveWatch([]);
+  }
+  watchlistStorageContract.removalHistoryIsBounded = loadWatchRemovals().length === WATCHLIST_REMOVAL_LIMIT;
+  watchlistStorageContract.boundedHistoryKeepsNewestRemoval = loadWatchRemovals()[0].codes[0] === String(600000 + WATCHLIST_REMOVAL_LIMIT);
+
+  values.set(WATCHLIST_STORAGE_KEY, JSON.stringify({ format: "aqsp-watchlist", version: 1, codes: ["000001", "bad"], removals: [{ codes: ["bad"], removed_at: "2026-10-23T01:00:00Z" }, { codes: ["600000"], removed_at: "invalid" }, { codes: ["600001"], removed_at: "2026-10-23T10:00:00" }, null, { codes: ["600002", "600002", "bad"], removed_at: "2026-10-23T01:00:00Z" }] }));
+  watchlistStorageContract.envelopePreservesLegacyCodeValidation = loadWatch().join(",") === "000001";
+  watchlistStorageContract.malformedRemovalRecordsAreIgnored = loadWatchRemovals().length === 1 && loadWatchRemovals()[0].codes.join(",") === "600002";
+  values.set(WATCHLIST_STORAGE_KEY, JSON.stringify({ format: "aqsp-watchlist", version: 2, codes: ["000001"], removals: [] }));
+  watchlistStorageContract.unknownEnvelopeVersionIsNotMisread = loadWatch().length === 0 && loadWatchRemovals().length === 0;
 } finally {
   if (storageDescriptor) Object.defineProperty(globalThis, "localStorage", storageDescriptor);
   else Reflect.deleteProperty(globalThis, "localStorage");

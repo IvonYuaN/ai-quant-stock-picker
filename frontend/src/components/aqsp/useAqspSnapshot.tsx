@@ -4,7 +4,8 @@ import { api, ApiError, isAqspAbortError, type AqspSnapshot } from "@/lib/api";
 import { normalizeSnapshot } from "@/lib/daily-view";
 export { isAqspSnapshotStale } from "@/lib/snapshot-freshness";
 
-export const AQSP_LIVE_REFRESH_INTERVAL_MS = 60_000;
+import { AQSP_LIVE_REFRESH_INTERVAL_MS } from "@/lib/alert-refresh";
+export { AQSP_LIVE_REFRESH_INTERVAL_MS } from "@/lib/alert-refresh";
 
 /**
  * 所选交易日只放在 URL 的 `?date=` 上，不放组件状态。

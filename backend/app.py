@@ -781,13 +781,33 @@ def alerts_list(
     return {"data": {"events": events, "open_count": open_count, "last_checked_at": alert_events.last_checked_at(), "last_check": alert_events.last_check()}}
 
 
+class AlertReviewPlanIn(BaseModel):
+    choice: str
+
+
+@app.post("/api/alerts/{event_id}/plan", tags=["持仓风险"], summary="记录人工处置方案，保留风险提醒")
+def alert_review_plan(event_id: str, body: AlertReviewPlanIn) -> dict:
+    """Save a review path only; never writes a sale or changes risk thresholds."""
+    import alert_events
+
+    try:
+        plan = alert_events.record_review_plan(event_id, body.choice)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if plan is None:
+        raise HTTPException(409, "提醒不存在或已失效，请刷新后重试")
+    return {"data": plan}
+
+
 @app.patch(
     "/api/alerts/{event_id}",
     tags=["该卖提醒"],
     summary="处理一条该卖提醒（已处理 / 已忽略）",
     description="""
 OPEN → HANDLED（`action=handled`）或 OPEN → IGNORED（`action=ignored`，
-ignore_streak+1 供 P1-2 灵敏度自适应）。非 OPEN 状态返回 409。
+同一持仓/规则连续忽略两次后将持续提醒降为每日一次，并返回提示）。
+规则处置先落幂等凭据，日志失败可按原操作重试；过期事件仅凭原凭据恢复。
+其它非 OPEN 状态返回 409。
 """,
 )
 def alerts_transition(
@@ -795,13 +815,14 @@ def alerts_transition(
     action: str = Query(..., description="handled | ignored"),
     note: str = Query("", description="处理备注（可选）"),
 ) -> dict:
-    import alert_events
+    from live_risk_service import transition_alert
 
     if action not in ("handled", "ignored"):
         raise HTTPException(400, "action 必须是 handled 或 ignored")
-    updated = alert_events.transition(event_id, action, note)
-    if updated and updated.get("rule_id"):
-        pf.record_rule_disposition(updated["rule_id"], action == "ignored")
+    try:
+        updated = transition_alert(event_id, action, note)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
     if updated is None:
         raise HTTPException(409, "事件不存在或已处于终态")
     return {"data": updated}

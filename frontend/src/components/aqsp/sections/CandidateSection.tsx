@@ -593,10 +593,12 @@ export function CandidateSection({
       </SectionHeader>
 
       <div className="aq-tag-row">
+        <Tag title={view.parameterSnapshot.detail}>{view.parameterSnapshot.label}</Tag>
         {view.frozenAt ? <Tag title={view.frozenAt}>当日候选已冻结 · {new Date(view.frozenAt).toLocaleTimeString("zh-CN", { timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit", hour12: false })}</Tag> : <Tag>冻结信息尚未生成</Tag>}
         <Tag tone={owned.holding + owned.watchlist > 0 ? "primary" : "neutral"}>命中我的持仓 {owned.holding} · 自选 {owned.watchlist}</Tag>
         <button type="button" className={cn("aq-btn", onlyOwned && "aq-btn-primary")} aria-pressed={onlyOwned} onClick={() => { setOnlyOwned(!onlyOwned); setHideOwned(false); }}>只看我的命中</button>
       </div>
+      {view.frozenAt ? <p className="aq-hint">评分、策略依据与参数身份沿用当日首次冻结；现价、新鲜度与消息按最新证据更新。</p> : null}
       {added.length > 0 ? <p className="aq-hint">盘中新增：{added.map((change) => `${change.display_name} ${change.symbol}`).join("、")}。保留初始名单，次一交易日重新冻结。</p> : null}
 
       {view.candidates.length === 0 ? (

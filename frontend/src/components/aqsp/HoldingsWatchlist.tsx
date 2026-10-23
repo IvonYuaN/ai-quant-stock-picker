@@ -151,7 +151,7 @@ export function HoldingsWatchlist({ portfolio, alerts, candidates, candidateDate
                   <div className="aq-watch-identity">
                     <Link to={researchLink}><strong>{row.name}</strong></Link>
                     <span className="aq-code">{row.code}</span>
-                    <div className="aq-tag-row">{holding ? <Badge>持仓</Badge> : <Badge>自选</Badge>}{holding && row.watched ? <Badge>已关注</Badge> : null}{row.candidate ? <Badge tone="ok">今日候选</Badge> : null}</div>
+                    <div className="aq-tag-row">{holding ? <Badge>持仓</Badge> : <Badge>自选</Badge>}{holding?.risk_rules?.some((rule) => rule.enabled) ? <Badge>强化盯盘 · 已关联规则</Badge> : null}{holding && row.watched ? <Badge>已关注</Badge> : null}{row.candidate ? <Badge tone="ok">今日候选</Badge> : null}</div>
                     {holding ? <Badge tone={holdingT1Status(holding.opened_at, shanghaiDate()).tone}>{holdingT1Status(holding.opened_at, shanghaiDate()).label}</Badge> : null}
                     {availability && typeof availability.sellable_shares === "number" ? <span className="aq-note">可卖 {availability.sellable_shares} 股{availability.t1_locked_shares ? ` · 今日锁定 ${availability.t1_locked_shares} 股` : ""}</span> : null}
                   </div>

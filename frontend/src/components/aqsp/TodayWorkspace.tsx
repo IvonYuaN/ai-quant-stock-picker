@@ -30,7 +30,7 @@ import { MessageSection } from "./sections/MessageSection";
 import { DiscussionSection } from "./sections/DiscussionSection";
 import { AlertInbox } from "./AlertInbox";
 import type { AqspSnapshot } from "@/types/aqsp";
-import { shanghaiDate } from "@/lib/operation";
+import { ALERTS_CHANGED_EVENT, shanghaiDate } from "@/lib/operation";
 
 function TodayHeader({
   date,
@@ -306,7 +306,7 @@ export function TodayWorkspace() {
         date={targetDate}
         snapshot={switching ? null : data}
         loading={loading}
-        onRefresh={refresh}
+        onRefresh={() => { refresh(); window.dispatchEvent(new Event(ALERTS_CHANGED_EVENT)); }}
         actions={view ? <ReviewExportButton view={view} /> : null}
       />
 

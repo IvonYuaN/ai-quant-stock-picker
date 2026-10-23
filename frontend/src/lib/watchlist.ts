@@ -3,18 +3,67 @@
 
 export const WATCHLIST_STORAGE_KEY = "vr-watchlist";
 export const WATCHLIST_CHANGED_EVENT = "aqsp-watchlist-changed";
+export const WATCHLIST_REMOVAL_LIMIT = 20;
+
+const STORAGE_FORMAT = "aqsp-watchlist";
+
+export interface WatchlistRemoval {
+  readonly codes: readonly string[];
+  readonly removed_at: string;
+}
+
+interface WatchlistState {
+  codes: string[];
+  removals: WatchlistRemoval[];
+}
+
+function validCodes(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((code): code is string => typeof code === "string" && /^\d{6}$/.test(code)) : [];
+}
+
+function parseWatchState(raw: string | null): WatchlistState {
+  let value: unknown;
+  try { value = JSON.parse(raw || "[]"); }
+  catch { return { codes: [], removals: [] }; }
+  if (Array.isArray(value)) return { codes: validCodes(value), removals: [] };
+  if (!value || typeof value !== "object" || !("format" in value) || value.format !== STORAGE_FORMAT || !("version" in value) || value.version !== 1) return { codes: [], removals: [] };
+  const state = value as { codes?: unknown; removals?: unknown };
+  const removals: WatchlistRemoval[] = [];
+  for (const item of Array.isArray(state.removals) ? state.removals : []) {
+    if (!item || typeof item !== "object") continue;
+    const record = item as { codes?: unknown; removed_at?: unknown };
+    const codes = [...new Set(validCodes(record.codes))];
+    if (!codes.length || typeof record.removed_at !== "string" || !/(Z|[+-]\d{2}:\d{2})$/.test(record.removed_at) || !Number.isFinite(Date.parse(record.removed_at))) continue;
+    removals.push({ codes, removed_at: record.removed_at });
+    if (removals.length === WATCHLIST_REMOVAL_LIMIT) break;
+  }
+  return { codes: validCodes(state.codes), removals };
+}
 
 export function loadWatch(): string[] {
   try {
-    const v = JSON.parse(localStorage.getItem(WATCHLIST_STORAGE_KEY) || "[]");
-    return Array.isArray(v) ? v.filter((c) => /^\d{6}$/.test(c)) : [];
+    return parseWatchState(localStorage.getItem(WATCHLIST_STORAGE_KEY)).codes;
   } catch {
     return [];
   }
 }
 
+export function loadWatchRemovals(): WatchlistRemoval[] {
+  try { return parseWatchState(localStorage.getItem(WATCHLIST_STORAGE_KEY)).removals; }
+  catch { return []; }
+}
+
 export function saveWatch(codes: string[]): void {
-  localStorage.setItem(WATCHLIST_STORAGE_KEY, JSON.stringify(codes));
+  // One key keeps removal evidence atomic with the list and inside existing backups.
+  const previous = parseWatchState(localStorage.getItem(WATCHLIST_STORAGE_KEY));
+  const nextCodes = validCodes(codes);
+  const nextSet = new Set(nextCodes);
+  const removed = [...new Set(previous.codes.filter((code) => !nextSet.has(code)))];
+  const removals = removed.length
+    ? [{ codes: removed, removed_at: new Date().toISOString() }, ...previous.removals].slice(0, WATCHLIST_REMOVAL_LIMIT)
+    : previous.removals;
+  const payload = removals.length ? { format: STORAGE_FORMAT, version: 1, codes: nextCodes, removals } : nextCodes;
+  localStorage.setItem(WATCHLIST_STORAGE_KEY, JSON.stringify(payload));
   // storage only reaches other tabs; notify this workspace after persistence succeeds.
   if (typeof window !== "undefined") window.dispatchEvent(new Event(WATCHLIST_CHANGED_EVENT));
 }

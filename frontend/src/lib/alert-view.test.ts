@@ -3,7 +3,7 @@
 // 背景：`GET /api/alerts` 在异常/降级（alert_event 簿损坏、新版后端未部署）时
 // 可能给 {} 或部分字段。归一化层要把这些边界钉死，页面才不会白屏；同时
 // buildAlertInbox 的两区派生（actionable vs watch，Q3=A T+1 语义）必须可复现。
-import { buildAlertInbox, normalizeAlerts, normalizeAlertEvent } from "./alert-view";
+import { buildAlertInbox, formatAlertPrice, groupPositionAlerts, normalizeAlerts, normalizeAlertEvent } from "./alert-view";
 
 const fullFixture = {
   open_count: 2,
@@ -65,6 +65,15 @@ const fullFixture = {
 const full = normalizeAlerts(fullFixture);
 
 export const alertViewContract = {
+  groupedRulesCountAsOnePosition: groupPositionAlerts(normalizeAlerts({ events: [fullFixture.events[0], { ...fullFixture.events[0], id: "other", level: "L5" }] })).length === 1,
+  groupedRulesKeepBothEvidence: groupPositionAlerts(normalizeAlerts({ events: [fullFixture.events[0], { ...fullFixture.events[0], id: "other", level: "L5" }] }))[0].events.length === 2,
+  differentPositionsNeverMerge: groupPositionAlerts(normalizeAlerts({ events: [ { ...fullFixture.events[0], position_id: "old" }, { ...fullFixture.events[0], id: "other", position_id: "new" } ] })).length === 2,
+  lockedLotsDoNotMergeWithSellable: groupPositionAlerts(normalizeAlerts({ events: [fullFixture.events[0], { ...fullFixture.events[0], sellable_now: false }] })).length === 2,
+  floatingPointTailNeverDisplayed: formatAlertPrice(9.969299999999999) === "9.9693",
+  invalidPriceUnknown: formatAlertPrice(Number.NaN) === "—" && formatAlertPrice(0) === "—",
+  missingHoldingDaysStaysUnknown: normalizeAlertEvent({ position_context: {} }).position_context?.holding_trade_days === null,
+  reviewChoiceSurvivesNormalization: normalizeAlertEvent({ review_plan: { choice: "t_watch", updated_at: "now" } }).review_plan?.choice === "t_watch",
+  badReviewChoiceNotAccepted: normalizeAlertEvent({ review_plan: { choice: "buy_more" } }).review_plan === undefined,
   /* ---- 完整数据原样通过 ---- */
   eventsKept: full.events.length === 3,
   openCountKept: full.open_count === 2,
@@ -89,6 +98,8 @@ export const alertViewContract = {
   missingSellableBecomesFalse: normalizeAlertEvent({ symbol: "600000" }).sellable_now === false,
   missingBasisBecomesEmptyStrings: normalizeAlertEvent({ symbol: "600000" }).basis_json.rule === "",
   missingNumbersBecomeZero: normalizeAlertEvent({ symbol: "600000" }).trigger_at === 0,
+  frequencyReductionNoteSurvivesRefresh: normalizeAlertEvent({ frequency_note: "连续忽略两次，已降为每日一次；可手动修改" }).frequency_note === "连续忽略两次，已降为每日一次；可手动修改",
+  legacyFrequencyNoteIsEmpty: normalizeAlertEvent({ symbol: "600000" }).frequency_note === "",
   wrongTypeStatusBecomesOpen: normalizeAlertEvent({ symbol: "600000", status: 123 }).status === "OPEN",
 
   /* ---- buildAlertInbox 两区派生（Q3=A T+1 语义）---- */

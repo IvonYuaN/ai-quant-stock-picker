@@ -12,6 +12,10 @@ from typing import Any
 
 from aqsp.core.time import latest_completed_trading_day, now_shanghai, to_shanghai
 from aqsp.portfolio.snapshot import snapshot_trading_date
+from aqsp.portfolio.parameter_snapshot import (
+    ParameterSnapshot,
+    parse_parameter_snapshot,
+)
 from aqsp.utils.jsonl_io import advisory_lock, atomic_write_text
 
 
@@ -368,6 +372,7 @@ class HomeDashboardSnapshot:
     variants: tuple[HomeSnapshotVariant, ...] = ()
     research_chain: HomeSnapshotResearchChain = HomeSnapshotResearchChain()
     frozen_at: str = ""
+    parameter_snapshot: ParameterSnapshot | None = None
     candidate_changes: tuple[HomeSnapshotCandidateChange, ...] = ()
 
     def __init__(
@@ -394,6 +399,7 @@ class HomeDashboardSnapshot:
         variants: tuple[HomeSnapshotVariant, ...] = (),
         research_chain: HomeSnapshotResearchChain | None = None,
         frozen_at: str = "",
+        parameter_snapshot: ParameterSnapshot | None = None,
         candidate_changes: tuple[HomeSnapshotCandidateChange, ...] = (),
     ) -> None:
         normalized_debates = tuple(debates or ())
@@ -435,6 +441,7 @@ class HomeDashboardSnapshot:
             self, "research_chain", research_chain or HomeSnapshotResearchChain()
         )
         object.__setattr__(self, "frozen_at", frozen_at)
+        object.__setattr__(self, "parameter_snapshot", parameter_snapshot)
         object.__setattr__(self, "candidate_changes", tuple(candidate_changes))
         self.__post_init__()
 
@@ -604,12 +611,7 @@ def _freeze_home_candidates(
     current: HomeDashboardSnapshot,
     existing: HomeDashboardSnapshot | None,
 ) -> HomeDashboardSnapshot:
-    """Keep a trading session's roster while refreshing evidence and safety gates."""
-    # The producer passes the persisted single-file result into the date index.
-    # Reapplying a difference against that already-frozen roster would erase its
-    # added/invalidated markers, so a validated frozen payload is idempotent.
-    if current.frozen_at:
-        return current
+    """Freeze scoring inputs with their identity; refresh quotes and safety gates."""
     same_session = (
         existing is not None
         and snapshot_trading_date(existing.selected_date)
@@ -619,19 +621,21 @@ def _freeze_home_candidates(
     if not same_session or existing is None:
         return replace(
             current,
-            frozen_at=current.generated_at if current.candidates else "",
-            candidate_changes=(),
+            frozen_at=(current.frozen_at or current.generated_at)
+            if current.candidates
+            else "",
+            candidate_changes=current.candidate_changes if current.frozen_at else (),
         )
     current_by_symbol = {
         candidate.symbol: candidate for candidate in current.candidates
     }
     original_symbols = {candidate.symbol for candidate in existing.candidates}
+    same_parameters = current.parameter_snapshot == existing.parameter_snapshot
     candidates = tuple(
-        current_by_symbol.get(candidate.symbol)
-        or replace(
+        _refresh_frozen_candidate(
             candidate,
-            research_status="日内已失效",
-            next_step="已不符合本轮候选条件，保留当日记录供复核",
+            current_by_symbol.get(candidate.symbol),
+            same_parameters=same_parameters,
         )
         for candidate in existing.candidates
     )
@@ -640,12 +644,28 @@ def _freeze_home_candidates(
             candidate.symbol, candidate.display_name, "invalidated"
         )
         for candidate in candidates
-        if candidate.symbol not in current_by_symbol
+        if candidate.research_status == "日内已失效"
     ) + tuple(
         HomeSnapshotCandidateChange(candidate.symbol, candidate.display_name, "added")
         for candidate in current.candidates
         if candidate.symbol not in original_symbols
     )
+    # The persisted single-file payload is also consumed by the date index.
+    # Preserve its change notes while still enforcing every frozen scoring field.
+    if current.frozen_at == (existing.frozen_at or existing.generated_at):
+        changes = tuple(
+            dict.fromkeys(
+                (
+                    *changes,
+                    *(
+                        change
+                        for change in current.candidate_changes
+                        if change.status == "added"
+                        and change.symbol not in original_symbols
+                    ),
+                )
+            )
+        )
     # A new candidate cannot carry a debate into the frozen roster, and a removed
     # candidate must not retain an old ready conclusion after its evidence vanished.
     debates = tuple(
@@ -677,7 +697,77 @@ def _freeze_home_candidates(
             ),
         ),
         frozen_at=existing.frozen_at or existing.generated_at,
+        parameter_snapshot=existing.parameter_snapshot,
         candidate_changes=changes,
+    )
+
+
+def _refresh_frozen_candidate(
+    original: HomeSnapshotCandidate,
+    latest: HomeSnapshotCandidate | None,
+    *,
+    same_parameters: bool,
+) -> HomeSnapshotCandidate:
+    """Keep the first score and all its evidence attached to the first identity."""
+    if latest is None or latest.research_status == "日内已失效":
+        return replace(
+            original,
+            research_status="日内已失效",
+            next_step="已不符合本轮候选条件，保留当日记录供复核",
+        )
+    status, next_step = latest.research_status, latest.next_step
+    if not same_parameters:
+        if not any(marker in status for marker in HOME_NON_RECOMMENDATION_MARKERS):
+            status = "参数身份变化 · 仅观察"
+        next_step = (
+            "评分与策略依据沿用首次冻结；当前参数身份变化或未验证，按原快照复核。"
+        )
+        if latest.next_step.startswith(next_step):
+            next_step = latest.next_step
+        elif not is_home_recommendation(latest) and latest.next_step:
+            next_step += f"最新约束：{latest.next_step}"
+    elif is_home_recommendation(latest) and not is_home_recommendation(original):
+        status = "继续观察（冻结评分待复核）"
+        next_step = "评分与策略依据保持首次冻结，按原快照及最新风险证据复核。"
+    elif is_home_recommendation(latest):
+        status, next_step = original.research_status, original.next_step
+
+    latest_close = next(
+        (metric for metric in latest.technical_metrics if metric.key == "close"),
+        None,
+    )
+    metrics = tuple(
+        (
+            replace(latest_close, label="现价（最新）")
+            if latest_close
+            else replace(metric, label="现价（最新）", value="未提供")
+        )
+        if metric.key == "close"
+        else metric
+        for metric in original.technical_metrics
+    )
+    if latest_close and not any(metric.key == "close" for metric in metrics):
+        metrics = (replace(latest_close, label="现价（最新）"), *metrics)[
+            :MAX_HOME_SNAPSHOT_TECHNICAL_METRICS
+        ]
+    note = "评分与策略依据为首次冻结；现价与新鲜度按最新数据展示"
+    context = original.context
+    if note not in context:
+        context = f"{context} / {note}" if context else note
+    return replace(
+        original,
+        research_status=status,
+        next_step=next_step,
+        context=context,
+        technical_metrics=metrics,
+        data_source=latest.data_source,
+        data_fetched_at=latest.data_fetched_at,
+        data_timestamp_source=latest.data_timestamp_source,
+        freshness=latest.freshness,
+        news_catalyst_summary=latest.news_catalyst_summary,
+        news_catalyst_source=latest.news_catalyst_source,
+        news_catalyst_url=latest.news_catalyst_url,
+        news_catalyst_published_at=latest.news_catalyst_published_at,
     )
 
 
@@ -1037,6 +1127,7 @@ def _snapshot_from_dict(payload: object) -> HomeDashboardSnapshot:
             "variants",
             "research_chain",
             "frozen_at",
+            "parameter_snapshot",
             "candidate_changes",
         },
     )
@@ -1095,6 +1186,7 @@ def _snapshot_from_dict(payload: object) -> HomeDashboardSnapshot:
         ),
         research_chain=_research_chain_from_dict(mapping.get("research_chain", {})),
         frozen_at=_optional_text(mapping.get("frozen_at"), "frozen_at"),
+        parameter_snapshot=parse_parameter_snapshot(mapping.get("parameter_snapshot")),
         candidate_changes=tuple(
             _candidate_change_from_dict(item)
             for item in _list(mapping.get("candidate_changes", ()), "candidate_changes")
@@ -1734,6 +1826,11 @@ def _universe_from_dict(payload: object) -> HomeSnapshotUniverse:
 
 
 def _validate_snapshot(snapshot: HomeDashboardSnapshot) -> None:
+    if snapshot.parameter_snapshot is not None:
+        if not isinstance(snapshot.parameter_snapshot, ParameterSnapshot):
+            raise ValueError("parameter_snapshot must be a ParameterSnapshot")
+        if snapshot.parameter_snapshot.effective_from > snapshot.selected_date:
+            raise ValueError("parameter_snapshot is not effective for selected_date")
     if snapshot.schema_version != HOME_SNAPSHOT_SCHEMA_VERSION:
         raise ValueError("unsupported home snapshot schema version")
     if not snapshot.generated_at.strip() or not snapshot.selected_date.strip():

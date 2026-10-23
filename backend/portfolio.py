@@ -341,11 +341,17 @@ def get_portfolio() -> dict:
                 {
                     "code": h["code"],
                     "name": q.get("name", h["code"]),
+                    "quote": {key: q[key] for key in ("name", "price", "change_pct", "quote_time", "as_of", "source") if key in q},
                     "price": price,
                     "shares": h["shares"],
                     "cost": h["cost"],
                     "opened_at": h.get("opened_at"),
                     "position_id": h.get("position_id"),
+                    "risk_rules": [
+                        {key: value for key, value in rule.items() if key != "disposition_receipts"}
+                        for rule in d.get("risk_rules", [])
+                        if rule.get("symbol") == h["code"] and rule.get("position_id") == h.get("position_id")
+                    ],
                     "sellable_shares": sum(float(lot["shares"]) for lot in (h.get("lots") or [{"shares": h["shares"], "opened_at": h.get("opened_at")}]) if not lot.get("opened_at") or lot["opened_at"] < today_shanghai().isoformat()),
                     "t1_locked_shares": sum(float(lot["shares"]) for lot in (h.get("lots") or [{"shares": h["shares"], "opened_at": h.get("opened_at")}]) if lot.get("opened_at") and lot["opened_at"] >= today_shanghai().isoformat()),
                     "market_value": round(mv, 2),
@@ -412,19 +418,55 @@ def observe_risk_prices(prices: dict[str, float]) -> list[dict]:
         return [r.copy() for r in data["risk_rules"] if r["symbol"] in symbols]
 
 
-def record_rule_disposition(rule_id: str, ignored: bool) -> None:
-    """Repeated ignored episodes reduce frequency, never strategy sensitivity."""
+def record_rule_disposition(
+    rule_id: str,
+    ignored: bool,
+    *,
+    expected_position_id: str | None = None,
+    expected_revision: int | None = None,
+    event_id: str | None = None,
+    require_receipt: bool = False,
+) -> dict | None:
+    """Persist one disposition per event for the matching position/rule version.
+
+    Return the disposition state, or None when its position/version is absent.
+    Event receipts make a retry safe if the alert journal fails after this save.
+    """
     with _LOCK, advisory_lock(_pf_file()):
         data = _load()
         rule = next((r for r in data.get("risk_rules", []) if r["id"] == rule_id), None)
         if rule is None:
-            return
+            return None
+        if expected_position_id and rule.get("position_id") != expected_position_id:
+            return None
+        receipts = rule.get("disposition_receipts", {})
+        if event_id and event_id in receipts:
+            receipt = receipts[event_id]
+            if receipt["ignored"] != ignored:
+                raise ValueError("该提醒已记录不同的处置，请按原操作重试")
+            if expected_revision is not None and receipt["revision"] != expected_revision:
+                return None
+            return {**rule, **receipt["state"]}
+        if require_receipt:
+            return None
+        if expected_revision is not None and rule.get("revision", 0) != expected_revision:
+            return None
         rule["ignore_streak"] = int(rule.get("ignore_streak", 0)) + 1 if ignored else 0
         if rule["ignore_streak"] >= risk_rules.PositionRuleDefaults().ignored_before_daily and rule["freq_mode"] == "always":
             rule["freq_mode"] = "daily"
             rule["frequency_note"] = "连续忽略两次，已降为每日一次；可手动修改"
+        if event_id:
+            rule.setdefault("disposition_receipts", {})[event_id] = {
+                "ignored": ignored,
+                "revision": rule.get("revision", 0),
+                "state": {
+                    key: rule[key]
+                    for key in ("ignore_streak", "freq_mode", "frequency_note")
+                },
+            }
         rule["updated_at"] = now_shanghai().isoformat(timespec="seconds")
         _save(data)
+        return rule.copy()
 
 
 def _refresh_snapshot() -> None:

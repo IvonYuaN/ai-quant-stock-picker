@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import date as date_type, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from aqsp.core.time import get_previous_trading_day, is_trading_day, now_shanghai
+from aqsp.portfolio.parameter_snapshot import parameter_snapshot_from_runtime_weights
 from aqsp.utils.jsonl_io import advisory_lock, atomic_write_text
 
 
@@ -83,6 +84,19 @@ def save_snapshot(
             for p in picks
         ],
     }
+    parameter_identities = tuple(
+        parameter_snapshot_from_runtime_weights(
+            (getattr(pick, "metrics", {}) or {}).get("strategy_weight_snapshot")
+        )
+        for pick in picks
+    )
+    identity = parameter_identities[0] if parameter_identities else None
+    if (
+        identity is not None
+        and identity.effective_from <= date
+        and all(item == identity for item in parameter_identities)
+    ):
+        snapshot["parameter_snapshot"] = asdict(identity)
 
     path = Path(snapshot_path)
     with advisory_lock(path):
