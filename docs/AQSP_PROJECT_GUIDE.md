@@ -181,7 +181,7 @@ RPS 相对强度、放量突破、均线缩量回踩、碗口反弹、低波趋�
 - 每次发布 = 新目录 `/opt/aqsp-releases/<full-sha>/`（git archive 落盘），软链 `aqsp-scheduler-current` → 当前、`aqsp-scheduler-rollback` → 上一版（`:35-36`）。
 - 落 `RELEASE_SHA` 到 release 根，供 `/api/health` `release_sha` 自检（防止「部署了但旧代码在跑」）。
 - **prod 自动链路**：`release_task_entrypoint.sh` 显式 `export AQSP_RUNTIME_DATA_ROOT=/opt/aqsp/data` + `export AQSP_PROJECT_ROOT=<release>` + `exec timeout 3600 bt_task.sh`（`:183`）。
-- **npm-free fast path**（2C/1.6G 防 OOM）：复用当前 release 的 `frontend/node_modules` + `dist`（`cp -a`）新 release 目录，再 `--skip-frontend-build --skip-restart`，最后手工 `systemctl restart aqsp-vibe-research-api/-preview`（PR #229/#230 均走此路径）。
+- **npm-free fast path**（2C/1.6G 防 OOM）：复用当前 release 的 `frontend/node_modules` + `dist`（`cp -a`）新 release 目录，再 `--skip-frontend-build --skip-restart`，最后手工 `systemctl restart aqsp-vibe-research-api/-preview`（PR #229/#230 均走此路径）。直接构建前会读取 `/proc/meminfo` 的 `MemAvailable`；默认低于 1024 MiB 就快速失败，避免 Node 堆上限掩盖进程总 RSS 对 1.6 GiB 主机的压力。阈值可由 `AQSP_DEPLOY_MIN_FRONTEND_BUILD_MEMORY_MIB` 覆盖；本次 OOM 前的可用内存采样约 711 MiB。
 - `INHERIT_DATA=true`（默认）切割时把 `data/` + `reports/` 从 current 继承进新 release。
 
 **判红/回滚**：`/api/health` 看 `release_sha` 与 `readlink -f .../aqsp-scheduler-current` 是否一致；回滚改软链即可。
