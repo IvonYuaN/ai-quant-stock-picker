@@ -1,6 +1,7 @@
 // AQSP 后端 API 客户端。/api → vite 代理到本地 FastAPI（默认 8900）。
 // 后端未启动或数据源异常时抛 ApiError，页面据此优雅降级。
 import type { AqspLifecycleIndex, AqspSnapshotEnvelope, AqspSnapshotView, InfoStreamData } from "@/types/aqsp";
+import { createBrowserIdentity } from "./browser-session";
 
 export type {
   AqspAgentDiscussion,
@@ -43,7 +44,7 @@ const ACCESS_KEY = "vr-access-key";
 
 // 本浏览器稳定身份：用于在「同一把共享 Key 下」让不同访客的数据互相隔离
 // （后端按 X-User-Id 切分目录）。与自选/笔记一样只存本地浏览器，换浏览器即另一人。
-const USER_ID = "vr-user-id";
+const browserIdentity = createBrowserIdentity();
 
 export function loadAccessKey(): string {
   try {
@@ -62,27 +63,19 @@ export function saveAccessKey(key: string) {
   }
 }
 
-// 取本浏览器身份；首次访问时生成并固化一个 UUID，后续复用。
+// 本页固定一个身份；存储失败时仅当前页面保留，绝不退回共享默认租户。
 export function loadUserId(): string {
-  try {
-    let id = localStorage.getItem(USER_ID);
-    if (!id) {
-      id = (crypto.randomUUID?.() ?? `u-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-      localStorage.setItem(USER_ID, id);
-    }
-    return id;
-  } catch {
-    return "";
-  }
+  return browserIdentity.userId();
 }
+
+export function hasTemporaryUserIdentity(): boolean { return browserIdentity.temporary(); }
 
 export function authHeaders(): Record<string, string> {
   const headers: Record<string, string> = {};
   const k = loadAccessKey();
   if (k) headers["Authorization"] = `Bearer ${k}`;
   // 本浏览器身份：公网/鉴权模式下让持仓、研报按访客隔离（本地单用户模式后端忽略此头）。
-  const uid = loadUserId();
-  if (uid) headers["X-User-Id"] = uid;
+  headers["X-User-Id"] = loadUserId();
   return headers;
 }
 

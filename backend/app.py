@@ -633,7 +633,9 @@ def portfolio_close(c: CloseIn) -> dict:
     except ValueError:
         raise HTTPException(400, "清仓日期格式应为 YYYY-MM-DD") from None
     try:
-        return {"data": pf.close_position(code, date, c.price, c.shares, c.cost, c.operation_id)}
+        import alert_events
+
+        return {"data": alert_events.close_from_operation(code, date, c.price, c.shares, c.cost, c.operation_id)}
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 

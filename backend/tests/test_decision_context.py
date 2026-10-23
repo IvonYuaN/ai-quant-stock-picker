@@ -263,6 +263,23 @@ def test_decision_context_rejects_adjusted_history_when_not_raw():
     )
 
 
+@pytest.mark.parametrize("current,stamp,valid", [
+    ("2026-10-23T20:00:00+08:00", "20261023100000", False),
+    ("2026-10-23T15:01:00+08:00", "20261023090000", False),
+    ("2026-10-24T10:00:00+08:00", "20261023090000", False),
+    ("2026-10-26T09:00:00+08:00", "20261023150000", True),
+    ("2026-10-23T20:00:00+08:00", "20261023150003", True),
+    ("2026-10-24T10:00:00+08:00", "20261023150000", True),
+    ("2026-10-23T12:45:00+08:00", "20261023113000", True),
+    ("2026-10-23T12:45:00+08:00", "20261023100000", False),
+    ("2026-10-23T14:00:00+08:00", "20261023133000", True),
+    ("2026-10-23T14:00:00+08:00", "20261023132959", False),
+])
+def test_position_quote_freshness_uses_session_clock_when_market_paused(current, stamp, valid):
+    issue = context.position_quote_issue({"quote_time": stamp}, checked_at=datetime.fromisoformat(current))
+    assert (issue == "") is valid
+
+
 def test_decision_context_reads_existing_cache_without_fetching_when_fresh(
     tmp_path, monkeypatch
 ):

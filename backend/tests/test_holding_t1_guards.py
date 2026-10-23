@@ -52,6 +52,19 @@ def test_live_risk_keeps_t1_when_override_omits_new_holding(
             },
         ],
     }
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    import decision_context
+    import position_context_source
+    import risk_rules
+
+    for holding in pf_data["holdings"]:
+        holding["quote"] = {"quote_time": "20261023100000"}
+    for rule in risk_rules.ensure_rules(pf_data):
+        rule["enabled"] = rule["level"] == "L1"
+    pf._save(pf_data)
+    monkeypatch.setattr(decision_context, "now_shanghai", lambda: datetime(2026, 10, 23, 10, tzinfo=ZoneInfo("Asia/Shanghai")))
+    monkeypatch.setattr(position_context_source, "load_position_sectors", lambda codes: {})
     monkeypatch.setattr(pf, "get_portfolio", lambda: copy.deepcopy(pf_data))
 
     response = t1_client.post(
