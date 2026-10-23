@@ -1523,6 +1523,9 @@ def test_run_evolve_uses_full_runtime_universe_when_auto_resolving_symbols(
             self.config_path = config_path
             self.config = FakeConfig()
 
+        def preflight(self):
+            return SimpleNamespace(allowed=True, reason="ready", cooldown_days_remaining=0)
+
         def evolve_parameters(self, strategy_name: str, frames):
             return None
 
@@ -3794,6 +3797,9 @@ def test_run_evolve_prefers_aqsp_symbols_when_configured(monkeypatch) -> None:
             self.config_path = config_path
             self.config = FakeConfig()
 
+        def preflight(self):
+            return SimpleNamespace(allowed=True, reason="ready", cooldown_days_remaining=0)
+
         def evolve_parameters(self, strategy_name: str, frames):
             return None
 
@@ -3844,6 +3850,9 @@ def test_run_evolve_writes_result_when_evolution_succeeds(
         def __init__(self, config_path: str):
             self.config_path = config_path
             self.config = FakeConfig()
+
+        def preflight(self):
+            return SimpleNamespace(allowed=True, reason="ready", cooldown_days_remaining=0)
 
         def evolve_parameters(self, strategy_name: str, frames):
             return EvolutionResult(
@@ -3908,6 +3917,9 @@ def test_run_evolve_apply_is_proposal_only(monkeypatch, tmp_path: Path) -> None:
         def __init__(self, config_path: str):
             self.config_path = config_path
             self.config = FakeConfig()
+
+        def preflight(self):
+            return SimpleNamespace(allowed=True, reason="ready", cooldown_days_remaining=0)
 
         def evolve_parameters(self, strategy_name: str, frames):
             return EvolutionResult(
