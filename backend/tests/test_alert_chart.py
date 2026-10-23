@@ -102,11 +102,12 @@ def test_alert_chart_uses_clean_raw_history_when_service_checks(
     closes = [10 + i * 0.1 for i in range(41)]
     if not future_cross_only:
         closes[-1] = 10
-    clean = pd.DataFrame({"date": dates.strftime("%Y-%m-%d"), "close": closes})
+    clean = pd.DataFrame({"date": dates, "close": closes})
     raw = pd.concat(
         [
             clean,
             clean.iloc[[3]],
+            clean.iloc[[3]].assign(date=dates[3] + pd.Timedelta(hours=12)),
             pd.DataFrame(
                 [
                     {"date": "not-a-date", "close": 999},
@@ -144,3 +145,92 @@ def test_alert_chart_uses_clean_raw_history_when_service_checks(
             ae.list_events()[0]["basis_json"]["chart"]["trigger_date"]
             == chart["trigger_date"]
         )
+
+
+@pytest.mark.parametrize(
+    "invalid_close", [0, -1, float("nan"), float("inf"), -float("inf"), "bad"]
+)
+def test_alert_chart_keeps_open_when_early_macd_history_price_invalid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, invalid_close: object
+) -> None:
+    import aqsp.data.source_factory as factory
+    from aqsp.core.time import latest_completed_trading_day
+    import decision_context
+    import live_risk_service
+    import portfolio as pf
+
+    monkeypatch.setattr(ae, "CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(pf, "CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(decision_context, "load_cached_market_overview", lambda: None)
+    holding = {
+        "code": "600000",
+        "shares": 100,
+        "cost": 12,
+        "price": 10,
+        "opened_at": "2026-01-01",
+    }
+    monkeypatch.setattr(pf, "get_portfolio", lambda: {"holdings": [holding]})
+    rules = [
+        {
+            "id": "600000-L2",
+            "symbol": "600000",
+            "level": "L2",
+            "enabled": True,
+            "param_value": 20,
+        },
+        {"id": "600000-L4", "symbol": "600000", "level": "L4", "enabled": True},
+    ]
+    monkeypatch.setattr(pf, "observe_risk_prices", lambda _: rules)
+    frame = pd.DataFrame(
+        {
+            "date": pd.bdate_range(end=latest_completed_trading_day(), periods=100),
+            "close": [10 + i * 0.1 for i in range(99)] + [10],
+        }
+    )
+
+    class Source:
+        def fetch_daily(
+            self, symbols: list, start: object, end: object, adjust: str = ""
+        ) -> dict:
+            return {"600000": frame}
+
+    monkeypatch.setattr(factory, "build_data_source", lambda *args, **kwargs: Source())
+    live_risk_service.check_positions({"600000": 5}, notify=False)
+    original = next(event for event in ae.list_events() if event["level"] == "L4")
+    assert original["status"] == "OPEN"
+
+    frame["close"] = frame["close"].astype(object)
+    frame.loc[3, "close"] = invalid_close
+    result = live_risk_service.check_positions({"600000": 5}, notify=False)
+    assert result["checks"] == {
+        "checked": ["600000:L2"],
+        "skipped": [{"symbol": "600000", "level": "L4", "reason": "日线价格无效"}],
+    }
+    retained = next(
+        event for event in ae.list_events() if event["id"] == original["id"]
+    )
+    assert retained["status"] == "OPEN"
+    assert retained["basis_json"] == original["basis_json"]
+    assert retained["condition_active"] is True
+    assert all(row["level"] != "L4" for row in result["reminders"])
+
+    frame.loc[3, "close"] = 10.3
+    recovered = live_risk_service.check_positions({"600000": 5}, notify=False)
+    assert recovered["checks"]["skipped"] == []
+    assert recovered["new_events"] == []
+    assert (
+        next(event for event in ae.list_events() if event["id"] == original["id"])[
+            "status"
+        ]
+        == "OPEN"
+    )
+
+    frame.loc[99, "close"] = 20
+    cleared = live_risk_service.check_positions({"600000": 5}, notify=False)
+    assert cleared["checks"]["skipped"] == []
+    assert (
+        next(event for event in ae.list_events() if event["id"] == original["id"])[
+            "status"
+        ]
+        == "EXPIRED"
+    )

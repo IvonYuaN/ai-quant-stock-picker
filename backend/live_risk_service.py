@@ -147,24 +147,25 @@ def check_positions(
                 reason = "缺少不复权日线"
             else:
                 frame = frame.copy()
-                frame["date"] = pd.to_datetime(frame["date"], errors="coerce")
+                frame["date"] = pd.to_datetime(frame["date"], errors="coerce").dt.normalize()
                 frame = (
                     frame[
                         frame["date"].notna()
                         & (frame["date"].dt.date <= today_shanghai())
                     ]
-                    .sort_values("date")
+                    .sort_values("date", kind="stable")
                     .drop_duplicates("date")
                 )
+                closes = pd.to_numeric(frame["close"], errors="coerce")
+                # EMA uses every input bar; MA only uses its trailing window.
+                evaluated_closes = closes if level == "L4" else closes.tail(minimum)
                 if len(frame) < minimum:
                     reason = "日线样本不足"
                 elif frame["date"].iloc[-1].date() < latest_completed_trading_day():
                     reason = "日线过期"
                 elif (
-                    not pd.to_numeric(frame["close"], errors="coerce")
-                    .tail(minimum)
-                    .gt(0)
-                    .all()
+                    not evaluated_closes.gt(0).all()
+                    or not evaluated_closes.map(math.isfinite).all()
                 ):
                     reason = "日线价格无效"
                 histories[symbol] = frame
