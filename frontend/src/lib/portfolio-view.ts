@@ -48,6 +48,9 @@ function normalizeHolding(raw: unknown): Holding {
     market_value: asNumber(record.market_value),
     pnl: asNumber(record.pnl),
     pnl_pct: asNumber(record.pnl_pct),
+    ...(typeof record.sellable_shares === "number" && Number.isFinite(record.sellable_shares) ? { sellable_shares: record.sellable_shares } : {}),
+    ...(typeof record.t1_locked_shares === "number" && Number.isFinite(record.t1_locked_shares) ? { t1_locked_shares: record.t1_locked_shares } : {}),
+    ...(Array.isArray(record.risk_rules) ? { risk_rules: record.risk_rules as Holding["risk_rules"] } : {}),
   };
 }
 

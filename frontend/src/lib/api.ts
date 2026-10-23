@@ -327,6 +327,22 @@ export interface Holding {
   /** 开仓日期 YYYY-MM-DD（P2-8；P2-8 前录入的老持仓无此字段 ⇒ ""）。T+1 可卖性据此推导。 */
   opened_at: string;
   market_value: number; pnl: number; pnl_pct: number;
+  sellable_shares?: number;
+  t1_locked_shares?: number;
+  risk_rules?: PositionAlertRule[];
+}
+export type AlertFrequency = "once" | "daily" | "always";
+export interface PositionAlertRule {
+  id: string; position_id: string; symbol: string;
+  level: "L1" | "L2" | "L4" | "L5";
+  enabled: boolean; param_value: number; trigger_price: number | null;
+  freq_mode: AlertFrequency; origin: "AUTO_DEFAULT" | "MANUAL";
+  effective_from: string | null; created_at: string; updated_at: string;
+  ignore_streak: number; frequency_note: string;
+}
+export interface PositionAlertRules {
+  rules: PositionAlertRule[];
+  unsupported_levels: string[];
 }
 export interface ClosedPosition {
   code: string; name: string; date: string; price: number; shares: number; cost: number;
@@ -363,6 +379,12 @@ export interface AlertEvent {
 export interface AlertData {
   events: AlertEvent[];
   open_count: number;
+  last_checked_at?: string | null;
+  last_check?: RiskCheckCoverage | null;
+}
+export interface RiskCheckCoverage {
+  checked: string[];
+  skipped: Array<{ symbol: string; level: string; reason: string }>;
 }
 /** `POST /api/live-risk/check` 的 `data`。 */
 export interface LiveRiskCheckResult {
@@ -370,6 +392,8 @@ export interface LiveRiskCheckResult {
   new_events: AlertEvent[];
   notify: string[];
   notify_suppressed: boolean;
+  checks?: RiskCheckCoverage;
+  last_checked_at?: string;
 }
 
 // 行业涨跌幅：东财对停牌/无数据的板块会给 "-" 占位串，故不能只声明 number。
@@ -532,11 +556,17 @@ export const api = {
   events: (code: string) => get<EventCalendarData>(`/events?code=${code}`),
   catalyst: () => get<CatalystData>("/catalyst"),
   portfolio: () => get<PortfolioData>("/portfolio"),
-  addHolding: (code: string, shares: number, cost: number, opened_at?: string) => request<PortfolioData>("/portfolio/holding", "POST", { code, shares, cost, opened_at }),
+  blocks: (code: string) => get<{ total: number; boards: Array<{ name: string; code: string; change_pct: number; lead_stock: string }>; concept_tags: string[] }>(`/blocks?code=${encodeURIComponent(code)}`),
+  addHolding: (code: string, shares: number, cost: number, opened_at?: string, operation_id?: string) => request<PortfolioData>("/portfolio/holding", "POST", { code, shares, cost, opened_at, operation_id }),
   removeHolding: (code: string) => request<PortfolioData>(`/portfolio/holding?code=${code}`, "DELETE"),
   refreshPortfolio: () => request<PortfolioData>("/portfolio/refresh", "POST"),
-  closePosition: (code: string, date: string, price: number, shares: number, cost: number) =>
-    request<PortfolioData>("/portfolio/close", "POST", { code, date, price, shares, cost }),
+  closePosition: (code: string, date: string, price: number, shares: number, cost: number, operation_id?: string) =>
+    request<PortfolioData>("/portfolio/close", "POST", { code, date, price, shares, cost, operation_id }),
+  riskRules: () => get<PositionAlertRules>("/portfolio/risk-rules"),
+  updateRiskRule: (id: string, patch: Partial<Pick<PositionAlertRule, "enabled" | "param_value" | "freq_mode">>) =>
+    request<PositionAlertRule>(`/portfolio/risk-rules/${encodeURIComponent(id)}`, "PATCH", patch),
+  closeAlertPosition: (id: string, date: string, price: number, shares: number) =>
+    request<{ event: AlertEvent; portfolio: PortfolioData }>(`/alerts/${encodeURIComponent(id)}/close`, "POST", { date, price, shares }),
   removeClosed: (index: number) => request<PortfolioData>(`/portfolio/close?index=${index}`, "DELETE"),
 
   // ---- P0-2 该卖提醒（LIVE 风控 → alert_event → 站内收件箱 + 外发）----

@@ -3453,6 +3453,56 @@
   .aq-alert-quiet { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; font-size: 0.76rem; color: hsl(var(--muted-foreground)); }
   .aq-alert-quiet > svg { width: 0.9rem; height: 0.9rem; }
   .aq-alert-quiet .aq-btn { margin-left: auto; min-height: 2.5rem; font-size: 0.75rem; }
+  .aq-record-trigger { margin: 0.5rem 0.75rem; justify-content: center; }
+  .aq-mobile-actions { display: flex; align-items: center; gap: 0.3rem; }
+  .aq-risk-home { min-width: 0; border-top: 3px solid hsl(var(--warning)); padding: 1.25rem 0; border-bottom: 1px solid hsl(var(--border)); }
+  .aq-risk-heading { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
+  .aq-risk-heading h2 { font-size: 1.3rem; font-weight: 650; margin: 0.35rem 0; }
+  .aq-risk-heading p:not(.aq-eyebrow) { font-size: 0.8rem; color: hsl(var(--muted-foreground)); }
+  .aq-risk-counters { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1rem; padding: 1.1rem 0; }
+  .aq-risk-counters > div { display: grid; align-content: start; gap: 0.3rem; border-left: 1px solid hsl(var(--border)); padding-left: 1rem; }
+  .aq-risk-counters > div:first-child { border: 0; padding-left: 0; }
+  .aq-risk-counters span { font-size: 0.75rem; color: hsl(var(--muted-foreground)); }
+  .aq-risk-counters strong { font-size: 2rem; font-variant-numeric: tabular-nums; font-weight: 600; line-height: 1.2; }
+  .aq-risk-counters small { font-size: 0.75rem; margin-left: 0.3rem; font-weight: 400; }
+  .aq-risk-counters .aq-risk-checked b { font-size: 0.9rem; font-weight: 500; padding-top: 0.4rem; }
+  .aq-risk-empty { padding: 1rem; border-left: 3px solid hsl(var(--primary)); background: hsl(var(--muted) / 0.4); }
+  .aq-risk-empty strong { font-size: 0.95rem; }
+  .aq-risk-empty p { margin: 0.5rem 0 0.75rem; font-size: 0.8rem; line-height: 1.7; color: hsl(var(--muted-foreground)); }
+  .aq-risk-footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.7rem; margin-top: 1rem; font-size: 0.75rem; color: hsl(var(--muted-foreground)); }
+  .aq-risk-footer a { display: inline-flex; gap: 0.3rem; align-items: center; color: hsl(var(--primary)); }
+  .aq-risk-footer svg { width: 1rem; height: 1rem; }
+  .aq-alert-evidence, .aq-alert-history { font-size: 0.75rem; color: hsl(var(--muted-foreground)); margin-top: 0.5rem; overflow-wrap: anywhere; }
+  .aq-alert-evidence summary, .aq-alert-history summary { cursor: pointer; min-height: 2rem; display: list-item; }
+  .aq-alert-history p { padding: 0.4rem 0; }
+  .aq-risk-incomplete { border-left: 3px solid hsl(var(--warning)); padding: 0.6rem 0.8rem; margin-top: 0.6rem; font-size: 0.75rem; background: hsl(var(--warning) / 0.06); }
+  .aq-risk-incomplete p { margin-top: 0.25rem; overflow-wrap: anywhere; }
+  .aq-operation-dialog { width: min(34rem, calc(100vw - 2rem)); max-height: calc(100dvh - 2rem); margin: auto; padding: 1.25rem; border: 1px solid hsl(var(--border)); border-radius: 0.5rem; background: hsl(var(--card)); color: hsl(var(--foreground)); overflow-y: auto; }
+  .aq-operation-dialog::backdrop { background: hsl(0 0% 0% / 0.55); }
+  .aq-operation-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
+  .aq-operation-head h2 { font-size: 1.3rem; font-weight: 600; }
+  .aq-operation-head p { color: hsl(var(--muted-foreground)); font-size: 0.8rem; margin-top: 0.3rem; }
+  .aq-operation-direction { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; margin: 1rem 0; }
+  .aq-operation-direction .aq-btn { justify-content: center; }
+  .aq-operation-direction [aria-pressed="true"] { border-color: hsl(var(--primary)); background: hsl(var(--primary) / 0.1); color: hsl(var(--primary)); }
+  .aq-operation-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.9rem; }
+  .aq-operation-fields label, .aq-rule-fields label { display: grid; min-width: 0; gap: 0.4rem; font-size: 0.8rem; }
+  .aq-operation-fields input, .aq-rule-fields .aq-input { width: 100%; min-width: 0; }
+  .aq-operation-note { color: hsl(var(--muted-foreground)); font-size: 0.75rem; line-height: 1.7; margin-top: 0.65rem; overflow-wrap: anywhere; }
+  .aq-operation-error { color: hsl(var(--danger)); font-size: 0.8rem; margin-top: 0.6rem; overflow-wrap: anywhere; }
+  .aq-operation-foot { display: flex; gap: 1rem; justify-content: space-between; align-items: center; border-top: 1px solid hsl(var(--border)); padding-top: 1rem; margin-top: 1rem; }
+  .aq-operation-foot span { font-size: 0.75rem; color: hsl(var(--muted-foreground)); }
+  .aq-rule-editor { padding: 0.8rem 0; border-top: 1px solid hsl(var(--border)); font-size: 0.8rem; }
+  .aq-rule-editor > summary { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; cursor: pointer; min-height: 2.5rem; }
+  .aq-rule-editor > summary svg { width: 1rem; height: 1rem; }
+  .aq-rule-editor > summary span { margin-left: auto; color: hsl(var(--muted-foreground)); font-size: 0.72rem; }
+  .aq-rule-form { padding: 0.8rem 0; border-top: 1px solid hsl(var(--border)); }
+  .aq-rule-title { display: flex; justify-content: space-between; gap: 0.75rem; margin-bottom: 0.6rem; }
+  .aq-rule-title label { display: flex; align-items: center; gap: 0.5rem; }
+  .aq-rule-title input { width: 1.1rem; height: 1.1rem; accent-color: hsl(var(--primary)); }
+  .aq-rule-title small { color: hsl(var(--muted-foreground)); }
+  .aq-rule-fields { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: end; }
+  .aq-rule-fields label { flex: 1 1 8rem; }
   .aq-date-list { flex-wrap: nowrap; overflow-x: auto; padding: 0.1rem; }
   .aq-date, .aq-chip, .aq-input { min-height: 2.5rem; }
   .aq-candidate-workspace { display: grid; gap: 0.75rem; min-width: 0; }
@@ -3537,10 +3587,21 @@
     .aq-mobile-brand svg { width: 1.2rem; height: 1.2rem; color: hsl(var(--primary)); }
     .aq-mobile-bar > span { font-size: 0.78rem; color: hsl(var(--muted-foreground)); }
     .aq-mobile-bar .aq-icon-btn { width: 2.5rem; height: 2.5rem; justify-content: center; }
-    .aq-mobile-nav { position: fixed; inset: auto 0 0; z-index: 40; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); padding: 0.3rem 0.25rem calc(0.3rem + env(safe-area-inset-bottom)); border-top: 1px solid hsl(var(--border)); background: hsl(var(--card)); }
+    .aq-mobile-nav { position: fixed; inset: auto 0 0; z-index: 40; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); padding: 0.3rem 0.25rem calc(0.3rem + env(safe-area-inset-bottom)); border-top: 1px solid hsl(var(--border)); background: hsl(var(--card)); }
     .aq-mobile-nav > a, .aq-mobile-nav > button { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.2rem; min-height: 3rem; color: hsl(var(--muted-foreground)); font-size: 0.68rem; }
     .aq-mobile-nav svg { width: 1.15rem; height: 1.15rem; }
     .aq-mobile-nav [aria-current="page"], .aq-mobile-nav [aria-expanded="true"] { color: hsl(var(--primary)); }
+    .aq-mobile-bar { padding-inline: 0.75rem; gap: 0.3rem; }
+    .aq-mobile-brand { gap: 0.25rem; }
+    .aq-mobile-bar > span { font-size: 0.72rem; }
+    .aq-mobile-actions .aq-btn { padding-inline: 0.65rem; font-size: 0.75rem; white-space: nowrap; }
+    .aq-risk-heading { align-items: flex-start; flex-wrap: wrap; gap: 0.6rem; }
+    .aq-risk-heading h2 { font-size: 1.15rem; }
+    .aq-risk-counters { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.8rem; }
+    .aq-risk-counters > div:nth-child(3) { border: 0; padding-left: 0; }
+    .aq-risk-counters strong { font-size: 1.6rem; }
+    .aq-alert-row { flex-wrap: wrap; }
+    .aq-alert-row-actions { width: 100%; justify-content: flex-start; }
     .aq-mobile-tools { position: fixed; z-index: 39; right: 0.5rem; left: 0.5rem; bottom: calc(4.2rem + env(safe-area-inset-bottom)); display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); max-height: 70vh; overflow-y: auto; gap: 0.3rem; padding: 0.8rem; border: 1px solid hsl(var(--border)); border-radius: 0.5rem; background: hsl(var(--card)); box-shadow: 0 4px 30px hsl(0 0% 0% / 0.3); }
     .aq-mobile-tools-head { grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.4rem; }
     .aq-mobile-tools-head button { width: 2.5rem; height: 2.5rem; justify-content: center; }

@@ -30,6 +30,7 @@ import { MessageSection } from "./sections/MessageSection";
 import { DiscussionSection } from "./sections/DiscussionSection";
 import { AlertInbox } from "./AlertInbox";
 import type { AqspSnapshot } from "@/types/aqsp";
+import { shanghaiDate } from "@/lib/operation";
 
 function TodayHeader({
   date,
@@ -52,16 +53,17 @@ function TodayHeader({
       <div>
         <p className="aq-eyebrow">
           <Compass aria-hidden="true" />
-          AQSP · 研究工作台
+          AQSP · T+1 决策工作台
         </p>
         <div className="aq-title-row">
-          <h1>今日研究</h1>
-          <strong>{date || "日期未记录"}</strong>
+          <h1>今日决策</h1>
+          <strong>{shanghaiDate()}</strong>
         </div>
         <p className="aq-page-sub">
-          候选、依据与风险，在同一研究日期下核对。
+          先看持仓风险，再核对候选、消息与大盘。
         </p>
         <div className="aq-meta-row">
+          <span>候选日期 {date || "待产出"}</span>
           {snapshot ? <span>更新 {formatAqspTime(snapshot.generated_at)}</span> : null}
           {snapshot ? (
             <Badge tone={historical || stale ? "warn" : "ok"}>
@@ -95,7 +97,7 @@ function DatePicker({ snapshot }: { snapshot: AqspSnapshot }) {
   return (
     <div className="aq-date-bar" aria-label="研究日期">
       <CalendarDays className="aq-date-icon" aria-hidden="true" />
-      <span className="aq-date-label">研究日期</span>
+      <span className="aq-date-label">候选日期</span>
       <div className="aq-date-list">
         {snapshot.available_dates.map((date) => {
           const label = formatResearchDate(date);
@@ -348,18 +350,6 @@ export function TodayWorkspace() {
         <LoadingState />
       ) : (
         <>
-          <section className="aq-workspace-summary" aria-label="当日研究摘要">
-            <div className="aq-workspace-verdict">
-              <Badge tone={view.gate.tone}>{view.gate.label}</Badge>
-              <strong>{view.chain.label}</strong>
-              <p>{view.gate.detail}</p>
-            </div>
-            <dl className="aq-workspace-counts">
-              <div><dt>研究候选</dt><dd>{view.candidates.length}<small>只</small></dd></div>
-              <div><dt>关联消息</dt><dd>{view.messages.length}<small>条</small></dd></div>
-              <div><dt>多空复核</dt><dd>{view.debates.length}<small>只</small></dd></div>
-            </dl>
-          </section>
           {candidateSection ? (
             <CandidateSection view={view} section={candidateSection} onPick={setPicked} />
           ) : null}
@@ -372,7 +362,7 @@ export function TodayWorkspace() {
             </div>
           </details>
           <details className="aq-workspace-fold">
-            <summary>研究过程与门禁明细 <span>{view.chain.label}</span></summary>
+            <summary>研究过程与验证依据</summary>
             <div className="aq-workspace-fold-body"><PersistentBlock view={view} /><DecisionPanel snapshot={data} /></div>
           </details>
           <details className="aq-workspace-fold">

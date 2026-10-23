@@ -8,6 +8,7 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { loadWatch, WATCHLIST_CHANGED_EVENT, WATCHLIST_STORAGE_KEY } from "@/lib/watchlist";
 import { EMPTY_OWNERSHIP, type OwnershipSets } from "@/lib/ownership";
+import { PORTFOLIO_CHANGED_EVENT } from "@/lib/operation";
 
 export function useOwnership(): OwnershipSets {
   const [sets, setSets] = useState<OwnershipSets>(EMPTY_OWNERSHIP);
@@ -24,7 +25,7 @@ export function useOwnership(): OwnershipSets {
     window.addEventListener(WATCHLIST_CHANGED_EVENT, syncWatchlist);
     window.addEventListener("storage", onStorage);
 
-    api
+    const syncHoldings = () => { void api
       .portfolio()
       .then((data) => {
         if (!alive) return;
@@ -36,12 +37,15 @@ export function useOwnership(): OwnershipSets {
       })
       .catch(() => {
         /* 持仓不可用时保留自选即可，不打扰选股 */
-      });
+      }); };
+    syncHoldings();
+    window.addEventListener(PORTFOLIO_CHANGED_EVENT, syncHoldings);
 
     return () => {
       alive = false;
       window.removeEventListener(WATCHLIST_CHANGED_EVENT, syncWatchlist);
       window.removeEventListener("storage", onStorage);
+      window.removeEventListener(PORTFOLIO_CHANGED_EVENT, syncHoldings);
     };
   }, []);
 

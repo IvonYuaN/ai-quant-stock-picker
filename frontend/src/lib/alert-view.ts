@@ -58,7 +58,15 @@ export function normalizeAlerts(raw: unknown): AlertData {
   const openCount =
     Number.isFinite(Number(record.open_count)) ? asNumber(record.open_count) :
     events.filter((e) => e.status === "OPEN").length;
-  return { events, open_count: openCount };
+  const check = asRecord(record.last_check);
+  return {
+    events, open_count: openCount,
+    last_checked_at: typeof record.last_checked_at === "string" ? record.last_checked_at : null,
+    last_check: record.last_check ? {
+      checked: asArray<unknown>(check.checked).map((item) => asString(item)),
+      skipped: asArray<unknown>(check.skipped).map((item) => { const row = asRecord(item); return { symbol: asString(row.symbol), level: asString(row.level), reason: asString(row.reason) }; }),
+    } : null,
+  };
 }
 
 export interface AlertInboxView {

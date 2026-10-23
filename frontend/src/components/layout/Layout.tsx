@@ -3,13 +3,15 @@ import { Link, Outlet, useLocation } from "react-router-dom";
 import { Download, LineChart, Moon, PanelLeftClose, PanelLeftOpen, Search, Sun, Upload, BellRing, Ellipsis, X } from "lucide-react";
 import { Toaster, toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { MY_LINE, NAV_LINES, PRIMARY_LINE } from "@/lib/ia";
+import { NAV_LINES, PRIMARY_LINE } from "@/lib/ia";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import { useAlertOpenCount } from "@/hooks/useAlertOpenCount";
 import { AqspWorkspaceProvider, useAqspSnapshot } from "@/components/aqsp/useAqspSnapshot";
 import { downloadVault, importVault } from "@/lib/vault";
 import { LoadingState } from "@/components/ui/primitives";
 import { CommandPalette } from "@/components/ui/CommandPalette";
+import { OperationRecorder } from "@/components/aqsp/OperationRecorder";
+import { requestOperation } from "@/lib/operation";
 
 /** 输入框里打字时不要抢快捷键 */
 function isTyping(target: EventTarget | null): boolean {
@@ -76,7 +78,7 @@ function WorkspaceLayout() {
       <header className="aq-mobile-bar">
         <Link to={navHref("/today")} className="aq-mobile-brand"><LineChart aria-hidden="true" /><b>AQSP</b></Link>
         <span>{NAV_LINES.flatMap((line) => line.items).find((item) => item.to === pathname)?.label ?? "个股研究"}</span>
-        <button type="button" className="aq-icon-btn" aria-label="搜索代码或页面" onClick={() => setPaletteOpen(true)}><Search aria-hidden="true" /></button>
+        <div className="aq-mobile-actions"><button type="button" className="aq-btn aq-btn-primary" onClick={() => requestOperation()}>我操作了</button><button type="button" className="aq-icon-btn" aria-label="更多工具" aria-controls="aq-mobile-tools" aria-expanded={mobileToolsOpen} onClick={() => setMobileToolsOpen((value) => !value)}><Ellipsis aria-hidden="true" /></button></div>
       </header>
       <aside className={cn("aq-sidebar", collapsed && "aq-sidebar-collapsed")}>
         <div className="aq-brand">
@@ -98,7 +100,7 @@ function WorkspaceLayout() {
               {collapsed ? <PanelLeftOpen aria-hidden="true" /> : <PanelLeftClose aria-hidden="true" />}
             </button>
           </div>
-          {!collapsed ? <p className="aq-brand-sub">选股研究工作台</p> : null}
+          {!collapsed ? <p className="aq-brand-sub">T+1 持仓决策工作台</p> : null}
         </div>
 
         {openAlerts > 0 ? (
@@ -113,6 +115,15 @@ function WorkspaceLayout() {
             <span className="aq-alert-badge-count">{openAlerts}</span>
           </Link>
         ) : null}
+
+        <button
+          type="button"
+          className="aq-btn aq-btn-primary aq-record-trigger"
+          onClick={() => requestOperation()}
+          title="回录已完成的买入或卖出"
+        >
+          <LineChart aria-hidden="true" />{!collapsed ? "我操作了" : null}
+        </button>
 
         <button
           type="button"
@@ -207,7 +218,7 @@ function WorkspaceLayout() {
             </span>
           </div>
 
-          {!collapsed ? <p className="aq-sidebar-note">AQSP · 只读研究</p> : null}
+          {!collapsed ? <p className="aq-sidebar-note">AQSP · 人工决策，不代下单</p> : null}
         </div>
       </aside>
 
@@ -234,18 +245,18 @@ function WorkspaceLayout() {
       {mobileToolsOpen ? (
         <section className="aq-mobile-tools" id="aq-mobile-tools" aria-label="个人工具">
           <div className="aq-mobile-tools-head"><strong>个人工具</strong><button type="button" className="aq-icon-btn" aria-label="关闭个人工具" onClick={() => setMobileToolsOpen(false)}><X aria-hidden="true" /></button></div>
-          {MY_LINE.items.map((item) => { const Icon = item.icon; return <Link key={item.to} to={navHref(item.to)} className="aq-mobile-tool" aria-current={pathname === item.to ? "page" : undefined}><Icon aria-hidden="true" /><span>{item.label}</span></Link>; })}
+          <button type="button" className="aq-mobile-tool" onClick={() => { setMobileToolsOpen(false); setPaletteOpen(true); }}><Search aria-hidden="true" /><span>搜索代码</span></button>
           <button type="button" className="aq-mobile-tool" onClick={toggle}>{dark ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}<span>{dark ? "切换亮色" : "切换暗色"}</span></button>
           <button type="button" className="aq-mobile-tool" onClick={() => { downloadVault(); toast("已导出备份文件"); }}><Download aria-hidden="true" /><span>导出个人备份</span></button>
           <button type="button" className="aq-mobile-tool" onClick={() => fileRef.current?.click()}><Upload aria-hidden="true" /><span>导入个人备份</span></button>
         </section>
       ) : null}
       <nav className="aq-mobile-nav" aria-label="主要导航">
-        {[...PRIMARY_LINE.items, MY_LINE.items[0]].map((item) => { const Icon = item.icon; return <Link key={item.to} to={navHref(item.to)} aria-current={pathname === item.to ? "page" : undefined}><Icon aria-hidden="true" /><span>{item.label}</span></Link>; })}
-        <button type="button" onClick={() => setMobileToolsOpen((value) => !value)} aria-label="更多个人工具" aria-controls="aq-mobile-tools" aria-expanded={mobileToolsOpen}><Ellipsis aria-hidden="true" /><span>更多</span></button>
+        {PRIMARY_LINE.items.map((item) => { const Icon = item.icon; return <Link key={item.to} to={navHref(item.to)} aria-current={pathname === item.to ? "page" : undefined}><Icon aria-hidden="true" /><span>{item.label}</span></Link>; })}
       </nav>
 
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+      <OperationRecorder />
 
       {/* 提示条跟随应用主题，避免亮色模式下弹出深色浮层。 */}
       <Toaster
