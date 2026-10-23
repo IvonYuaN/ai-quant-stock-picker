@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -16410,7 +16411,7 @@ def test_dashboard_main_reads_only_home_snapshot_when_valid(
 
     dashboard.main()
 
-    assert rendered == [snapshot]
+    assert rendered == [replace(snapshot, frozen_at=snapshot.generated_at)]
     assert workspace_calls == [True]
 
 
