@@ -115,7 +115,7 @@ function snapshotFixture(over: { gate?: AqspRecommendationGate; candidates?: str
     summaries: [],
     source: { effective: "ok", latest_trade_date: "2026-09-24", lag_days: 0, status: "fresh" },
     coldstart: { status: "ok", detail: "" },
-    stale_after: "2026-09-26T19:00:00+08:00",
+    stale_after: "2099-09-26T19:00:00+08:00",
     message_status: "ok",
     messages: [],
     market_context: null,
@@ -169,6 +169,18 @@ export const decisionContract: Record<string, boolean> = {
   "gate拦截时表模式降级 observe": tableMode(snapshotFixture({ gate: gateBlocked }), healthyPerf()) === "observe",
   "gate阻塞 headline 含走门未放行":
     buildDecision(snapshotFixture({ gate: gateBlocked }), healthyPerf(), "").headline.includes("走门未放行"),
+  "缺少gate不能视为放行": !buildDecision({ ...snapshotFixture(), recommendation_gate: undefined }, healthyPerf(), "").canAct,
+  "缺少gate时表模式为观察": tableMode({ ...snapshotFixture(), recommendation_gate: undefined }, healthyPerf()) === "observe",
+  "研究专用即使allowed为true仍不可推进": !buildDecision(snapshotFixture({ gate: { ...gateOpen, status: "research_display" } }), healthyPerf(), "").canAct,
+  "研究专用表模式为观察": tableMode(snapshotFixture({ gate: { ...gateOpen, status: "research_display" } }), healthyPerf()) === "observe",
+  "历史快照不可推进": !buildDecision({ ...snapshotFixture(), meta: { historical: true, stale: false } }, healthyPerf(), "").canAct,
+  "历史快照表模式为观察": tableMode({ ...snapshotFixture(), meta: { historical: true, stale: false } }, healthyPerf()) === "observe",
+  "过期快照不可推进": !buildDecision({ ...snapshotFixture(), meta: { historical: false, stale: true } }, healthyPerf(), "").canAct,
+  "过期快照表模式为观察": tableMode({ ...snapshotFixture(), meta: { historical: false, stale: true } }, healthyPerf()) === "observe",
+  "旧契约过期deadline也不可推进": !buildDecision({ ...snapshotFixture(), stale_after: "2000-01-01T00:00:00+08:00" }, healthyPerf(), "").canAct,
+  "旧契约非法deadline不可推进": !buildDecision({ ...snapshotFixture(), stale_after: "invalid" }, healthyPerf(), "").canAct,
+  "旧契约缺少deadline不可推进": !buildDecision({ ...snapshotFixture(), stale_after: "" }, healthyPerf(), "").canAct,
+  "meta未过期不能覆盖已过期deadline": !buildDecision({ ...snapshotFixture(), stale_after: "2000-01-01T00:00:00+08:00", meta: { historical: false, stale: false } }, healthyPerf(), "").canAct,
 
   // 冷启动
   "冷启动 ⇒ 不可用命中率背书": buildDecision(snapshotFixture(), coldPerf(), "").canAct === false,

@@ -1,12 +1,11 @@
 // 个股研究页（/stock/:code）。
 //
-// 只读下钻：复用 StockDetailDrawer 的行情渲染（api.quote + changeClass + formatSignedPct），
-// 叠加「相关新闻催化」（来自 /api/catalyst，按 affected_symbols 过滤）
-// 与「事件面」（来自 /api/events：解禁预警 + 近 5 日龙虎榜，pit_cache 只读）。
-// 不评分、不预测。
+// 研究日期来自共享快照；评分、消息和讨论严格同日，当前行情与事件独立展示。
+// 页面不重算评分，加入自选只写当前浏览器。
 import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
-import { CalendarClock, ExternalLink } from "lucide-react";
+import { Link, useParams } from "react-router-dom";
+import { ArrowLeft, CalendarClock, Check, ExternalLink, RefreshCw, Star } from "lucide-react";
+import { toast } from "sonner";
 import {
   api,
   type DividendPlanEvent,
@@ -43,6 +42,13 @@ import {
   StatePanel,
   Tag,
 } from "@/components/ui/primitives";
+import { useWorkspaceSnapshot, formatAqspTime } from "@/components/aqsp/useAqspSnapshot";
+import { buildDailyView } from "@/lib/daily-view";
+import { messagesForCandidate } from "@/lib/candidate-chain";
+import { debateProcessText, messageSourceUrl } from "@/lib/research-view";
+import { todayResearchHref } from "@/lib/research-route";
+import { evidenceLabel, statusLabel } from "@/lib/display-labels";
+import { loadWatch, saveWatch, WATCHLIST_CHANGED_EVENT } from "@/lib/watchlist";
 import { cn } from "@/lib/utils";
 
 function extractMessage(reason: unknown): string {
@@ -58,10 +64,38 @@ export function StockResearchPage() {
   const [eventCalendar, setEventCalendar] = useState<EventCalendarData | null>(null);
   const [eventsError, setEventsError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [resourceCode, setResourceCode] = useState("");
+  const [reload, setReload] = useState(0);
+  const [watched, setWatched] = useState(() => loadWatch().includes(code ?? ""));
+  const workspace = useWorkspaceSnapshot();
+  const snapshot = workspace.data && !workspace.switching && !workspace.error &&
+    (workspace.selectedDate ? workspace.data.selected_date === workspace.selectedDate : !workspace.data.meta?.historical)
+    ? workspace.data : null;
+  const view = snapshot ? buildDailyView(snapshot) : null;
+  const row = view?.candidates.find((candidate) => candidate.symbol === code);
+  const debate = view?.debates.find((result) => result.symbol === code);
+  const datedMessages = snapshot && code ? messagesForCandidate(snapshot.messages, code) : [];
+  const validCode = Boolean(code && /^\d{6}$/.test(code));
+  const researchDate = view?.date || workspace.selectedDate;
 
   useEffect(() => {
-    if (!code) return;
+    const sync = () => setWatched(loadWatch().includes(code ?? ""));
+    sync();
+    window.addEventListener(WATCHLIST_CHANGED_EVENT, sync);
+    window.addEventListener("storage", sync);
+    return () => {
+      window.removeEventListener(WATCHLIST_CHANGED_EVENT, sync);
+      window.removeEventListener("storage", sync);
+    };
+  }, [code]);
+
+  useEffect(() => {
     let alive = true;
+    setResourceCode(code ?? "");
+    setQuote(null);
+    setCatalyst(null);
+    setEventCalendar(null);
+    if (!code || !/^\d{6}$/.test(code)) { setLoading(false); return; }
     setLoading(true);
     setQuoteError("");
     setCatalystError("");
@@ -84,48 +118,113 @@ export function StockResearchPage() {
     return () => {
       alive = false;
     };
-  }, [code]);
+  }, [code, reload]);
 
-  if (!code) {
+  if (!code || !validCode) {
     return (
       <HeroState
         tone="neutral"
-        title="未指定股票代码"
-        detail="在地址栏输入 /stock/代码 打开个股研究，例如 /stock/600519。"
+        title="股票代码无效"
+        detail="请输入有效的 6 位 A 股代码。"
+        action={<Link className="aq-btn" to="/today">返回今日研究</Link>}
       />
     );
   }
 
-  const events = catalyst ? filterEventsForSymbol(catalyst.events, code) : [];
-  const upcomingUnlocks = eventCalendar ? sortUnlocksByDaysUntil(eventCalendar.upcoming_unlocks ?? []) : [];
-  const recentLonghubang = eventCalendar?.recent_longhubang ?? [];
-  const suspendResumes = eventCalendar?.suspend_resumes ?? [];
-  const recentEarnings = eventCalendar?.recent_earnings_forecasts ?? [];
-  const upcomingDividends = eventCalendar?.upcoming_dividends ?? [];
+  const matchedResource = resourceCode === code;
+  const currentQuote = matchedResource ? quote : null;
+  const currentCalendar = matchedResource ? eventCalendar : null;
+  const events = matchedResource && catalyst ? filterEventsForSymbol(catalyst.events, code) : [];
+  const upcomingUnlocks = currentCalendar ? sortUnlocksByDaysUntil(currentCalendar.upcoming_unlocks ?? []) : [];
+  const recentLonghubang = currentCalendar?.recent_longhubang ?? [];
+  const suspendResumes = currentCalendar?.suspend_resumes ?? [];
+  const recentEarnings = currentCalendar?.recent_earnings_forecasts ?? [];
+  const upcomingDividends = currentCalendar?.upcoming_dividends ?? [];
+  let returnHref = "/today";
+  try { returnHref = todayResearchHref(researchDate || undefined); } catch { /* Invalid dates are reported by the snapshot boundary. */ }
+
+  function addToWatchlist() {
+    const existing = loadWatch();
+    if (existing.includes(code!)) { setWatched(true); return; }
+    try {
+      saveWatch([...existing, code!]);
+      setWatched(true);
+      toast("已加入自选，保存在此浏览器");
+    } catch {
+      toast("自选保存失败，请检查浏览器存储后重试");
+    }
+  }
 
   return (
-    <>
-      <SectionHeader number="01" title={`个股研究 · ${code}`} description="行情快照 + 相关催化，只读、不评分。" />
+    <div className="aq-page aq-research-workspace">
+      <header className="aq-page-head aq-research-head">
+        <div>
+          <Link className="aq-research-back" to={returnHref}><ArrowLeft aria-hidden="true" />返回{researchDate ? ` ${researchDate} ` : "今日"}研究</Link>
+          <p className="aq-eyebrow">个股研究</p>
+          <div className="aq-title-row"><h1>{row?.name || currentQuote?.name || code}</h1><span className="aq-code">{code}</span></div>
+          <p className="aq-page-sub">{view ? `${view.date} · ${view.isHistorical ? "历史研究记录" : "当日研究快照"}` : workspace.error ? "研究快照暂不可用" : "研究快照读取中"} · 评分与依据来自同一日期</p>
+        </div>
+        <div className="aq-research-actions">
+          <button type="button" className="aq-btn aq-btn-primary" onClick={addToWatchlist} disabled={watched}>
+            {watched ? <Check aria-hidden="true" /> : <Star aria-hidden="true" />}{watched ? "已在自选" : "加入自选"}
+          </button>
+          <Link className="aq-btn" to={researchDate ? `/my/watchlist?date=${encodeURIComponent(researchDate)}` : "/my/watchlist"}>我的自选</Link>
+          <button type="button" className="aq-btn aq-btn-icon" title="刷新研究与行情" aria-label="刷新研究与行情" onClick={() => { workspace.refresh(); setReload((value) => value + 1); }}><RefreshCw aria-hidden="true" /></button>
+        </div>
+      </header>
+
+      <section className="aq-research-summary" aria-label="同日研究摘要">
+        {workspace.loading && !view ? <LoadingState label="正在读取所选日期的研究依据…" /> : null}
+        {workspace.error ? <StatePanel tone="warn" action={<button type="button" className="aq-btn" onClick={workspace.refresh}>重试研究</button>}>{workspace.error}，暂不展示未核实的评分与依据。</StatePanel> : null}
+        {view ? (
+          <>
+            <div className="aq-tag-row"><Badge tone={view.isHistorical ? "neutral" : view.gate.tone}>{view.isHistorical ? "历史记录 · 仅供回看" : view.gate.label}</Badge><span className="aq-detail-muted">快照更新 {formatAqspTime(view.generatedAt)}</span></div>
+            <p className="aq-detail-muted">{view.isHistorical ? "以下为当时记录的研究依据，不表示当前推荐状态。" : view.gate.detail}</p>
+            {!row ? <EmptyState title="该股票不在所选日期候选中" detail={`${view.date} 未提供 ${code} 的 AQSP 评分与证据链，可查看独立行情和事件，也可加入自选。`} /> : (
+              <>
+                <div className="aq-research-score"><strong className="aq-num">{row.scoreText}</strong><span>确定性评分</span><Tag tone={row.ready ? "ok" : "warn"}>{row.ready ? "依据已齐 · 可继续复核" : "证据待补 · 仅供观察"}</Tag><Tag>{statusLabel(row.status)}</Tag><Tag>{evidenceLabel(row.evidence)}</Tag></div>
+                {row.context ? <p className="aq-card-summary">{row.context}</p> : null}
+                <div className="aq-research-columns">
+                  <div className="aq-research-evidence"><p className="aq-label">为什么入选</p>{row.reasons.length ? <ul className="aq-reason-list">{row.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul> : <p className="aq-detail-muted">选股依据尚未记录。</p>}<p className="aq-detail-muted">命中策略：{row.strategies || "未记录"}</p></div>
+                  <div className="aq-research-evidence"><p className="aq-label">下一观察与风险</p><p>{row.nextStep || "等待新增证据后复核。"}</p>{debate?.primary_risk_gate ? <StatePanel tone="warn">{debate.primary_risk_gate}</StatePanel> : <p className="aq-detail-muted">个股级风险结论尚未记录，不代表无风险。</p>}{debate?.next_trigger ? <p className="aq-detail-muted">下一验证：{debate.next_trigger}</p> : null}</div>
+                </div>
+                {row.metrics.length ? <dl className="aq-research-kv">{row.metrics.map((metric) => <div key={metric.key}><dt>{metric.label}</dt><dd>{metric.value}</dd></div>)}</dl> : null}
+                {row.breakdown.length ? <details className="aq-drawer"><summary className="aq-drawer-summary">评分拆解与数据来源</summary><div className="aq-drawer-body"><ul className="aq-reason-list">{row.breakdown.map((item) => <li key={item}>{item}</li>)}</ul><p className="aq-detail-muted">{row.provenance || "来源未记录"}</p></div></details> : row.provenance ? <p className="aq-detail-muted">来源：{row.provenance}</p> : null}
+              </>
+            )}
+          </>
+        ) : null}
+      </section>
+
+      {view && row ? <section className="aq-detail-block">
+        <SectionHeader title="同日消息与多空复核" description={`${view.date} 的个股证据，与下方实时行情分别呈现。`} count={`${datedMessages.length} 条消息`} />
+        <div className="aq-research-columns">
+          <div className="aq-research-evidence"><p className="aq-label">可引用消息</p>{datedMessages.length ? datedMessages.map((message, index) => <article className="aq-event-row" key={`${message.title}-${index}`}><a className="aq-radar-title" href={messageSourceUrl(message)} target="_blank" rel="noreferrer">{message.title}<ExternalLink aria-hidden="true" /></a><p className="aq-detail-muted">{message.source} · {message.published_at}</p>{message.summary ? <p>{message.summary}</p> : null}{message.validation_signals?.length ? <p className="aq-detail-muted">确认条件：{message.validation_signals.join("；")}</p> : null}{message.invalidation_signals?.length ? <p className="aq-detail-muted">失效条件：{message.invalidation_signals.join("；")}</p> : null}</article>) : <EmptyState title="暂无同日可引用消息" detail="缺少关联股票代码及原文链接的消息，不作为个股依据。" />}</div>
+          <div className="aq-research-evidence"><p className="aq-label">多空结论</p>{debate ? <><p>{debate.conclusion || "尚未记录结论"}</p><p className="aq-detail-muted">{debateProcessText(debate) || "过程尚未记录"}</p>{debate.disagreement_points?.length ? <ul className="aq-reason-list">{debate.disagreement_points.map((point) => <li key={point}>分歧：{point}</li>)}</ul> : null}{debate.uncertainty_points?.length ? <ul className="aq-reason-list">{debate.uncertainty_points.map((point) => <li key={point}>待核实：{point}</li>)}</ul> : null}<p className="aq-detail-muted">讨论仅供研究，不覆盖确定性评分。</p></> : <EmptyState title="尚未形成同日多空复核" detail="保留现有确定性依据，等待个股支持与反证。" />}</div>
+        </div>
+      </section> : null}
+
+      <SectionHeader title="实时行情" description="当前接口返回的行情快照，不作为历史日期的价格证据。" />
 
       <Card className="aq-research-quote">
         {loading ? <LoadingState label="正在读取行情与催化…" /> : null}
-        {quoteError ? <StatePanel tone="warn">{quoteError}，行情降级；下方催化仍可看。</StatePanel> : null}
-        {!loading && !quote ? (
+        {quoteError ? <StatePanel tone="warn" action={<button type="button" className="aq-btn" onClick={() => setReload((value) => value + 1)}>重试行情与事件</button>}>{quoteError}，行情降级；下方催化仍可看。</StatePanel> : null}
+        {!loading && !currentQuote ? (
           <EmptyState title="未获取到行情" detail="该代码可能不是有效的 6 位 A 股代码，或后端行情源暂不可用。" />
         ) : null}
-        {quote ? (
+        {currentQuote ? (
           <div className="aq-research-quote-body">
             <div className="aq-title-row">
-              <h2>{quote.name || "读取中…"}</h2>
+              <h2>{currentQuote.name || code}</h2>
               <strong>{code}</strong>
             </div>
             <p className="aq-detail-muted">
-              现价 <b className="aq-num">{quote.price.toFixed(2)}</b>{" "}
-              <b className={cn("aq-num", changeClass(quote.change_pct))}>{formatSignedPct(quote.change_pct)}</b>
-              {quote.pe_ttm ? ` · PE ${quote.pe_ttm.toFixed(1)}` : ""}
-              {quote.pb ? ` · PB ${quote.pb.toFixed(2)}` : ""}
-              {quote.mcap_yi ? ` · 市值 ${quote.mcap_yi.toFixed(0)} 亿` : ""}
-              {` · 换手 ${quote.turnover_pct.toFixed(2)}%`}
+              现价 <b className="aq-num">{currentQuote.price.toFixed(2)}</b>{" "}
+              <b className={cn("aq-num", changeClass(currentQuote.change_pct))}>{formatSignedPct(currentQuote.change_pct)}</b>
+              {currentQuote.pe_ttm ? ` · PE ${currentQuote.pe_ttm.toFixed(1)}` : ""}
+              {currentQuote.pb ? ` · PB ${currentQuote.pb.toFixed(2)}` : ""}
+              {currentQuote.mcap_yi ? ` · 市值 ${currentQuote.mcap_yi.toFixed(0)} 亿` : ""}
+              {` · 换手 ${currentQuote.turnover_pct.toFixed(2)}%`}
             </p>
           </div>
         ) : null}
@@ -135,10 +234,10 @@ export function StockResearchPage() {
         <SectionHeader
           number="02"
           title="相关新闻催化"
-          description="来自催化事件流，仅聚合展示，不评分。"
+          description="当前催化事件流，独立于所选日期的研究快照，不评分。"
           count={events.length}
         />
-        {catalystError ? <StatePanel tone="warn">{catalystError}，催化模块降级。</StatePanel> : null}
+        {catalystError ? <StatePanel tone="warn" action={<button type="button" className="aq-btn" onClick={() => setReload((value) => value + 1)}>重试事件</button>}>{catalystError}，催化模块降级。</StatePanel> : null}
         {!catalystError && !loading && events.length === 0 ? (
           <EmptyState title="暂无相关催化" detail="该股票未出现在当前催化事件流中。" />
         ) : null}
@@ -151,7 +250,7 @@ export function StockResearchPage() {
         <SectionHeader
           number="03"
           title="事件面"
-          description="解禁 / 龙虎榜 / 停复牌 / 业绩预告 / 分红（pit_cache 只读，缺数据 ≠ 没事件）。"
+          description="当前事件缓存：解禁 / 龙虎榜 / 停复牌 / 业绩预告 / 分红。缺少记录不代表没有风险。"
           icon={CalendarClock}
           count={
             upcomingUnlocks.length +
@@ -161,7 +260,7 @@ export function StockResearchPage() {
             upcomingDividends.length
           }
         />
-        {eventsError ? <StatePanel tone="warn">{eventsError}，事件面降级。</StatePanel> : null}
+        {eventsError ? <StatePanel tone="warn" action={<button type="button" className="aq-btn" onClick={() => setReload((value) => value + 1)}>重试事件</button>}>{eventsError}，事件面降级。</StatePanel> : null}
         {!eventsError &&
         !loading &&
         upcomingUnlocks.length === 0 &&
@@ -169,11 +268,11 @@ export function StockResearchPage() {
         suspendResumes.length === 0 &&
         recentEarnings.length === 0 &&
         upcomingDividends.length === 0 ? (
-          <EmptyState title="暂无事件数据（pit_cache 未生成）" detail="由 scripts/preload_event_data.sh 预加载后可见。" />
+          <EmptyState title="暂无事件数据" detail="当前事件缓存尚未提供记录，缺少数据不代表没有风险事件。" />
         ) : null}
         {upcomingUnlocks.length > 0 ? (
           <>
-            <p className="aq-eyebrow">解禁预警（{eventCalendar?.unlock_horizon_days ?? 30} 天内）</p>
+            <p className="aq-eyebrow">解禁预警（{currentCalendar?.unlock_horizon_days ?? 30} 天内）</p>
             {upcomingUnlocks.map((event, index) => (
               <UnlockRow key={index} event={event} />
             ))}
@@ -181,7 +280,7 @@ export function StockResearchPage() {
         ) : null}
         {recentLonghubang.length > 0 ? (
           <>
-            <p className="aq-eyebrow">近 {eventCalendar?.longhubang_lookback_days ?? 5} 日龙虎榜</p>
+            <p className="aq-eyebrow">近 {currentCalendar?.longhubang_lookback_days ?? 5} 日龙虎榜</p>
             {recentLonghubang.map((event, index) => (
               <LonghubangRow key={index} event={event} />
             ))}
@@ -212,7 +311,7 @@ export function StockResearchPage() {
           </>
         ) : null}
       </section>
-    </>
+    </div>
   );
 }
 

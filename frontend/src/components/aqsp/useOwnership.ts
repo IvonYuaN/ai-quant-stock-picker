@@ -6,7 +6,7 @@
 // 持仓读不到（后端未启动 / 未录入）时只降级为自选，**不影响选股本身**。
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
-import { loadWatch } from "@/lib/watchlist";
+import { loadWatch, WATCHLIST_CHANGED_EVENT, WATCHLIST_STORAGE_KEY } from "@/lib/watchlist";
 import { EMPTY_OWNERSHIP, type OwnershipSets } from "@/lib/ownership";
 
 export function useOwnership(): OwnershipSets {
@@ -14,8 +14,15 @@ export function useOwnership(): OwnershipSets {
 
   useEffect(() => {
     let alive = true;
-    const watchlist = new Set(loadWatch());
-    setSets((prev) => ({ holdings: prev.holdings, watchlist }));
+    const syncWatchlist = () => {
+      setSets((prev) => ({ holdings: prev.holdings, watchlist: new Set(loadWatch()) }));
+    };
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === WATCHLIST_STORAGE_KEY || event.key === null) syncWatchlist();
+    };
+    syncWatchlist();
+    window.addEventListener(WATCHLIST_CHANGED_EVENT, syncWatchlist);
+    window.addEventListener("storage", onStorage);
 
     api
       .portfolio()
@@ -33,6 +40,8 @@ export function useOwnership(): OwnershipSets {
 
     return () => {
       alive = false;
+      window.removeEventListener(WATCHLIST_CHANGED_EVENT, syncWatchlist);
+      window.removeEventListener("storage", onStorage);
     };
   }, []);
 

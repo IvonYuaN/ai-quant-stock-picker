@@ -3,11 +3,12 @@
 // 解决的是最基础的一类体验问题：想看一只股票，得先判断它该在哪个页面、再找到它、再点开。
 // 这里把「导航 / 自选 / 直接输代码」合成一个入口：想查什么直接敲。
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { ArrowRight, CornerDownLeft, LineChart, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { NAV_LINES } from "@/lib/ia";
-import { loadWatch } from "@/lib/watchlist";
+import { loadWatch, WATCHLIST_CHANGED_EVENT } from "@/lib/watchlist";
+import { stockResearchHref } from "@/lib/research-route";
 
 interface Command {
   key: string;
@@ -22,8 +23,15 @@ const CODE_PATTERN = /^\d{6}$/;
 export function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
+  const [watchCodes, setWatchCodes] = useState(() => loadWatch());
   const inputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
+  const { search } = useLocation();
+  const date = new URLSearchParams(search).get("date") || undefined;
+  const stockHref = (code: string) => {
+    try { return stockResearchHref(code, date); }
+    catch { return stockResearchHref(code); }
+  };
 
   const commands = useMemo<Command[]>(() => {
     const goto = (to: string) => () => navigate(to);
@@ -34,21 +42,31 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
         label: item.label,
         hint: `${line.title} · ${item.desc}`,
         group: "跳转",
-        run: goto(item.to),
+        run: goto(date ? `${item.to}?date=${encodeURIComponent(date)}` : item.to),
       })),
     );
 
-    const watch = loadWatch();
-    const watchCommands: Command[] = watch.map((code) => ({
+    const watchCommands: Command[] = watchCodes.map((code) => ({
       key: `watch:${code}`,
       label: code,
       hint: "自选 · 查看个股详情",
       group: "自选",
-      run: goto(`/today?symbol=${code}`),
+      run: goto(stockHref(code)),
     }));
 
     return [...navCommands, ...watchCommands];
-  }, [navigate]);
+  }, [navigate, date, watchCodes]);
+
+  useEffect(() => {
+    const sync = () => setWatchCodes(loadWatch());
+    sync();
+    window.addEventListener(WATCHLIST_CHANGED_EVENT, sync);
+    window.addEventListener("storage", sync);
+    return () => {
+      window.removeEventListener(WATCHLIST_CHANGED_EVENT, sync);
+      window.removeEventListener("storage", sync);
+    };
+  }, [open]);
 
   // 直接输 6 位代码永远可用（不必先加自选）
   const trimmed = query.trim();
@@ -58,7 +76,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
         label: trimmed,
         hint: "查看个股详情",
         group: "代码",
-        run: () => navigate(`/today?symbol=${trimmed}`),
+        run: () => navigate(stockHref(trimmed)),
       }
     : null;
 

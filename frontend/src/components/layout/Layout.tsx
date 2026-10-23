@@ -1,9 +1,9 @@
 import { Suspense, useEffect, useRef, useState } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
-import { Download, LineChart, Moon, PanelLeftClose, PanelLeftOpen, Search, Sun, Upload, BellRing } from "lucide-react";
+import { Download, LineChart, Moon, PanelLeftClose, PanelLeftOpen, Search, Sun, Upload, BellRing, Ellipsis, X } from "lucide-react";
 import { Toaster, toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { NAV_LINES } from "@/lib/ia";
+import { MY_LINE, NAV_LINES, PRIMARY_LINE } from "@/lib/ia";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import { useAlertOpenCount } from "@/hooks/useAlertOpenCount";
 import { AqspWorkspaceProvider, useAqspSnapshot } from "@/components/aqsp/useAqspSnapshot";
@@ -31,7 +31,9 @@ export function Layout() {
 }
 
 function WorkspaceLayout() {
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
+  const researchDate = new URLSearchParams(search).get("date");
+  const navHref = (path: string) => researchDate ? `${path}?date=${encodeURIComponent(researchDate)}` : path;
   const { dark, toggle } = useDarkMode();
   const { data, loading } = useAqspSnapshot();
   const { openCount: openAlerts, refetch: refetchAlerts } = useAlertOpenCount();
@@ -39,7 +41,10 @@ function WorkspaceLayout() {
     () => localStorage.getItem("aqsp-sidebar") === "collapsed",
   );
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => setMobileToolsOpen(false), [pathname]);
 
   useEffect(() => {
     localStorage.setItem("aqsp-sidebar", collapsed ? "collapsed" : "expanded");
@@ -68,10 +73,15 @@ function WorkspaceLayout() {
 
   return (
     <div className="aq-shell">
+      <header className="aq-mobile-bar">
+        <Link to={navHref("/today")} className="aq-mobile-brand"><LineChart aria-hidden="true" /><b>AQSP</b></Link>
+        <span>{NAV_LINES.flatMap((line) => line.items).find((item) => item.to === pathname)?.label ?? "个股研究"}</span>
+        <button type="button" className="aq-icon-btn" aria-label="搜索代码或页面" onClick={() => setPaletteOpen(true)}><Search aria-hidden="true" /></button>
+      </header>
       <aside className={cn("aq-sidebar", collapsed && "aq-sidebar-collapsed")}>
         <div className="aq-brand">
           <div className="aq-brand-row">
-            <Link to="/today" className="aq-brand-link">
+            <Link to={navHref("/today")} className="aq-brand-link">
               <span className="aq-brand-mark">
                 <LineChart aria-hidden="true" />
               </span>
@@ -88,7 +98,7 @@ function WorkspaceLayout() {
               {collapsed ? <PanelLeftOpen aria-hidden="true" /> : <PanelLeftClose aria-hidden="true" />}
             </button>
           </div>
-          {!collapsed ? <p className="aq-brand-sub">AI 自动产出 + 个人选股管理</p> : null}
+          {!collapsed ? <p className="aq-brand-sub">选股研究工作台</p> : null}
         </div>
 
         {openAlerts > 0 ? (
@@ -130,7 +140,8 @@ function WorkspaceLayout() {
                 return (
                   <Link
                     key={item.to}
-                    to={item.to}
+                    to={navHref(item.to)}
+                    aria-current={active ? "page" : undefined}
                     title={collapsed ? `${item.label} · ${item.desc}` : undefined}
                     className={cn("aq-nav-item", active && "aq-nav-item-active", collapsed && "aq-nav-item-collapsed")}
                   >
@@ -172,20 +183,6 @@ function WorkspaceLayout() {
                 <Upload aria-hidden="true" />
                 <span>导入</span>
               </button>
-              <input
-                ref={fileRef}
-                type="file"
-                accept="application/json"
-                hidden
-                onChange={async (event) => {
-                  const file = event.target.files?.[0];
-                  if (!file) return;
-                  const result = importVault(await file.text());
-                  if (result.ok) toast(`已导入 ${result.keys} 项，刷新后生效`);
-                  else toast.error(`导入失败：${result.reason}`);
-                  event.target.value = "";
-                }}
-              />
             </div>
           ) : null}
 
@@ -214,6 +211,17 @@ function WorkspaceLayout() {
         </div>
       </aside>
 
+      <input ref={fileRef} type="file" accept="application/json" hidden onChange={async (event) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+        try {
+          const result = importVault(await file.text());
+          if (result.ok) toast(`已导入 ${result.keys} 项，刷新后生效`);
+          else toast.error(`导入失败：${result.reason}`);
+        } catch { toast.error("读取备份失败，请检查文件后重试"); }
+        event.target.value = "";
+      }} />
+
       <main className="aq-main">
         <div className="aq-content">
           {/* 路由是懒加载的（见 router.tsx）：切页时先显示加载态，避免闪一下空白页框 */}
@@ -222,6 +230,20 @@ function WorkspaceLayout() {
           </Suspense>
         </div>
       </main>
+
+      {mobileToolsOpen ? (
+        <section className="aq-mobile-tools" id="aq-mobile-tools" aria-label="个人工具">
+          <div className="aq-mobile-tools-head"><strong>个人工具</strong><button type="button" className="aq-icon-btn" aria-label="关闭个人工具" onClick={() => setMobileToolsOpen(false)}><X aria-hidden="true" /></button></div>
+          {MY_LINE.items.map((item) => { const Icon = item.icon; return <Link key={item.to} to={navHref(item.to)} className="aq-mobile-tool" aria-current={pathname === item.to ? "page" : undefined}><Icon aria-hidden="true" /><span>{item.label}</span></Link>; })}
+          <button type="button" className="aq-mobile-tool" onClick={toggle}>{dark ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}<span>{dark ? "切换亮色" : "切换暗色"}</span></button>
+          <button type="button" className="aq-mobile-tool" onClick={() => { downloadVault(); toast("已导出备份文件"); }}><Download aria-hidden="true" /><span>导出个人备份</span></button>
+          <button type="button" className="aq-mobile-tool" onClick={() => fileRef.current?.click()}><Upload aria-hidden="true" /><span>导入个人备份</span></button>
+        </section>
+      ) : null}
+      <nav className="aq-mobile-nav" aria-label="主要导航">
+        {[...PRIMARY_LINE.items, MY_LINE.items[0]].map((item) => { const Icon = item.icon; return <Link key={item.to} to={navHref(item.to)} aria-current={pathname === item.to ? "page" : undefined}><Icon aria-hidden="true" /><span>{item.label}</span></Link>; })}
+        <button type="button" onClick={() => setMobileToolsOpen((value) => !value)} aria-label="更多个人工具" aria-controls="aq-mobile-tools" aria-expanded={mobileToolsOpen}><Ellipsis aria-hidden="true" /><span>更多</span></button>
+      </nav>
 
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
 

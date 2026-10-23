@@ -11,7 +11,6 @@ import { BellRing, CircleCheck, Eye, RefreshCw, X } from "lucide-react";
 import {
   Badge,
   Card,
-  EmptyState,
   ErrorState,
   LoadingState,
   SectionHeader,
@@ -139,23 +138,20 @@ export function AlertInbox() {
   const view: AlertInboxView = buildAlertInbox(data);
   if (view.openCount === 0) {
     return (
-      <div className="aq-alert-inbox">
-        <EmptyState
-          title="今天没有该卖提醒"
-          detail="你的持仓没有触发止损/动态止损位。有持仓时可点右侧「重新检查」跑一次 LIVE 风控。"
-          icon={BellRing}
-          action={
-            <button type="button" className="aq-btn aq-btn-primary" onClick={() => void refreshRisk()} disabled={busy}>
-              <RefreshCw aria-hidden="true" /> 重新检查
-            </button>
-          }
-        />
+      <div className="aq-alert-quiet">
+        <BellRing aria-hidden="true" />
+        <span>暂无未处理的持仓风控提醒</span>
+        {error ? <span className="aq-tone-warn" role="alert">检查失败：{error}</span> : null}
+        <button type="button" className="aq-btn" onClick={() => void refreshRisk()} disabled={busy} title="重新检查持仓 LIVE 风控">
+          <RefreshCw aria-hidden="true" /> 检查持仓
+        </button>
       </div>
     );
   }
 
   return (
     <Card accent="warning" className="aq-alert-inbox-card">
+      {error ? <ErrorState error={error} onRefresh={() => void load()} /> : null}
       <SectionHeader
         title="今日该卖提醒"
         description="来自你实盘持仓的风控触发。先看「可卖」区，再决定动哪只；「明日生效」区是 T+1 当日买入、今天卖不掉的，先记着。"

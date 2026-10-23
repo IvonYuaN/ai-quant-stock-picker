@@ -6,7 +6,7 @@
 // 曾经这里聚合了 19 个后端接口，把行情终端重做了一遍 —— 那是舍本逐末：
 // 本项目的价值在选股与复盘，专业站点在个股数据上做得远比我们好。
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ExternalLink, X } from "lucide-react";
+import { ExternalLink, RefreshCw, X } from "lucide-react";
 import { api, type Quote } from "@/lib/api";
 import { Badge, LoadingState, StatePanel, Tag } from "@/components/ui/primitives";
 import { changeClass, formatSignedPct } from "@/lib/format";
@@ -38,37 +38,52 @@ export function StockDetailDrawer({
   onClose: () => void;
   intro?: StockIntro;
 }) {
-  const [quote, setQuote] = useState<Quote | null>(null);
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<{
+    symbol: string | null;
+    quote: Quote | null;
+    error: string;
+    loading: boolean;
+  }>({ symbol: null, quote: null, error: "", loading: false });
+  const [retry, setRetry] = useState(0);
   const panelRef = useRef<HTMLElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
+  // Hide the previous symbol before the new request effect runs.
+  const matchesSymbol = result.symbol === symbol;
+  const quote = matchesSymbol ? result.quote : null;
+  const error = matchesSymbol ? result.error : "";
+  const loading = Boolean(symbol && (!matchesSymbol || result.loading));
 
   useEffect(() => {
     if (!symbol) {
-      setQuote(null);
-      setError("");
+      setResult({ symbol: null, quote: null, error: "", loading: false });
       return;
     }
     let alive = true;
-    setLoading(true);
+    setResult({ symbol, quote: null, error: "", loading: true });
     api
       .quote(symbol)
       .then((data) => {
         if (!alive) return;
-        setQuote(data[symbol] ?? null);
-        setError("");
+        const current = data[symbol] ?? null;
+        setResult({
+          symbol,
+          quote: current,
+          error: current ? "" : "暂未返回该标的行情",
+          loading: false,
+        });
       })
       .catch((reason: unknown) => {
-        if (alive) setError(reason instanceof Error ? reason.message : "行情读取失败");
-      })
-      .finally(() => {
-        if (alive) setLoading(false);
+        if (alive) setResult({
+          symbol,
+          quote: null,
+          error: reason instanceof Error ? reason.message : "行情读取失败",
+          loading: false,
+        });
       });
     return () => {
       alive = false;
     };
-  }, [symbol]);
+  }, [symbol, retry]);
 
   useEffect(() => {
     if (!symbol) return;
@@ -127,7 +142,7 @@ export function StockDetailDrawer({
           <div>
             <p className="aq-eyebrow">个股简介 · 选股视角</p>
             <div className="aq-title-row">
-              <h2>{quote?.name ?? "读取中…"}</h2>
+              <h2>{quote?.name || (loading ? "读取中…" : symbol)}</h2>
               <strong>{symbol}</strong>
             </div>
             {quote ? (
@@ -155,7 +170,14 @@ export function StockDetailDrawer({
 
         <div className="aq-drawer-panel-body">
           {loading ? <LoadingState label="正在读取行情…" /> : null}
-          {error ? <StatePanel tone="warn">{error}，不影响下方链接。</StatePanel> : null}
+          {error ? (
+            <StatePanel tone="warn">
+              {error}，研究摘要与下方链接仍可使用。
+              <button type="button" className="aq-btn" onClick={() => setRetry((value) => value + 1)}>
+                <RefreshCw aria-hidden="true" /> 重试行情
+              </button>
+            </StatePanel>
+          ) : null}
 
           <section className="aq-detail-block">
             <p className="aq-label">AQSP 为什么把它选出来</p>

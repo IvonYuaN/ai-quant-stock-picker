@@ -1,165 +1,211 @@
-// 我的自选：我的线。自选列表只存当前浏览器（localStorage），不上传服务端。
-//
-// 对照用的额外列（换手率 / 市值 / PE）与「查看个股详情」入口都在这里 ——
-// 原「我的测试」页的用途已并入本页，不再单独占一个导航项。
-import { useEffect, useMemo, useState } from "react";
-import { ExternalLink, ShieldCheck, Trash2 } from "lucide-react";
+// 自选继续研究：浏览器私有列表，与所选日期的研究快照关联。
+import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { Link } from "react-router-dom";
+import { ArrowRight, Plus, RefreshCw, Star, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { addCodes, loadWatch, saveWatch } from "@/lib/watchlist";
+import {
+  addCodes, loadWatch, saveWatch, WATCHLIST_CHANGED_EVENT, WATCHLIST_STORAGE_KEY,
+} from "@/lib/watchlist";
 import { api, type Quote } from "@/lib/api";
-import { Badge, StatePanel } from "@/components/ui/primitives";
-import { StockDetailDrawer } from "@/components/aqsp/StockDetailDrawer";
+import { Badge, EmptyState, StatePanel, Tag } from "@/components/ui/primitives";
+import { useWorkspaceSnapshot } from "@/components/aqsp/useAqspSnapshot";
+import { buildDailyView } from "@/lib/daily-view";
+import { statusLabel } from "@/lib/display-labels";
 import { changeClass, formatSignedPct } from "@/lib/format";
 import { cn } from "@/lib/utils";
+
+function quoteNumber(value: number | undefined, digits = 2, suffix = ""): string {
+  return typeof value === "number" && Number.isFinite(value) ? `${value.toFixed(digits)}${suffix}` : "—";
+}
 
 export function WatchlistPage() {
   const [codes, setCodes] = useState<string[]>(() => loadWatch());
   const [raw, setRaw] = useState("");
-  const [quotes, setQuotes] = useState<Record<string, Quote>>({});
+  const [quoteState, setQuoteState] = useState<{ key: string; data: Record<string, Quote> }>({ key: "", data: {} });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [picked, setPicked] = useState<string | null>(null);
+  const [reload, setReload] = useState(0);
+  const { data: snapshot, loading: snapshotLoading, error: snapshotError, switching, selectedDate } = useWorkspaceSnapshot();
+  const view = useMemo(() => snapshot && !switching ? buildDailyView(snapshot) : null, [snapshot, switching]);
+  const codesKey = codes.join(",");
 
   useEffect(() => {
-    if (codes.length === 0) {
-      setQuotes({});
+    const sync = () => {
+      const next = loadWatch();
+      setCodes((previous) => previous.join(",") === next.join(",") ? previous : next);
+    };
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === WATCHLIST_STORAGE_KEY || event.key === null) sync();
+    };
+    window.addEventListener(WATCHLIST_CHANGED_EVENT, sync);
+    window.addEventListener("storage", onStorage);
+    return () => {
+      window.removeEventListener(WATCHLIST_CHANGED_EVENT, sync);
+      window.removeEventListener("storage", onStorage);
+    };
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    setQuoteState({ key: codesKey, data: {} });
+    setError("");
+    if (!codesKey) {
+      setLoading(false);
       return;
     }
-    let alive = true;
     setLoading(true);
-    api
-      .quote(codes.join(","))
+    api.quote(codesKey)
       .then((data) => {
-        if (alive) {
-          setQuotes(data);
-          setError("");
-        }
+        if (alive) setQuoteState({ key: codesKey, data });
       })
-      .catch((err: unknown) => {
-        if (alive) setError(err instanceof Error ? err.message : "行情读取失败");
+      .catch((reason: unknown) => {
+        if (alive) setError(reason instanceof Error ? reason.message : "行情读取失败");
       })
       .finally(() => {
         if (alive) setLoading(false);
       });
-    return () => {
-      alive = false;
-    };
-  }, [codes]);
+    return () => { alive = false; };
+  }, [codesKey, reload]);
 
-  const rows = useMemo(() => codes.map((code) => ({ code, quote: quotes[code] })), [codes, quotes]);
+  const candidateByCode = useMemo(() => new Map(view?.candidates.map((row) => [row.symbol, row]) ?? []), [view]);
+  const matchedCount = codes.filter((code) => candidateByCode.has(code)).length;
 
-  function persist(next: string[]) {
-    setCodes(next);
-    saveWatch(next);
+  function persist(next: string[]): boolean {
+    try {
+      saveWatch(next);
+      setCodes(next);
+      return true;
+    } catch {
+      toast.error("自选保存失败，请检查浏览器存储后重试；原列表仍保留。");
+      return false;
+    }
   }
 
-  function submit() {
+  function submit(event: FormEvent<HTMLFormElement>): void {
+    event.preventDefault();
     const { next, added } = addCodes(codes, raw);
-    persist(next);
-    setRaw("");
-    toast(added > 0 ? `已添加 ${added} 只` : "没有新的代码");
+    if (!added) {
+      toast("没有新的有效代码，请输入 6 位 A 股代码。");
+      return;
+    }
+    if (persist(next)) {
+      setRaw("");
+      toast(`已关注 ${added} 只股票`);
+    }
   }
+
+  const researchDate = view?.date || selectedDate;
+  const researchLink = (code: string) => `/stock/${code}${researchDate ? `?date=${encodeURIComponent(researchDate)}` : ""}`;
 
   return (
     <div className="aq-page">
       <header className="aq-page-head">
         <div>
-          <p className="aq-eyebrow">AQSP · 我的线</p>
-          <div className="aq-title-row">
-            <h1>我的自选</h1>
-          </div>
-          <p className="aq-page-sub">共 {codes.length} 只 · 含换手率 / 市值 / PE，可直接查看个股详情</p>
+          <p className="aq-eyebrow"><Star aria-hidden="true" /> AQSP · 个人跟踪</p>
+          <div className="aq-title-row"><h1>我的自选</h1></div>
+          <p className="aq-page-sub">继续核对关注标的的研究依据与风险。</p>
         </div>
         <Badge tone="neutral">只存此浏览器</Badge>
       </header>
 
-      <p className="aq-privacy-note">
-        <ShieldCheck aria-hidden="true" />
-        <span>
-          自选股保存在你当前这台设备的浏览器里，不会上传服务器，因此别人访问看不到、也改不了你的列表。
-          代价是换设备或清缓存会丢 —— 用侧栏底部的「导出备份」可以搬走。
-        </span>
-      </p>
-
-      <div className="aq-toolbar">
-        <input
-          className="aq-input"
-          value={raw}
-          onChange={(event) => setRaw(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") submit();
-          }}
-          placeholder="粘贴 6 位代码，逗号 / 空格 / 换行都行，例如 600519,000858"
-        />
-        <button type="button" className="aq-btn aq-btn-primary" onClick={submit}>
-          添加
-        </button>
+      <div className="aq-watch-summary" aria-label="自选摘要">
+        <span><b>{codes.length}</b> 只关注</span>
+        {view ? (
+          <>
+            <span><b>{matchedCount}</b> 只进入所选日候选</span>
+            <span>研究对照 <b>{researchDate}</b> · {view.isHistorical ? "历史记录" : "当前快照"}</span>
+          </>
+        ) : <span>{snapshotLoading || switching ? "正在读取研究对照…" : "研究快照暂不可用"}</span>}
       </div>
 
-      {error ? <StatePanel tone="warn">{error}，自选列表仍可使用。</StatePanel> : null}
-      {loading ? <StatePanel>正在读取行情…</StatePanel> : null}
-
-      {rows.length === 0 ? (
-        <StatePanel>还没有自选股，在上方粘贴代码即可加入。</StatePanel>
-      ) : (
-        <div className="aq-table-wrap">
-          <table className="aq-table">
-            <thead>
-              <tr>
-                <th>代码 / 名称</th>
-                <th className="aq-num">最新价</th>
-                <th className="aq-num">涨跌幅</th>
-                <th className="aq-num">换手率</th>
-                <th className="aq-num">市值(亿)</th>
-                <th className="aq-num">PE(TTM)</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map(({ code, quote }) => (
-                <tr key={code}>
-                  <td>
-                    <strong>{quote?.name || code}</strong>
-                    <div className="aq-code">{code}</div>
-                  </td>
-                  <td className="aq-num">{quote ? quote.price.toFixed(2) : "—"}</td>
-                  <td className={cn("aq-num", quote && changeClass(quote.change_pct))}>
-                    {quote ? formatSignedPct(quote.change_pct) : "—"}
-                  </td>
-                  <td className="aq-num">{quote ? `${quote.turnover_pct.toFixed(2)}%` : "—"}</td>
-                  <td className="aq-num">{quote ? quote.mcap_yi.toFixed(1) : "—"}</td>
-                  <td className="aq-num">{quote && quote.pe_ttm ? quote.pe_ttm.toFixed(1) : "—"}</td>
-                  <td className="aq-num">
-                    <div className="aq-row-actions">
-                      <button
-                        type="button"
-                        className="aq-btn aq-btn-icon"
-                        onClick={() => setPicked(code)}
-                        title="查看个股详情"
-                      >
-                        <ExternalLink aria-hidden="true" />
-                      </button>
-                      <button
-                        type="button"
-                        className="aq-btn aq-btn-danger aq-btn-icon"
-                        onClick={() => {
-                          persist(codes.filter((item) => item !== code));
-                          toast(`已移除 ${code}`);
-                        }}
-                        title="移除"
-                      >
-                        <Trash2 aria-hidden="true" />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      <form className="aq-watch-entry" onSubmit={submit}>
+        <label htmlFor="watchlist-codes">添加关注代码</label>
+        <div className="aq-row-actions">
+          <input
+            id="watchlist-codes"
+            className="aq-input"
+            value={raw}
+            onChange={(event) => setRaw(event.target.value)}
+            placeholder="600519, 000858"
+            aria-describedby="watchlist-input-help"
+            autoComplete="off"
+          />
+          <button type="submit" className="aq-btn aq-btn-primary"><Plus aria-hidden="true" /> 添加</button>
+          <button
+            type="button"
+            className="aq-btn"
+            onClick={() => setReload((value) => value + 1)}
+            disabled={loading || !codes.length}
+          >
+            <RefreshCw className={cn(loading && "aq-spin")} aria-hidden="true" />
+            刷新行情
+          </button>
         </div>
-      )}
+        <p id="watchlist-input-help" className="aq-note">支持逗号、空格或换行分隔。自选不上传服务器，换设备前可从侧栏导出备份。</p>
+      </form>
 
-      <StockDetailDrawer symbol={picked} onClose={() => setPicked(null)} />
+      {error ? (
+        <StatePanel tone="warn">
+          行情读取失败：{error}。关注记录仍保留。
+          <button type="button" className="aq-btn" onClick={() => setReload((value) => value + 1)} disabled={loading}>
+            <RefreshCw aria-hidden="true" /> 重试行情
+          </button>
+        </StatePanel>
+      ) : null}
+      {snapshotError ? <StatePanel tone="warn">研究对照更新失败：{snapshotError}。{view ? "保留上次读取的研究记录。" : "仍可查看自选和行情。"}</StatePanel> : null}
+
+      {codes.length === 0 ? (
+        <EmptyState
+          title="还没有关注标的"
+          detail="从候选研究中加入自选，或在上方输入股票代码。"
+          action={<Link className="aq-btn aq-btn-primary" to="/today">查看研究候选 <ArrowRight aria-hidden="true" /></Link>}
+        />
+      ) : (
+        <>
+          <p className="aq-note">行情为当前接口快照，与 {researchDate || "所选日期"} 的研究记录分开展示，不作为历史行情证据。{loading ? "行情读取中…" : ""}</p>
+          <ul className="aq-watch-list" aria-label="已关注股票">
+            {codes.map((code) => {
+              const quote = quoteState.key === codesKey ? quoteState.data[code] : undefined;
+              const candidate = candidateByCode.get(code);
+              const validChange = typeof quote?.change_pct === "number" && Number.isFinite(quote.change_pct);
+              return (
+                <li className="aq-watch-row" key={code}>
+                  <div className="aq-watch-identity">
+                    <Link to={researchLink(code)}><strong>{candidate?.name || quote?.name || code}</strong></Link>
+                    <span className="aq-code">{code}</span>
+                  </div>
+                  <dl className="aq-watch-metrics">
+                    <div><dt>现价</dt><dd className="aq-num">{quoteNumber(quote?.price)}</dd></div>
+                    <div><dt>涨跌幅</dt><dd className={cn("aq-num", validChange && changeClass(quote!.change_pct))}>{validChange ? formatSignedPct(quote!.change_pct) : "—"}</dd></div>
+                    <div><dt>换手率</dt><dd className="aq-num">{quoteNumber(quote?.turnover_pct, 2, "%")}</dd></div>
+                  </dl>
+                  <div className="aq-watch-research">
+                    {candidate ? (
+                      <>
+                        <div className="aq-tag-row"><Tag tone="primary">所选日候选</Tag><Tag>{statusLabel(candidate.status)}</Tag></div>
+                        <p>确定性评分 <b>{candidate.scoreText}</b> · {candidate.ready ? "研究材料齐备" : "研究材料待补"}</p>
+                        {candidate.nextStep ? <p className="aq-note">下一观察：{candidate.nextStep}</p> : null}
+                      </>
+                    ) : <p className="aq-note">{view ? `未进入 ${researchDate} 候选；可继续查看该日研究记录。` : "研究对照尚未读取，不推断候选状态。"}</p>}
+                  </div>
+                  <div className="aq-watch-actions">
+                    <Link className="aq-btn" to={researchLink(code)}>继续研究 <ArrowRight aria-hidden="true" /></Link>
+                    <button
+                      type="button"
+                      className="aq-btn aq-btn-icon"
+                      title={`移除 ${candidate?.name || quote?.name || code}`}
+                      aria-label={`移除 ${candidate?.name || quote?.name || code}`}
+                      onClick={() => {
+                        if (persist(codes.filter((item) => item !== code))) toast(`已移除 ${code}`);
+                      }}
+                    ><Trash2 aria-hidden="true" /></button>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </>
+      )}
     </div>
   );
 }

@@ -2,7 +2,7 @@
 //
 // 数据全部来自 daily-view 的展示模型，本文件不做任何判断逻辑，
 // 因此"候选名怎么显示""什么算可复核"在页签和卡片里必然一致。
-import { ArrowRight, BookOpen, Check, ExternalLink, TrendingUp } from "lucide-react";
+import { ArrowRight, BookOpen, Check, ExternalLink, SlidersHorizontal, Star } from "lucide-react";
 import {
   Badge,
   Card,
@@ -12,7 +12,10 @@ import {
   clickableRowProps,
 } from "@/components/ui/primitives";
 import { useEffect, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
+import { toast } from "sonner";
+import { loadWatch, saveWatch } from "@/lib/watchlist";
+import { stockResearchHref } from "@/lib/research-route";
 import { cn } from "@/lib/utils";
 import { api, type ReviewRecord } from "@/lib/api";
 import { evidenceLabel, statusLabel } from "@/lib/display-labels";
@@ -128,6 +131,7 @@ function CandidateDetailCard({
   historyWindow,
   onToggleCompare,
   onPick,
+  date,
 }: {
   row: CandidateRow;
   ownership: OwnershipSets;
@@ -138,9 +142,20 @@ function CandidateDetailCard({
   historyWindow: number;
   onToggleCompare: (symbol: string) => void;
   onPick?: (symbol: string) => void;
+  date: string;
 }) {
+  const watched = ownership.watchlist.has(row.symbol);
+  const toggleWatch = () => {
+    try {
+      const current = loadWatch();
+      saveWatch(watched ? current.filter((code) => code !== row.symbol) : [...new Set([...current, row.symbol])]);
+      toast(watched ? "已移出自选" : "已加入自选");
+    } catch {
+      toast.error("自选保存失败，请检查浏览器存储后重试。");
+    }
+  };
   return (
-    <Card accent={row.ready ? "success" : "warning"}>
+    <Card className="aq-selected-candidate" accent={row.ready ? "success" : "warning"}>
       <div className="aq-card-head">
         <div className="aq-card-title">
           <h3>{row.name}</h3>
@@ -158,6 +173,10 @@ function CandidateDetailCard({
         {row.ready ? <Tag tone="ok">材料齐了</Tag> : <Tag tone="warn">材料待补</Tag>}
         <OwnerTag ownership={ownership} code={row.symbol} />
         <LifecycleTag lifecycle={lifecycle} historyWindow={historyWindow} />
+      </div>
+      <div className="aq-candidate-actions">
+        <Link className="aq-btn aq-btn-primary" to={stockResearchHref(row.symbol, date)}>完整研究 <ArrowRight aria-hidden="true" /></Link>
+        <button type="button" className="aq-btn" onClick={toggleWatch} aria-pressed={watched}><Star aria-hidden="true" fill={watched ? "currentColor" : "none"} />{watched ? "已自选" : "加入自选"}</button>
         {onPick && row.symbol ? (
           <button type="button" className="aq-btn aq-btn-icon" onClick={() => onPick(row.symbol)} title="查看个股详情">
             <ExternalLink aria-hidden="true" />
@@ -186,12 +205,12 @@ function CandidateDetailCard({
       {reviews.length > 0 ? (
         <p
           className="aq-review-echo"
-          title={reviews[reviews.length - 1].notes || undefined}
+          title={reviews[0].notes || undefined}
         >
           <BookOpen aria-hidden="true" />
-          历史复盘 {reviews.length} 次 · 上次 {reviews[reviews.length - 1].rating}★
-          {reviews[reviews.length - 1].tags.length > 0
-            ? ` · ${reviews[reviews.length - 1].tags.join("/")}`
+          历史复盘 {reviews.length} 次 · 上次 {reviews[0].rating}★
+          {reviews[0].tags.length > 0
+            ? ` · ${reviews[0].tags.join("/")}`
             : ""}
         </p>
       ) : null}
@@ -423,7 +442,7 @@ function CandidateControls({
     hideOwned?: boolean;
   }) => void;
 }) {
-  if (rows.length <= 1) return null;
+  if (rows.length === 0) return null;
   return (
     <div className="aq-toolbar aq-toolbar-wrap">
       <label className="aq-field-inline">
@@ -475,6 +494,7 @@ export function CandidateSection({
   const [onlyReady, setOnlyReady] = useState(false);
   const [strategy, setStrategy] = useState<string | null>(null);
   const [hideOwned, setHideOwned] = useState(false);
+  const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
   const ownership = useOwnership();
   // 历史复盘：看候选时同步看到「自己上次对这只票的判断」——决策时刻最有价值的镜子。
   // 取不到时静默降级（不影响候选研究主流程）。
@@ -506,14 +526,18 @@ export function CandidateSection({
   // 候选池生命周期（issue #317 W1）：新入选/连续在榜/回归一眼可见。
   // 快照面缺失或端点不可用时静默降级，不阻断候选研究主流程。
   const [lifecycles, setLifecycles] = useState<Record<string, AqspCandidateLifecycle>>({});
+  const [lifecycleDate, setLifecycleDate] = useState("");
   const [historyWindow, setHistoryWindow] = useState(0);
   useEffect(() => {
     let cancelled = false;
+    setLifecycles({});
+    setHistoryWindow(0);
     api
-      .aqspLifecycle()
+      .aqspLifecycle(view.date)
       .then((index) => {
         if (cancelled) return;
         setLifecycles(index.lifecycles ?? {});
+        setLifecycleDate(view.date);
         setHistoryWindow(index.history_window ?? 0);
       })
       .catch(() => {
@@ -522,7 +546,7 @@ export function CandidateSection({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [view.date]);
   const selection = selectCandidates(view.candidates, {
     sort,
     onlyReady,
@@ -530,6 +554,7 @@ export function CandidateSection({
     exclude: hideOwned ? (row) => ownedKind(row.symbol, ownership) !== null : undefined,
   });
   const visible = selection.rows;
+  const selected = visible.find((row) => row.symbol === selectedSymbol) ?? visible[0];
   const owned = summarizeOwned(
     view.candidates.map((row) => row.symbol),
     ownership,
@@ -549,17 +574,14 @@ export function CandidateSection({
     setSearchParams(params, { replace: true });
   };
   return (
-    <section id={section.id} className="aq-section">
+    <section id={section.id} className="aq-candidate-workspace">
       <SectionHeader
-        number={section.number}
-        title={section.label}
-        description={section.description}
+        title="候选研究"
+        description="选择标的查看依据，加入自选持续跟踪。"
         count={section.count}
       >
         <Badge tone={view.chain.tone}>{view.chain.label}</Badge>
       </SectionHeader>
-
-      <ResearchChainLane view={view} />
 
       {view.candidates.length === 0 ? (
         <EmptyState
@@ -575,6 +597,8 @@ export function CandidateSection({
         />
       ) : (
         <>
+          <details className="aq-candidate-filters">
+            <summary><SlidersHorizontal aria-hidden="true" />筛选与排序 <span>{visible.length} / {view.candidates.length} 只 · {owned.watchlist} 已自选{selection.hidden ? ` · 已筛除 ${selection.hidden} 只` : ""}</span></summary>
           <CandidateControls
             rows={view.candidates}
             sort={sort}
@@ -588,19 +612,7 @@ export function CandidateSection({
               if (next.hideOwned !== undefined) setHideOwned(next.hideOwned);
             }}
           />
-
-          {owned.holding + owned.watchlist > 0 ? (
-            <p className="aq-note">
-              这 {view.candidates.length} 只候选里，有 {owned.holding} 只你已持仓、{owned.watchlist} 只已自选，
-              真正的“新面孔”是 {owned.fresh} 只。
-            </p>
-          ) : null}
-
-          {selection.hidden > 0 ? (
-            <p className="aq-note">
-              按当前条件显示 {visible.length} / {selection.total} 只，已隐藏 {selection.hidden} 只。
-            </p>
-          ) : null}
+          </details>
 
           {visible.length === 0 ? (
             <EmptyState
@@ -609,14 +621,31 @@ export function CandidateSection({
             />
           ) : (
             <>
-              <CandidateChainTable
-                rows={visible}
-                variantDate={view.variantLatestDate ?? ""}
-                ownership={ownership}
-                lifecycles={lifecycles}
-                historyWindow={historyWindow}
-                onPick={onPick}
-              />
+              <div className="aq-candidate-split">
+                <div className="aq-candidate-roster" role="group" aria-label="选择研究候选">
+                  <div className="aq-candidate-roster-head"><span>标的 / 研究状态</span><span>评分</span></div>
+                  {visible.map((row, index) => (
+                    <button key={row.symbol} type="button" className={cn("aq-candidate-choice", selected?.symbol === row.symbol && "aq-candidate-choice-active")} aria-pressed={selected?.symbol === row.symbol} onClick={() => setSelectedSymbol(row.symbol)}>
+                      <span className="aq-candidate-rank">{String(index + 1).padStart(2, "0")}</span>
+                      <span className="aq-candidate-choice-body"><span className="aq-candidate-choice-title"><b>{row.name}</b><span className="aq-code">{row.symbol}</span></span><span>{statusLabel(row.status)} · {row.messageCount} 条消息 · {row.debateRounds !== null ? `${row.debateRounds} 轮复核` : "待复核"}</span><OwnerTag ownership={ownership} code={row.symbol} /></span>
+                      <strong className="aq-candidate-choice-score">{row.scoreText}</strong>
+                    </button>
+                  ))}
+                </div>
+                {selected ? <CandidateDetailCard
+                    key={selected.symbol}
+                    row={selected}
+                    date={view.date}
+                    ownership={ownership}
+                    inCompare={compareSymbols.includes(selected.symbol)}
+                    compareFull={compareSymbols.length >= MAX_COMPARE_SYMBOLS}
+                    reviews={reviewsBySymbol.get(selected.symbol) ?? []}
+                    lifecycle={lifecycleDate === view.date ? lifecycles[selected.symbol] : undefined}
+                    historyWindow={historyWindow}
+                    onToggleCompare={(symbol) => setCompareSymbols(toggleCompareSymbol(compareSymbols, symbol))}
+                    onPick={onPick}
+                  /> : null}
+              </div>
               {compareSymbols.length >= 2 ? (
                 <ComparePanel
                   rows={view.candidates}
@@ -627,35 +656,15 @@ export function CandidateSection({
                 />
               ) : null}
 
-              <div className="aq-card-grid">
-                {visible.map((row) => (
-                  <CandidateDetailCard
-                    key={row.symbol}
-                    row={row}
-                    ownership={ownership}
-                    inCompare={compareSymbols.includes(row.symbol)}
-                    compareFull={compareSymbols.length >= MAX_COMPARE_SYMBOLS}
-                    reviews={reviewsBySymbol.get(row.symbol) ?? []}
-                    lifecycle={lifecycles[row.symbol]}
-                    historyWindow={historyWindow}
-                    onToggleCompare={(symbol) =>
-                      setCompareSymbols(toggleCompareSymbol(compareSymbols, symbol))
-                    }
-                    onPick={onPick}
-                  />
-                ))}
-              </div>
+              <details className="aq-workspace-fold">
+                <summary>逐票完整证据链 <span>消息 / 讨论 / 历史实验 / 当前复核</span></summary>
+                <div className="aq-workspace-fold-body"><ResearchChainLane view={view} /><CandidateChainTable rows={visible} variantDate={view.variantLatestDate ?? ""} ownership={ownership} lifecycles={lifecycleDate === view.date ? lifecycles : {}} historyWindow={historyWindow} onPick={onPick} /></div>
+              </details>
             </>
           )}
         </>
       )}
 
-      {view.chainDetail ? (
-        <p className="aq-note">
-          <TrendingUp className="aq-inline-icon" aria-hidden="true" />
-          {view.chainDetail}
-        </p>
-      ) : null}
     </section>
   );
 }

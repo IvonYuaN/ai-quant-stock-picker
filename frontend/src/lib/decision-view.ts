@@ -15,6 +15,8 @@ import type { AqspSnapshot, AqspCandidate } from "@/types/aqsp";
 import type { PerformanceView } from "./performance-view";
 import { asRecord, asString, asNumber, asArray } from "./safe";
 import { strategyListLabel } from "./display-labels";
+import { gatePresentation } from "./research-view";
+import { isAqspSnapshotStale } from "./snapshot-freshness";
 
 export type Tone = "ok" | "warn" | "neutral";
 
@@ -98,20 +100,27 @@ export function projectCandidates(snapshot: AqspSnapshot): DecisionCandidate[] {
 
 export function decisionBlockers(snapshot: AqspSnapshot, perf: PerformanceView): DecisionBlocker[] {
   const out: DecisionBlocker[] = [];
-  const gate = asRecord(snapshot.recommendation_gate) as {
-    recommendation_allowed?: boolean;
-    status?: string;
-    reasons?: readonly string[];
-  };
+  const gate = snapshot.recommendation_gate;
+  const presentation = gatePresentation(gate);
+  const snapshotStale = isAqspSnapshotStale(snapshot);
 
   // 1) 走门未放行（硬阻塞）
-  if (gate && gate.recommendation_allowed === false) {
-    const reasons = asArray<unknown>(gate.reasons as readonly unknown[]).map((s) => asString(s)).filter(Boolean);
+  if (presentation !== "ready" || snapshot.meta?.historical || snapshotStale) {
+    const reasons = asArray<unknown>(gate?.reasons as readonly unknown[]).map((s) => asString(s)).filter(Boolean);
+    const context = snapshot.meta?.historical
+      ? "当前为历史研究记录，只能回看当时依据。"
+      : snapshotStale
+        ? "研究快照已过期或缺少有效时效信息，等待更新后再复核。"
+        : presentation === "unavailable"
+          ? "推荐状态尚未提供，候选仅供观察。"
+          : gate?.status === "research_display"
+            ? "当前为研究展示，不进入正式推荐。"
+            : "推荐闸当前关闭，候选仅可观察。";
     out.push({
       kind: "gate",
       tone: "warn",
-      title: `走门未放行${gate.status ? `（${gate.status}）` : ""}`,
-      detail: reasons.length ? reasons.join("；") : "推荐闸当前关闭，候选仅可观察。",
+      title: snapshot.meta?.historical ? "历史研究 · 仅供回看" : `走门未放行${gate?.status ? `（${gate.status}）` : ""}`,
+      detail: [context, ...reasons].join("；"),
     });
   }
 

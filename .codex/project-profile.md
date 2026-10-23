@@ -16,6 +16,8 @@ Support: UX Architect, Reality Checker, Real-Time Data Reliability Engineer.
 
 ## Current Goal
 
+2026-10-23 当前完整交付：依 `docs/architecture.md` §7.1 与 `docs/research-workspace-delivery.md`，完成今日研究工作台、桌面/手机导航、同日个股依据、自选跟踪的完整闭环。Frontend Developer 负责真实页面实现，UX Architect 负责信息层级和响应式，Reality Checker 负责日期、门禁与失败路径；以构建、契约、全量回归、独立无头交互及线上版本/截图为验收。局部文案或提示调整不能代替本轮交付。
+
 将 AQSP 演进为面向短线决策研究的实时多源数据与多代理研判系统。实时数据优先于历史数据，历史数据只用于回测、walk-forward 验证和阈值冻结证据；盘中链路优先保证新鲜度、可成交性和信息时效。策略默认围绕短线/超短线机会检测，允许受控自动优化，但优化结果只能进入阈值与权重层，不能直接覆盖确定性评分与人工决策边界。
 
 当前主线分四条并行推进：1) 压实实时行情/分时/quote 新鲜度与降级链路；2) 明确历史数据只进回测与验证、不反向污染盘中决策；3) 把国内外高价值信息源作为决策上下文接入并排序；4) 收敛多 Agent 讨论、投票和意见汇总，使其成为候选建议增强层而非下单层。
