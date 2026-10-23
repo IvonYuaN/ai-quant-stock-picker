@@ -124,7 +124,21 @@ def parameter_snapshot_from_candidate_row(
                 return None
         except (TypeError, ValueError):
             return None
-    signal_date = str(row.get("signal_date") or row.get("date") or "")
-    if signal_date and identity.effective_from > signal_date:
+    source_dates: set[str] = set()
+    for field in ("signal_date", "date"):
+        raw_date = row.get(field)
+        if raw_date in (None, ""):
+            continue
+        if not isinstance(raw_date, str):
+            return None
+        try:
+            if date.fromisoformat(raw_date).isoformat() != raw_date:
+                return None
+        except ValueError:
+            return None
+        source_dates.add(raw_date)
+    if len(source_dates) != 1:
+        return None
+    if identity.effective_from > next(iter(source_dates)):
         return None
     return identity

@@ -285,6 +285,28 @@ def test_parameter_snapshot_rejects_identity_when_outer_ledger_version_conflicts
     )
 
 
+@pytest.mark.parametrize(
+    "dates",
+    [
+        {"signal_date": ""},
+        {"signal_date": None},
+        {"signal_date": "invalid"},
+        {"signal_date": "2026-02-30"},
+        {"signal_date": "2026-10-23", "date": "2026-10-22"},
+        {"signal_date": "2026-10-23", "date": "invalid"},
+        {"signal_date": "2026-10-23", "date": 20261023},
+    ],
+)
+def test_parameter_snapshot_is_unverified_when_source_date_is_missing_or_conflicting(
+    dates: dict[str, object],
+) -> None:
+    assert parameter_snapshot_from_candidate_row(_row(**dates)) is None
+
+
+def test_parameter_snapshot_certifies_identity_when_both_source_dates_agree() -> None:
+    assert parameter_snapshot_from_candidate_row(_row(date="2026-10-23")) == _identity()
+
+
 def test_parameter_snapshot_follows_actual_spotlight_when_other_task_wins(
     tmp_path: Path,
 ) -> None:
