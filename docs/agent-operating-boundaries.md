@@ -79,6 +79,7 @@ python3 scripts/headless_dashboard_check.py --url https://lh.ifidy.cn --screensh
 - `coldstart` 只在收盘后补冷启动样本。
 - `daily` 是收盘完整链路，负责复盘、纸面验证、通知和看板刷新。
 - `monitor` 只做异常告警，不应重复推正常流水。
+- root 运行的 `monitor` 检查 Web 持仓时，子进程使用持仓数据根目录的非 root owner UID/GID，并清空附加组，避免产生 API 用户不可写的锁文件。普通用户或 root 所有的数据根保持原身份；代码不修改已有文件 owner、ACL、systemd 或 cron。
 
 当用户前台需要工作时，Codex 仍可继续后台托管，但必须只使用上述边界内的命令和隔离验证。
 

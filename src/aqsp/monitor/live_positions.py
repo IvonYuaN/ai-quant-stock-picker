@@ -21,6 +21,16 @@ class LivePositionMonitorConfig:
     timeout_seconds: int = 120
 
 
+def _subprocess_identity(data_root: Path) -> dict[str, int | list[int]]:
+    """Let a root-run monitor create locks as the API's data owner."""
+    if os.geteuid() != 0:
+        return {}
+    owner = data_root.stat()
+    if owner.st_uid == 0:
+        return {}
+    return {"user": owner.st_uid, "group": owner.st_gid, "extra_groups": []}
+
+
 def check_live_positions(
     *, notify: bool = False, dry_run: bool = False
 ) -> list[MonitorResult]:
@@ -74,6 +84,7 @@ def check_live_positions(
             check=True,
             env=env,
             timeout=LivePositionMonitorConfig().timeout_seconds,
+            **_subprocess_identity(data_root),
         )
         summary = json.loads(result.stdout.strip().splitlines()[-1])
         if summary["tenants_checked"] == 0 and summary["failed_tenants"] == 0:

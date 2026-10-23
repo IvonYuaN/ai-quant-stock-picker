@@ -59,6 +59,68 @@ def test_live_position_monitor_consumes_service_when_store_exists(
 
 
 @pytest.mark.parametrize(
+    ("uid", "gid", "expected"),
+    [(1200, 1300, {"user": 1200, "group": 1300, "extra_groups": []}), (0, 0, {})],
+)
+def test_live_position_monitor_uses_data_owner_when_running_as_root(
+    monkeypatch, uid, gid, expected
+):
+    monkeypatch.setattr(monitor.os, "geteuid", lambda: 0)
+    data_root = SimpleNamespace(stat=lambda: SimpleNamespace(st_uid=uid, st_gid=gid))
+    assert monitor._subprocess_identity(data_root) == expected
+
+
+def test_live_position_monitor_preserves_identity_when_running_as_nonroot(monkeypatch):
+    monkeypatch.setattr(monitor.os, "geteuid", lambda: 1200)
+
+    def unexpected():
+        raise AssertionError("non-root must not inspect or override data owner")
+
+    assert monitor._subprocess_identity(SimpleNamespace(stat=unexpected)) == {}
+
+
+def test_live_position_monitor_forwards_credentials_when_owner_selected(
+    monitor_store, monkeypatch
+):
+    credentials = {"user": 1200, "group": 1300, "extra_groups": []}
+    monkeypatch.setattr(monitor, "_subprocess_identity", lambda path: credentials)
+    captured = {}
+
+    def run(command, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(
+            stdout=json.dumps(
+                {
+                    "tenants_checked": 1,
+                    "open_events": 0,
+                    "skipped_checks": 0,
+                    "failed_tenants": 0,
+                }
+            )
+        )
+
+    monkeypatch.setattr(monitor.subprocess, "run", run)
+    assert monitor.check_live_positions()[0].triggered is False
+    assert {key: captured[key] for key in credentials} == credentials
+
+
+def test_live_position_monitor_reports_failure_when_owner_unreadable(
+    monitor_store, monkeypatch
+):
+    def unavailable(path):
+        raise PermissionError("cannot inspect data root owner")
+
+    def unexpected(*args, **kwargs):
+        raise AssertionError("must not start service with an unknown identity")
+
+    monkeypatch.setattr(monitor, "_subprocess_identity", unavailable)
+    monkeypatch.setattr(monitor.subprocess, "run", unexpected)
+    result = monitor.check_live_positions()
+    assert result[0].triggered is True
+    assert "未产生完整结论" in result[0].message
+
+
+@pytest.mark.parametrize(
     "failure", [subprocess.TimeoutExpired("monitor", 1), OSError("denied")]
 )
 def test_live_position_monitor_reports_failure_when_service_unavailable(
