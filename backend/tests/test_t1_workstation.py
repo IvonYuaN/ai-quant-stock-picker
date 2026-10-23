@@ -567,7 +567,7 @@ def test_t1_check_reports_gaps_when_history_missing(workstation, monkeypatch):
             assert adjust == ""
             return {}
 
-    monkeypatch.setattr(source_factory, "build_data_source", lambda name: EmptySource())
+    monkeypatch.setattr(source_factory, "build_data_source", lambda name, **kwargs: EmptySource())
     pf.add_holding("600000", 100, 10, "2026-10-22")
     result = workstation.post("/api/live-risk/check", json={"notify": False})
     assert result.status_code == 200
@@ -577,6 +577,44 @@ def test_t1_check_reports_gaps_when_history_missing(workstation, monkeypatch):
     inbox = workstation.get("/api/alerts").json()["data"]
     assert inbox["last_checked_at"] == data["last_checked_at"]
     assert inbox["last_check"] == data["checks"]
+
+
+@pytest.mark.parametrize("tenant_id", ["local", "u_" + "a" * 20])
+def test_t1_history_uses_tenant_cache_when_scheduler_cache_unavailable(
+    workstation, monkeypatch, tmp_path, tenant_id
+):
+    from pathlib import Path
+    from aqsp.data import source_factory
+
+    shared = tmp_path / "scheduler-cache.db"
+    shared.write_text("scheduler-owned-cache", encoding="utf-8")
+    monkeypatch.setenv("AQSP_CACHE_DB", str(shared))
+    captured = []
+
+    class EmptySource:
+        def fetch_daily(self, symbols, start, end, adjust):
+            assert adjust == ""
+            return {}
+
+    def build(name, *, cache):
+        assert name == "tencent"
+        captured.append(cache.db_path)
+        return EmptySource()
+
+    monkeypatch.setattr(source_factory, "build_data_source", build)
+    token = tenant.current_tenant.set(tenant_id)
+    try:
+        pf.add_holding("600000", 100, 10, "2026-10-22")
+        import live_risk_service as service
+
+        result = service.check_positions(notify=False)
+        expected = Path(pf._tenant_dir()) / "live-risk-history.db"
+        assert captured == [expected]
+        assert expected.is_file()
+        assert shared.read_text(encoding="utf-8") == "scheduler-owned-cache"
+        assert {row["reason"] for row in result["checks"]["skipped"]} == {"缺少不复权日线"}
+    finally:
+        tenant.current_tenant.reset(token)
 
 
 def test_t1_readonly_check_preserves_outbound_when_background_follows(
