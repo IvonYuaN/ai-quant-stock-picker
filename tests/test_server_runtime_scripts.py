@@ -9,6 +9,8 @@ import subprocess
 from datetime import date, timedelta
 from pathlib import Path
 
+import pytest
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -1279,6 +1281,8 @@ def test_server_sync_script_has_lock_guard() -> None:
     assert "lock_is_stale" in script
     assert "git_sync_lock_is_stale" in script
     assert "检测到陈旧主锁，自动回收" in script
+    assert "LOCK_BOOT_ID" in script
+    assert "BOOT_STAT_PATH" in script
     assert "检测到陈旧 Git 同步锁，自动回收" in script
     assert "LOCK_RUNNER" in script
     assert "LOCK_STARTED_AT" in script
@@ -1288,6 +1292,54 @@ def test_server_sync_script_has_lock_guard() -> None:
     assert "AQSP_SYNC_RESULT_FILE" in script
     assert 'write_result "skipped_lock"' in script
     assert 'write_result "completed"' in script
+
+
+@pytest.mark.parametrize(
+    ("stored_boot_id", "legacy", "should_reclaim"),
+    [("old-boot", False, True), ("", True, True), ("new-boot", False, False)],
+)
+def test_server_sync_reclaims_only_previous_boot_lock_when_recovering_runtime(
+    tmp_path: Path,
+    stored_boot_id: str,
+    legacy: bool,
+    should_reclaim: bool,
+) -> None:
+    root, runner = _build_sync_runtime(tmp_path)
+    lock_dir = root / "data" / ".locks" / "server-runtime.lock"
+    lock_dir.mkdir(parents=True)
+    (lock_dir / "meta.env").write_text(
+        f"LOCK_PID={os.getpid()}\nLOCK_RUNNER=intraday\n"
+        + (f"LOCK_BOOT_ID={stored_boot_id}\n" if stored_boot_id else ""),
+        encoding="utf-8",
+    )
+    boot_stat_path = tmp_path / "boot_stat"
+    boot_stat_path.write_text("btime 200\n", encoding="utf-8")
+    if legacy:
+        os.utime(lock_dir, (100, 100))
+    boot_id_path = tmp_path / "boot_id"
+    boot_id_path.write_text("new-boot\n", encoding="utf-8")
+    result_path = root / ".state" / "result.env"
+    marker_path = root / "marker.txt"
+    result = _run_server_sync(
+        root,
+        runner=runner,
+        result_path=result_path,
+        marker_path=marker_path,
+        extra_env={
+            "AQSP_BOOT_ID_PATH": str(boot_id_path),
+            "AQSP_BOOT_STAT_PATH": str(boot_stat_path),
+            "AQSP_IMMUTABLE_RELEASE": "true",
+        },
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    if should_reclaim:
+        assert "检测到陈旧主锁，自动回收" in result.stdout
+        assert marker_path.read_text(encoding="utf-8").strip() == "ran"
+        assert not lock_dir.exists()
+    else:
+        assert "skipped_lock" in result_path.read_text(encoding="utf-8")
+        assert lock_dir.exists()
+        assert not marker_path.exists()
 
 
 def test_server_monitor_script_has_lock_guard() -> None:
@@ -1703,5 +1755,5 @@ def test_preload_event_data_kaipanla_theme_relay() -> None:
     assert "kaipanla_theme_rotation.csv" in script
     assert "kaipanla_theme_leaders.csv" in script
     # rc=2 特殊处理：schema 漂移 ≠ 失败（数据已落盘，仍回流）
-    assert 'rc" -eq 2' in script or 'rc=$?;' in script
+    assert 'rc" -eq 2' in script or "rc=$?;" in script
     assert "回落本地直连" in script

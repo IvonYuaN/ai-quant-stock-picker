@@ -23,6 +23,8 @@ GIT_SYNC_LOCK_INFO_FILE="${GIT_SYNC_LOCK_FILE}/meta.env"
 GIT_SYNC_WAIT_SECONDS="${AQSP_GIT_SYNC_WAIT_SECONDS:-180}"
 GIT_LOCK_STALE_MINUTES="${AQSP_GIT_LOCK_STALE_MINUTES:-30}"
 LOCK_STALE_MINUTES="${AQSP_LOCK_STALE_MINUTES:-360}"
+BOOT_ID_PATH="${AQSP_BOOT_ID_PATH:-/proc/sys/kernel/random/boot_id}"
+BOOT_STAT_PATH="${AQSP_BOOT_STAT_PATH:-/proc/stat}"
 RUNNER_TIMEOUT_SECONDS="${AQSP_RUNNER_TIMEOUT_SECONDS:-0}"
 RUNNER_KILL_AFTER_SECONDS="${AQSP_RUNNER_KILL_AFTER_SECONDS:-15}"
 RUN_RESULT_FILE="${AQSP_SYNC_RESULT_FILE:-}"
@@ -253,10 +255,25 @@ lock_is_stale() {
     if [ ! -d "$LOCK_FILE" ]; then
         return 1
     fi
-    local age_minutes pid=""
+    local age_minutes pid="" lock_boot_id="" current_boot_id="" boot_epoch="" lock_mtime=""
     age_minutes="$(lock_age_minutes "$LOCK_FILE")"
     load_lock_info
     pid="${LOCK_PID:-}"
+    lock_boot_id="${LOCK_BOOT_ID:-}"
+    if [ -r "$BOOT_ID_PATH" ]; then
+        current_boot_id="$(tr -d '\r\n' <"$BOOT_ID_PATH")"
+    fi
+    if [ -n "$lock_boot_id" ] && [ -n "$current_boot_id" ] && \
+       [ "$lock_boot_id" != "$current_boot_id" ]; then
+        return 0
+    fi
+    if [ -z "$lock_boot_id" ] && [ -r "$BOOT_STAT_PATH" ]; then
+        boot_epoch="$(awk '$1 == "btime" { print $2; exit }' "$BOOT_STAT_PATH")"
+        lock_mtime="$(stat -c %Y "$LOCK_FILE" 2>/dev/null || stat -f %m "$LOCK_FILE")"
+        if [[ "$boot_epoch" =~ ^[0-9]+$ ]] && [ "$lock_mtime" -lt "$boot_epoch" ]; then
+            return 0
+        fi
+    fi
     if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
         return 1
     fi
@@ -303,6 +320,9 @@ fi
     printf 'LOCK_PID=%q\n' "$$"
     printf 'LOCK_RUNNER=%q\n' "${RUNNER_SCRIPT}"
     printf 'LOCK_STARTED_AT=%q\n' "$(date '+%Y-%m-%d %H:%M:%S')"
+    if [ -r "$BOOT_ID_PATH" ]; then
+        printf 'LOCK_BOOT_ID=%q\n' "$(tr -d '\r\n' <"$BOOT_ID_PATH")"
+    fi
 } >"$LOCK_INFO_FILE"
 trap 'rm -f "$LOCK_INFO_FILE"; rmdir "$LOCK_FILE"' EXIT
 
