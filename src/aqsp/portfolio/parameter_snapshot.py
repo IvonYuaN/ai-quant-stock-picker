@@ -100,3 +100,31 @@ def parameter_snapshot_from_runtime_weights(
         return identity
     except (TypeError, ValueError):
         return None
+
+
+def parameter_snapshot_from_candidate_row(
+    row: Mapping[str, object],
+) -> ParameterSnapshot | None:
+    """Bind provenance to the row that supplied the displayed score.
+
+    Legacy rows may omit the outer version, but an explicit conflict must never
+    be hidden by a valid identity nested inside the runtime weights.
+    """
+    identity = parameter_snapshot_from_runtime_weights(
+        row.get("strategy_weight_snapshot")
+    )
+    if identity is None:
+        return None
+    outer_version = row.get("thresholds_version")
+    if outer_version not in (None, "") and outer_version != identity.version:
+        return None
+    if row.get("parameter_snapshot") is not None:
+        try:
+            if parse_parameter_snapshot(row["parameter_snapshot"]) != identity:
+                return None
+        except (TypeError, ValueError):
+            return None
+    signal_date = str(row.get("signal_date") or row.get("date") or "")
+    if signal_date and identity.effective_from > signal_date:
+        return None
+    return identity

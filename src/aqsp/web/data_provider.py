@@ -23,7 +23,7 @@ from aqsp.market_context import cross_market_rule_runtime_summary
 from aqsp.paper import read_paper_trades
 from aqsp.portfolio.parameter_snapshot import (
     ParameterSnapshot,
-    parameter_snapshot_from_runtime_weights,
+    parameter_snapshot_from_candidate_row,
 )
 from aqsp.presentation import (
     format_review_meta,
@@ -406,6 +406,7 @@ class DashboardCandidateSpotlight:
     bias20_pct: float | None = None
     stop_loss: float | None = None
     take_profit: float | None = None
+    parameter_snapshot: ParameterSnapshot | None = None
 
 
 @dataclass(frozen=True)
@@ -881,6 +882,7 @@ class DashboardCandidateCard:
     stop_loss: float | None = None
     take_profit: float | None = None
     research_recommendation: bool = False
+    parameter_snapshot: ParameterSnapshot | None = None
 
 
 @dataclass(frozen=True)
@@ -1219,6 +1221,9 @@ class DashboardDataProvider:
                     symbol=candidate.symbol,
                     display_name=self._symbol_name(merged_row),
                     score=candidate.score,
+                    parameter_snapshot=parameter_snapshot_from_candidate_row(
+                        merged_row
+                    ),
                     action_label=action_label,
                     status_label=status_label,
                     blocker=blocker,
@@ -3570,36 +3575,6 @@ class DashboardDataProvider:
     def default_task_id(self) -> str:
         return "main_chain"
 
-    def parameter_snapshot_for_candidates(
-        self, task_id: str, signal_date: str, symbols: tuple[str, ...]
-    ) -> ParameterSnapshot | None:
-        """Read only the exact candidates' persisted screening provenance.
-
-        A legacy, mixed, or incomplete batch is unverified. Reloading today's
-        thresholds here would incorrectly certify historical candidate scores.
-        """
-        requested = set(symbols)
-        if not requested:
-            return None
-        rows = [
-            row
-            for row in self._task_signal_rows(task_id)
-            if str(row.get("signal_date") or row.get("date") or "") == signal_date
-            and self._canonical_symbol(str(row.get("symbol") or "")) in requested
-        ]
-        if {
-            self._canonical_symbol(str(row.get("symbol") or "")) for row in rows
-        } != requested:
-            return None
-        identities = tuple(
-            parameter_snapshot_from_runtime_weights(row.get("strategy_weight_snapshot"))
-            for row in rows
-        )
-        first = identities[0] if identities else None
-        if first is None or first.effective_from > signal_date:
-            return None
-        return first if all(identity == first for identity in identities) else None
-
     def task_dates(self, task_id: str) -> tuple[str, ...]:
         def _build() -> tuple[str, ...]:
             if task_id == "briefing":
@@ -5108,6 +5083,7 @@ class DashboardDataProvider:
             symbol=symbol,
             display_name=self._symbol_name(merged_row),
             score=float(merged_row.get("score") or 0.0),
+            parameter_snapshot=parameter_snapshot_from_candidate_row(merged_row),
             action_label=self._action_label(merged_row),
             status_label=self._candidate_status(merged_row),
             blocker=self._candidate_blocker_text(merged_row),
@@ -5204,6 +5180,10 @@ class DashboardDataProvider:
             )
             if value is not None:
                 merged[field] = value
+                if field == "reasons":
+                    # Backfilled evidence belongs to another scoring row. Keep
+                    # it visible, but do not certify this mixed card's identity.
+                    merged.pop("strategy_weight_snapshot", None)
 
         if not self._row_field_has_value(merged.get("debate_active_role_summary")):
             debate_active_role_summary = self._debate_active_role_summary_for_row(
@@ -6415,6 +6395,7 @@ class DashboardDataProvider:
                     display_name=self._symbol_name(row),
                     rank_label=self._rank_label(index, row, task_id=task_id),
                     score=float(row.get("score") or 0.0),
+                    parameter_snapshot=parameter_snapshot_from_candidate_row(row),
                     action_label=self._action_label(row),
                     status_label=self._candidate_status(row),
                     decision_note=self._decision_note(row),

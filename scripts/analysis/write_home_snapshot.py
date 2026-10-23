@@ -50,6 +50,7 @@ from aqsp.news.catalysts import (
     CatalystReport,
     load_catalyst_report_artifact,
 )
+from aqsp.portfolio.parameter_snapshot import ParameterSnapshot
 from aqsp.web.data_provider import DashboardDataProvider
 from aqsp.ledger.runtime import count_paper_tracking_days
 from aqsp.runtime.recommendation_gate import (
@@ -478,12 +479,20 @@ def _snapshot_candidate(candidate: Any) -> HomeSnapshotCandidate | None:
 
 
 def _snapshot_candidates(payload: Any) -> tuple[HomeSnapshotCandidate, ...]:
+    """Return selected cards without discarding their provenance during selection."""
+    return _snapshot_candidates_with_parameters(payload)[0]
+
+
+def _snapshot_candidates_with_parameters(
+    payload: Any, *, selected_date: str = ""
+) -> tuple[tuple[HomeSnapshotCandidate, ...], ParameterSnapshot | None]:
     """Return bounded recommendation, observation, and blocked cards.
 
     Observation-only data must remain visible on the home page without becoming a
     recommendation. The typed candidate status is what keeps that boundary clear.
     """
     candidates: list[HomeSnapshotCandidate] = []
+    identities: list[ParameterSnapshot | None] = []
     symbols: set[str] = set()
     ordered = (
         *(getattr(payload.task_view, "detail_cards", ()) or ()),
@@ -507,6 +516,17 @@ def _snapshot_candidates(payload: Any) -> tuple[HomeSnapshotCandidate, ...]:
         "待核对",
         "仅观察",
     )
+
+    def selected_result() -> tuple[
+        tuple[HomeSnapshotCandidate, ...], ParameterSnapshot | None
+    ]:
+        first = identities[0] if identities else None
+        verified = (
+            isinstance(first, ParameterSnapshot)
+            and all(identity == first for identity in identities)
+            and (not selected_date or first.effective_from <= selected_date)
+        )
+        return tuple(candidates), first if verified else None
 
     def card_kind(item: Any) -> str:
         raw_status = _first_text(
@@ -537,10 +557,11 @@ def _snapshot_candidates(payload: Any) -> tuple[HomeSnapshotCandidate, ...]:
             ):
                 continue
             candidates.append(candidate)
+            identities.append(getattr(item, "parameter_snapshot", None))
             symbols.add(candidate.symbol)
             if len(candidates) == MAX_HOME_CANDIDATES:
-                return tuple(candidates)
-    return tuple(candidates)
+                return selected_result()
+    return selected_result()
 
 
 def _apply_recommendation_gate(
@@ -2745,7 +2766,9 @@ def build_home_snapshot(
     universe = _universe_snapshot()
     generated_at = to_shanghai(now_shanghai()).isoformat(timespec="seconds")
     source = _snapshot_source(runtime, task_view, selected_date=selected_date)
-    candidates = _snapshot_candidates(payload)
+    candidates, parameter_snapshot = _snapshot_candidates_with_parameters(
+        payload, selected_date=selected_date
+    )
     runtime_debates = _runtime_debates_for_snapshot(
         selected_date,
         {candidate.symbol for candidate in candidates},
@@ -2808,17 +2831,6 @@ def build_home_snapshot(
     summaries = _phase_conclusion_summaries(
         provider, selected_date, debates, candidates
     )
-    parameter_loader = getattr(provider, "parameter_snapshot_for_candidates", None)
-    parameter_snapshot = (
-        parameter_loader(
-            selected_task_id,
-            selected_date,
-            tuple(candidate.symbol for candidate in candidates),
-        )
-        if callable(parameter_loader)
-        else None
-    )
-
     return HomeDashboardSnapshot(
         schema_version=HOME_SNAPSHOT_SCHEMA_VERSION,
         generated_at=generated_at,

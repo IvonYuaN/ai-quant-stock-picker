@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -13,6 +14,7 @@ from aqsp.core.types import PickResult
 from aqsp.portfolio.parameter_snapshot import (
     ParameterSnapshot,
     build_parameter_snapshot,
+    parameter_snapshot_from_candidate_row,
     parameter_snapshot_from_runtime_weights,
 )
 from aqsp.portfolio.snapshot import save_snapshot
@@ -26,12 +28,14 @@ from aqsp.web.home_snapshot import (
     HomeSnapshotDay,
     HomeSnapshotIndex,
     HomeSnapshotSource,
+    HomeSnapshotTechnicalMetric,
     load_home_dashboard_snapshot,
     load_home_snapshot_index,
     write_home_dashboard_snapshot,
     write_home_snapshot_index,
 )
 from backend.aqsp_bridge import AQSPSnapshotUnavailable, _parse_snapshot
+from scripts import write_home_snapshot
 
 
 def _weights(version: str = "test-1") -> dict[str, object]:
@@ -203,12 +207,9 @@ def test_parameter_snapshot_is_persisted_when_real_candidate_is_rendered_to_csv(
     assert picks[0].score == pick.score
     to_dataframe(picks).to_csv(tmp_path / "latest.csv", index=False)
     provider = _provider(tmp_path)
-    assert (
-        provider.parameter_snapshot_for_candidates(
-            "intraday", "2026-10-23", ("600001",)
-        )
-        == _identity()
-    )
+    cards = provider._build_detail_cards(provider._task_signal_rows("intraday"))
+    assert cards[0].parameter_snapshot == _identity()
+    assert cards[0].score == pick.score
 
 
 def test_parameter_snapshot_uses_exact_artifact_when_task_and_date_match(
@@ -222,12 +223,13 @@ def test_parameter_snapshot_uses_exact_artifact_when_task_and_date_match(
             _row(_weights("old"), signal_date="2026-10-22"),
         ],
     )
-    assert (
-        _provider(tmp_path).parameter_snapshot_for_candidates(
-            "main_chain", "2026-10-23", ("600001",)
-        )
-        == _identity()
-    )
+    provider = _provider(tmp_path)
+    rows = [
+        row
+        for row in provider._task_signal_rows("main_chain")
+        if row.get("signal_date") == "2026-10-23"
+    ]
+    assert provider._build_detail_cards(rows)[0].parameter_snapshot == _identity()
 
 
 @pytest.mark.parametrize(
@@ -235,8 +237,7 @@ def test_parameter_snapshot_uses_exact_artifact_when_task_and_date_match(
     [
         [],
         [_row({})],
-        [_row(), _row(_weights("other"))],
-        [_row(symbol="600002")],
+        [_row(), _row(_weights("other"), symbol="600002")],
         [_row(_weights(), signal_date="2026-10-12")],
     ],
 )
@@ -244,31 +245,117 @@ def test_parameter_snapshot_is_unverified_when_source_is_missing_mixed_or_wrong_
     tmp_path: Path, rows
 ) -> None:
     _write_rows(tmp_path, rows)
-    assert (
-        _provider(tmp_path).parameter_snapshot_for_candidates(
-            "main_chain", "2026-10-23", ("600001",)
-        )
-        is None
+    provider = _provider(tmp_path)
+    cards = provider._build_detail_cards(
+        [dict(row, score=70, rating="watch") for row in rows]
     )
+    _, identity = write_home_snapshot._snapshot_candidates_with_parameters(
+        SimpleNamespace(task_view=SimpleNamespace(detail_cards=cards), spotlights=()),
+        selected_date="2026-10-23",
+    )
+    assert identity is None
 
 
 def test_parameter_snapshot_is_unverified_when_any_candidate_lacks_provenance(
     tmp_path: Path,
 ) -> None:
     _write_rows(tmp_path, [_row(), _row({}, symbol="600002")])
-    assert (
-        _provider(tmp_path).parameter_snapshot_for_candidates(
-            "main_chain", "2026-10-23", ("600001", "600002")
-        )
-        is None
+    cards = _provider(tmp_path)._build_detail_cards(
+        [
+            dict(row, score=70, rating="watch")
+            for row in (_row(), _row({}, symbol="600002"))
+        ]
     )
+    _, identity = write_home_snapshot._snapshot_candidates_with_parameters(
+        SimpleNamespace(task_view=SimpleNamespace(detail_cards=cards), spotlights=()),
+        selected_date="2026-10-23",
+    )
+    assert identity is None
+
+
+def test_parameter_snapshot_rejects_identity_when_outer_ledger_version_conflicts() -> (
+    None
+):
+    assert (
+        parameter_snapshot_from_candidate_row(_row(thresholds_version="other")) is None
+    )
+    assert (
+        parameter_snapshot_from_candidate_row(_row(thresholds_version="test-1"))
+        == _identity()
+    )
+
+
+def test_parameter_snapshot_follows_actual_spotlight_when_other_task_wins(
+    tmp_path: Path,
+) -> None:
+    provider = _provider(tmp_path)
+    card = provider._build_detail_cards(
+        [_row(score=70, rating="watch", reasons=["旧规则依据"])]
+    )[0]
+    spotlight = provider._build_same_day_spotlight(
+        "600001",
+        {
+            "row": _row(
+                _weights("new-task"),
+                task_id="morning_breakout",
+                score=99,
+                rating="buy",
+                research_recommendation=True,
+                reasons=["新规则依据"],
+            ),
+            "task_labels": ("盘前突破",),
+        },
+    )
+    selected, identity = write_home_snapshot._snapshot_candidates_with_parameters(
+        SimpleNamespace(
+            task_view=SimpleNamespace(detail_cards=(card,)), spotlights=(spotlight,)
+        ),
+        selected_date="2026-10-23",
+    )
+    assert selected[0].score == 99
+    assert selected[0].deterministic_reasons == spotlight.reasons
+    assert identity == _identity("new-task")
+    assert identity != card.parameter_snapshot
+
+
+def test_parameter_snapshot_does_not_certify_backfilled_reasons_from_other_row(
+    tmp_path: Path,
+) -> None:
+    provider = _provider(tmp_path)
+    row = _row(score=99, rating="buy")
+    spotlight = provider._build_same_day_spotlight(
+        "600001",
+        {
+            "row": row,
+            "task_labels": ("盘前突破",),
+            "entries": [
+                {
+                    "row": _row(_weights("other"), score=70, reasons=["旧规则依据"]),
+                    "task_id": "main_chain",
+                }
+            ],
+        },
+    )
+    assert spotlight.score == 99
+    assert spotlight.reasons
+    assert spotlight.parameter_snapshot is None
 
 
 def test_parameter_snapshot_preserves_identity_when_same_trading_session_refreshes(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "home.json"
-    first = _snapshot()
+    original = replace(
+        _snapshot().candidates[0],
+        deterministic_reasons=("首次规则",),
+        strategies=("first",),
+        score_breakdown=("首次评分明细",),
+        technical_metrics=(
+            HomeSnapshotTechnicalMetric("close", "现价", "10.00"),
+            HomeSnapshotTechnicalMetric("rsi12", "RSI12", "50.0"),
+        ),
+    )
+    first = replace(_snapshot(), candidates=(original,))
     write_home_dashboard_snapshot(path, first)
     write_home_dashboard_snapshot(
         path,
@@ -276,11 +363,38 @@ def test_parameter_snapshot_preserves_identity_when_same_trading_session_refresh
             first,
             generated_at="2026-10-23T14:00:00+08:00",
             parameter_snapshot=_identity("changed"),
+            candidates=(
+                replace(
+                    original,
+                    score=90,
+                    research_status="纸面复核",
+                    deterministic_reasons=("新规则",),
+                    strategies=("new",),
+                    score_breakdown=("新评分明细",),
+                    technical_metrics=(
+                        HomeSnapshotTechnicalMetric("close", "现价", "12.00"),
+                        HomeSnapshotTechnicalMetric("rsi12", "RSI12", "80.0"),
+                    ),
+                    data_fetched_at="2026-10-23T14:00:00+08:00",
+                ),
+            ),
         ),
     )
     current = load_home_dashboard_snapshot(path)
     assert current is not None
     assert current.parameter_snapshot == first.parameter_snapshot
+    candidate = current.candidates[0]
+    assert candidate.score == 70
+    assert candidate.deterministic_reasons == original.deterministic_reasons
+    assert candidate.strategies == original.strategies
+    assert candidate.score_breakdown == original.score_breakdown
+    assert [(metric.key, metric.value) for metric in candidate.technical_metrics] == [
+        ("close", "12.00"),
+        ("rsi12", "50.0"),
+    ]
+    assert candidate.data_fetched_at.endswith("14:00:00+08:00")
+    assert candidate.research_status == "参数身份变化 · 仅观察"
+    assert "首次冻结" in candidate.context
     assert current.generated_at.endswith("14:00:00+08:00")
     next_day = replace(_snapshot("2026-10-26"), parameter_snapshot=_identity("changed"))
     write_home_dashboard_snapshot(path, next_day)
@@ -297,6 +411,89 @@ def test_parameter_snapshot_keeps_legacy_unverified_when_same_day_is_rebuilt(
     write_home_dashboard_snapshot(path, replace(_snapshot(), parameter_snapshot=None))
     write_home_dashboard_snapshot(path, _snapshot())
     assert load_home_dashboard_snapshot(path).parameter_snapshot is None
+
+
+@pytest.mark.parametrize("incoming_identity", [None, _identity(), _identity("changed")])
+@pytest.mark.parametrize("pre_frozen", [False, True])
+def test_parameter_snapshot_keeps_score_binding_when_refresh_claims_to_be_frozen(
+    tmp_path: Path,
+    incoming_identity: ParameterSnapshot | None,
+    pre_frozen: bool,
+) -> None:
+    first = _snapshot()
+    current = replace(
+        first,
+        generated_at="2026-10-23T14:00:00+08:00",
+        parameter_snapshot=incoming_identity,
+        frozen_at=first.generated_at if pre_frozen else "",
+        candidates=(
+            replace(first.candidates[0], score=90, deterministic_reasons=("新依据",)),
+        ),
+    )
+    single_path, index_path = tmp_path / "home.json", tmp_path / "index.json"
+    write_home_dashboard_snapshot(single_path, first)
+    write_home_snapshot_index(
+        index_path,
+        HomeSnapshotIndex(
+            schema_version="v1-index",
+            generated_at=first.generated_at,
+            days=(HomeSnapshotDay(first.selected_date, first),),
+            selected_date=first.selected_date,
+            stale_after=first.stale_after,
+        ),
+    )
+    write_home_dashboard_snapshot(single_path, current)
+    persisted = load_home_dashboard_snapshot(single_path)
+    assert persisted is not None
+    assert persisted.parameter_snapshot == first.parameter_snapshot
+    assert persisted.candidates[0].score == 70
+    assert (
+        persisted.candidates[0].deterministic_reasons
+        == first.candidates[0].deterministic_reasons
+    )
+    write_home_snapshot_index(
+        index_path,
+        HomeSnapshotIndex(
+            schema_version="v1-index",
+            generated_at=persisted.generated_at,
+            days=(HomeSnapshotDay(persisted.selected_date, persisted),),
+            selected_date=persisted.selected_date,
+            stale_after=persisted.stale_after,
+        ),
+    )
+    assert (
+        load_home_snapshot_index(index_path).snapshot_for_date(first.selected_date)
+        == persisted
+    )
+
+
+def test_parameter_snapshot_preserves_new_risk_when_parameters_change(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "home.json"
+    first = _snapshot()
+    write_home_dashboard_snapshot(path, first)
+    write_home_dashboard_snapshot(
+        path,
+        replace(
+            first,
+            parameter_snapshot=None,
+            candidates=(
+                replace(
+                    first.candidates[0],
+                    score=90,
+                    research_status="数据过期 · 阻塞观察",
+                    next_step="等待新行情",
+                    freshness="stale",
+                ),
+            ),
+        ),
+    )
+    current = load_home_dashboard_snapshot(path)
+    assert current.candidates[0].score == 70
+    assert current.candidates[0].research_status == "数据过期 · 阻塞观察"
+    assert current.candidates[0].freshness == "stale"
+    assert "等待新行情" in current.candidates[0].next_step
 
 
 def test_parameter_snapshot_roundtrips_when_snapshot_index_and_bridge_read_it(
