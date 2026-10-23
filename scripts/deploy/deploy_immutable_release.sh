@@ -43,6 +43,7 @@ NPM_BIN="${AQSP_NPM_BIN:-/usr/bin/npm}"
 # （2026-10-20 发版事故根因：孤儿 vite 构建把 api 压到 OOM）。
 # 置空或 "none" ⇒ 不注入 NODE_OPTIONS（交给 node 默认）。
 FRONTEND_NODE_OPTIONS="${AQSP_DEPLOY_NODE_OPTIONS:---max-old-space-size=512}"
+MIN_FRONTEND_BUILD_MEMORY_MIB="${AQSP_DEPLOY_MIN_FRONTEND_BUILD_MEMORY_MIB:-1024}"
 REMOTE="${AQSP_GIT_REMOTE:-origin}"
 BRANCH="${AQSP_GIT_BRANCH:-main}"
 REF="${AQSP_RELEASE_REF:-$BRANCH}"
@@ -98,6 +99,9 @@ Env knobs:
   AQSP_DEPLOY_NODE_OPTIONS   node heap cap for npm ci / vite build
                              (default --max-old-space-size=512; empty or "none"
                              => use node defaults). 1.6G prod boxes OOM without it.
+  AQSP_DEPLOY_MIN_FRONTEND_BUILD_MEMORY_MIB
+                             minimum host MemAvailable before npm ci / vite build
+                             (default 1024 MiB); below this, use prepared artifacts.
   AQSP_DEPLOY_ALLOWED_WINDOW HH:MM-HH:MM local-tz window allowed for cut-over
   AQSP_DEPLOY_KEEP_STAGE_ON_FAILURE
                              true (default) keeps the staged release when a
@@ -259,10 +263,34 @@ stage_is_reusable() {
     return 0
 }
 
+frontend_available_memory_mib() {
+    [ -r /proc/meminfo ] || fail "frontend build preflight: /proc/meminfo unavailable; refusing an unbounded build"
+    local available_kib
+    available_kib="$(awk '$1 == "MemAvailable:" { print $2; found=1; exit } END { if (!found) exit 1 }' /proc/meminfo)" \
+        || fail "frontend build preflight: MemAvailable is missing from /proc/meminfo"
+    case "$available_kib" in
+        ''|*[!0-9]*) fail "frontend build preflight: invalid MemAvailable value: $available_kib" ;;
+    esac
+    printf '%s\n' "$((available_kib / 1024))"
+}
+
+assert_frontend_build_memory() {
+    local available_mib minimum_mib="$MIN_FRONTEND_BUILD_MEMORY_MIB"
+    case "$minimum_mib" in
+        ''|*[!0-9]*|0) fail "frontend build preflight: invalid minimum memory value: $minimum_mib" ;;
+    esac
+    available_mib="$(frontend_available_memory_mib)"
+    if [ "$available_mib" -lt "$minimum_mib" ]; then
+        fail "frontend build preflight: MemAvailable ${available_mib} MiB is below ${minimum_mib} MiB; reuse prepared frontend artifacts or raise AQSP_DEPLOY_MIN_FRONTEND_BUILD_MEMORY_MIB on a larger host"
+    fi
+    log "frontend build memory preflight ok: MemAvailable=${available_mib} MiB minimum=${minimum_mib} MiB"
+}
+
 build_frontend() {
     local root="$1"
     [ -d "$root/frontend" ] || fail "frontend directory missing in release: $root/frontend"
     [ -f "$root/frontend/package-lock.json" ] || fail "frontend package-lock.json missing"
+    assert_frontend_build_memory
     # 堆上限注入（npm ci 与 vite build 都会吃内存）
     if [ -n "$FRONTEND_NODE_OPTIONS" ] && [ "$FRONTEND_NODE_OPTIONS" != "none" ]; then
         log "frontend node options: $FRONTEND_NODE_OPTIONS"
@@ -704,7 +732,7 @@ if [ "${AQSP_DEPLOY_LIB:-0}" = "1" ]; then
     return 0 2>/dev/null || true
 fi
 
-[ -d "$REPO_ROOT/.git" ] || fail "Git repo missing: $REPO_ROOT"
+[ -e "$REPO_ROOT/.git" ] || fail "Git repo missing: $REPO_ROOT"
 [ -x "$PYTHON_BIN" ] || fail "runtime python missing or not executable: $PYTHON_BIN"
 [ -x "$NPM_BIN" ] || fail "npm missing or not executable: $NPM_BIN"
 

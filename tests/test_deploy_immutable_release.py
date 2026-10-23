@@ -314,6 +314,8 @@ set -e
 export AQSP_DEPLOY_LIB=1
 source "%s"
 FRONTEND_NODE_OPTIONS="${AQSP_DEPLOY_NODE_OPTIONS:---max-old-space-size=512}"
+MIN_FRONTEND_BUILD_MEMORY_MIB="${AQSP_DEPLOY_MIN_FRONTEND_BUILD_MEMORY_MIB:-1024}"
+frontend_available_memory_mib() { printf '2048\n'; }
 NPM_BIN="%s"
 PYTHON_BIN="%s"
 build_frontend "%s"
@@ -331,6 +333,32 @@ build_frontend "%s"
         assert r2.returncode == 0, r2.stdout + r2.stderr
         assert "--max-old-space-size" not in r2.stdout, r2.stdout
         assert "node default heap" in r2.stdout, r2.stdout
+
+
+@requires_script
+def test_frontend_build_fails_before_npm_when_available_memory_is_low():
+    with tempfile.TemporaryDirectory() as tmp:
+        base = Path(tmp)
+        marker = base / "npm-was-run"
+        fake_npm = base / "npm"
+        fake_npm.write_text(f"#!/usr/bin/env bash\ntouch '{marker}'\n")
+        fake_npm.chmod(0o755)
+        rel = base / "release"
+        (rel / "frontend").mkdir(parents=True)
+        (rel / "frontend" / "package-lock.json").write_text("{}")
+        bash = """
+set -e
+export AQSP_DEPLOY_LIB=1
+source "%s"
+MIN_FRONTEND_BUILD_MEMORY_MIB=1024
+frontend_available_memory_mib() { printf '711\n'; }
+NPM_BIN="%s"
+build_frontend "%s"
+""" % (SCRIPT, fake_npm, rel)
+        r = subprocess.run(["bash", "-c", bash], capture_output=True, text=True)
+        assert r.returncode != 0, r.stdout
+        assert "MemAvailable 711 MiB is below 1024 MiB" in r.stderr
+        assert not marker.exists(), "npm started despite failed memory preflight"
 
 
 @requires_script
