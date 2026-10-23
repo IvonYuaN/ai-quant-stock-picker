@@ -196,6 +196,10 @@ def test_t1_alert_sale_recovers_when_event_write_fails(workstation, monkeypatch)
         ae.close_from_event(event["id"], "2026-10-23", 9, 100)
     assert pf.get_portfolio()["holdings"] == []
     monkeypatch.setattr(ae, "_save", original_save)
+    # A background check can observe the committed sale before the retry and
+    # expire the still-OPEN alert. Recovery must use the portfolio sale receipt.
+    ae.upsert_from_reminders([], active_symbols=set())
+    assert next(row for row in ae.list_events() if row["id"] == event["id"])["status"] == "EXPIRED"
     response = workstation.post(
         f"/api/alerts/{event['id']}/close",
         json={"date": "2026-10-23", "price": 9, "shares": 100},
@@ -210,6 +214,61 @@ def test_t1_alert_sale_recovers_when_event_write_fails(workstation, monkeypatch)
     )
     assert replay.status_code == 200
     assert len(replay.json()["data"]["portfolio"]["closed"]) == 1
+
+
+@pytest.mark.parametrize("status", ["HANDLED", "IGNORED", "EXPIRED"])
+def test_t1_alert_sale_rejects_when_terminal_without_sale_receipt(workstation, status):
+    pf.add_holding("600000", 100, 10, "2026-10-22")
+    event = ae.upsert_from_reminders([_reminder()])[0]
+    if status == "EXPIRED":
+        ae.upsert_from_reminders([], checked_rules={"600000-L1"})
+    else:
+        ae.transition(event["id"], "handled" if status == "HANDLED" else "ignored")
+    response = workstation.post(
+        f"/api/alerts/{event['id']}/close",
+        json={"date": "2026-10-23", "price": 9, "shares": 100},
+    )
+    assert response.status_code == 409
+    assert pf.get_portfolio()["holdings"][0]["shares"] == 100
+    assert pf.get_portfolio()["closed"] == []
+
+
+def test_t1_alert_sale_rejects_when_symbol_reentered_with_different_position(workstation):
+    pf.add_holding("600000", 100, 10, "2026-10-22")
+    old_id = pf.get_portfolio()["holdings"][0]["position_id"]
+    event = ae.upsert_from_reminders([{**_reminder(), "position_id": old_id}])[0]
+    pf.close_position("600000", "2026-10-23", 9, 100, 10, "global-old-sale")
+    pf.add_holding("600000", 100, 11, "2026-10-22")
+    new_id = pf.get_portfolio()["holdings"][0]["position_id"]
+    assert new_id != old_id
+    response = workstation.post(
+        f"/api/alerts/{event['id']}/close",
+        json={"date": "2026-10-23", "price": 9, "shares": 100},
+    )
+    assert response.status_code == 409
+    assert "旧持仓" in response.json()["detail"]
+    assert pf.get_portfolio()["holdings"][0]["position_id"] == new_id
+    assert pf.get_portfolio()["holdings"][0]["shares"] == 100
+    assert len(pf.get_portfolio()["closed"]) == 1
+
+
+def test_t1_alert_sale_recovers_when_position_reentered_after_committed_sale(workstation, monkeypatch):
+    pf.add_holding("600000", 100, 10, "2026-10-22")
+    old_id = pf.get_portfolio()["holdings"][0]["position_id"]
+    event = ae.upsert_from_reminders([{**_reminder(), "position_id": old_id}])[0]
+    original_save = ae._save
+    monkeypatch.setattr(ae, "_save", lambda events: (_ for _ in ()).throw(OSError("disk failed")))
+    with pytest.raises(OSError):
+        ae.close_from_event(event["id"], "2026-10-23", 9, 100)
+    monkeypatch.setattr(ae, "_save", original_save)
+    ae.upsert_from_reminders([], active_symbols=set())
+    pf.add_holding("600000", 100, 11, "2026-10-22")
+    new_id = pf.get_portfolio()["holdings"][0]["position_id"]
+    result = ae.close_from_event(event["id"], "2026-10-23", 9, 100)
+    assert result["event"]["status"] == "HANDLED"
+    assert result["portfolio"]["holdings"][0]["position_id"] == new_id
+    assert result["portfolio"]["holdings"][0]["shares"] == 100
+    assert len(result["portfolio"]["closed"]) == 1
 
 
 def test_t1_check_reports_gaps_when_history_missing(workstation, monkeypatch):

@@ -378,10 +378,19 @@ def close_from_event(event_id: str, date: str, price: float, shares: float) -> d
         if event is None:
             raise ValueError("提醒不存在")
         operation_id = f"alert:{event_id}"
-        if event["status"] != "OPEN" and event.get("operation_id") != operation_id:
-            raise ValueError("提醒已处理，不能重复回录")
+        if event["status"] != "OPEN":
+            # A monitor may expire the event between the durable sale and a failed
+            # event write. The portfolio receipt, not the alert status, proves it
+            # is safe to finish that interrupted disposition without another sale.
+            receipt_exists = any(
+                closed.get("operation_id") == operation_id
+                for closed in pf.get_portfolio().get("closed", [])
+            )
+            if not receipt_exists:
+                raise ValueError("提醒已处理，不能重复回录")
         portfolio = pf.close_position(
-            event["symbol"], date, price, shares, 0, operation_id, require_holding=True
+            event["symbol"], date, price, shares, 0, operation_id, require_holding=True,
+            expected_position_id=event.get("position_id") or None,
         )
         stamp = _now_iso()
         still_held = any(h["code"] == event["symbol"] for h in portfolio["holdings"])

@@ -235,6 +235,7 @@ def remove_holding(code: str) -> dict:
 def close_position(
     code: str, date: str, price: float, shares: float, cost: float,
     operation_id: str | None = None, *, require_holding: bool = False,
+    expected_position_id: str | None = None,
 ) -> dict:
     """Atomically record an actual sale and reduce existing holdings (FIFO T+1 lots).
 
@@ -262,6 +263,8 @@ def close_position(
         holding = next((h for h in d["holdings"] if h["code"] == code), None)
         if require_holding and holding is None:
             raise ValueError("持仓不存在，不能从提醒重复记账")
+        if expected_position_id and holding and holding.get("position_id") != expected_position_id:
+            raise ValueError("提醒对应旧持仓，不能用于回录当前新持仓")
         if holding:
             lots = holding.get("lots") or [{"shares": holding["shares"], "opened_at": holding.get("opened_at")}]
             available = sum(float(lot["shares"]) for lot in lots if not lot.get("opened_at") or lot["opened_at"] < date)
