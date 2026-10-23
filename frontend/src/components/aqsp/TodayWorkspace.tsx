@@ -351,7 +351,7 @@ export function TodayWorkspace() {
           <section className="aq-workspace-summary" aria-label="当日研究摘要">
             <div className="aq-workspace-verdict">
               <Badge tone={view.gate.tone}>{view.gate.label}</Badge>
-              <strong>{view.conclusion || "等待当日研究结论"}</strong>
+              <strong>{view.chain.label}</strong>
               <p>{view.gate.detail}</p>
             </div>
             <dl className="aq-workspace-counts">

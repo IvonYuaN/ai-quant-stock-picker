@@ -576,7 +576,6 @@ export function CandidateSection({
   return (
     <section id={section.id} className="aq-candidate-workspace">
       <SectionHeader
-        number={section.number}
         title="候选研究"
         description="选择标的查看依据，加入自选持续跟踪。"
         count={section.count}

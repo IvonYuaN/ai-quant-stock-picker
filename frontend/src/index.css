@@ -3452,11 +3452,13 @@
   .aq-refresh-warning span { color: hsl(var(--muted-foreground)); }
   .aq-alert-quiet { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; font-size: 0.76rem; color: hsl(var(--muted-foreground)); }
   .aq-alert-quiet > svg { width: 0.9rem; height: 0.9rem; }
-  .aq-alert-quiet .aq-btn { margin-left: auto; min-height: 2.25rem; font-size: 0.75rem; }
+  .aq-alert-quiet .aq-btn { margin-left: auto; min-height: 2.5rem; font-size: 0.75rem; }
+  .aq-date-list { flex-wrap: nowrap; overflow-x: auto; padding: 0.1rem; }
+  .aq-date, .aq-chip, .aq-input { min-height: 2.5rem; }
   .aq-candidate-workspace { display: grid; gap: 0.75rem; min-width: 0; }
   .aq-candidate-workspace .aq-section-head { margin-bottom: 0; }
   .aq-candidate-filters { min-width: 0; font-size: 0.8rem; }
-  .aq-candidate-filters > summary { display: flex; align-items: center; gap: 0.4rem; width: fit-content; min-height: 2rem; cursor: pointer; color: hsl(var(--muted-foreground)); }
+  .aq-candidate-filters > summary { display: flex; align-items: center; gap: 0.4rem; width: fit-content; min-height: 2.5rem; cursor: pointer; color: hsl(var(--muted-foreground)); }
   .aq-candidate-filters summary svg { width: 0.9rem; height: 0.9rem; }
   .aq-candidate-filters summary > span { margin-left: 0.5rem; }
   .aq-candidate-filters .aq-toolbar { padding: 0.7rem 0; }
@@ -3547,6 +3549,7 @@
     .aq-workspace-counts > div { padding-left: 0.7rem; }
     .aq-workspace-counts dd { font-size: 1.4rem; }
     .aq-candidate-split { grid-template-columns: minmax(0, 1fr); gap: 0.85rem; }
+    .aq-candidate-workspace > .aq-section-head .aq-section-desc { display: none; }
     .aq-candidate-roster { max-height: 18rem; overflow-y: auto; }
     .aq-candidate-choice { min-height: 4.25rem; padding: 0.7rem; }
     .aq-selected-candidate { padding: 0.9rem; }
