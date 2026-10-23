@@ -61,6 +61,13 @@ class EvolutionConfig:
 
 
 @dataclass(frozen=True)
+class EvolutionPreflight:
+    allowed: bool
+    reason: str
+    cooldown_days_remaining: int
+
+
+@dataclass(frozen=True)
 class MarketRegimeAnalysis:
     regime: str
     confidence: float
@@ -337,6 +344,19 @@ class AutoEvolution:
         )
         return improvement < -effective_threshold
 
+    def preflight(self) -> EvolutionPreflight:
+        """Gate expensive data loading using only loaded config/cooldown state.
+
+        An allowed result does not waive sample, performance or proposal gates.
+        This method performs no market I/O or sample scan.
+        """
+        if not self.config.enabled:
+            return EvolutionPreflight(False, "disabled", 0)
+        remaining = self._cooldown_days_remaining()
+        return EvolutionPreflight(
+            remaining == 0, "cooldown_active" if remaining else "ready", remaining
+        )
+
     def _get_recent_performance(self) -> Optional[Dict[str, float]]:
         history_file = self.data_dir / "performance_history.jsonl"
         if not history_file.exists():
@@ -359,14 +379,11 @@ class AutoEvolution:
         sample_count: int | None = None,
         walkforward_payload: Mapping[str, object] | None = None,
     ) -> EvolutionResult | None:
-        if not self.config.enabled:
+        if not self.preflight().allowed:
             return None
 
         effective_sample_count = self._resolve_sample_count(data, sample_count)
         if not self._has_minimum_samples(effective_sample_count):
-            return None
-
-        if self._cooldown_days_remaining() > 0:
             return None
 
         current_params = self._get_base_params(strategy_name)
