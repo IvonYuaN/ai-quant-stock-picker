@@ -139,11 +139,29 @@ def _reset_alert_store() -> None:
         os.remove(path)
 
 
+def _inject_check_positions(monkeypatch) -> None:
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    import decision_context
+    import position_context_source
+    import risk_rules
+
+    data = _pf_data_with_opened_at(_today_shanghai_iso())
+    for holding in data["holdings"]:
+        holding["quote"] = {"quote_time": "20261023100000"}
+    for rule in risk_rules.ensure_rules(data):
+        rule["enabled"] = rule["level"] == "L1"
+    pf._save(data)
+    monkeypatch.setattr(pf, "get_portfolio", lambda: data)
+    monkeypatch.setattr(decision_context, "now_shanghai", lambda: datetime(2026, 10, 23, 10, tzinfo=ZoneInfo("Asia/Shanghai")))
+    monkeypatch.setattr(position_context_source, "load_position_sectors", lambda codes: {})
+
+
 def test_live_risk_derives_t1_from_opened_at(monkeypatch) -> None:
     """不传 holding_days ⇒ 后端从 opened_at 推导：今天开=明日生效，之前开/老仓=该卖。"""
     _reset_alert_store()
     _reset_portfolio()
-    monkeypatch.setattr(pf, "get_portfolio", lambda: _pf_data_with_opened_at(_today_shanghai_iso()))
+    _inject_check_positions(monkeypatch)
     monkeypatch.setattr(nr, "dispatch_notification_once", lambda *a, **k: [])
     client = TestClient(app_module.app)
 
@@ -166,7 +184,7 @@ def test_live_risk_explicit_holding_days_overrides_opened_at(monkeypatch) -> Non
     """向后兼容：显式 holding_days 仍优先于 opened_at 推导。"""
     _reset_alert_store()
     _reset_portfolio()
-    monkeypatch.setattr(pf, "get_portfolio", lambda: _pf_data_with_opened_at(_today_shanghai_iso()))
+    _inject_check_positions(monkeypatch)
     monkeypatch.setattr(nr, "dispatch_notification_once", lambda *a, **k: [])
     client = TestClient(app_module.app)
 

@@ -304,6 +304,8 @@ def close_position(
                 "pnl": round(pnl, 2),
                 "pnl_pct": round((price - cost) / cost * 100, 2) if cost else 0.0,
                 "operation_id": operation_id,
+                "position_id": holding.get("position_id") if holding else None,
+                "position_closed": bool(holding and holding["shares"] <= 0),
             }
         )
         _save(d)
@@ -404,10 +406,21 @@ def update_risk_rule(rule_id: str, patch: dict) -> dict:
         return rule.copy()
 
 
-def observe_risk_prices(prices: dict[str, float]) -> list[dict]:
+def risk_position_matches(snapshot: dict, current: dict) -> bool:
+    """Compare all user-position inputs that can invalidate a risk check."""
+    return all(snapshot.get(key) == current.get(key) for key in ("position_id", "cost", "shares", "opened_at"))
+
+
+def observe_risk_prices(
+    prices: dict[str, float], *, expected_holdings: list[dict] | None = None,
+) -> list[dict]:
     """Persist observed high-water prices; trailing stops never move down."""
     with _LOCK, advisory_lock(_pf_file()):
         data = _load()
+        if expected_holdings is not None:
+            expected = {row["code"]: row for row in expected_holdings}
+            positions = {row["code"]: row for row in data.get("holdings", [])}
+            prices = {code: value for code, value in prices.items() if code in expected and code in positions and risk_position_matches(expected[code], positions[code])}
         for rule in risk_rules.ensure_rules(data):
             price = prices.get(rule["symbol"], 0)
             if rule["level"] == "L5" and math.isfinite(price) and price > 0:

@@ -18,6 +18,11 @@ from aqsp.risk.live_risk import run_live_risk_check
 
 @pytest.fixture
 def workstation(tmp_path, monkeypatch):
+    import decision_context
+    import position_context_source
+
+    monkeypatch.setattr(decision_context, "now_shanghai", lambda: datetime(2026, 10, 23, 10, tzinfo=ZoneInfo("Asia/Shanghai")))
+    monkeypatch.setattr(position_context_source, "load_position_sectors", lambda codes: {})
     monkeypatch.setattr(pf, "CACHE_DIR", str(tmp_path))
     monkeypatch.setattr(ae, "CACHE_DIR", str(tmp_path))
     monkeypatch.setattr(
@@ -27,7 +32,7 @@ def workstation(tmp_path, monkeypatch):
     monkeypatch.setattr(
         pf.astock,
         "tencent_quote",
-        lambda codes: {c: {"name": c, "price": 9} for c in codes},
+        lambda codes: {c: {"name": c, "price": 9, "quote_time": "20261023100000"} for c in codes},
     )
     return TestClient(app_module.app)
 
