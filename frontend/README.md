@@ -14,6 +14,10 @@ npm run preview        # 预览产物
 
 后端需先启动（`bash ../scripts/start_vibe_research.sh`），否则页面只剩降级态。
 
+发布前运行 `python3 ../scripts/check_frontend_audit.py --frontend-dir .`。
+2026-10-23：锁定 Vite 6.4.5 补丁，修复 6.4.3 的开发服务器与编辑器入口公告（#440）；
+保持现有主版本和预览命令，不新增 audit 豁免。服务器使用同一锁文件安装依赖，本地构建后上传 `dist`。
+
 ## 路由
 
 | 线 | 路由 | 说明 |
