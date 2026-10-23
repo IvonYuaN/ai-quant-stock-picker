@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import shutil
 import sys
@@ -21,9 +22,11 @@ from datetime import date, timezone, timedelta
 
 from aqsp.core.errors import DataError
 from aqsp.core.time import now_shanghai, today_shanghai
+from aqsp.utils.jsonl_io import advisory_lock
 
 import astock
 import tenant as _tenant
+import risk_rules
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 _OLD_PF_FILE = os.path.join(HERE, ".cache", "portfolio.json")  # ≤v0.1.1 旧位置
@@ -32,7 +35,7 @@ CACHE_DIR = os.environ.get("VR_DATA_DIR") or os.path.join(
     os.path.expanduser("~"), ".vibe-research"
 )
 BEIJING = timezone(timedelta(hours=8))
-_LOCK = threading.Lock()
+_LOCK = threading.RLock()
 
 
 def _tenant_id() -> str:
@@ -163,7 +166,8 @@ def resolve_holding_days(
 
 
 def add_holding(
-    code: str, shares: float, cost: float, opened_at: str | None = None
+    code: str, shares: float, cost: float, opened_at: str | None = None,
+    operation_id: str | None = None,
 ) -> dict:
     """加一笔持仓；同代码则按加权平均成本合并（加仓）。
 
@@ -176,15 +180,24 @@ def add_holding(
             按老仓（即时可卖）处理，不误伤。同代码合并时保留最早的 opened_at
             （加仓不改动原仓的开仓基准；合并行按老仓可卖，不把老仓误判成当日买入）。
     """
+    if not math.isfinite(shares) or shares <= 0 or not math.isfinite(cost):
+        raise ValueError("数量须为正数，成本须为有限数字")
     today = today_shanghai()
     opened_at = (
         today.isoformat() if opened_at is None
         else _parse_opened_at(opened_at, today).isoformat()
     )
-    with _LOCK:
+    with _LOCK, advisory_lock(_pf_file()):
         d = _load()
+        request = {"code": code, "shares": shares, "cost": cost, "opened_at": opened_at}
+        if operation_id and operation_id in d.get("operations", {}):
+            if d["operations"][operation_id] != request:
+                raise ValueError("重复操作标识的成交内容不同")
+            return get_portfolio()
         for h in d["holdings"]:
             if h["code"] == code:
+                lots = h.setdefault("lots", [{"shares": h["shares"], "opened_at": h.get("opened_at")}])
+                lots.append({"shares": shares, "opened_at": opened_at})
                 total = h["shares"] + shares
                 # 4 位小数：ETF/基金成本常见 3-4 位（issue #13），2-3 位会让市值/盈亏对不上账
                 h["cost"] = (
@@ -200,28 +213,79 @@ def add_holding(
                 break
         else:
             d["holdings"].append(
-                {"code": code, "shares": shares, "cost": cost, "opened_at": opened_at}
+                {"code": code, "shares": shares, "cost": cost, "opened_at": opened_at,
+                 "lots": [{"shares": shares, "opened_at": opened_at}]}
             )
+        risk_rules.ensure_rules(d)
+        if operation_id:
+            d.setdefault("operations", {})[operation_id] = request
         _save(d)
     return get_portfolio()
 
 
 def remove_holding(code: str) -> dict:
-    with _LOCK:
+    with _LOCK, advisory_lock(_pf_file()):
         d = _load()
         d["holdings"] = [h for h in d["holdings"] if h["code"] != code]
+        d["risk_rules"] = [r for r in d.get("risk_rules", []) if r["symbol"] != code]
         _save(d)
     return get_portfolio()
 
 
 def close_position(
-    code: str, date: str, price: float, shares: float, cost: float
+    code: str, date: str, price: float, shares: float, cost: float,
+    operation_id: str | None = None, *, require_holding: bool = False,
 ) -> dict:
-    """记一笔已清仓：算已实现盈亏，存入 closed 列表。"""
-    pnl = (price - cost) * shares
-    with _LOCK:
+    """Atomically record an actual sale and reduce existing holdings (FIFO T+1 lots).
+
+    Legacy history-only entry is retained when no holding exists. Alert disposition
+    requires a holding and uses a durable operation id for crash-safe retries.
+    """
+    from datetime import date as date_type
+
+    try:
+        sold_at = date_type.fromisoformat(date)
+    except ValueError as exc:
+        raise ValueError("清仓日期必须为 YYYY-MM-DD") from exc
+    if sold_at.isoformat() != date or sold_at > today_shanghai():
+        raise ValueError("清仓日期必须为不晚于今天的 YYYY-MM-DD")
+    if not all(math.isfinite(v) for v in (price, shares, cost)) or price <= 0 or shares <= 0:
+        raise ValueError("成交价与数量须为有限正数")
+    with _LOCK, advisory_lock(_pf_file()):
         d = _load()
         d.setdefault("closed", [])
+        existing = next((c for c in d["closed"] if operation_id and c.get("operation_id") == operation_id), None)
+        if existing:
+            if any(existing[k] != v for k, v in {"code": code, "date": date, "price": price, "shares": shares}.items()):
+                raise ValueError("重复操作标识的成交内容不同")
+            return get_portfolio()
+        holding = next((h for h in d["holdings"] if h["code"] == code), None)
+        if require_holding and holding is None:
+            raise ValueError("持仓不存在，不能从提醒重复记账")
+        if holding:
+            lots = holding.get("lots") or [{"shares": holding["shares"], "opened_at": holding.get("opened_at")}]
+            available = sum(float(lot["shares"]) for lot in lots if not lot.get("opened_at") or lot["opened_at"] < date)
+            if shares > available:
+                raise ValueError(f"T+1 可卖数量不足：当日可卖 {available:g} 股")
+            cost = float(holding["cost"])
+            remaining = shares
+            updated_lots = []
+            for lot in sorted(lots, key=lambda item: item.get("opened_at") or ""):
+                volume = float(lot["shares"])
+                if not lot.get("opened_at") or lot["opened_at"] < date:
+                    consumed = min(volume, remaining)
+                    volume -= consumed
+                    remaining -= consumed
+                if volume > 0:
+                    updated_lots.append({**lot, "shares": volume})
+            holding["shares"] -= shares
+            holding["lots"] = updated_lots
+            if holding["shares"] <= 0:
+                d["holdings"].remove(holding)
+                d["risk_rules"] = [r for r in d.get("risk_rules", []) if r["symbol"] != code]
+            elif updated_lots:
+                holding["opened_at"] = updated_lots[0].get("opened_at")
+        pnl = (price - cost) * shares
         try:
             name = astock.tencent_quote([code]).get(code, {}).get("name", code)
         except Exception:
@@ -236,6 +300,7 @@ def close_position(
                 "cost": cost,
                 "pnl": round(pnl, 2),
                 "pnl_pct": round((price - cost) / cost * 100, 2) if cost else 0.0,
+                "operation_id": operation_id,
             }
         )
         _save(d)
@@ -243,7 +308,7 @@ def close_position(
 
 
 def remove_closed(index: int) -> dict:
-    with _LOCK:
+    with _LOCK, advisory_lock(_pf_file()):
         d = _load()
         cl = d.get("closed", [])
         if 0 <= index < len(cl):
@@ -277,6 +342,9 @@ def get_portfolio() -> dict:
                     "shares": h["shares"],
                     "cost": h["cost"],
                     "opened_at": h.get("opened_at"),
+                    "position_id": h.get("position_id"),
+                    "sellable_shares": sum(float(lot["shares"]) for lot in (h.get("lots") or [{"shares": h["shares"], "opened_at": h.get("opened_at")}]) if not lot.get("opened_at") or lot["opened_at"] < today_shanghai().isoformat()),
+                    "t1_locked_shares": sum(float(lot["shares"]) for lot in (h.get("lots") or [{"shares": h["shares"], "opened_at": h.get("opened_at")}]) if lot.get("opened_at") and lot["opened_at"] >= today_shanghai().isoformat()),
                     "market_value": round(mv, 2),
                     "pnl": round(pnl, 2),
                     "pnl_pct": round(pnl / cv * 100, 2) if cv else 0.0,
@@ -301,9 +369,64 @@ def get_portfolio() -> dict:
     }
 
 
+def get_risk_rules() -> list[dict]:
+    """Lazily attach defaults for old holdings and return only active positions."""
+    with _LOCK, advisory_lock(_pf_file()):
+        data = _load()
+        before = json.dumps(data, sort_keys=True)
+        rules = risk_rules.ensure_rules(data)
+        symbols = {h["code"] for h in data.get("holdings", [])}
+        if json.dumps(data, sort_keys=True) != before:
+            _save(data)
+        return [r.copy() for r in rules if r["symbol"] in symbols]
+
+
+def update_risk_rule(rule_id: str, patch: dict) -> dict:
+    """Persist user controls without resetting cost linkage or trailing peak."""
+    with _LOCK, advisory_lock(_pf_file()):
+        data = _load()
+        rules = risk_rules.ensure_rules(data)
+        rule = next((r for r in rules if r["id"] == rule_id), None)
+        if rule is None:
+            raise ValueError("持仓提醒规则不存在")
+        risk_rules.patch_rule(rule, patch)
+        risk_rules.ensure_rules(data)
+        _save(data)
+        return rule.copy()
+
+
+def observe_risk_prices(prices: dict[str, float]) -> list[dict]:
+    """Persist observed high-water prices; trailing stops never move down."""
+    with _LOCK, advisory_lock(_pf_file()):
+        data = _load()
+        for rule in risk_rules.ensure_rules(data):
+            price = prices.get(rule["symbol"], 0)
+            if rule["level"] == "L5" and math.isfinite(price) and price > 0:
+                rule["high_water_price"] = max(float(rule.get("high_water_price") or 0), price)
+                rule["trigger_price"] = max(float(rule.get("trigger_price") or 0), rule["high_water_price"] * (1 - float(rule["param_value"])))
+        _save(data)
+        symbols = {h["code"] for h in data.get("holdings", [])}
+        return [r.copy() for r in data["risk_rules"] if r["symbol"] in symbols]
+
+
+def record_rule_disposition(rule_id: str, ignored: bool) -> None:
+    """Repeated ignored episodes reduce frequency, never strategy sensitivity."""
+    with _LOCK, advisory_lock(_pf_file()):
+        data = _load()
+        rule = next((r for r in data.get("risk_rules", []) if r["id"] == rule_id), None)
+        if rule is None:
+            return
+        rule["ignore_streak"] = int(rule.get("ignore_streak", 0)) + 1 if ignored else 0
+        if rule["ignore_streak"] >= risk_rules.PositionRuleDefaults().ignored_before_daily and rule["freq_mode"] == "always":
+            rule["freq_mode"] = "daily"
+            rule["frequency_note"] = "连续忽略两次，已降为每日一次；可手动修改"
+        rule["updated_at"] = now_shanghai().isoformat(timespec="seconds")
+        _save(data)
+
+
 def _refresh_snapshot() -> None:
     """后台定时任务：刷新时间戳（GET 本就实时算，这里记录后台刷新点）。"""
-    with _LOCK:
+    with _LOCK, advisory_lock(_pf_file()):
         d = _load()
         d["last_refresh"] = _now()
         _save(d)

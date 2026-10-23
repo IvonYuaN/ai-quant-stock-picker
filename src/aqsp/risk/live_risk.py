@@ -25,6 +25,7 @@ T+1 语义（Q3=A 拍板）：
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import math
 from typing import Dict, List, Optional
 
 import pandas as pd
@@ -35,6 +36,15 @@ from aqsp.risk.stop_loss import Position, StopLossConfig, StopLossManager
 
 # T+1 限制文案（当日买入、今日不可卖出时挂到 L5 / L1 提醒上）
 _T1_NOTE = "T+1 限制：当日买入，今日不可卖出"
+
+
+@dataclass(frozen=True)
+class LiveIndicatorConfig:
+    """Standard MACD formula already used by aqsp.indicators (not strategy tuning)."""
+
+    fast: int = 12
+    slow: int = 26
+    signal: int = 9
 
 
 @dataclass(frozen=True)
@@ -54,6 +64,10 @@ class SellReminder:
     action_hint: str  # "该卖" | "明日生效" | "观察"
     basis: Dict[str, str] = field(default_factory=dict)  # 触发依据（basis_json）
     t1_note: str = ""  # T+1 限制说明（当日买入时非空）
+    rule_id: str = ""
+    freq_mode: str = "once"
+    position_id: str = ""
+    rule_revision: int = 0
 
     def to_dict(self) -> Dict[str, object]:
         """供前端收件箱 / 外发 notifier 序列化的扁平视图。"""
@@ -67,6 +81,10 @@ class SellReminder:
             "action_hint": self.action_hint,
             "t1_note": self.t1_note,
             "basis_json": self.basis,
+            "rule_id": self.rule_id,
+            "freq_mode": self.freq_mode,
+            "position_id": self.position_id,
+            "rule_revision": self.rule_revision,
         }
 
 
@@ -149,6 +167,7 @@ def run_live_risk_check(
     holding_days: Optional[Dict[str, int]] = None,
     price_history: Optional[Dict[str, pd.DataFrame]] = None,
     stop_config: Optional[StopLossConfig] = None,
+    position_rules: Optional[List[Dict[str, object]]] = None,
 ) -> List[SellReminder]:
     """对实盘持仓跑 L1/L5 风控，产「该卖提醒」列表（独立 LIVE 入口）。
 
@@ -165,6 +184,14 @@ def run_live_risk_check(
     Returns:
         该卖/观察提醒列表（无依据不产；全绿持仓返回空列表）。
     """
+    if position_rules is not None:
+        return _check_position_rules(
+            holdings,
+            current_prices,
+            holding_days or {},
+            price_history or {},
+            position_rules,
+        )
     days = holding_days or {}
     history = price_history or {}
     slm = StopLossManager(stop_config)
@@ -212,6 +239,109 @@ def run_live_risk_check(
                         stop_price=dyn.recommended_stop,
                         method=dyn.method,
                         sellable_now=sellable_now,
+                    )
+                )
+    return reminders
+
+
+def _check_position_rules(
+    holdings: List[Dict[str, object]],
+    prices: Dict[str, float],
+    days: Dict[str, int],
+    history: Dict[str, pd.DataFrame],
+    rules: List[Dict[str, object]],
+) -> List[SellReminder]:
+    """Pure LIVE-only evaluation; user defaults never reach backtest thresholds.
+
+    History schema: date, close (raw prices). Caller checks date freshness.
+    L5 uses only persisted observations since entry, avoiding pre-entry highs.
+    """
+    reminders: List[SellReminder] = []
+    for holding in holdings:
+        code = str(holding.get("code", ""))
+        price, cost = float(prices.get(code) or 0), float(holding.get("cost") or 0)
+        if (
+            not math.isfinite(price)
+            or not math.isfinite(cost)
+            or price <= 0
+            or cost <= 0
+        ):
+            continue
+        sellable = days.get(code, 1) >= 1
+        frame = history.get(code)
+        for rule in rules:
+            if rule.get("symbol") != code or not rule.get("enabled"):
+                continue
+            level = str(rule["level"])
+            threshold = 0.0
+            basis: Dict[str, str] = {}
+            if level == "L1":
+                threshold = cost * (1 - float(rule["param_value"]))
+                if price <= threshold:
+                    basis = {
+                        "rule": f"成本价 {cost:.4f} × (1−{float(rule['param_value']):.1%}) = {threshold:.4f}",
+                        "actual": f"现价 {price:.4f}",
+                        "evidence": "用户持仓 L1 硬止损",
+                    }
+            elif level == "L5":
+                threshold = float(rule.get("trigger_price") or 0)
+                if threshold > 0 and price <= threshold:
+                    basis = {
+                        "rule": f"已观测持仓最高价 {float(rule.get('high_water_price') or 0):.4f} 回撤 {float(rule['param_value']):.1%}；止损位只升不降 {threshold:.4f}",
+                        "actual": f"现价 {price:.4f}",
+                        "evidence": "L5 持仓期已观测价格，不使用开仓前高点",
+                    }
+            elif level == "L2" and frame is not None and "close" in frame:
+                window = int(float(rule["param_value"]))
+                closes = pd.to_numeric(frame["close"], errors="coerce")
+                if len(closes) >= window and closes.tail(window).notna().all():
+                    threshold = float(closes.tail(window).mean())
+                    if price < threshold:
+                        basis = {
+                            "rule": f"现价跌破 MA{window} {threshold:.4f}",
+                            "actual": f"现价 {price:.4f}",
+                            "evidence": f"截至 {frame['date'].iloc[-1]} 不复权日线",
+                        }
+            elif level == "L4" and frame is not None and "close" in frame:
+                # Standard MACD(12,26,9), the PRD's supported L4 indicator.
+                strategy = LiveIndicatorConfig()
+                closes = pd.to_numeric(frame["close"], errors="coerce")
+                if (
+                    len(closes) >= strategy.slow + strategy.signal
+                    and closes.notna().all()
+                ):
+                    dif = (
+                        closes.ewm(span=strategy.fast, adjust=False).mean()
+                        - closes.ewm(span=strategy.slow, adjust=False).mean()
+                    )
+                    dea = dif.ewm(span=strategy.signal, adjust=False).mean()
+                    if dif.iloc[-2] >= dea.iloc[-2] and dif.iloc[-1] < dea.iloc[-1]:
+                        threshold = float(closes.iloc[-1])
+                        basis = {
+                            "rule": "MACD(12,26,9) DIF 下穿 DEA",
+                            "actual": f"DIF {dif.iloc[-1]:.6f} / DEA {dea.iloc[-1]:.6f}",
+                            "evidence": f"截至 {frame['date'].iloc[-1]} 不复权日线；仅支持MACD死叉",
+                        }
+            if basis:
+                reminders.append(
+                    SellReminder(
+                        symbol=code,
+                        level=level,
+                        current_price=price,
+                        threshold_price=threshold,
+                        pnl_pct=_pnl_pct(cost, price),
+                        sellable_now=sellable,
+                        action_hint="该卖"
+                        if sellable
+                        else "明日生效"
+                        if level == "L1"
+                        else "观察",
+                        basis=basis,
+                        t1_note="" if sellable else _T1_NOTE,
+                        rule_id=str(rule["id"]),
+                        freq_mode=str(rule.get("freq_mode", "once")),
+                        position_id=str(rule.get("position_id", "")),
+                        rule_revision=int(rule.get("revision", 0)),
                     )
                 )
     return reminders

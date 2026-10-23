@@ -458,6 +458,7 @@ class HoldingIn(BaseModel):
     shares: float
     cost: float
     opened_at: str | None = None
+    operation_id: str | None = Field(default=None, min_length=1, max_length=128)
 
 
 @app.get(
@@ -498,7 +499,7 @@ def portfolio_get():
 - `opened_at`: 开仓日期 YYYY-MM-DD（可选，缺省今天；补录历史持仓时传实际开仓日）
     """,
 )
-def portfolio_add(h: HoldingIn):
+def portfolio_add(h: HoldingIn) -> dict:
     """加一笔持仓（同代码按加权平均成本合并）。存本地，不上传。"""
     code = (h.code or "").strip()
     if not code.isdigit() or len(code) != 6:
@@ -507,7 +508,7 @@ def portfolio_add(h: HoldingIn):
         raise HTTPException(400, "数量必须大于 0")
     # 成本价不限正负：融券 / 返息 / 摊薄后为负成本等情形按结果计算，用户想怎么输就怎么输。
     try:
-        return {"data": pf.add_holding(code, h.shares, h.cost, h.opened_at)}
+        return {"data": pf.add_holding(code, h.shares, h.cost, h.opened_at, h.operation_id)}
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
@@ -591,6 +592,7 @@ class CloseIn(BaseModel):
     price: float
     shares: float
     cost: float
+    operation_id: str | None = Field(default=None, min_length=1, max_length=128)
 
 
 @app.post(
@@ -613,7 +615,7 @@ class CloseIn(BaseModel):
 - `cost`: 买入成本价
     """,
 )
-def portfolio_close(c: CloseIn):
+def portfolio_close(c: CloseIn) -> dict:
     """记一笔已清仓（已实现盈亏）。存本地。"""
     code = (c.code or "").strip()
     if not code.isdigit() or len(code) != 6:
@@ -630,7 +632,49 @@ def portfolio_close(c: CloseIn):
         datetime.strptime(date, "%Y-%m-%d")
     except ValueError:
         raise HTTPException(400, "清仓日期格式应为 YYYY-MM-DD") from None
-    return {"data": pf.close_position(code, date, c.price, c.shares, c.cost)}
+    try:
+        return {"data": pf.close_position(code, date, c.price, c.shares, c.cost, c.operation_id)}
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+class RiskRulePatch(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    enabled: bool | None = None
+    param_value: float | None = None
+    freq_mode: str | None = None
+
+
+@app.get("/api/portfolio/risk-rules", tags=["该卖提醒"])
+def risk_rules_get() -> dict:
+    """Editable user-position rules; L3 is explicitly not implemented."""
+    return {"data": {"rules": pf.get_risk_rules(), "unsupported_levels": ["L3"]}}
+
+
+@app.patch("/api/portfolio/risk-rules/{rule_id}", tags=["该卖提醒"])
+def risk_rule_update(rule_id: str, body: RiskRulePatch) -> dict:
+    try:
+        return {"data": pf.update_risk_rule(rule_id, body.model_dump(exclude_unset=True))}
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+class AlertCloseIn(BaseModel):
+    date: str
+    price: float
+    shares: float
+
+
+@app.post("/api/alerts/{event_id}/close", tags=["该卖提醒"])
+def alert_close(event_id: str, body: AlertCloseIn) -> dict:
+    """Record the user's actual sale; never submit an order."""
+    import alert_events
+
+    try:
+        return {"data": alert_events.close_from_event(event_id, body.date, body.price, body.shares)}
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
 
 
 @app.delete(
@@ -706,68 +750,16 @@ P0-2 该卖提醒（Q3=A T+1 语义）：
 - `notify`（可选）: 是否外发，默认 true
 """,
 )
-def live_risk_check(body: LiveRiskCheckIn = LiveRiskCheckIn()):
-    try:
-        pf_data = pf.get_portfolio()
-    except Exception as e:  # noqa: BLE001
-        raise HTTPException(502, f"持仓读取异常：{e}") from e
-
-    holdings = [
-        {"code": h["code"], "shares": h["shares"], "cost": h["cost"]}
-        for h in pf_data.get("holdings", [])
-    ]
-    prices = {h["code"]: h["price"] for h in pf_data.get("holdings", []) if h.get("price")}
-
+def live_risk_check(body: LiveRiskCheckIn = LiveRiskCheckIn()) -> dict:
     from aqsp.core.errors import DataError
+    from live_risk_service import PortfolioReadError, check_positions
 
     try:
-        holding_days = pf.resolve_holding_days(
-            pf_data.get("holdings", []), body.holding_days,
-        )
+        return {"data": check_positions(body.holding_days, notify=body.notify)}
     except DataError as exc:
         raise HTTPException(409, str(exc)) from exc
-
-    from aqsp.risk.live_risk import run_live_risk_check
-
-    reminders = run_live_risk_check(
-        holdings,
-        prices,
-        holding_days=holding_days,
-        stop_config=None,  # 生产 thresholds（L1 8% / L5 ATR×2.0）
-    )
-    import alert_events
-
-    new_events = alert_events.upsert_from_reminders([r.to_dict() for r in reminders])
-
-    notify_results: list[str] = []
-    suppressed = False
-    if body.notify and new_events:
-        from aqsp.notification_runtime import dispatch_notification_once
-        import portfolio as _pf
-
-        markdown = _live_risk_alert_markdown(new_events)
-        state_path = os.path.join(_pf.CACHE_DIR, "notify-state-live-risk.json")
-        for e in new_events:
-            threshold = round(float(e.get("threshold_at") or 0), 2)
-            kind = f"live-risk|{e.get('symbol')}|{e.get('level')}|{threshold}"
-            results = dispatch_notification_once(
-                markdown,
-                mode="summary",
-                prefix="live-risk",
-                kind=kind,
-                state_path=state_path,
-            )
-            if not results:
-                suppressed = True
-            notify_results.extend(results)
-    return {
-        "data": {
-            "reminders": [r.to_dict() for r in reminders],
-            "new_events": new_events,
-            "notify": notify_results,
-            "notify_suppressed": suppressed,
-        }
-    }
+    except PortfolioReadError as exc:
+        raise HTTPException(502, str(exc)) from exc
 
 
 @app.get(
@@ -779,14 +771,14 @@ def live_risk_check(body: LiveRiskCheckIn = LiveRiskCheckIn()):
 def alerts_list(
     status: str = Query("", description="OPEN|HANDLED|IGNORED|EXPIRED，空=全部"),
     symbol: str = Query("", description="6位代码，空=全部"),
-):
+) -> dict:
     import alert_events
 
     events = alert_events.list_events(
         status=status or None, symbol=symbol or None
     )
     open_count = sum(1 for e in events if e.get("status") == "OPEN")
-    return {"data": {"events": events, "open_count": open_count}}
+    return {"data": {"events": events, "open_count": open_count, "last_checked_at": alert_events.last_checked_at(), "last_check": alert_events.last_check()}}
 
 
 @app.patch(
@@ -802,12 +794,14 @@ def alerts_transition(
     event_id: str,
     action: str = Query(..., description="handled | ignored"),
     note: str = Query("", description="处理备注（可选）"),
-):
+) -> dict:
     import alert_events
 
     if action not in ("handled", "ignored"):
         raise HTTPException(400, "action 必须是 handled 或 ignored")
     updated = alert_events.transition(event_id, action, note)
+    if updated and updated.get("rule_id"):
+        pf.record_rule_disposition(updated["rule_id"], action == "ignored")
     if updated is None:
         raise HTTPException(409, "事件不存在或已处于终态")
     return {"data": updated}

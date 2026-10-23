@@ -8014,10 +8014,12 @@ def run_briefing(args: argparse.Namespace) -> int:
 
 def run_monitor(args: argparse.Namespace) -> int:
     from aqsp.monitor.checker import MonitorChecker
+    from aqsp.monitor.live_positions import check_live_positions
     from aqsp.monitor.notifier import format_alert, send_alerts
 
     checker = MonitorChecker(config_path=args.config)
     results = checker.check_all()
+    results.extend(check_live_positions(notify=bool(args.notify), dry_run=bool(args.dry_run)))
     suppress_console_alert = bool(
         getattr(args, "suppress_console_alert", False)
         or (

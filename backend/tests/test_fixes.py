@@ -56,7 +56,8 @@ def test_portfolio_crud_roundtrip(tmp_pf):
     assert client.get("/api/portfolio").json()["data"]["holdings"] == []
 
     r = client.post(
-        "/api/portfolio/holding", json={"code": "600519", "shares": 100, "cost": 8.0}
+        "/api/portfolio/holding",
+        json={"code": "600519", "shares": 100, "cost": 8.0, "opened_at": "2026-07-02"},
     )
     assert r.status_code == 200
     h = r.json()["data"]["holdings"][0]
@@ -65,7 +66,8 @@ def test_portfolio_crud_roundtrip(tmp_pf):
 
     # 同代码加仓 → 加权平均成本
     client.post(
-        "/api/portfolio/holding", json={"code": "600519", "shares": 100, "cost": 12.0}
+        "/api/portfolio/holding",
+        json={"code": "600519", "shares": 100, "cost": 12.0, "opened_at": "2026-07-02"},
     )
     h = client.get("/api/portfolio").json()["data"]["holdings"][0]
     assert h["shares"] == 200
@@ -75,7 +77,7 @@ def test_portfolio_crud_roundtrip(tmp_pf):
         "/api/portfolio/close",
         json={
             "code": "600519",
-            "date": "2026-07-05",
+            "date": "2026-07-03",
             "price": 11.0,
             "shares": 200,
             "cost": 10.0,
@@ -83,6 +85,7 @@ def test_portfolio_crud_roundtrip(tmp_pf):
     )
     assert r.status_code == 200
     assert r.json()["data"]["closed"][0]["pnl"] == pytest.approx(200.0)
+    assert r.json()["data"]["holdings"] == []
 
     assert (
         client.delete("/api/portfolio/holding?code=600519").json()["data"]["holdings"]
@@ -309,6 +312,7 @@ def test_market_degrades_without_akshare(monkeypatch):
     - sentiment 自己的源（东财 breadth）失败时才降级为 ``{}``（三态纪律，
       绝不拿 0 冒充「全市场平盘」）。
     """
+
     def boom():
         raise astock.DependencyMissing("akshare 未安装")
 
