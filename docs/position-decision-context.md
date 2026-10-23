@@ -33,8 +33,10 @@ stock_history=None, market_overview=None, sector_snapshot=None, checked_at=None)
 已完成交易日涨跌，并注明不是当前分时。今天未完成的 bar 不冒充昨日收盘。
 
 只有三个维度都有同一交易日的已验证弱势证据时，才追加“复核减仓或退出”分析。
-L1 已触发始终明确硬风险，不能被背景回暖或做T表述掩盖。账面亏损本身不是做T依据；
-没有日内区间、流动性和往返成本证据时，`t_plan.eligible=null`，没有可卖量或已触发
-L1 时为 `false`。本模块不会凭不足的证据返回 `true`。
+L1 已触发始终保留并明确风险提醒，不能被背景回暖或做T表述掩盖，也不单独推出清仓结论。
+只有大盘、所属板块、个股都有同交易日的已验证弱势证据时，才突出复核减仓或退出；其他情形
+保留持有、减仓和做T观察三种人工选择。账面亏损或止损线触发本身不是做T依据；没有日内区间、
+流动性和往返成本证据时，`t_plan.eligible=null`，仅表示不能确认适合执行，用户仍可记录观察意向。
+没有可卖底仓或三维同步走弱时为 `false`。本模块不会凭不足的证据返回 `true`。
 
 验证：`PYTHONPATH=src:backend python -m pytest -q backend/tests/test_decision_context.py`。

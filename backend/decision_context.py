@@ -372,7 +372,7 @@ def build_position_context(
         and stock_context.status == "falling"
     )
     if hard_risk:
-        stance, title = "risk_review", "硬止损已越线，优先复核风险处置"
+        stance, title = "risk_review", "止损规则已触发，复核风险与仓位选择"
         cost = _number(holding.get("cost"))
         price = _number((quote or {}).get("price", holding.get("price")))
         triggered = next(event for event in matching if event.get("level") == "L1")
@@ -384,8 +384,10 @@ def build_position_context(
             facts.append(f"已低于设定的成本止损线 {threshold:.4f}")
         reason = "；".join(facts + ["L1 硬风险仍生效，需复核仓位；这不等于必须一次性清仓，也不能仅以深亏或做 T 为由忽略风险。"])
         if joint_weakness:
-            title = "硬风险叠加大盘、板块和个股走弱，优先复核减仓或退出"
+            title = "止损规则叠加大盘、板块和个股走弱，优先复核减仓或退出"
             reason += " 三项同交易日弱势证据一致，继续等反弹或做 T 的依据不足。"
+        else:
+            reason += " 尚无大盘、板块、个股同日同步走弱的完整证据；风险提醒保留，是否持有、减仓或做 T 需按可承受损失与后续条件复核。"
     elif joint_weakness:
         stance, title = "exit_review", "市场、所属板块与个股同向走弱，复核减仓或退出"
         reason = (
@@ -395,16 +397,18 @@ def build_position_context(
         stance, title = "observe", "结合已触发规则复核，持有或减仓需看后续证据"
         reason = "单项阈值或账面亏损不足以说明现在必须全部卖出；市场、板块、个股未形成完整同向弱势证据。"
     sellable = _number(holding.get("sellable_shares"))
-    if hard_risk:
-        t_plan = TObservationPlan(False, "已触发硬止损，做T不能掩盖或延后风险复核。")
-    elif sellable is not None and sellable <= 0:
+    if sellable is not None and sellable <= 0:
         t_plan = TObservationPlan(
             False, "当前无可卖持仓，受T+1限制，不能执行卖出再回补。"
+        )
+    elif joint_weakness:
+        t_plan = TObservationPlan(
+            False, "大盘、所属板块与个股均有同交易日走弱证据；先复核风险处置，不用做T延后判断。"
         )
     else:
         t_plan = TObservationPlan(
             None,
-            "缺少经验证的日内区间、流动性及往返成本证据；暂不能判断适合做T，亏损本身不是依据。",
+            "可记录做T观察意向，但当前没有经验证的日内区间、流动性及往返成本证据，不能判断适合执行；亏损或止损线触发本身都不是做T依据。",
         )
     options = (
         "继续持有：须核对触发原因及风险承受，不能忽略已越线规则",
