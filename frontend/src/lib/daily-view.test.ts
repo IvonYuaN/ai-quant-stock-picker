@@ -9,6 +9,7 @@ import {
   buildDailyView,
   DEFAULT_TODAY_SECTION,
   gateView,
+  parameterSnapshotView,
   resolveTodaySection,
   symbolNames,
   TODAY_SECTION_IDS,
@@ -203,6 +204,18 @@ export const dailyViewContract = {
   readyCandidateIsMarkedReady: view.candidates[0].ready === true,
   frozenTimestampPassesIntoCandidateView:
     buildDailyView({ ...dailyViewFixture, frozen_at: "2026-09-11T09:15:00+08:00" }).frozenAt === "2026-09-11T09:15:00+08:00",
+  legacyParameterSnapshotIsUnverified:
+    parameterSnapshotView({ ...dailyViewFixture, frozen_at: "2026-09-11T09:15:00+08:00" }).label === "参数快照待生成 · 未验证",
+  realParameterSnapshotShowsItsEffectiveDateAndFingerprint:
+    parameterSnapshotView({ ...dailyViewFixture, parameter_snapshot: { version: "test-version", effective_from: "2026-09-01", fingerprint: "a".repeat(64) } }).label === "参数快照已冻结生效 · test-version · 生效于 2026-09-01 · 指纹 aaaaaaaaaaaa",
+  parameterSnapshotDoesNotInventFutureExpiry:
+    !parameterSnapshotView({ ...dailyViewFixture, parameter_snapshot: { version: "test-version", effective_from: "2026-09-01", fingerprint: "a".repeat(64) } }).label.includes("冻结至"),
+  invalidParameterFingerprintIsUnverified:
+    parameterSnapshotView({ ...dailyViewFixture, parameter_snapshot: { version: "test-version", effective_from: "2026-09-01", fingerprint: "fake" } }).label.includes("未验证"),
+  futureParameterSnapshotIsUnverified:
+    parameterSnapshotView({ ...dailyViewFixture, parameter_snapshot: { version: "test-version", effective_from: "2026-09-12", fingerprint: "a".repeat(64) } }).label.includes("未验证"),
+  parameterIdentityPassesIntoCandidateView:
+    buildDailyView({ ...dailyViewFixture, parameter_snapshot: { version: "test-version", effective_from: "2026-09-01", fingerprint: "a".repeat(64) } }).parameterSnapshot.label.includes("test-version"),
   invalidatedCandidateIsNeverReadyDespitePreviousEvidence:
     buildDailyView({ ...dailyViewFixture, candidate_changes: [{ symbol: "300750", display_name: "宁德时代", status: "invalidated" }] }).candidates[0].ready === false,
   intradayDifferencePassesIntoCandidateView:

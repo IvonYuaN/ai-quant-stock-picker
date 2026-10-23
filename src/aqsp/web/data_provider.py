@@ -21,6 +21,10 @@ from aqsp.ledger.base import read_ledger
 from aqsp.ledger.runtime import cold_start_min_days
 from aqsp.market_context import cross_market_rule_runtime_summary
 from aqsp.paper import read_paper_trades
+from aqsp.portfolio.parameter_snapshot import (
+    ParameterSnapshot,
+    parameter_snapshot_from_runtime_weights,
+)
 from aqsp.presentation import (
     format_review_meta,
     format_symbol_name,
@@ -3565,6 +3569,36 @@ class DashboardDataProvider:
 
     def default_task_id(self) -> str:
         return "main_chain"
+
+    def parameter_snapshot_for_candidates(
+        self, task_id: str, signal_date: str, symbols: tuple[str, ...]
+    ) -> ParameterSnapshot | None:
+        """Read only the exact candidates' persisted screening provenance.
+
+        A legacy, mixed, or incomplete batch is unverified. Reloading today's
+        thresholds here would incorrectly certify historical candidate scores.
+        """
+        requested = set(symbols)
+        if not requested:
+            return None
+        rows = [
+            row
+            for row in self._task_signal_rows(task_id)
+            if str(row.get("signal_date") or row.get("date") or "") == signal_date
+            and self._canonical_symbol(str(row.get("symbol") or "")) in requested
+        ]
+        if {
+            self._canonical_symbol(str(row.get("symbol") or "")) for row in rows
+        } != requested:
+            return None
+        identities = tuple(
+            parameter_snapshot_from_runtime_weights(row.get("strategy_weight_snapshot"))
+            for row in rows
+        )
+        first = identities[0] if identities else None
+        if first is None or first.effective_from > signal_date:
+            return None
+        return first if all(identity == first for identity in identities) else None
 
     def task_dates(self, task_id: str) -> tuple[str, ...]:
         def _build() -> tuple[str, ...]:

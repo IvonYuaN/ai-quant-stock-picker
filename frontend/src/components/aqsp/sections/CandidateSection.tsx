@@ -593,6 +593,7 @@ export function CandidateSection({
       </SectionHeader>
 
       <div className="aq-tag-row">
+        <Tag title={view.parameterSnapshot.detail}>{view.parameterSnapshot.label}</Tag>
         {view.frozenAt ? <Tag title={view.frozenAt}>当日候选已冻结 · {new Date(view.frozenAt).toLocaleTimeString("zh-CN", { timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit", hour12: false })}</Tag> : <Tag>冻结信息尚未生成</Tag>}
         <Tag tone={owned.holding + owned.watchlist > 0 ? "primary" : "neutral"}>命中我的持仓 {owned.holding} · 自选 {owned.watchlist}</Tag>
         <button type="button" className={cn("aq-btn", onlyOwned && "aq-btn-primary")} aria-pressed={onlyOwned} onClick={() => { setOnlyOwned(!onlyOwned); setHideOwned(false); }}>只看我的命中</button>

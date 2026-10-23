@@ -14,6 +14,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from aqsp.core.time import now_shanghai
+from aqsp.portfolio.parameter_snapshot import ParameterSnapshot, parse_parameter_snapshot
 
 
 DEFAULT_SNAPSHOT_PATH = "data/runtime/home_dashboard_snapshot.json"
@@ -357,6 +358,7 @@ class AQSPSnapshot:
     variants: tuple[AQSPVariant, ...] = ()
     research_chain: AQSPResearchChain = AQSPResearchChain()
     frozen_at: str = ""
+    parameter_snapshot: ParameterSnapshot | None = None
     candidate_changes: tuple[AQSPCandidateChange, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
@@ -982,6 +984,7 @@ def _parse_snapshot(payload: Mapping[str, Any]) -> AQSPSnapshot:
         "variants",
         "research_chain",
         "frozen_at",
+        "parameter_snapshot",
         "candidate_changes",
     }
     _check_keys(payload, required, "快照", optional)
@@ -1030,6 +1033,12 @@ def _parse_snapshot(payload: Mapping[str, Any]) -> AQSPSnapshot:
     frozen_at = _optional_text(payload.get("frozen_at"), "frozen_at")
     if frozen_at:
         _timestamp(frozen_at, "frozen_at")
+    try:
+        parameter_snapshot = parse_parameter_snapshot(payload.get("parameter_snapshot"))
+        if parameter_snapshot is not None and parameter_snapshot.effective_from > selected_date:
+            raise ValueError("parameter snapshot is not effective for selected_date")
+    except (TypeError, ValueError) as exc:
+        raise AQSPSnapshotUnavailable("参数快照元数据无效") from exc
     changes = tuple(
         _parse_candidate_change(item)
         for item in _list(payload.get("candidate_changes", []), "candidate_changes")
@@ -1065,6 +1074,7 @@ def _parse_snapshot(payload: Mapping[str, Any]) -> AQSPSnapshot:
         variants=variants,
         research_chain=_parse_research_chain(payload.get("research_chain")),
         frozen_at=frozen_at,
+        parameter_snapshot=parameter_snapshot,
         candidate_changes=changes,
     )
 

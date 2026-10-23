@@ -2808,6 +2808,16 @@ def build_home_snapshot(
     summaries = _phase_conclusion_summaries(
         provider, selected_date, debates, candidates
     )
+    parameter_loader = getattr(provider, "parameter_snapshot_for_candidates", None)
+    parameter_snapshot = (
+        parameter_loader(
+            selected_task_id,
+            selected_date,
+            tuple(candidate.symbol for candidate in candidates),
+        )
+        if callable(parameter_loader)
+        else None
+    )
 
     return HomeDashboardSnapshot(
         schema_version=HOME_SNAPSHOT_SCHEMA_VERSION,
@@ -2830,6 +2840,7 @@ def build_home_snapshot(
         variant_suite=variant_suite,
         variants=variants,
         research_chain=research_chain,
+        parameter_snapshot=parameter_snapshot,
     )
 
 

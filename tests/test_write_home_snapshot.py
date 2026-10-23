@@ -851,6 +851,23 @@ def test_write_home_snapshot_builds_bounded_advisory_only_payload(monkeypatch) -
     assert snapshot.stale_after == "2026-07-10T15:31:00+08:00"
 
 
+def test_write_home_snapshot_uses_persisted_parameter_identity_for_selected_candidates(monkeypatch) -> None:
+    from aqsp.portfolio.parameter_snapshot import ParameterSnapshot
+
+    provider = _Provider()
+    identity = ParameterSnapshot("historical-test", "2026-07-01", "a" * 64)
+    calls = []
+
+    def load_identity(task_id, signal_date, symbols):
+        calls.append((task_id, signal_date, symbols))
+        return identity
+
+    monkeypatch.setattr(provider, "parameter_snapshot_for_candidates", load_identity, raising=False)
+    snapshot = write_home_snapshot.build_home_snapshot(provider, signal_date="2026-07-10", task_id="intraday")
+    assert snapshot.parameter_snapshot == identity
+    assert calls == [("intraday", "2026-07-10", tuple(item.symbol for item in snapshot.candidates))]
+
+
 def test_snapshot_debates_preserves_role_specific_views_and_deduplicates_rounds() -> (
     None
 ):

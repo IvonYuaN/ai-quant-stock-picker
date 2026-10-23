@@ -208,9 +208,17 @@ export interface AqspSnapshot {
   research_chain?: AqspResearchChain;
   /** First nonempty roster of the selected trading session. */
   frozen_at?: string;
+  /** Actual screening provenance; absent on legacy/unverified artifacts. */
+  parameter_snapshot?: AqspParameterSnapshot | null;
   candidate_changes?: readonly AqspCandidateChange[];
   /** Present after the HTTP envelope is normalized; absent in the raw data payload. */
   meta?: AqspSnapshotMeta;
+}
+
+export interface AqspParameterSnapshot {
+  version: string;
+  effective_from: string;
+  fingerprint: string;
 }
 
 export interface AqspCandidateChange {

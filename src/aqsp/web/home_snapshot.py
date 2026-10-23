@@ -12,6 +12,7 @@ from typing import Any
 
 from aqsp.core.time import latest_completed_trading_day, now_shanghai, to_shanghai
 from aqsp.portfolio.snapshot import snapshot_trading_date
+from aqsp.portfolio.parameter_snapshot import ParameterSnapshot, parse_parameter_snapshot
 from aqsp.utils.jsonl_io import advisory_lock, atomic_write_text
 
 
@@ -368,6 +369,7 @@ class HomeDashboardSnapshot:
     variants: tuple[HomeSnapshotVariant, ...] = ()
     research_chain: HomeSnapshotResearchChain = HomeSnapshotResearchChain()
     frozen_at: str = ""
+    parameter_snapshot: ParameterSnapshot | None = None
     candidate_changes: tuple[HomeSnapshotCandidateChange, ...] = ()
 
     def __init__(
@@ -394,6 +396,7 @@ class HomeDashboardSnapshot:
         variants: tuple[HomeSnapshotVariant, ...] = (),
         research_chain: HomeSnapshotResearchChain | None = None,
         frozen_at: str = "",
+        parameter_snapshot: ParameterSnapshot | None = None,
         candidate_changes: tuple[HomeSnapshotCandidateChange, ...] = (),
     ) -> None:
         normalized_debates = tuple(debates or ())
@@ -435,6 +438,7 @@ class HomeDashboardSnapshot:
             self, "research_chain", research_chain or HomeSnapshotResearchChain()
         )
         object.__setattr__(self, "frozen_at", frozen_at)
+        object.__setattr__(self, "parameter_snapshot", parameter_snapshot)
         object.__setattr__(self, "candidate_changes", tuple(candidate_changes))
         self.__post_init__()
 
@@ -677,6 +681,7 @@ def _freeze_home_candidates(
             ),
         ),
         frozen_at=existing.frozen_at or existing.generated_at,
+        parameter_snapshot=existing.parameter_snapshot,
         candidate_changes=changes,
     )
 
@@ -1037,6 +1042,7 @@ def _snapshot_from_dict(payload: object) -> HomeDashboardSnapshot:
             "variants",
             "research_chain",
             "frozen_at",
+            "parameter_snapshot",
             "candidate_changes",
         },
     )
@@ -1095,6 +1101,7 @@ def _snapshot_from_dict(payload: object) -> HomeDashboardSnapshot:
         ),
         research_chain=_research_chain_from_dict(mapping.get("research_chain", {})),
         frozen_at=_optional_text(mapping.get("frozen_at"), "frozen_at"),
+        parameter_snapshot=parse_parameter_snapshot(mapping.get("parameter_snapshot")),
         candidate_changes=tuple(
             _candidate_change_from_dict(item)
             for item in _list(mapping.get("candidate_changes", ()), "candidate_changes")
@@ -1734,6 +1741,11 @@ def _universe_from_dict(payload: object) -> HomeSnapshotUniverse:
 
 
 def _validate_snapshot(snapshot: HomeDashboardSnapshot) -> None:
+    if snapshot.parameter_snapshot is not None:
+        if not isinstance(snapshot.parameter_snapshot, ParameterSnapshot):
+            raise ValueError("parameter_snapshot must be a ParameterSnapshot")
+        if snapshot.parameter_snapshot.effective_from > snapshot.selected_date:
+            raise ValueError("parameter_snapshot is not effective for selected_date")
     if snapshot.schema_version != HOME_SNAPSHOT_SCHEMA_VERSION:
         raise ValueError("unsupported home snapshot schema version")
     if not snapshot.generated_at.strip() or not snapshot.selected_date.strip():
