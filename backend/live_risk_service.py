@@ -87,6 +87,7 @@ def check_positions(
 
     import risk_rules
     from aqsp.core.time import latest_completed_trading_day, today_shanghai
+    from aqsp.data.cache import DataCache
     from aqsp.data.source_factory import build_data_source
     from datetime import timedelta
     import pandas as pd
@@ -100,7 +101,11 @@ def check_positions(
     if history_rules:
         today = today_shanghai()
         try:
-            source = build_data_source("tencent")
+            # API/monitor users cannot write the scheduler-owned shared cache.
+            source = build_data_source(
+                "tencent",
+                cache=DataCache(Path(pf._tenant_dir()) / "live-risk-history.db"),
+            )
             histories = source.fetch_daily(
                 sorted({r["symbol"] for r in history_rules}),
                 today
