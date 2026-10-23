@@ -110,7 +110,9 @@ def test_home_snapshot_round_trips_bounded_home_payload(tmp_path) -> None:
 
     write_home_dashboard_snapshot(source, snapshot)
 
-    assert load_home_dashboard_snapshot(source) == snapshot
+    assert load_home_dashboard_snapshot(source) == replace(
+        snapshot, frozen_at=snapshot.generated_at
+    )
     assert json.loads(source.read_text(encoding="utf-8"))["schema_version"] == "v1"
 
 
@@ -231,7 +233,7 @@ def test_home_snapshot_round_trips_messages_and_debate_process(tmp_path) -> None
     write_home_dashboard_snapshot(path, snapshot)
 
     loaded = load_home_dashboard_snapshot(path)
-    assert loaded == snapshot
+    assert loaded == replace(snapshot, frozen_at=snapshot.generated_at)
     assert loaded is not None
     assert loaded.message_status == "部分可用"
     assert loaded.messages[0].source == "RSS"

@@ -8,7 +8,7 @@ from datetime import date as date_type, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from aqsp.core.time import now_shanghai
+from aqsp.core.time import get_previous_trading_day, is_trading_day, now_shanghai
 from aqsp.utils.jsonl_io import advisory_lock, atomic_write_text
 
 
@@ -44,15 +44,24 @@ class SnapshotDiff:
         )
 
 
+def snapshot_trading_date(value: str) -> str:
+    """Resolve a session key with the shared exchange calendar, including holidays."""
+    target = date_type.fromisoformat(value)
+    return (
+        target if is_trading_day(target) else get_previous_trading_day(target)
+    ).isoformat()
+
+
 def save_snapshot(
     picks: list[Any],
     snapshot_path: str = "data/pick_snapshots.jsonl",
     date: str | None = None,
 ) -> None:
-    """保存每日选股快照"""
+    """冻结交易日首次候选；重跑不替换原集合与顺序。"""
 
     if date is None:
         date = now_shanghai().date().isoformat()
+    date = snapshot_trading_date(date)
 
     snapshot = {
         "date": date,
@@ -87,6 +96,9 @@ def save_snapshot(
                     except (json.JSONDecodeError, KeyError):
                         pass
 
+        if date in snapshots and snapshots[date].get("picks"):
+            return
+        snapshot["frozen_at"] = snapshot["created_at"]
         snapshots[date] = snapshot
 
         snapshot_dates = [

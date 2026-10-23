@@ -34,8 +34,40 @@ const rows: CandidateRow[] = [
 ];
 
 const base = { sort: "score" as const, onlyReady: false, strategy: null };
+const personalRows = Array.from({ length: 20 }, (_, index) => row({
+  symbol: String(600001 + index), score: 100 - index,
+}));
+const ownership = {
+  holdings: new Set(["600018", "600020"]),
+  watchlist: new Set(["600014", "600016", "600019", "600020"]),
+};
+const personal = { ...base, sort: "personal" as const, ownership };
 
 export const candidateViewContract = {
+  personalSortPutsTwoHoldingsAndThreeWatchlistInFirstFive:
+    selectCandidates(personalRows, personal).rows.slice(0, 5).map((item) => item.symbol).join("|") === "600018|600020|600014|600016|600019",
+  holdingOutranksWatchlistWhenAlsoWatched:
+    selectCandidates(personalRows, personal).rows[1].symbol === "600020",
+  personalRowsCarryExplicitOwnershipFlags:
+    selectCandidates(personalRows, personal).rows[0].hit_position === true &&
+    selectCandidates(personalRows, personal).rows[2].hit_watchlist === true,
+  dualOwnedRowsKeepBothFactsButRankAsHolding:
+    selectCandidates(personalRows, personal).rows[1].hit_position === true &&
+    selectCandidates(personalRows, personal).rows[1].hit_watchlist === true,
+  personalSortPreservesFrozenOrderWithinAllOtherCandidates:
+    selectCandidates(personalRows, personal).rows.slice(5).map((item) => item.symbol).join("|") === personalRows.filter((item) => !ownership.holdings.has(item.symbol) && !ownership.watchlist.has(item.symbol)).map((item) => item.symbol).join("|"),
+  personalSortWithNoOwnershipPreservesOriginalOrder:
+    selectCandidates(rows, { ...base, sort: "personal" }).rows.map((item) => item.symbol).join("|") === "000001|000002|000003",
+  personalSortWithNoMatchesPreservesOriginalOrder:
+    selectCandidates(rows, personal).rows.map((item) => item.symbol).join("|") === "000001|000002|000003",
+  onlyOwnedKeepsFiveMatchingCandidates:
+    selectCandidates(personalRows, { ...personal, onlyOwned: true }).rows.length === 5,
+  onlyOwnedReportsHiddenCount:
+    selectCandidates(personalRows, { ...personal, onlyOwned: true }).hidden === 15,
+  missingOwnershipSafelyProducesNoMatches:
+    selectCandidates(rows, { ...base, onlyOwned: true }).rows.length === 0,
+  personalSortAndExclusionCompose:
+    selectCandidates(personalRows, { ...personal, onlyOwned: true, exclude: (item) => ownership.holdings.has(item.symbol) }).rows.length === 3,
   /* ---- 策略选项 ---- */
   // 顺序以实际 zh-CN 排序为准（不是"拉丁字母排前面"那种想当然）
   strategiesSplitFromString: strategyOptions(rows).join("|") === "放量突破|均线缩量回踩|RPS 相对强度",

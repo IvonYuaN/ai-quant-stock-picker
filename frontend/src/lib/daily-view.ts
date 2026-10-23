@@ -10,6 +10,7 @@ import { isAqspSnapshotStale } from "./snapshot-freshness";
 import type {
   AqspAgentResult,
   AqspCandidate,
+  AqspCandidateChange,
   AqspCrossMarket,
   AqspMarketContext,
   AqspMessage,
@@ -177,6 +178,8 @@ export interface DailyView {
   date: string;
   dateLabel: { day: string; weekday: string };
   generatedAt: string;
+  frozenAt?: string;
+  candidateChanges?: readonly AqspCandidateChange[];
   isHistorical: boolean;
 
   conclusion: string;
@@ -351,7 +354,9 @@ function buildCandidateRows(snapshot: AqspSnapshot): CandidateRow[] {
       scoreText: Number.isFinite(candidate.score) ? candidate.score.toFixed(1) : "—",
       status: candidate.research_status || "状态未记录",
       evidence: candidate.evidence_status || "证据未记录",
-      ready: candidateResearchReady(snapshot, symbol),
+      ready: !(snapshot.candidate_changes ?? []).some(
+        (change) => change.symbol === symbol && change.status === "invalidated",
+      ) && candidateResearchReady(snapshot, symbol),
       strategies: strategyListLabel(candidate.strategies),
       keyMetric: keyMetric ? `${keyMetric.label} ${keyMetric.value}` : "",
       messageCount: messages.length,
@@ -513,6 +518,8 @@ export function buildDailyView(snapshot: AqspSnapshot): DailyView {
     date: snapshot.selected_date,
     dateLabel: formatDateParts(snapshot.selected_date),
     generatedAt: snapshot.generated_at,
+    frozenAt: snapshot.frozen_at ?? "",
+    candidateChanges: snapshot.candidate_changes ?? [],
     isHistorical: snapshot.meta?.historical ?? false,
     conclusion: snapshotConclusion(snapshot),
     gate,

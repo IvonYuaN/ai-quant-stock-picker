@@ -18,6 +18,7 @@ from typing import Any, Iterable
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
+
 def _find_project_root(start: Path) -> Path:
     """向上寻找含 pyproject.toml 的目录作为仓库根。
 
@@ -3038,6 +3039,20 @@ def main(argv: list[str] | None = None) -> int:
         load_home_dashboard_snapshot(output_path), current_snapshot
     )
     write_home_dashboard_snapshot(output_path, current_snapshot)
+    # Both API surfaces must consume the same frozen roster, including during
+    # migration when only the single snapshot exists and the index is rebuilt.
+    frozen_snapshot = load_home_dashboard_snapshot(output_path)
+    if frozen_snapshot is None:
+        raise DataError("written home snapshot could not be read back")
+    index = replace(
+        index,
+        days=tuple(
+            HomeSnapshotDay(day.date, frozen_snapshot)
+            if day.date == frozen_snapshot.selected_date
+            else day
+            for day in index.days
+        ),
+    )
     write_home_snapshot_index(index_path, index)
     print(
         "home snapshot written "
