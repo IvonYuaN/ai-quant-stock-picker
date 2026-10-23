@@ -63,6 +63,90 @@ def test_t1_rules_attach_and_preserve_when_cost_changes(workstation):
     assert rule["origin"] == "MANUAL"
 
 
+def test_t1_review_plan_keeps_risk_and_groups_rules_when_saved(workstation):
+    first, second = ae.upsert_from_reminders([
+        {**_reminder(), "position_id": "position-a"},
+        {**_reminder(), "level": "L5", "rule_id": "600000-L5", "position_id": "position-a"},
+        {**_reminder(), "position_id": "position-b", "rule_revision": 3},
+    ])[:2]
+    result = workstation.post(f"/api/alerts/{first['id']}/plan", json={"choice": "t_watch"})
+    assert result.status_code == 200
+    events = ae.list_events()
+    matching = [event for event in events if event.get("position_id") == "position-a"]
+    assert len(matching) == 2
+    assert all(event["review_plan"]["choice"] == "t_watch" for event in matching)
+    assert all(event["status"] == "OPEN" for event in events)
+    assert "review_plan" not in next(event for event in events if event["position_id"] == "position-b")
+    assert pf._load().get("holdings", []) == []
+    assert second["id"] in {event["id"] for event in matching}
+
+
+@pytest.mark.parametrize("choice", ["buy_more", "", "sell_now"])
+def test_t1_review_plan_rejects_when_choice_invalid(workstation, choice):
+    event = ae.upsert_from_reminders([_reminder()])[0]
+    before = ae._load()
+    response = workstation.post(f"/api/alerts/{event['id']}/plan", json={"choice": choice})
+    assert response.status_code == 400
+    assert ae._load() == before
+
+
+def test_t1_review_plan_rejects_when_event_terminal_or_missing(workstation):
+    event = ae.upsert_from_reminders([_reminder()])[0]
+    ae.transition(event["id"], "handled")
+    for event_id in (event["id"], "not-present"):
+        result = workstation.post(f"/api/alerts/{event_id}/plan", json={"choice": "hold"})
+        assert result.status_code == 409
+
+
+def test_t1_review_plan_preserves_prior_when_storage_fails(workstation, monkeypatch):
+    event = ae.upsert_from_reminders([_reminder()])[0]
+    ae.record_review_plan(event["id"], "hold")
+    monkeypatch.setattr(ae, "_save", lambda events: (_ for _ in ()).throw(OSError("disk full")))
+    with pytest.raises(OSError):
+        ae.record_review_plan(event["id"], "t_watch")
+    assert ae.list_events()[0]["review_plan"]["choice"] == "hold"
+
+
+def test_t1_context_uses_actual_quote_name_date_and_risk_when_checked(workstation, monkeypatch):
+    import decision_context
+
+    monkeypatch.setattr(decision_context, "now_shanghai", lambda: datetime(2026, 10, 23, 10, tzinfo=ZoneInfo("Asia/Shanghai")))
+    monkeypatch.setattr(decision_context, "load_cached_market_overview", lambda: None)
+    monkeypatch.setattr(pf.astock, "tencent_quote", lambda codes: {code: {"name": "合成持仓", "price": 8, "quote_time": "20261023100000", "change_pct": -2.0} for code in codes})
+    pf.add_holding("600000", 100, 10, "2026-10-22")
+    response = workstation.post("/api/live-risk/check", json={"notify": False})
+    assert response.status_code == 200
+    events = workstation.get("/api/alerts").json()["data"]["events"]
+    assert len(events) >= 2
+    for event in events:
+        context = event["position_context"]
+        assert context["name"] == "合成持仓"
+        assert context["holding_trade_days"] == 1
+        assert context["stock"]["status"] == "falling"
+        assert context["market"]["status"] == "unknown"
+        assert context["sector"]["status"] == "unknown"
+        assert context["assessment"]["stance"] == "risk_review"
+        assert "-20.0%" in context["assessment"]["reason"]
+        assert "不等于必须一次性清仓" in context["assessment"]["reason"]
+        assert context["assessment"]["t_plan"]["eligible"] is False
+
+
+def test_t1_batch_receipt_keeps_newer_daily_time_when_recovered(workstation):
+    events = ae.upsert_from_reminders([_reminder(), {**_reminder(), "level": "L5", "rule_id": "600000-L5"}])
+    ids = [event["id"] for event in events]
+    ae.mark_notified_many(ids, notified_at="2026-10-23T10:00:00+08:00")
+    ae.mark_notified_many(ids, notified_at="2026-10-22T10:00:00+08:00")
+    assert all(event["last_notified_at"] == "2026-10-23T10:00:00+08:00" for event in ae.list_events())
+
+
+def test_t1_batch_receipt_does_not_partially_save_when_write_fails(workstation, monkeypatch):
+    events = ae.upsert_from_reminders([_reminder(), {**_reminder(), "level": "L5", "rule_id": "600000-L5"}])
+    monkeypatch.setattr(ae, "_save", lambda events: (_ for _ in ()).throw(OSError("disk full")))
+    with pytest.raises(OSError):
+        ae.mark_notified_many([event["id"] for event in events], notified_at="2026-10-23T10:00:00+08:00")
+    assert all(event["last_notified_at"] is None for event in ae.list_events())
+
+
 @pytest.mark.parametrize(
     "patch",
     [
@@ -138,6 +222,20 @@ def test_t1_frequency_applies_when_once_daily_always(workstation, monkeypatch):
     assert len(ae.list_events(status="OPEN")) == 1
 
 
+def test_t1_event_updates_return_when_price_changes_without_new_episode(
+    workstation: TestClient,
+) -> None:
+    first = {**_reminder(), "pnl_pct": -0.1}
+    event = ae.upsert_from_reminders([first])[0]
+    assert ae.upsert_from_reminders([
+        {**first, "current_price": 8, "pnl_pct": -0.2}
+    ]) == []
+    current = ae.list_events()[0]
+    assert current["id"] == event["id"]
+    assert current["trigger_at"] == 8
+    assert current["pnl_pct"] == -0.2
+
+
 def test_t1_ignore_reduces_frequency_when_two_episodes(workstation):
     pf.add_holding("600000", 100, 10, "2026-10-22")
     pf.update_risk_rule("600000-L1", {"freq_mode": "always"})
@@ -146,6 +244,196 @@ def test_t1_ignore_reduces_frequency_when_two_episodes(workstation):
     rule = next(r for r in pf.get_risk_rules() if r["level"] == "L1")
     assert rule["freq_mode"] == "daily"
     assert "连续忽略" in rule["frequency_note"]
+
+
+def test_t1_ignore_returns_frequency_when_two_current_episodes(
+    workstation: TestClient,
+) -> None:
+    pf.add_holding("600000", 100, 10, "2026-10-22")
+    rule = pf.update_risk_rule("600000-L1", {"freq_mode": "always"})
+    reminder = {**_reminder("always"), "position_id": rule["position_id"]}
+    for _ in range(2):
+        event = ae.upsert_from_reminders([reminder])[0]
+        response = workstation.patch(
+            f"/api/alerts/{event['id']}", params={"action": "ignored"}
+        )
+        assert response.status_code == 200
+        ae.upsert_from_reminders([], checked_rules={rule["id"]})
+    result = response.json()["data"]
+    assert result["freq_mode"] == "daily"
+    assert result["ignore_streak"] == 2
+    assert "连续忽略两次" in result["frequency_note"]
+
+
+def test_t1_ignore_preserves_new_rule_when_event_is_for_old_position(
+    workstation: TestClient,
+) -> None:
+    pf.add_holding("600000", 100, 10, "2026-10-22")
+    old_rule = pf.get_risk_rules()[0]
+    event = ae.upsert_from_reminders([
+        {**_reminder("always"), "position_id": old_rule["position_id"]}
+    ])[0]
+    pf.close_position("600000", "2026-10-23", 9, 100, 0)
+    pf.add_holding("600000", 100, 9, "2026-10-23")
+    pf.update_risk_rule("600000-L1", {"freq_mode": "always"})
+    before = pf.get_risk_rules()
+    response = workstation.patch(
+        f"/api/alerts/{event['id']}", params={"action": "ignored"}
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["status"] == "IGNORED"
+    assert pf.get_risk_rules() == before
+
+
+def test_t1_ignore_retries_once_when_alert_save_fails_after_rule_save(
+    workstation: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pf.add_holding("600000", 100, 10, "2026-10-22")
+    rule = pf.update_risk_rule("600000-L1", {"freq_mode": "always"})
+    event = ae.upsert_from_reminders([
+        {**_reminder("always"), "position_id": rule["position_id"]}
+    ])[0]
+    original_save = ae._save
+
+    def fail_save(events: list[dict]) -> None:
+        raise OSError("simulated alert write failure")
+
+    monkeypatch.setattr(ae, "_save", fail_save)
+    with pytest.raises(OSError, match="simulated alert write failure"):
+        workstation.patch(f"/api/alerts/{event['id']}", params={"action": "ignored"})
+    monkeypatch.setattr(ae, "_save", original_save)
+    assert ae.list_events()[0]["status"] == "OPEN"
+    response = workstation.patch(
+        f"/api/alerts/{event['id']}", params={"action": "ignored"}
+    )
+    assert response.status_code == 200
+    current = next(r for r in pf.get_risk_rules() if r["level"] == "L1")
+    assert current["ignore_streak"] == 1
+    assert current["freq_mode"] == "always"
+
+
+def test_t1_ignore_keeps_event_open_when_rule_save_fails(
+    workstation: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pf.add_holding("600000", 100, 10, "2026-10-22")
+    rule = pf.update_risk_rule("600000-L1", {"freq_mode": "always"})
+    event = ae.upsert_from_reminders([
+        {**_reminder("always"), "position_id": rule["position_id"]}
+    ])[0]
+    before = pf._load()
+    original_save = pf._save
+
+    def fail_save(data: dict) -> None:
+        raise OSError("simulated portfolio write failure")
+
+    monkeypatch.setattr(pf, "_save", fail_save)
+    with pytest.raises(OSError, match="simulated portfolio write failure"):
+        workstation.patch(f"/api/alerts/{event['id']}", params={"action": "ignored"})
+    monkeypatch.setattr(pf, "_save", original_save)
+    assert pf._load() == before
+    assert ae.list_events()[0]["status"] == "OPEN"
+    response = workstation.patch(
+        f"/api/alerts/{event['id']}", params={"action": "ignored"}
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["ignore_streak"] == 1
+
+
+@pytest.mark.parametrize("manual_edit", [False, True])
+def test_t1_ignore_recovers_original_receipt_when_monitor_expires_failed_commit(
+    workstation: TestClient, monkeypatch: pytest.MonkeyPatch, manual_edit: bool,
+) -> None:
+    pf.add_holding("600000", 100, 10, "2026-10-22")
+    rule = pf.update_risk_rule("600000-L1", {"freq_mode": "always"})
+    event = ae.upsert_from_reminders([
+        {**_reminder("always"), "position_id": rule["position_id"]}
+    ])[0]
+    original_save = ae._save
+
+    def fail_save(events: list[dict]) -> None:
+        raise OSError("simulated alert write failure")
+
+    monkeypatch.setattr(ae, "_save", fail_save)
+    with pytest.raises(OSError):
+        workstation.patch(f"/api/alerts/{event['id']}", params={"action": "ignored"})
+    monkeypatch.setattr(ae, "_save", original_save)
+    ae.upsert_from_reminders([], checked_rules={rule["id"]})
+    assert ae.list_events()[0]["status"] == "EXPIRED"
+    if manual_edit:
+        pf.update_risk_rule(rule["id"], {"param_value": 0.1, "freq_mode": "once"})
+    before = pf.get_risk_rules()
+    response = workstation.patch(
+        f"/api/alerts/{event['id']}", params={"action": "ignored"}
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["status"] == "IGNORED"
+    assert response.json()["data"]["ignore_streak"] == 1
+    assert response.json()["data"]["freq_mode"] == "always"
+    assert pf.get_risk_rules() == before
+    assert ae.list_events()[0]["status"] == "IGNORED"
+
+
+def test_t1_ignore_rejects_expired_event_when_no_disposition_receipt(
+    workstation: TestClient,
+) -> None:
+    pf.add_holding("600000", 100, 10, "2026-10-22")
+    rule = pf.get_risk_rules()[0]
+    event = ae.upsert_from_reminders([
+        {**_reminder(), "position_id": rule["position_id"]}
+    ])[0]
+    ae.upsert_from_reminders([], checked_rules={rule["id"]})
+    before = pf.get_risk_rules()
+    response = workstation.patch(
+        f"/api/alerts/{event['id']}", params={"action": "ignored"}
+    )
+    assert response.status_code == 409
+    assert pf.get_risk_rules() == before
+    assert ae.list_events()[0]["status"] == "EXPIRED"
+
+
+def test_t1_ignore_preserves_edits_when_event_rule_revision_is_old(
+    workstation: TestClient,
+) -> None:
+    pf.add_holding("600000", 100, 10, "2026-10-22")
+    rule = pf.update_risk_rule("600000-L1", {"freq_mode": "always"})
+    event = ae.upsert_from_reminders([
+        {**_reminder("always"), "position_id": rule["position_id"]}
+    ])[0]
+    pf.update_risk_rule("600000-L1", {"param_value": 0.1})
+    before = pf.get_risk_rules()
+    response = workstation.patch(
+        f"/api/alerts/{event['id']}", params={"action": "ignored"}
+    )
+    assert response.status_code == 200
+    assert pf.get_risk_rules() == before
+
+
+def test_t1_disposition_rejects_opposite_retry_when_first_journal_save_failed(
+    workstation: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pf.add_holding("600000", 100, 10, "2026-10-22")
+    rule = pf.get_risk_rules()[0]
+    event = ae.upsert_from_reminders([
+        {**_reminder(), "position_id": rule["position_id"]}
+    ])[0]
+    original_save = ae._save
+
+    def fail_save(events: list[dict]) -> None:
+        raise OSError("simulated alert write failure")
+
+    monkeypatch.setattr(ae, "_save", fail_save)
+    with pytest.raises(OSError):
+        workstation.patch(f"/api/alerts/{event['id']}", params={"action": "ignored"})
+    monkeypatch.setattr(ae, "_save", original_save)
+    response = workstation.patch(
+        f"/api/alerts/{event['id']}", params={"action": "handled"}
+    )
+    assert response.status_code == 409
+    assert "按原操作重试" in response.json()["detail"]
+    assert ae.list_events()[0]["status"] == "OPEN"
+    assert workstation.patch(
+        f"/api/alerts/{event['id']}", params={"action": "ignored"}
+    ).status_code == 200
 
 
 def test_t1_sell_only_settled_lots_when_today_addition(workstation):
@@ -313,6 +601,31 @@ def test_t1_readonly_check_preserves_outbound_when_background_follows(
     assert not calls
     assert service.check_positions(notify=True)["notify"]
     assert len(calls) == 1
+    assert service.check_positions(notify=True)["notify"] == []
+    assert len(calls) == 1
+
+
+def test_t1_service_groups_delivery_when_multiple_rules_trigger(workstation, monkeypatch):
+    import live_risk_service as service
+    import aqsp.notification_runtime as notification_runtime
+    from aqsp.notifier import NotifyResult
+
+    pf.add_holding("600000", 100, 10, "2026-10-22")
+    for level in ("L2", "L4"):
+        pf.update_risk_rule(f"600000-{level}", {"enabled": False})
+    calls = []
+    monkeypatch.setattr(
+        notification_runtime,
+        "dispatch_notification",
+        lambda markdown, **kwargs: (
+            calls.append(markdown) or [NotifyResult("synthetic", True, "stub")]
+        ),
+    )
+    response = service.check_positions(notify=True)
+    events = ae.list_events()
+    assert {event["level"] for event in events} == {"L1", "L5"}
+    assert len(calls) == 1 and response["notify"]
+    assert all(event["last_notified_at"] for event in events)
     assert service.check_positions(notify=True)["notify"] == []
     assert len(calls) == 1
 

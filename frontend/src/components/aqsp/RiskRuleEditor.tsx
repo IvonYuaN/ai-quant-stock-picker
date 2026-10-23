@@ -58,7 +58,7 @@ export function RiskRuleEditor({ code }: { code: string }) {
   }, [open, load]);
   return <details className="aq-rule-editor" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
     <summary><ShieldCheck aria-hidden="true" />风险规则与频率 <span>L3 炸板未上线</span></summary>
-    {loading ? <p role="status">读取规则中…</p> : error ? <p className="aq-operation-error" role="alert">{error}<button type="button" className="aq-btn" onClick={() => void load()}><RefreshCw aria-hidden="true" />重试</button></p> : rules.length ? rules.map((rule) => <RuleForm key={`${rule.id}:${rule.updated_at}`} rule={rule} onSave={(updated) => { setRules((prior) => prior.map((item) => item.id === updated.id ? updated : item)); setSaved(`${updated.level} 规则已保存`); }} />) : <p>暂无已关联规则，请刷新后重试。</p>}
+    {loading ? <p role="status">读取规则中…</p> : error ? <p className="aq-operation-error" role="alert">{error}<button type="button" className="aq-btn" onClick={() => void load()}><RefreshCw aria-hidden="true" />重试</button></p> : rules.length ? rules.map((rule) => <RuleForm key={`${rule.id}:${rule.updated_at}:${rule.freq_mode}:${rule.ignore_streak}`} rule={rule} onSave={(updated) => { setRules((prior) => prior.map((item) => item.id === updated.id ? updated : item)); setSaved(`${updated.level} 规则已保存`); }} />) : <p>暂无已关联规则，请刷新后重试。</p>}
     {saved ? <p role="status">{saved}</p> : null}
   </details>;
 }

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import math
 import json
 import re
@@ -17,13 +16,39 @@ class PortfolioReadError(RuntimeError):
     """Position storage or quotes could not be read."""
 
 
+def transition_alert(event_id: str, action: str, note: str = "") -> dict | None:
+    """Commit disposition and matching frequency state with retry-safe receipts."""
+    import alert_events
+
+    def record(event: dict, recovery: bool) -> dict | None:
+        if not event.get("rule_id") or not event.get("position_id"):
+            return None
+        return pf.record_rule_disposition(
+            event["rule_id"],
+            action == "ignored",
+            expected_position_id=event["position_id"],
+            expected_revision=event.get("rule_revision", 0),
+            event_id=event["id"],
+            require_receipt=recovery,
+        )
+
+    return alert_events.transition(event_id, action, note, before_commit=record)
+
+
 def _live_risk_alert_markdown(events: list[dict]) -> str:
-    lines = [f"# 持仓风险提醒-{len(events)} 条", ""]
+    symbols = {event.get("symbol") for event in events}
+    lines = [f"# 持仓风险待复核 · {len(symbols)} 只", ""]
+    context = events[0].get("position_context") or {} if events else {}
+    if context:
+        assessment = context.get("assessment") or {}
+        lines.extend([str(assessment.get("title") or ""), str(assessment.get("reason") or ""), ""])
     for event in events:
         basis = event.get("basis_json") or {}
+        position = event.get("position_context") or {}
         lines.append(
-            f"- **{event.get('level')}｜{event.get('symbol')}** {event.get('action_hint')}（{basis.get('rule', '')}；{basis.get('actual', '')}）{event.get('t1_note', '')}"
+            f"- **{position.get('name') or '名称待补'} {event.get('symbol')} · {event.get('level')}** {basis.get('rule', '')}；{basis.get('actual', '')} {event.get('t1_note', '')}"
         )
+    lines.extend(["", "规则触发不等于全仓卖出指令；请结合大盘、板块与个股证据复核持有、减仓或做 T 条件。做 T 不保证解套，既有硬风险仍保留。"])
     return "\n".join(lines)
 
 
@@ -156,9 +181,25 @@ def check_positions(
         position_rules=usable_rules if rules else None,
     )
     import alert_events
+    from decision_context import build_position_context, load_cached_market_overview
+
+    overview = load_cached_market_overview()
+    serialized = [reminder.to_dict() for reminder in reminders]
+    contexts: dict[str, dict] = {}
+    for holding in pf_data.get("holdings", []):
+        code = holding["code"]
+        contexts[code] = build_position_context(
+            holding,
+            [row for row in serialized if row["symbol"] == code],
+            quote=holding.get("quote"),
+            stock_history=histories.get(code),
+            market_overview=overview,
+        ).to_dict()
+    for row in serialized:
+        row["position_context"] = contexts.get(str(row["symbol"]))
 
     new_events = alert_events.upsert_from_reminders(
-        [r.to_dict() for r in reminders],
+        serialized,
         checked_symbols=set(prices),
         checked_rules=checked_rules,
         active_symbols=active_codes,
@@ -170,37 +211,19 @@ def check_positions(
     eligible = checked_rules | {
         alert_events._dedup_key(e) for e in new_events if not e.get("rule_id")
     }
-    pending = alert_events.pending_notifications(eligible) if notify else []
-    if pending:
-        from aqsp.notification_runtime import dispatch_notification_once
-        import portfolio as _pf
+    if notify:
+        from live_risk_delivery import deliver_position_alerts
 
-        state_path = os.path.join(_pf._tenant_dir(), "notify-state-live-risk.json")
-        for e in pending:
-            period = last_checked_at[:10] if e.get("freq_mode") == "daily" else "once"
-            kind = f"live-risk|{e['id']}|{period}"
-            if e.get("freq_mode") == "always":
-                from uuid import uuid4
-
-                kind += f"|{uuid4().hex}"
-            results = dispatch_notification_once(
-                _live_risk_alert_markdown([e.get("delivery_view") or e]),
-                mode="summary",
-                prefix="live-risk",
-                kind=kind,
-                state_path=state_path,
-            )
-            if not results:
-                suppressed = True
-            elif any(getattr(result, "ok", False) for result in results):
-                alert_events.mark_notified(e["id"])
-            from aqsp.notifier import format_notify_results
-
-            notify_results.extend(
-                format_notify_results(results, prefix="live-risk") if results else []
-            )
+        delivery = deliver_position_alerts(
+            eligible,
+            last_checked_at,
+            render=_live_risk_alert_markdown,
+            acknowledge=alert_events.mark_notified_many,
+        )
+        notify_results = list(delivery.notify)
+        suppressed = delivery.notify_suppressed
     return {
-        "reminders": [r.to_dict() for r in reminders],
+        "reminders": serialized,
         "new_events": new_events,
         "notify": notify_results,
         "notify_suppressed": suppressed,

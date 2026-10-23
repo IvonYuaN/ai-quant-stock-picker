@@ -324,6 +324,7 @@ export interface CatalystData {
 
 export interface Holding {
   code: string; name: string; price: number; shares: number; cost: number;
+  position_id?: string | null;
   /** 开仓日期 YYYY-MM-DD（P2-8；P2-8 前录入的老持仓无此字段 ⇒ ""）。T+1 可卖性据此推导。 */
   opened_at: string;
   market_value: number; pnl: number; pnl_pct: number;
@@ -372,8 +373,20 @@ export interface AlertEvent {
   basis_json: { rule: string; actual: string; evidence: string };
   status: "OPEN" | "HANDLED" | "IGNORED" | "EXPIRED";
   ignore_streak: number;
+  frequency_note?: string;
+  freq_mode?: AlertFrequency;
+  review_plan?: { choice: "hold" | "reduce" | "t_watch"; updated_at: string };
+  position_context?: PositionDecisionContext;
   created_at: string;
   updated_at: string;
+}
+export interface DecisionEvidence {
+  status: string; summary: string; as_of: string | null; source: string; evidence?: unknown;
+}
+export interface PositionDecisionContext {
+  name: string; opened_at: string | null; holding_trade_days: number | null;
+  market: DecisionEvidence; sector: DecisionEvidence; stock: DecisionEvidence;
+  assessment: { stance: string; title: string; reason: string; t_plan: { eligible: boolean | null; reason: string } };
 }
 /** `GET /api/alerts` 的 `data`。 */
 export interface AlertData {
@@ -582,6 +595,8 @@ export const api = {
       `/alerts/${encodeURIComponent(id)}?action=${action}&note=${encodeURIComponent(note)}`,
       "PATCH",
     ),
+  alertReviewPlan: (id: string, choice: "hold" | "reduce" | "t_watch") =>
+    request<NonNullable<AlertEvent["review_plan"]>>(`/alerts/${encodeURIComponent(id)}/plan`, "POST", { choice }),
   runLiveRiskCheck: (holding_days?: Record<string, number>, notify = true) =>
     request<LiveRiskCheckResult>("/live-risk/check", "POST", { holding_days, notify }),
   quote: (codes: string) => get<Record<string, Quote>>(`/quote?codes=${codes}`),

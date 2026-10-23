@@ -5,8 +5,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { api } from "@/lib/api";
-import { normalizeAlerts } from "@/lib/alert-view";
-import { ALERTS_CHANGED_EVENT } from "@/lib/operation";
+import { groupPositionAlerts, normalizeAlerts } from "@/lib/alert-view";
+import { browserAlertRefreshSource, subscribeAlertRefresh } from "@/lib/alert-refresh";
 
 export function useAlertOpenCount() {
   const [openCount, setOpenCount] = useState(0);
@@ -15,17 +15,15 @@ export function useAlertOpenCount() {
   const refetch = useCallback(async () => {
     try {
       const data = normalizeAlerts(await api.alerts());
-      setOpenCount(data.open_count);
+      setOpenCount(groupPositionAlerts(data).length);
     } catch {
       // #431 端点未部署 / 后端未起 / 网络异常 ⇒ 侧栏静默隐藏，不报错不轮询。
-      setOpenCount(0);
+      // 暂时断网不能把已知风险数量归零。
     }
   }, []);
 
   useEffect(() => {
-    void refetch();
-    window.addEventListener(ALERTS_CHANGED_EVENT, refetch);
-    return () => window.removeEventListener(ALERTS_CHANGED_EVENT, refetch);
+    return subscribeAlertRefresh(() => void refetch(), browserAlertRefreshSource());
   }, [refetch, pathname]);
 
   return { openCount, refetch };

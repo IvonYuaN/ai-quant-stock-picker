@@ -373,9 +373,19 @@ def build_position_context(
     )
     if hard_risk:
         stance, title = "risk_review", "硬止损已越线，优先复核风险处置"
-        reason = (
-            "L1 成本硬止损已经触发；背景分析不能取消该风险，也不能用做T替代风险处置。"
-        )
+        cost = _number(holding.get("cost"))
+        price = _number((quote or {}).get("price", holding.get("price")))
+        triggered = next(event for event in matching if event.get("level") == "L1")
+        threshold = _number(triggered.get("threshold_price", triggered.get("threshold_at")))
+        facts = []
+        if cost is not None and cost > 0 and price is not None and price > 0:
+            facts.append(f"成本 {cost:.4f}，检查价 {price:.4f}，浮动盈亏 {(price / cost - 1):+.1%}")
+        if threshold is not None and threshold > 0:
+            facts.append(f"已低于设定的成本止损线 {threshold:.4f}")
+        reason = "；".join(facts + ["L1 硬风险仍生效，需复核仓位；这不等于必须一次性清仓，也不能仅以深亏或做 T 为由忽略风险。"])
+        if joint_weakness:
+            title = "硬风险叠加大盘、板块和个股走弱，优先复核减仓或退出"
+            reason += " 三项同交易日弱势证据一致，继续等反弹或做 T 的依据不足。"
     elif joint_weakness:
         stance, title = "exit_review", "市场、所属板块与个股同向走弱，复核减仓或退出"
         reason = (

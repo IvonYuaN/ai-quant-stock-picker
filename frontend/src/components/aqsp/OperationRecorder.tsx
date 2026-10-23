@@ -80,7 +80,8 @@ export function OperationRecorder() {
     catch { setError("浏览器无法保存本次防重复记录，尚未提交。请允许站点存储后重试。"); return; }
     inFlight.current = true; setBusy(true); setError("");
     try {
-      if (form.direction === "buy") await api.addHolding(form.code.trim(), Number(form.shares), Number(form.price), form.date, submission.current.id);
+      let buyResult: PortfolioData | null = null;
+      if (form.direction === "buy") buyResult = await api.addHolding(form.code.trim(), Number(form.shares), Number(form.price), form.date, submission.current.id);
       else if (target?.alertId) await api.closeAlertPosition(target.alertId, form.date, Number(form.price), Number(form.shares));
       else await api.closePosition(form.code.trim(), form.date, Number(form.price), Number(form.shares), holding?.cost ?? 0, submission.current.id);
       try { sessionStorage.removeItem(draftKey.current); } catch { /* 保留旧编号重试仍幂等。 */ }
@@ -89,7 +90,8 @@ export function OperationRecorder() {
       announcePortfolioChange();
       dialog.current?.close(); setTarget(null);
       inFlight.current = false; setBusy(false);
-      toast.success(form.direction === "buy" ? "买入回录已保存，风险规则已关联" : "卖出回录已保存，持仓已更新");
+      const savedRules = buyResult?.holdings.find((row) => row.code === form.code.trim())?.risk_rules;
+      toast.success(form.direction === "buy" ? savedRules ? `买入回录已保存，已关联 ${savedRules.length} 条风险规则（${savedRules.filter((rule) => rule.enabled).length} 条启用）` : "买入回录已保存，请在持仓中核对风险规则" : "卖出回录已保存，持仓已更新");
       void api.runLiveRiskCheck(undefined, false).then(announcePortfolioChange).catch(() => toast.warning("成交已保存；风险检查失败，请在今日页重新检查"));
     } catch (reason) {
       const unknown = !(reason instanceof ApiError) || reason.status === 0 || reason.status >= 500;

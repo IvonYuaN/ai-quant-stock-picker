@@ -107,11 +107,11 @@ function WorkspaceLayout() {
           <Link
             to="/today"
             className="aq-alert-badge"
-            title={`${openAlerts} 条未处理的该卖提醒，点击查看`}
+            title={`${openAlerts} 只持仓风险待复核，点击查看`}
             onClick={() => void refetchAlerts()}
           >
             <BellRing aria-hidden="true" />
-            {!collapsed ? <span>该卖提醒</span> : null}
+            {!collapsed ? <span>持仓风险</span> : null}
             <span className="aq-alert-badge-count">{openAlerts}</span>
           </Link>
         ) : null}
