@@ -24,7 +24,7 @@ T+1 语义（Q3=A 拍板）：
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 import math
 from typing import Dict, List, Optional
 
@@ -48,6 +48,60 @@ class LiveIndicatorConfig:
 
 
 @dataclass(frozen=True)
+class MacdEvidencePoint:
+    """One raw daily close and the exact MACD values used by LIVE evaluation."""
+
+    date: str
+    close: float
+    dif: float
+    dea: float
+
+
+@dataclass(frozen=True)
+class MacdChartEvidence:
+    """Trigger-bound display snapshot; no later market-data fetch is needed."""
+
+    trigger_date: str
+    points: tuple[MacdEvidencePoint, ...]
+    fast: int
+    slow: int
+    signal: int
+    kind: str = "macd_dead_cross"
+    price_adjustment: str = "none"
+    source: str = "LIVE 检查使用的不复权日线"
+
+
+def _macd_chart_evidence(
+    frame: pd.DataFrame, dif: pd.Series, dea: pd.Series, config: LiveIndicatorConfig
+) -> MacdChartEvidence | None:
+    """Keep at most 60 display points, preserving full-history EMA calculations."""
+    if "date" not in frame:
+        return None
+    dates = pd.to_datetime(frame["date"], errors="coerce")
+    if dates.isna().any() or not dates.is_monotonic_increasing:
+        return None
+    labels = dates.dt.strftime("%Y-%m-%d").tolist()
+    if len(set(labels)) != len(labels):
+        return None
+    points = tuple(
+        MacdEvidencePoint(day, float(close), float(d), float(e))
+        for day, close, d, e in zip(labels, frame["close"], dif, dea)
+    )
+    if not all(
+        p.close > 0 and all(math.isfinite(v) for v in (p.close, p.dif, p.dea))
+        for p in points
+    ):
+        return None
+    return MacdChartEvidence(
+        trigger_date=labels[-1],
+        points=points[-60:],
+        fast=config.fast,
+        slow=config.slow,
+        signal=config.signal,
+    )
+
+
+@dataclass(frozen=True)
 class SellReminder:
     """一条对实盘持仓的「该卖 / 观察」提醒（收件箱数据源）。
 
@@ -68,6 +122,7 @@ class SellReminder:
     freq_mode: str = "once"
     position_id: str = ""
     rule_revision: int = 0
+    chart_evidence: MacdChartEvidence | None = None
 
     def to_dict(self) -> Dict[str, object]:
         """供前端收件箱 / 外发 notifier 序列化的扁平视图。"""
@@ -80,7 +135,14 @@ class SellReminder:
             "sellable_now": self.sellable_now,
             "action_hint": self.action_hint,
             "t1_note": self.t1_note,
-            "basis_json": self.basis,
+            "basis_json": {
+                **self.basis,
+                **(
+                    {"chart": asdict(self.chart_evidence)}
+                    if self.chart_evidence
+                    else {}
+                ),
+            },
             "rule_id": self.rule_id,
             "freq_mode": self.freq_mode,
             "position_id": self.position_id,
@@ -275,6 +337,7 @@ def _check_position_rules(
             level = str(rule["level"])
             threshold = 0.0
             basis: Dict[str, str] = {}
+            chart_evidence = None
             if level == "L1":
                 threshold = cost * (1 - float(rule["param_value"]))
                 if price <= threshold:
@@ -308,7 +371,8 @@ def _check_position_rules(
                 closes = pd.to_numeric(frame["close"], errors="coerce")
                 if (
                     len(closes) >= strategy.slow + strategy.signal
-                    and closes.notna().all()
+                    and closes.gt(0).all()
+                    and closes.map(math.isfinite).all()
                 ):
                     dif = (
                         closes.ewm(span=strategy.fast, adjust=False).mean()
@@ -316,6 +380,9 @@ def _check_position_rules(
                     )
                     dea = dif.ewm(span=strategy.signal, adjust=False).mean()
                     if dif.iloc[-2] >= dea.iloc[-2] and dif.iloc[-1] < dea.iloc[-1]:
+                        chart_evidence = _macd_chart_evidence(frame, dif, dea, strategy)
+                        if chart_evidence is None:
+                            continue
                         threshold = float(closes.iloc[-1])
                         basis = {
                             "rule": "MACD(12,26,9) DIF 下穿 DEA",
@@ -342,6 +409,7 @@ def _check_position_rules(
                         freq_mode=str(rule.get("freq_mode", "once")),
                         position_id=str(rule.get("position_id", "")),
                         rule_revision=int(rule.get("revision", 0)),
+                        chart_evidence=chart_evidence,
                     )
                 )
     return reminders

@@ -12,15 +12,18 @@
 // 两区分开，用户一眼能分清"今天能动的"和"今天只能看着的"。
 import type { AlertData, AlertEvent, DecisionEvidence, Holding, PositionDecisionContext } from "./api";
 import { asArray, asNumber, asRecord, asString } from "./safe";
+import { normalizeMacdChart } from "./alert-chart";
 
 const STATUS_VALUES = new Set(["OPEN", "HANDLED", "IGNORED", "EXPIRED"]);
 
-function normalizeBasis(raw: unknown): AlertEvent["basis_json"] {
+function normalizeBasis(raw: unknown, level: string, checkedAt: string): AlertEvent["basis_json"] {
   const record = asRecord(raw);
+  const chart = level === "L4" ? normalizeMacdChart(record.chart, checkedAt) : undefined;
   return {
     rule: asString(record.rule),
     actual: asString(record.actual),
     evidence: asString(record.evidence),
+    ...(chart ? { chart } : {}),
   };
 }
 
@@ -59,7 +62,7 @@ export function normalizeAlertEvent(raw: unknown): AlertEvent {
     sellable_now: record.sellable_now === true,
     action_hint: asString(record.action_hint),
     t1_note: asString(record.t1_note),
-    basis_json: normalizeBasis(record.basis_json),
+    basis_json: normalizeBasis(record.basis_json, asString(record.level), asString(record.updated_at) || asString(record.created_at)),
     status: normalizeStatus(record.status),
     ignore_streak: asNumber(record.ignore_streak),
     frequency_note: asString(record.frequency_note),

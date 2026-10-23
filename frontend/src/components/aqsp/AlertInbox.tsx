@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { ArrowUpRight, BellRing, Check, RefreshCw, X } from "lucide-react";
-import { Badge, LoadingState, Tag } from "@/components/ui/primitives";
+import { Badge, LoadingState } from "@/components/ui/primitives";
 import { api, type AlertData, type AlertEvent, type PortfolioData } from "@/lib/api";
 import { ALERT_LEVEL_NAMES, formatAlertPrice, groupPositionAlerts, normalizeAlerts, type PositionAlertGroup } from "@/lib/alert-view";
 import { browserAlertRefreshSource, subscribeAlertRefresh } from "@/lib/alert-refresh";
 import { formatEvidenceTime } from "@/lib/format";
 import { WatchlistActivity } from "./WatchlistActivity";
+import { AlertEvidence } from "./AlertEvidence";
 import { ALERTS_CHANGED_EVENT, PORTFOLIO_CHANGED_EVENT, requestOperation, shanghaiDate } from "@/lib/operation";
 
 type ReviewChoice = NonNullable<AlertEvent["review_plan"]>["choice"];
@@ -32,7 +33,7 @@ function PositionAlert({ group, busy, onTransition, onPlan }: { group: PositionA
     </dl>
     <div className="aq-position-assessment"><strong>{context?.assessment.title || (hardStop ? "成本风险线已越过，需重新评估仓位" : "价格或趋势触发风险条件")}</strong><p>{context?.assessment.reason || `${group.events.map((row) => ALERT_LEVEL_NAMES[row.level] || row.level).join("、")}已触发。规则越线说明风险增加，尚不能据此判断应全部卖出；需要结合行情与持仓计划复核。`}</p></div>
     <dl className="aq-position-context">{([ ["大盘", context?.market], ["板块", context?.sector], ["个股", context?.stock] ] as const).map(([label, evidence]) => <div key={label}><dt>{label}</dt><dd>{evidence?.summary || "分析依据待补，暂无法判断强弱"}<small>{evidence?.source ? `${evidence.source} · ${formatEvidenceTime(evidence.as_of) || "时间待核验"}` : "缺少可核验数据"}</small></dd></div>)}</dl>
-    <details className="aq-alert-evidence"><summary>触发依据 · {group.events.length} 项规则（合并展示）</summary>{group.events.map((row) => <div className="aq-position-rule" key={row.id}><Tag>{row.level}</Tag><div><b>{ALERT_LEVEL_NAMES[row.level] || row.level} · 参考线 {formatAlertPrice(row.threshold_at)}</b><p>{row.basis_json.rule}；{row.basis_json.actual}</p><small>{row.basis_json.evidence}</small></div></div>)}</details>
+    <AlertEvidence events={group.events} symbol={group.symbol} />
     <div className="aq-position-plan"><div className="aq-position-plan-heading"><b>我的处置方案</b><span>{plan ? "已记录，风险提醒仍保留" : "结合依据选择，不自动成交"}</span></div><div className="aq-position-plan-options" role="group" aria-label={`${group.symbol} 处置方案`}>{(Object.keys(PLAN_LABELS) as ReviewChoice[]).map((choice) => <button key={choice} type="button" className="aq-btn" disabled={busy} aria-pressed={plan?.choice === choice} onClick={() => onPlan(event, choice)}>{PLAN_LABELS[choice]}</button>)}</div>{plan ? <p className="aq-position-plan-note">{planText[plan.choice]}{plan.choice === "t_watch" ? ` ${context?.assessment.t_plan.reason || "当前缺少日内可执行证据，尚不能生成做 T 价位。"}` : ""}</p> : null}</div>
     <footer className="aq-position-alert-actions"><div>{group.sellable ? <button type="button" className="aq-btn" disabled={busy} onClick={() => requestOperation({ direction: "sell", code: group.symbol, alertId: event.id })}><ArrowUpRight aria-hidden="true" />记录实际卖出</button> : <span className="aq-note">{event.t1_note || "当日新增数量不可卖"}</span>}{plan?.choice === "t_watch" ? <button type="button" className="aq-btn" disabled={busy} onClick={() => requestOperation({ direction: "buy", code: group.symbol })}>记录实际回补</button> : null}</div><div><button type="button" className="aq-btn" disabled={busy} onClick={() => onTransition(group.events, "handled")}><Check aria-hidden="true" />已复核</button><button type="button" className="aq-btn aq-btn-icon" disabled={busy} title="忽略本仓位本次全部提醒" aria-label={`忽略 ${group.symbol} 提醒`} onClick={() => onTransition(group.events, "ignored")}><X aria-hidden="true" /></button></div></footer>
   </article>;
