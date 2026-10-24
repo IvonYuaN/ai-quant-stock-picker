@@ -38,6 +38,7 @@ if str(PROJECT_ROOT / "src") not in sys.path:
 
 from aqsp.core.time import (
     get_previous_trading_day,
+    is_trading_day,
     latest_completed_trading_day,
     now_shanghai,
     today_shanghai,
@@ -296,6 +297,18 @@ def _snapshot_dates(task_view: Any, selected_date: str) -> tuple[str, ...]:
 def _snapshot_task_id(task_id: str) -> str:
     """Use the live intraday artifact for the midday display refresh."""
     return "intraday" if task_id.strip() == "midday" else task_id.strip()
+
+
+def _requested_snapshot_date(task_id: str, signal_date: str = "") -> str:
+    """Choose a session date without inventing a weekend/holiday trading day."""
+    requested = _text(signal_date)
+    if requested:
+        return requested
+    if _snapshot_task_id(task_id) == "intraday":
+        today = today_shanghai()
+        if is_trading_day(today):
+            return today.isoformat()
+    return latest_completed_trading_day().isoformat()
 
 
 def _snapshot_realtime_cross_market(task_id: str) -> dict | None:
@@ -2751,11 +2764,7 @@ def build_home_snapshot(
     # Intraday is a realtime surface. Historical daily views remain pinned to
     # the latest completed close, but the live homepage must use today's
     # intraday artifact while the market is open.
-    requested_date = _text(signal_date) or (
-        today_shanghai().isoformat()
-        if selected_task_id == "intraday"
-        else latest_completed_trading_day().isoformat()
-    )
+    requested_date = _requested_snapshot_date(selected_task_id, signal_date)
     payload = provider.home_digest_payload(
         selected_task_id,
         signal_date=requested_date,
