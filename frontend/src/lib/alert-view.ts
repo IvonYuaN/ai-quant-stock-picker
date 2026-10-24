@@ -124,7 +124,11 @@ export interface PositionAlertGroup {
 export function groupPositionAlerts(alerts: AlertData, holdings: readonly Holding[] = []): PositionAlertGroup[] {
   const groups = new Map<string, PositionAlertGroup>();
   for (const event of alerts.events.filter((row) => row.status === "OPEN")) {
-    const key = `${event.symbol}:${event.position_id ?? "legacy"}:${event.sellable_now}`;
+    // 旧事件可能没有 position_id；同代码已有新仓时按当前仓身份归并，
+    // 避免一次风险检查在收件箱显示两张相同股票卡。不同 T+1 可卖状态仍分区保留。
+    const currentPositionId = holdings.find((row) => row.code === event.symbol)?.position_id;
+    const positionKey = event.position_id ?? currentPositionId ?? "legacy";
+    const key = `${event.symbol}:${positionKey}:${event.sellable_now}`;
     let group = groups.get(key);
     if (!group) {
       const holding = holdings.find((row) => row.code === event.symbol && (!event.position_id || row.position_id === event.position_id || row.risk_rules?.some((rule) => rule.position_id === event.position_id)));

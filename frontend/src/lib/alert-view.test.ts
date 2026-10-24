@@ -4,6 +4,7 @@
 // 可能给 {} 或部分字段。归一化层要把这些边界钉死，页面才不会白屏；同时
 // buildAlertInbox 的两区派生（actionable vs watch，Q3=A T+1 语义）必须可复现。
 import { buildAlertInbox, formatAlertPrice, groupPositionAlerts, normalizeAlerts, normalizeAlertEvent } from "./alert-view";
+import type { Holding } from "./api";
 
 const fullFixture = {
   open_count: 2,
@@ -68,6 +69,10 @@ export const alertViewContract = {
   groupedRulesCountAsOnePosition: groupPositionAlerts(normalizeAlerts({ events: [fullFixture.events[0], { ...fullFixture.events[0], id: "other", level: "L5" }] })).length === 1,
   groupedRulesKeepBothEvidence: groupPositionAlerts(normalizeAlerts({ events: [fullFixture.events[0], { ...fullFixture.events[0], id: "other", level: "L5" }] }))[0].events.length === 2,
   differentPositionsNeverMerge: groupPositionAlerts(normalizeAlerts({ events: [ { ...fullFixture.events[0], position_id: "old" }, { ...fullFixture.events[0], id: "other", position_id: "new" } ] })).length === 2,
+  legacyEventUsesCurrentHoldingIdentity: groupPositionAlerts(
+    normalizeAlerts({ events: [fullFixture.events[0], { ...fullFixture.events[0], id: "new", position_id: "current", level: "L5" }] }),
+    [{ code: "600000", position_id: "current" } as Holding],
+  ).length === 1,
   lockedLotsDoNotMergeWithSellable: groupPositionAlerts(normalizeAlerts({ events: [fullFixture.events[0], { ...fullFixture.events[0], sellable_now: false }] })).length === 2,
   floatingPointTailNeverDisplayed: formatAlertPrice(9.969299999999999) === "9.9693",
   invalidPriceUnknown: formatAlertPrice(Number.NaN) === "—" && formatAlertPrice(0) === "—",

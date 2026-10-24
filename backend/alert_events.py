@@ -523,18 +523,53 @@ def close_from_event(event_id: str, date: str, price: float, shares: float) -> d
             event["symbol"], date, price, shares, 0, operation_id, require_holding=True,
             expected_position_id=event.get("position_id") or None,
         )
+        sale_receipt = next(
+            (
+                closed
+                for closed in portfolio.get("closed", [])
+                if closed.get("operation_id") == operation_id
+            ),
+            None,
+        )
+        position_closed = bool(sale_receipt and sale_receipt.get("position_closed"))
         stamp = _now_iso()
-        still_held = any(h["code"] == event["symbol"] for h in portfolio["holdings"])
         for target in events:
-            if target["id"] == event_id or (
-                not still_held
+            if target["id"] == event_id:
+                # A partial sale must leave the triggering condition OPEN.  The
+                # position still exists and the next check must be able to keep
+                # showing/notify the risk; marking it HANDLED here would make a
+                # once-frequency alert disappear until its condition resets.
+                target.update(
+                    last_sale={
+                        "operation_id": operation_id,
+                        "date": date,
+                        "price": price,
+                        "shares": shares,
+                    },
+                    updated_at=stamp,
+                    operation_id=operation_id,
+                )
+                if position_closed:
+                    target.update(
+                        status="HANDLED",
+                        condition_active=False,
+                        handled_at=stamp,
+                        handled_note=f"已回录全部卖出 {shares:g} 股 @ {price:g}",
+                    )
+            elif (
+                position_closed
                 and target["symbol"] == event["symbol"]
                 and target["status"] == "OPEN"
+                and (
+                    not target.get("position_id")
+                    or target.get("position_id") == event.get("position_id")
+                )
             ):
                 target.update(
                     status="HANDLED",
+                    condition_active=False,
                     handled_at=stamp,
-                    handled_note=f"已回录卖出 {shares:g} 股 @ {price:g}",
+                    handled_note=f"已回录全部卖出 {shares:g} 股 @ {price:g}",
                     updated_at=stamp,
                     operation_id=operation_id,
                 )

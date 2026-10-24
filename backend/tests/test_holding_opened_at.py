@@ -108,6 +108,23 @@ def test_get_portfolio_legacy_row_opened_at_none(monkeypatch) -> None:
     assert rows[0]["opened_at"] is None
 
 
+def test_get_portfolio_retains_verified_name_when_quote_source_fails(monkeypatch) -> None:
+    """短暂行情故障不应让风险卡退回代码或“名称待补”。"""
+    _reset_portfolio()
+    monkeypatch.setattr(
+        pf.astock,
+        "tencent_quote",
+        lambda codes: {c: {"name": "浦发银行", "price": 9.5} for c in codes},
+    )
+    pf.add_holding("600000", 100, 10.0, "2026-10-09")
+    assert pf._load()["holdings"][0]["name"] == "浦发银行"
+
+    monkeypatch.setattr(pf.astock, "tencent_quote", lambda codes: {})
+    rows = pf.get_portfolio()["holdings"]
+    assert rows[0]["name"] == "浦发银行"
+    assert pf._load()["holdings"][0]["name"] == "浦发银行"
+
+
 # ---------- 端点：从 opened_at 自动推导 T+1（不传 holding_days） ----------
 
 

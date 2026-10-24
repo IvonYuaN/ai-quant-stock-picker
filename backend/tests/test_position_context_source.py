@@ -169,6 +169,26 @@ def test_position_sale_retains_risk_when_only_partial_sale_recorded(position_sto
     assert current["last_sale"]["shares"] == 100
 
 
+def test_alert_sale_keeps_trigger_open_after_partial_sale(position_store):
+    """Alert-driven partial sale must retain the risk event for the lot left."""
+    pid = pf.get_portfolio()["holdings"][0]["position_id"]
+    event = ae.upsert_from_reminders([{
+        "symbol": "600000",
+        "level": "L1",
+        "position_id": pid,
+        "rule_id": "600000-L1",
+        "basis_json": {"rule": "synthetic", "actual": "8"},
+    }])[0]
+
+    result = ae.close_from_event(event["id"], "2026-10-23", 9, 100)
+
+    assert result["portfolio"]["holdings"][0]["shares"] == 100
+    current = next(row for row in ae.list_events() if row["id"] == event["id"])
+    assert current["status"] == "OPEN"
+    assert current["condition_active"] is True
+    assert current["last_sale"]["operation_id"] == f"alert:{event['id']}"
+
+
 def test_position_sale_handles_legacy_event_when_full_position_closed(position_store):
     ae.upsert_from_reminders([{"symbol": "600000", "level": "L1", "basis_json": {"rule": "legacy", "actual": "8"}}])
     ae.close_from_operation("600000", "2026-10-23", 9, 200, 10, "legacy-sale")

@@ -328,6 +328,7 @@ def get_portfolio() -> dict:
         d = _load()
     hs = d.get("holdings", [])
     rows, tmv, tcost = [], 0.0, 0.0
+    names_to_persist: dict[str, str] = {}
     if hs:
         try:
             quotes = astock.tencent_quote([h["code"] for h in hs])
@@ -335,6 +336,14 @@ def get_portfolio() -> dict:
             quotes = {}
         for h in hs:
             q = quotes.get(h["code"], {})
+            quote_name = str(q.get("name") or "").strip()
+            stored_name = str(h.get("name") or "").strip()
+            # 名称是显示证据的一部分。行情源短暂失败时保留上次已核验名称，
+            # 避免风险卡退化成“名称待补”；代码本身绝不写成股票名。
+            valid_quote_name = bool(quote_name and quote_name != h["code"] and not quote_name.isdigit())
+            if valid_quote_name and stored_name != quote_name:
+                names_to_persist[h["code"]] = quote_name
+            display_name = quote_name if valid_quote_name else (stored_name or h["code"])
             price = q.get("price", 0.0)
             mv = price * h["shares"]
             cv = h["cost"] * h["shares"]
@@ -342,7 +351,7 @@ def get_portfolio() -> dict:
             rows.append(
                 {
                     "code": h["code"],
-                    "name": q.get("name", h["code"]),
+                    "name": display_name,
                     "quote": {key: q[key] for key in ("name", "price", "change_pct", "quote_time", "as_of", "source") if key in q},
                     "price": price,
                     "shares": h["shares"],
@@ -363,6 +372,15 @@ def get_portfolio() -> dict:
             )
             tmv += mv
             tcost += cv
+    if names_to_persist:
+        # 重新读取后只合并名称，避免行情请求期间并发成交把最新持仓覆盖掉。
+        with _LOCK, advisory_lock(_pf_file()):
+            latest = _load()
+            for holding in latest.get("holdings", []):
+                name = names_to_persist.get(str(holding.get("code") or ""))
+                if name:
+                    holding["name"] = name
+            _save(latest)
     total_pnl = tmv - tcost
     closed = d.get("closed", [])
     return {
