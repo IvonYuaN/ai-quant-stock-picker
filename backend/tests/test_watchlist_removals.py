@@ -46,6 +46,19 @@ def test_watchlist_removal_is_idempotent_and_readable(workstation: TestClient) -
     assert workstation.get("/api/watchlist/removals").json()["data"]["records"] == [record]
 
 
+def test_watchlist_cors_allows_tenant_identity_header(workstation: TestClient) -> None:
+    response = workstation.options(
+        "/api/watchlist/removals",
+        headers={
+            "Origin": "http://localhost:5173",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "x-user-id",
+        },
+    )
+    assert response.status_code == 200
+    assert "x-user-id" in response.headers.get("access-control-allow-headers", "").lower()
+
+
 @pytest.mark.parametrize("codes", [[], ["60001"], ["600001", "bad"]])
 def test_watchlist_removal_rejects_invalid_codes(
     workstation: TestClient, codes: list[str]
