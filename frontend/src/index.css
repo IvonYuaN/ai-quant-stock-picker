@@ -3469,6 +3469,9 @@
   .aq-risk-heading h2 { font-size: 1.3rem; font-weight: 650; margin: 0.35rem 0; }
   .aq-risk-heading p:not(.aq-eyebrow) { font-size: 0.8rem; color: hsl(var(--muted-foreground)); }
   .aq-risk-summary { display: flex; flex-wrap: wrap; gap: 0.5rem 1.25rem; color: hsl(var(--muted-foreground)); font-size: 0.76rem; padding: 0.75rem 0 1rem; }
+  .aq-risk-group { margin-top: 0.85rem; }
+  .aq-risk-group-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 0.75rem; margin: 0 0 0.35rem; color: hsl(var(--foreground)); font-size: 0.86rem; font-weight: 650; }
+  .aq-risk-group-heading span { color: hsl(var(--muted-foreground)); font-size: 0.72rem; font-weight: 400; }
   .aq-position-alert { margin: 0.6rem 0; border: 1px solid hsl(var(--border)); border-radius: 8px; background: hsl(var(--background)); padding: 1rem; min-width: 0; }
   .aq-position-alert-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.5rem; align-items: center; }
   .aq-position-alert-head .aq-alert-row-title b { font-size: 1.05rem; }
