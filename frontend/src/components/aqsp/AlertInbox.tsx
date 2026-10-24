@@ -119,7 +119,7 @@ export function AlertInbox() {
     {renderAlertGroup(actionable, "今天可卖 · 需要复核", "aq-risk-actionable-heading")}
     {renderAlertGroup(watch, "T+1 观察 · 明日才能卖", "aq-risk-watch-heading")}
     {data?.last_check?.skipped.length ? <details className="aq-risk-incomplete"><summary>分析依据不完整 · {data.last_check.skipped.length} 项待补</summary>{data.last_check.skipped.map((item, index) => <p key={`${item.symbol}:${item.level}:${index}`}>{portfolio?.holdings.find((row) => row.code === item.symbol)?.name || item.symbol} · {item.level} · {item.reason}</p>)}</details> : null}
-    <footer className="aq-risk-footer"><Link to="/my/holdings">持仓与风险规则 <ArrowUpRight aria-hidden="true" /></Link><span>L3 炸板未上线</span></footer>
+    <footer className="aq-risk-footer"><Link to="/my/holdings">持仓与风险规则 <ArrowUpRight aria-hidden="true" /></Link><details className="aq-risk-capability"><summary>能力范围</summary><span>L3 炸板提醒尚未上线</span></details></footer>
     {checkNote ? <p className="aq-operation-note" role="status">{checkNote}</p> : null}
     {history.length ? <details className="aq-alert-history"><summary>已处理与忽略记录（最近 {history.length} 条）</summary>{history.map((event) => <p key={event.id}>{event.symbol} · {event.level} · {event.status === "HANDLED" ? "已处理" : event.status === "IGNORED" ? "已忽略" : "已失效"} · {event.updated_at}</p>)}</details> : null}
     <WatchlistActivity />
