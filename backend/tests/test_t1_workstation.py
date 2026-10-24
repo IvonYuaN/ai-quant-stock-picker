@@ -68,6 +68,12 @@ def test_t1_rules_attach_and_preserve_when_cost_changes(workstation):
     assert rule["origin"] == "MANUAL"
 
 
+def test_t1_new_rules_default_to_once_to_limit_repeat_alert_noise(workstation):
+    pf.add_holding("600000", 100, 10, "2026-10-22")
+    rules = workstation.get("/api/portfolio/risk-rules").json()["data"]["rules"]
+    assert {rule["freq_mode"] for rule in rules} == {"once"}
+
+
 def test_t1_review_plan_keeps_risk_and_groups_rules_when_saved(workstation):
     first, second = ae.upsert_from_reminders([
         {**_reminder(), "position_id": "position-a"},

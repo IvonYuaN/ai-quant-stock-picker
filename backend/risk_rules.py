@@ -60,7 +60,10 @@ def ensure_rules(data: dict) -> list[dict]:
                     "enabled": True,
                     "param_value": param,
                     "trigger_price": None,
-                    "freq_mode": "daily" if level == "L4" else "once",
+                    # All new rules start at the quietest cadence.  L4 is
+                    # especially noisy because a MACD cross can persist across
+                    # several checks; users can opt into daily/always explicitly.
+                    "freq_mode": "once",
                     "origin": "AUTO_DEFAULT",
                     "effective_from": effective,
                     "created_at": stamp,
