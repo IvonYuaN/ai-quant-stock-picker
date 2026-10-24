@@ -602,6 +602,28 @@ export function CandidateSection({
       </div>
       {view.frozenAt ? <p className="aq-hint">评分、策略依据与参数身份沿用当日首次冻结；现价、新鲜度与消息按最新证据更新。</p> : null}
       {added.length > 0 ? <p className="aq-hint">盘中新增：{added.map((change) => `${change.display_name} ${change.symbol}`).join("、")}。保留初始名单，次一交易日重新冻结。</p> : null}
+      {added.length > 0 ? (
+        <section className="aq-candidate-increment" aria-label="盘中新增候选">
+          <div className="aq-candidate-increment-head">
+            <strong>盘中新增</strong>
+            <span>不改变已冻结名单与排序</span>
+          </div>
+          {added.map((change) => (
+            <div className="aq-candidate-increment-row" key={change.symbol}>
+              <div className="aq-candidate-increment-identity">
+                <Tag tone="primary">新增</Tag>
+                <strong>{change.display_name || "未命名标的"}</strong>
+                <span className="aq-code">{change.symbol}</span>
+              </div>
+              {onPick ? (
+                <button type="button" className="aq-btn" onClick={() => onPick(change.symbol)}>
+                  查看个股
+                </button>
+              ) : null}
+            </div>
+          ))}
+        </section>
+      ) : null}
 
       {view.candidates.length === 0 ? (
         <EmptyState

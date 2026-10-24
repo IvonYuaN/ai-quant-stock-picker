@@ -3567,6 +3567,13 @@
   .aq-candidate-filters summary > span { margin-left: 0.5rem; }
   .aq-candidate-filters .aq-toolbar { padding: 0.7rem 0; }
   .aq-candidate-split { display: grid; grid-template-columns: minmax(17rem, 0.9fr) minmax(0, 1.4fr); gap: 1.25rem; align-items: start; }
+  .aq-candidate-increment { min-width: 0; border: 1px solid hsl(var(--primary) / 0.35); border-radius: 0.5rem; background: hsl(var(--primary) / 0.04); }
+  .aq-candidate-increment-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.55rem; padding: 0.7rem 0.9rem; border-bottom: 1px solid hsl(var(--primary) / 0.2); }
+  .aq-candidate-increment-head span { color: hsl(var(--muted-foreground)); font-size: 0.72rem; }
+  .aq-candidate-increment-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.7rem; padding: 0.65rem 0.9rem; border-top: 1px solid hsl(var(--border) / 0.7); }
+  .aq-candidate-increment-row:first-of-type { border-top: 0; }
+  .aq-candidate-increment-identity { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.45rem; min-width: 0; }
+  .aq-candidate-increment-identity strong { overflow-wrap: anywhere; }
   .aq-candidate-roster { min-width: 0; overflow: hidden; border: 1px solid hsl(var(--border)); border-radius: 0.5rem; background: hsl(var(--card)); }
   .aq-candidate-roster-head { display: flex; justify-content: space-between; padding: 0.65rem 0.9rem; color: hsl(var(--muted-foreground)); font-size: 0.72rem; background: hsl(var(--muted) / 0.5); }
   .aq-candidate-roster-group + .aq-candidate-roster-group { border-top: 1px solid hsl(var(--border)); }
