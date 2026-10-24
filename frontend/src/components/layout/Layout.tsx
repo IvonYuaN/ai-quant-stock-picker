@@ -12,6 +12,8 @@ import { LoadingState } from "@/components/ui/primitives";
 import { CommandPalette } from "@/components/ui/CommandPalette";
 import { OperationRecorder } from "@/components/aqsp/OperationRecorder";
 import { requestOperation } from "@/lib/operation";
+import { hasTemporaryUserIdentity } from "@/lib/api";
+import { readLocalPreference, writeLocalPreference } from "@/lib/browser-session";
 
 /** 输入框里打字时不要抢快捷键 */
 function isTyping(target: EventTarget | null): boolean {
@@ -40,8 +42,9 @@ function WorkspaceLayout() {
   const { data, loading } = useAqspSnapshot();
   const { openCount: openAlerts, refetch: refetchAlerts } = useAlertOpenCount();
   const [collapsed, setCollapsed] = useState(
-    () => localStorage.getItem("aqsp-sidebar") === "collapsed",
+    () => readLocalPreference("aqsp-sidebar") === "collapsed",
   );
+  const [temporaryIdentity] = useState(hasTemporaryUserIdentity);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -49,7 +52,7 @@ function WorkspaceLayout() {
   useEffect(() => setMobileToolsOpen(false), [pathname]);
 
   useEffect(() => {
-    localStorage.setItem("aqsp-sidebar", collapsed ? "collapsed" : "expanded");
+    writeLocalPreference("aqsp-sidebar", collapsed ? "collapsed" : "expanded");
   }, [collapsed]);
 
   // 全局快捷键：Cmd/Ctrl+K 打开命令面板；不在输入时按 / 也可打开
@@ -235,6 +238,7 @@ function WorkspaceLayout() {
 
       <main className="aq-main">
         <div className="aq-content">
+          {temporaryIdentity ? <p className="aq-refresh-warning" role="status">浏览器限制本机存储，当前页面使用临时独立身份。刷新或关闭页面后无法恢复此身份，也无法自动找回本会话下录入的持仓。请先允许本站存储再录入真实成交。</p> : null}
           {/* 路由是懒加载的（见 router.tsx）：切页时先显示加载态，避免闪一下空白页框 */}
           <Suspense fallback={<LoadingState label="正在加载页面…" />}>
             <Outlet />

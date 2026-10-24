@@ -8528,39 +8528,40 @@ def run_evolve(args: argparse.Namespace) -> int:
     print("开始自动进化...")
     evolution = AutoEvolution(config_path=args.config)
 
-    if not evolution.config.enabled:
-        print("自动进化已禁用")
-        return 0
-
-    print("分析当前策略表现...")
-    explicit_symbols = os.getenv("AQSP_SYMBOLS", "").strip()
-    symbols = _resolve_run_symbols(
-        args.source,
-        explicit_symbols,
-        pool_name="",
-        max_universe=_runtime_max_universe(getattr(args, "max_universe", 0)),
-        min_avg_amount=10_000_000,
-    )
-    if not symbols:
-        print("无法解析股票池")
-        return 1
-
-    try:
-        frames = _fetch_frames_for_cli(
+    preflight = evolution.preflight()
+    result = None
+    if not preflight.allowed:
+        print(f"自动进化跳过: {preflight.reason}（冷却剩余 {preflight.cooldown_days_remaining} 天）")
+    else:
+        print("分析当前策略表现...")
+        explicit_symbols = os.getenv("AQSP_SYMBOLS", "").strip()
+        symbols = _resolve_run_symbols(
             args.source,
-            symbols,
-            benchmark_symbol=None,
-            days=250,
+            explicit_symbols,
+            pool_name="",
+            max_universe=_runtime_max_universe(getattr(args, "max_universe", 0)),
+            min_avg_amount=10_000_000,
         )
-    except Exception:
-        frames = {}
+        if not symbols:
+            print("无法解析股票池")
+            return 1
 
-    if not frames:
-        print("无法获取数据")
-        return 1
+        try:
+            frames = _fetch_frames_for_cli(
+                args.source,
+                symbols,
+                benchmark_symbol=None,
+                days=250,
+            )
+        except Exception:
+            frames = {}
 
-    print("正在进化参数...")
-    result = evolution.evolve_parameters("composite", frames)
+        if not frames:
+            print("无法获取数据")
+            return 1
+
+        print("正在进化参数...")
+        result = evolution.evolve_parameters("composite", frames)
 
     if result:
         print("\n进化完成:")
@@ -8588,8 +8589,9 @@ def run_evolve(args: argparse.Namespace) -> int:
             "new_params": result.new_params if result else {},
             "performance_improvement": result.performance_improvement if result else 0,
             "confidence": result.confidence if result else 0,
-            "reason": result.reason if result else "",
-            "status": "proposal_only" if result else "no_change",
+            "reason": result.reason if result else ("" if preflight.allowed else preflight.reason),
+            "status": "proposal_only" if result else ("no_change" if preflight.allowed else "skipped"),
+            "cooldown_days_remaining": preflight.cooldown_days_remaining,
             "applied": False,
             "timestamp": now_shanghai().isoformat(),
         }

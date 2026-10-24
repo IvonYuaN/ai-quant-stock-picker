@@ -147,13 +147,47 @@ def _unknown(summary: str, *, evidence: tuple[str, ...] = ()) -> ContextEvidence
 def _timely_quote(stamp: tuple[date, str], current: datetime) -> bool:
     if len(stamp[1]) == 10:
         return False
-    opening, closing = market_hours(current)
-    if _is_basic_trading_day(current.date()) and opening <= current < closing:
-        return (
-            current - datetime.fromisoformat(stamp[1])
-            <= LiveCandidateViewConfig().max_age
-        )
-    return True
+    session = _session(current)
+    if session is None or stamp[0] != session:
+        return False
+    session_time = current.replace(year=session.year, month=session.month, day=session.day)
+    _, closing = market_hours(session_time)
+    # After hours/pre-open/weekends compare with the last session close, rather
+    # than accepting an arbitrary early-session quote forever. Lunch is paused.
+    anchor = min(current, closing)
+    lunch_start = session_time.replace(hour=11, minute=30, second=0, microsecond=0)
+    lunch_end = session_time.replace(hour=13, minute=0, second=0, microsecond=0)
+    if lunch_start <= anchor < lunch_end:
+        anchor = lunch_start
+    age = anchor - datetime.fromisoformat(stamp[1])
+    return age <= LiveCandidateViewConfig().max_age
+
+
+def position_quote_issue(
+    quote: Mapping[str, Any] | None, *, checked_at: datetime | None = None
+) -> str:
+    """Return a rejection reason, or empty text for a verifiable session quote.
+
+    Only source timestamps qualify; fetch time and date-only labels do not.
+    This gate is shared by rule evaluation and display evidence.
+    """
+    current = to_shanghai(checked_at or now_shanghai())
+    if not isinstance(quote, Mapping):
+        return "缺少行情源时间"
+    raw_time = quote.get("as_of")
+    if not raw_time and quote.get("quote_time"):
+        from astock import parse_gtimg_time
+
+        raw_time = parse_gtimg_time(quote["quote_time"])
+    stamp = _source_date(raw_time, current)
+    if stamp is None or len(stamp[1]) == 10:
+        return "行情源时间缺失、无效或在未来"
+    session = _session(current)
+    if session is None:
+        return "本地交易日历未覆盖检查日期"
+    if stamp[0] != session or not _timely_quote(stamp, current):
+        return "行情过期"
+    return ""
 
 
 def load_cached_market_overview(

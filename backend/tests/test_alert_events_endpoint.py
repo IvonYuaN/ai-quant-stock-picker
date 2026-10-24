@@ -14,6 +14,8 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from fastapi.testclient import TestClient
 
@@ -44,6 +46,11 @@ def _inject_holdings_and_prices(monkeypatch) -> None:
     - 600000 老仓 cost 12.00 / 现价 11.00（跌 8.3% < -8% 生产阈值 ⇒ L1 触发）
     - 600036 当日买入 cost 28.50 / 现价 26.10（跌 8.4% ⇒ L1 触发，T+1 降格）
     """
+    import decision_context
+    import position_context_source
+
+    monkeypatch.setattr(decision_context, "now_shanghai", lambda: datetime(2026, 10, 23, 10, tzinfo=ZoneInfo("Asia/Shanghai")))
+    monkeypatch.setattr(position_context_source, "load_position_sectors", lambda codes: {})
     pf_data = {
         "holdings": [
             {"code": "600000", "name": "浦发", "price": 11.00,
@@ -58,6 +65,14 @@ def _inject_holdings_and_prices(monkeypatch) -> None:
         "closed": [], "realized_pnl": 0,
         "updated": "2026-10-20 11:00", "last_refresh": None,
     }
+    for holding in pf_data["holdings"]:
+        holding["quote"] = {"quote_time": "20261023100000"}
+    import risk_rules
+
+    rules = risk_rules.ensure_rules(pf_data)
+    for rule in rules:
+        rule["enabled"] = rule["level"] == "L1"
+    pf._save(pf_data)
     monkeypatch.setattr(pf, "get_portfolio", lambda: pf_data)
 
 

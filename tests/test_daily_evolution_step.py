@@ -106,6 +106,7 @@ def test_success_path_parses_evolution_result(
     assert len(calls) == 1
     argv = calls[0]["argv"]
     assert "-m" in argv and "aqsp" in argv and "evolve" in argv
+    assert argv[argv.index("--max-universe") + 1] == str(config.max_universe)
     assert calls[0]["cwd"] == str(config.project_root)
     assert isinstance(calls[0]["timeout"], int) and calls[0]["timeout"] > 0
 
@@ -124,6 +125,22 @@ def test_timeout_is_graceful_skip(daily_pipeline, tmp_path, monkeypatch) -> None
 
     assert result.get("skipped") is True
     assert result.get("reason") == "timeout_budget_exceeded"
+
+
+def test_evolution_step_does_not_notify_when_preflight_skips(daily_pipeline, tmp_path, monkeypatch) -> None:
+    import json
+    import aqsp.notification_runtime as notification
+
+    config = _config(daily_pipeline, tmp_path)
+    monkeypatch.setenv("TUSHARE_TOKEN", "dummy")
+    monkeypatch.setattr(daily_pipeline, "_notify_fanout_enabled", lambda config: True)
+    monkeypatch.setattr(notification, "dispatch_notification_once", lambda *a, **k: pytest.fail("skipped research cannot notify"))
+    (tmp_path / "data/evolution_result.json").write_text(json.dumps({
+        "status": "skipped", "reason": "cooldown_active", "cooldown_days_remaining": 6,
+    }))
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: SimpleNamespace(returncode=0, stdout="", stderr=""))
+    result = daily_pipeline._step_auto_evolution(config, logging.getLogger("t"))
+    assert result == {"skipped": True, "exit_code": 0, "reason": "cooldown_active", "cooldown_days_remaining": 6}
 
 
 def test_nonzero_exit_is_graceful_skip(daily_pipeline, tmp_path, monkeypatch) -> None:

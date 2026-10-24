@@ -1018,6 +1018,8 @@ def _step_auto_evolution(
         "evolve",
         "--source",
         config.source,
+        "--max-universe",
+        str(config.max_universe),
         "--output",
         str(output_path_abs),
     ]
@@ -1063,6 +1065,14 @@ def _step_auto_evolution(
             payload = json.loads(output_path_abs.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
             payload = {}
+
+    if payload.get("status") == "skipped":
+        reason = str(payload.get("reason") or "preflight_skipped")
+        logger.info("  自进化预检跳过: %s", reason)
+        return {
+            "skipped": True, "exit_code": exit_code, "reason": reason,
+            "cooldown_days_remaining": payload.get("cooldown_days_remaining", 0),
+        }
 
     strategy_name = str(payload.get("strategy_name", "") or "")
     confidence = float(payload.get("confidence", 0) or 0)

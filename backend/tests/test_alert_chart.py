@@ -3,14 +3,24 @@
 from __future__ import annotations
 
 import json
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import pytest
 
 import alert_events as ae
 from aqsp.risk.live_risk import run_live_risk_check
+
+
+@pytest.fixture(autouse=True)
+def fresh_quote_context(monkeypatch: pytest.MonkeyPatch) -> None:
+    import decision_context
+    import position_context_source
+
+    monkeypatch.setattr(decision_context, "now_shanghai", lambda: datetime(2026, 10, 23, 10, tzinfo=ZoneInfo("Asia/Shanghai")))
+    monkeypatch.setattr(position_context_source, "load_position_sectors", lambda codes: {})
 
 
 @pytest.fixture
@@ -88,16 +98,18 @@ def test_alert_chart_uses_clean_raw_history_when_service_checks(
         "cost": 12,
         "price": 10,
         "name": "合成图形证据",
+        "quote": {"quote_time": "20261023100000"},
         "opened_at": "2026-06-01",
     }
     monkeypatch.setattr(pf, "get_portfolio", lambda: {"holdings": [holding]})
     monkeypatch.setattr(
         pf,
         "observe_risk_prices",
-        lambda _: [
+        lambda _, **kwargs: [
             {"id": "600000-L4", "symbol": "600000", "level": "L4", "enabled": True}
         ],
     )
+    pf._save({"holdings": [holding], "risk_rules": pf.observe_risk_prices({})})
     dates = pd.bdate_range(end=latest_completed_trading_day(), periods=41)
     closes = [10 + i * 0.1 for i in range(41)]
     if not future_cross_only:
@@ -168,6 +180,7 @@ def test_alert_chart_keeps_open_when_early_macd_history_price_invalid(
         "cost": 12,
         "price": 10,
         "opened_at": "2026-01-01",
+        "quote": {"quote_time": "20261023100000"},
     }
     monkeypatch.setattr(pf, "get_portfolio", lambda: {"holdings": [holding]})
     rules = [
@@ -180,7 +193,8 @@ def test_alert_chart_keeps_open_when_early_macd_history_price_invalid(
         },
         {"id": "600000-L4", "symbol": "600000", "level": "L4", "enabled": True},
     ]
-    monkeypatch.setattr(pf, "observe_risk_prices", lambda _: rules)
+    monkeypatch.setattr(pf, "observe_risk_prices", lambda _, **kwargs: rules)
+    pf._save({"holdings": [holding], "risk_rules": rules})
     frame = pd.DataFrame(
         {
             "date": pd.bdate_range(end=latest_completed_trading_day(), periods=100),

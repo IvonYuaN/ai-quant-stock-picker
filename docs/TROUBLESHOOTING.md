@@ -38,6 +38,10 @@ tail -50 logs/daily/run-$(date +%Y-%m-%d).log
 
 ## 锁文件残留
 
+主链路锁记录创建时的 Linux boot ID。机器重启后，下一轮调度会立即回收上次启动遗留的锁；旧版锁没有 boot ID 时，会用锁目录时间与 `/proc/stat` 的启动时间识别。同次启动且 PID 仍在运行的锁继续受互斥保护。
+
+2026-10-23 排查发现两条独立故障：Node 构建触发主机 OOM；盘中任务在解析实时股票池阶段中断后留下运行锁，重启后因未满 6 小时而反复跳过后续调度。不能把所有重启都归因于 OOM。构建内存预检见 PR #451；股票池解析现在由 `AQSP_INTRADAY_UNIVERSE_RESOLUTION_TIMEOUT_SECONDS` 单独限时（默认 180 秒，TERM 后最多再等 10 秒），超时记录 `universe_resolution_timeout` 并释放盘中锁。原来的选股命令超时只覆盖解析完成后的计算，不能替代这道保护。
+
 项目有两类锁：
 
 - 运行锁：`.locks/server-runtime.lock`、`.locks/server-monitor.lock`

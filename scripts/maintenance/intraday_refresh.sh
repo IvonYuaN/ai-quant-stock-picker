@@ -234,6 +234,12 @@ if ! [[ "$INTRADAY_RUN_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] || [ "$INTRADAY_RUN_TIMEO
     log "盘中运行超时配置无效(${INTRADAY_RUN_TIMEOUT_SECONDS})，使用 1200 秒"
     INTRADAY_RUN_TIMEOUT_SECONDS="1200"
 fi
+INTRADAY_UNIVERSE_RESOLUTION_TIMEOUT_SECONDS="${AQSP_INTRADAY_UNIVERSE_RESOLUTION_TIMEOUT_SECONDS:-180}"
+if ! [[ "$INTRADAY_UNIVERSE_RESOLUTION_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] || \
+   [ "$INTRADAY_UNIVERSE_RESOLUTION_TIMEOUT_SECONDS" -le 0 ]; then
+    log "实时股票池解析超时配置无效(${INTRADAY_UNIVERSE_RESOLUTION_TIMEOUT_SECONDS})，使用 180 秒"
+    INTRADAY_UNIVERSE_RESOLUTION_TIMEOUT_SECONDS="180"
+fi
 # 盘中默认解析完整实时股票池；短线流动性阈值必须通过盘中专用变量显式设置，
 # 不能继承收盘主链的 AQSP_MIN_AVG_AMOUNT 而静默缩成一部分股票。
 INTRADAY_FAST_MAX_UNIVERSE="${AQSP_INTRADAY_FAST_MAX_UNIVERSE:-0}"
@@ -1592,13 +1598,28 @@ if is_truthy "$INTRADAY_BATCH_SCAN" && \
    [ -f "${PROJECT_ROOT}/scripts/prepare_intraday_batch.py" ] && \
    [ -z "${AQSP_SYMBOLS:-}" ] && \
    [ "$INTRADAY_MAX_UNIVERSE" = "0" ]; then
-    if ! INTRADAY_BATCH_SYMBOLS="$(${PYTHON_BIN} "${PROJECT_ROOT}/scripts/prepare_intraday_batch.py" \
+    batch_resolution_started_epoch=$(date +%s)
+    if INTRADAY_BATCH_SYMBOLS="$(timeout --signal=TERM --kill-after=10s \
+        "${INTRADAY_UNIVERSE_RESOLUTION_TIMEOUT_SECONDS}s" \
+        "${PYTHON_BIN}" "${PROJECT_ROOT}/scripts/prepare_intraday_batch.py" \
         --source "$INTRADAY_SOURCE" \
         --batch-size "$INTRADAY_BATCH_SIZE" \
         --min-avg-amount "$INTRADAY_MIN_AVG_AMOUNT" \
         --cursor "$INTRADAY_CURSOR_PATH" 2>>"$RESULT_LOG")"; then
+        :
+    else
+        batch_resolution_exit_code=$?
+        batch_resolution_elapsed=$(( $(date +%s) - batch_resolution_started_epoch ))
+        if [ "$batch_resolution_exit_code" -eq 124 ] || \
+           [ "$batch_resolution_exit_code" -eq 143 ] || \
+           { [ "$batch_resolution_exit_code" -eq 137 ] && \
+             [ "$batch_resolution_elapsed" -ge "$INTRADAY_UNIVERSE_RESOLUTION_TIMEOUT_SECONDS" ]; }; then
+            RUN_TIMED_OUT="true"
+            RUN_EXIT_CLASS="universe_resolution_timeout"
+            log "[ERROR] 实时股票池解析超时，超过 ${INTRADAY_UNIVERSE_RESOLUTION_TIMEOUT_SECONDS}s；不启动选股任务"
+        fi
         log "[ERROR] 无法准备盘中股票批次；不退回全量重策略，避免再次阻塞服务器"
-        write_intraday_status "failed" "universe_resolution_failed；实时股票池解析失败" "1"
+        write_intraday_status "failed" "universe_resolution_failed；实时股票池解析失败或超时" "$batch_resolution_exit_code"
         exit 1
     fi
     if [ -z "$INTRADAY_BATCH_SYMBOLS" ]; then

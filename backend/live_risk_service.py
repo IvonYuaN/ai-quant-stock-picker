@@ -65,12 +65,21 @@ def check_positions(
         {"code": h["code"], "shares": h["shares"], "cost": h["cost"]}
         for h in pf_data.get("holdings", [])
     ]
+    from decision_context import now_shanghai, position_quote_issue
+
+    checked_at = now_shanghai()
+    quote_issues = {
+        h["code"]: position_quote_issue(h.get("quote"), checked_at=checked_at)
+        for h in pf_data.get("holdings", [])
+    }
     prices = {
         h["code"]: h["price"]
         for h in pf_data.get("holdings", [])
         if isinstance(h.get("price"), (int, float))
         and math.isfinite(h["price"])
         and h["price"] > 0
+        and not isinstance(h["price"], bool)
+        and not quote_issues[h["code"]]
     }
 
     from aqsp.core.errors import DataError
@@ -92,12 +101,12 @@ def check_positions(
     from datetime import timedelta
     import pandas as pd
 
-    rules = pf.observe_risk_prices(prices)
+    rules = pf.observe_risk_prices(prices, expected_holdings=pf_data.get("holdings", []))
     active_codes = {h["code"] for h in holdings}
     rules = [r for r in rules if r["symbol"] in active_codes]
     histories: dict[str, pd.DataFrame] = {}
     checks: dict = {"checked": [], "skipped": []}
-    history_rules = [r for r in rules if r["enabled"] and r["level"] in {"L2", "L4"}]
+    history_rules = [r for r in rules if r["enabled"] and r["symbol"] in prices and r["level"] in {"L2", "L4"}]
     if history_rules:
         today = today_shanghai()
         try:
@@ -130,7 +139,7 @@ def check_positions(
         if cost <= 0 or not math.isfinite(cost):
             reason = "无有效正成本基准"
         elif not prices.get(symbol):
-            reason = "缺少有效现价"
+            reason = quote_issues.get(symbol) or "缺少有效现价"
         elif level in {"L2", "L4"}:
             frame = histories.get(symbol)
             minimum = (
@@ -184,32 +193,51 @@ def check_positions(
         holding_days=holding_days,
         stop_config=None,  # 生产 thresholds（L1 8% / L5 ATR×2.0）
         price_history=histories,
-        position_rules=usable_rules if rules else None,
+        position_rules=usable_rules,
     )
     import alert_events
     from decision_context import build_position_context, load_cached_market_overview
 
     overview = load_cached_market_overview()
     serialized = [reminder.to_dict() for reminder in reminders]
+    from position_context_source import load_position_sectors
+
+    sectors = load_position_sectors(sorted({row["symbol"] for row in serialized}))
     contexts: dict[str, dict] = {}
     for holding in pf_data.get("holdings", []):
         code = holding["code"]
+        sector = sectors.get(code)
+        # Industry membership and board quotes must both carry source time.
+        # Never persist current classifications into historical holdings/ledger.
+        if sector and not position_quote_issue({"as_of": sector.get("membership_as_of")}, checked_at=checked_at):
+            context_holding = {**holding, "industry": sector.get("industry")}
+        else:
+            context_holding, sector = holding, None
         contexts[code] = build_position_context(
-            holding,
+            context_holding,
             [row for row in serialized if row["symbol"] == code],
             quote=holding.get("quote"),
             stock_history=histories.get(code),
             market_overview=overview,
+            sector_snapshot=sector,
+            checked_at=checked_at,
         ).to_dict()
     for row in serialized:
         row["position_context"] = contexts.get(str(row["symbol"]))
 
-    new_events = alert_events.upsert_from_reminders(
-        serialized,
-        checked_symbols=set(prices),
-        checked_rules=checked_rules,
-        active_symbols=active_codes,
+    from live_risk_commit import commit_position_check
+
+    committed = commit_position_check(
+        serialized, pf_data.get("holdings", []), rules, checked_rules, set(prices),
     )
+    serialized, new_events = committed.reminders, committed.new_events
+    checked_rules = committed.eligible_rules
+    if committed.changed_symbols:
+        checks["checked"] = [key for key in checks["checked"] if key.split(":", 1)[0] not in committed.changed_symbols]
+        checks["skipped"].extend(
+            {"symbol": code, "level": "POSITION", "reason": "检查期间持仓或规则已变化，请重新检查"}
+            for code in sorted(committed.changed_symbols)
+        )
     last_checked_at = alert_events.mark_checked(checks)
 
     notify_results: list[str] = []
