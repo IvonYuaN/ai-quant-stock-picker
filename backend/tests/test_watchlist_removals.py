@@ -110,4 +110,3 @@ def test_remove_holding_expires_open_events_for_removed_position(
     assert current["status"] == "EXPIRED"
     assert current["condition_active"] is False
     assert "持仓已移除" in current["handled_note"]
-
