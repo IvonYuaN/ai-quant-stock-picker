@@ -851,6 +851,33 @@ def test_write_home_snapshot_builds_bounded_advisory_only_payload(monkeypatch) -
     assert snapshot.stale_after == "2026-07-10T15:31:00+08:00"
 
 
+def test_intraday_snapshot_defaults_to_latest_completed_session_on_non_trading_day(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        write_home_snapshot,
+        "today_shanghai",
+        lambda: date(2026, 7, 11),  # Saturday
+    )
+    monkeypatch.setattr(
+        write_home_snapshot,
+        "is_trading_day",
+        lambda value: False,
+    )
+    monkeypatch.setattr(
+        write_home_snapshot,
+        "latest_completed_trading_day",
+        lambda: date(2026, 7, 10),
+    )
+
+    assert write_home_snapshot._requested_snapshot_date("intraday") == "2026-07-10"
+    assert write_home_snapshot._requested_snapshot_date("midday") == "2026-07-10"
+    assert (
+        write_home_snapshot._requested_snapshot_date("intraday", "2026-07-09")
+        == "2026-07-09"
+    )
+
+
 def test_write_home_snapshot_uses_persisted_parameter_identity_for_selected_candidates(
     monkeypatch,
 ) -> None:
@@ -2358,7 +2385,7 @@ def test_write_home_snapshot_maps_midday_to_today_intraday_artifact() -> None:
     write_home_snapshot.build_home_snapshot(provider, task_id="midday")
 
     assert provider.digest_calls == [
-        ("intraday", write_home_snapshot.today_shanghai().isoformat())
+        ("intraday", write_home_snapshot._requested_snapshot_date("midday"))
     ]
 
 
