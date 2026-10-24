@@ -149,7 +149,12 @@ function CandidateDetailCard({
   const toggleWatch = () => {
     try {
       const current = loadWatch();
-      saveWatch(watched ? current.filter((code) => code !== row.symbol) : [...new Set([...current, row.symbol])]);
+      const change = saveWatch(watched ? current.filter((code) => code !== row.symbol) : [...new Set([...current, row.symbol])]);
+      if (change.removed.length && change.operation_id) {
+        void api.recordWatchlistRemoval([...change.removed], change.operation_id).catch(() => {
+          // localStorage removal evidence remains available when the API is offline.
+        });
+      }
       toast(watched ? "已移出自选" : "已加入自选");
     } catch {
       toast.error("自选保存失败，请检查浏览器存储后重试。");
@@ -601,7 +606,6 @@ export function CandidateSection({
         <button type="button" className={cn("aq-btn", onlyOwned && "aq-btn-primary")} aria-pressed={onlyOwned} onClick={() => { setOnlyOwned(!onlyOwned); setHideOwned(false); }}>只看我的命中</button>
       </div>
       {view.frozenAt ? <p className="aq-hint">评分、策略依据与参数身份沿用当日首次冻结；现价、新鲜度与消息按最新证据更新。</p> : null}
-      {added.length > 0 ? <p className="aq-hint">盘中新增：{added.map((change) => `${change.display_name} ${change.symbol}`).join("、")}。保留初始名单，次一交易日重新冻结。</p> : null}
       {added.length > 0 ? (
         <section className="aq-candidate-increment" aria-label="盘中新增候选">
           <div className="aq-candidate-increment-head">
