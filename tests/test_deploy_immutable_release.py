@@ -362,6 +362,35 @@ build_frontend "%s"
 
 
 @requires_script
+def test_prod_frontend_build_is_blocked_without_explicit_override():
+    """小内存生产机必须复用预构建制品，不能误跑 npm 导致整机失联。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        error_file = Path(tmp) / "build-policy.err"
+        bash = """
+set -e
+export AQSP_DEPLOY_LIB=1
+source "%s"
+TARGET=prod
+SKIP_FRONTEND_BUILD=false
+ALLOW_PROD_FRONTEND_BUILD=false
+if assert_frontend_build_policy 2>"%s"; then
+    echo POLICY_LEAK
+    exit 1
+fi
+grep -Fq "production frontend build is disabled" "%s"
+SKIP_FRONTEND_BUILD=true
+assert_frontend_build_policy
+ALLOW_PROD_FRONTEND_BUILD=true
+SKIP_FRONTEND_BUILD=false
+assert_frontend_build_policy
+echo POLICY_GUARD_OK
+""" % (SCRIPT, error_file, error_file)
+        r = subprocess.run(["bash", "-c", bash], capture_output=True, text=True)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "POLICY_GUARD_OK" in r.stdout
+
+
+@requires_script
 def test_stage_dir_is_deterministic_per_commit():
     """stage 路径按 commit 确定化 ⇒ 失败产物可被下次部署复用。"""
     bash = """

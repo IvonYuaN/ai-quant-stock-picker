@@ -71,6 +71,9 @@ SKIP_VARIANT_CHECK="false"
 INHERIT_DATA="true"
 DRY_RUN="false"
 FORCE="false"
+# 生产 ECS 只有 1.6G 内存；前端制品必须在开发机/构建机生成后复用。
+# 只有明确设置该开关才允许在 prod 上执行 npm ci / vite build。
+ALLOW_PROD_FRONTEND_BUILD="${AQSP_DEPLOY_ALLOW_PROD_FRONTEND_BUILD:-false}"
 
 usage() {
     cat <<'USAGE'
@@ -284,6 +287,13 @@ assert_frontend_build_memory() {
         fail "frontend build preflight: MemAvailable ${available_mib} MiB is below ${minimum_mib} MiB; reuse prepared frontend artifacts or raise AQSP_DEPLOY_MIN_FRONTEND_BUILD_MEMORY_MIB on a larger host"
     fi
     log "frontend build memory preflight ok: MemAvailable=${available_mib} MiB minimum=${minimum_mib} MiB"
+}
+
+assert_frontend_build_policy() {
+    if [ "$TARGET" = "prod" ] && [ "$SKIP_FRONTEND_BUILD" != "true" ] && [ "$ALLOW_PROD_FRONTEND_BUILD" != "true" ]; then
+        printf '%s\n' "production frontend build is disabled on the small ECS; prepare frontend artifacts and use --skip-frontend-build (set AQSP_DEPLOY_ALLOW_PROD_FRONTEND_BUILD=true only on a larger build host)" >&2
+        return 1
+    fi
 }
 
 build_frontend() {
@@ -739,6 +749,8 @@ fi
 if [ "$DRY_RUN" = "true" ]; then
     dry_run_plan
 fi
+
+assert_frontend_build_policy
 
 mkdir -p "$RELEASES_ROOT" "$LOCK_DIR"
 
