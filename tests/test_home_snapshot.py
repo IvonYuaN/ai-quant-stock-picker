@@ -116,6 +116,30 @@ def test_home_snapshot_round_trips_bounded_home_payload(tmp_path) -> None:
     assert json.loads(source.read_text(encoding="utf-8"))["schema_version"] == "v1"
 
 
+def test_home_snapshot_keeps_first_same_day_roster_and_records_intraday_additions(tmp_path) -> None:
+    path = tmp_path / "home.json"
+    first = _snapshot(
+        dates=("2026-07-11",),
+        candidates=(_candidate("603019"), _candidate("600879")),
+    )
+    refreshed = replace(
+        first,
+        generated_at="2026-07-11T11:00:00+08:00",
+        candidates=(_candidate("600879"), _candidate("000858")),
+    )
+
+    write_home_dashboard_snapshot(path, first)
+    write_home_dashboard_snapshot(path, refreshed)
+
+    loaded = load_home_dashboard_snapshot(path)
+    assert loaded is not None
+    assert tuple(candidate.symbol for candidate in loaded.candidates) == ("603019", "600879")
+    assert [(change.symbol, change.status) for change in loaded.candidate_changes] == [
+        ("603019", "invalidated"),
+        ("000858", "added"),
+    ]
+
+
 def test_home_snapshot_round_trips_candidate_provenance(tmp_path) -> None:
     candidate = HomeSnapshotCandidate(
         symbol="603019",

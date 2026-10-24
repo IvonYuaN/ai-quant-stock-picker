@@ -10,6 +10,13 @@ const STORAGE_FORMAT = "aqsp-watchlist";
 export interface WatchlistRemoval {
   readonly codes: readonly string[];
   readonly removed_at: string;
+  /** 与服务端审计记录对应的幂等操作标识；旧本地记录可缺省。 */
+  readonly operation_id?: string;
+}
+
+export interface WatchlistChangedDetail {
+  readonly removed: readonly string[];
+  readonly operation_id?: string;
 }
 
 interface WatchlistState {
@@ -31,10 +38,13 @@ function parseWatchState(raw: string | null): WatchlistState {
   const removals: WatchlistRemoval[] = [];
   for (const item of Array.isArray(state.removals) ? state.removals : []) {
     if (!item || typeof item !== "object") continue;
-    const record = item as { codes?: unknown; removed_at?: unknown };
+    const record = item as { codes?: unknown; removed_at?: unknown; operation_id?: unknown };
     const codes = [...new Set(validCodes(record.codes))];
     if (!codes.length || typeof record.removed_at !== "string" || !/(Z|[+-]\d{2}:\d{2})$/.test(record.removed_at) || !Number.isFinite(Date.parse(record.removed_at))) continue;
-    removals.push({ codes, removed_at: record.removed_at });
+    const operationId = typeof record.operation_id === "string" && record.operation_id.trim()
+      ? record.operation_id.trim()
+      : undefined;
+    removals.push({ codes, removed_at: record.removed_at, ...(operationId ? { operation_id: operationId } : {}) });
     if (removals.length === WATCHLIST_REMOVAL_LIMIT) break;
   }
   return { codes: validCodes(state.codes), removals };
@@ -53,19 +63,36 @@ export function loadWatchRemovals(): WatchlistRemoval[] {
   catch { return []; }
 }
 
-export function saveWatch(codes: string[]): void {
+export function saveWatch(codes: string[]): WatchlistChangedDetail {
   // One key keeps removal evidence atomic with the list and inside existing backups.
   const previous = parseWatchState(localStorage.getItem(WATCHLIST_STORAGE_KEY));
   const nextCodes = validCodes(codes);
   const nextSet = new Set(nextCodes);
   const removed = [...new Set(previous.codes.filter((code) => !nextSet.has(code)))];
+  const operationId = removed.length ? makeRemovalOperationId() : undefined;
   const removals = removed.length
-    ? [{ codes: removed, removed_at: new Date().toISOString() }, ...previous.removals].slice(0, WATCHLIST_REMOVAL_LIMIT)
+    ? [{ codes: removed, removed_at: new Date().toISOString(), operation_id: operationId }, ...previous.removals].slice(0, WATCHLIST_REMOVAL_LIMIT)
     : previous.removals;
   const payload = removals.length ? { format: STORAGE_FORMAT, version: 1, codes: nextCodes, removals } : nextCodes;
   localStorage.setItem(WATCHLIST_STORAGE_KEY, JSON.stringify(payload));
   // storage only reaches other tabs; notify this workspace after persistence succeeds.
-  if (typeof window !== "undefined") window.dispatchEvent(new Event(WATCHLIST_CHANGED_EVENT));
+  if (typeof window !== "undefined") {
+    const detail: WatchlistChangedDetail = { removed, ...(operationId ? { operation_id: operationId } : {}) };
+    window.dispatchEvent(new CustomEvent<WatchlistChangedDetail>(WATCHLIST_CHANGED_EVENT, { detail }));
+    return detail;
+  }
+  return { removed, ...(operationId ? { operation_id: operationId } : {}) };
+}
+
+function makeRemovalOperationId(): string {
+  try {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+      return `watchlist-remove:${crypto.randomUUID()}`;
+    }
+  } catch {
+    // Fall through to a local, collision-resistant fallback for restricted browsers.
+  }
+  return `watchlist-remove:${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
 
 // 从任意文本里抽取 6 位 A 股代码（逗号 / 空格 / 换行 / 顿号分隔都行，方便一次粘贴一串）。
