@@ -44,6 +44,11 @@ NPM_BIN="${AQSP_NPM_BIN:-/usr/bin/npm}"
 # 置空或 "none" ⇒ 不注入 NODE_OPTIONS（交给 node 默认）。
 FRONTEND_NODE_OPTIONS="${AQSP_DEPLOY_NODE_OPTIONS:---max-old-space-size=512}"
 MIN_FRONTEND_BUILD_MEMORY_MIB="${AQSP_DEPLOY_MIN_FRONTEND_BUILD_MEMORY_MIB:-1024}"
+# Optional prebuilt dist staged on the target host. This lets a build machine
+# upload only the verified frontend artifact while the ECS keeps npm/vite out
+# of the release path entirely.
+FRONTEND_DIST_SOURCE="${AQSP_FRONTEND_DIST_SOURCE:-}"
+FRONTEND_DIST_SHA256="${AQSP_FRONTEND_DIST_SHA256:-}"
 REMOTE="${AQSP_GIT_REMOTE:-origin}"
 BRANCH="${AQSP_GIT_BRANCH:-main}"
 REF="${AQSP_RELEASE_REF:-$BRANCH}"
@@ -80,6 +85,7 @@ usage() {
 usage: scripts/deploy_immutable_release.sh [--target prod|runner] [--ref REF]
                                            [--branch BRANCH]
                                            [--skip-frontend-build]
+                                           [--frontend-dist-source PATH --frontend-dist-sha256 SHA256]
                                            [--skip-restart]
                                            [--skip-public-check]
                                            [--skip-scheduler-check]
@@ -110,6 +116,11 @@ Env knobs:
                              true (default) keeps the staged release when a
                              build/deploy fails, so a re-run reuses it;
                              false deletes it.
+  AQSP_FRONTEND_DIST_SOURCE
+                             target-host path to a prebuilt frontend/dist;
+                             requires --skip-frontend-build.
+  AQSP_FRONTEND_DIST_SHA256 SHA-256 of frontend/dist/index.html; required with
+                             AQSP_FRONTEND_DIST_SOURCE for artifact identity.
 
 Staging: the stage dir is deterministic per commit (<releases>/.stage-<commit>).
 A failed build KEEPS it, so re-running the same command reuses the already
@@ -155,6 +166,8 @@ while [ "$#" -gt 0 ]; do
         --ref) REF="${2:?--ref requires value}"; shift 2 ;;
         --branch) BRANCH="${2:?--branch requires value}"; shift 2 ;;
         --skip-frontend-build) SKIP_FRONTEND_BUILD="true"; shift ;;
+        --frontend-dist-source) FRONTEND_DIST_SOURCE="${2:?--frontend-dist-source requires value}"; shift 2 ;;
+        --frontend-dist-sha256) FRONTEND_DIST_SHA256="${2:?--frontend-dist-sha256 requires value}"; shift 2 ;;
         --skip-restart) SKIP_RESTART="true"; shift ;;
         --skip-public-check) SKIP_PUBLIC_CHECK="true"; shift ;;
         --skip-scheduler-check) SKIP_SCHEDULER_CHECK="true"; shift ;;
@@ -394,6 +407,29 @@ inherit_frontend_artifacts() {
         fail "--skip-frontend-build requires current release frontend/node_modules and frontend/dist"
     cp -a "$src/frontend/node_modules" "$new_release/frontend/"
     cp -a "$src/frontend/dist" "$new_release/frontend/"
+}
+
+install_prebuilt_frontend_dist() {
+    local root="$1" source="$FRONTEND_DIST_SOURCE" expected actual
+    [ -n "$source" ] || return 0
+    [ "$SKIP_FRONTEND_BUILD" = "true" ] || \
+        fail "--frontend-dist-source requires --skip-frontend-build"
+    [ -d "$source" ] || fail "prebuilt frontend dist missing: $source"
+    [ -f "$source/index.html" ] || fail "prebuilt frontend index missing: $source/index.html"
+    expected="$(printf '%s' "$FRONTEND_DIST_SHA256" | tr '[:upper:]' '[:lower:]')"
+    if [[ ! "$expected" =~ ^[0-9a-f]{64}$ ]]; then
+        fail "prebuilt frontend SHA256 must be 64 lowercase hex characters"
+    fi
+    if command -v sha256sum >/dev/null 2>&1; then
+        actual="$(sha256sum "$source/index.html" | awk '{print tolower($1)}')"
+    else
+        actual="$(shasum -a 256 "$source/index.html" | awk '{print tolower($1)}')"
+    fi
+    [ "$actual" = "$expected" ] || fail "prebuilt frontend SHA256 mismatch: expected=$expected actual=$actual"
+    [ -d "$root/frontend/node_modules" ] || fail "prebuilt frontend requires inherited frontend/node_modules"
+    rm -rf -- "$root/frontend/dist"
+    cp -a "$source" "$root/frontend/dist"
+    log "installed prebuilt frontend dist: source=$source sha256=$actual"
 }
 
 check_release() {
@@ -783,6 +819,9 @@ log "deploy target=$TARGET commit=$COMMIT branch=$BRANCH release=$RELEASE_DIR"
 if [ "$SKIP_FRONTEND_BUILD" = "true" ] && [ -d "$RELEASE_DIR" ] && { [ ! -d "$RELEASE_DIR/frontend/node_modules" ] || [ ! -d "$RELEASE_DIR/frontend/dist" ]; }; then
     fail "--skip-frontend-build requires an existing release with complete frontend artifacts"
 fi
+if [ -n "$FRONTEND_DIST_SOURCE" ] && [ -d "$RELEASE_DIR" ]; then
+    fail "--frontend-dist-source cannot mutate an existing immutable release; deploy a new commit"
+fi
 
 if [ ! -d "$RELEASE_DIR" ]; then
     STAGE_DIR="$(stage_dir_for "$COMMIT")"
@@ -801,6 +840,7 @@ if [ ! -d "$RELEASE_DIR" ]; then
             build_frontend "$STAGE_DIR"
         fi
     fi
+    install_prebuilt_frontend_dist "$STAGE_DIR"
     inherit_runtime_data "$STAGE_DIR"
     normalize_release_modes "$STAGE_DIR"
     mv "$STAGE_DIR" "$RELEASE_DIR"

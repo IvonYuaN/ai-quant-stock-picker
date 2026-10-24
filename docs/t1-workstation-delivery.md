@@ -156,3 +156,4 @@ L3 炸板不在 v1，显式标记未上线；不更改策略阈值或以 LLM 覆
 - GitHub 凭据失效导致本地提交无法推送，线上发布链被阻塞；在 commit 可被服务器从 GitHub fetch 前，不执行新的线上切换、重启或非标准上传。
 - 本地当前分支已重新生成前端制品：`npm run build` 成功（2500 modules），`frontend/dist/index.html` SHA256 为 `e493d6c856a9a24b819ff9d2664343e02415bd0a1ba9365838967aee4160110c`；前端 34 个契约文件、784 项断言和 live-position monitor/调度定向 31 项测试均通过。该哈希尚未进入线上 release。
 - 运行链路核对结果：`server_monitor.sh → aqsp monitor → check_live_positions → backend/live_risk_service.py` 已在当前分支接通，不另加独立 live-risk cron，避免同一持仓在两个调度器中重复检查和外发；线上旧 release 未包含这条接线，需随本分支 immutable release 一起切换后才会生效。
+- immutable 发布脚本现支持目标机预置 `frontend/dist`（`AQSP_FRONTEND_DIST_SOURCE` + `AQSP_FRONTEND_DIST_SHA256`），在切换前校验 `index.html` 哈希并拒绝覆盖既有 release；不再依赖服务器上不存在的临时 helper。部署脚本回归 19 项通过。

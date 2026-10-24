@@ -16,6 +16,7 @@ These are shell-level integration tests (no live prod/runner required):
 from __future__ import annotations
 
 import os
+import hashlib
 import shutil
 import subprocess
 import tempfile
@@ -310,6 +311,68 @@ echo FRONTEND_INHERIT_OK
         r = subprocess.run(["bash", "-c", bash], capture_output=True, text=True)
         assert r.returncode == 0, r.stdout + r.stderr
         assert "FRONTEND_INHERIT_OK" in r.stdout
+
+
+@requires_script
+def test_prebuilt_frontend_dist_is_verified_and_installed_without_build():
+    """预构建 dist 可在目标机校验哈希后覆盖继承制品，不触发 npm/vite。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        base = Path(tmp)
+        cur = base / "current"
+        new = base / "new"
+        source = base / "uploaded-dist"
+        (cur / "frontend" / "node_modules").mkdir(parents=True)
+        (cur / "frontend" / "dist").mkdir(parents=True)
+        (cur / "frontend" / "node_modules" / "marker.txt").write_text("deps")
+        (cur / "frontend" / "dist" / "index.html").write_text("old")
+        (source / "assets").mkdir(parents=True)
+        (source / "index.html").write_text("verified-new")
+        (source / "assets" / "app.js").write_text("bundle")
+        digest = hashlib.sha256((source / "index.html").read_bytes()).hexdigest()
+        (new / "frontend").mkdir(parents=True)
+        link = base / "current-link"
+        link.symlink_to(cur)
+        bash = """
+set -e
+export AQSP_DEPLOY_LIB=1
+source "%s"
+CURRENT_LINK="%s"
+SKIP_FRONTEND_BUILD=true
+FRONTEND_DIST_SOURCE="%s"
+FRONTEND_DIST_SHA256="%s"
+inherit_frontend_artifacts "%s"
+install_prebuilt_frontend_dist "%s"
+test "$(cat "%s/frontend/dist/index.html")" = verified-new
+test -f "%s/frontend/dist/assets/app.js"
+test -f "%s/frontend/node_modules/marker.txt"
+echo PREBUILT_FRONTEND_OK
+""" % (SCRIPT, link, source, digest, new, new, new, new, new)
+        r = subprocess.run(["bash", "-c", bash], capture_output=True, text=True)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "PREBUILT_FRONTEND_OK" in r.stdout
+
+
+@requires_script
+def test_prebuilt_frontend_dist_rejects_hash_mismatch():
+    with tempfile.TemporaryDirectory() as tmp:
+        base = Path(tmp)
+        source = base / "dist"
+        root = base / "release"
+        (source).mkdir()
+        (source / "index.html").write_text("verified")
+        (root / "frontend" / "node_modules").mkdir(parents=True)
+        bash = """
+set +e
+export AQSP_DEPLOY_LIB=1
+source "%s"
+SKIP_FRONTEND_BUILD=true
+FRONTEND_DIST_SOURCE="%s"
+FRONTEND_DIST_SHA256="%064d"
+install_prebuilt_frontend_dist "%s"
+""" % (SCRIPT, source, 0, root)
+        r = subprocess.run(["bash", "-c", bash], capture_output=True, text=True)
+        assert r.returncode != 0
+        assert "SHA256 mismatch" in r.stderr
 
 
 # ---- 2026-10-20 发版事故硬化：node 堆上限 + stage 确定化/复用 ----
