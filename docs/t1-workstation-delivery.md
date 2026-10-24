@@ -152,4 +152,5 @@ L3 炸板不在 v1，显式标记未上线；不更改策略阈值或以 LLM 覆
 - 公网只读核验仍指向旧稳定 release `03f30986002846fe4eb7547320f22cac0c15f053`；`/api/health`、API、preview 和 systemd target 正常，未发现本次重启后的新 OOM。线上尚未包含本地分支新增的 `/api/watchlist/removals`，该接口返回 404。
 - 反复卡死的已证实链路有两条：盘中实时股票池解析无界等待并长期占用主锁；生产机执行 `npm ci`/`vite build` 在 1.6 GiB ECS 上触发 Node OOM，导致 SSH、API、前端同时超时。后续发布必须在本地/构建机生成制品，ECS 只切换 immutable release，禁止执行 npm/vite。
 - 真实验收仍未完成：当前真实租户只有 1 只持仓（002129 TCL 中环）、没有 live-risk 外发成功回执，也没有首周噪音率；首页快照当前候选均已失效，且未见生产 `candidate_computations` 产物。因此不能把 M0 出口或最终交付标记为完成，也不能创建样例持仓或发送测试通知代替证据。
+- 11:12 的连续只读复核显示公网首页快照仍停在 09:05:26，`source.status` 仍为“正在解析实时股票池”，3 个候选全部标记为“日内已失效”，`batch_active=false`；这证明当前首页是陈旧快照，不能当作三时点冻结或正常刷新证据。
 - GitHub 凭据失效导致本地提交无法推送，线上发布链被阻塞；在 commit 可被服务器从 GitHub fetch 前，不执行新的线上切换、重启或非标准上传。
