@@ -25,6 +25,13 @@
 - 发布时将预置 `frontend/dist`，传入 `AQSP_FRONTEND_DIST_SOURCE` 和
   `AQSP_FRONTEND_DIST_SHA256`，使用 `--skip-frontend-build`；ECS 不执行 npm/vite。
 
+## 2026-10-24 本地复验
+
+- `uv run --project . pytest -q`：5852 passed、4 skipped、16 deselected。
+- 前端契约 34 个文件、784 项断言通过；生产构建成功（2500 modules transformed）。
+- 隔离 Chromium + 临时 FastAPI/租户再次通过：两只持仓录入、股票名、持仓风险提醒、持有/减仓/做 T 方案、频率降噪、部分卖出、失败重试、四项导航、旧路由、桌面 1440px 与手机 390px。
+- 验收夹具使用上一交易日收盘行情；盘中旧报价在周末被正确判为过期，避免用不可核验数据制造提醒。
+
 ## 当前阻塞
 
 本机 GitHub keyring token 无效，SSH agent 也没有 identity；远端无法 fetch 本地
