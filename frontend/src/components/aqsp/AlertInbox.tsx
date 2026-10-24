@@ -4,6 +4,7 @@ import { ArrowUpRight, BellRing, Check, RefreshCw, X } from "lucide-react";
 import { Badge, LoadingState } from "@/components/ui/primitives";
 import { api, type AlertData, type AlertEvent, type PortfolioData } from "@/lib/api";
 import { ALERT_LEVEL_NAMES, formatAlertPrice, groupPositionAlerts, normalizeAlerts, type PositionAlertGroup } from "@/lib/alert-view";
+import { normalizePortfolio } from "@/lib/portfolio-view";
 import { browserAlertRefreshSource, subscribeAlertRefresh } from "@/lib/alert-refresh";
 import { formatEvidenceTime } from "@/lib/format";
 import { WatchlistActivity } from "./WatchlistActivity";
@@ -58,7 +59,7 @@ export function AlertInbox() {
     if (version !== generation.current) return;
     if (alerts.status === "fulfilled" && Array.isArray(alerts.value?.events)) { setData(normalizeAlerts(alerts.value)); setError(""); }
     else setError(alerts.status === "rejected" && alerts.reason instanceof Error ? alerts.reason.message : "提醒响应不完整，请重试");
-    if (positions.status === "fulfilled") { setPortfolio(positions.value); setPortfolioError(""); }
+    if (positions.status === "fulfilled") { setPortfolio(normalizePortfolio(positions.value)); setPortfolioError(""); }
     else setPortfolioError(positions.reason instanceof Error ? positions.reason.message : "持仓读取失败");
     setLoading(false);
   }, []);
