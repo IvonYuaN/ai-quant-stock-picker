@@ -282,6 +282,36 @@ test -f "%s/data/f.txt" && echo INHERIT_LEAK || echo INHERIT_SKIPPED
         assert "INHERIT_SKIPPED" in r.stdout
 
 
+@requires_script
+def test_skip_frontend_build_inherits_current_artifacts():
+    """生产快速路径应从当前 release 复制制品，不在新 release 运行 npm。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        base = Path(tmp)
+        cur = base / "current"
+        new = base / "new"
+        (cur / "frontend" / "node_modules").mkdir(parents=True)
+        (cur / "frontend" / "dist").mkdir(parents=True)
+        (cur / "frontend" / "node_modules" / "marker.txt").write_text("deps")
+        (cur / "frontend" / "dist" / "marker.txt").write_text("dist")
+        (new / "frontend").mkdir(parents=True)
+        link = base / "current-link"
+        link.symlink_to(cur)
+        bash = """
+set -e
+export AQSP_DEPLOY_LIB=1
+source "%s"
+CURRENT_LINK="%s"
+SKIP_FRONTEND_BUILD=true
+inherit_frontend_artifacts "%s"
+test -f "%s/frontend/node_modules/marker.txt"
+test -f "%s/frontend/dist/marker.txt"
+echo FRONTEND_INHERIT_OK
+""" % (SCRIPT, link, new, new, new)
+        r = subprocess.run(["bash", "-c", bash], capture_output=True, text=True)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "FRONTEND_INHERIT_OK" in r.stdout
+
+
 # ---- 2026-10-20 发版事故硬化：node 堆上限 + stage 确定化/复用 ----
 
 

@@ -383,6 +383,19 @@ inherit_runtime_data() {
     done
 }
 
+# 生产小机禁止 npm/vite 构建；新 release 通过当前已验证制品继承前端运行目录。
+# 这样 --skip-frontend-build 既保持源码不可变，也不要求目标机先手工准备同名目录。
+inherit_frontend_artifacts() {
+    local new_release="$1" src
+    [ "$SKIP_FRONTEND_BUILD" = "true" ] || return 0
+    [ -L "$CURRENT_LINK" ] || fail "--skip-frontend-build requires a current release with frontend artifacts"
+    src="$(readlink -f "$CURRENT_LINK")"
+    [ -d "$src/frontend/node_modules" ] && [ -d "$src/frontend/dist" ] || \
+        fail "--skip-frontend-build requires current release frontend/node_modules and frontend/dist"
+    cp -a "$src/frontend/node_modules" "$new_release/frontend/"
+    cp -a "$src/frontend/dist" "$new_release/frontend/"
+}
+
 check_release() {
     local root="$1"
     PYTHONPATH="$root/src" "$PYTHON_BIN" "$root/scripts/check_release_consistency.py" \
@@ -767,7 +780,7 @@ RELEASE_DIR="${RELEASES_ROOT}/${COMMIT}"
 RUNTIME_DATA_ROOT="${AQSP_RUNTIME_DATA_ROOT:-${RELEASE_DIR}/data}"
 log "deploy target=$TARGET commit=$COMMIT branch=$BRANCH release=$RELEASE_DIR"
 
-if [ "$SKIP_FRONTEND_BUILD" = "true" ] && { [ ! -d "$RELEASE_DIR/frontend/node_modules" ] || [ ! -d "$RELEASE_DIR/frontend/dist" ]; }; then
+if [ "$SKIP_FRONTEND_BUILD" = "true" ] && [ -d "$RELEASE_DIR" ] && { [ ! -d "$RELEASE_DIR/frontend/node_modules" ] || [ ! -d "$RELEASE_DIR/frontend/dist" ]; }; then
     fail "--skip-frontend-build requires an existing release with complete frontend artifacts"
 fi
 
@@ -782,7 +795,9 @@ if [ ! -d "$RELEASE_DIR" ]; then
         fi
         mkdir -p "$STAGE_DIR"
         (cd "$REPO_ROOT" && git archive --format=tar "$COMMIT") | tar -x -C "$STAGE_DIR"
-        if [ "$SKIP_FRONTEND_BUILD" != "true" ]; then
+        if [ "$SKIP_FRONTEND_BUILD" = "true" ]; then
+            inherit_frontend_artifacts "$STAGE_DIR"
+        else
             build_frontend "$STAGE_DIR"
         fi
     fi
