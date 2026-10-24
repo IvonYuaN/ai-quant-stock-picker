@@ -100,6 +100,14 @@ class PriceVolumeLevelCorrelation(BaseStrategy):
             return 0.5
         # corr ∈ [-1,1] → [0,1]
         score = max(0.0, min(1.0, (float(corr) + 1.0) / 2.0))
+        # Keep an exact endpoint from collapsing after an explicit inversion.
+        # ``corr == 1`` is common for synthetic/low-noise windows; preserving a
+        # representable interior value keeps the factor discriminative while
+        # retaining the documented [0, 1] score domain.
+        if score == 1.0:
+            score = float(np.nextafter(1.0, 0.0))
+        elif score == 0.0:
+            score = float(np.nextafter(0.0, 1.0))
         # ⚠️ 方向纠正必须用 `1 - score` 而非 `-score`：
         # 本类末行的 clamp 会把负值压成 0 ⇒ 维度退化成常量（无区分度）。
         if cfg.invert_signal:
