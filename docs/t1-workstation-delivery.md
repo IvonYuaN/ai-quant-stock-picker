@@ -145,3 +145,11 @@ L3 炸板不在 v1，显式标记未上线；不更改策略阈值或以 LLM 覆
 - 预检跳过会写入当次带时区的 skip 回执，覆盖旧研究提案；daily 据此记录跳过且不通知，避免把旧文件当成本次成果。
 - 这消除两条已复现的资源浪费路径；没有历史逐进程 RSS，仍不能把它等同于全部晚间卡顿根因，不重跑生产重型任务制造证据。
 - 修复前 4 项回归失败；修复后定向 186 passed、独立审查 42 passed，全量 5816 passed、9 skipped、16 deselected。真实独立 CLI 进程从临时已落盘历史读取冷却状态，禁用/冷却两条路径均在 15 秒预算内跳过并覆盖旧回执。
+
+## 2026-10-24 当前交付边界
+
+- 本地分支 `fix/t1-loss-context` 已完成 M0–M3 代码链路与本地门禁；最近一次清理提交为 `72c0cb7b`。工作树干净，`git diff --check origin/main...HEAD` 通过。
+- 公网只读核验仍指向旧稳定 release `03f30986002846fe4eb7547320f22cac0c15f053`；`/api/health`、API、preview 和 systemd target 正常，未发现本次重启后的新 OOM。线上尚未包含本地分支新增的 `/api/watchlist/removals`，该接口返回 404。
+- 反复卡死的已证实链路有两条：盘中实时股票池解析无界等待并长期占用主锁；生产机执行 `npm ci`/`vite build` 在 1.6 GiB ECS 上触发 Node OOM，导致 SSH、API、前端同时超时。后续发布必须在本地/构建机生成制品，ECS 只切换 immutable release，禁止执行 npm/vite。
+- 真实验收仍未完成：当前真实租户只有 1 只持仓（002129 TCL 中环）、没有 live-risk 外发成功回执，也没有首周噪音率；首页快照当前候选均已失效，且未见生产 `candidate_computations` 产物。因此不能把 M0 出口或最终交付标记为完成，也不能创建样例持仓或发送测试通知代替证据。
+- GitHub 凭据失效导致本地提交无法推送，线上发布链被阻塞；在 commit 可被服务器从 GitHub fetch 前，不执行新的线上切换、重启或非标准上传。
