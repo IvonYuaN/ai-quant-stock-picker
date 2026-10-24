@@ -50,6 +50,7 @@ import myreports as mr
 import performance_bridge
 import source_health
 import tenant as _tenant
+import watchlist
 
 app = FastAPI(
     title="AQSP API",
@@ -132,7 +133,7 @@ _ORIGINS = _cors_origins(_raw_origins, _PUBLIC_MODE)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_ORIGINS,
-    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "DELETE", "PATCH", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
     allow_credentials=False,
 )
@@ -459,6 +460,31 @@ class HoldingIn(BaseModel):
     cost: float
     opened_at: str | None = None
     operation_id: str | None = Field(default=None, min_length=1, max_length=128)
+
+
+class WatchlistRemovalIn(BaseModel):
+    """A successful browser watchlist removal to retain in the server audit."""
+
+    codes: list[str] = Field(min_length=1, max_length=100)
+    operation_id: str | None = Field(default=None, min_length=1, max_length=128)
+
+
+@app.get("/api/watchlist/removals", tags=["持仓管理"], summary="自选移出监控记录")
+def watchlist_removals(limit: int = Query(20, ge=1, le=20)) -> dict:
+    """Read the tenant's recent successful browser-watchlist removals."""
+    try:
+        return {"data": {"records": watchlist.list_removals(limit)}}
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/api/watchlist/removals", tags=["持仓管理"], summary="记录自选移出监控")
+def watchlist_removal(body: WatchlistRemovalIn) -> dict:
+    """Record a removal after localStorage persistence; this never changes scoring."""
+    try:
+        return {"data": {"record": watchlist.record_removal(body.codes, body.operation_id)}}
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @app.get(

@@ -224,11 +224,43 @@ def add_holding(
 
 
 def remove_holding(code: str) -> dict:
-    with _LOCK, advisory_lock(_pf_file()):
+    # Keep the same alerts -> portfolio lock order as live checks and sales.  A
+    # manual removal must not leave an OPEN risk card pointing at a position that
+    # no longer exists, nor race a commit that is validating that position.
+    import alert_events
+
+    with (
+        alert_events._LOCK,
+        advisory_lock(alert_events._file()),
+        _LOCK,
+        advisory_lock(_pf_file()),
+    ):
         d = _load()
+        removed = [h for h in d["holdings"] if h["code"] == code]
         d["holdings"] = [h for h in d["holdings"] if h["code"] != code]
         d["risk_rules"] = [r for r in d.get("risk_rules", []) if r["symbol"] != code]
         _save(d)
+        if removed:
+            position_ids = {h.get("position_id") for h in removed}
+            events = alert_events._load()
+            stamp = alert_events._now_iso()
+            changed = False
+            for event in events:
+                if event.get("symbol") != code or event.get("status") != "OPEN":
+                    continue
+                # Legacy events have no position identity; the only safe
+                # disambiguator available for a removed code is the code itself.
+                if event.get("position_id") and event.get("position_id") not in position_ids:
+                    continue
+                event.update(
+                    status="EXPIRED",
+                    condition_active=False,
+                    updated_at=stamp,
+                    handled_note="持仓已移除，停止监控",
+                )
+                changed = True
+            if changed:
+                alert_events._save(events)
     return get_portfolio()
 
 
