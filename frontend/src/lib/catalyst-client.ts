@@ -44,8 +44,9 @@ export async function fetchCatalyst(signal?: AbortSignal): Promise<CatalystData>
   let resp: Response;
   try {
     resp = await fetch("/api/catalyst", { headers: authHeaders(), signal });
-  } catch {
-    throw new CatalystError("连接不到后端，请先启动 backend（uvicorn app:app --port 8900）", 0);
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    throw new CatalystError("暂时无法读取催化报告，请稍后重试", 0);
   }
   if (!resp.ok) throw new CatalystError(`HTTP ${resp.status}`, resp.status);
   const payload = (await resp.json().catch(() => null)) as unknown;

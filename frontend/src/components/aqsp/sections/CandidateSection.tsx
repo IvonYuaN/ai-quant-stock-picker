@@ -25,6 +25,7 @@ import { symbolNames } from "@/lib/daily-view";
 import type { AqspCandidateLifecycle } from "@/types/aqsp";
 import {
   selectCandidates,
+  groupCandidatesByOwnership,
   strategyCounts,
   type CandidateSortKey,
 } from "@/lib/candidate-view";
@@ -559,6 +560,7 @@ export function CandidateSection({
     exclude: hideOwned ? (row) => ownedKind(row.symbol, ownership) !== null : undefined,
   });
   const visible = selection.rows;
+  const visibleGroups = groupCandidatesByOwnership(visible);
   const selected = visible.find((row) => row.symbol === selectedSymbol) ?? visible[0];
   const owned = summarizeOwned(
     view.candidates.map((row) => row.symbol),
@@ -643,13 +645,21 @@ export function CandidateSection({
               <div className="aq-candidate-split">
                 <div className="aq-candidate-roster" role="group" aria-label="选择研究候选">
                   <div className="aq-candidate-roster-head"><span>标的 / 研究状态</span><span>评分</span></div>
-                  {visible.map((row, index) => (
-                    <button key={row.symbol} type="button" className={cn("aq-candidate-choice", selected?.symbol === row.symbol && "aq-candidate-choice-active")} aria-pressed={selected?.symbol === row.symbol} onClick={() => setSelectedSymbol(row.symbol)}>
-                      <span className="aq-candidate-rank">{String(index + 1).padStart(2, "0")}</span>
-                      <span className="aq-candidate-choice-body"><span className="aq-candidate-choice-title"><b>{row.name}</b><span className="aq-code">{row.symbol}</span>{invalidated.has(row.symbol) ? <Tag tone="warn">已失效</Tag> : null}</span><span>{statusLabel(row.status)} · {row.messageCount} 条消息 · {row.debateRounds !== null ? `${row.debateRounds} 轮复核` : "待复核"}</span><OwnerTag ownership={ownership} code={row.symbol} /></span>
-                      <strong className="aq-candidate-choice-score">{row.scoreText}</strong>
-                    </button>
-                  ))}
+                  {visibleGroups.map((group, groupIndex) => {
+                    const rankOffset = visibleGroups.slice(0, groupIndex).reduce((total, item) => total + item.rows.length, 0);
+                    return group.rows.length ? (
+                      <section className="aq-candidate-roster-group" key={group.kind} data-candidate-group={group.kind} aria-label={`${group.label} ${group.rows.length} 只`}>
+                        <div className="aq-candidate-roster-group-head"><strong>{group.label}</strong><span>{group.rows.length} 只</span></div>
+                        {group.rows.map((row, index) => (
+                          <button key={row.symbol} type="button" className={cn("aq-candidate-choice", selected?.symbol === row.symbol && "aq-candidate-choice-active")} aria-pressed={selected?.symbol === row.symbol} onClick={() => setSelectedSymbol(row.symbol)}>
+                            <span className="aq-candidate-rank">{String(rankOffset + index + 1).padStart(2, "0")}</span>
+                            <span className="aq-candidate-choice-body"><span className="aq-candidate-choice-title"><b>{row.name}</b><span className="aq-code">{row.symbol}</span>{invalidated.has(row.symbol) ? <Tag tone="warn">已失效</Tag> : null}</span><span>{statusLabel(row.status)} · {row.messageCount} 条消息 · {row.debateRounds !== null ? `${row.debateRounds} 轮复核` : "待复核"}</span><OwnerTag ownership={ownership} code={row.symbol} /></span>
+                            <strong className="aq-candidate-choice-score">{row.scoreText}</strong>
+                          </button>
+                        ))}
+                      </section>
+                    ) : null;
+                  })}
                 </div>
                 {selected ? <CandidateDetailCard
                     key={selected.symbol}

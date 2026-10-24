@@ -3420,6 +3420,14 @@
 .aq-concept-card { margin-bottom: 14px; }
 .aq-concept-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 4px; }
 .aq-concept-head h3 { margin: 0; font-size: 1.05em; }
+.aq-catalyst-section { min-width: 0; }
+.aq-catalyst-metadata { padding-bottom: 0.5rem; }
+.aq-catalyst-evidence > summary { min-height: 44px; padding: 0.75rem 0; cursor: pointer; }
+.aq-catalyst-evidence .aq-concept-card { margin: 0.5rem 0; min-width: 0; overflow-wrap: anywhere; }
+.aq-catalyst-evidence .aq-concept-head { flex-wrap: wrap; gap: 0.5rem; }
+.aq-catalyst-evidence .aq-event-title,
+.aq-catalyst-evidence .aq-transmission-path,
+.aq-catalyst-evidence .aq-detail-muted { overflow-wrap: anywhere; }
 
 /* 研究工作台：候选选择与详情联动，长证据按需展开。 */
 @layer components {
@@ -3555,6 +3563,10 @@
   .aq-candidate-split { display: grid; grid-template-columns: minmax(17rem, 0.9fr) minmax(0, 1.4fr); gap: 1.25rem; align-items: start; }
   .aq-candidate-roster { min-width: 0; overflow: hidden; border: 1px solid hsl(var(--border)); border-radius: 0.5rem; background: hsl(var(--card)); }
   .aq-candidate-roster-head { display: flex; justify-content: space-between; padding: 0.65rem 0.9rem; color: hsl(var(--muted-foreground)); font-size: 0.72rem; background: hsl(var(--muted) / 0.5); }
+  .aq-candidate-roster-group + .aq-candidate-roster-group { border-top: 1px solid hsl(var(--border)); }
+  .aq-candidate-roster-group-head { display: flex; justify-content: space-between; align-items: center; padding: 0.55rem 0.9rem; color: hsl(var(--muted-foreground)); font-size: 0.72rem; background: hsl(var(--muted) / 0.22); }
+  .aq-candidate-roster-group-head strong { color: hsl(var(--foreground)); font-size: 0.76rem; }
+  .aq-watchlist-area { scroll-margin-top: 1rem; }
   .aq-candidate-choice { display: grid; grid-template-columns: 1.4rem minmax(0, 1fr) auto; gap: 0.65rem; align-items: center; width: 100%; min-height: 5rem; padding: 0.9rem; text-align: left; border-top: 1px solid hsl(var(--border) / 0.7); border-left: 3px solid transparent; transition: background 140ms ease; }
   .aq-candidate-choice:hover { background: hsl(var(--muted) / 0.6); }
   .aq-candidate-choice-active { background: hsl(var(--primary) / 0.07); border-left-color: hsl(var(--primary)); }

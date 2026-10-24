@@ -1,5 +1,5 @@
 // 候选筛选与排序的契约断言（由 npm test 真正执行）。
-import { selectCandidates, strategyCounts, strategyOptions } from "./candidate-view";
+import { groupCandidatesByOwnership, selectCandidates, strategyCounts, strategyOptions } from "./candidate-view";
 import type { CandidateRow } from "./daily-view";
 
 const row = (over: Partial<CandidateRow>): CandidateRow =>
@@ -42,8 +42,17 @@ const ownership = {
   watchlist: new Set(["600014", "600016", "600019", "600020"]),
 };
 const personal = { ...base, sort: "personal" as const, ownership };
+const personalGroups = groupCandidatesByOwnership(selectCandidates(personalRows, personal).rows);
 
 export const candidateViewContract = {
+  personalDisplayHasExplicitOwnershipGroups:
+    personalGroups.map((group) => group.kind).join("|") === "holding|watchlist|other",
+  personalDisplaySeparatesTwoHoldingsAndThreeWatchlistMatches:
+    personalGroups[0].rows.length === 2 && personalGroups[1].rows.length === 3,
+  personalDisplayGroupsKeepFrozenInputOrder:
+    personalGroups.flatMap((group) => group.rows.map((item) => item.symbol)).join("|") ===
+    "600018|600020|600014|600016|600019|" +
+    personalRows.filter((item) => !ownership.holdings.has(item.symbol) && !ownership.watchlist.has(item.symbol)).map((item) => item.symbol).join("|"),
   personalSortPutsTwoHoldingsAndThreeWatchlistInFirstFive:
     selectCandidates(personalRows, personal).rows.slice(0, 5).map((item) => item.symbol).join("|") === "600018|600020|600014|600016|600019",
   holdingOutranksWatchlistWhenAlsoWatched:

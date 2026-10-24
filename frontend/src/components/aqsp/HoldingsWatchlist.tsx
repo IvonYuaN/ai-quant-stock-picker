@@ -7,6 +7,7 @@ import { buildHoldingGroups, normalizeHoldingSectors } from "@/lib/holding-view"
 import { holdingT1Status, shanghaiDate } from "@/lib/portfolio-view";
 import { addCodes, loadWatch, saveWatch, WATCHLIST_CHANGED_EVENT, WATCHLIST_STORAGE_KEY } from "@/lib/watchlist";
 import { changeClass, formatMoney, formatSignedPct } from "@/lib/format";
+import { WATCHLIST_ANCHOR_ID } from "@/lib/hash-navigation";
 import { cn } from "@/lib/utils";
 import { Badge, EmptyState, SectionHeader, StatePanel } from "@/components/ui/primitives";
 
@@ -122,7 +123,7 @@ export function HoldingsWatchlist({ portfolio, alerts, candidates, candidateDate
   }
 
   return (
-    <>
+    <div id={WATCHLIST_ANCHOR_ID} className="aq-watchlist-area">
       <form className="aq-watch-entry" onSubmit={addWatch}>
         <label htmlFor="holding-watch-codes">添加自选</label>
         <div className="aq-row-actions">
@@ -187,6 +188,6 @@ export function HoldingsWatchlist({ portfolio, alerts, candidates, candidateDate
           </ul>
         </section>
       ))}
-    </>
+    </div>
   );
 }
