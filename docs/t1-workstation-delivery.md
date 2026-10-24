@@ -155,3 +155,4 @@ L3 炸板不在 v1，显式标记未上线；不更改策略阈值或以 LLM 覆
 - 11:12 的连续只读复核显示公网首页快照仍停在 09:05:26，`source.status` 仍为“正在解析实时股票池”，3 个候选全部标记为“日内已失效”，`batch_active=false`；这证明当前首页是陈旧快照，不能当作三时点冻结或正常刷新证据。
 - GitHub 凭据失效导致本地提交无法推送，线上发布链被阻塞；在 commit 可被服务器从 GitHub fetch 前，不执行新的线上切换、重启或非标准上传。
 - 本地当前分支已重新生成前端制品：`npm run build` 成功（2500 modules），`frontend/dist/index.html` SHA256 为 `e493d6c856a9a24b819ff9d2664343e02415bd0a1ba9365838967aee4160110c`；前端 34 个契约文件、784 项断言和 live-position monitor/调度定向 31 项测试均通过。该哈希尚未进入线上 release。
+- 运行链路核对结果：`server_monitor.sh → aqsp monitor → check_live_positions → backend/live_risk_service.py` 已在当前分支接通，不另加独立 live-risk cron，避免同一持仓在两个调度器中重复检查和外发；线上旧 release 未包含这条接线，需随本分支 immutable release 一起切换后才会生效。
