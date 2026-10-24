@@ -1,5 +1,6 @@
 // 持仓与自选的唯一入口：服务端持仓、本地自选和风险事件在同一页关联。
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useLocation } from "react-router-dom";
 import { Plus, RefreshCw, ShieldCheck, Trash2, Wallet } from "lucide-react";
 import { toast } from "sonner";
 import { api, type AlertEvent, type PortfolioData } from "@/lib/api";
@@ -12,6 +13,7 @@ import { HoldingsWatchlist, openOperation } from "@/components/aqsp/HoldingsWatc
 import { useAqspSnapshot } from "@/components/aqsp/useAqspSnapshot";
 import { cn } from "@/lib/utils";
 import { changeClass, formatMoney, formatSignedPct } from "@/lib/format";
+import { scrollToHashTarget } from "@/lib/hash-navigation";
 
 export function HoldingsPage({ renderRiskSettings }: { renderRiskSettings?: (code: string) => ReactNode }) {
   const [data, setData] = useState<PortfolioData | null>(null);
@@ -24,6 +26,7 @@ export function HoldingsPage({ renderRiskSettings }: { renderRiskSettings?: (cod
   const portfolioSequence = useRef(0);
   const alertSequence = useRef(0);
   const snapshotState = useAqspSnapshot();
+  const { hash } = useLocation();
   const snapshot = snapshotState.data;
   const currentCandidates = !snapshotState.switching ? currentHoldingCandidates(snapshot) : [];
 
@@ -71,6 +74,10 @@ export function HoldingsPage({ renderRiskSettings }: { renderRiskSettings?: (cod
       window.removeEventListener(ALERTS_CHANGED_EVENT, onAlerts);
     };
   }, [load, loadAlerts]);
+
+  useEffect(() => {
+    scrollToHashTarget(hash);
+  }, [hash]);
 
   async function run(action: () => Promise<PortfolioData>, successMessage: string): Promise<void> {
     setBusy(true);

@@ -72,8 +72,13 @@ export function WatchlistPage() {
 
   function persist(next: string[]): boolean {
     try {
-      saveWatch(next);
+      const change = saveWatch(next);
       setCodes(next);
+      if (change.removed.length && change.operation_id) {
+        void api.recordWatchlistRemoval([...change.removed], change.operation_id).catch(() => {
+          // localStorage removal evidence remains available when the API is offline.
+        });
+      }
       return true;
     } catch {
       toast.error("自选保存失败，请检查浏览器存储后重试；原列表仍保留。");
@@ -141,7 +146,7 @@ export function WatchlistPage() {
             刷新行情
           </button>
         </div>
-        <p id="watchlist-input-help" className="aq-note">支持逗号、空格或换行分隔。自选不上传服务器，换设备前可从侧栏导出备份。</p>
+        <p id="watchlist-input-help" className="aq-note">支持逗号、空格或换行分隔。自选列表保留在此浏览器；移出动作会留下当前身份的审计记录。</p>
       </form>
 
       {error ? (

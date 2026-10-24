@@ -18,6 +18,8 @@ LEGACY_HEALTH_PATH = "/_stcore/health"
 CANONICAL_ENTRY_MARKERS = ("AQSP", "研究工作台")
 CANONICAL_ENTRY_MARKER_GROUPS = (
     CANONICAL_ENTRY_MARKERS,
+    ("AQSP", "T+1", "工作台"),
+    ("AQSP", "今日决策"),
     ("AQSP", "当前研究"),
     ("AQSP", "当天研究"),
 )

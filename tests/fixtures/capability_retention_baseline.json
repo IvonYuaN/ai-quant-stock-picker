@@ -1,0 +1,327 @@
+{
+  "schema_version": 1,
+  "source_commit": "3465c3dd21a8b4c12743e96d6a8a2b92237dfdc4",
+  "source_description": "Original T+1 PRD first committed in #438; HTTP method+path, includes GET /metrics.",
+  "test_selection": "Historical tests importing aqsp.backtest or aqsp.strategies, including function-local imports; pytest --collect-only -q -m not live.",
+  "minimum_http_method_paths": 67,
+  "http_method_paths": [
+    [
+      "DELETE",
+      "/api/myreports/{rid}"
+    ],
+    [
+      "DELETE",
+      "/api/portfolio/close"
+    ],
+    [
+      "DELETE",
+      "/api/portfolio/holding"
+    ],
+    [
+      "DELETE",
+      "/api/reviews/{review_id}"
+    ],
+    [
+      "GET",
+      "/api/alerts"
+    ],
+    [
+      "GET",
+      "/api/announcements"
+    ],
+    [
+      "GET",
+      "/api/aqsp/candidate-lifecycle"
+    ],
+    [
+      "GET",
+      "/api/aqsp/candidate/{symbol}"
+    ],
+    [
+      "GET",
+      "/api/aqsp/candidates/{symbol}"
+    ],
+    [
+      "GET",
+      "/api/aqsp/closing-review"
+    ],
+    [
+      "GET",
+      "/api/aqsp/dates"
+    ],
+    [
+      "GET",
+      "/api/aqsp/ic-dual-verdict"
+    ],
+    [
+      "GET",
+      "/api/aqsp/ic-history"
+    ],
+    [
+      "GET",
+      "/api/aqsp/info-stream"
+    ],
+    [
+      "GET",
+      "/api/aqsp/performance"
+    ],
+    [
+      "GET",
+      "/api/aqsp/signals"
+    ],
+    [
+      "GET",
+      "/api/aqsp/snapshot"
+    ],
+    [
+      "GET",
+      "/api/block-trade"
+    ],
+    [
+      "GET",
+      "/api/blocks"
+    ],
+    [
+      "GET",
+      "/api/catalyst"
+    ],
+    [
+      "GET",
+      "/api/dashboard/metrics"
+    ],
+    [
+      "GET",
+      "/api/disclosure"
+    ],
+    [
+      "GET",
+      "/api/dividend"
+    ],
+    [
+      "GET",
+      "/api/dragon-tiger"
+    ],
+    [
+      "GET",
+      "/api/events"
+    ],
+    [
+      "GET",
+      "/api/finance"
+    ],
+    [
+      "GET",
+      "/api/financials"
+    ],
+    [
+      "GET",
+      "/api/fund-flow"
+    ],
+    [
+      "GET",
+      "/api/global/indices"
+    ],
+    [
+      "GET",
+      "/api/global/stock"
+    ],
+    [
+      "GET",
+      "/api/health"
+    ],
+    [
+      "GET",
+      "/api/holders"
+    ],
+    [
+      "GET",
+      "/api/hot-concepts"
+    ],
+    [
+      "GET",
+      "/api/indices"
+    ],
+    [
+      "GET",
+      "/api/industry"
+    ],
+    [
+      "GET",
+      "/api/info"
+    ],
+    [
+      "GET",
+      "/api/investor-qa"
+    ],
+    [
+      "GET",
+      "/api/kline"
+    ],
+    [
+      "GET",
+      "/api/lockup"
+    ],
+    [
+      "GET",
+      "/api/margin"
+    ],
+    [
+      "GET",
+      "/api/market/emotion"
+    ],
+    [
+      "GET",
+      "/api/market/overview"
+    ],
+    [
+      "GET",
+      "/api/market/turnover-top"
+    ],
+    [
+      "GET",
+      "/api/myreports"
+    ],
+    [
+      "GET",
+      "/api/myreports/file/{rid}"
+    ],
+    [
+      "GET",
+      "/api/news"
+    ],
+    [
+      "GET",
+      "/api/portfolio"
+    ],
+    [
+      "GET",
+      "/api/quote"
+    ],
+    [
+      "GET",
+      "/api/radar"
+    ],
+    [
+      "GET",
+      "/api/reports"
+    ],
+    [
+      "GET",
+      "/api/reviews"
+    ],
+    [
+      "GET",
+      "/api/reviews/insights"
+    ],
+    [
+      "GET",
+      "/api/reviews/tags"
+    ],
+    [
+      "GET",
+      "/api/valuation"
+    ],
+    [
+      "GET",
+      "/api/valuation/percentile"
+    ],
+    [
+      "GET",
+      "/api/version"
+    ],
+    [
+      "GET",
+      "/metrics"
+    ],
+    [
+      "PATCH",
+      "/api/alerts/{event_id}"
+    ],
+    [
+      "POST",
+      "/api/chat"
+    ],
+    [
+      "POST",
+      "/api/live-risk/check"
+    ],
+    [
+      "POST",
+      "/api/myreports"
+    ],
+    [
+      "POST",
+      "/api/portfolio/close"
+    ],
+    [
+      "POST",
+      "/api/portfolio/holding"
+    ],
+    [
+      "POST",
+      "/api/portfolio/refresh"
+    ],
+    [
+      "POST",
+      "/api/radar/refresh"
+    ],
+    [
+      "POST",
+      "/api/reviews"
+    ],
+    [
+      "PUT",
+      "/api/reviews/{review_id}"
+    ]
+  ],
+  "minimum_tests_per_file": {
+    "tests/test_199_config_invariant.py": 4,
+    "tests/test_adaptive_evolution.py": 3,
+    "tests/test_auto_evolution.py": 13,
+    "tests/test_auto_factor_mining.py": 3,
+    "tests/test_backtest.py": 85,
+    "tests/test_backtest_audit.py": 2,
+    "tests/test_check_before_live.py": 132,
+    "tests/test_cli_audit.py": 1,
+    "tests/test_cli_runtime_fixes.py": 90,
+    "tests/test_cli_walkforward.py": 74,
+    "tests/test_closing_premium.py": 16,
+    "tests/test_dynamic_stop.py": 7,
+    "tests/test_event_driven_calendar.py": 32,
+    "tests/test_event_signals_cli.py": 9,
+    "tests/test_experiment.py": 8,
+    "tests/test_factor_backtest.py": 6,
+    "tests/test_family_htf_mr.py": 10,
+    "tests/test_integration.py": 17,
+    "tests/test_mean_reversion.py": 13,
+    "tests/test_momentum_invert_signal.py": 6,
+    "tests/test_morning_breakout.py": 14,
+    "tests/test_multi_factor_rotation.py": 8,
+    "tests/test_new_strategies.py": 25,
+    "tests/test_notify_templates.py": 29,
+    "tests/test_pit_skip_note_factor_accuracy.py": 8,
+    "tests/test_planb_grid_cscv_smoke.py": 3,
+    "tests/test_portfolio_manager.py": 23,
+    "tests/test_price_volume_corr.py": 11,
+    "tests/test_regime_runtime.py": 6,
+    "tests/test_reports_v2.py": 3,
+    "tests/test_runtime_config.py": 18,
+    "tests/test_selection_determinism.py": 5,
+    "tests/test_stop_loss.py": 49,
+    "tests/test_strategies.py": 37,
+    "tests/test_strategy.py": 28,
+    "tests/test_strategy_catalog.py": 3,
+    "tests/test_strategy_mixer.py": 12,
+    "tests/test_triple_rise.py": 13,
+    "tests/test_unified_risk.py": 9,
+    "tests/test_variant_account.py": 3,
+    "tests/test_volume_invert_signal.py": 6,
+    "tests/test_volume_strategy.py": 10,
+    "tests/test_volume_surge.py": 10,
+    "tests/test_walkforward_checkpoint.py": 5,
+    "tests/test_walkforward_grid_variant_factor_enable.py": 28,
+    "tests/test_walkforward_net_fees.py": 6,
+    "tests/test_walkforward_skipped_periods.py": 16,
+    "tests/test_web_config.py": 3
+  }
+}

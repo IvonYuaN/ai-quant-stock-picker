@@ -35,6 +35,28 @@ export interface OwnedCandidateRow extends CandidateRow {
   hit_watchlist: boolean;
 }
 
+export interface CandidateOwnershipGroup {
+  kind: "holding" | "watchlist" | "other";
+  label: string;
+  rows: OwnedCandidateRow[];
+}
+
+/** Split the selected roster by ownership without changing the incoming order. */
+export function groupCandidatesByOwnership(
+  rows: readonly OwnedCandidateRow[],
+): CandidateOwnershipGroup[] {
+  const groups: CandidateOwnershipGroup[] = [
+    { kind: "holding", label: "持仓命中", rows: [] },
+    { kind: "watchlist", label: "自选命中", rows: [] },
+    { kind: "other", label: "其他候选", rows: [] },
+  ];
+  for (const row of rows) {
+    const kind = row.hit_position ? "holding" : row.hit_watchlist ? "watchlist" : "other";
+    groups.find((group) => group.kind === kind)!.rows.push(row);
+  }
+  return groups;
+}
+
 /** 把 `strategyA · strategyB` 这样的串拆成可选项（去重、去空）。 */
 export function strategyOptions(rows: readonly CandidateRow[]): string[] {
   const seen = new Set<string>();

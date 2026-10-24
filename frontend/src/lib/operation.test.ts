@@ -23,6 +23,7 @@ export const operationContract = {
   shanghaiBoundary: shanghaiDate(new Date("2026-10-22T16:01:00Z")) === "2026-10-23",
   fourNavigationItems: NAV_LINES.flatMap((line) => line.items).length === 4,
   navigationOrder: NAV_LINES.flatMap((line) => line.items.map((item) => item.to)).join(",") === "/today,/my/holdings,/market,/stream",
+  navigationLabelsMatchT1Spec: NAV_LINES.flatMap((line) => line.items.map((item) => item.label)).join(",") === "今日,我的持仓,大盘,消息",
   watchlistCompatibility: LEGACY_ROUTES["/my/watchlist"] === "/my/holdings#watchlist",
   conceptsCompatibility: LEGACY_ROUTES["/concepts"] === "/stream",
   sellableSharesPreserved: portfolioFixture.holdings[0].sellable_shares === 100,

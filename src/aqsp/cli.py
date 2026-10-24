@@ -4684,6 +4684,16 @@ def _mark_gate_notification_suppressed(
 
 
 def run_screen(args: argparse.Namespace) -> int:
+    from aqsp.portfolio.snapshot import snapshot_trading_date
+    from aqsp.services.candidate_freeze import (
+        CandidateSnapshotError,
+        candidate_request_fingerprint,
+        candidate_snapshot_path,
+        candidate_freeze_enabled,
+        freeze_scored_candidates,
+        load_candidate_snapshot,
+    )
+
     actual_source = "csv"
     explicit_symbol_count = 0
     symbols: list[str] = []
@@ -4695,6 +4705,84 @@ def run_screen(args: argparse.Namespace) -> int:
         print("screen --csv 仅允许进入 walkforward/pit，不能形成 live_short 候选")
         return 1
     else:
+        thresholds = load_thresholds()
+        freeze_enabled = candidate_freeze_enabled()
+        session_date = snapshot_trading_date(today_shanghai().isoformat())
+        request_fingerprint = candidate_request_fingerprint(
+            {
+                "entrypoint": "screen",
+                "mode": args.mode,
+                "symbols": sorted(item.strip() for item in args.symbols.split(",") if item.strip()),
+                "pool": str(getattr(args, "pool", "") or ""),
+                "source": args.source,
+                "limit": int(args.limit),
+                "min_avg_amount": float(args.min_avg_amount),
+                "max_data_lag_days": int(getattr(args, "max_data_lag_days", 0) or 0),
+                "benchmark_symbol": str(args.benchmark_symbol),
+                "thresholds_version": thresholds.version,
+            }
+        )
+        try:
+            frozen = (
+                load_candidate_snapshot(
+                    session_date,
+                    request_fingerprint,
+                    candidate_snapshot_path(),
+                )
+                if freeze_enabled
+                else None
+            )
+        except CandidateSnapshotError as exc:
+            print(f"候选冻结不可复用，停止本次计算: {exc}")
+            return 1
+        if frozen is not None:
+            picks = list(frozen.final_picks if frozen.finalized else frozen.screened_picks)
+            table = to_dataframe(picks)
+            print("已复用本交易日冻结候选，跳过股票池解析与重新评分。")
+            if table.empty:
+                print("No candidates.")
+            else:
+                print(table.to_string(index=False))
+            if args.report:
+                run_metadata = RunMetadata(
+                    requested_source=args.source,
+                    actual_source=frozen.source,
+                    source_freshness_tier="frozen",
+                    source_coverage_tier="frozen",
+                    source_local_status="reused",
+                    source_health_label="frozen",
+                    source_health_message=(
+                        "候选评分沿用本交易日首次完整快照；本次未重新取数。"
+                    ),
+                    fallback_used=False,
+                    explicit_symbol_count=len(
+                        [item for item in args.symbols.split(",") if item.strip()]
+                    ),
+                    resolved_symbol_count=frozen.resolved_symbol_count,
+                    fetched_frame_count=0,
+                    screened_count=len(frozen.screened_picks),
+                    final_count=len(picks),
+                    min_price=frozen.min_price,
+                    max_price=frozen.max_price,
+                    min_avg_amount=frozen.min_avg_amount,
+                    online_factors_enabled=False,
+                    thresholds_version=frozen.thresholds_version,
+                    data_latest_trade_date=frozen.data_latest_trade_date,
+                    regime=frozen.regime,
+                    max_universe=0,
+                )
+                atomic_write_text(
+                    args.report,
+                    to_markdown(
+                        picks,
+                        title=f"AI 量化选股报告({args.mode})",
+                        metadata=run_metadata,
+                    ),
+                )
+            if args.output_csv:
+                atomic_write_text(args.output_csv, table.to_csv(index=False))
+            return 0
+
         allowed, reason = _runtime_source_workload_allowed(
             args.source,
             workload="live_short",
@@ -4754,7 +4842,8 @@ def run_screen(args: argparse.Namespace) -> int:
         actual_source,
     )
     screen_frames = _drop_benchmark_frame(frames, args.benchmark_symbol)
-    thresholds = load_thresholds()
+    if args.csv:
+        thresholds = load_thresholds()
     regime = _detect_runtime_regime(
         frames,
         benchmark_symbol=args.benchmark_symbol,
@@ -4787,6 +4876,41 @@ def run_screen(args: argparse.Namespace) -> int:
         strategy_weights=config.strategy_weights,
         strategy_weight_reasons={},
     )
+    if not args.csv and freeze_enabled:
+        request_fingerprint = candidate_request_fingerprint(
+            {
+                "entrypoint": "screen",
+                "mode": args.mode,
+                "symbols": sorted(item.strip() for item in args.symbols.split(",") if item.strip()),
+                "pool": str(getattr(args, "pool", "") or ""),
+                "source": args.source,
+                "limit": int(args.limit),
+                "min_avg_amount": float(args.min_avg_amount),
+                "max_data_lag_days": int(getattr(args, "max_data_lag_days", 0) or 0),
+                "benchmark_symbol": str(args.benchmark_symbol),
+                "thresholds_version": thresholds.version,
+            }
+        )
+        try:
+            frozen = freeze_scored_candidates(
+                session_date=snapshot_trading_date(today_shanghai().isoformat()),
+                request_fingerprint=request_fingerprint,
+                source=actual_source,
+                data_latest_trade_date=latest.isoformat() if latest is not None else "",
+                thresholds_version=thresholds.version,
+                regime=regime,
+                strategy_weights=dict(config.strategy_weights or {}),
+                resolved_symbols=list(symbols) if symbols else list(screen_frames),
+                min_price=float(thresholds.filter.min_price),
+                max_price=float(thresholds.filter.max_price),
+                min_avg_amount=float(args.min_avg_amount),
+                picks=picks,
+                path=candidate_snapshot_path(),
+            )
+        except CandidateSnapshotError as exc:
+            print(f"候选冻结写入失败，拒绝发布未冻结结果: {exc}")
+            return 1
+        picks = list(frozen.final_picks if frozen.finalized else frozen.screened_picks)
     table = to_dataframe(picks)
     if table.empty:
         print("No candidates.")
@@ -4991,6 +5115,17 @@ def _write_daily_research_report(
 
 
 def _run_scheduled_legacy(args: argparse.Namespace) -> int:
+    from aqsp.portfolio.snapshot import snapshot_trading_date
+    from aqsp.services.candidate_freeze import (
+        CandidateSnapshotError,
+        candidate_freeze_enabled,
+        candidate_request_fingerprint,
+        candidate_snapshot_path,
+        freeze_final_candidates,
+        freeze_scored_candidates,
+        load_candidate_snapshot,
+    )
+
     env = load_runtime_config()
     as_of_raw = str(getattr(args, "as_of", "") or "").strip()
     try:
@@ -5032,6 +5167,37 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         as_of_raw=as_of_raw,
     )
     enable_online_factors = args.enable_online_factors or env.enable_online_factors
+    freeze_enabled = candidate_freeze_enabled()
+    thresholds = load_thresholds()
+    candidate_snapshot = None
+    candidate_fingerprint = ""
+    if not as_of_raw and freeze_enabled:
+        candidate_fingerprint = candidate_request_fingerprint(
+            {
+                "entrypoint": "scheduled",
+                "mode": mode,
+                "symbols": sorted(
+                    item.strip() for item in explicit_symbols.split(",") if item.strip()
+                ),
+                "pool": str(getattr(args, "pool", "") or ""),
+                "source": args.source,
+                "limit": int(limit),
+                "max_universe": int(max_universe),
+                "min_avg_amount": float(min_avg_amount),
+                "max_data_lag_days": int(max_data_lag_days),
+                "benchmark_symbol": str(args.benchmark_symbol),
+                "thresholds_version": thresholds.version,
+            }
+        )
+        try:
+            candidate_snapshot = load_candidate_snapshot(
+                snapshot_trading_date(today.isoformat()),
+                candidate_fingerprint,
+                candidate_snapshot_path(),
+            )
+        except CandidateSnapshotError as exc:
+            print(f"候选冻结不可复用，停止本次运行: {exc}")
+            return 1
     explicit_symbol_count = len(
         [item.strip() for item in explicit_symbols.split(",") if item.strip()]
     )
@@ -5042,6 +5208,28 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
     if args.csv:
         frames = load_csv(args.csv)
         actual_source = "csv"
+    elif candidate_snapshot is not None:
+        symbols = list(dict.fromkeys(pick.symbol for pick in candidate_snapshot.screened_picks))
+        print(
+            "已复用本交易日完整候选评分快照；跳过全股票池解析与重评分，"
+            "新增项未扫描全市场，状态保持未知。"
+        )
+        frames, actual_source = _fetch_frames_for_cli_with_metadata(
+            args.source,
+            symbols,
+            benchmark_symbol=args.benchmark_symbol,
+            end_date=today,
+            workload="live_short" if requires_live_short_source else None,
+        )
+        if requires_live_short_source:
+            actual_allowed, actual_reason = _runtime_actual_source_workload_allowed(
+                args.source,
+                actual_source,
+                workload="live_short",
+            )
+            if not actual_allowed:
+                print(actual_reason)
+                return 1
     else:
         symbols = _resolve_run_symbols(
             args.source,
@@ -5129,8 +5317,6 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
     validation = None
     if not args.skip_validation:
         validation = validate_predictions(formal_ledger_path, frames)
-
-    thresholds = load_thresholds()
 
     breaker = _build_circuit_breaker(thresholds)
     paper_ledger_path = os.getenv("AQSP_PAPER_LEDGER", "data/paper_trades.jsonl")
@@ -5256,18 +5442,21 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         strategy_weights=weights,
         strategy_weight_reasons=strategy_weight_reasons,
     )
-    screened_picks = _enrich_pick_names(
-        _screen_universe_with_thresholds(screen_frames, config, thresholds),
-        screen_frames,
-        realtime_source_name=actual_source,
-    )
-    screened_picks = _attach_runtime_weight_snapshot(
-        screened_picks,
-        thresholds=thresholds,
-        regime=regime,
-        strategy_weights=weights,
-        strategy_weight_reasons=strategy_weight_reasons,
-    )
+    if candidate_snapshot is not None:
+        screened_picks = list(candidate_snapshot.screened_picks)
+    else:
+        screened_picks = _enrich_pick_names(
+            _screen_universe_with_thresholds(screen_frames, config, thresholds),
+            screen_frames,
+            realtime_source_name=actual_source,
+        )
+        screened_picks = _attach_runtime_weight_snapshot(
+            screened_picks,
+            thresholds=thresholds,
+            regime=regime,
+            strategy_weights=weights,
+            strategy_weight_reasons=strategy_weight_reasons,
+        )
     relevant_intraday_missing_symbols = _relevant_intraday_missing_symbols(
         screened_picks,
         missing_symbols=intraday_missing_symbols,
@@ -5283,6 +5472,26 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
             screened_picks,
             reason=status.reason,
         )
+    if candidate_snapshot is None and not as_of_raw and freeze_enabled:
+        try:
+            candidate_snapshot = freeze_scored_candidates(
+                session_date=snapshot_trading_date(today.isoformat()),
+                request_fingerprint=candidate_fingerprint,
+                source=actual_source,
+                data_latest_trade_date=latest.isoformat(),
+                thresholds_version=thresholds.version,
+                regime=regime,
+                strategy_weights=dict(weights),
+                resolved_symbols=list(symbols),
+                min_price=float(thresholds.filter.min_price),
+                max_price=float(thresholds.filter.max_price),
+                min_avg_amount=float(min_avg_amount),
+                picks=screened_picks,
+                path=candidate_snapshot_path(),
+            )
+        except CandidateSnapshotError as exc:
+            print(f"候选冻结写入失败，拒绝发布未冻结结果: {exc}")
+            return 1
     _write_high_frequency_provisional_outputs(
         task_id=normalized_task_id,
         args=args,
@@ -5877,6 +6086,21 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         )
         if portfolio_decisions:
             print("排序结果已生成")
+
+    if not as_of_raw and freeze_enabled:
+        try:
+            if candidate_snapshot is None:
+                raise CandidateSnapshotError("缺少候选评分快照")
+            candidate_snapshot = freeze_final_candidates(
+                candidate_snapshot,
+                picks,
+                path=candidate_snapshot_path(),
+            )
+            if candidate_snapshot.finalized:
+                picks = list(candidate_snapshot.final_picks)
+        except CandidateSnapshotError as exc:
+            print(f"正式候选列表冻结失败，停止输出: {exc}")
+            return 1
 
     # 保存选股快照并在 ledger 写入前补齐候选状态，确保 report / ledger / paper 三端一致。
     if picks and persist_research_outputs:

@@ -16,6 +16,7 @@ These are shell-level integration tests (no live prod/runner required):
 from __future__ import annotations
 
 import os
+import hashlib
 import shutil
 import subprocess
 import tempfile
@@ -282,6 +283,98 @@ test -f "%s/data/f.txt" && echo INHERIT_LEAK || echo INHERIT_SKIPPED
         assert "INHERIT_SKIPPED" in r.stdout
 
 
+@requires_script
+def test_skip_frontend_build_inherits_current_artifacts():
+    """生产快速路径应从当前 release 复制制品，不在新 release 运行 npm。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        base = Path(tmp)
+        cur = base / "current"
+        new = base / "new"
+        (cur / "frontend" / "node_modules").mkdir(parents=True)
+        (cur / "frontend" / "dist").mkdir(parents=True)
+        (cur / "frontend" / "node_modules" / "marker.txt").write_text("deps")
+        (cur / "frontend" / "dist" / "marker.txt").write_text("dist")
+        (new / "frontend").mkdir(parents=True)
+        link = base / "current-link"
+        link.symlink_to(cur)
+        bash = """
+set -e
+export AQSP_DEPLOY_LIB=1
+source "%s"
+CURRENT_LINK="%s"
+SKIP_FRONTEND_BUILD=true
+inherit_frontend_artifacts "%s"
+test -f "%s/frontend/node_modules/marker.txt"
+test -f "%s/frontend/dist/marker.txt"
+echo FRONTEND_INHERIT_OK
+""" % (SCRIPT, link, new, new, new)
+        r = subprocess.run(["bash", "-c", bash], capture_output=True, text=True)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "FRONTEND_INHERIT_OK" in r.stdout
+
+
+@requires_script
+def test_prebuilt_frontend_dist_is_verified_and_installed_without_build():
+    """预构建 dist 可在目标机校验哈希后覆盖继承制品，不触发 npm/vite。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        base = Path(tmp)
+        cur = base / "current"
+        new = base / "new"
+        source = base / "uploaded-dist"
+        (cur / "frontend" / "node_modules").mkdir(parents=True)
+        (cur / "frontend" / "dist").mkdir(parents=True)
+        (cur / "frontend" / "node_modules" / "marker.txt").write_text("deps")
+        (cur / "frontend" / "dist" / "index.html").write_text("old")
+        (source / "assets").mkdir(parents=True)
+        (source / "index.html").write_text("verified-new")
+        (source / "assets" / "app.js").write_text("bundle")
+        digest = hashlib.sha256((source / "index.html").read_bytes()).hexdigest()
+        (new / "frontend").mkdir(parents=True)
+        link = base / "current-link"
+        link.symlink_to(cur)
+        bash = """
+set -e
+export AQSP_DEPLOY_LIB=1
+source "%s"
+CURRENT_LINK="%s"
+SKIP_FRONTEND_BUILD=true
+FRONTEND_DIST_SOURCE="%s"
+FRONTEND_DIST_SHA256="%s"
+inherit_frontend_artifacts "%s"
+install_prebuilt_frontend_dist "%s"
+test "$(cat "%s/frontend/dist/index.html")" = verified-new
+test -f "%s/frontend/dist/assets/app.js"
+test -f "%s/frontend/node_modules/marker.txt"
+echo PREBUILT_FRONTEND_OK
+""" % (SCRIPT, link, source, digest, new, new, new, new, new)
+        r = subprocess.run(["bash", "-c", bash], capture_output=True, text=True)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "PREBUILT_FRONTEND_OK" in r.stdout
+
+
+@requires_script
+def test_prebuilt_frontend_dist_rejects_hash_mismatch():
+    with tempfile.TemporaryDirectory() as tmp:
+        base = Path(tmp)
+        source = base / "dist"
+        root = base / "release"
+        (source).mkdir()
+        (source / "index.html").write_text("verified")
+        (root / "frontend" / "node_modules").mkdir(parents=True)
+        bash = """
+set +e
+export AQSP_DEPLOY_LIB=1
+source "%s"
+SKIP_FRONTEND_BUILD=true
+FRONTEND_DIST_SOURCE="%s"
+FRONTEND_DIST_SHA256="%064d"
+install_prebuilt_frontend_dist "%s"
+""" % (SCRIPT, source, 0, root)
+        r = subprocess.run(["bash", "-c", bash], capture_output=True, text=True)
+        assert r.returncode != 0
+        assert "SHA256 mismatch" in r.stderr
+
+
 # ---- 2026-10-20 发版事故硬化：node 堆上限 + stage 确定化/复用 ----
 
 
@@ -359,6 +452,35 @@ build_frontend "%s"
         assert r.returncode != 0, r.stdout
         assert "MemAvailable 711 MiB is below 1024 MiB" in r.stderr
         assert not marker.exists(), "npm started despite failed memory preflight"
+
+
+@requires_script
+def test_prod_frontend_build_is_blocked_without_explicit_override():
+    """小内存生产机必须复用预构建制品，不能误跑 npm 导致整机失联。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        error_file = Path(tmp) / "build-policy.err"
+        bash = """
+set -e
+export AQSP_DEPLOY_LIB=1
+source "%s"
+TARGET=prod
+SKIP_FRONTEND_BUILD=false
+ALLOW_PROD_FRONTEND_BUILD=false
+if assert_frontend_build_policy 2>"%s"; then
+    echo POLICY_LEAK
+    exit 1
+fi
+grep -Fq "production frontend build is disabled" "%s"
+SKIP_FRONTEND_BUILD=true
+assert_frontend_build_policy
+ALLOW_PROD_FRONTEND_BUILD=true
+SKIP_FRONTEND_BUILD=false
+assert_frontend_build_policy
+echo POLICY_GUARD_OK
+""" % (SCRIPT, error_file, error_file)
+        r = subprocess.run(["bash", "-c", bash], capture_output=True, text=True)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "POLICY_GUARD_OK" in r.stdout
 
 
 @requires_script

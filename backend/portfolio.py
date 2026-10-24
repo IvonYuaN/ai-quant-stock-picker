@@ -224,11 +224,43 @@ def add_holding(
 
 
 def remove_holding(code: str) -> dict:
-    with _LOCK, advisory_lock(_pf_file()):
+    # Keep the same alerts -> portfolio lock order as live checks and sales.  A
+    # manual removal must not leave an OPEN risk card pointing at a position that
+    # no longer exists, nor race a commit that is validating that position.
+    import alert_events
+
+    with (
+        alert_events._LOCK,
+        advisory_lock(alert_events._file()),
+        _LOCK,
+        advisory_lock(_pf_file()),
+    ):
         d = _load()
+        removed = [h for h in d["holdings"] if h["code"] == code]
         d["holdings"] = [h for h in d["holdings"] if h["code"] != code]
         d["risk_rules"] = [r for r in d.get("risk_rules", []) if r["symbol"] != code]
         _save(d)
+        if removed:
+            position_ids = {h.get("position_id") for h in removed}
+            events = alert_events._load()
+            stamp = alert_events._now_iso()
+            changed = False
+            for event in events:
+                if event.get("symbol") != code or event.get("status") != "OPEN":
+                    continue
+                # Legacy events have no position identity; the only safe
+                # disambiguator available for a removed code is the code itself.
+                if event.get("position_id") and event.get("position_id") not in position_ids:
+                    continue
+                event.update(
+                    status="EXPIRED",
+                    condition_active=False,
+                    updated_at=stamp,
+                    handled_note="持仓已移除，停止监控",
+                )
+                changed = True
+            if changed:
+                alert_events._save(events)
     return get_portfolio()
 
 
@@ -328,6 +360,7 @@ def get_portfolio() -> dict:
         d = _load()
     hs = d.get("holdings", [])
     rows, tmv, tcost = [], 0.0, 0.0
+    names_to_persist: dict[str, str] = {}
     if hs:
         try:
             quotes = astock.tencent_quote([h["code"] for h in hs])
@@ -335,6 +368,14 @@ def get_portfolio() -> dict:
             quotes = {}
         for h in hs:
             q = quotes.get(h["code"], {})
+            quote_name = str(q.get("name") or "").strip()
+            stored_name = str(h.get("name") or "").strip()
+            # 名称是显示证据的一部分。行情源短暂失败时保留上次已核验名称，
+            # 避免风险卡退化成“名称待补”；代码本身绝不写成股票名。
+            valid_quote_name = bool(quote_name and quote_name != h["code"] and not quote_name.isdigit())
+            if valid_quote_name and stored_name != quote_name:
+                names_to_persist[h["code"]] = quote_name
+            display_name = quote_name if valid_quote_name else (stored_name or h["code"])
             price = q.get("price", 0.0)
             mv = price * h["shares"]
             cv = h["cost"] * h["shares"]
@@ -342,7 +383,7 @@ def get_portfolio() -> dict:
             rows.append(
                 {
                     "code": h["code"],
-                    "name": q.get("name", h["code"]),
+                    "name": display_name,
                     "quote": {key: q[key] for key in ("name", "price", "change_pct", "quote_time", "as_of", "source") if key in q},
                     "price": price,
                     "shares": h["shares"],
@@ -363,6 +404,15 @@ def get_portfolio() -> dict:
             )
             tmv += mv
             tcost += cv
+    if names_to_persist:
+        # 重新读取后只合并名称，避免行情请求期间并发成交把最新持仓覆盖掉。
+        with _LOCK, advisory_lock(_pf_file()):
+            latest = _load()
+            for holding in latest.get("holdings", []):
+                name = names_to_persist.get(str(holding.get("code") or ""))
+                if name:
+                    holding["name"] = name
+            _save(latest)
     total_pnl = tmv - tcost
     closed = d.get("closed", [])
     return {

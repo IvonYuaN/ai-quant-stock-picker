@@ -7,6 +7,7 @@ import { buildHoldingGroups, normalizeHoldingSectors } from "@/lib/holding-view"
 import { holdingT1Status, shanghaiDate } from "@/lib/portfolio-view";
 import { addCodes, loadWatch, saveWatch, WATCHLIST_CHANGED_EVENT, WATCHLIST_STORAGE_KEY } from "@/lib/watchlist";
 import { changeClass, formatMoney, formatSignedPct } from "@/lib/format";
+import { WATCHLIST_ANCHOR_ID } from "@/lib/hash-navigation";
 import { cn } from "@/lib/utils";
 import { Badge, EmptyState, SectionHeader, StatePanel } from "@/components/ui/primitives";
 
@@ -99,8 +100,13 @@ export function HoldingsWatchlist({ portfolio, alerts, candidates, candidateDate
 
   function persist(next: string[]): boolean {
     try {
-      saveWatch(next);
+      const change = saveWatch(next);
       setCodes(next);
+      if (change.removed.length && change.operation_id) {
+        void api.recordWatchlistRemoval([...change.removed], change.operation_id).catch(() => {
+          // localStorage removal evidence remains available when the API is offline.
+        });
+      }
       return true;
     } catch {
       toast.error("自选保存失败，原列表仍保留；请检查浏览器存储后重试。");
@@ -122,7 +128,7 @@ export function HoldingsWatchlist({ portfolio, alerts, candidates, candidateDate
   }
 
   return (
-    <>
+    <div id={WATCHLIST_ANCHOR_ID} className="aq-watchlist-area">
       <form className="aq-watch-entry" onSubmit={addWatch}>
         <label htmlFor="holding-watch-codes">添加自选</label>
         <div className="aq-row-actions">
@@ -130,7 +136,7 @@ export function HoldingsWatchlist({ portfolio, alerts, candidates, candidateDate
           <button type="submit" className="aq-btn"><Plus aria-hidden="true" /> 添加自选</button>
           <button type="button" className="aq-btn aq-btn-icon" title="刷新自选行情与板块" aria-label="刷新自选行情与板块" disabled={loading || !allCodes.length} onClick={() => setReload((value) => value + 1)}><RefreshCw className={cn(loading && "aq-spin")} aria-hidden="true" /></button>
         </div>
-        <p className="aq-note">自选保留在此浏览器；换设备前可使用备份导出。{candidateStatus}</p>
+        <p className="aq-note">自选列表保留在此浏览器；移出动作会留下当前身份的审计记录。{candidateStatus}</p>
       </form>
       {quoteError ? <StatePanel tone="warn">行情读取失败：{quoteError}。关注记录仍保留，价格可能为上次读取结果。<button className="aq-btn" type="button" disabled={loading} onClick={() => setReload((value) => value + 1)}>重试行情</button></StatePanel> : null}
       {sectorError ? <StatePanel tone="warn">部分板块读取失败，未取得资料的标的显示“板块待补”。<button className="aq-btn" type="button" onClick={() => setReload((value) => value + 1)}>重试板块</button></StatePanel> : null}
@@ -187,6 +193,6 @@ export function HoldingsWatchlist({ portfolio, alerts, candidates, candidateDate
           </ul>
         </section>
       ))}
-    </>
+    </div>
   );
 }

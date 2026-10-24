@@ -128,6 +128,7 @@ jobs:
           PYTEST_TOTAL_SHARDS: 4
         run: |
           python3 -m pytest --collect-only -q -m "not live" tests backend/tests > /tmp/aqsp-all-test-nodes.txt
+          python3 scripts/check_capability_retention.py --collected-tests /tmp/aqsp-all-test-nodes.txt
           python3 - <<'PY' > /tmp/aqsp-test-nodes.txt
           import os
           from pathlib import Path

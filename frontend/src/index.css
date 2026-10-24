@@ -3420,6 +3420,14 @@
 .aq-concept-card { margin-bottom: 14px; }
 .aq-concept-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 4px; }
 .aq-concept-head h3 { margin: 0; font-size: 1.05em; }
+.aq-catalyst-section { min-width: 0; }
+.aq-catalyst-metadata { padding-bottom: 0.5rem; }
+.aq-catalyst-evidence > summary { min-height: 44px; padding: 0.75rem 0; cursor: pointer; }
+.aq-catalyst-evidence .aq-concept-card { margin: 0.5rem 0; min-width: 0; overflow-wrap: anywhere; }
+.aq-catalyst-evidence .aq-concept-head { flex-wrap: wrap; gap: 0.5rem; }
+.aq-catalyst-evidence .aq-event-title,
+.aq-catalyst-evidence .aq-transmission-path,
+.aq-catalyst-evidence .aq-detail-muted { overflow-wrap: anywhere; }
 
 /* 研究工作台：候选选择与详情联动，长证据按需展开。 */
 @layer components {
@@ -3461,6 +3469,9 @@
   .aq-risk-heading h2 { font-size: 1.3rem; font-weight: 650; margin: 0.35rem 0; }
   .aq-risk-heading p:not(.aq-eyebrow) { font-size: 0.8rem; color: hsl(var(--muted-foreground)); }
   .aq-risk-summary { display: flex; flex-wrap: wrap; gap: 0.5rem 1.25rem; color: hsl(var(--muted-foreground)); font-size: 0.76rem; padding: 0.75rem 0 1rem; }
+  .aq-risk-group { margin-top: 0.85rem; }
+  .aq-risk-group-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 0.75rem; margin: 0 0 0.35rem; color: hsl(var(--foreground)); font-size: 0.86rem; font-weight: 650; }
+  .aq-risk-group-heading span { color: hsl(var(--muted-foreground)); font-size: 0.72rem; font-weight: 400; }
   .aq-position-alert { margin: 0.6rem 0; border: 1px solid hsl(var(--border)); border-radius: 8px; background: hsl(var(--background)); padding: 1rem; min-width: 0; }
   .aq-position-alert-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.5rem; align-items: center; }
   .aq-position-alert-head .aq-alert-row-title b { font-size: 1.05rem; }
@@ -3512,6 +3523,9 @@
   .aq-risk-footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.7rem; margin-top: 1rem; font-size: 0.75rem; color: hsl(var(--muted-foreground)); }
   .aq-risk-footer a { display: inline-flex; gap: 0.3rem; align-items: center; color: hsl(var(--primary)); }
   .aq-risk-footer svg { width: 1rem; height: 1rem; }
+  .aq-risk-capability { margin-left: auto; }
+  .aq-risk-capability summary { cursor: pointer; }
+  .aq-risk-capability span { display: block; margin-top: 0.35rem; }
   .aq-alert-evidence, .aq-alert-history { font-size: 0.75rem; color: hsl(var(--muted-foreground)); margin-top: 0.5rem; overflow-wrap: anywhere; }
   .aq-alert-evidence summary, .aq-alert-history summary { cursor: pointer; min-height: 2rem; display: list-item; }
   .aq-alert-history p { padding: 0.4rem 0; }
@@ -3553,8 +3567,19 @@
   .aq-candidate-filters summary > span { margin-left: 0.5rem; }
   .aq-candidate-filters .aq-toolbar { padding: 0.7rem 0; }
   .aq-candidate-split { display: grid; grid-template-columns: minmax(17rem, 0.9fr) minmax(0, 1.4fr); gap: 1.25rem; align-items: start; }
+  .aq-candidate-increment { min-width: 0; border: 1px solid hsl(var(--primary) / 0.35); border-radius: 0.5rem; background: hsl(var(--primary) / 0.04); }
+  .aq-candidate-increment-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.55rem; padding: 0.7rem 0.9rem; border-bottom: 1px solid hsl(var(--primary) / 0.2); }
+  .aq-candidate-increment-head span { color: hsl(var(--muted-foreground)); font-size: 0.72rem; }
+  .aq-candidate-increment-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.7rem; padding: 0.65rem 0.9rem; border-top: 1px solid hsl(var(--border) / 0.7); }
+  .aq-candidate-increment-row:first-of-type { border-top: 0; }
+  .aq-candidate-increment-identity { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.45rem; min-width: 0; }
+  .aq-candidate-increment-identity strong { overflow-wrap: anywhere; }
   .aq-candidate-roster { min-width: 0; overflow: hidden; border: 1px solid hsl(var(--border)); border-radius: 0.5rem; background: hsl(var(--card)); }
   .aq-candidate-roster-head { display: flex; justify-content: space-between; padding: 0.65rem 0.9rem; color: hsl(var(--muted-foreground)); font-size: 0.72rem; background: hsl(var(--muted) / 0.5); }
+  .aq-candidate-roster-group + .aq-candidate-roster-group { border-top: 1px solid hsl(var(--border)); }
+  .aq-candidate-roster-group-head { display: flex; justify-content: space-between; align-items: center; padding: 0.55rem 0.9rem; color: hsl(var(--muted-foreground)); font-size: 0.72rem; background: hsl(var(--muted) / 0.22); }
+  .aq-candidate-roster-group-head strong { color: hsl(var(--foreground)); font-size: 0.76rem; }
+  .aq-watchlist-area { scroll-margin-top: 1rem; }
   .aq-candidate-choice { display: grid; grid-template-columns: 1.4rem minmax(0, 1fr) auto; gap: 0.65rem; align-items: center; width: 100%; min-height: 5rem; padding: 0.9rem; text-align: left; border-top: 1px solid hsl(var(--border) / 0.7); border-left: 3px solid transparent; transition: background 140ms ease; }
   .aq-candidate-choice:hover { background: hsl(var(--muted) / 0.6); }
   .aq-candidate-choice-active { background: hsl(var(--primary) / 0.07); border-left-color: hsl(var(--primary)); }

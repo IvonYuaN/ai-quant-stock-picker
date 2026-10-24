@@ -27,8 +27,8 @@ export interface NavLine {
 }
 
 // 小白视角重排（2026-10-08）：原来 12 个 jargon 入口平铺，普通人一开门就懵。
-// 现在按「我会用到的」分三层 —— 主区只留每天真正要看的两件事，
-// 进阶工具收进「进阶分析」一组，本机私有数据单独成「我的」。
+// 现在按「我会用到的」收敛为一条四项主线：今日、我的持仓、大盘、消息。
+// 量化过程与历史资料留在页面内的证据折叠区，不再占用主导航。
 export const PRIMARY_LINE: NavLine = {
   id: "primary",
   title: "T+1 决策",
@@ -37,8 +37,8 @@ export const PRIMARY_LINE: NavLine = {
   items: [
     { to: "/today", label: "今日", desc: "持仓提醒 · 今日候选", icon: Compass },
     { to: "/my/holdings", label: "我的持仓", desc: "持仓与自选 · 操作跟进", icon: Wallet },
-    { to: "/market", label: "大盘行情", desc: "大盘 · 情绪 · 涨跌家数", icon: Globe2 },
-    { to: "/stream", label: "小道消息", desc: "消息线索 · 事实核验", icon: Zap },
+    { to: "/market", label: "大盘", desc: "大盘 · 情绪 · 涨跌家数", icon: Globe2 },
+    { to: "/stream", label: "消息", desc: "消息线索 · 事实核验", icon: Zap },
   ],
 };
 

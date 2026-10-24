@@ -83,6 +83,13 @@ export interface MyReport {
   id: string; name: string; industry: string; size: number; ext: string; ts: number;
 }
 
+export interface WatchlistRemovalRecord {
+  id?: string;
+  operation_id?: string;
+  codes: readonly string[];
+  removed_at: string;
+}
+
 // 下载/预览研报：带鉴权头 fetch → blob → 触发浏览器下载（<a download> 无法带 Authorization，故走 blob）。
 export async function downloadReport(id: string, name: string): Promise<void> {
   const resp = await fetch(`/api/myreports/file/${id}`, { headers: authHeaders() });
@@ -570,6 +577,13 @@ export const api = {
   events: (code: string) => get<EventCalendarData>(`/events?code=${code}`),
   catalyst: () => get<CatalystData>("/catalyst"),
   portfolio: () => get<PortfolioData>("/portfolio"),
+  recordWatchlistRemoval: (codes: string[], operation_id: string) =>
+    request<{ record: WatchlistRemovalRecord }>(
+      "/watchlist/removals",
+      "POST",
+      { codes, operation_id },
+    ),
+  watchlistRemovals: (limit = 20) => get<WatchlistRemovalRecord[]>(`/watchlist/removals?limit=${limit}`),
   blocks: (code: string) => get<{ total: number; boards: Array<{ name: string; code: string; change_pct: number; lead_stock: string }>; concept_tags: string[] }>(`/blocks?code=${encodeURIComponent(code)}`),
   addHolding: (code: string, shares: number, cost: number, opened_at?: string, operation_id?: string) => request<PortfolioData>("/portfolio/holding", "POST", { code, shares, cost, opened_at, operation_id }),
   removeHolding: (code: string) => request<PortfolioData>(`/portfolio/holding?code=${code}`, "DELETE"),

@@ -3,7 +3,7 @@
 // 只读：/api/aqsp/info-stream（财联社快讯 + 概念异动榜）。
 // 每条信息自带证据（来源、时间、重要度）；单源故障显式「缺材料」提示，
 // 不静默渲染成正常空数据。
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { RefreshCw, Zap } from "lucide-react";
 import {
   EmptyState,
@@ -17,6 +17,7 @@ import { api } from "@/lib/api";
 import { changeClass, formatEvidenceTime, formatSignedPct, formatYi } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { InfoStreamData, InfoStreamNewsItem } from "@/types/aqsp";
+import { CatalystSectorSection } from "@/components/aqsp/CatalystSectorSection";
 
 function extractMessage(reason: unknown): string {
   return reason instanceof Error ? reason.message : "读取失败";
@@ -61,6 +62,28 @@ function SourceHealthBar({ data }: { data: InfoStreamData }) {
   );
 }
 
+export function InfoStreamLoadStatus({
+  error,
+  loading,
+  hasData,
+  onRefresh,
+}: {
+  error: string;
+  loading: boolean;
+  hasData: boolean;
+  onRefresh: () => void;
+}) {
+  return (
+    <>
+      {error ? <ErrorState
+        error={hasData ? `${error}；仍显示上次成功读取的数据。` : error}
+        onRefresh={onRefresh}
+      /> : null}
+      {loading && !hasData ? <LoadingState label="正在读取信息流" /> : null}
+    </>
+  );
+}
+
 function NewsItem({ item }: { item: InfoStreamNewsItem }) {
   return (
     <div className="aq-card">
@@ -90,26 +113,27 @@ export function InfoStreamPage() {
   const [data, setData] = useState<InfoStreamData | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const requestSequence = useRef(0);
 
   const load = useCallback((force: boolean) => {
-    let alive = true;
+    const run = ++requestSequence.current;
     setLoading(true);
     api
       .infoStream(force)
       .then((value) => {
-        if (!alive) return;
+        if (requestSequence.current !== run) return;
         setData(value);
         setError("");
       })
       .catch((reason: unknown) => {
-        if (!alive) return;
+        if (requestSequence.current !== run) return;
         setError(extractMessage(reason));
       })
       .finally(() => {
-        if (alive) setLoading(false);
+        if (requestSequence.current === run) setLoading(false);
       });
     return () => {
-      alive = false;
+      requestSequence.current += 1;
     };
   }, []);
 
@@ -141,8 +165,12 @@ export function InfoStreamPage() {
         </button>
       </SectionHeader>
 
-      {error ? <ErrorState error={error} onRefresh={() => load(true)} /> : null}
-      {loading && !data ? <LoadingState label="正在读取信息流" /> : null}
+      <InfoStreamLoadStatus
+        error={error}
+        loading={loading}
+        hasData={Boolean(data)}
+        onRefresh={() => load(true)}
+      />
 
       {data ? (
         <>
@@ -218,6 +246,7 @@ export function InfoStreamPage() {
           </section>
         </>
       ) : null}
+      <CatalystSectorSection />
     </div>
   );
 }

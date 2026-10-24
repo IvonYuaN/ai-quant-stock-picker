@@ -25,6 +25,7 @@ import { symbolNames } from "@/lib/daily-view";
 import type { AqspCandidateLifecycle } from "@/types/aqsp";
 import {
   selectCandidates,
+  groupCandidatesByOwnership,
   strategyCounts,
   type CandidateSortKey,
 } from "@/lib/candidate-view";
@@ -148,7 +149,12 @@ function CandidateDetailCard({
   const toggleWatch = () => {
     try {
       const current = loadWatch();
-      saveWatch(watched ? current.filter((code) => code !== row.symbol) : [...new Set([...current, row.symbol])]);
+      const change = saveWatch(watched ? current.filter((code) => code !== row.symbol) : [...new Set([...current, row.symbol])]);
+      if (change.removed.length && change.operation_id) {
+        void api.recordWatchlistRemoval([...change.removed], change.operation_id).catch(() => {
+          // localStorage removal evidence remains available when the API is offline.
+        });
+      }
       toast(watched ? "已移出自选" : "已加入自选");
     } catch {
       toast.error("自选保存失败，请检查浏览器存储后重试。");
@@ -559,6 +565,7 @@ export function CandidateSection({
     exclude: hideOwned ? (row) => ownedKind(row.symbol, ownership) !== null : undefined,
   });
   const visible = selection.rows;
+  const visibleGroups = groupCandidatesByOwnership(visible);
   const selected = visible.find((row) => row.symbol === selectedSymbol) ?? visible[0];
   const owned = summarizeOwned(
     view.candidates.map((row) => row.symbol),
@@ -599,7 +606,28 @@ export function CandidateSection({
         <button type="button" className={cn("aq-btn", onlyOwned && "aq-btn-primary")} aria-pressed={onlyOwned} onClick={() => { setOnlyOwned(!onlyOwned); setHideOwned(false); }}>只看我的命中</button>
       </div>
       {view.frozenAt ? <p className="aq-hint">评分、策略依据与参数身份沿用当日首次冻结；现价、新鲜度与消息按最新证据更新。</p> : null}
-      {added.length > 0 ? <p className="aq-hint">盘中新增：{added.map((change) => `${change.display_name} ${change.symbol}`).join("、")}。保留初始名单，次一交易日重新冻结。</p> : null}
+      {added.length > 0 ? (
+        <section className="aq-candidate-increment" aria-label="盘中新增候选">
+          <div className="aq-candidate-increment-head">
+            <strong>盘中新增</strong>
+            <span>不改变已冻结名单与排序</span>
+          </div>
+          {added.map((change) => (
+            <div className="aq-candidate-increment-row" key={change.symbol}>
+              <div className="aq-candidate-increment-identity">
+                <Tag tone="primary">新增</Tag>
+                <strong>{change.display_name || "未命名标的"}</strong>
+                <span className="aq-code">{change.symbol}</span>
+              </div>
+              {onPick ? (
+                <button type="button" className="aq-btn" onClick={() => onPick(change.symbol)}>
+                  查看个股
+                </button>
+              ) : null}
+            </div>
+          ))}
+        </section>
+      ) : null}
 
       {view.candidates.length === 0 ? (
         <EmptyState
@@ -643,13 +671,21 @@ export function CandidateSection({
               <div className="aq-candidate-split">
                 <div className="aq-candidate-roster" role="group" aria-label="选择研究候选">
                   <div className="aq-candidate-roster-head"><span>标的 / 研究状态</span><span>评分</span></div>
-                  {visible.map((row, index) => (
-                    <button key={row.symbol} type="button" className={cn("aq-candidate-choice", selected?.symbol === row.symbol && "aq-candidate-choice-active")} aria-pressed={selected?.symbol === row.symbol} onClick={() => setSelectedSymbol(row.symbol)}>
-                      <span className="aq-candidate-rank">{String(index + 1).padStart(2, "0")}</span>
-                      <span className="aq-candidate-choice-body"><span className="aq-candidate-choice-title"><b>{row.name}</b><span className="aq-code">{row.symbol}</span>{invalidated.has(row.symbol) ? <Tag tone="warn">已失效</Tag> : null}</span><span>{statusLabel(row.status)} · {row.messageCount} 条消息 · {row.debateRounds !== null ? `${row.debateRounds} 轮复核` : "待复核"}</span><OwnerTag ownership={ownership} code={row.symbol} /></span>
-                      <strong className="aq-candidate-choice-score">{row.scoreText}</strong>
-                    </button>
-                  ))}
+                  {visibleGroups.map((group, groupIndex) => {
+                    const rankOffset = visibleGroups.slice(0, groupIndex).reduce((total, item) => total + item.rows.length, 0);
+                    return group.rows.length ? (
+                      <section className="aq-candidate-roster-group" key={group.kind} data-candidate-group={group.kind} aria-label={`${group.label} ${group.rows.length} 只`}>
+                        <div className="aq-candidate-roster-group-head"><strong>{group.label}</strong><span>{group.rows.length} 只</span></div>
+                        {group.rows.map((row, index) => (
+                          <button key={row.symbol} type="button" className={cn("aq-candidate-choice", selected?.symbol === row.symbol && "aq-candidate-choice-active")} aria-pressed={selected?.symbol === row.symbol} onClick={() => setSelectedSymbol(row.symbol)}>
+                            <span className="aq-candidate-rank">{String(rankOffset + index + 1).padStart(2, "0")}</span>
+                            <span className="aq-candidate-choice-body"><span className="aq-candidate-choice-title"><b>{row.name}</b><span className="aq-code">{row.symbol}</span>{invalidated.has(row.symbol) ? <Tag tone="warn">已失效</Tag> : null}</span><span>{statusLabel(row.status)} · {row.messageCount} 条消息 · {row.debateRounds !== null ? `${row.debateRounds} 轮复核` : "待复核"}</span><OwnerTag ownership={ownership} code={row.symbol} /></span>
+                            <strong className="aq-candidate-choice-score">{row.scoreText}</strong>
+                          </button>
+                        ))}
+                      </section>
+                    ) : null;
+                  })}
                 </div>
                 {selected ? <CandidateDetailCard
                     key={selected.symbol}

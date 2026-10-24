@@ -52,11 +52,24 @@ export function OperationRecorder() {
       if (pendingDraft.current) { dialog.current?.showModal(); return; }
       const detail = (event as CustomEvent<OperationTarget>).detail ?? {};
       setTarget(detail);
-      setForm({ direction: detail.direction ?? "buy", code: detail.code ?? "", price: "", shares: "", date: shanghaiDate() });
+      const code = detail.code?.trim() ?? "";
+      setForm({ direction: detail.direction ?? "buy", code, price: "", shares: "", date: shanghaiDate() });
       setError(""); setUncertain(false); setPortfolio(null);
       submission.current = { fingerprint: "", id: "" };
       dialog.current?.showModal();
       void loadPortfolio();
+      // 回录入口已知标的时，先带入最新价，减少用户重复输入；行情失败或用户已改价时保留原值。
+      if (code) {
+        void api.quote(code).then((quotes) => {
+          const quote = quotes[code];
+          if (!quote || !Number.isFinite(quote.price) || quote.price <= 0) return;
+          setForm((value) => value.code.trim() === code && value.price === ""
+            ? { ...value, price: String(quote.price) }
+            : value);
+        }).catch(() => {
+          /* 当前价只是便捷预填；行情失败不阻断手动回录。 */
+        });
+      }
     };
     window.addEventListener(RECORD_OPERATION_EVENT, open);
     return () => { window.removeEventListener(RECORD_OPERATION_EVENT, open); readVersion.current++; };
