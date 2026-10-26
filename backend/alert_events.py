@@ -275,7 +275,8 @@ def record_review_plan(event_id: str, choice: str) -> dict | None:
         target = next((e for e in events if e.get("id") == event_id), None)
         if target is None or target.get("status") != "OPEN":
             return None
-        plan = {"choice": choice, "updated_at": _now_iso()}
+        previous = target.get("review_plan") or {}
+        plan = previous.copy() if previous.get("choice") == choice else {"choice": choice, "updated_at": _now_iso()}
         for event in events:
             if (event.get("status") == "OPEN"
                 and event.get("symbol") == target.get("symbol")

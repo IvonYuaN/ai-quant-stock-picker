@@ -384,7 +384,7 @@ def get_portfolio() -> dict:
                 {
                     "code": h["code"],
                     "name": display_name,
-                    "quote": {key: q[key] for key in ("name", "price", "change_pct", "quote_time", "as_of", "source") if key in q},
+                    "quote": {key: q[key] for key in ("name", "price", "change_pct", "quote_time", "as_of", "source", "high", "low", "last_close", "amount_wan", "limit_up", "limit_down") if key in q},
                     "price": price,
                     "shares": h["shares"],
                     "cost": h["cost"],
