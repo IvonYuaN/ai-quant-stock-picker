@@ -5,8 +5,10 @@ import asyncio
 import fcntl
 import json
 import os
-from dataclasses import dataclass
-from collections.abc import AsyncIterator, Callable
+from dataclasses import dataclass, replace
+from collections.abc import AsyncIterator, Callable, Mapping
+import math
+import time
 from pathlib import Path
 from typing import Any, Literal
 
@@ -25,13 +27,37 @@ from position_route_review import risk_evidence_revision
 @dataclass(frozen=True)
 class DiscussionLimits:
     """I/O budgets, not strategy thresholds: <=3 calls at once, no retries."""
-    # Real 3.0 Flash cross-replies exceeded the former 18s cap. The streaming
+    # A validated 3.0 Flash peer reply took 32.26s (see #462). The streaming
     # route reports progress while retaining finite per-phase I/O deadlines.
-    role_timeout: float = 30.0
-    synthesis_timeout: float = 25.0
+    role_timeout: float = 45.0
+    # Same validated summary took 23.45s and previously hit 25s. Allow bounded
+    # latency headroom, configurable for provider/model changes, without retries.
+    synthesis_timeout: float = 45.0
+    max_phase_timeout: float = 60.0
     heartbeat_seconds: float = 5.0
     max_tokens: int = 1400
     max_response_bytes: int = 100_000
+    summary_text_chars: int = 180
+    summary_list_items: int = 3
+
+
+def discussion_limits(environ: Mapping[str, str] | None = None) -> DiscussionLimits:
+    """Read finite operational budgets; invalid settings fail before model I/O."""
+    values = os.environ if environ is None else environ
+    limits = DiscussionLimits()
+    overrides: dict[str, float] = {}
+    for name, field in (("AQSP_POSITION_ROLE_TIMEOUT_SECONDS", "role_timeout"),
+                        ("AQSP_POSITION_SYNTHESIS_TIMEOUT_SECONDS", "synthesis_timeout")):
+        if name not in values:
+            continue
+        try:
+            value = float(values[name])
+        except (ValueError, TypeError):
+            raise ValueError(f"{name} 必须为有限秒数，且大于0、不超过{limits.max_phase_timeout:g}") from None
+        if not math.isfinite(value) or not 0 < value <= limits.max_phase_timeout:
+            raise ValueError(f"{name} 必须为有限秒数，且大于0、不超过{limits.max_phase_timeout:g}")
+        overrides[field] = value
+    return replace(limits, **overrides)
 
 
 @dataclass(frozen=True)
@@ -48,6 +74,14 @@ class ModelHTTPError(RuntimeError):
     def __init__(self, status_code: int) -> None:
         self.status_code = status_code
         super().__init__(f"模型接口 HTTP {status_code}")
+
+
+class ModelOutputError(RuntimeError):
+    """Safe transport-level incompleteness, with no upstream body in the error."""
+
+    def __init__(self, kind: Literal["truncated_output", "empty_output"]) -> None:
+        self.kind = kind
+        super().__init__(kind)
 
 
 class Observation(BaseModel):
@@ -162,8 +196,17 @@ async def call_model(endpoint: ModelEndpoint, payload: dict[str, Any], timeout: 
                     chunks.append(chunk)
         data = json.loads(b"".join(chunks))
         if endpoint.anthropic:
-            return "".join(block.get("text", "") for block in data["content"] if block.get("type") == "text")
-        return data["choices"][0]["message"]["content"]
+            if data.get("stop_reason") == "max_tokens":
+                raise ModelOutputError("truncated_output")
+            content = "".join(block.get("text", "") for block in data["content"] if block.get("type") == "text")
+        else:
+            choice = data["choices"][0]
+            if choice.get("finish_reason") == "length":
+                raise ModelOutputError("truncated_output")
+            content = choice["message"]["content"]
+        if not isinstance(content, str) or not content.strip():
+            raise ModelOutputError("empty_output")
+        return content
     return await asyncio.wait_for(fetch(), timeout=timeout)
 
 
@@ -202,13 +245,15 @@ def _parse(text: str, schema: type[BaseModel], evidence: dict[str, Any], prices:
     return parsed
 
 
-def output_schema(schema: type[BaseModel], evidence: dict[str, Any], prices: dict[str, Any], peers: set[str]) -> dict[str, Any]:
+def output_schema(schema: type[BaseModel], evidence: dict[str, Any], prices: dict[str, Any], peers: set[str],
+                  limits: DiscussionLimits | None = None) -> dict[str, Any]:
     """Describe exact reference IDs before generation, then validate independently.
 
     A schema shown in a prompt is not guaranteed enforcement by the provider.
     The parser still rejects unsupported references; no repair or silent retry.
     """
     result = schema.model_json_schema()
+    limits = limits or DiscussionLimits()
     containers = [result, *result.get("$defs", {}).values()]
     for container in containers:
         properties = container.get("properties", {})
@@ -216,14 +261,28 @@ def output_schema(schema: type[BaseModel], evidence: dict[str, Any], prices: dic
             properties["evidence_ids"]["items"] = {"type": "string", "enum": sorted(evidence)}
         if "price_ref" in properties:
             properties["price_ref"] = {"anyOf": [{"type": "string", "enum": sorted(prices)}, {"type": "null"}]} if prices else {"type": "null"}
+            properties["price_ref"]["description"] = "sell_review或buy_review必须引用price_refs中的ID；observe/pause允许null"
         if "reply_to" in properties:
             properties["reply_to"]["items"] = {"type": "string", "enum": sorted(peers)}
             if not peers:
                 properties["reply_to"]["maxItems"] = 0
+            else:
+                properties["reply_to"]["minItems"] = 1
+                properties["challenge"]["minLength"] = 1
+        if schema is not RoleOpinion:
+            for value in properties.values():
+                if value.get("type") == "string":
+                    value["maxLength"] = min(value.get("maxLength", limits.summary_text_chars), limits.summary_text_chars)
+                if value.get("type") == "array" and value.get("items", {}).get("type") == "string" and "enum" not in value["items"]:
+                    value["maxItems"] = min(value.get("maxItems", limits.summary_list_items), limits.summary_list_items)
+                    value["items"]["maxLength"] = limits.summary_text_chars
     return result
 
 
 def _model_failure(exc: Exception) -> dict[str, str]:
+    if isinstance(exc, ModelOutputError):
+        issue = "模型输出达到长度上限，未使用不完整结果" if exc.kind == "truncated_output" else "模型返回空内容，未形成有效意见"
+        return {"failure_kind": exc.kind, "issue": issue}
     if isinstance(exc, ModelHTTPError):
         return {"failure_kind": "upstream_status", "issue": f"模型接口 HTTP {exc.status_code}，未自动重试"}
     if isinstance(exc, (TimeoutError, httpx.TimeoutException)):
@@ -236,10 +295,11 @@ def _model_failure(exc: Exception) -> dict[str, str]:
 async def run_discussion(event_id: str, choice: str | None, expected_position: dict[str, Any], config: dict[str, str] | None = None,
                          server_model: str | None = None, on_progress: Callable[[str], None] | None = None) -> dict[str, Any]:
     """Discuss one server-built snapshot, commit only to an unchanged open position."""
+    started = time.monotonic()
     comparison = choice is None
     if not comparison and choice not in {"hold", "reduce", "t_watch"}:
         raise ValueError("未知处置方案")
-    limits = DiscussionLimits()
+    limits = discussion_limits()
     lease_path = Path(ae.CACHE_DIR) / ".position-discussion.lock"
     lease_path.parent.mkdir(parents=True, exist_ok=True)
     with lease_path.open("a") as lease:
@@ -288,16 +348,19 @@ async def run_discussion(event_id: str, choice: str | None, expected_position: d
                   "scenario": None if comparison else worksheet["scenario"]}
         rounds: list[dict[str, Any]] = []
         async def opinion(role: str, peers: dict[str, Any] | None) -> dict[str, Any]:
+            call_started = time.monotonic()
             try:
                 raw = await call_model(endpoint, {**common, "role": ROLES[role][1],
                     "task": ("独立评估；每个文字字段用一句话，reply_to为空数组，challenge为空字符串" if peers is None else
-                             "回应同行：指出同意、反对或缺证，不必改变原判断；每个文字字段用一句话，reply_to只填peer_opinions的键"),
+                             "回应同行：指出同意、反对或缺证，不必改变原判断；每个文字字段用一句话。reply_to至少填一个peer_opinions的键，challenge必须写实际回应，不能留空"),
                     "allowed_evidence_ids": sorted(evidence),
                     "peer_opinions": peers or {}, "output_schema": output_schema(RoleOpinion, evidence, prices, set(peers or {}))}, limits.role_timeout, limits)
                 result = _parse(raw, RoleOpinion, evidence, prices, set(peers or {}), guards)
-                return {"role": role, "label": ROLES[role][0], "status": "ok", "opinion": result}
+                return {"role": role, "label": ROLES[role][0], "status": "ok", "opinion": result,
+                        "elapsed_seconds": round(time.monotonic() - call_started, 2)}
             except (ValueError, KeyError, TypeError, IndexError, AttributeError, RuntimeError, httpx.HTTPError, TimeoutError) as exc:
-                return {"role": role, "label": ROLES[role][0], "status": "failed", **_model_failure(exc)}
+                return {"role": role, "label": ROLES[role][0], "status": "failed", **_model_failure(exc),
+                        "elapsed_seconds": round(time.monotonic() - call_started, 2)}
         if on_progress:
             on_progress("independent")
         initial = list(await asyncio.gather(*(opinion(role, None) for role in ROLES)))
@@ -312,7 +375,9 @@ async def run_discussion(event_id: str, choice: str | None, expected_position: d
         completed = [row for row in replies if row["status"] == "ok"]
         summary = None
         summary_failure: dict[str, str] = {}
+        summary_seconds = None
         if len(completed) >= 2:
+            summary_started = time.monotonic()
             if on_progress:
                 on_progress("synthesis")
             try:
@@ -320,12 +385,14 @@ async def run_discussion(event_id: str, choice: str | None, expected_position: d
                 task = ("比较持有、减仓、做T三条路各自适用的证据、代价、缺口及不宜条件；有依据时说明可优先核对哪条路，"
                         "无依据时focus_choice=null。不要预设解套或买卖结论，不要求先填交易数量或费用，不自动选择。"
                         if comparison else "依据两轮意见给出所选方案的条件计划，保留分歧、缺口和不应操作情形，不以多数票定买卖")
+                task += "面向新手，每个文字字段只写一句必要结论或理由；避免重复，各列表只保留关键信息，不为填满列表补内容。"
                 raw = await call_model(endpoint, {**common, "task": task,
                     "rounds": rounds, "allowed_evidence_ids": sorted(evidence),
-                    "output_schema": output_schema(schema, evidence, prices, set())}, limits.synthesis_timeout, limits)
+                    "output_schema": output_schema(schema, evidence, prices, set(), limits)}, limits.synthesis_timeout, limits)
                 summary = _parse(raw, schema, evidence, prices, set(), guards)
             except (ValueError, KeyError, TypeError, IndexError, AttributeError, RuntimeError, httpx.HTTPError, TimeoutError) as exc:
                 summary_failure = _model_failure(exc)
+            summary_seconds = round(time.monotonic() - summary_started, 2)
         result = {"status": "complete" if summary and len(completed) == len(ROLES) else "partial" if completed or valid else "failed",
                   "generated_at": now_shanghai().isoformat(), "model": endpoint.model,
                   "mode": "同一模型的三角色讨论", "choice": choice, "position_snapshot": expected_position,
@@ -334,6 +401,8 @@ async def run_discussion(event_id: str, choice: str | None, expected_position: d
                   "analysis_basis_id": worksheet["analysis_basis_id"], "risk_revision": worksheet["risk_revision"],
                   "rounds": rounds, "summary": summary, "model_text_unverified": True,
                   "summary_issue": summary_failure.get("issue", ""), "summary_failure_kind": summary_failure.get("failure_kind", ""),
+                  "elapsed_seconds": round(time.monotonic() - started, 2), "summary_seconds": summary_seconds,
+                  "io_budget": {"role_timeout_seconds": limits.role_timeout, "synthesis_timeout_seconds": limits.synthesis_timeout},
                   "notice": "模型意见仅供人工复核；角色可能共享模型偏差，不是独立模型共识。仅检查格式、引用及结构化动作；模型自由文字未经交易语义验证，不是操作指令，不覆盖风险规则或自动成交。"}
         await asyncio.to_thread(_save_result, event_id, plan, expected_position, result)
         return result

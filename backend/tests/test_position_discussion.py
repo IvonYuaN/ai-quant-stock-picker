@@ -375,3 +375,85 @@ def test_position_discussion_explains_compatibility_failure_without_leaking_prov
     assert {row["failure_kind"] for row in result["rounds"][0]["opinions"]} == {kind}
     assert "private-key" not in response.text
     assert result["evidence_snapshot"]["quote"]["price"] == worksheet["basis"]["price"]
+
+
+def test_position_discussion_uses_operational_budgets_when_explicitly_configured(discussion_client, monkeypatch) -> None:
+    client, event_id, worksheet, _ = discussion_client
+    monkeypatch.setenv("AQSP_POSITION_ROLE_TIMEOUT_SECONDS", "12.5")
+    monkeypatch.setenv("AQSP_POSITION_SYNTHESIS_TIMEOUT_SECONDS", "44")
+    original = discussion.call_model
+    budgets = []
+    async def measured(endpoint, payload, timeout, limits):
+        budgets.append(("summary" if "rounds" in payload else "role", timeout))
+        return await original(endpoint, payload, timeout, limits)
+    monkeypatch.setattr(discussion, "call_model", measured)
+    result = client.post(f"/api/alerts/{event_id}/discussion", json={"choice": None, "expected_position": worksheet["position_snapshot"]})
+    assert result.json()["data"]["status"] == "complete"
+    assert budgets == [("role", 12.5)] * 6 + [("summary", 44)]
+    assert discussion.discussion_limits({}).synthesis_timeout == 45
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "61", "inf", "nan", "private-key", ""])
+def test_position_discussion_refuses_invalid_budget_before_model_io(discussion_client, monkeypatch, value: str) -> None:
+    client, event_id, worksheet, calls = discussion_client
+    monkeypatch.setenv("AQSP_POSITION_SYNTHESIS_TIMEOUT_SECONDS", value)
+    response = client.post(f"/api/alerts/{event_id}/discussion/stream", json={"choice": None, "expected_position": worksheet["position_snapshot"]})
+    assert calls == []
+    record = json.loads(response.text.splitlines()[-1])
+    assert record["event"] == "error" and "AQSP_POSITION_SYNTHESIS_TIMEOUT_SECONDS" in record["detail"]
+    if value == "private-key":
+        assert value not in record["detail"]
+
+
+@pytest.mark.parametrize("anthropic,kind", [(False, "truncated_output"), (True, "truncated_output"), (False, "empty_output"), (True, "empty_output")])
+def test_position_model_transport_rejects_incomplete_response_even_when_json_parseable(monkeypatch, anthropic: bool, kind: str) -> None:
+    text = json.dumps(COMPARISON) if kind == "truncated_output" else "  "
+    payload = ({"content": [{"type": "text", "text": text}], "stop_reason": "max_tokens" if kind == "truncated_output" else "end_turn"}
+               if anthropic else {"choices": [{"message": {"content": text}, "finish_reason": "length" if kind == "truncated_output" else "stop"}]})
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, json=payload))
+    original = httpx.AsyncClient
+    monkeypatch.setattr(discussion.httpx, "AsyncClient", lambda **kwargs: original(transport=transport, **kwargs))
+    with pytest.raises(discussion.ModelOutputError) as error:
+        asyncio.run(discussion.call_model(discussion.ModelEndpoint("https://model.invalid", "private-key", "model", anthropic), {}, 1, discussion.DiscussionLimits()))
+    assert discussion._model_failure(error.value)["failure_kind"] == kind
+    assert "private-key" not in str(error.value)
+
+
+def test_position_discussion_requests_short_summary_without_losing_routes_or_disagreements(discussion_client) -> None:
+    client, event_id, worksheet, calls = discussion_client
+    response = client.post(f"/api/alerts/{event_id}/discussion", json={"choice": None, "expected_position": worksheet["position_snapshot"]})
+    assert response.json()["data"]["summary"]["disagreements"] == COMPARISON["disagreements"]
+    schema = calls[-1]["output_schema"]
+    assert schema["properties"]["conclusion"]["maxLength"] == 180
+    assert schema["$defs"]["RouteOpinion"]["properties"]["reason"]["maxLength"] == 180
+    assert schema["properties"]["agreements"]["maxItems"] == 3
+    assert schema["properties"]["routes"]["minItems"] == schema["properties"]["routes"]["maxItems"] == 3
+    assert len(calls[-1]["rounds"]) == 2
+    assert all(len(row["opinions"]) == 3 for row in calls[-1]["rounds"])
+    assert calls[-1]["guards"]["no_orders"]
+
+
+def test_position_discussion_preserves_roles_without_fake_summary_when_synthesis_times_out(discussion_client, monkeypatch) -> None:
+    client, event_id, worksheet, calls = discussion_client
+    original = discussion.call_model
+    async def failed_summary(endpoint, payload, timeout, limits):
+        if "rounds" in payload:
+            calls.append(payload)
+            raise TimeoutError("private-key")
+        return await original(endpoint, payload, timeout, limits)
+    monkeypatch.setattr(discussion, "call_model", failed_summary)
+    response = client.post(f"/api/alerts/{event_id}/discussion", json={"choice": None, "expected_position": worksheet["position_snapshot"]})
+    result = response.json()["data"]
+    assert len(calls) == 7 and result["status"] == "partial" and result["summary"] is None
+    assert result["summary_failure_kind"] == "timeout" and "private-key" not in response.text
+    assert all(row["status"] == "ok" and row["elapsed_seconds"] >= 0 for rnd in result["rounds"] for row in rnd["opinions"])
+    assert result["summary_seconds"] >= 0 and result["elapsed_seconds"] >= result["summary_seconds"]
+    assert result["io_budget"] == {"role_timeout_seconds": 45, "synthesis_timeout_seconds": 45}
+    assert result["choice"] is None
+
+
+def test_position_discussion_describes_required_peer_reply_when_challenge_has_peers() -> None:
+    schema = discussion.output_schema(discussion.RoleOpinion, {"quote": {}}, {"price_0": {}}, {"trend"})
+    assert schema["properties"]["reply_to"]["minItems"] == 1
+    assert schema["properties"]["challenge"]["minLength"] == 1
+    assert schema["properties"]["reply_to"]["items"]["enum"] == ["trend"]
