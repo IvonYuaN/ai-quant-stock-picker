@@ -5,7 +5,7 @@ import { formatEvidenceTime } from "@/lib/format";
 import { ALERTS_CHANGED_EVENT } from "@/lib/operation";
 
 export function FollowupStatus({ observation, compact = false }: { observation: FollowupObservation; compact?: boolean }) {
-  return <div className={`aq-followup-status${compact ? " aq-followup-status-compact" : ""}`}><strong>{observation.title}</strong>{!compact ? <p>{observation.detail}</p> : null}<small>后台检查 {formatEvidenceTime(observation.observed_at)}{!compact ? ` · 行情时点 ${formatEvidenceTime(observation.quote_as_of) || "尚缺依据"}` : ""}</small></div>;
+  return <div className={`aq-followup-status${compact ? " aq-followup-status-compact" : ""}`}><strong>{observation.requires_refresh ? "上次记录（当前状态待重查）：" : ""}{observation.title}</strong>{!compact ? <p>{observation.detail}</p> : null}<small>后台检查 {formatEvidenceTime(observation.observed_at)}{!compact ? ` · 行情时点 ${formatEvidenceTime(observation.quote_as_of) || "尚缺依据"}` : ""}</small></div>;
 }
 
 /** Background facts stay separate from the page quote; setting a mode is not a delivery receipt. */
@@ -31,15 +31,16 @@ export function PositionFollowupPanel({ worksheet, disabled, onSaved }: { worksh
     finally { inFlight.current = false; if (active.current) setBusy(false); }
   }
   return <section className="aq-followup-panel" aria-label="后台计划跟进">
+    <details className="aq-followup-details"><summary><span>后台跟进与通知</span><small>{observation ? `${stale ? "记录待重查 · " : ""}${formatEvidenceTime(observation.observed_at)}` : "尚无检查记录"}</small></summary>
     <h2>上次后台检查</h2>
     {observation ? <FollowupStatus observation={observation} /> : <p>尚无这笔持仓的后台检查记录，不能据此判断计划状态。</p>}
-    {stale && !worksheet.archived ? <p className="aq-action-plan-warning" role="status">这条记录已旧，或方案、仓位、条件与规则已变化，需等待新的后台检查；当前页行情更新不会改写它。</p> : null}
-    {issue ? <p className="aq-note" role="status">{issue}</p> : null}
+    {!worksheet.archived && (stale || issue) ? <p className="aq-action-plan-warning" role="status">{issue || "这条记录已旧，或方案、仓位、条件与规则已变化，需等待新的后台检查；当前页行情更新不会改写它。"}</p> : null}
     {!worksheet.archived ? <details className="aq-followup-settings"><summary>通知设置 · {worksheet.followup ? ({ off: "仅站内", changes: "变化时提醒", daily: "每天最多一次" })[worksheet.followup.mode] : "待读取"}</summary>
       <label>需要外发通知吗？<select aria-label="计划通知模式" value={worksheet.followup?.mode ?? "off"} disabled={disabled || busy || !worksheet.followup} onChange={(event) => void save(event.target.value as FollowupMode)}>{Object.entries(FOLLOWUP_MODES).map(([mode, label]) => <option key={mode} value={mode}>{label}</option>)}</select></label>
       <p className="aq-note">正常等待不外发；开启后使用现有通知渠道。保存设置只表示配置成功，不代表通知已送达。</p>
       {busy ? <p role="status">正在保存通知设置…</p> : null}{saved ? <p role="status">通知设置已保存，未验证外发是否送达。</p> : null}{error ? <p role="alert">{error}</p> : null}
     </details> : null}
     <p className="aq-note">{worksheet.archived ? "清仓后停止跟进，这里只保留当时的后台检查记录。" : "后台按现有定时检查入口运行，数据源失败时可能延后。页面可见时每分钟读取一次，不代表实时逐笔监听。"}</p>
+    </details>
   </section>;
 }

@@ -3822,6 +3822,9 @@
 /* Background observations have their own clock and stay readable on narrow screens. */
 .aq-followup-panel { border: 1px solid hsl(var(--border)); border-radius: 14px; padding: 20px; margin: 18px 0; min-width: 0; }
 .aq-followup-panel h2 { font-size: 1rem; margin: 0 0 12px; }
+.aq-followup-details > summary { cursor: pointer; min-height: 44px; line-height: 1.6; }
+.aq-followup-details > summary small { display: block; color: hsl(var(--muted-foreground)); font-weight: 400; }
+.aq-followup-details[open] > summary { margin-bottom: 16px; }
 .aq-followup-status { min-width: 0; overflow-wrap: anywhere; }
 .aq-followup-status p { margin: 8px 0; }
 .aq-followup-status small { display: block; color: hsl(var(--muted-foreground)); line-height: 1.6; }

@@ -5,7 +5,7 @@ import { draftNeedsReview } from "./position-workspace";
 import { followupForRiskGroup, followupResponseIsCurrent, followupsWithoutRiskCards, followupView, saveFollowupMode, visibleFollowups } from "./position-followup";
 import { groupPositionAlerts, normalizeAlerts } from "./alert-view";
 import { normalizePortfolio } from "./portfolio-view";
-import { PositionFollowupPanel } from "../components/aqsp/PositionFollowupPanel";
+import { FollowupStatus, PositionFollowupPanel } from "../components/aqsp/PositionFollowupPanel";
 
 const observationFixture: FollowupObservation = {
   position_id: "holding-a", symbol: "600000", name: "合成持仓", state: "price_watch", title: "已到保存的观察价", detail: "只说明报价位置，转弱仍待核对。",
@@ -35,7 +35,9 @@ export const followupDisplayContracts = {
   oldSnapshotIsHistorical: staleHtml.includes("这条记录已旧") && staleHtml.includes("当前页行情更新不会改写"),
   sourceFailureDoesNotBecomeAllClear: failedHtml.includes("行情源未能完成") && failedHtml.includes('disabled=""'),
   settingsCollapsedByDefault: /<details class="aq-followup-settings">/.test(normalHtml),
+  backgroundDoesNotDuplicatePrimaryPlan: /<details class="aq-followup-details">/.test(normalHtml),
   configurationIsNotDelivery: normalHtml.includes("不代表通知已送达") && !normalHtml.includes("已成功发送"),
+  homeStaleRecordDoesNotClaimCurrent: renderToStaticMarkup(createElement(FollowupStatus, { observation: { ...observationFixture, requires_refresh: true }, compact: true })).includes("当前状态待重查"),
   scheduleDoesNotPromiseRealtime: normalHtml.includes("可能延后") && normalHtml.includes("不代表实时逐笔监听"),
   archiveHasNoModeControl: !archiveHtml.includes("<select") && !archiveHtml.includes("通知设置") && archiveHtml.includes("清仓后停止跟进"),
   foreignSnapshotNeverDisplayed: followupView({ ...worksheetFixture, position_id: "holding-b" }).observation === null,

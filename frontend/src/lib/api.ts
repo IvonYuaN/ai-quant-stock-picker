@@ -423,6 +423,7 @@ export interface PositionConstraints {
 export interface PlanTarget { kind: "position" | "alert"; id: string }
 export type FollowupMode = "off" | "changes" | "daily";
 export interface FollowupObservation {
+  requires_refresh?: boolean; issue?: string;
   position_id: string; symbol: string; name: string;
   state: "waiting" | "price_watch" | "below_watch" | "paused" | "needs_review" | "evidence_unavailable" | "missing_prices" | "exited" | "unplanned";
   title: string; detail: string; observed_at: string; quote_as_of: string | null;
