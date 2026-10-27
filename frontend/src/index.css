@@ -3730,3 +3730,39 @@
 .aq-position-discussion input:not([type="checkbox"]) { width: 100%; min-width: 0; padding: 9px; background: transparent; border: 1px solid #4b5055; border-radius: 4px; }
 .aq-discussion-result { margin-top: 14px; }
 .aq-discussion-result article { padding: 10px 0; border-top: 1px solid #34383c; }
+
+/* Beginner flow: one decision at a time, evidence on demand. */
+.aq-beginner-assessment { display: grid; gap: .35rem; padding: .3rem 0 .3rem .8rem; }
+.aq-beginner-label { font-size: .73rem; color: hsl(var(--muted-foreground)); font-weight: 500; }
+.aq-beginner-assessment p { margin: 0; }
+.aq-beginner-assessment small { color: hsl(var(--muted-foreground)); font-size: .75rem; }
+.aq-beginner-details > summary, .aq-plan-help > summary, .aq-plan-calculator > summary { min-height: 44px; padding: .7rem 0; cursor: pointer; font-size: .8rem; }
+.aq-beginner-details, .aq-plan-help, .aq-plan-calculator { min-width: 0; }
+.aq-position-plan-options.aq-beginner-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .65rem; }
+.aq-position-plan-options.aq-beginner-options .aq-btn { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: .25rem; padding: .7rem; margin: 0; border-radius: 6px; min-height: 70px; white-space: normal; }
+.aq-beginner-options b { font-size: .9rem; }
+.aq-beginner-options small { font-size: .72rem; color: hsl(var(--muted-foreground)); font-weight: 400; }
+.aq-next-action { border-left: 3px solid hsl(var(--primary)); padding: .75rem 1rem; background: hsl(var(--primary) / .05); }
+.aq-next-action h4 { font-size: 1rem; line-height: 1.7; margin: .35rem 0; text-wrap: pretty; }
+.aq-next-then { margin: .5rem 0; }
+.aq-next-cancel { padding-top: .6rem; margin-top: .6rem; border-top: 1px solid hsl(var(--border)); color: hsl(var(--muted-foreground)); font-size: .8rem; }
+.aq-next-cancel b { display: block; font-weight: 500; color: hsl(var(--foreground)); }
+.aq-plan-meta { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .5rem; align-items: center; margin-top: .7rem; font-size: .72rem; color: hsl(var(--muted-foreground)); }
+.aq-plan-meta .aq-btn { min-height: 44px; font-size: .75rem; }
+.aq-plan-calculator, .aq-plan-help { border-top: 1px solid hsl(var(--border)); margin-top: .5rem; }
+.aq-plan-calculator form { padding: .25rem 0 .8rem; }
+.aq-action-plan-fees > summary, .aq-plan-outcome summary { cursor: pointer; min-height: 44px; padding: .6rem 0; }
+.aq-plan-outcome { display: grid; gap: .4rem; border-left: 3px solid hsl(var(--primary)); padding: .8rem 1rem; margin: .8rem 0; background: hsl(var(--primary) / .05); }
+.aq-plan-outcome > strong { font-size: 1.1rem; font-variant-numeric: tabular-nums; }
+.aq-plan-outcome > p { color: hsl(var(--muted-foreground)); font-size: .8rem; }
+.aq-plan-outcome dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .7rem; }
+.aq-plan-outcome dt { color: hsl(var(--muted-foreground)); }
+.aq-plan-outcome dd { font-variant-numeric: tabular-nums; }
+.aq-plan-help .aq-position-discussion { border: 0; padding: 0; margin: .3rem 0 .8rem; }
+.aq-plan-help ul { list-style: disc; padding-left: 1.2rem; }
+.aq-position-alert summary:focus-visible { outline: 2px solid hsl(var(--primary)); outline-offset: 3px; }
+@media (max-width: 640px) {
+  .aq-position-plan-options.aq-beginner-options { gap: .4rem; }
+  .aq-position-plan-options.aq-beginner-options .aq-btn { padding: .6rem .45rem; min-height: 76px; }
+  .aq-next-action { padding: .65rem .75rem; }
+}
