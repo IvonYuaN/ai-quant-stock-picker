@@ -251,3 +251,52 @@ def test_strategy_evidence_discards_refresh_when_position_changes(plan_client, m
     monkeypatch.setattr(source, 'refresh_strategy_sources', refresh)
     result = client.post(f'/api/positions/{pid}/strategy-evidence')
     assert result.status_code == 409 and '持仓已变化' in result.text
+
+
+def test_strategy_evidence_projects_typed_facts_into_real_review_validator_without_prose_parsing(tmp_path) -> None:
+    from strategy_review_context import validate_position_action_numbers
+    cache('overview', {'sentiment': {'date': '20261023', 'up': 800, 'down': 3000, 'breadth': '偏弱'}})
+    cache(source._sector_key(['002129']), {'002129': sector(change_pct=1)})
+    loaded = context(tmp_path / 'absent.db')
+    evidence = current_position_evidence(loaded, {**QUOTE, 'change_pct': 2}, current=NOW)
+    assert evidence['market']['breadth_counts'] == {'up': 800, 'down': 3000}
+    assert evidence['sector']['industry'] == '银行' and evidence['sector']['change_pct'] == 1
+    assert evidence['stock']['change_pct'] == 2
+    # Erasing display prose must not remove, or manufacture, numeric authority.
+    for row in evidence.values():
+        row['summary'], row['evidence'] = '不含数字的合成说明', []
+    action = {'actions': [{'condition': '板块上涨1%，个股上涨2%，上涨800家、下跌3000家，仍需人工核对T+1',
+                           'invalidation': '来源失效则暂缓'}]}
+    validate_position_action_numbers(action, evidence, {})
+    action['actions'][0]['condition'] = '板块上涨3%说明可以买入'
+    with pytest.raises(ValueError):
+        validate_position_action_numbers(action, evidence, {})
+
+
+def test_strategy_evidence_detects_industry_change_after_real_projection_when_direction_unchanged(tmp_path) -> None:
+    from copy import deepcopy
+    from strategy_review_context import position_review_context
+    cache(source._sector_key(['002129']), {'002129': sector(change_pct=1)})
+    original = current_position_evidence(context(tmp_path / 'absent.db'), QUOTE, current=NOW)
+    watch = {'choice': 'hold', 'condition': '等待确认', 'invalidation': '行业变化重新核对',
+             'position_snapshot': {'position_id': 'p1'}, 'evidence_snapshot': deepcopy(original)}
+    worksheet = {'symbol': '002129', 'position_id': 'p1', 'position_snapshot': {'position_id': 'p1'},
+                 'review_plan': {'choice': 'hold', 'watch': watch}}
+    unchanged = position_review_context(worksheet, original, {})
+    assert not unchanged['material_changed']
+    cache(source._sector_key(['002129']), {'002129': sector(industry='半导体', name='半导体', change_pct=1)})
+    current = current_position_evidence(context(tmp_path / 'absent.db'), QUOTE, current=NOW)
+    assert current['sector']['status'] == original['sector']['status'] == 'rising'
+    assert current['sector']['source'] == original['sector']['source']
+    review = position_review_context(worksheet, current, {})
+    changes = [row for row in review['changes'] if row['category'] == 'sector']
+    assert review['material_changed'] and len(changes) == 1
+    assert changes[0]['before']['industry'] == '银行' and changes[0]['after']['industry'] == '半导体'
+
+
+def test_strategy_evidence_does_not_promote_invalid_source_numbers_into_review_facts(tmp_path) -> None:
+    cache('overview', {'sentiment': {'date': '20261022', 'up': 800, 'down': 3000, 'breadth': '偏弱'}})
+    cache(source._sector_key(['002129']), {'002129': sector(as_of='2026-10-22T10:00:00+08:00', change_pct=1)})
+    result = current_position_evidence(context(tmp_path / 'absent.db'), QUOTE, current=NOW)
+    assert 'breadth_counts' not in result['market']
+    assert 'change_pct' not in result['sector'] and 'industry' not in result['sector']

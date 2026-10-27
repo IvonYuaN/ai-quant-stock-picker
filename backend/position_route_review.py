@@ -12,7 +12,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 from typing import Any
 
-from decision_context import _session, _source_date, _stock_context, _timely_quote
+from decision_context import _number, _session, _source_date, _stock_context, _timely_quote
 
 
 @dataclass(frozen=True)
@@ -71,6 +71,8 @@ def current_position_evidence(context: Mapping[str, Any], quote: Mapping[str, An
             "as_of": None, "source": "", "evidence": [],
         }
     evidence["stock"] = asdict(_stock_context(quote, None, current))
+    if evidence['stock']['status'] != 'unknown':
+        evidence['stock']['change_pct'] = _number(quote.get('change_pct'))
     return evidence
 
 

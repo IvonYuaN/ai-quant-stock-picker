@@ -186,6 +186,9 @@ def source_numbers(evidence: dict[str, Any], refs: dict[str, Any]) -> SourceNumb
     percentages = [row.get('change_pct') for row in rows]
     if sector.get('source') and sector.get('as_of'):
         percentages.append(sector.get('change_pct'))
+    stock = evidence.get('stock') or {}
+    if stock.get('source') and stock.get('as_of'):
+        percentages.append(stock.get('change_pct'))
     if market.get('source') and market.get('as_of'):
         percentages.extend(row.get('change_pct') for row in market.get('indices', []))
     stamps = [row.get('as_of') for row in rows] + [market.get('as_of'), sector.get('as_of'), research.get('date'),
@@ -224,6 +227,11 @@ def validate_position_action_numbers(parsed: dict[str, Any], evidence: dict[str,
     for action in parsed.get('actions', []):
         for key in ('condition', 'invalidation'):
             prose = action[key].replace('T+1', '')
+            # Inspect currency before removing source dates: otherwise a model
+            # can turn an allowed date into a fabricated price by adding 元.
+            currency = re.findall(r'([-+]?\d+(?:\.\d+)?)\s*(?:元|块|角)', prose)
+            if any(float(number) not in allowed for number in currency):
+                raise ValueError('模型动作的价格单位与当前有源价位不符')
             for stamp in sorted(stamps, key=len, reverse=True):
                 prose = re.sub(rf'(?<!\d){re.escape(stamp)}(?!\d)', '', prose)
             for suffix, values in ((r'[%％]', facts.percentages), (r'分', facts.scores), (r'家', facts.counts)):

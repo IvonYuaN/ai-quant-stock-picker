@@ -201,9 +201,21 @@ def load_strategy_context(holding: Mapping[str, Any], codes: Sequence[str], hist
     context = dc.build_position_context(current_holding, [], quote=holding.get('quote'), stock_history=history,
                                         market_overview=overview, sector_snapshot=sector,
                                         checked_at=checked_at).to_dict()
+    # ContextEvidence's display schema omits numeric/identity fields. Project
+    # only source-validated typed facts here, never recover them from its prose.
+    market_fact = context['market']
+    if market_fact.get('source') and market_fact.get('as_of') and isinstance(overview, Mapping):
+        sentiment = overview.get('sentiment') or {}
+        counts = {key: dc._number(sentiment.get(key)) for key in ('up', 'down')} if isinstance(sentiment, Mapping) else {}
+        if counts and all(value is not None and value >= 0 for value in counts.values()):
+            market_fact['breadth_counts'] = counts
+    if sector is not None and context['sector']['status'] != 'unknown':
+        context['sector'].update(industry=sector['industry'], change_pct=dc._number(sector['change_pct']))
     indices = _indices(checked_at)
     if indices:
         if context['market']['status'] == 'unknown':
+            if market_fact.get('breadth_counts') is not None:
+                indices['breadth_counts'] = market_fact['breadth_counts']
             context['market'] = indices
         else:
             context['market']['indices'] = indices['indices']

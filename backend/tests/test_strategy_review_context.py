@@ -44,3 +44,12 @@ def test_position_review_rejects_wrong_unit_or_invented_quantity_when_number_has
     row['actions'][0]['condition'] = text
     with pytest.raises(ValueError):
         validate_position_action_numbers(row, EVIDENCE, PRICES)
+
+
+@pytest.mark.parametrize('text', ['跌破2026-10-27元则取消', '报价2026-10-27T10:00:00+08:00元',
+                                  '2026-10-27块才继续观察'])
+def test_position_review_rejects_currency_suffix_when_source_date_is_used_as_action_price(text: str) -> None:
+    row = deepcopy(OPINION)
+    row['actions'][0].update(price_ref='current_low', condition=text)
+    with pytest.raises(ValueError):
+        validate_position_action_numbers(row, EVIDENCE, PRICES)
