@@ -78,6 +78,7 @@ try {
   streamResult = await api.candidateDiscussionStream("600000", { expected_version: 1, expected_evidence_version: "evidence-1", server_model: "next-model" }, (stage) => progress.push(stage), new AbortController().signal);
   await api.adoptCandidateObservation("600000", input);
   await api.stopCandidateObservation("600000", 2, "stop-1");
+  await api.refreshCandidateEvidence("600000");
   reject = true;
   try { await api.adoptCandidateObservation("600000", input); } catch { rejected = true; }
 } finally { globalThis.fetch = originalFetch; }
@@ -88,5 +89,6 @@ export const candidateObservationTransportContracts = {
   progressOnlyDoesNotCompleteAnalysis: progress[0] === "independent" && streamResult?.id === "discussion-1",
   adoptsExactSourceWithoutPositionOrTrade: calls[3].url.endsWith("/600000/adopt") && calls[3].body.discussion_id === "discussion-1" && !JSON.stringify(calls[3].body).includes("shares"),
   stopsWithCASAndIdempotencyKey: calls[4].url.endsWith("/600000/stop") && calls[4].body.expected_version === 2 && calls[4].body.operation_id === "stop-1",
-  conflictDoesNotRetryOrPretendSuccess: rejected && calls.length === 6,
+  sourceRefreshIsExplicitWithoutPlanOrModelWrite: calls[5].url === "/api/candidate-observations/600000/strategy-evidence" && calls[5].method === "POST" && Object.keys(calls[5].body).length === 0,
+  conflictDoesNotRetryOrPretendSuccess: rejected && calls.length === 7,
 };

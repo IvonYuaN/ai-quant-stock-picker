@@ -6,6 +6,7 @@ availability and research revisions are included. No scoring or order writes.
 """
 from __future__ import annotations
 
+import asyncio
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
@@ -254,13 +255,16 @@ def current_evidence(code: str, quote: dict[str, Any], *, current: datetime) -> 
     market_fact = asdict(dc._market_context(overview, current))
     if market_fact['status'] == 'unknown':
         market_fact = sources._indices(current) or market_fact
-    cached = sources._cached(sources._sector_key([code]), current)
-    sector = cached.get(code) if isinstance(cached, dict) else None
+    sector = sources.load_cached_strategy_sectors([code], checked_at=current).get(code)
     identity = {}
     if isinstance(sector, dict) and not dc.position_quote_issue({'as_of': sector.get('membership_as_of')}, checked_at=current):
         identity = {'industry': sector.get('industry')}
     sector_fact = asdict(dc._sector_context(identity, overview, sector, current))
     sector_fact['industry'] = identity.get('industry')
+    sector_fact['change_pct'] = dc._number(sector.get('change_pct')) if sector and sector_fact['status'] != 'unknown' else None
+    if market_fact['status'] != 'unknown' and overview:
+        sentiment = overview.get('sentiment') or {}
+        market_fact['breadth_counts'] = {key: dc._number(sentiment.get(key)) for key in ('up', 'down')}
     stock_fact = asdict(dc._stock_context(quote, None, current))
     evidence = {'research': report, 'quote': {'price': quote.get('price'), 'as_of': stamp, 'source': quote.get('source') or '腾讯行情'},
                 'market': market_fact, 'sector': sector_fact, 'stock': stock_fact}
@@ -298,6 +302,19 @@ def list_workspaces() -> dict[str, Any]:
                        **{key: deepcopy(row.get(key)) for key in ('version', 'discussion', 'watch', 'observation')},
                        'analysis': recovered_analysis(row),
                        'ownership': ownership(code)} for code, row in rows.items()]}
+
+
+async def refresh_sources(code: str) -> dict[str, Any]:
+    """Explicit bounded public-source refresh, independent of holdings/LLM work."""
+    code = symbol(code)
+    report, _ = research(code, now_shanghai())
+    if not report:
+        raise CandidateConflict('当前候选研究不可用，请先更新研究；未请求外部来源')
+    if ownership(code)['status'] != 'unowned':
+        raise CandidateConflict('持仓归属已变化，请使用持仓策略核对')
+    refreshed = await sources.refresh_strategy_sources([code], checked_at=now_shanghai())
+    value = await asyncio.to_thread(workspace, code)
+    return {**value, 'source_refresh': refreshed.to_dict()}
 
 
 def checked(value: dict[str, Any], version: int, evidence_version: str) -> None:

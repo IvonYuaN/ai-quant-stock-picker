@@ -13,6 +13,7 @@ from datetime import datetime
 import fcntl
 import hashlib
 import json
+import math
 from pathlib import Path
 import sqlite3
 from typing import Any
@@ -33,6 +34,7 @@ class StrategyEvidenceLimits:
     max_response_bytes: int = 500_000
     history_rows: int = 2
     sqlite_timeout_seconds: float = 0.1
+    max_cache_bytes: int = 500_000
 
 
 @dataclass(frozen=True)
@@ -53,15 +55,69 @@ def _sector_key(codes: Sequence[str]) -> str:
     return 'position_sectors_' + hashlib.sha256(','.join(_symbols(codes)).encode()).hexdigest()
 
 
-def _cached(key: str, current: datetime, *, negative: bool = False) -> Any:
+def _cached(key: str, current: datetime, *, negative: bool = False,
+            limits: StrategyEvidenceLimits | None = None) -> Any:
+    limits = limits or StrategyEvidenceLimits()
     try:
-        value = json.loads(Path(market._cache_path(key)).read_text())
-        age = current.timestamp() - float(value['ts'])
+        path = Path(market._cache_path(key))
+        if path.is_symlink():
+            return None
+        with path.open('rb') as handle:
+            raw = handle.read(limits.max_cache_bytes + 1)
+        if len(raw) > limits.max_cache_bytes:
+            return None
+        value = json.loads(raw)
+        if not isinstance(value, dict) or type(value.get('ts')) not in (int, float):
+            return None
+        age = current.timestamp() - value['ts']
+        if not math.isfinite(age):
+            return None
         if 0 <= age < (market._NEG_TTL if negative or not value.get('val') else market._TTL):
             return value['val']
-    except (OSError, ValueError, KeyError, TypeError):
+    except (OSError, ValueError, KeyError, TypeError, OverflowError):
         pass
     return None
+
+
+def _sector_fact(row: Any, current: datetime | None = None) -> dict[str, Any] | None:
+    """Whitelist public facts; validate source times on every current read.
+
+    Projection writes preserve source timestamps as received. A quote can have
+    advanced during network I/O, beyond the caller's pre-request checked_at;
+    only a read's actual reference time can decide whether that fact is usable.
+    """
+    fields = ('industry', 'name', 'membership_as_of', 'as_of', 'change_pct', 'source')
+    if not isinstance(row, Mapping) or any(
+            not isinstance(row.get(key), str) or not row[key].strip()
+            for key in fields if key != 'change_pct'):
+        return None
+    if row['industry'] != row['name'] or dc._number(row.get('change_pct')) is None:
+        return None
+    if current is not None and any(dc.position_quote_issue({'as_of': row[key]}, checked_at=current)
+                                   for key in ('membership_as_of', 'as_of')):
+        return None
+    return {key: row[key] for key in fields}
+
+
+def load_cached_strategy_sectors(codes: Sequence[str], *, checked_at: datetime,
+                                limits: StrategyEvidenceLimits | None = None) -> dict[str, dict[str, Any]]:
+    """Read at most one bounded public-fact cache per symbol, without network.
+
+    Explicit refresh projects its batch into these single-symbol entries. No
+    directory discovery or tenant portfolio reads occur. Cache TTL and original
+    source/membership timestamps must both remain valid; missing facts are absent.
+    """
+    limits = limits or StrategyEvidenceLimits()
+    symbols = _symbols(codes)
+    if not symbols or len(symbols) > sectors_source.PositionContextSourceConfig().batch_size:
+        return {}
+    result = {}
+    for code in symbols:
+        cached = _cached(_sector_key([code]), checked_at, limits=limits)
+        fact = _sector_fact(cached.get(code), checked_at) if isinstance(cached, Mapping) else None
+        if fact is not None:
+            result[code] = fact
+    return result
 
 
 def _history(path: Path, code: str, current: datetime, limits: StrategyEvidenceLimits) -> pd.DataFrame | None:
@@ -127,8 +183,13 @@ def load_strategy_context(holding: Mapping[str, Any], codes: Sequence[str], hist
         overview = dc.load_cached_market_overview(checked_at=checked_at)
     except (OSError, ValueError, TypeError):
         overview = None
-    cached_sectors = _cached(_sector_key(codes), checked_at)
-    sector = cached_sectors.get(holding['code']) if isinstance(cached_sectors, Mapping) else None
+    code = str(holding['code'])
+    sector = load_cached_strategy_sectors([code], checked_at=checked_at, limits=limits).get(code)
+    if sector is None:
+        # Keep exact-batch legacy reads until the next explicit refresh projects
+        # individual symbols. Never scan another batch/tenant or renew its TTL.
+        cached_sectors = _cached(_sector_key(codes), checked_at, limits=limits)
+        sector = _sector_fact(cached_sectors.get(code), checked_at) if isinstance(cached_sectors, Mapping) else None
     current_holding = dict(holding)
     if isinstance(sector, Mapping) and not dc.position_quote_issue({'as_of': sector.get('membership_as_of')}, checked_at=checked_at):
         current_holding['industry'] = sector.get('industry')
@@ -181,12 +242,14 @@ async def refresh_strategy_sources(codes: Sequence[str], *, checked_at: datetime
     limits = limits or StrategyEvidenceLimits()
     symbols = _symbols(codes)
     if not symbols or len(symbols) > sectors_source.PositionContextSourceConfig().batch_size:
-        return StrategyRefresh('unavailable', '当前持仓代码不完整或超出单批依据预算')
+        return StrategyRefresh('unavailable', '当前股票代码不完整或超出单批依据预算')
     key = _sector_key(symbols)
-    if _cached(key, checked_at) and _cached('strategy_indices', checked_at):
+    if len(load_cached_strategy_sectors(symbols, checked_at=checked_at, limits=limits)) == len(symbols) and _cached('strategy_indices', checked_at):
         return StrategyRefresh('cached')
     attempt_key = 'strategy_attempt_' + key
-    if _cached(attempt_key, checked_at, negative=True) is not None:
+    attempt_keys = tuple('strategy_attempt_' + _sector_key([code]) for code in symbols)
+    if (_cached(attempt_key, checked_at, negative=True) is not None
+            or all(_cached(item, checked_at, negative=True) is not None for item in attempt_keys)):
         return StrategyRefresh('cached', '刚刚已检查来源；暂用本次可取得依据，缺失项仍待补')
     cache_dir = Path(market._MARKET_CACHE_DIR)
     cache_dir.mkdir(parents=True, exist_ok=True)
@@ -196,9 +259,10 @@ async def refresh_strategy_sources(codes: Sequence[str], *, checked_at: datetime
         except BlockingIOError:
             return StrategyRefresh('busy', '已有策略依据正在刷新，当前保留可核验缓存')
         # A different request may have filled the same batch before this lease.
-        if _cached(key, checked_at) and _cached('strategy_indices', checked_at):
+        if len(load_cached_strategy_sectors(symbols, checked_at=checked_at, limits=limits)) == len(symbols) and _cached('strategy_indices', checked_at):
             return StrategyRefresh('cached')
-        if _cached(attempt_key, checked_at, negative=True) is not None:
+        if (_cached(attempt_key, checked_at, negative=True) is not None
+                or all(_cached(item, checked_at, negative=True) is not None for item in attempt_keys)):
             return StrategyRefresh('cached', '刚刚已检查来源；暂用本次可取得依据，缺失项仍待补')
         completed: dict[str, Any] = {}
         issue = ''
@@ -208,8 +272,20 @@ async def refresh_strategy_sources(codes: Sequence[str], *, checked_at: datetime
         except (TimeoutError, httpx.HTTPError, OSError, ValueError, TypeError):
             issue = '行情源在本次时间预算内未完成，缺失依据保持未知'
         # wait_for has awaited cancellation; no source task survives lease exit.
-        for cache_key, value in completed.items():
-            market._write_cache(cache_key, value)
-        market._write_cache(attempt_key, {'checked_at': checked_at.isoformat()})
-        return StrategyRefresh('partial' if issue or not all(completed.get(item) for item in (key, 'strategy_indices')) else 'updated',
-                               issue or ('部分来源未返回有效数据，缺失依据保持未知' if not all(completed.get(item) for item in (key, 'strategy_indices')) else ''))
+        raw_sectors = completed.get(key)
+        sector_facts = {code: fact for code in symbols
+                        if isinstance(raw_sectors, Mapping)
+                        and (fact := _sector_fact(raw_sectors.get(code))) is not None}
+        if sector_facts:
+            market._write_cache(key, sector_facts)
+            for code, fact in sector_facts.items():
+                market._write_cache(_sector_key([code]), {code: fact})
+        if 'strategy_indices' in completed:
+            market._write_cache('strategy_indices', completed['strategy_indices'])
+        # A failed/partial batch cools subset retries too. Only this attempt
+        # timestamp changes; failed sources never renew an old fact's TTL.
+        for cache_key in {attempt_key, *attempt_keys}:
+            market._write_cache(cache_key, {'checked_at': checked_at.isoformat()})
+        complete = len(sector_facts) == len(symbols) and bool(completed.get('strategy_indices'))
+        return StrategyRefresh('partial' if issue or not complete else 'updated',
+                               issue or ('部分来源未返回有效数据，缺失依据保持未知' if not complete else ''))

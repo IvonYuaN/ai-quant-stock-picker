@@ -23,6 +23,7 @@ function CandidateObservationWorkspace({ symbol, researchDate, historical }: { s
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [actionError, setActionError] = useState("");
+  const [refreshMessage, setRefreshMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [discussing, setDiscussing] = useState(false);
   const [stage, setStage] = useState("preparing");
@@ -44,7 +45,7 @@ function CandidateObservationWorkspace({ symbol, researchDate, historical }: { s
   useEffect(() => { if (selection && adoptionForm.current) { adoptionForm.current.focus({ preventScroll: true }); adoptionForm.current.scrollIntoView({ block: "nearest" }); } }, [selection]);
   const accept = useCallback((next: CandidateWorkspace) => {
     if (next.symbol !== symbol) throw new Error("返回的候选身份不一致，请重新进入。");
-    if (active.current) { generation.current++; setData(next); setError(""); }
+    if (active.current) { generation.current++; setData(next); setError(""); setRefreshMessage(""); }
   }, [symbol]);
   const load = useCallback(async () => {
     if (readFlight.current || mutation.current) return;
@@ -79,6 +80,7 @@ function CandidateObservationWorkspace({ symbol, researchDate, historical }: { s
   const analyzing = discussing || data?.analysis.status === "running";
   const selectedUnavailable = !!catalog && (catalog.directory_complete ?? catalog.listed !== null) && !!model && model !== catalog.current_model && !catalog.models.includes(model);
   const locked = busy || loading || !!error;
+  const canRefreshSources = data?.ownership.status === "unowned" && !historical && !error;
   const currentIssue = data ? candidateDiscussionIssue(result, data) : "";
   const selectedAction = selection?.index != null ? result?.summary?.actions[selection.index] : null;
   const selectedReference = selectedAction?.price_ref ? result?.price_refs[selectedAction.price_ref] : null;
@@ -87,6 +89,19 @@ function CandidateObservationWorkspace({ symbol, researchDate, historical }: { s
     const version = ++generation.current;
     try { const next = await api.candidateObservation(symbol); if (active.current && generation.current === version) accept(next); }
     catch (reason) { if (active.current && generation.current === version) setError(reason instanceof Error ? reason.message : "尚不能读取保存结果，请手动刷新核对。"); }
+  }
+  async function refreshEvidence() {
+    if (mutation.current || busy || loading || analyzing || historical) return;
+    mutation.current = true; generation.current++; setBusy(true); setActionError(""); setRefreshMessage("");
+    try {
+      const next = await api.refreshCandidateEvidence(symbol);
+      if (active.current) {
+        accept(next); clearConfirmation();
+        const state = next.source_refresh;
+        setRefreshMessage(state?.issue || (state?.state === "updated" ? "已更新可取得的大盘和板块依据；缺失项仍为未知。" : state?.state === "cached" ? "当前使用有效缓存，已重新核对行情与来源时间。" : "本次来源未全部更新，缺失项仍为未知。"));
+      }
+    } catch (reason) { if (active.current) { setActionError(reason instanceof Error ? reason.message : "依据更新失败，请稍后重试"); await recover(); } }
+    finally { mutation.current = false; if (active.current) setBusy(false); }
   }
   async function discuss() {
     if (!data || mutation.current || locked || workspaceIssue || analyzing || selectedUnavailable || catalogBusy) return;
@@ -139,7 +154,8 @@ function CandidateObservationWorkspace({ symbol, researchDate, historical }: { s
     </div>;
   }
   return <section id="candidate-observation" className="aq-candidate-observation" aria-label="候选入场条件与持续观察">
-    <div className="aq-candidate-observation-head"><div><p className="aq-eyebrow">未持仓 · 先看参与条件</p><h2>还没买，先等什么？</h2></div><button type="button" className="aq-btn" disabled={busy || loading} onClick={() => void load()}>{loading ? "读取中…" : "更新当前状态"}</button></div>
+    <div className="aq-candidate-observation-head"><div><p className="aq-eyebrow">未持仓 · 先看参与条件</p><h2>还没买，先等什么？</h2></div><button type="button" className="aq-btn" disabled={busy || loading || analyzing} onClick={() => void (canRefreshSources ? refreshEvidence() : load())}>{busy ? "更新中…" : loading ? "读取中…" : error || !data ? "重试读取" : canRefreshSources ? "更新判断依据" : "更新当前状态"}</button></div>
+    {refreshMessage ? <p role="status" className="aq-note">{refreshMessage}</p> : null}
     {!data && loading ? <p role="status">正在核对当前候选、行情与持仓身份…</p> : null}
     {error ? <p role="alert">{error}。{data ? "保留上次记录，先更新核对后再采用。" : "可以重试读取，研究摘要仍可查看。"}</p> : null}
     {data?.ownership.status === "owned" ? <div className="aq-candidate-owned"><h3>这只股票已有持仓</h3><p>从当前仓位出发分析持有、减仓或做 T。</p>{planHref ? <Link className="aq-btn aq-btn-primary" to={planHref}>查看我的持仓策略</Link> : <Link className="aq-btn" to="/my/holdings">返回持仓核对身份</Link>}</div> : data ? <>
