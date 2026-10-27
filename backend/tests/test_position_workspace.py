@@ -117,7 +117,7 @@ def test_position_workspace_keeps_loss_baseline_when_quote_refreshes(plan_client
     position_id = own_id()
     value = worksheet(client, position_id)
     result = client.post(f'/api/positions/{position_id}/constraints', json={
-        'attention': 'available', 'extra_cash': 0, 'loss_limit': 500, **guards(value)})
+        'attention': 'available', 'extra_cash': 0, 'loss_limit': 500, 'expected_quote': {'price': value['basis']['price'], 'as_of': value['basis']['quote_as_of']}, **guards(value)})
     assert result.status_code == 200, result.text
     saved = result.json()['data']
     monkeypatch.setattr(pf.astock, 'tencent_quote', lambda codes: {code: {**QUOTE, 'price': 8.8} for code in codes})
@@ -197,3 +197,14 @@ def test_position_workspace_does_not_inherit_legacy_plan_when_snapshot_identity_
     value = worksheet(client, own_id())
     assert value['review_plan'] == {}
     assert ae._load()[0]['id'] == event_id
+
+
+def test_position_workspace_rejects_new_risk_baseline_when_confirmed_quote_changed(plan_client, monkeypatch) -> None:
+    client, _ = plan_client
+    position_id = own_id()
+    value = worksheet(client, position_id)
+    monkeypatch.setattr(pf.astock, 'tencent_quote', lambda codes: {code: {**QUOTE, 'price': 9.1} for code in codes})
+    response = client.post(f'/api/positions/{position_id}/constraints', json={
+        'attention': 'available', 'loss_limit': 500, 'expected_quote': {'price': value['basis']['price'], 'as_of': value['basis']['quote_as_of']}, **guards(value)})
+    assert response.status_code == 409 and '起算价格' in response.text
+    assert worksheet(client, position_id)['constraints']['risk_baseline'] is None

@@ -884,6 +884,7 @@ class PositionConstraintsIn(BaseModel):
     extra_cash: Any = None
     loss_limit: Any = None
     reset_risk_baseline: Any = False
+    expected_quote: dict[str, Any] | None = None
     expected_position: dict[str, Any] | None = None
     expected_revision: str | None = None
 
@@ -893,8 +894,8 @@ def position_constraints(position_id: str, body: PositionConstraintsIn) -> dict:
     """Confirm optional user limits; never change frozen strategy risk rules."""
     from position_plan_service import PlanConflictError, save_position_constraints
     try:
-        result = save_position_constraints(position_id, body.model_dump(exclude={"expected_position", "expected_revision"}),
-                                           body.expected_position, body.expected_revision)
+        result = save_position_constraints(position_id, body.model_dump(exclude={"expected_position", "expected_revision", "expected_quote"}),
+                                           body.expected_position, body.expected_revision, body.expected_quote)
     except ValueError as exc:
         raise HTTPException(409 if isinstance(exc, PlanConflictError) else 400, str(exc)) from exc
     if result is None:

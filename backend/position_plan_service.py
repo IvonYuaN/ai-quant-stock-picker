@@ -254,12 +254,16 @@ def save_position_plan(position_id: str, choice: str, parameters: dict[str, Any]
 
 
 def save_position_constraints(position_id: str, raw: dict[str, Any], expected_position: dict[str, Any] | None,
-                              expected_revision: str | None) -> dict[str, Any] | None:
+                              expected_revision: str | None, expected_quote: dict[str, Any] | None = None) -> dict[str, Any] | None:
     """Confirm optional constraints; loss limits retain their confirmed baseline."""
     worksheet = read_position_plan(position_id)
     if worksheet is None:
         return None
     constraints = parse_constraints(raw, worksheet['constraints'], worksheet['position_snapshot'], worksheet['basis'], current=now_shanghai())
+    if constraints.get('risk_baseline') and constraints['risk_baseline'] != worksheet['constraints'].get('risk_baseline'):
+        actual_quote = {'price': worksheet['basis']['price'], 'as_of': worksheet['basis']['quote_as_of']}
+        if expected_quote != actual_quote:
+            raise PlanConflictError('确认风险金额期间行情已变化，请更新并重新确认起算价格和时点；旧预算未重置')
     with ae._LOCK, advisory_lock(ae._file()), pf._LOCK, advisory_lock(pf._pf_file()):
         data, events = pf._load(), ae._load()
         root, _ = _checked_root(position_id, expected_position, expected_revision, data, events)

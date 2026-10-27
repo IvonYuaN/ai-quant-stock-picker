@@ -167,6 +167,7 @@ def describe_constraints(
     else:
         note += f"回补净资金缺口不得超过确认上限 {extra:g} 元。"
     return {"constraints_issue": "；".join(issues), "risk_remaining": remaining,
+            "risk_baseline_requires_confirmation": loss is not None and not valid,
             "quantity_bounds": {"sellable_shares": available, "buy_lot": minimum,
                                 "extra_cash_limit": extra, "note": note}}
 
