@@ -170,14 +170,17 @@ def test_action_plan_rejects_buy_price_when_choice_is_reduction() -> None:
         calculate_scenario("reduce", PARAMS, HOLDING)
 
 
-def test_action_plan_joint_weakness_expires_when_quote_or_sector_recovers(plan_client, monkeypatch) -> None:
+def test_action_plan_joint_weakness_expires_when_quote_or_sector_recovers(plan_client, monkeypatch, tmp_path) -> None:
+    import market
+    from position_strategy_evidence import _sector_key
+
     client, event = plan_client
-    events = ae._load()
-    context = events[0]["position_context"]
-    context["action_basis"]["joint_weakness"] = True
-    context["market"] = {"as_of": "2026-10-23", "status": "weak", "source": "合成市场源"}
-    context["sector"] = {"as_of": "2026-10-23T10:00:00+08:00", "status": "falling", "source": "合成板块源"}
-    ae._save(events)
+    monkeypatch.setattr(market, '_MARKET_CACHE_DIR', str(tmp_path / 'market'))
+    monkeypatch.setattr(market.time, 'time', lambda: NOW.timestamp())
+    market._write_cache('overview', {'sentiment': {'date': '20261023', 'up': 800, 'down': 3000, 'breadth': '偏弱'}})
+    market._write_cache(_sector_key(['002129']), {'002129': {
+        'industry': '银行', 'name': '银行', 'membership_as_of': NOW.isoformat(),
+        'as_of': NOW.isoformat(), 'change_pct': -2, 'source': '合成板块源'}})
     monkeypatch.setattr(pf.astock, "tencent_quote", lambda codes: {code: {**QUOTE, "change_pct": -1} for code in codes})
     assert client.get(f"/api/alerts/{event}/action-plan").json()["data"]["basis"]["joint_weakness"] is True
     monkeypatch.setattr(pf.astock, "tencent_quote", lambda codes: {code: {**QUOTE, "change_pct": 1} for code in codes})

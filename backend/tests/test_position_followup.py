@@ -31,6 +31,7 @@ def test_position_followup_records_only_background_check_when_page_is_read(plan_
     client, _ = plan_client
     position_id, value = setup_plan(client)
     assert value['followup']['last_check'] is None and value['followup']['mode'] == 'off'
+    assert value['followup']['current_plan_key'] == plan_key(pf._load()['position_reviews'][position_id], position_id)
     portfolio = pf.get_portfolio()
     monkeypatch.setattr(pf, 'get_portfolio', lambda: (_ for _ in ()).throw(AssertionError('extra quote batch')))
     before = deepcopy(pf._load()['position_reviews'][position_id])
@@ -168,7 +169,8 @@ def test_position_followup_read_mode_defaults_off_when_not_confirmed(plan_client
     client, _ = plan_client
     position_id, _ = setup_plan(client)
     worksheet = plans.read_position_plan(position_id)
-    assert worksheet['followup'] == {'mode': 'off', 'last_check': None, 'requires_refresh': False, 'issue': ''}
+    assert worksheet['followup'] == {'mode': 'off', 'last_check': None, 'requires_refresh': False, 'issue': '',
+                                     'current_plan_key': plan_key(pf._load()['position_reviews'][position_id], position_id)}
     assert tenant.current_tenant.get() == 'local'
 
 

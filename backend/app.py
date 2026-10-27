@@ -948,6 +948,19 @@ def position_action_plan(position_id: str) -> dict:
     return {"data": result}
 
 
+@app.post("/api/positions/{position_id}/strategy-evidence", tags=["持仓风险"])
+def position_strategy_evidence(position_id: str) -> dict:
+    """Refresh shared source facts; never choose a plan or change a position."""
+    from position_plan_service import refresh_strategy_evidence
+    try:
+        result = refresh_strategy_evidence(position_id)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if result is None:
+        raise HTTPException(409, "原持仓不存在或身份已变化，请返回持仓刷新")
+    return {"data": result}
+
+
 @app.post("/api/positions/{position_id}/plan", tags=["持仓风险"])
 def position_review_plan(position_id: str, body: AlertReviewPlanIn) -> dict:
     """Save a human plan using the same guards as the legacy event adapter."""
@@ -1011,6 +1024,47 @@ def position_followup_preference(position_id: str, body: PositionFollowupIn) -> 
     if result is None:
         raise HTTPException(409, "原持仓不存在，请刷新")
     return {"data": result}
+
+
+class StrategyWatchIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    choice: str
+    source_discussion: str
+    generated_at: str
+    action_index: int = Field(strict=True, ge=0)
+    comparator: str
+    expected_position: dict[str, Any]
+    expected_revision: str
+    expected_analysis_basis_id: str
+
+
+@app.post("/api/positions/{position_id}/strategy-watch", tags=["持仓策略"])
+def position_strategy_watch(position_id: str, body: StrategyWatchIn) -> dict:
+    """Human-confirmed observation; no order, quantity or fee requirement."""
+    from position_plan_service import PlanConflictError
+    from position_strategy_watch import StrategyWatchInput, adopt_strategy_watch
+    try:
+        return {"data": adopt_strategy_watch(position_id, StrategyWatchInput(**body.model_dump()))}
+    except ValueError as exc:
+        raise HTTPException(409 if isinstance(exc, PlanConflictError) else 400, str(exc)) from exc
+
+
+class StrategyWatchStopIn(BaseModel):
+    model_config = {"extra": "forbid"}
+    expected_position: dict[str, Any]
+    expected_revision: str
+
+
+@app.post("/api/positions/{position_id}/strategy-watch/stop", tags=["持仓策略"])
+def position_strategy_watch_stop(position_id: str, body: StrategyWatchStopIn) -> dict:
+    """Stop one adopted observation; ordinary risk monitoring remains active."""
+    from position_plan_service import PlanConflictError
+    from position_strategy_watch import stop_strategy_watch
+    try:
+        return {"data": stop_strategy_watch(position_id, body.expected_position, body.expected_revision)}
+    except ValueError as exc:
+        raise HTTPException(409 if isinstance(exc, PlanConflictError) else 400, str(exc)) from exc
 
 
 @app.post("/api/positions/{position_id}/discussion", tags=["持仓风险"])

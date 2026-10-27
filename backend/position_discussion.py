@@ -308,12 +308,8 @@ async def run_discussion(event_id: str, choice: str | None, expected_position: d
         if worksheet is None or worksheet["position_snapshot"] != expected_position or worksheet.get("archived") or not expected_revision or worksheet["revision"] != expected_revision:
             raise ValueError("持仓已变化或提醒已失效，请刷新")
         basis, plan = worksheet["basis"], worksheet["review_plan"]
-        if basis["quote_issue"] and not comparison:
-            raise ValueError("行情依据无效，请先刷新有效行情")
         if not comparison and plan.get("choice") != choice:
             raise ValueError("方案已变化，请刷新后讨论")
-        if not comparison and worksheet["scenario_issue"]:
-            raise ValueError("原测算已失效，请核对并重新保存参数后讨论")
         endpoint = await asyncio.to_thread(resolve_endpoint, config)
         if server_model:
             if config:
@@ -328,6 +324,7 @@ async def run_discussion(event_id: str, choice: str | None, expected_position: d
         evidence = {"holding": worksheet["position_snapshot"], "quote": {"price": basis["price"], "as_of": basis["quote_as_of"], "source": basis["quote_source"]},
                     "market": context.get("market", {"status": "unknown"}),
                     "sector": context.get("sector", {"status": "unknown"}),
+                    "stock": context.get("stock", {"status": "unknown"}),
                     "risk_trigger": worksheet["risk_trigger"], "personal_constraints": worksheet["constraints"],
                     "route_constraints": worksheet["route_review"], **prices}
         guards = {"sellable_shares": basis["sellable_shares"],
@@ -338,8 +335,10 @@ async def run_discussion(event_id: str, choice: str | None, expected_position: d
         common = {"symbol": worksheet["symbol"], "name": worksheet["name"], "chosen_plan": choice,
                   "review_mode": "比较三条路，用户尚未通过本请求作出选择" if comparison else "核对已选方案",
                   "evidence": evidence, "price_refs": prices, "guards": guards,
-                  "saved_parameters": None if comparison else plan.get("parameters"),
-                  "scenario": None if comparison else worksheet["scenario"]}
+                  "saved_parameters": None if comparison or worksheet['scenario_issue'] else plan.get("parameters"),
+                  "scenario": None if comparison or worksheet['scenario_issue'] else worksheet["scenario"],
+                  "scenario_issue": worksheet['scenario_issue'],
+                  "observation_note": "先解释当前路线、买卖前提与取消条件；无需先填写数量费用。行情缺失或暂停时解释缺口及替代路线，不提出可执行买卖。"}
         rounds: list[dict[str, Any]] = []
         async def opinion(role: str, peers: dict[str, Any] | None) -> dict[str, Any]:
             call_started = time.monotonic()

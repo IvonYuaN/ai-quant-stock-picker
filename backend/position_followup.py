@@ -72,7 +72,7 @@ def plan_key(root: dict[str, Any], position_id: str) -> str:
     """Bind human intent, excluding dynamic prices, model output and risk highs."""
     plan = root.get('review_plan') or {}
     return evidence_digest({'position_id': position_id, 'intent_version': root.get('version', 0), 'choice': plan.get('choice'),
-                            'parameters': plan.get('parameters'), 'updated_at': plan.get('updated_at'),
+                            'parameters': plan.get('parameters'), 'watch': plan.get('watch'), 'watch_stopped': plan.get('watch_stopped'), 'updated_at': plan.get('updated_at'),
                             'position': plan.get('position_snapshot'), 'acknowledged_sale_id': plan.get('acknowledged_sale_id'),
                             'constraints_version': root.get('constraints_version', 0), 'constraints': root.get('constraints')})
 
@@ -106,6 +106,8 @@ def observe_plan(worksheet: dict[str, Any], root: dict[str, Any], *, current: da
         state, title, detail, reason = 'exited', '这笔持仓已清仓', '历史计划停止当前跟进；重新买入不沿用原计划。', 'exited'
     elif not choice:
         state, title, detail, reason = 'unplanned', '还没有选择处理方式', '可以先比较三条路；尚未建立后台观察条件。', 'unplanned'
+    elif plan.get('watch_stopped'):
+        state, title, detail, reason = 'unplanned', '你已停止这项策略跟踪', '原观察条件不再监控，也不自动回退到旧试算价位；可重新分析后采用新条件。持仓风险规则仍按原设置检查。', 'watch_stopped'
     elif worksheet.get('sale_requires_review'):
         state, title, detail, reason = 'needs_review', '成交后需要重核余仓', '已有新的真实卖出回录；请核对剩余股份和用途，不能沿用原试算继续回补。', 'sale'
     elif (plan.get('position_snapshot') != worksheet['position_snapshot']
@@ -122,6 +124,30 @@ def observe_plan(worksheet: dict[str, Any], root: dict[str, Any], *, current: da
         state, title, detail, reason = 'needs_review', '当前风险线仍触发，重新核对持有依据', '继续持有仍承担后续下跌风险；当前风险事实不能单独替代卖出分析，请核对三维证据和可承受损失。', 'risk'
     elif unresolved_pause:
         state, title, detail, reason = 'evidence_unavailable', '三维暂停依据尚未核清', '本轮部分大盘、板块或个股证据缺失；不能将缺证视为原暂停已解除，继续保留暂停并核对来源。', 'joint_evidence_unknown'
+    elif plan.get('watch'):
+        watch = plan['watch']
+        target = _price(watch.get('price'))
+        comparator = watch.get('comparator')
+        if (watch.get('position_snapshot') != worksheet['position_snapshot']
+                or watch.get('constraints') != worksheet.get('constraints')
+                or watch.get('trade_revision') != worksheet.get('trade_revision')):
+            state, title, detail, reason = 'needs_review', '原策略对应的持仓或条件已变化', '即使重新保存了试算，原AI观察条件也需按最新持仓、费用和个人条件重新分析后采用。', 'watch_changed'
+        elif target is None or comparator not in {'at_or_above', 'at_or_below'}:
+            state, title, detail, reason = 'needs_review', '已保存观察条件不可核验', '观察价或比较方向不完整，请重新分析并采用；未沿用损坏条件。', 'watch_invalid'
+        elif any((watch.get('evidence_snapshot', {}).get(key, {}).get('status', 'unknown')
+                  != evidence.get(key, {}).get('status', 'unknown')) for key in ('market', 'sector', 'stock')):
+            state, title, detail, reason = 'needs_review', '原策略依据发生变化，重新分析', '大盘、板块或个股的方向/证据可用性与采用时不同；先核对变化，再决定是否保留原条件。', 'evidence_changed'
+        else:
+            reached = basis['price'] >= target if comparator == 'at_or_above' else basis['price'] <= target
+            direction = '达到或高于' if comparator == 'at_or_above' else '达到或低于'
+            condition = str(watch.get('condition') or '核对原分析提出的其他条件')
+            invalidation = str(watch.get('invalidation') or '依据变化时重新分析')
+            if reached:
+                state, title, reason = 'price_watch', '已到策略观察价，核验买卖前提', 'strategy_price'
+                detail = f"本次报价 {basis['price']:.2f} 元，{direction}你采用的 {target:.2f} 元。下一步核验：{condition}；取消条件：{invalidation}。报价只证明到价，其他条件尚未自动确认。"
+            else:
+                title, reason = '正在跟踪你采用的策略条件', 'strategy_waiting'
+                detail = f"当前 {basis['price']:.2f} 元，等待报价{direction} {target:.2f} 元后核验：{condition}；取消条件：{invalidation}。"
     elif worksheet.get('scenario_issue'):
         state, title, detail, reason = 'needs_review', '原试算需要重新核对', worksheet['scenario_issue'], 'scenario'
     else:
@@ -143,10 +169,11 @@ def observe_plan(worksheet: dict[str, Any], root: dict[str, Any], *, current: da
 
 def followup_view(root: dict[str, Any], revision: str, snapshot: dict[str, Any], *, current: datetime) -> dict[str, Any]:
     """Reads never manufacture a successful background check."""
+    current_plan_key = plan_key(root, snapshot['position_id'])
     try:
         observation = saved_observation(root)
     except DataError as exc:
-        return {'mode': root.get('followup_mode', 'off'), 'last_check': None, 'requires_refresh': True, 'issue': str(exc)}
+        return {'mode': root.get('followup_mode', 'off'), 'last_check': None, 'requires_refresh': True, 'issue': str(exc), 'current_plan_key': current_plan_key}
     issue = ''
     if observation:
         if observation.get('revision') != revision or observation.get('position_snapshot') != snapshot:
@@ -161,7 +188,7 @@ def followup_view(root: dict[str, Any], revision: str, snapshot: dict[str, Any],
                     issue = '后台检查记录已旧；当前到价与风险状态尚待新一轮检查，不能当作实时跟踪。'
             except (KeyError, TypeError, ValueError):
                 issue = '后台记录时间不可核验，等待重新检查。'
-    return {'mode': root.get('followup_mode', 'off'), 'last_check': observation, 'requires_refresh': bool(issue), 'issue': issue}
+    return {'mode': root.get('followup_mode', 'off'), 'last_check': observation, 'requires_refresh': bool(issue), 'issue': issue, 'current_plan_key': current_plan_key}
 
 
 def notification_key(root: dict[str, Any], observation: dict[str, Any], *, current: datetime) -> str | None:

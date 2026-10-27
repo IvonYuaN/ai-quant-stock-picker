@@ -111,9 +111,38 @@ def read_position_plan(position_id: str) -> dict[str, Any] | None:
     # This established API lazily attaches IDs/rules for legacy holdings.
     pf.get_risk_rules()
     portfolio = pf.get_portfolio()
+    current = now_shanghai()
+    from position_strategy_evidence import load_strategy_context
+    holding = next((row for row in portfolio['holdings'] if row.get('position_id') == position_id), None)
+    context = load_strategy_context(holding, [row['code'] for row in portfolio['holdings']],
+                                    Path(pf._tenant_dir()) / 'live-risk-history.db', checked_at=current) if holding else {}
+    # Re-read after quote/cache I/O; stale holding snapshots cannot become plans.
     with ae._LOCK, pf._LOCK:
         events, data = ae._load(), pf._load()
-    return build_position_worksheet(position_id, portfolio, data, events, current=now_shanghai())
+    return build_position_worksheet(position_id, portfolio, data, events, current=current, context=context)
+
+
+def refresh_strategy_evidence(position_id: str) -> dict[str, Any] | None:
+    """Explicit bounded source refresh; ordinary worksheet GET remains read-only."""
+    import asyncio
+    from position_strategy_evidence import refresh_strategy_sources
+    if not Path(pf._pf_file()).is_file():
+        return None
+    with pf._LOCK:
+        before = pf._load()
+    holding = next((row for row in before.get('holdings', []) if row.get('position_id') == position_id), None)
+    if holding is None:
+        return None
+    snapshot = _snapshot(holding)
+    refreshed = asyncio.run(refresh_strategy_sources([row['code'] for row in before['holdings']], checked_at=now_shanghai()))
+    with pf._LOCK:
+        latest = next((row for row in pf._load().get('holdings', []) if row.get('position_id') == position_id), None)
+    if latest is None or _snapshot(latest) != snapshot:
+        raise PlanConflictError('刷新依据期间持仓已变化，请更新后重新分析')
+    result = read_position_plan(position_id)
+    if result is not None:
+        result['strategy_evidence_refresh'] = refreshed.to_dict()
+    return result
 
 
 def build_position_worksheet(position_id: str, portfolio: dict[str, Any], data: dict[str, Any], events: list[dict[str, Any]],
@@ -194,7 +223,7 @@ def build_position_worksheet(position_id: str, portfolio: dict[str, Any], data: 
             'route_review': review, 'comparison': comparison, 'analysis_basis_id': basis_id, 'risk_revision': risk_revision,
             'current_risk': facts, 'risk_trigger': {'checked_at': context_event.get('updated_at'), 'basis': context_event.get('basis_json', {}), 'current_facts': facts,
                              'rules': holding.get('risk_rules', []), 'open_alert_count': len(opened)},
-            'scenario': scenario, 'scenario_issue': scenario_issue,
+            'scenario': scenario, 'scenario_issue': scenario_issue, 'trade_revision': trade_revision,
             'recorded_sale': {key: receipt[key] for key in ('date', 'price', 'shares')} if receipt else None,
             'sale_requires_review': sale_requires_review, 'simulation_only': True}
 
@@ -248,7 +277,7 @@ def save_position_plan(position_id: str, choice: str, parameters: dict[str, Any]
         data, events = pf._load(), ae._load()
         root, _ = _checked_root(position_id, expected_position, expected_revision, data, events)
         previous = root['review_plan']
-        plan = deepcopy(previous) if previous.get('choice') == choice and parameters is None else {'choice': choice}
+        plan = deepcopy(previous) if previous.get('choice') == choice else {'choice': choice}
         plan['updated_at'] = now_shanghai().isoformat()
         if parameters is not None or not plan.get('parameters'):
             plan.update({'position_snapshot': worksheet['position_snapshot'],

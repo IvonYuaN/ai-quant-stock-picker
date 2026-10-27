@@ -7,6 +7,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+import httpx
+
 import astock
 
 
@@ -48,6 +50,10 @@ def _fetch(codes: tuple[str, ...], config: PositionContextSourceConfig) -> dict:
         headers={"User-Agent": astock.UA},
         timeout=config.timeout_seconds,
     ).json())
+    return _combine_rows(codes, memberships, sectors)
+
+
+def _combine_rows(codes: tuple[str, ...], memberships: list[dict], sectors: list[dict]) -> dict:
     by_name = {row.get("f14"): row for row in sectors if isinstance(row.get("f14"), str)}
     result = {}
     for row in memberships:
@@ -96,3 +102,45 @@ def load_position_sectors(codes: Sequence[str]) -> Mapping[str, Mapping[str, Any
         return {code: row for code, row in result.items() if code in symbols and isinstance(row, Mapping)} if isinstance(result, Mapping) else {}
     except Exception:  # noqa: BLE001 -- optional evidence never blocks hard risk checks
         return {}
+
+
+async def fetch_position_sectors(codes: Sequence[str], client: httpx.AsyncClient, *, max_response_bytes: int) -> dict:
+    """Fetch the existing two batch endpoints without retry/proxy fallback.
+
+    The caller owns the shared cache lock and cancellable total request budget.
+    This variant does not invoke the legacy synchronous transport or spawn work.
+    """
+    config = PositionContextSourceConfig()
+    symbols = tuple(sorted({code for code in codes if isinstance(code, str) and len(code) == 6 and code.isascii() and code.isdigit()}))
+    if not symbols or len(symbols) > config.batch_size:
+        return {}
+
+    async def get(url: str, params: dict[str, Any]) -> list[dict]:
+        import json
+        chunks, size = [], 0
+        async with client.stream("GET", url, params=params, headers={"User-Agent": astock.UA}) as response:
+            response.raise_for_status()
+            async for chunk in response.aiter_bytes():
+                size += len(chunk)
+                if size > max_response_bytes:
+                    raise ValueError("行业依据响应超过大小预算")
+                chunks.append(chunk)
+        return _rows(json.loads(b"".join(chunks)))
+
+    import asyncio
+    results = await asyncio.gather(
+        get("https://push2.eastmoney.com/api/qt/ulist.np/get", {
+            "secids": ",".join(f"{1 if astock.get_prefix(code) == 'sh' else 0}.{code}" for code in symbols),
+            "fields": "f12,f100,f124", "fltt": 2,
+        }),
+        get("https://push2.eastmoney.com/api/qt/clist/get", {
+            "pn": 1, "pz": config.batch_size, "po": 1, "np": 1,
+            "fltt": 2, "invt": 2, "fid": "f3", "fs": "m:90+t:2", "fields": "f14,f3,f124",
+        }),
+        return_exceptions=True,
+    )
+    for result in results:
+        if isinstance(result, BaseException):
+            raise result
+    memberships, sectors = results
+    return _combine_rows(symbols, memberships, sectors)

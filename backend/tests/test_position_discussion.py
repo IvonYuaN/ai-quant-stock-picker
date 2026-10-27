@@ -158,7 +158,7 @@ def test_position_model_transport_cancels_stuck_request_when_deadline_passes(mon
     assert cancelled
 
 
-def test_position_discussion_rejects_invalidated_scenario_before_model_call(discussion_client) -> None:
+def test_position_discussion_explains_current_route_without_invalidated_calculation(discussion_client) -> None:
     client, event_id, worksheet, calls = discussion_client
     from test_position_action_plan import PARAMS
     client.post(f"/api/alerts/{event_id}/plan", json={"choice": "t_watch", "parameters": PARAMS, "expected_position": worksheet["position_snapshot"], "expected_revision": worksheet["revision"]})
@@ -168,7 +168,9 @@ def test_position_discussion_rejects_invalidated_scenario_before_model_call(disc
     pf._save(data)
     changed = client.get(f"/api/alerts/{event_id}/action-plan").json()["data"]
     response = client.post(f"/api/alerts/{event_id}/discussion", json={"choice": "t_watch", "expected_position": changed["position_snapshot"], "expected_revision": changed["revision"]})
-    assert response.status_code == 409 and "失效" in response.text and not calls
+    assert response.status_code == 200 and calls
+    assert calls[-1]['saved_parameters'] is None and calls[-1]['scenario'] is None
+    assert '失效' in calls[-1]['scenario_issue']
 
 
 def test_position_discussion_uses_anthropic_v1_messages_when_default_sdk_base_has_no_version(monkeypatch) -> None:

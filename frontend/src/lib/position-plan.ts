@@ -53,7 +53,7 @@ export function beginnerPlan(choice: ReviewChoice, basis: ActionWorksheet["basis
 export const PLAN_CHOICES = {
   hold: { title: "先观察", benefit: "保留仓位，等走势更清楚", cost: "继续承担这只股票下跌的损失" },
   reduce: { title: "先减仓", benefit: "减少后续下跌影响的钱", cost: "锁定卖出部分的当前盈亏，也可能错过反弹" },
-  t_watch: { title: "做 T 试算", benefit: "用部分持仓尝试赚取一次差价", cost: "要盯盘、付两次费用，卖出后可能买不回来" },
+  t_watch: { title: "做 T 观察", benefit: "用部分持仓尝试赚取一次差价", cost: "要盯盘、付两次费用，卖出后可能买不回来" },
 } as const;
 
 /** Describe observable facts, never infer reversal, execution or suitability. */
