@@ -297,34 +297,48 @@ def check_existing_tenants(*, notify: bool = False) -> dict:
     import tenant
 
     root = Path(pf.CACHE_DIR)
-    candidates = [root / "portfolio.json"]
+    candidates = [root]
     users = root / "users"
     if users.is_dir() and not users.is_symlink():
-        candidates += sorted(users.glob("*/portfolio.json"))
+        candidates += sorted({path.parent for pattern in ('*/portfolio.json', '*/candidate-observations.json')
+                              for path in users.glob(pattern)})
     summary: dict = {
         "tenants_checked": 0,
         "open_events": 0,
         "skipped_checks": 0,
         "failed_tenants": 0,
+        "candidate_checks": 0,
+        "candidate_notifications": 0,
     }
-    for path in candidates:
-        if path.is_symlink() or path.parent.is_symlink() or not path.is_file():
+    for folder in candidates:
+        if folder.is_symlink() or folder.parent.is_symlink() or not folder.is_dir():
             continue
-        tid = "local" if path.parent == root else path.parent.name
+        tid = "local" if folder == root else folder.name
         if tid != "local" and not re.fullmatch(r"[uk]_[0-9a-f]{20}", tid):
             continue
         try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-            if not isinstance(payload, dict) or not (payload.get("holdings") or payload.get("position_reviews")):
+            path = folder / 'portfolio.json'
+            if path.is_symlink():
+                continue
+            payload = json.loads(path.read_text(encoding='utf-8')) if path.is_file() else {}
+            has_positions = isinstance(payload, dict) and bool(payload.get('holdings') or payload.get('position_reviews'))
+            candidate_path = folder / 'candidate-observations.json'
+            has_candidates = candidate_path.is_file() and not candidate_path.is_symlink()
+            if not has_positions and not has_candidates:
                 continue
             token = tenant.current_tenant.set(tid)
             try:
-                result = check_positions(notify=notify)
+                if has_positions:
+                    result = check_positions(notify=notify)
+                    summary['skipped_checks'] += len(result['checks']['skipped'])
+                    import alert_events
+                    summary['open_events'] += len(alert_events.list_events(status='OPEN'))
+                if has_candidates:
+                    from candidate_monitor import check_candidates
+                    checked = check_candidates(notify=notify)
+                    summary['candidate_checks'] += checked['checked']
+                    summary['candidate_notifications'] += checked['notified']
                 summary["tenants_checked"] += 1
-                summary["skipped_checks"] += len(result["checks"]["skipped"])
-                import alert_events
-
-                summary["open_events"] += len(alert_events.list_events(status="OPEN"))
             finally:
                 tenant.current_tenant.reset(token)
         except Exception:  # noqa: BLE001 -- privacy: do not expose tenant path/codes to monitor output
