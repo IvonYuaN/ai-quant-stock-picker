@@ -1,6 +1,6 @@
 // 持仓与自选的唯一入口：服务端持仓、本地自选和风险事件在同一页关联。
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { useLocation } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { Plus, RefreshCw, ShieldCheck, Trash2, Wallet } from "lucide-react";
 import { toast } from "sonner";
 import { api, type AlertEvent, type PortfolioData } from "@/lib/api";
@@ -11,6 +11,7 @@ import { isAqspSnapshotStale } from "@/lib/snapshot-freshness";
 import { Badge, LoadingState, SectionHeader, StatePanel, ToneCallout } from "@/components/ui/primitives";
 import { HoldingsWatchlist, openOperation } from "@/components/aqsp/HoldingsWatchlist";
 import { useAqspSnapshot } from "@/components/aqsp/useAqspSnapshot";
+import { positionPlanHref } from "@/lib/position-workspace";
 import { cn } from "@/lib/utils";
 import { changeClass, formatMoney, formatSignedPct } from "@/lib/format";
 import { scrollToHashTarget } from "@/lib/hash-navigation";
@@ -134,7 +135,7 @@ export function HoldingsPage({ renderRiskSettings }: { renderRiskSettings?: (cod
         <SectionHeader title="历史成交" description="已实现盈亏按录入成交价计算 · 红盈绿亏" count={`${data.closed.length} 笔`} />
         <div className="aq-table-wrap"><table className="aq-table"><thead><tr><th>卖出日</th><th>代码 / 名称</th><th className="aq-num">成交价</th><th className="aq-num">成本价</th><th className="aq-num">股数</th><th className="aq-num">已实现盈亏</th><th className="aq-num">收益率</th><th /></tr></thead><tbody>
           {data.closed.map((row, index) => <tr key={`${row.code}-${row.date}-${index}`}>
-            <td className="aq-num">{row.date}</td><td><strong>{row.name}</strong><div className="aq-code">{row.code}</div></td>
+            <td className="aq-num">{row.date}</td><td><strong>{row.name}</strong><div className="aq-code">{row.code}</div>{row.position_id ? <Link className="aq-note" to={positionPlanHref(row.position_id) ?? "/my/holdings"}>查看历史计划</Link> : null}</td>
             <td className="aq-num">{row.price.toFixed(2)}</td><td className="aq-num">{row.cost.toFixed(4)}</td><td className="aq-num">{row.shares}</td>
             <td className={cn("aq-num", changeClass(row.pnl))}>{formatMoney(row.pnl)}</td><td className={cn("aq-num", changeClass(row.pnl_pct))}>{formatSignedPct(row.pnl_pct)}</td>
             <td><button type="button" className="aq-btn aq-btn-danger aq-btn-icon" title="删除这条成交记录" aria-label={`删除 ${row.code} ${row.date} 成交记录`} disabled={busy} onClick={() => void run(() => api.removeClosed(index), "已删除该条记录")}><Trash2 aria-hidden="true" /></button></td>

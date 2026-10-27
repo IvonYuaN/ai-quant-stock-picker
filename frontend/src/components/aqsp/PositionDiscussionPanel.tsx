@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState } from "react";
-import { api, isAqspAbortError, type ActionWorksheet, type DiscussionAction, type PositionDiscussion, type PositionModelCatalog, type PositionModelConfig, type ReviewChoice } from "@/lib/api";
+import { api, isAqspAbortError, type ActionWorksheet, type DiscussionAction, type PositionDiscussion, type PositionModelCatalog, type PositionModelConfig, type PlanTarget, type ReviewChoice } from "@/lib/api";
 import { formatEvidenceTime } from "@/lib/format";
+import { worksheetGuard, discussionIsCurrent } from "@/lib/position-workspace";
 import { PLAN_CHOICES, worksheetExpired } from "@/lib/position-plan";
 
 const actionLabels = { observe: "继续观察", sell_review: "卖出复核", buy_review: "回补复核", pause: "暂停操作" };
 
-export function PositionDiscussionPanel({ eventId, choice, worksheet, disabled, disabledReason }: {
-  eventId: string; choice: ReviewChoice | null; worksheet: ActionWorksheet; disabled: boolean; disabledReason?: string;
+export function PositionDiscussionPanel({ eventId, target, choice, worksheet, disabled, disabledReason, onComplete }: {
+  eventId?: string; target?: PlanTarget; onComplete?: () => void; choice: ReviewChoice | null; worksheet: ActionWorksheet; disabled: boolean; disabledReason?: string;
 }) {
+  const planTarget = target ?? { kind: "alert" as const, id: eventId ?? "" };
   const comparison = choice === null;
   const persisted = comparison ? worksheet.comparison : worksheet.review_plan.discussion;
   const [result, setResult] = useState<PositionDiscussion | null>(persisted ?? null);
@@ -26,6 +28,8 @@ export function PositionDiscussionPanel({ eventId, choice, worksheet, disabled, 
   const catalogInFlight = useRef(false);
   const catalogIdentity = useRef("");
   const latestBasis = useRef(worksheet.analysis_basis_id);
+  const latestRevision = useRef(worksheet.revision);
+  latestRevision.current = worksheet.revision;
   const receivedAgainst = useRef<string | undefined>(undefined);
   latestBasis.current = worksheet.analysis_basis_id;
   useEffect(() => { active.current = true; return () => { active.current = false; controller.current?.abort(); }; }, []);
@@ -51,18 +55,20 @@ export function PositionDiscussionPanel({ eventId, choice, worksheet, disabled, 
   useEffect(() => { void loadModels(); }, []);
   const selectedUnavailable = !!catalog && (catalog.directory_complete ?? catalog.listed !== null) && !!serverModel && serverModel !== catalog.current_model && !catalog.models.includes(serverModel);
   const snapshotMatches = !!result && result.choice === choice && ["position_id", "cost", "shares", "sellable_shares"].every((key) => result.position_snapshot[key as keyof ActionWorksheet["position_snapshot"]] === worksheet.position_snapshot[key as keyof ActionWorksheet["position_snapshot"]]);
-  const evidenceMatches = !!result && !!result.analysis_basis_id && result.analysis_basis_id === worksheet.analysis_basis_id
+  const evidenceMatches = !!result && discussionIsCurrent(result, worksheet)
     && !worksheetExpired({ ...worksheet.basis, checked_at: result.generated_at }, Date.now());
   async function discuss() {
-    if (inFlight.current || disabled || (!custom && (selectedUnavailable || catalogBusy))) return;
+    if (inFlight.current || disabled || worksheet.archived || !worksheet.revision || (!custom && (selectedUnavailable || catalogBusy))) return;
     if (custom && Object.values(config).some((value) => !value.trim())) { setError("请填完接口地址、模型名和 API Key。"); return; }
     inFlight.current = true; setBusy(true); setError(""); setStage("preparing");
     controller.current = new AbortController();
     try {
-      const next = await api.positionDiscussionStream(eventId, choice, worksheet.position_snapshot,
+      const guard = worksheetGuard(worksheet);
+      const sentRevision = guard.expected_revision;
+      const next = await api.positionDiscussionStream(planTarget.id, choice, guard.expected_position,
         (nextStage) => { if (active.current) setStage(nextStage); }, controller.current.signal, custom ? config : undefined,
-        !custom && serverModel && serverModel !== catalog?.current_model ? serverModel : undefined);
-      if (active.current) { receivedAgainst.current = latestBasis.current; setResult(next); if (next.status === "failed") setError("模型未完成有效讨论，保留条件计划，可重试。"); }
+        !custom && serverModel && serverModel !== catalog?.current_model ? serverModel : undefined, guard.expected_revision, planTarget.kind);
+      if (active.current) { receivedAgainst.current = sentRevision === latestRevision.current ? latestBasis.current : undefined; setResult(next); onComplete?.(); if (next.status === "failed") setError("模型未完成有效讨论，保留条件计划，可重试。"); }
     } catch (reason) { if (active.current) setError(isAqspAbortError(reason) ? "已停止等待本次分析，请刷新核对是否已有保存结果。" : reason instanceof Error ? reason.message : "讨论失败，可以重试。"); }
     finally { controller.current = null; inFlight.current = false; if (active.current) setBusy(false); }
   }
@@ -72,8 +78,9 @@ export function PositionDiscussionPanel({ eventId, choice, worksheet, disabled, 
     </li>; })}</ol>;
   }
   return <div className="aq-position-discussion" aria-label="AI 持仓方案讨论">
-    <div className="aq-action-plan-heading"><h4>{comparison ? "拿不准？先让 AI 比较三条路" : "帮我看这条路是否合适"}</h4><button type="button" className="aq-btn" disabled={disabled || busy || (!custom && (selectedUnavailable || catalogBusy))} onClick={() => void discuss()}>{busy ? "正在分析…" : result ? "重新分析" : comparison ? "帮我比较" : "开始分析"}</button></div>
+    <div className="aq-action-plan-heading"><h4>{comparison ? "拿不准？先让 AI 比较三条路" : "帮我看这条路是否合适"}</h4><button type="button" className="aq-btn" disabled={disabled || !!worksheet.archived || !worksheet.revision || busy || (!custom && (selectedUnavailable || catalogBusy))} onClick={() => void discuss()}>{busy ? "正在分析…" : result ? "重新分析" : comparison ? "帮我比较" : "开始分析"}</button></div>
     <p className="aq-note">{comparison ? "无需先选方案或填写交易参数。分析只作参考，完成后由你选择。" : "从趋势、做 T 和风险三个角度核对这条路；缺少依据会说明，不预设必须买卖。"}</p>
+    <p className="aq-note">点击分析会将这笔持仓、已保存的个人条件和行情依据发送给所选模型；也可以直接手动选择。</p>
     {disabled && disabledReason ? <p role="status">{disabledReason}</p> : null}
     {!custom && catalog?.listed === false ? <p role="status">默认型号可能已迭代，请展开模型设置，选择可用型号验证。</p> : null}
     <details onToggle={(event) => { if (event.currentTarget.open && !catalog && !catalogBusy) void loadModels(); }}><summary>模型设置 · {custom ? "本次输入" : serverModel || "使用现有配置"}</summary>
@@ -90,8 +97,8 @@ export function PositionDiscussionPanel({ eventId, choice, worksheet, disabled, 
     {busy ? <div role="status"><p>{({ preparing: "正在准备持仓依据…", independent: "三个角色正在独立分析…", challenge: "正在互相核对观点与缺证…", synthesis: "正在整理三条路的理由与分歧…" } as Record<string, string>)[stage] || "正在分析…"}</p><button type="button" className="aq-btn" onClick={() => controller.current?.abort()}>停止本次分析</button></div> : null}
     {error ? <p role="alert">{error}</p> : null}
     {result && !snapshotMatches ? <p role="status">持仓或选择已变化，旧讨论不再展示，请重新分析。</p> : null}
-    {result && snapshotMatches && !evidenceMatches ? <p role="status">当前依据与生成时不同或讨论已旧。下方保留生成时分析供核对，不能直接当作当前操作依据。</p> : null}
-    {result && snapshotMatches ? <details className="aq-discussion-result" open={evidenceMatches || (!!receivedAgainst.current && receivedAgainst.current === worksheet.analysis_basis_id && !!result.evidence_snapshot && !worksheetExpired({ ...worksheet.basis, checked_at: result.generated_at }))}><summary>{evidenceMatches ? "查看分析结果" : "查看生成时分析与依据"}</summary>
+    {result && snapshotMatches && !evidenceMatches ? <p role="status">个人条件、持仓或行情依据与生成时不同，或讨论已旧。下方保留生成时分析供核对，不能直接当作当前操作依据。</p> : null}
+    {result && snapshotMatches ? <details className="aq-discussion-result" open={evidenceMatches || (!!receivedAgainst.current && receivedAgainst.current === worksheet.analysis_basis_id && result.review_revision === worksheet.revision && !!result.evidence_snapshot && !worksheetExpired({ ...worksheet.basis, checked_at: result.generated_at }))}><summary>{evidenceMatches ? "查看分析结果" : "查看生成时分析与依据"}</summary>
       <p className="aq-note">{result.mode} · {result.model} · {formatEvidenceTime(result.generated_at)} · {result.status === "complete" ? "讨论完成" : result.status === "partial" ? "部分完成" : "未完成"}</p>
       <p className="aq-note">讨论行情快照 {formatEvidenceTime(result.quote_as_of)}；这是生成时意见，后续行情变化需重新核对。</p>
       {result.evidence_snapshot ? <details><summary>分析当时使用的证据</summary><p>当时价格 {result.evidence_snapshot.quote.price ?? "未知"} 元 · {result.evidence_snapshot.quote.source || "来源待核验"} · {formatEvidenceTime(result.evidence_snapshot.quote.as_of)}</p>{(["market", "sector"] as const).map((key) => { const row = result.evidence_snapshot![key]; return <p key={key}>{key === "market" ? "大盘" : "板块"}：{row.summary || "依据不足"} · {row.source || "来源待核验"} · {formatEvidenceTime(row.as_of)}</p>; })}</details> : null}

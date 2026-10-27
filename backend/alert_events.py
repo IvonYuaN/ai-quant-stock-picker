@@ -255,6 +255,16 @@ def list_events(status: str | None = None, symbol: str | None = None) -> list[di
     """收件箱数据源：默认按 created_at 倒序；``status`` 过滤（GET /api/alerts 用）。"""
     with _LOCK:
         events = _load()
+    # Current plans have one position root; terminal events are only entry paths.
+    # Copy the projection rather than writing it back into the event journal.
+    import portfolio as pf
+    with pf._LOCK:
+        roots = pf._load().get("position_reviews", {}) if os.path.isfile(pf._pf_file()) else {}
+    for event in events:
+        root = roots.get(event.get("position_id"))
+        if root is not None:
+            event["review_plan"] = root.get("review_plan", {})
+            event["position_analysis"] = root.get("comparison")
     if status:
         events = [e for e in events if e.get("status") == status]
     if symbol:
@@ -262,29 +272,11 @@ def list_events(status: str | None = None, symbol: str | None = None) -> list[di
     return sorted(events, key=lambda e: str(e.get("created_at", "")), reverse=True)
 
 
-def record_review_plan(event_id: str, choice: str) -> dict | None:
-    """Record a human review choice for this open position, without dismissing risk.
-
-    Returns None when the event is missing or terminal. Same-position rules share
-    one atomic choice; a reopened position must not inherit a previous choice.
-    """
-    if choice not in {"hold", "reduce", "t_watch"}:
-        raise ValueError("方案必须是 hold、reduce 或 t_watch")
-    with _LOCK, advisory_lock(_file()):
-        events = _load()
-        target = next((e for e in events if e.get("id") == event_id), None)
-        if target is None or target.get("status") != "OPEN":
-            return None
-        previous = target.get("review_plan") or {}
-        plan = previous.copy() if previous.get("choice") == choice else {"choice": choice, "updated_at": _now_iso()}
-        for event in events:
-            if (event.get("status") == "OPEN"
-                and event.get("symbol") == target.get("symbol")
-                and event.get("position_id") == target.get("position_id")
-                and event.get("sellable_now") == target.get("sellable_now")):
-                event["review_plan"] = plan.copy()
-        _save(events)
-        return plan
+def record_review_plan(event_id: str, choice: str, *, expected_position: dict | None = None,
+                       expected_revision: str | None = None) -> dict | None:
+    """Compatibility entry; never bypass canonical position CAS with event writes."""
+    from position_plan_service import save_action_plan
+    return save_action_plan(event_id, choice, expected_position=expected_position, expected_revision=expected_revision)
 
 
 def transition(

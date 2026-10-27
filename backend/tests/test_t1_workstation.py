@@ -51,6 +51,11 @@ def _reminder(mode="once"):
     }
 
 
+def _plan_body(client: TestClient, event_id: str, choice: str) -> dict:
+    worksheet = client.get(f"/api/alerts/{event_id}/action-plan").json()["data"]
+    return {"choice": choice, "expected_position": worksheet["position_snapshot"], "expected_revision": worksheet["revision"]}
+
+
 def test_t1_rules_attach_and_preserve_when_cost_changes(workstation):
     pf.add_holding("600000", 100, 10, "2026-10-22", "buy-1")
     initial = workstation.get("/api/portfolio/risk-rules").json()["data"]
@@ -75,20 +80,22 @@ def test_t1_new_rules_default_to_once_to_limit_repeat_alert_noise(workstation):
 
 
 def test_t1_review_plan_keeps_risk_and_groups_rules_when_saved(workstation):
+    pf.add_holding("600000", 100, 10, "2026-10-22")
+    position_id = pf._load()["holdings"][0]["position_id"]
     first, second = ae.upsert_from_reminders([
-        {**_reminder(), "position_id": "position-a"},
-        {**_reminder(), "level": "L5", "rule_id": "600000-L5", "position_id": "position-a"},
+        {**_reminder(), "position_id": position_id},
+        {**_reminder(), "level": "L5", "rule_id": "600000-L5", "position_id": position_id},
         {**_reminder(), "position_id": "position-b", "rule_revision": 3},
     ])[:2]
-    result = workstation.post(f"/api/alerts/{first['id']}/plan", json={"choice": "t_watch"})
+    result = workstation.post(f"/api/alerts/{first['id']}/plan", json=_plan_body(workstation, first["id"], "t_watch"))
     assert result.status_code == 200
     events = ae.list_events()
-    matching = [event for event in events if event.get("position_id") == "position-a"]
+    matching = [event for event in events if event.get("position_id") == position_id]
     assert len(matching) == 2
     assert all(event["review_plan"]["choice"] == "t_watch" for event in matching)
     assert all(event["status"] == "OPEN" for event in events)
     assert "review_plan" not in next(event for event in events if event["position_id"] == "position-b")
-    assert pf._load().get("holdings", []) == []
+    assert pf._load()["holdings"][0]["shares"] == 100
     assert second["id"] in {event["id"] for event in matching}
 
 
@@ -110,11 +117,15 @@ def test_t1_review_plan_rejects_when_event_terminal_or_missing(workstation):
 
 
 def test_t1_review_plan_preserves_prior_when_storage_fails(workstation, monkeypatch):
-    event = ae.upsert_from_reminders([_reminder()])[0]
-    ae.record_review_plan(event["id"], "hold")
-    monkeypatch.setattr(ae, "_save", lambda events: (_ for _ in ()).throw(OSError("disk full")))
+    pf.add_holding("600000", 100, 10, "2026-10-22")
+    position_id = pf._load()["holdings"][0]["position_id"]
+    event = ae.upsert_from_reminders([{**_reminder(), "position_id": position_id}])[0]
+    body = _plan_body(workstation, event["id"], "hold")
+    assert workstation.post(f"/api/alerts/{event['id']}/plan", json=body).status_code == 200
+    body = _plan_body(workstation, event["id"], "t_watch")
+    monkeypatch.setattr(pf, "_save", lambda data: (_ for _ in ()).throw(OSError("disk full")))
     with pytest.raises(OSError):
-        ae.record_review_plan(event["id"], "t_watch")
+        workstation.post(f"/api/alerts/{event['id']}/plan", json=body)
     assert ae.list_events()[0]["review_plan"]["choice"] == "hold"
 
 

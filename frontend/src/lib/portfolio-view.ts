@@ -39,6 +39,7 @@ function normalizeHolding(raw: unknown): Holding {
   const code = asString(record.code);
   return {
     code,
+    position_id: typeof record.position_id === "string" && record.position_id.trim() ? record.position_id : null,
     name: asString(record.name, code),
     price: asNumber(record.price),
     shares: asNumber(record.shares),
@@ -59,6 +60,7 @@ function normalizeClosed(raw: unknown): ClosedPosition {
   const code = asString(record.code);
   return {
     code,
+    position_id: typeof record.position_id === "string" && record.position_id.trim() ? record.position_id : null,
     name: asString(record.name, code),
     date: asString(record.date),
     price: asNumber(record.price),

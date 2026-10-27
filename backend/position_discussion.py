@@ -17,11 +17,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 import alert_events as ae
 import chat
-import portfolio as pf
 from aqsp.core.time import now_shanghai
-from aqsp.utils.jsonl_io import advisory_lock
-from position_plan_service import read_action_plan
-from position_route_review import risk_evidence_revision
+from position_plan_service import read_action_plan, read_position_plan, save_position_discussion
 
 
 @dataclass(frozen=True)
@@ -293,7 +290,7 @@ def _model_failure(exc: Exception) -> dict[str, str]:
 
 
 async def run_discussion(event_id: str, choice: str | None, expected_position: dict[str, Any], config: dict[str, str] | None = None,
-                         server_model: str | None = None, on_progress: Callable[[str], None] | None = None) -> dict[str, Any]:
+                         server_model: str | None = None, on_progress: Callable[[str], None] | None = None, *, position_id: str | None = None, expected_revision: str | None = None) -> dict[str, Any]:
     """Discuss one server-built snapshot, commit only to an unchanged open position."""
     started = time.monotonic()
     comparison = choice is None
@@ -307,8 +304,8 @@ async def run_discussion(event_id: str, choice: str | None, expected_position: d
             fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
             raise ValueError("已有持仓讨论进行中，请稍后重试") from exc
-        worksheet = await asyncio.to_thread(read_action_plan, event_id)
-        if worksheet is None or worksheet["position_snapshot"] != expected_position:
+        worksheet = await asyncio.to_thread(read_position_plan if position_id else read_action_plan, position_id or event_id)
+        if worksheet is None or worksheet["position_snapshot"] != expected_position or worksheet.get("archived") or not expected_revision or worksheet["revision"] != expected_revision:
             raise ValueError("持仓已变化或提醒已失效，请刷新")
         basis, plan = worksheet["basis"], worksheet["review_plan"]
         if basis["quote_issue"] and not comparison:
@@ -326,22 +323,19 @@ async def run_discussion(event_id: str, choice: str | None, expected_position: d
             if catalog.get("directory_complete", catalog.get("listed") is not None) and server_model not in catalog["models"]:
                 raise ValueError("所选型号未在当前提供商目录中，请刷新型号后重选；未自动替换")
             endpoint = ModelEndpoint(endpoint.url, endpoint.key, server_model, endpoint.anthropic)
-        event = next((row for row in ae.list_events() if row["id"] == event_id), None)
-        if event is None:
-            raise ValueError("提醒已失效")
         context = worksheet["route_review"]["evidence"]
         prices = {f"price_{index}": ref for index, ref in enumerate(basis["references"])}
         evidence = {"holding": worksheet["position_snapshot"], "quote": {"price": basis["price"], "as_of": basis["quote_as_of"], "source": basis["quote_source"]},
                     "market": context.get("market", {"status": "unknown"}),
                     "sector": context.get("sector", {"status": "unknown"}),
-                    "risk_trigger": {"checked_at": event.get("updated_at"), "basis": event.get("basis_json", {})},
+                    "risk_trigger": worksheet["risk_trigger"], "personal_constraints": worksheet["constraints"],
                     "route_constraints": worksheet["route_review"], **prices}
         guards = {"sellable_shares": basis["sellable_shares"],
-                  "pause_t": bool(basis["joint_weakness"] or basis["quote_issue"] or not basis["sellable_shares"]),
+                  "pause_t": bool(basis["joint_weakness"] or basis["quote_issue"] or not basis["sellable_shares"] or basis.get("personal_pause_t")),
                   "quote_issue": basis["quote_issue"],
                   "t_plus_one": "当日买入不得当日再卖出", "no_orders": True,
                   "context_note": "market/sector/risk_trigger为原检查快照，须核对as_of，缺失或过期不是当前事实"}
-        common = {"symbol": worksheet["symbol"], "name": (event.get("position_context") or {}).get("name", ""), "chosen_plan": choice,
+        common = {"symbol": worksheet["symbol"], "name": worksheet["name"], "chosen_plan": choice,
                   "review_mode": "比较三条路，用户尚未通过本请求作出选择" if comparison else "核对已选方案",
                   "evidence": evidence, "price_refs": prices, "guards": guards,
                   "saved_parameters": None if comparison else plan.get("parameters"),
@@ -399,6 +393,7 @@ async def run_discussion(event_id: str, choice: str | None, expected_position: d
                   "quote_as_of": basis["quote_as_of"], "price_refs": prices, "guards": guards,
                   "evidence_snapshot": evidence,
                   "analysis_basis_id": worksheet["analysis_basis_id"], "risk_revision": worksheet["risk_revision"],
+                  "review_revision": worksheet["revision"], "position_id": worksheet["position_id"],
                   "rounds": rounds, "summary": summary, "model_text_unverified": True,
                   "summary_issue": summary_failure.get("issue", ""), "summary_failure_kind": summary_failure.get("failure_kind", ""),
                   "elapsed_seconds": round(time.monotonic() - started, 2), "summary_seconds": summary_seconds,
@@ -409,7 +404,7 @@ async def run_discussion(event_id: str, choice: str | None, expected_position: d
 
 
 async def stream_discussion(event_id: str, choice: str | None, expected_position: dict[str, Any],
-                            config: dict[str, str] | None = None, server_model: str | None = None) -> AsyncIterator[str]:
+                            config: dict[str, str] | None = None, server_model: str | None = None, *, position_id: str | None = None, expected_revision: str | None = None) -> AsyncIterator[str]:
     """Yield bounded progress/result records; disconnect cancels pending I/O.
 
     This is a request-local task, not an untracked worker or a persistent job.
@@ -418,7 +413,7 @@ async def stream_discussion(event_id: str, choice: str | None, expected_position
     from contextlib import suppress
 
     progress: asyncio.Queue[str] = asyncio.Queue()
-    task = asyncio.create_task(run_discussion(event_id, choice, expected_position, config, server_model, progress.put_nowait))
+    task = asyncio.create_task(run_discussion(event_id, choice, expected_position, config, server_model, progress.put_nowait, position_id=position_id, expected_revision=expected_revision))
     stage = "preparing"
     try:
         yield json.dumps({"event": "progress", "stage": stage}) + "\n"
@@ -453,27 +448,4 @@ async def stream_discussion(event_id: str, choice: str | None, expected_position
 
 
 def _save_result(event_id: str, original_plan: dict[str, Any], snapshot: dict[str, Any], result: dict[str, Any]) -> None:
-    with ae._LOCK, advisory_lock(ae._file()), pf._LOCK, advisory_lock(pf._pf_file()):
-        events = ae._load()
-        target = next((row for row in events if row["id"] == event_id and row["status"] == "OPEN"), None)
-        comparison = result["choice"] is None
-        if target is None or (not comparison and any((target.get("review_plan") or {}).get(key) != original_plan.get(key) for key in ("choice", "updated_at", "parameters"))):
-            raise ValueError("讨论期间方案已变化，请刷新；旧结论未写入")
-        matching = [row for row in events if row.get("status") == "OPEN" and row.get("symbol") == target["symbol"]
-                    and row.get("position_id") == target.get("position_id")]
-        if risk_evidence_revision(matching) != result["risk_revision"]:
-            raise ValueError("讨论期间风险检查依据已变化，请重新分析；旧结论未写入")
-        holding = next((row for row in pf._load().get("holdings", []) if row.get("code") == target["symbol"] and row.get("position_id") == snapshot["position_id"]), None)
-        if holding is None or any(holding.get(key) != snapshot[key] for key in ("position_id", "cost", "shares")):
-            raise ValueError("讨论期间持仓已变化，旧结论未写入")
-        today = now_shanghai().date().isoformat()
-        sellable = sum(float(lot["shares"]) for lot in (holding.get("lots") or [holding]) if not lot.get("opened_at") or lot["opened_at"] < today)
-        if sellable != snapshot["sellable_shares"]:
-            raise ValueError("讨论期间可卖底仓已变化，旧结论未写入")
-        for row in events:
-            if row.get("status") == "OPEN" and row.get("symbol") == target["symbol"] and row.get("position_id") == target.get("position_id"):
-                if comparison:
-                    row["position_analysis"] = result
-                else:
-                    row["review_plan"] = {**row.get("review_plan", {}), "discussion": result}
-        ae._save(events)
+    save_position_discussion(str(snapshot["position_id"]), snapshot, result)
