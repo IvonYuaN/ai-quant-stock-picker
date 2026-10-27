@@ -161,6 +161,22 @@ def _breadth_counts() -> dict | None:
     return counts
 
 
+def breadth_label(up: int | float, down: int | float) -> str:
+    """Reuse the existing market breadth presentation bands, without changing them."""
+    r = up / max(down, 1)
+    if up < 600:
+        breadth = "冰点"
+    elif r < 0.7:
+        breadth = "偏弱"
+    elif r < 1.2:
+        breadth = "中性"
+    elif r < 2.5:
+        breadth = "偏强"
+    else:
+        breadth = "普涨"
+    return breadth
+
+
 def _sentiment(emotion: dict | None = None) -> dict:
     """市场情绪：涨跌家数/涨停跌停/宽度（#417 起改东财口径）。
 
@@ -189,17 +205,7 @@ def _sentiment(emotion: dict | None = None) -> dict:
         emotion = get_short_term_emotion() or {}
     zt = emotion.get("zt_count")
     dt = emotion.get("dt_count")
-    r = up / max(down, 1)
-    if up < 600:
-        breadth = "冰点"
-    elif r < 0.7:
-        breadth = "偏弱"
-    elif r < 1.2:
-        breadth = "中性"
-    elif r < 2.5:
-        breadth = "偏强"
-    else:
-        breadth = "普涨"
+    breadth = breadth_label(up, down)
     return {
         "up": up,
         "down": down,
