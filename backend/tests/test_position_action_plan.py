@@ -207,3 +207,64 @@ def test_action_plan_keeps_parameters_when_selected_choice_is_clicked_again(plan
     again = client.get(f"/api/alerts/{event}/action-plan").json()["data"]
     assert again["scenario"]["net_cash"] == 85.35
     assert again["review_plan"]["parameters"] == PARAMS
+
+
+def test_action_plan_returns_recorded_sale_when_receipt_matches_same_position(plan_client) -> None:
+    client, event = plan_client
+    before = client.get(f"/api/alerts/{event}/action-plan").json()["data"]
+    assert client.post(f"/api/alerts/{event}/plan", json={"choice": "t_watch", "parameters": PARAMS, "expected_position": before["position_snapshot"]}).status_code == 200
+    ae.close_from_operation("002129", "2026-10-23", 9.5, 200, 12, "journey-sale")
+    result = client.get(f"/api/alerts/{event}/action-plan").json()["data"]
+    assert result["recorded_sale"] == {"date": "2026-10-23", "price": 9.5, "shares": 200}
+    assert result["basis"]["shares"] == 800
+    assert result["scenario"] is None and result["scenario_issue"]
+    assert ae.list_events()[0]["status"] == "OPEN"
+    assert result["review_plan"]["position_snapshot"]["shares"] == 1000
+
+
+def test_action_plan_ignores_event_sale_when_no_durable_receipt(plan_client) -> None:
+    client, event = plan_client
+    events = ae._load()
+    events[0]["last_sale"] = {"operation_id": "unknown", "date": "2026-10-23", "price": 9.5, "shares": 200}
+    ae._save(events)
+    assert client.get(f"/api/alerts/{event}/action-plan").json()["data"]["recorded_sale"] is None
+
+
+@pytest.mark.parametrize("changed", [{"position_id": "another"}, {"shares": 300}, {"code": "600000"}])
+def test_action_plan_ignores_sale_when_receipt_does_not_match(plan_client, changed: dict) -> None:
+    client, event = plan_client
+    ae.close_from_operation("002129", "2026-10-23", 9.5, 200, 12, "journey-sale")
+    data = pf._load()
+    data["closed"][-1].update(changed)
+    pf._save(data)
+    assert client.get(f"/api/alerts/{event}/action-plan").json()["data"]["recorded_sale"] is None
+
+
+def test_action_plan_acknowledges_sale_only_when_current_scenario_saved(plan_client) -> None:
+    client, event = plan_client
+    ae.record_review_plan(event, "t_watch")
+    ae.close_from_operation("002129", "2026-10-23", 9.5, 200, 12, "journey-sale")
+    before = client.get(f"/api/alerts/{event}/action-plan").json()["data"]
+    assert before["sale_requires_review"] is True
+    assert client.post(f"/api/alerts/{event}/plan", json={"choice": "t_watch"}).status_code == 200
+    assert client.get(f"/api/alerts/{event}/action-plan").json()["data"]["sale_requires_review"] is True
+    assert client.post(f"/api/alerts/{event}/plan", json={"choice": "t_watch", "parameters": PARAMS, "expected_position": before["position_snapshot"]}).status_code == 200
+    after = client.get(f"/api/alerts/{event}/action-plan").json()["data"]
+    assert after["recorded_sale"] == before["recorded_sale"]
+    assert after["sale_requires_review"] is False
+    assert after["scenario"] and not after["scenario_issue"]
+    assert pf._load()["holdings"][0]["shares"] == 800
+
+
+def test_action_plan_can_resume_holding_after_recorded_sale_without_scenario(plan_client) -> None:
+    client, event = plan_client
+    ae.close_from_operation("002129", "2026-10-23", 9.5, 200, 12, "journey-sale")
+    assert client.post(f"/api/alerts/{event}/plan", json={"choice": "hold"}).status_code == 200
+    result = client.get(f"/api/alerts/{event}/action-plan").json()["data"]
+    assert result["recorded_sale"]
+    assert result["sale_requires_review"] is True
+    assert client.post(f"/api/alerts/{event}/plan", json={"choice": "hold", "expected_position": result["position_snapshot"]}).status_code == 200
+    result = client.get(f"/api/alerts/{event}/action-plan").json()["data"]
+    assert result["sale_requires_review"] is False
+    assert result["review_plan"]["choice"] == "hold"
+    assert not result["review_plan"].get("parameters")
