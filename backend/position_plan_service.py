@@ -12,6 +12,7 @@ from typing import Any
 
 import alert_events as ae
 import portfolio as pf
+import trade_journal as journal
 from aqsp.core.time import now_shanghai
 from aqsp.utils.jsonl_io import advisory_lock
 from position_action_plan import build_action_basis, calculate_scenario
@@ -85,7 +86,8 @@ def _revision(root: dict[str, Any], data: dict[str, Any], events: list[dict[str,
     return evidence_digest({'version': root['version'], 'constraints': root['constraints'],
                             'plan': {key: value for key, value in root['review_plan'].items() if key != 'discussion'},
                             'position': _snapshot(holding), 'risk': _risk_revision(data, events, position_id),
-                            'sale': _receipt_id(_receipt(data, position_id))})
+                            'sale': _receipt_id(_receipt(data, position_id)),
+                            'trades': journal.position_revision(data, holding['code'])})
 
 
 def resolve_position_id(event_id: str) -> str | None:
@@ -155,6 +157,8 @@ def build_position_worksheet(position_id: str, portfolio: dict[str, Any], data: 
     revision = _revision(root, data, events, live or holding)
     plan = deepcopy(root['review_plan'])
     scenario, scenario_issue = None, ''
+    trade_revision = journal.position_revision(data, holding['code'])
+    trades_changed = plan.get('trade_revision') is not None and plan['trade_revision'] != trade_revision
     sale_requires_review = bool(receipt and plan.get('acknowledged_sale_id') != _receipt_id(receipt))
     if plan.get('parameters'):
         if archived or plan.get('position_snapshot') != snapshot:
@@ -163,6 +167,8 @@ def build_position_worksheet(position_id: str, portfolio: dict[str, Any], data: 
             scenario_issue = '个人条件已变化，旧测算失效，请核对后重新保存'
         elif sale_requires_review:
             scenario_issue = '已回录新的卖出，先核对剩余仓位并重新保存试算'
+        elif trades_changed:
+            scenario_issue = '实际成交、费用或买回关联已变化，请核对后重新保存试算'
         else:
             try:
                 scenario = calculate_scenario(plan['choice'], plan['parameters'], {**holding, **snapshot})
@@ -170,7 +176,7 @@ def build_position_worksheet(position_id: str, portfolio: dict[str, Any], data: 
             except ValueError as exc:
                 scenario, scenario_issue = None, str(exc)
     discussion = plan.get('discussion')
-    if discussion and not archived and (discussion.get('position_snapshot') != snapshot or sale_requires_review):
+    if discussion and not archived and (discussion.get('position_snapshot') != snapshot or sale_requires_review or trades_changed):
         plan['discussion'] = None
     facts = current_rule_facts(holding.get('risk_rules', []), basis, current=current)
     review = build_route_review(holding, quote, basis, old_context, opened, current=current, risk_facts=facts).to_dict()
@@ -179,7 +185,7 @@ def build_position_worksheet(position_id: str, portfolio: dict[str, Any], data: 
     basis_id = evidence_digest({'risk_revision': risk_revision, 'review_revision': revision, 'evidence': review['evidence'],
                                 'basis': {key: value for key, value in basis.items() if key != 'checked_at'}})
     comparison = root.get('comparison')
-    if comparison and not archived and comparison.get('position_snapshot') != snapshot:
+    if comparison and not archived and (comparison.get('position_snapshot') != snapshot or comparison.get('review_revision') != revision):
         comparison = None
     from position_followup import followup_view
     return {'followup': followup_view(root, revision, snapshot, current=current), 'position_id': position_id, 'name': holding.get('name') or holding['code'], 'symbol': holding['code'],
@@ -246,7 +252,8 @@ def save_position_plan(position_id: str, choice: str, parameters: dict[str, Any]
         plan['updated_at'] = now_shanghai().isoformat()
         if parameters is not None or not plan.get('parameters'):
             plan.update({'position_snapshot': worksheet['position_snapshot'],
-                         'constraints_version': root.get('constraints_version', 0)})
+                         'constraints_version': root.get('constraints_version', 0),
+                         'trade_revision': journal.position_revision(data, worksheet['symbol'])})
         # Intent changes do not silently acknowledge a new sale. Explicit hold
         # confirmation, or a refreshed fee calculation, acknowledges this receipt.
         if parameters is not None or choice == 'hold' and previous.get('choice') == 'hold':

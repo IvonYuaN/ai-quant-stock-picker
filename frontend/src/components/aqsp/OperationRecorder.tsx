@@ -26,7 +26,9 @@ export function OperationRecorder() {
     setLoadError(""); setJournal(null);
     if (!/^\d{6}$/.test(code)) return;
     try {
-      const [current, trades] = await Promise.all([api.portfolio(), api.tradeJournal(code)]);
+      const current = await api.portfolio();
+      if (version !== readVersion.current) return;
+      const trades = await api.tradeJournal(code);
       if (version === readVersion.current) { setPortfolio(current); setJournal(trades); }
     } catch (reason) {
       if (version === readVersion.current) setLoadError(reason instanceof Error ? reason.message : "读取持仓失败");
@@ -77,8 +79,8 @@ export function OperationRecorder() {
     const validation = operationError(form, shanghaiDate());
     if (validation) { setError(validation); return; }
     if (!uncertain && (!journal || identityChanged)) { setError(identityChanged ? "原持仓已退出或重开，请关闭旧页面并从当前持仓重新录入" : "请先读取并核对当前持仓"); return; }
-    if (!uncertain && form.direction === "sell" && !holding) { setError("请先读取并确认要卖出的持仓"); return; }
-    if (!uncertain && form.direction === "sell" && holding && Number(form.shares) > (holding.sellable_shares ?? holding.shares)) { setError("数量超过当前可卖持仓，请核对 T+1 限制"); return; }
+    if (!uncertain && form.direction === "sell" && !journal?.position.position_id) { setError("请先读取并确认要卖出的持仓"); return; }
+    if (!uncertain && form.direction === "sell" && journal && Number(form.shares) > journal.position.sellable_shares) { setError("数量超过当前可卖持仓，请核对 T+1 限制"); return; }
     if (!uncertain) {
       pendingRequest.current = {
         operation_id: crypto.randomUUID(), direction: form.direction, code: form.code.trim(), date: form.date,
@@ -127,10 +129,10 @@ export function OperationRecorder() {
           <label>成交数量（股）<input type="number" className="aq-input" inputMode="decimal" min="0.0001" step="any" value={form.shares} disabled={busy || uncertain} onChange={(event) => change({ shares: event.target.value })} required /></label>
           <label>本笔实际总费用（元，可后补）<input type="number" className="aq-input" inputMode="decimal" min="0" step="any" value={form.actualFees ?? ""} disabled={busy || uncertain} onChange={(event) => change({ actualFees: event.target.value })} placeholder="未知留空；核实免费才填 0" /></label>
         </div>
-        <div className="aq-operation-note">{loadError ? <><span role="alert">读取持仓失败：{loadError}</span><button type="button" className="aq-btn" disabled={busy} onClick={() => void load(form.code.trim())}><RefreshCw aria-hidden="true" />重试读取</button></> : !/^\d{6}$/.test(form.code.trim()) ? "填写代码后核对当前持仓" : !journal ? "正在读取当前持仓…" : identityChanged ? <span role="alert">原持仓已退出或重开，不能从旧页面录入新仓</span> : holding ? `${holding.name || holding.code} · 持有 ${holding.shares} 股 · 当前可卖 ${holding.sellable_shares ?? holding.shares} 股` : "当前没有这只持仓；实际买入将建立新仓"}</div>
+        <div className="aq-operation-note">{loadError ? <><span role="alert">读取持仓失败：{loadError}</span><button type="button" className="aq-btn" disabled={busy} onClick={() => void load(form.code.trim())}><RefreshCw aria-hidden="true" />重试读取</button></> : !/^\d{6}$/.test(form.code.trim()) ? "填写代码后核对当前持仓" : !journal ? "正在读取当前持仓…" : identityChanged ? <span role="alert">原持仓已退出或重开，不能从旧页面录入新仓</span> : journal.position.position_id ? `${holding?.name || form.code.trim()} · 持有 ${journal.position.shares} 股 · 当前可卖 ${journal.position.sellable_shares} 股` : "当前没有这只持仓；实际买入将建立新仓"}</div>
         {form.direction === "buy" ? <p className="aq-operation-note">这是新增成交，会增加持仓。已在持仓中记过的数量不要重复录入；普通买入不会自动算作做 T 买回。</p> : null}
         {error ? <p className="aq-operation-error" role="alert">{error}</p> : null}
-        <footer className="aq-operation-foot"><span>仅记录成交，不代下单</span><button className="aq-btn aq-btn-primary" type="submit" disabled={busy || (!uncertain && (!journal || identityChanged || (form.direction === "sell" && !holding)))}><Check aria-hidden="true" />{busy ? "正在保存…" : uncertain ? "原样重试成交" : "保存成交"}</button></footer>
+        <footer className="aq-operation-foot"><span>仅记录成交，不代下单</span><button className="aq-btn aq-btn-primary" type="submit" disabled={busy || (!uncertain && (!journal || identityChanged || (form.direction === "sell" && !journal.position.position_id)))}><Check aria-hidden="true" />{busy ? "正在保存…" : uncertain ? "原样重试成交" : "保存成交"}</button></footer>
       </form>
     </dialog>
   );

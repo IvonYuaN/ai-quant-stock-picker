@@ -629,9 +629,9 @@ class TradeReceiptIn(BaseModel):
     direction: str
     code: str
     date: str
-    price: float
-    shares: float
-    actual_fees: float | None = None
+    price: float = Field(strict=True, gt=0, allow_inf_nan=False)
+    shares: float = Field(strict=True, gt=0, allow_inf_nan=False)
+    actual_fees: float | None = Field(default=None, strict=True, ge=0, allow_inf_nan=False)
     expected_position_id: str | None = None
     expected_position_revision: str
     alert_id: str | None = Field(default=None, max_length=128)
@@ -642,7 +642,7 @@ class TradeFeeIn(BaseModel):
 
     operation_id: str = Field(min_length=1, max_length=128)
     expected_revision: str
-    actual_fees: float | None = None
+    actual_fees: float | None = Field(default=None, strict=True, ge=0, allow_inf_nan=False)
 
 
 class TradeAllocationIn(BaseModel):
@@ -650,9 +650,9 @@ class TradeAllocationIn(BaseModel):
 
     sell_receipt_id: str
     buy_receipt_id: str
-    shares: float
-    confirm_same_day_order: bool = False
-    confirm_cross_position: bool = False
+    shares: float = Field(strict=True, gt=0, allow_inf_nan=False)
+    confirm_same_day_order: bool = Field(default=False, strict=True)
+    confirm_cross_position: bool = Field(default=False, strict=True)
 
 
 class TradeLinkIn(BaseModel):

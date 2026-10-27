@@ -99,9 +99,16 @@ def _maybe_migrate_to_tenant() -> None:
     if os.path.exists(tf) or not os.path.exists(_legacy_local_pf()):
         return
     try:
+        with open(_legacy_local_pf(), encoding="utf-8") as source:
+            legacy = json.load(source)
+        # A legacy aggregate could be adopted by the original browser. Actual
+        # tenant-bound fills and their immutable receipts must never be cloned
+        # into a newly guessed browser identity.
+        if legacy.get("trade_receipts"):
+            return
         os.makedirs(_tenant_dir(), exist_ok=True)
         shutil.copy2(_legacy_local_pf(), tf)
-    except OSError:
+    except (OSError, json.JSONDecodeError):
         pass
 
 
@@ -227,6 +234,8 @@ def add_holding(
     with _LOCK, advisory_lock(_pf_file()):
         d = _load()
         request = {"code": code, "shares": shares, "cost": cost, "opened_at": opened_at}
+        if operation_id and (operation_id in d.get("trade_mutations", {}) or any(row.get("operation_id") == operation_id for row in d.get("closed", []))):
+            raise ValueError("该操作编号已用于其他成交协议，不能重复记账")
         if operation_id and operation_id in d.get("operations", {}):
             if d["operations"][operation_id] != request:
                 raise ValueError("重复操作标识的成交内容不同")
@@ -370,6 +379,8 @@ def close_position(
     with _LOCK, advisory_lock(_pf_file()):
         d = _load()
         d.setdefault("closed", [])
+        if operation_id and (operation_id in d.get("trade_mutations", {}) or operation_id in d.get("operations", {})):
+            raise ValueError("该操作编号已用于其他成交协议，不能重复记账")
         existing = next((c for c in d["closed"] if operation_id and c.get("operation_id") == operation_id), None)
         if existing:
             if any(existing[k] != v for k, v in {"code": code, "date": date, "price": price, "shares": shares}.items()):

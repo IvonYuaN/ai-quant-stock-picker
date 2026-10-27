@@ -54,6 +54,7 @@ def position_revision(data: dict[str, Any], code: str) -> str:
     ids = {r['receipt_id'] for r in receipts}
     links = [link for link in data.get('trade_links', []) if any(a['sell_receipt_id'] in ids or a['buy_receipt_id'] in ids for a in link['allocations'])]
     return _digest({'tenant': pf._tenant_id(), 'code': code,
+                    'version': data.get('trade_code_versions', {}).get(code, 0),
                     'position': {k: holding.get(k) for k in ('position_id', 'shares', 'cost', 'opened_at', 'lots')} if holding else None,
                     'receipts': receipts, 'links': links})
 
@@ -113,6 +114,8 @@ def _retry(data: dict[str, Any], operation_id: str, request: dict[str, Any]) -> 
 
 def _commit(data: dict[str, Any], code: str, operation_id: str, request: dict[str, Any], *, kind: str, before: object = None) -> dict[str, Any]:
     data['trade_version'] = data.get('trade_version', 0) + 1
+    versions = data.setdefault('trade_code_versions', {})
+    versions[code] = versions.get(code, 0) + 1
     data.setdefault('trade_audit', []).append({'operation_id': operation_id, 'kind': kind, 'before': deepcopy(before),
                                              'request': deepcopy(request), 'recorded_at': now_shanghai().isoformat()})
     result = _view(data, code)
@@ -132,7 +135,8 @@ def _reconcile_sale(data: dict[str, Any], operation_id: str) -> None:
     events = ae._load()
     changed = False
     for event in events:
-        if event.get('symbol') != receipt['code'] or event.get('position_id') != receipt['position_id'] or event.get('status') != 'OPEN':
+        recoverable = event.get('status') == 'OPEN' or (closed.get('position_closed') and event.get('status') == 'EXPIRED')
+        if event.get('symbol') != receipt['code'] or event.get('position_id') != receipt['position_id'] or not recoverable:
             continue
         sale = {key: receipt[key] for key in ('operation_id', 'date', 'price', 'shares')}
         if latest['receipt_id'] == operation_id and event.get('last_sale') != sale:
