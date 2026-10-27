@@ -25,6 +25,16 @@ HOLDING = {"code": "002129", "position_id": "p1", "shares": 1000, "sellable_shar
 QUOTE = {"price": 9.2, "high": 9.5, "low": 9, "last_close": 9.1, "quote_time": "20261023100000"}
 
 
+def record_plan(event_id: str, choice: str) -> dict | None:
+    worksheet = service.read_action_plan(event_id)
+    return ae.record_review_plan(event_id, choice, expected_position=worksheet["position_snapshot"], expected_revision=worksheet["revision"])
+
+
+def plan_body(client: TestClient, event_id: str, choice: str) -> dict:
+    worksheet = client.get(f"/api/alerts/{event_id}/action-plan").json()["data"]
+    return {"choice": choice, "expected_position": worksheet["position_snapshot"], "expected_revision": worksheet["revision"]}
+
+
 def test_action_plan_computes_net_two_legs_when_explicit_costs_provided() -> None:
     result = calculate_scenario("t_watch", PARAMS, HOLDING)
     assert result["gross_spread"] == 100
@@ -106,31 +116,31 @@ def test_action_plan_endpoint_persists_and_recomputes_without_trade(plan_client)
     client, event = plan_client
     before = pf._load()
     worksheet = client.get(f"/api/alerts/{event}/action-plan").json()["data"]
-    result = client.post(f"/api/alerts/{event}/plan", json={"choice": "t_watch", "parameters": PARAMS, "expected_position": worksheet["position_snapshot"]})
+    result = client.post(f"/api/alerts/{event}/plan", json={"choice": "t_watch", "parameters": PARAMS, "expected_position": worksheet["position_snapshot"], "expected_revision": worksheet["revision"]})
     assert result.status_code == 200, result.text
     reloaded = client.get(f"/api/alerts/{event}/action-plan").json()["data"]
     assert reloaded["review_plan"]["parameters"] == PARAMS
     assert reloaded["scenario"]["net_cash"] == 85.35
     assert ae.list_events()[0]["status"] == "OPEN"
-    assert pf._load() == before
+    assert {key: value for key, value in pf._load().items() if key != "position_reviews"} == {key: value for key, value in before.items() if key != "position_reviews"}
 
 
 def test_action_plan_endpoint_invalidates_scenario_when_holdings_changed(plan_client) -> None:
     client, event = plan_client
     worksheet = client.get(f"/api/alerts/{event}/action-plan").json()["data"]
-    body = {"choice": "t_watch", "parameters": PARAMS, "expected_position": worksheet["position_snapshot"]}
+    body = {"choice": "t_watch", "parameters": PARAMS, "expected_position": worksheet["position_snapshot"], "expected_revision": worksheet["revision"]}
     assert client.post(f"/api/alerts/{event}/plan", json=body).status_code == 200
     pf.add_holding("002129", 100, 9.2, "2026-10-23")
     changed = client.get(f"/api/alerts/{event}/action-plan").json()["data"]
     assert changed["scenario"] is None and "已变化" in changed["scenario_issue"]
-    assert client.post(f"/api/alerts/{event}/plan", json=body).status_code == 400
+    assert client.post(f"/api/alerts/{event}/plan", json=body).status_code == 409
 
 
 def test_action_plan_endpoint_rejects_stale_quote_when_saving(plan_client, monkeypatch) -> None:
     client, event = plan_client
     worksheet = client.get(f"/api/alerts/{event}/action-plan").json()["data"]
     monkeypatch.setattr(pf.astock, "tencent_quote", lambda codes: {code: {**QUOTE, "quote_time": "20261022150000"} for code in codes})
-    result = client.post(f"/api/alerts/{event}/plan", json={"choice": "t_watch", "parameters": PARAMS, "expected_position": worksheet["position_snapshot"]})
+    result = client.post(f"/api/alerts/{event}/plan", json={"choice": "t_watch", "parameters": PARAMS, "expected_position": worksheet["position_snapshot"], "expected_revision": worksheet["revision"]})
     assert result.status_code == 400 and "过期" in result.text
     assert "parameters" not in ae.list_events()[0].get("review_plan", {})
 
@@ -147,10 +157,11 @@ def test_action_plan_endpoint_rejects_reopened_identity_and_cross_tenant(plan_cl
 def test_action_plan_endpoint_preserves_prior_inputs_when_journal_write_fails(plan_client, monkeypatch) -> None:
     client, event = plan_client
     worksheet = client.get(f"/api/alerts/{event}/action-plan").json()["data"]
-    ae.record_review_plan(event, "hold")
-    monkeypatch.setattr(ae, "_save", lambda rows: (_ for _ in ()).throw(OSError("disk full")))
+    record_plan(event, "hold")
+    worksheet = client.get(f"/api/alerts/{event}/action-plan").json()["data"]
+    monkeypatch.setattr(pf, "_save", lambda rows: (_ for _ in ()).throw(OSError("disk full")))
     with pytest.raises(OSError):
-        client.post(f"/api/alerts/{event}/plan", json={"choice": "t_watch", "parameters": PARAMS, "expected_position": worksheet["position_snapshot"]})
+        client.post(f"/api/alerts/{event}/plan", json={"choice": "t_watch", "parameters": PARAMS, "expected_position": worksheet["position_snapshot"], "expected_revision": worksheet["revision"]})
     assert ae.list_events()[0]["review_plan"]["choice"] == "hold"
 
 
@@ -194,9 +205,9 @@ def test_action_plan_rejects_mid_commit_change_and_t1_locked_when_saving(plan_cl
     data = pf._load()
     data["holdings"][0]["lots"] = [{"shares": 1000, "opened_at": "2026-10-23"}]
     pf._save(data)
-    monkeypatch.setattr(service, "read_action_plan", lambda event_id: worksheet)
-    response = client.post(f"/api/alerts/{event}/plan", json={"choice": "t_watch", "parameters": PARAMS, "expected_position": worksheet["position_snapshot"]})
-    assert response.status_code == 400 and "可卖底仓已变化" in response.text
+    monkeypatch.setattr(service, "read_position_plan", lambda position_id: worksheet)
+    response = client.post(f"/api/alerts/{event}/plan", json={"choice": "t_watch", "parameters": PARAMS, "expected_position": worksheet["position_snapshot"], "expected_revision": worksheet["revision"]})
+    assert response.status_code == 409 and "已变化" in response.text
 
 
 def test_action_plan_rejects_fractional_position_when_rounding_would_hide_quantity() -> None:
@@ -212,10 +223,10 @@ def test_action_plan_reports_realized_loss_when_reduction_is_below_cost() -> Non
 def test_action_plan_keeps_parameters_when_selected_choice_is_clicked_again(plan_client) -> None:
     client, event = plan_client
     worksheet = client.get(f"/api/alerts/{event}/action-plan").json()["data"]
-    body = {"choice": "t_watch", "parameters": PARAMS, "expected_position": worksheet["position_snapshot"]}
+    body = {"choice": "t_watch", "parameters": PARAMS, "expected_position": worksheet["position_snapshot"], "expected_revision": worksheet["revision"]}
     assert client.post(f"/api/alerts/{event}/plan", json=body).status_code == 200
     for _ in range(2):
-        assert client.post(f"/api/alerts/{event}/plan", json={"choice": "t_watch"}).status_code == 200
+        assert client.post(f"/api/alerts/{event}/plan", json=plan_body(client, event, "t_watch")).status_code == 200
     again = client.get(f"/api/alerts/{event}/action-plan").json()["data"]
     assert again["scenario"]["net_cash"] == 85.35
     assert again["review_plan"]["parameters"] == PARAMS
@@ -224,7 +235,8 @@ def test_action_plan_keeps_parameters_when_selected_choice_is_clicked_again(plan
 def test_action_plan_returns_recorded_sale_when_receipt_matches_same_position(plan_client) -> None:
     client, event = plan_client
     before = client.get(f"/api/alerts/{event}/action-plan").json()["data"]
-    assert client.post(f"/api/alerts/{event}/plan", json={"choice": "t_watch", "parameters": PARAMS, "expected_position": before["position_snapshot"]}).status_code == 200
+    before = client.get(f"/api/alerts/{event}/action-plan").json()["data"]
+    assert client.post(f"/api/alerts/{event}/plan", json={"choice": "t_watch", "parameters": PARAMS, "expected_position": before["position_snapshot"], "expected_revision": before["revision"]}).status_code == 200
     ae.close_from_operation("002129", "2026-10-23", 9.5, 200, 12, "journey-sale")
     result = client.get(f"/api/alerts/{event}/action-plan").json()["data"]
     assert result["recorded_sale"] == {"date": "2026-10-23", "price": 9.5, "shares": 200}
@@ -242,7 +254,7 @@ def test_action_plan_ignores_event_sale_when_no_durable_receipt(plan_client) -> 
     assert client.get(f"/api/alerts/{event}/action-plan").json()["data"]["recorded_sale"] is None
 
 
-@pytest.mark.parametrize("changed", [{"position_id": "another"}, {"shares": 300}, {"code": "600000"}])
+@pytest.mark.parametrize("changed", [{"position_id": "another"}, {"code": "600000"}])
 def test_action_plan_ignores_sale_when_receipt_does_not_match(plan_client, changed: dict) -> None:
     client, event = plan_client
     ae.close_from_operation("002129", "2026-10-23", 9.5, 200, 12, "journey-sale")
@@ -254,13 +266,14 @@ def test_action_plan_ignores_sale_when_receipt_does_not_match(plan_client, chang
 
 def test_action_plan_acknowledges_sale_only_when_current_scenario_saved(plan_client) -> None:
     client, event = plan_client
-    ae.record_review_plan(event, "t_watch")
+    record_plan(event, "t_watch")
     ae.close_from_operation("002129", "2026-10-23", 9.5, 200, 12, "journey-sale")
     before = client.get(f"/api/alerts/{event}/action-plan").json()["data"]
     assert before["sale_requires_review"] is True
-    assert client.post(f"/api/alerts/{event}/plan", json={"choice": "t_watch"}).status_code == 200
+    assert client.post(f"/api/alerts/{event}/plan", json=plan_body(client, event, "t_watch")).status_code == 200
     assert client.get(f"/api/alerts/{event}/action-plan").json()["data"]["sale_requires_review"] is True
-    assert client.post(f"/api/alerts/{event}/plan", json={"choice": "t_watch", "parameters": PARAMS, "expected_position": before["position_snapshot"]}).status_code == 200
+    before = client.get(f"/api/alerts/{event}/action-plan").json()["data"]
+    assert client.post(f"/api/alerts/{event}/plan", json={"choice": "t_watch", "parameters": PARAMS, "expected_position": before["position_snapshot"], "expected_revision": before["revision"]}).status_code == 200
     after = client.get(f"/api/alerts/{event}/action-plan").json()["data"]
     assert after["recorded_sale"] == before["recorded_sale"]
     assert after["sale_requires_review"] is False
@@ -271,12 +284,23 @@ def test_action_plan_acknowledges_sale_only_when_current_scenario_saved(plan_cli
 def test_action_plan_can_resume_holding_after_recorded_sale_without_scenario(plan_client) -> None:
     client, event = plan_client
     ae.close_from_operation("002129", "2026-10-23", 9.5, 200, 12, "journey-sale")
-    assert client.post(f"/api/alerts/{event}/plan", json={"choice": "hold"}).status_code == 200
+    assert client.post(f"/api/alerts/{event}/plan", json=plan_body(client, event, "hold")).status_code == 200
     result = client.get(f"/api/alerts/{event}/action-plan").json()["data"]
     assert result["recorded_sale"]
     assert result["sale_requires_review"] is True
-    assert client.post(f"/api/alerts/{event}/plan", json={"choice": "hold", "expected_position": result["position_snapshot"]}).status_code == 200
+    assert client.post(f"/api/alerts/{event}/plan", json={"choice": "hold", "expected_position": result["position_snapshot"], "expected_revision": result["revision"]}).status_code == 200
     result = client.get(f"/api/alerts/{event}/action-plan").json()["data"]
     assert result["sale_requires_review"] is False
     assert result["review_plan"]["choice"] == "hold"
     assert not result["review_plan"].get("parameters")
+
+
+def test_action_plan_uses_durable_receipt_when_event_copy_differs(plan_client) -> None:
+    client, event = plan_client
+    ae.close_from_operation("002129", "2026-10-23", 9.5, 200, 12, "journey-sale")
+    events = ae._load()
+    events[0]["last_sale"]["shares"] = 999
+    ae._save(events)
+    result = client.get(f"/api/alerts/{event}/action-plan").json()["data"]
+    assert result["recorded_sale"]["shares"] == 200
+    assert result["sale_requires_review"] is True

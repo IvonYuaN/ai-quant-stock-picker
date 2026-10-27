@@ -810,6 +810,7 @@ def alerts_list(
 
 
 class AlertReviewPlanIn(BaseModel):
+    expected_revision: str | None = None
     choice: str
     parameters: dict[str, Any] | None = None
     expected_position: dict[str, Any] | None = None
@@ -821,9 +822,10 @@ def alert_review_plan(event_id: str, body: AlertReviewPlanIn) -> dict:
     from position_plan_service import save_action_plan
 
     try:
-        plan = save_action_plan(event_id, body.choice, body.parameters, body.expected_position)
+        plan = save_action_plan(event_id, body.choice, body.parameters, body.expected_position, body.expected_revision)
     except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
+        from position_plan_service import PlanConflictError
+        raise HTTPException(409 if isinstance(exc, PlanConflictError) else 400, str(exc)) from exc
     if plan is None:
         raise HTTPException(409, "提醒不存在或已失效，请刷新后重试")
     return {"data": plan}
@@ -834,17 +836,91 @@ def alert_action_plan(event_id: str) -> dict:
     """Read live source evidence and hypothetical costs; no notifications or trades."""
     from position_plan_service import read_action_plan
 
-    result = read_action_plan(event_id)
+    try:
+        result = read_action_plan(event_id)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
     if result is None:
         raise HTTPException(409, "提醒或原持仓已失效，请刷新")
     return {"data": result}
 
 
 class PositionDiscussionIn(BaseModel):
+    expected_revision: str | None = None
     choice: str | None = None
     expected_position: dict[str, Any]
     llm: LLMConfig | None = None
     server_model: str | None = Field(default=None, min_length=1, max_length=200)
+
+
+@app.get("/api/positions/{position_id}/action-plan", tags=["持仓风险"])
+def position_action_plan(position_id: str) -> dict:
+    """Every own position has a worksheet, including those without alerts."""
+    from position_plan_service import read_position_plan
+    try:
+        result = read_position_plan(position_id)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if result is None:
+        raise HTTPException(409, "原持仓不存在或身份已变化，请返回持仓刷新")
+    return {"data": result}
+
+
+@app.post("/api/positions/{position_id}/plan", tags=["持仓风险"])
+def position_review_plan(position_id: str, body: AlertReviewPlanIn) -> dict:
+    """Save a human plan using the same guards as the legacy event adapter."""
+    from position_plan_service import PlanConflictError, save_position_plan
+    try:
+        result = save_position_plan(position_id, body.choice, body.parameters, body.expected_position, body.expected_revision)
+    except ValueError as exc:
+        raise HTTPException(409 if isinstance(exc, PlanConflictError) else 400, str(exc)) from exc
+    if result is None:
+        raise HTTPException(409, "原持仓不存在，请刷新")
+    return {"data": result}
+
+
+class PositionConstraintsIn(BaseModel):
+    attention: str
+    extra_cash: Any = None
+    loss_limit: Any = None
+    reset_risk_baseline: Any = False
+    expected_position: dict[str, Any] | None = None
+    expected_revision: str | None = None
+
+
+@app.post("/api/positions/{position_id}/constraints", tags=["持仓风险"])
+def position_constraints(position_id: str, body: PositionConstraintsIn) -> dict:
+    """Confirm optional user limits; never change frozen strategy risk rules."""
+    from position_plan_service import PlanConflictError, save_position_constraints
+    try:
+        result = save_position_constraints(position_id, body.model_dump(exclude={"expected_position", "expected_revision"}),
+                                           body.expected_position, body.expected_revision)
+    except ValueError as exc:
+        raise HTTPException(409 if isinstance(exc, PlanConflictError) else 400, str(exc)) from exc
+    if result is None:
+        raise HTTPException(409, "原持仓不存在，请刷新")
+    return {"data": result}
+
+
+@app.post("/api/positions/{position_id}/discussion", tags=["持仓风险"])
+async def position_root_discussion(position_id: str, body: PositionDiscussionIn) -> dict:
+    """Discuss the same canonical position from any of its entry paths."""
+    from position_discussion import run_discussion
+    try:
+        result = await run_discussion("", body.choice, body.expected_position, body.llm.model_dump() if body.llm else None,
+                                      body.server_model, position_id=position_id, expected_revision=body.expected_revision)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {"data": result}
+
+
+@app.post("/api/positions/{position_id}/discussion/stream", tags=["持仓风险"])
+async def position_root_discussion_stream(position_id: str, body: PositionDiscussionIn) -> StreamingResponse:
+    """Bounded progress, cancellation and CAS are shared with event discussion."""
+    from position_discussion import stream_discussion
+    return StreamingResponse(stream_discussion("", body.choice, body.expected_position,
+        body.llm.model_dump() if body.llm else None, body.server_model, position_id=position_id, expected_revision=body.expected_revision),
+        media_type="application/x-ndjson", headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
 
 
 @app.get("/api/position-models", tags=["持仓风险"], summary="读取现有提供商型号目录，不自动更换配置")
@@ -870,7 +946,7 @@ async def position_discussion(event_id: str, body: PositionDiscussionIn) -> dict
     from position_discussion import run_discussion
 
     try:
-        result = await run_discussion(event_id, body.choice, body.expected_position, body.llm.model_dump() if body.llm else None, body.server_model)
+        result = await run_discussion(event_id, body.choice, body.expected_position, body.llm.model_dump() if body.llm else None, body.server_model, expected_revision=body.expected_revision)
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
     return {"data": result}
@@ -882,7 +958,7 @@ async def position_discussion_stream(event_id: str, body: PositionDiscussionIn) 
     from position_discussion import stream_discussion
 
     return StreamingResponse(stream_discussion(event_id, body.choice, body.expected_position,
-        body.llm.model_dump() if body.llm else None, body.server_model),
+        body.llm.model_dump() if body.llm else None, body.server_model, expected_revision=body.expected_revision),
         media_type="application/x-ndjson", headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
 
 

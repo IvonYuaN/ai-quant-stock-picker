@@ -12,7 +12,7 @@ import pytest
 import alert_events as ae
 import portfolio as pf
 import position_discussion as discussion
-from test_position_action_plan import plan_client  # noqa: F401
+from test_position_action_plan import plan_body, record_plan, plan_client  # noqa: F401
 
 
 
@@ -37,7 +37,7 @@ def discussion_client(plan_client, monkeypatch):  # noqa: F811
         peers = payload["peer_opinions"]
         return json.dumps({**OPINION, "reply_to": list(peers)[:1], "challenge": "同意需核对费用，但缺少板块数据不能确认方向" if peers else ""}, ensure_ascii=False)
     monkeypatch.setattr(discussion, "call_model", fake_model)
-    client.post(f"/api/alerts/{event_id}/plan", json={"choice": "t_watch"})
+    client.post(f"/api/alerts/{event_id}/plan", json=plan_body(client, event_id, "t_watch"))
     worksheet = client.get(f"/api/alerts/{event_id}/action-plan").json()["data"]
     return client, event_id, worksheet, calls
 
@@ -45,7 +45,7 @@ def discussion_client(plan_client, monkeypatch):  # noqa: F811
 def test_position_discussion_forms_peer_replies_when_models_return_valid_evidence(discussion_client) -> None:
     client, event_id, worksheet, calls = discussion_client
     before = pf._load()
-    response = client.post(f"/api/alerts/{event_id}/discussion", json={"choice": "t_watch", "expected_position": worksheet["position_snapshot"]})
+    response = client.post(f"/api/alerts/{event_id}/discussion", json={"choice": "t_watch", "expected_position": worksheet["position_snapshot"], "expected_revision": worksheet["revision"]})
     assert response.status_code == 200, response.text
     result = response.json()["data"]
     assert result["status"] == "complete"
@@ -56,7 +56,7 @@ def test_position_discussion_forms_peer_replies_when_models_return_valid_evidenc
     assert "private-key" not in response.text
     saved = client.get(f"/api/alerts/{event_id}/action-plan").json()["data"]["review_plan"]["discussion"]
     assert saved == result
-    assert pf._load() == before and ae.list_events()[0]["status"] == "OPEN"
+    assert {key: value for key, value in pf._load().items() if key != "position_reviews"} == {key: value for key, value in before.items() if key != "position_reviews"} and ae.list_events()[0]["status"] == "OPEN"
 
 
 def test_position_discussion_does_not_claim_consensus_when_all_models_fail(discussion_client, monkeypatch) -> None:
@@ -64,7 +64,7 @@ def test_position_discussion_does_not_claim_consensus_when_all_models_fail(discu
     async def failure(*args):
         raise TimeoutError("upstream contains private-key")
     monkeypatch.setattr(discussion, "call_model", failure)
-    response = client.post(f"/api/alerts/{event_id}/discussion", json={"choice": "t_watch", "expected_position": worksheet["position_snapshot"]})
+    response = client.post(f"/api/alerts/{event_id}/discussion", json={"choice": "t_watch", "expected_position": worksheet["position_snapshot"], "expected_revision": worksheet["revision"]})
     result = response.json()["data"]
     assert result["status"] == "failed" and result["summary"] is None
     assert len(result["rounds"]) == 1 and "private-key" not in response.text
@@ -78,7 +78,7 @@ def test_position_discussion_keeps_partial_results_when_one_role_fails(discussio
             raise TimeoutError()
         return await original(endpoint, payload, timeout, limits)
     monkeypatch.setattr(discussion, "call_model", partly_failed)
-    result = client.post(f"/api/alerts/{event_id}/discussion", json={"choice": "t_watch", "expected_position": worksheet["position_snapshot"]}).json()["data"]
+    result = client.post(f"/api/alerts/{event_id}/discussion", json={"choice": "t_watch", "expected_position": worksheet["position_snapshot"], "expected_revision": worksheet["revision"]}).json()["data"]
     assert result["status"] == "partial" and result["summary"]
     assert len(result["rounds"][1]["opinions"]) == 2
 
@@ -94,17 +94,17 @@ def test_position_discussion_rejects_old_result_when_state_changes(discussion_cl
                 data["holdings"][0]["shares"] += 100
                 pf._save(data)
             else:
-                ae.record_review_plan(event_id, "hold")
+                record_plan(event_id, "hold")
         return await original(endpoint, payload, timeout, limits)
     monkeypatch.setattr(discussion, "call_model", changed)
-    result = client.post(f"/api/alerts/{event_id}/discussion", json={"choice": "t_watch", "expected_position": worksheet["position_snapshot"]})
+    result = client.post(f"/api/alerts/{event_id}/discussion", json={"choice": "t_watch", "expected_position": worksheet["position_snapshot"], "expected_revision": worksheet["revision"]})
     assert result.status_code == 409 and "已变化" in result.text
     assert "discussion" not in ae.list_events()[0]["review_plan"]
 
 
 def test_position_discussion_refuses_foreign_tenant_before_model_call(discussion_client) -> None:
     client, event_id, worksheet, calls = discussion_client
-    response = client.post(f"/api/alerts/{event_id}/discussion", headers={"X-User-Id": "other"}, json={"choice": "t_watch", "expected_position": worksheet["position_snapshot"]})
+    response = client.post(f"/api/alerts/{event_id}/discussion", headers={"X-User-Id": "other"}, json={"choice": "t_watch", "expected_position": worksheet["position_snapshot"], "expected_revision": worksheet["revision"]})
     assert response.status_code == 409 and not calls
 
 
@@ -112,7 +112,7 @@ def test_position_discussion_refuses_parallel_requests_when_lease_held(discussio
     client, event_id, worksheet, calls = discussion_client
     with (Path(ae.CACHE_DIR) / ".position-discussion.lock").open("a") as lease:
         fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        response = client.post(f"/api/alerts/{event_id}/discussion", json={"choice": "t_watch", "expected_position": worksheet["position_snapshot"]})
+        response = client.post(f"/api/alerts/{event_id}/discussion", json={"choice": "t_watch", "expected_position": worksheet["position_snapshot"], "expected_revision": worksheet["revision"]})
     assert response.status_code == 409 and "进行中" in response.text and not calls
 
 
@@ -161,13 +161,13 @@ def test_position_model_transport_cancels_stuck_request_when_deadline_passes(mon
 def test_position_discussion_rejects_invalidated_scenario_before_model_call(discussion_client) -> None:
     client, event_id, worksheet, calls = discussion_client
     from test_position_action_plan import PARAMS
-    client.post(f"/api/alerts/{event_id}/plan", json={"choice": "t_watch", "parameters": PARAMS, "expected_position": worksheet["position_snapshot"]})
+    client.post(f"/api/alerts/{event_id}/plan", json={"choice": "t_watch", "parameters": PARAMS, "expected_position": worksheet["position_snapshot"], "expected_revision": worksheet["revision"]})
     data = pf._load()
     data["holdings"][0]["shares"] = 200
     data["holdings"][0]["lots"] = [{"shares": 200, "opened_at": "2026-10-22"}]
     pf._save(data)
     changed = client.get(f"/api/alerts/{event_id}/action-plan").json()["data"]
-    response = client.post(f"/api/alerts/{event_id}/discussion", json={"choice": "t_watch", "expected_position": changed["position_snapshot"]})
+    response = client.post(f"/api/alerts/{event_id}/discussion", json={"choice": "t_watch", "expected_position": changed["position_snapshot"], "expected_revision": changed["revision"]})
     assert response.status_code == 409 and "失效" in response.text and not calls
 
 
@@ -181,7 +181,7 @@ def test_position_discussion_uses_anthropic_v1_messages_when_default_sdk_base_ha
 
 def test_position_discussion_hides_old_analysis_when_position_changes_after_save(discussion_client) -> None:
     client, event_id, worksheet, calls = discussion_client
-    assert client.post(f"/api/alerts/{event_id}/discussion", json={"choice": "t_watch", "expected_position": worksheet["position_snapshot"]}).status_code == 200
+    assert client.post(f"/api/alerts/{event_id}/discussion", json={"choice": "t_watch", "expected_position": worksheet["position_snapshot"], "expected_revision": worksheet["revision"]}).status_code == 200
     data = pf._load()
     data["holdings"][0]["cost"] += 1
     pf._save(data)
@@ -194,7 +194,7 @@ def test_position_discussion_reports_safe_http_status_when_provider_rejects_requ
     async def limited(*args):
         raise discussion.ModelHTTPError(429)
     monkeypatch.setattr(discussion, "call_model", limited)
-    response = client.post(f"/api/alerts/{event_id}/discussion", json={"choice": "t_watch", "expected_position": worksheet["position_snapshot"]})
+    response = client.post(f"/api/alerts/{event_id}/discussion", json={"choice": "t_watch", "expected_position": worksheet["position_snapshot"], "expected_revision": worksheet["revision"]})
     result = response.json()["data"]
     assert result["status"] == "failed" and result["summary"] is None
     assert all("HTTP 429" in row["issue"] for row in result["rounds"][0]["opinions"])
@@ -202,18 +202,19 @@ def test_position_discussion_reports_safe_http_status_when_provider_rejects_requ
 
 def test_position_comparison_runs_before_choice_when_no_trade_parameters_exist(discussion_client) -> None:
     client, event_id, worksheet, calls = discussion_client
-    events = ae._load()
-    for row in events:
-        row.pop("review_plan", None)
-    ae._save(events)
+    data = pf._load()
+    data["position_reviews"][worksheet["position_id"]]["review_plan"] = {}
+    data["position_reviews"][worksheet["position_id"]]["version"] += 1
+    pf._save(data)
+    worksheet = client.get(f"/api/alerts/{event_id}/action-plan").json()["data"]
     before = pf._load()
-    response = client.post(f"/api/alerts/{event_id}/discussion", json={"expected_position": worksheet["position_snapshot"]})
+    response = client.post(f"/api/alerts/{event_id}/discussion", json={"expected_position": worksheet["position_snapshot"], "expected_revision": worksheet["revision"]})
     assert response.status_code == 200, response.text
     result = response.json()["data"]
     assert result["choice"] is None and result["status"] == "complete"
     assert len(result["summary"]["routes"]) == 3 and len(calls) == 7
     assert all(row["chosen_plan"] is None and row["saved_parameters"] is None for row in calls)
-    assert pf._load() == before
+    assert {key: value for key, value in pf._load().items() if key != "position_reviews"} == {key: value for key, value in before.items() if key != "position_reviews"}
     reloaded = client.get(f"/api/alerts/{event_id}/action-plan").json()["data"]
     assert reloaded["review_plan"] == {} and reloaded["comparison"] == result
     assert ae.list_events()[0]["status"] == "OPEN"
@@ -221,7 +222,7 @@ def test_position_comparison_runs_before_choice_when_no_trade_parameters_exist(d
 
 def test_position_comparison_hides_result_when_position_changes_after_analysis(discussion_client) -> None:
     client, event_id, worksheet, calls = discussion_client
-    assert client.post(f"/api/alerts/{event_id}/discussion", json={"choice": None, "expected_position": worksheet["position_snapshot"]}).status_code == 200
+    assert client.post(f"/api/alerts/{event_id}/discussion", json={"choice": None, "expected_position": worksheet["position_snapshot"], "expected_revision": worksheet["revision"]}).status_code == 200
     data = pf._load()
     data["holdings"][0]["cost"] += 1
     pf._save(data)
@@ -245,11 +246,11 @@ def test_position_discussion_accepts_catalog_choice_without_persisting_key_or_gl
     async def directory(*args, **kwargs):
         return {"models": ["agnes-3.0-flash"], "directory_complete": True}
     monkeypatch.setattr(position_model_catalog, "read_catalog", directory)
-    response = client.post(f"/api/alerts/{event_id}/discussion", json={"choice": None, "expected_position": worksheet["position_snapshot"], "server_model": "agnes-3.0-flash"})
+    response = client.post(f"/api/alerts/{event_id}/discussion", json={"choice": None, "expected_position": worksheet["position_snapshot"], "expected_revision": worksheet["revision"], "server_model": "agnes-3.0-flash"})
     assert response.status_code == 200
     assert response.json()["data"]["model"] == "agnes-3.0-flash"
     assert "private-key" not in response.text
-    rejected = client.post(f"/api/alerts/{event_id}/discussion", json={"choice": None, "expected_position": worksheet["position_snapshot"], "server_model": "retired"})
+    rejected = client.post(f"/api/alerts/{event_id}/discussion", json={"choice": None, "expected_position": worksheet["position_snapshot"], "expected_revision": worksheet["revision"], "server_model": "retired"})
     assert rejected.status_code == 409 and "未自动替换" in rejected.text
 
 
@@ -275,15 +276,15 @@ def test_position_comparison_does_not_write_old_result_when_risk_evidence_change
             ae._save(events)
         return await original(endpoint, payload, timeout, limits)
     monkeypatch.setattr(discussion, "call_model", update)
-    result = client.post(f"/api/alerts/{event_id}/discussion", json={"choice": None, "expected_position": worksheet["position_snapshot"]})
-    assert result.status_code == 409 and "风险检查依据已变化" in result.text
-    assert "position_analysis" not in ae.list_events()[0]
+    result = client.post(f"/api/alerts/{event_id}/discussion", json={"choice": None, "expected_position": worksheet["position_snapshot"], "expected_revision": worksheet["revision"]})
+    assert result.status_code == 409 and "风险依据已变化" in result.text
+    assert ae.list_events()[0].get("position_analysis") is None
 
 
 def test_position_comparison_identifies_old_source_when_quote_changes_without_trade(discussion_client, monkeypatch) -> None:
     from test_position_action_plan import QUOTE
     client, event_id, worksheet, calls = discussion_client
-    result = client.post(f"/api/alerts/{event_id}/discussion", json={"choice": None, "expected_position": worksheet["position_snapshot"]}).json()["data"]
+    result = client.post(f"/api/alerts/{event_id}/discussion", json={"choice": None, "expected_position": worksheet["position_snapshot"], "expected_revision": worksheet["revision"]}).json()["data"]
     monkeypatch.setattr(pf.astock, "tencent_quote", lambda codes: {code: {**QUOTE, "price": 9.3} for code in codes})
     latest = client.get(f"/api/alerts/{event_id}/action-plan").json()["data"]
     assert latest["position_snapshot"] == worksheet["position_snapshot"]
@@ -296,13 +297,13 @@ def test_position_discussion_keeps_explicit_model_when_catalog_is_unavailable(di
     async def directory(*args, **kwargs):
         return {"models": [], "listed": None, "directory_complete": False, "issue": "目录不可用"}
     monkeypatch.setattr(position_model_catalog, "read_catalog", directory)
-    result = client.post(f"/api/alerts/{event_id}/discussion", json={"choice": None, "expected_position": worksheet["position_snapshot"], "server_model": "explicit-model"})
+    result = client.post(f"/api/alerts/{event_id}/discussion", json={"choice": None, "expected_position": worksheet["position_snapshot"], "expected_revision": worksheet["revision"], "server_model": "explicit-model"})
     assert result.status_code == 200 and result.json()["data"]["model"] == "explicit-model"
 
 
 def test_position_discussion_describes_exact_reference_ids_when_requesting_new_model(discussion_client) -> None:
     client, event_id, worksheet, calls = discussion_client
-    client.post(f"/api/alerts/{event_id}/discussion", json={"choice": None, "expected_position": worksheet["position_snapshot"]})
+    client.post(f"/api/alerts/{event_id}/discussion", json={"choice": None, "expected_position": worksheet["position_snapshot"], "expected_revision": worksheet["revision"]})
     first, reply, summary = calls[0], calls[3], calls[-1]
     assert first["output_schema"]["properties"]["reply_to"]["maxItems"] == 0
     assert reply["output_schema"]["properties"]["reply_to"]["items"]["enum"] == sorted(reply["peer_opinions"])
@@ -312,7 +313,7 @@ def test_position_discussion_describes_exact_reference_ids_when_requesting_new_m
 
 def test_position_discussion_stream_reports_result_and_keeps_tenant_isolated(discussion_client) -> None:
     client, event_id, worksheet, calls = discussion_client
-    body = {"choice": None, "expected_position": worksheet["position_snapshot"]}
+    body = {"choice": None, "expected_position": worksheet["position_snapshot"], "expected_revision": worksheet["revision"]}
     denied = client.post(f"/api/alerts/{event_id}/discussion/stream", headers={"X-User-Id": "other"}, json=body)
     assert calls == [] and '"event": "error"' in denied.text
     response = client.post(f"/api/alerts/{event_id}/discussion/stream", json=body)
@@ -336,7 +337,7 @@ def test_position_discussion_stream_cancels_model_and_releases_lease_when_discon
             cancelled.append(True)
     monkeypatch.setattr(discussion, "call_model", waiting)
     async def consume() -> None:
-        stream = discussion.stream_discussion(event_id, None, worksheet["position_snapshot"])
+        stream = discussion.stream_discussion(event_id, None, worksheet["position_snapshot"], expected_revision=worksheet["revision"])
         assert json.loads(await anext(stream))["stage"] == "preparing"
         assert json.loads(await anext(stream))["stage"] == "independent"
         await asyncio.sleep(0)
@@ -351,7 +352,7 @@ def test_position_discussion_stream_has_heartbeats_and_hides_transport_errors(mo
     from dataclasses import replace
     limits = replace(discussion.DiscussionLimits(), heartbeat_seconds=0.001)
     monkeypatch.setattr(discussion, "DiscussionLimits", lambda: limits)
-    async def failed(*args):
+    async def failed(*args, **kwargs):
         await asyncio.sleep(0.01)
         raise RuntimeError("secret-private-key")
     monkeypatch.setattr(discussion, "run_discussion", failed)
@@ -369,7 +370,7 @@ def test_position_discussion_explains_compatibility_failure_without_leaking_prov
     async def failed(*args):
         raise error
     monkeypatch.setattr(discussion, "call_model", failed)
-    response = client.post(f"/api/alerts/{event_id}/discussion/stream", json={"choice": None, "expected_position": worksheet["position_snapshot"]})
+    response = client.post(f"/api/alerts/{event_id}/discussion/stream", json={"choice": None, "expected_position": worksheet["position_snapshot"], "expected_revision": worksheet["revision"]})
     result = json.loads(response.text.splitlines()[-1])["data"]
     assert result["status"] == "failed" and result["summary"] is None
     assert {row["failure_kind"] for row in result["rounds"][0]["opinions"]} == {kind}
@@ -387,7 +388,7 @@ def test_position_discussion_uses_operational_budgets_when_explicitly_configured
         budgets.append(("summary" if "rounds" in payload else "role", timeout))
         return await original(endpoint, payload, timeout, limits)
     monkeypatch.setattr(discussion, "call_model", measured)
-    result = client.post(f"/api/alerts/{event_id}/discussion", json={"choice": None, "expected_position": worksheet["position_snapshot"]})
+    result = client.post(f"/api/alerts/{event_id}/discussion", json={"choice": None, "expected_position": worksheet["position_snapshot"], "expected_revision": worksheet["revision"]})
     assert result.json()["data"]["status"] == "complete"
     assert budgets == [("role", 12.5)] * 6 + [("summary", 44)]
     assert discussion.discussion_limits({}).synthesis_timeout == 45
@@ -397,7 +398,7 @@ def test_position_discussion_uses_operational_budgets_when_explicitly_configured
 def test_position_discussion_refuses_invalid_budget_before_model_io(discussion_client, monkeypatch, value: str) -> None:
     client, event_id, worksheet, calls = discussion_client
     monkeypatch.setenv("AQSP_POSITION_SYNTHESIS_TIMEOUT_SECONDS", value)
-    response = client.post(f"/api/alerts/{event_id}/discussion/stream", json={"choice": None, "expected_position": worksheet["position_snapshot"]})
+    response = client.post(f"/api/alerts/{event_id}/discussion/stream", json={"choice": None, "expected_position": worksheet["position_snapshot"], "expected_revision": worksheet["revision"]})
     assert calls == []
     record = json.loads(response.text.splitlines()[-1])
     assert record["event"] == "error" and "AQSP_POSITION_SYNTHESIS_TIMEOUT_SECONDS" in record["detail"]
@@ -421,7 +422,7 @@ def test_position_model_transport_rejects_incomplete_response_even_when_json_par
 
 def test_position_discussion_requests_short_summary_without_losing_routes_or_disagreements(discussion_client) -> None:
     client, event_id, worksheet, calls = discussion_client
-    response = client.post(f"/api/alerts/{event_id}/discussion", json={"choice": None, "expected_position": worksheet["position_snapshot"]})
+    response = client.post(f"/api/alerts/{event_id}/discussion", json={"choice": None, "expected_position": worksheet["position_snapshot"], "expected_revision": worksheet["revision"]})
     assert response.json()["data"]["summary"]["disagreements"] == COMPARISON["disagreements"]
     schema = calls[-1]["output_schema"]
     assert schema["properties"]["conclusion"]["maxLength"] == 180
@@ -442,7 +443,7 @@ def test_position_discussion_preserves_roles_without_fake_summary_when_synthesis
             raise TimeoutError("private-key")
         return await original(endpoint, payload, timeout, limits)
     monkeypatch.setattr(discussion, "call_model", failed_summary)
-    response = client.post(f"/api/alerts/{event_id}/discussion", json={"choice": None, "expected_position": worksheet["position_snapshot"]})
+    response = client.post(f"/api/alerts/{event_id}/discussion", json={"choice": None, "expected_position": worksheet["position_snapshot"], "expected_revision": worksheet["revision"]})
     result = response.json()["data"]
     assert len(calls) == 7 and result["status"] == "partial" and result["summary"] is None
     assert result["summary_failure_kind"] == "timeout" and "private-key" not in response.text

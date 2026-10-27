@@ -70,7 +70,7 @@ def current_position_evidence(context: Mapping[str, Any], quote: Mapping[str, An
 def build_route_review(
     holding: Mapping[str, Any], quote: Mapping[str, Any],
     basis: Mapping[str, Any], context: Mapping[str, Any],
-    events: Sequence[Mapping[str, Any]], *, current: datetime,
+    events: Sequence[Mapping[str, Any]], *, current: datetime, risk_facts: Sequence[Mapping[str, Any]] | None = None,
 ) -> PositionRouteReview:
     """Revalidate saved background times and compare constraints on one holding."""
     evidence = current_position_evidence(context, quote, current=current)
@@ -81,7 +81,7 @@ def build_route_review(
     recovery = (cost / price - 1) * 100 if price and cost and cost > price else None
     sellable = holding.get("sellable_shares") or 0
     shares = holding.get("shares") or 0
-    hard = any(row.get("level") == "L1" for row in events)
+    hard = any(row.get("level") == "L1" for row in events) if risk_facts is None else any(row.get("level") == "L1" and row.get("status") == "triggered" for row in risk_facts)
     issue = basis.get("quote_issue")
     joint = basis["joint_weakness"]
     title = "先核对风险，再决定怎么处理" if hard or joint else "先看这只持仓，再比较三条路"
@@ -94,12 +94,19 @@ def build_route_review(
     else:
         summary = "先比较保留仓位、降低暴露和尝试差价的条件；当前涨跌或账面亏损都不足以单独决定路线。"
     if hard and not issue:
-        threshold = next((row.get("threshold_at") for row in events if row.get("level") == "L1"), None)
+        threshold = (next((row.get("threshold_at") for row in events if row.get("level") == "L1"), None) if risk_facts is None else
+                     next((row.get("threshold") for row in risk_facts if row.get("level") == "L1" and row.get("status") == "triggered"), None))
         if isinstance(threshold, (int, float)) and not isinstance(threshold, bool) and threshold > 0:
-            summary = f"上次检查触发风险线 {threshold:.2f} 元。" + (
+            summary = (f"上次检查触发风险线 {threshold:.2f} 元。" if risk_facts is None else f"当前有效风险线 {threshold:.2f} 元。") + (
                 f"当前价 {price:.2f} 元仍低于该线，继续持有需核对可承受损失。" if price < threshold else
                 f"当前价 {price:.2f} 元已回到该线上方，需重新检查规则；原提醒未自动解除。") + (
                 "三维同日弱势证据一致，暂停新增做 T 测算。" if joint else "请结合下面证据比较处理方式。")
+    if risk_facts is not None and any(row.get('status') == 'unknown' for row in risk_facts):
+        missing.append('部分持仓风险规则缺少本次指标证据，未判定解除')
+    if risk_facts is not None and any(row.get('level') == 'L5' and row.get('status') == 'triggered' for row in risk_facts):
+        title = '当前触及回撤保护线，先核对风险'
+        summary += '当前有效价已低于回撤保护线，需复核余仓；不等同自动卖出。'
+        hard = True
     hold = RouteReview("hold", "risk_review" if hard or joint else "review",
                        f"继续保留 {shares:g} 股的后续涨跌敞口。" + ("已触发的风险仍需处理。" if hard else "需核对继续持有的依据。"),
                        ("你可承受的后续损失", "继续持有的趋势依据"))
@@ -115,3 +122,31 @@ def build_route_review(
                     ("能否盯盘", "可核验的日内与流动性条件", "两腿费用及买不回时的安排"))
     return PositionRouteReview(title, summary, pnl, recovery, (hold, reduce, t), evidence,
                                tuple(missing + ["个人风险与资金约束", "做 T 的流动性及费用条件"]))
+
+
+def current_rule_facts(rules: Sequence[Mapping[str, Any]], basis: Mapping[str, Any], *, current: datetime) -> list[dict[str, Any]]:
+    """Recheck source-priced user rules without creating an alert or a signal.
+
+    L2/L4 need bar evidence, so quote-only reads cannot mark them cleared.
+    Disabled or future-effective rules are explicit facts, not current triggers.
+    """
+    import math
+    facts: list[dict[str, Any]] = []
+    session = _session(current)
+    for rule in rules:
+        status, reason = 'unknown', '需要本次日线/指标证据，不能由现价或无提醒推定风险解除'
+        threshold = rule.get('trigger_price')
+        valid_threshold = (isinstance(threshold, (int, float)) and not isinstance(threshold, bool)
+                           and math.isfinite(threshold) and threshold > 0)
+        effective = rule.get('effective_from')
+        if rule.get('enabled') is not True:
+            status, reason = 'disabled', '此规则已停用；历史提醒不是当前启用规则的结论'
+        elif effective and (session is None or str(effective) > session.isoformat()):
+            status, reason = 'not_effective', '尚未到规则生效交易日'
+        elif rule.get('level') in {'L1', 'L5'} and valid_threshold and not basis.get('quote_issue') and basis.get('price') is not None:
+            status = 'triggered' if basis['price'] < threshold else 'not_triggered'
+            reason = f"当前有效价 {basis['price']:.2f} 元{'低于' if status == 'triggered' else '未低于'}规则价 {threshold:.2f} 元；不自动解除原提醒或记录成交"
+        facts.append({'rule_id': rule.get('id'), 'level': rule.get('level'), 'revision': rule.get('revision', 0),
+                      'status': status, 'threshold': threshold if valid_threshold else None, 'reason': reason,
+                      'effective_from': effective, 'as_of': basis.get('quote_as_of'), 'source': basis.get('quote_source')})
+    return facts
