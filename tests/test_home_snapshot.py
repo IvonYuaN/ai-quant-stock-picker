@@ -24,6 +24,7 @@ from aqsp.web.home_snapshot import (
     HomeSnapshotColdstart,
     HomeSnapshotCrossMarket,
     HomeSnapshotDebate,
+    HomeSnapshotAgentView,
     HomeSnapshotIndex,
     HomeSnapshotMarketContext,
     HomeSnapshotMessage,
@@ -114,6 +115,47 @@ def test_home_snapshot_round_trips_bounded_home_payload(tmp_path) -> None:
         snapshot, frozen_at=snapshot.generated_at
     )
     assert json.loads(source.read_text(encoding="utf-8"))["schema_version"] == "v1"
+
+
+def test_home_snapshot_round_trips_role_evidence_when_agent_views_are_present(tmp_path) -> None:
+    debate = HomeSnapshotDebate(
+        symbol="603019", display_name="合成候选", conclusion="等待确认",
+        primary_risk_gate="量能", next_trigger="核验量价", active_roles=("trend", "risk"),
+        round_count=2, neutral_count=2,
+        agent_views=tuple(HomeSnapshotAgentView(
+            role=role, stance="neutral", confidence=0.6,
+            arguments=("合成有源依据",), opportunities=("等待量价确认",),
+            risks=("板块分歧",), counterarguments=("报价未证明突破",),
+        ) for role in ("trend", "risk")),
+    )
+    snapshot = _snapshot(candidates=(_candidate("603019"),), debates=(debate,), stale_after="2026-07-12T09:30:00+08:00")
+    path, index_path = tmp_path / "home.json", tmp_path / "index.json"
+    write_home_dashboard_snapshot(path, snapshot)
+    frozen = load_home_dashboard_snapshot(path)
+    assert frozen is not None and frozen.debates[0].agent_views == debate.agent_views
+    write_home_snapshot_index(index_path, HomeSnapshotIndex(
+        schema_version=HOME_SNAPSHOT_INDEX_SCHEMA_VERSION,
+        generated_at=frozen.generated_at, selected_date=frozen.selected_date,
+        days=(HomeSnapshotDay(frozen.selected_date, frozen),),
+        stale_after=frozen.stale_after,
+    ))
+    restored = load_home_snapshot_for_date(index_path, frozen.selected_date)
+    assert restored is not None and restored.debates[0].agent_views == debate.agent_views
+
+
+@pytest.mark.parametrize("changes", [
+    {"invented": []}, {"arguments": "not a list"}, {"confidence": "not a number"},
+])
+def test_home_snapshot_rejects_invalid_role_evidence_when_optional_fields_are_allowed(tmp_path, changes) -> None:
+    payload = _snapshot(candidates=(_candidate("603019"),), debates=(HomeSnapshotDebate(
+        symbol="603019", display_name="合成候选", conclusion="等待", primary_risk_gate="量能",
+        next_trigger="确认", active_roles=("trend", "risk"), round_count=2, neutral_count=2,
+        agent_views=(HomeSnapshotAgentView(role="risk", stance="neutral", confidence=0.5),),
+    ),)).to_dict()
+    payload['debates'][0]['agent_views'][0].update(changes)
+    path = tmp_path / 'home.json'
+    path.write_text(json.dumps(payload), encoding='utf-8')
+    assert load_home_dashboard_snapshot(path) is None
 
 
 def test_home_snapshot_keeps_first_same_day_roster_and_records_intraday_additions(tmp_path) -> None:

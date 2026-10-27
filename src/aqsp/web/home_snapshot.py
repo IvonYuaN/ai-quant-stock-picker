@@ -1719,7 +1719,12 @@ def _debate_from_dict(payload: object) -> HomeSnapshotDebate:
 
 def _agent_view_from_dict(payload: object) -> HomeSnapshotAgentView:
     mapping = _mapping(payload, "debate.agent_views")
-    _require_keys(mapping, {"role", "stance", "confidence"}, "debate.agent_views")
+    _require_keys(
+        mapping,
+        {"role", "stance", "confidence"},
+        "debate.agent_views",
+        optional={"arguments", "opportunities", "risks", "counterarguments"},
+    )
     return HomeSnapshotAgentView(
         role=_text(mapping["role"], "debate.agent_views.role"),
         stance=_text(mapping["stance"], "debate.agent_views.stance"),
