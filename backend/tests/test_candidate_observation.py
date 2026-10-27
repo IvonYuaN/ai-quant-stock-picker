@@ -133,7 +133,7 @@ def test_candidate_adopt_allows_quote_ticks_but_rejects_research_or_direction_ch
     assert client.post('/api/candidate-observations/600000/adopt', json=body).status_code == 200
     # An intent cannot be changed by replaying an operation ID with new content.
     assert client.post('/api/candidate-observations/600000/adopt', json=body | {'choice': 'confirmation'}).status_code == 409
-    data['data']['generated_at'] = '2026-10-27T09:59:00+08:00'
+    data['data']['candidates'][0]['score'] = 70
     assert client.post('/api/candidate-observations/600000/adopt', json=body | {'operation_id': 'new-op', 'expected_version': 2}).status_code == 409
     assert monitor.check_candidates()['needs_review'] == 1
 
@@ -245,7 +245,7 @@ def test_candidate_model_commit_rejects_during_research_change(env, monkeypatch)
     original = transport.call_model
     async def changing(*args, **kwargs):
         raw = await original(*args, **kwargs)
-        data['data']['generated_at'] = '2026-10-27T09:59:00+08:00'
+        data['data']['candidates'][0]['score'] = 70
         return raw
     monkeypatch.setattr(transport, 'call_model', changing)
     value = resources.workspace('600000')
@@ -400,7 +400,7 @@ def test_candidate_adopt_rechecks_research_at_commit_when_replaced_after_quote_r
     original = resources.workspace
     def changed(*args, **kwargs):
         captured = original(*args, **kwargs)
-        data['data']['generated_at'] = '2026-10-27T09:59:00+08:00'
+        data['data']['candidates'][0]['score'] = 70
         return captured
     monkeypatch.setattr(resources, 'workspace', changed)
     response = client.post('/api/candidate-observations/600000/adopt', json=adoption(value, result))
@@ -502,3 +502,133 @@ def test_candidate_model_rejects_wrong_fact_unit_when_number_is_sourced_score(en
     row['summary'] = '当前75元，预计涨75%'
     with pytest.raises(ValueError, match='单位'):
         discussion.parse(json.dumps(row), discussion.CandidateOpinion, value, set())
+
+
+def test_candidate_keeps_adopted_price_and_notification_identity_when_writer_only_refreshes_times(env, monkeypatch):
+    client, data, quote, _ = env
+    value, result = analyze(env)
+    original_evidence = deepcopy(result['evidence_snapshot'])
+    assert client.post('/api/candidate-observations/600000/adopt', json=adoption(value, result)).status_code == 200
+    quote.update(price=9.8, low=9.6, change_pct=1)
+    import aqsp.notification_runtime as notify
+    sent = []
+    def dispatch(markdown, **kwargs):
+        sent.append(markdown)
+        notify.mark_notification_sent(kind=kwargs['kind'], markdown=markdown, state_path=kwargs['state_path'])
+        return [SimpleNamespace(ok=True)]
+    monkeypatch.setattr(notify, 'dispatch_notification_once', dispatch)
+    for minute in (1, 2):
+        later = NOW + timedelta(minutes=minute)
+        monkeypatch.setattr(resources, 'now_shanghai', lambda: later)
+        monkeypatch.setattr(monitor, 'now_shanghai', lambda: later)
+        quote['quote_time'] = f'20261027100{minute}00'
+        data['data']['generated_at'] = later.isoformat()
+        data['data']['stale_after'] = (later + timedelta(hours=8)).isoformat()
+        data['data']['candidates'][0]['data_fetched_at'] = later.isoformat()
+        checked = monitor.check_candidates(notify=True)
+        assert checked['price_watch'] == 1 and checked['needs_review'] == 0
+        current = resources.workspace('600000')
+        assert current['evidence_version'] == value['evidence_version']
+        assert current['watch']['price'] == 9.8 and current['watch']['source_ref'] == result['price_refs']['low']
+        assert current['discussion']['evidence_snapshot'] == original_evidence
+    assert len(sent) == 1
+
+
+@pytest.mark.parametrize('change,label', [
+    ('score', '个股评分'), ('strategy', '个股评分'), ('technical_price', '个股评分'),
+    ('news', '个股评分'), ('gate', '风险门禁'), ('parameters', '策略参数'),
+    ('date', '研究日期'), ('source', '研究来源'), ('quote_source', '行情来源'),
+    ('direction', '方向'), ('debate', '研究讨论'),
+])
+def test_candidate_pauses_and_explains_substantive_changes_when_watch_adopted(env, change, label):
+    client, data, quote, _ = env
+    value, result = analyze(env)
+    assert client.post('/api/candidate-observations/600000/adopt', json=adoption(value, result)).status_code == 200
+    candidate = data['data']['candidates'][0]
+    if change == 'score':
+        candidate['score'] = 74
+    elif change == 'strategy':
+        candidate['strategies'] = ['changed-strategy']
+    elif change == 'technical_price':
+        candidate['technical_metrics'] = [{'key': 'support', 'label': '有源参考价', 'value': '9.7'}]
+    elif change == 'news':
+        candidate['news_catalyst_summary'] = '新的风险公告'
+    elif change == 'gate':
+        data['data']['recommendation_gate']['recommendation_allowed'] = False
+    elif change == 'parameters':
+        data['data']['parameter_snapshot'] = {'version': 'next', 'effective_from': '2026-10-26', 'fingerprint': 'a' * 64}
+    elif change == 'date':
+        data['data']['selected_date'] = '2026-10-26'
+    elif change == 'source':
+        data['data']['source']['effective'] = 'new-research-source'
+    elif change == 'quote_source':
+        quote['source'] = '新的报价源'
+    elif change == 'direction':
+        quote['change_pct'] = -1
+    else:
+        data['data']['debates'] = [{'symbol': '600000', 'conclusion': '研究结论改变'}]
+    assert monitor.check_candidates()['needs_review'] == 1
+    current = resources.workspace('600000')
+    assert current['observation']['state'] == 'needs_review'
+    assert label in current['observation']['detail']
+    assert client.post('/api/candidate-observations/600000/adopt', json=adoption(value, result, expected_version=2, operation_id='after-change')).status_code == 409
+
+
+@pytest.mark.parametrize('change', ['expired', 'future_generated', 'future_source', 'old_quote', 'absent'])
+def test_candidate_never_uses_stable_identity_to_bypass_source_validity_when_refresh_invalid(env, change):
+    client, data, quote, _ = env
+    value, result = analyze(env)
+    assert client.post('/api/candidate-observations/600000/adopt', json=adoption(value, result)).status_code == 200
+    if change == 'expired':
+        data['data']['stale_after'] = NOW.isoformat()
+    elif change == 'future_generated':
+        data['data']['generated_at'] = (NOW + timedelta(minutes=1)).isoformat()
+    elif change == 'future_source':
+        data['data']['candidates'][0]['data_fetched_at'] = (NOW + timedelta(minutes=1)).isoformat()
+    elif change == 'old_quote':
+        quote['quote_time'] = '20261026150000'
+    else:
+        data['data']['candidates'] = []
+    assert monitor.check_candidates()['needs_review'] == 1
+    assert resources.workspace('600000')['observation']['state'] == 'evidence_unavailable'
+
+
+def test_candidate_commits_model_and_adoption_when_publication_time_only_changes(env, monkeypatch):
+    client, data, _, _ = env
+    original = transport.call_model
+    async def refreshing(*args, **kwargs):
+        raw = await original(*args, **kwargs)
+        data['data']['generated_at'] = '2026-10-27T09:59:00+08:00'
+        data['data']['candidates'][0]['data_fetched_at'] = '2026-10-27T09:59:00+08:00'
+        return raw
+    monkeypatch.setattr(transport, 'call_model', refreshing)
+    value, result = analyze(env)
+    assert result['evidence_snapshot']['research']['generated_at'] == '2026-10-27T09:55:00+08:00'
+    assert client.post('/api/candidate-observations/600000/adopt', json=adoption(value, result)).status_code == 200
+
+
+def test_candidate_legacy_watch_requires_one_review_without_rewriting_frozen_intent(env):
+    client, _, _, _ = env
+    value, result = analyze(env)
+    assert client.post('/api/candidate-observations/600000/adopt', json=adoption(value, result)).status_code == 200
+    data = resources.load_store()
+    old = data['resources']['600000']['watch']
+    old.pop('evidence_basis')
+    old['evidence_version'] = 'legacy-digest'
+    resources.save_store(data)
+    current = resources.workspace('600000')
+    assert current['watch'] == old
+    assert current['observation']['state'] == 'needs_review'
+    assert '旧版依据' in current['observation']['detail']
+
+
+def test_candidate_defer_stays_quiet_on_refresh_but_reviews_new_evidence(env):
+    client, data, _, _ = env
+    value, result = analyze(env)
+    response = client.post('/api/candidate-observations/600000/adopt', json=adoption(value, result, choice='defer', action_index=None, comparator=None))
+    assert response.status_code == 200
+    data['data']['generated_at'] = '2026-10-27T09:59:00+08:00'
+    assert monitor.check_candidates()['needs_review'] == 0
+    assert resources.workspace('600000')['observation']['state'] == 'deferred'
+    data['data']['candidates'][0]['deterministic_reasons'].append('新的有源依据')
+    assert monitor.check_candidates()['needs_review'] == 1
