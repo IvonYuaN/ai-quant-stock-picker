@@ -54,12 +54,19 @@ def current_position_evidence(context: Mapping[str, Any], quote: Mapping[str, An
     evidence: dict[str, Any] = {}
     for key, label in (("market", "大盘"), ("sector", "板块")):
         row = context.get(key) or {}
+        row = row if isinstance(row, Mapping) else {}
         stamp = _source_date(row.get("as_of"), current)
         valid = bool(stamp and stamp[0] == _session(current)
                      and (key == "market" or _timely_quote(stamp, current))
                      and row.get("source") and row.get("status") in
                      ({"weak", "strong", "neutral"} if key == "market" else {"falling", "rising", "flat"}))
-        evidence[key] = {**row, "summary": f"本交易日检查快照：{row.get('summary', '')}"} if valid else {
+        # Current index facts can be useful to the model without proving a
+        # broad-market stance. Preserve them as unknown, never as risk all-clear.
+        facts = row.get('evidence')
+        sourced_unknown = bool(row.get('status') == 'unknown' and row.get('source')
+                                and isinstance(facts, (list, tuple)) and facts and all(isinstance(fact, str) for fact in facts)
+                                and stamp and stamp[0] == _session(current) and _timely_quote(stamp, current))
+        evidence[key] = {**row, "summary": f"本交易日检查快照：{row.get('summary', '')}"} if valid or sourced_unknown else {
             "status": "unknown", "summary": f"{label}当前依据待补：没有来源及时点均有效的证据",
             "as_of": None, "source": "", "evidence": [],
         }

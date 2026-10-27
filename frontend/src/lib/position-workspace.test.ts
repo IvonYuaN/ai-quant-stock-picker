@@ -51,7 +51,7 @@ export const workspaceUserContracts = {
   quoteChangeMakesModelHistorical: !discussionIsCurrent(modelFixture, { ...worksheetFixture, analysis_basis_id: "basis-2" }),
   matchingModelRemainsCurrent: discussionIsCurrent(modelFixture, worksheetFixture),
   compareBeforeChoosingShowsRealReason: comparisonHtml.includes("当前可卖800股") && comparisonHtml.includes("没有时间盯盘"),
-  pausedRouteOnlyRecordsIntent: comparisonHtml.includes("仅记录做 T 试算意向"),
+  pausedRouteOnlyRecordsIntent: comparisonHtml.includes("仅记录做 T 观察意向"),
   archivedPlanHasNoInputsOrTradeControls: !archivedPlanHtml.includes("<button") && !archivedPlanHtml.includes("<input") && archivedPlanHtml.includes("这笔持仓已清仓"),
   personalPauseIsVisibleAndBlocksCalculation: personalPauseHtml.includes("个人条件下先暂停做 T") && /type="submit"[^>]*disabled/.test(personalPauseHtml),
   archivedComparisonHasNoActiveControls: !archivedHtml.includes("<button") && !archivedHtml.includes("模型设置"),

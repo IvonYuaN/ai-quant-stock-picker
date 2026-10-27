@@ -3859,3 +3859,34 @@
 .aq-trade-receipts li { display: grid; gap: 4px; font-size: 13px; }
 .aq-trade-links > div { padding: 8px 0 12px; }
 @media (max-width: 480px) { .aq-trade-journal { padding: 12px; } .aq-trade-title { align-items: flex-start; } .aq-trade-title .aq-btn { flex-shrink: 0; } }
+
+/* A saved strategy leads the position workspace; calculations stay optional. */
+.aq-strategy-environment { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; border: 1px solid hsl(var(--border)); border-radius: 12px; overflow: hidden; margin: 18px 0; background: hsl(var(--border)); }
+.aq-strategy-environment > div { min-width: 0; padding: 16px; background: hsl(var(--card)); }
+.aq-strategy-environment p { margin: 8px 0; font-size: 13px; line-height: 1.65; }
+.aq-strategy-environment small, .aq-strategy-watch small, .aq-strategy-actions small { display: block; color: hsl(var(--muted-foreground)); font-size: 11px; overflow-wrap: anywhere; }
+.aq-strategy-watch, .aq-strategy-empty { margin: 16px 0; padding: 20px; border: 1px solid hsl(var(--primary)); border-radius: 12px; background: color-mix(in srgb, hsl(var(--primary)) 5%, hsl(var(--card))); }
+.aq-strategy-watch h3, .aq-strategy-empty h3 { margin: 8px 0; font-size: 19px; }
+.aq-strategy-watch p, .aq-strategy-empty p { line-height: 1.7; }
+.aq-strategy-watch-price { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin: 18px 0; }
+.aq-strategy-watch-price b { font-size: 25px; font-variant-numeric: tabular-nums; }
+.aq-strategy-watch-price span { font-size: 12px; color: hsl(var(--muted-foreground)); }
+.aq-strategy-model { margin: 20px 0; }
+.aq-strategy-actions { list-style: none; display: grid; gap: 14px; padding: 0; margin: 14px 0; }
+.aq-strategy-actions > li { min-width: 0; padding: 16px; border: 1px solid hsl(var(--border)); border-radius: 10px; }
+.aq-strategy-action-title { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+.aq-strategy-action-title strong { color: hsl(var(--primary)); font-size: 20px; font-variant-numeric: tabular-nums; }
+.aq-strategy-actions p { margin: 10px 0; line-height: 1.7; }
+.aq-strategy-actions p > span { color: hsl(var(--muted-foreground)); margin-right: 12px; font-size: 12px; }
+.aq-strategy-actions .aq-btn { margin-top: 12px; }
+.aq-strategy-adopt { display: grid; gap: 12px; margin-top: 16px; padding-top: 16px; border-top: 1px solid hsl(var(--border)); }
+.aq-strategy-adopt > label:not(.aq-action-plan-confirm) { display: grid; gap: 7px; font-size: 12px; }
+.aq-strategy-adopt select { min-width: 0; width: 100%; }
+.aq-strategy-records { margin-top: 24px; }
+@media (max-width: 640px) {
+  .aq-strategy-environment { grid-template-columns: 1fr; }
+  .aq-strategy-environment > div { padding: 13px 16px; }
+  .aq-strategy-watch, .aq-strategy-empty, .aq-strategy-actions > li { padding: 15px; }
+  .aq-strategy-watch-price b { font-size: 22px; }
+  .aq-strategy-actions .aq-row-actions { display: grid; grid-template-columns: 1fr; }
+}

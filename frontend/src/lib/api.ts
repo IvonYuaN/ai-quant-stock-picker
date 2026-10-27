@@ -428,13 +428,30 @@ export interface PlanParameters {
 export interface PositionModelConfig { baseURL: string; apiKey: string; model: string }
 export interface PositionModelCatalog { catalog_id: string; current_model: string; models: string[]; checked_at: string; listed: boolean | null; directory_complete?: boolean; issue: string; notice: string }
 export interface DiscussionAction { action: "observe" | "sell_review" | "buy_review" | "pause"; price_ref: string | null; condition: string; invalidation: string }
+export type WatchComparator = "at_or_above" | "at_or_below";
+export interface StrategyWatch {
+  action: DiscussionAction["action"]; price: number; comparator: WatchComparator;
+  condition: string; invalidation: string;
+  price_ref: { label: string; price: number; source: string; as_of: string };
+  source_generated_at: string; saved_at: string;
+  position_snapshot?: ActionWorksheet["position_snapshot"];
+  constraints?: PositionConstraints;
+  trade_revision?: string;
+  evidence_snapshot?: Partial<Record<"market" | "sector" | "stock", { status?: string }>>;
+}
+export interface StrategyWatchInput {
+  choice: ReviewChoice; source_discussion: "comparison" | "plan";
+  generated_at: string; action_index: number; comparator: WatchComparator;
+  expected_position: ActionWorksheet["position_snapshot"];
+  expected_revision: string; expected_analysis_basis_id: string;
+}
 export interface PositionDiscussion {
   review_revision?: string;
   summary_issue?: string;
   status: "complete" | "partial" | "failed"; generated_at: string; model: string; mode: string;
   choice: ReviewChoice | null; position_snapshot: ActionWorksheet["position_snapshot"]; quote_as_of: string | null;
   analysis_basis_id?: string;
-  evidence_snapshot?: { quote: { price: number | null; as_of: string | null; source: string }; market: { summary?: string; source?: string; as_of?: string }; sector: { summary?: string; source?: string; as_of?: string } };
+  evidence_snapshot?: { quote: { price: number | null; as_of: string | null; source: string }; market: { status?: string; summary?: string; source?: string; as_of?: string }; sector: { status?: string; summary?: string; source?: string; as_of?: string }; stock?: { status?: string; summary?: string; source?: string; as_of?: string } };
   price_refs: Record<string, { label: string; price: number; as_of: string; source: string }>;
   rounds: Array<{ stage: string; opinions: Array<{ role: string; label: string; status: string; issue?: string;
     opinion?: { summary: string; evidence_ids: string[]; uncertainties: string[]; actions: DiscussionAction[]; reply_to: string[]; challenge: string } }> }>;
@@ -453,6 +470,7 @@ export interface PlanTarget { kind: "position" | "alert"; id: string }
 export type FollowupMode = "off" | "changes" | "daily";
 export interface FollowupObservation {
   requires_refresh?: boolean; issue?: string;
+  reason?: string; joint_pause_pending?: boolean;
   position_id: string; symbol: string; name: string;
   state: "waiting" | "price_watch" | "below_watch" | "paused" | "needs_review" | "evidence_unavailable" | "missing_prices" | "exited" | "unplanned";
   title: string; detail: string; observed_at: string; quote_as_of: string | null;
@@ -460,11 +478,13 @@ export interface FollowupObservation {
 }
 export interface ActionWorksheet {
   symbol: string;
+  current_risk?: Array<{ status: string; level: string }>;
+  trade_revision?: string;
   position_id?: string;
   name?: string;
   revision?: string;
   archived?: boolean;
-  followup?: { mode: FollowupMode; last_check: FollowupObservation | null; requires_refresh: boolean; issue: string };
+  followup?: { mode: FollowupMode; last_check: FollowupObservation | null; requires_refresh: boolean; issue: string; current_plan_key?: string };
   constraints?: PositionConstraints;
   constraints_issue?: string;
   risk_baseline_requires_confirmation?: boolean;
@@ -474,7 +494,7 @@ export interface ActionWorksheet {
     position_id: string | null; joint_weakness: boolean; personal_pause_t?: boolean;
     references: Array<{ label: string; price: number; as_of: string; source: string }> };
   position_snapshot: { position_id: string | null; cost: number; shares: number; sellable_shares: number };
-  review_plan: { choice?: ReviewChoice; parameters?: PlanParameters; discussion?: PositionDiscussion; position_snapshot?: ActionWorksheet["position_snapshot"] };
+  review_plan: { choice?: ReviewChoice; watch?: StrategyWatch; watch_stopped?: boolean; parameters?: PlanParameters; discussion?: PositionDiscussion; position_snapshot?: ActionWorksheet["position_snapshot"] };
   recorded_sale?: { date: string; price: number; shares: number } | null;
   sale_requires_review?: boolean;
   scenario: { gross_spread: number; estimated_fees: number; net_cash: number; realized_pnl: number | null; economic_cost: number | null;
@@ -716,6 +736,9 @@ export const api = {
     request<NonNullable<AlertEvent["review_plan"]>>(`/alerts/${encodeURIComponent(id)}/plan`, "POST", { choice, parameters, expected_position, expected_revision }),
   alertActionPlan: (id: string) => get<ActionWorksheet>(`/alerts/${encodeURIComponent(id)}/action-plan`),
   positionActionPlan: (id: string) => get<ActionWorksheet>(`/positions/${encodeURIComponent(id)}/action-plan`),
+  refreshStrategyEvidence: (id: string) => request<ActionWorksheet>(`/positions/${encodeURIComponent(id)}/strategy-evidence`, "POST", {}),
+  adoptStrategyWatch: (id: string, input: StrategyWatchInput) => request<ActionWorksheet>(`/positions/${encodeURIComponent(id)}/strategy-watch`, "POST", input),
+  stopStrategyWatch: (id: string, expected_position: ActionWorksheet["position_snapshot"], expected_revision: string) => request<ActionWorksheet>(`/positions/${encodeURIComponent(id)}/strategy-watch/stop`, "POST", { expected_position, expected_revision }),
   positionFollowups: () => get<{ items: FollowupObservation[] }>("/position-followups"),
   savePositionFollowup: (id: string, mode: FollowupMode, expected_mode: FollowupMode, expected_position: ActionWorksheet["position_snapshot"], expected_revision: string) =>
     request<ActionWorksheet>(`/positions/${encodeURIComponent(id)}/followup`, "POST", { mode, expected_mode, expected_position, expected_revision }),
