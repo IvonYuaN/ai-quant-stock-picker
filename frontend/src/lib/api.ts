@@ -445,7 +445,22 @@ export interface StrategyWatchInput {
   expected_position: ActionWorksheet["position_snapshot"];
   expected_revision: string; expected_analysis_basis_id: string;
 }
+/** Server-built comparison; original prices are context, never new action refs. */
+export interface StrategyReviewContext {
+  kind: "candidate" | "position";
+  status: "adopted" | "not_adopted" | "identity_mismatch";
+  original: null | {
+    choice?: string | null; condition?: string | null; invalidation?: string | null;
+    comparator?: WatchComparator | null; price_ref?: string | CandidatePriceReference | null;
+    saved_at?: string | null; evidence_snapshot?: Record<string, unknown> | null;
+    snapshot_complete: boolean;
+  };
+  current: { evidence_snapshot?: Record<string, unknown>; price_refs?: Record<string, CandidatePriceReference> };
+  changes: Array<{ category: string; label: string; before: unknown; after: unknown }>;
+  missing_evidence: string[]; material_changed: boolean; quote_updated: boolean; notice: string;
+}
 export interface PositionDiscussion {
+  review_context?: StrategyReviewContext;
   review_revision?: string;
   summary_issue?: string;
   status: "complete" | "partial" | "failed"; generated_at: string; model: string; mode: string;
@@ -464,6 +479,7 @@ export type CandidateChoice = "pullback" | "confirmation" | "defer";
 export interface CandidatePriceReference { label: string; price: number; as_of: string; source: string }
 export interface CandidateCondition { choice: CandidateChoice; price_ref: string | null; condition: string; invalidation: string }
 export interface CandidateDiscussion {
+  review_context?: StrategyReviewContext;
   id: string; status: "complete" | "partial" | "failed"; generated_at: string; model: string; mode: string;
   resource_version: number; evidence_version: string; research_date: string | null; quote_as_of: string | null;
   price_refs: Record<string, CandidatePriceReference>; evidence_snapshot: Record<string, unknown>;

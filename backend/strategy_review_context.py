@@ -233,7 +233,7 @@ def validate_position_action_numbers(parsed: dict[str, Any], evidence: dict[str,
             if any(float(number) not in allowed for number in currency):
                 raise ValueError('模型动作的价格单位与当前有源价位不符')
             for stamp in sorted(stamps, key=len, reverse=True):
-                prose = re.sub(rf'(?<!\d){re.escape(stamp)}(?!\d)', '', prose)
+                prose = re.sub(rf'(?<!\d){re.escape(stamp)}(?!\d|\s*[元块角股手%％分家点倍])', '', prose)
             for suffix, values in ((r'[%％]', facts.percentages), (r'分', facts.scores), (r'家', facts.counts)):
                 prose = re.sub(rf'([-+]?\d+(?:\.\d+)?)\s*{suffix}',
                                lambda match: '' if float(match[1]) in values else match[0], prose)

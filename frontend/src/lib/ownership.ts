@@ -7,6 +7,8 @@
 export interface OwnershipSets {
   holdings: ReadonlySet<string>;
   watchlist: ReadonlySet<string>;
+  /** false means the latest read is unavailable, rather than a known empty portfolio. */
+  holdingsKnown?: boolean;
 }
 
 export type OwnedKind = "holding" | "watchlist" | null;
@@ -16,9 +18,22 @@ export const EMPTY_OWNERSHIP: OwnershipSets = {
   watchlist: new Set<string>(),
 };
 
+export const UNKNOWN_OWNERSHIP: OwnershipSets = { ...EMPTY_OWNERSHIP, holdingsKnown: false };
+
+export function ownershipFromCodes(codes: readonly string[] | null, watchlist: ReadonlySet<string>): OwnershipSets {
+  return { holdings: new Set(codes ?? []), watchlist, holdingsKnown: codes !== null };
+}
+
+export function ownershipSummaryLabel(codes: readonly string[], own: OwnershipSets): string {
+  const summary = summarizeOwned(codes, own);
+  return own.holdingsKnown === false
+    ? `持仓身份未读全 · 自选 ${summary.watchlist}`
+    : `命中我的持仓 ${summary.holding} · 自选 ${summary.watchlist}`;
+}
+
 /** 持仓优先于自选：真金白银比"关注"更值得在列表里先看到。 */
 export function ownedKind(code: string, own: OwnershipSets): OwnedKind {
-  if (own.holdings.has(code)) return "holding";
+  if (own.holdingsKnown !== false && own.holdings.has(code)) return "holding";
   if (own.watchlist.has(code)) return "watchlist";
   return null;
 }

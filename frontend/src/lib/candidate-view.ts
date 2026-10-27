@@ -105,12 +105,12 @@ export function selectCandidates(
   const filtered = rows.filter(
     (row) =>
       (!options.onlyReady || row.ready) &&
-      (!options.onlyOwned || (options.ownership && ownedKind(row.symbol, options.ownership) !== null)) &&
+      (!options.onlyOwned || options.ownership?.holdingsKnown === false || (options.ownership && ownedKind(row.symbol, options.ownership) !== null)) &&
       matchStrategy(row, options.strategy) &&
       !(options.exclude?.(row) ?? false),
   ).map((row) => ({
     ...row,
-    hit_position: options.ownership?.holdings.has(row.symbol) ?? false,
+    hit_position: options.ownership?.holdingsKnown !== false && (options.ownership?.holdings.has(row.symbol) ?? false),
     hit_watchlist: options.ownership?.watchlist.has(row.symbol) ?? false,
   }));
 

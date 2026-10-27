@@ -53,3 +53,11 @@ def test_position_review_rejects_currency_suffix_when_source_date_is_used_as_act
     row['actions'][0].update(price_ref='current_low', condition=text)
     with pytest.raises(ValueError):
         validate_position_action_numbers(row, EVIDENCE, PRICES)
+
+
+@pytest.mark.parametrize("unit", ["元", "块", "角", "股", "手", "%", "％", "分", "家", "点", "倍"])
+def test_position_review_rejects_source_date_used_as_numeric_unit_when_date_is_allowed(unit: str) -> None:
+    row = deepcopy(OPINION)
+    row["actions"][0]["condition"] = f"回落至2026-10-27 {unit}后核对"
+    with pytest.raises(ValueError):
+        validate_position_action_numbers(row, EVIDENCE, PRICES)

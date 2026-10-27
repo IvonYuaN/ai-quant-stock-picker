@@ -5,6 +5,8 @@ import {
   ownedKind,
   summarizeOwned,
   type OwnershipSets,
+  ownershipFromCodes,
+  ownershipSummaryLabel,
 } from "./ownership";
 
 const own: OwnershipSets = {
@@ -38,4 +40,14 @@ export const ownershipContract = {
   alreadyHeldDetects: alreadyHeldCount(codes, own) === 1,
   alreadyHeldZeroWhenNone: alreadyHeldCount(["601318"], own) === 0,
   alreadyHeldIgnoresWatchlist: alreadyHeldCount(["300750"], own) === 0,
+};
+
+const unavailable = ownershipFromCodes(null, new Set(["300750"]));
+const knownEmpty = ownershipFromCodes([], new Set(["300750"]));
+export const ownershipAvailabilityContracts = {
+  failedReadDoesNotBecomeKnownEmpty: unavailable.holdingsKnown === false && knownEmpty.holdingsKnown === true,
+  failedReadDoesNotClaimZeroHoldings: ownershipSummaryLabel(codes, unavailable) === "持仓身份未读全 · 自选 1",
+  knownEmptyStillShowsZero: ownershipSummaryLabel(codes, knownEmpty) === "命中我的持仓 0 · 自选 1",
+  unavailableHoldingsCannotKeepStaleOwnedBadge: ownedKind("600036", { ...unavailable, holdings: own.holdings }) === null,
+  watchlistRemainsAvailableIndependently: ownedKind("300750", unavailable) === "watchlist",
 };
