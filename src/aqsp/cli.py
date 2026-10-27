@@ -3395,6 +3395,8 @@ def _write_high_frequency_provisional_outputs(
     latest: date,
     mode: str,
     run_metadata: RunMetadata,
+    observation_frames: dict[str, pd.DataFrame] | None = None,
+    observation_missing_symbols: tuple[str, ...] = (),
 ) -> None:
     if not _is_high_frequency_task(task_id):
         return
@@ -3404,6 +3406,20 @@ def _write_high_frequency_provisional_outputs(
     mirror_csv_path = str(os.environ.get("AQSP_PROVISIONAL_OUTPUT_CSV") or "").strip()
     if not any((report_path, output_csv_path, mirror_report_path, mirror_csv_path)):
         return
+
+    from aqsp.services.candidate_freeze import (
+        candidate_freeze_enabled, session_candidate_view, refresh_candidate_observations,
+    )
+
+    if candidate_freeze_enabled() and str(getattr(args, "symbols", "") or "").strip():
+        stable_picks = session_candidate_view()
+        if stable_picks is not None:
+            picks = stable_picks
+            run_metadata = replace(run_metadata, final_count=len(picks))
+        if observation_frames is not None:
+            picks = refresh_candidate_observations(
+                picks, observation_frames, missing_symbols=observation_missing_symbols,
+            )
 
     table = to_intraday_dataframe(picks, metadata=run_metadata)
     markdown = to_markdown(
@@ -4906,6 +4922,7 @@ def run_screen(args: argparse.Namespace) -> int:
                 min_avg_amount=float(args.min_avg_amount),
                 picks=picks,
                 path=candidate_snapshot_path(),
+                thresholds=thresholds,
             )
         except CandidateSnapshotError as exc:
             print(f"候选冻结写入失败，拒绝发布未冻结结果: {exc}")
@@ -5119,11 +5136,16 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
     from aqsp.services.candidate_freeze import (
         CandidateSnapshotError,
         candidate_freeze_enabled,
+        candidate_batch_snapshot_path,
         candidate_request_fingerprint,
         candidate_snapshot_path,
         freeze_final_candidates,
         freeze_scored_candidates,
         load_candidate_snapshot,
+        refresh_candidate_observations,
+        session_candidate_view,
+        validate_candidate_scan_receipt,
+        write_candidate_scan_receipt,
     )
 
     env = load_runtime_config()
@@ -5171,7 +5193,24 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
     thresholds = load_thresholds()
     candidate_snapshot = None
     candidate_fingerprint = ""
-    if not as_of_raw and freeze_enabled:
+    computation_path = candidate_snapshot_path()
+    rotating_batch = bool(
+        not as_of_raw and _requires_intraday_overlay_task(normalized_task_id)
+        and explicit_symbols.strip()
+    )
+    observation_symbols: list[str] = []
+    if rotating_batch and freeze_enabled:
+        try:
+            stable_view = session_candidate_view()
+        except CandidateSnapshotError as exc:
+            print(f"当日稳定候选不可发布: {exc}")
+            return 1
+        # Follow the visible shortlist without expanding a rotating scan back
+        # into the entire market. This is the existing display limit, not a
+        # new scoring/coverage threshold. Supplementary quotes never count
+        # toward the selected batch or participate in its scoring.
+        observation_symbols = [pick.symbol for pick in (stable_view or [])[:limit]]
+    if not as_of_raw and (freeze_enabled or rotating_batch):
         candidate_fingerprint = candidate_request_fingerprint(
             {
                 "entrypoint": "scheduled",
@@ -5189,11 +5228,15 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
                 "thresholds_version": thresholds.version,
             }
         )
+        if rotating_batch:
+            computation_path = candidate_batch_snapshot_path(candidate_fingerprint)
         try:
-            candidate_snapshot = load_candidate_snapshot(
-                snapshot_trading_date(today.isoformat()),
-                candidate_fingerprint,
-                candidate_snapshot_path(),
+            candidate_snapshot = (
+                load_candidate_snapshot(
+                    snapshot_trading_date(today.isoformat()),
+                    candidate_fingerprint,
+                    computation_path,
+                ) if freeze_enabled else None
             )
         except CandidateSnapshotError as exc:
             print(f"候选冻结不可复用，停止本次运行: {exc}")
@@ -5209,18 +5252,24 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         frames = load_csv(args.csv)
         actual_source = "csv"
     elif candidate_snapshot is not None:
-        symbols = list(dict.fromkeys(pick.symbol for pick in candidate_snapshot.screened_picks))
+        symbols = list(candidate_snapshot.resolved_symbols)
         print(
-            "已复用本交易日完整候选评分快照；跳过全股票池解析与重评分，"
-            "新增项未扫描全市场，状态保持未知。"
+            "已复用同批完整候选评分快照；按原解析标的重新取行情，"
+            "评分复用不计作新批次扫描。"
         )
-        frames, actual_source = _fetch_frames_for_cli_with_metadata(
-            args.source,
-            symbols,
-            benchmark_symbol=args.benchmark_symbol,
-            end_date=today,
-            workload="live_short" if requires_live_short_source else None,
-        )
+        if _requires_intraday_overlay_task(normalized_task_id):
+            frames, actual_source = _fetch_special_strategy_frames(
+                args.source, list(dict.fromkeys([*symbols, *observation_symbols])),
+                benchmark_symbol=args.benchmark_symbol,
+            )
+        else:
+            frames, actual_source = _fetch_frames_for_cli_with_metadata(
+                args.source,
+                symbols,
+                benchmark_symbol=args.benchmark_symbol,
+                end_date=today,
+                workload="live_short" if requires_live_short_source else None,
+            )
         if requires_live_short_source:
             actual_allowed, actual_reason = _runtime_actual_source_workload_allowed(
                 args.source,
@@ -5242,7 +5291,7 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         if _requires_intraday_overlay_task(normalized_task_id):
             frames, actual_source = _fetch_special_strategy_frames(
                 args.source,
-                symbols,
+                list(dict.fromkeys([*symbols, *observation_symbols])),
                 benchmark_symbol=args.benchmark_symbol,
             )
         else:
@@ -5275,6 +5324,30 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         max_data_lag_days,
         workload="live_short" if requires_live_short_source else None,
     )
+    batch_freeze_allowed = True
+    if rotating_batch and args.output_csv:
+        write_candidate_scan_receipt(
+            args.output_csv, session_date=today.isoformat(),
+            request_fingerprint=candidate_fingerprint,
+            symbols=symbols, frames=frames, missing_symbols=intraday_missing_symbols,
+            benchmark_symbol=args.benchmark_symbol,
+        )
+        try:
+            valid_ratio = float(os.getenv("AQSP_INTRADAY_MIN_VALID_RATIO", "0.5"))
+            valid_ratio = min(max(valid_ratio, 0.0), 1.0)
+        except ValueError:
+            valid_ratio = 0.5
+        try:
+            validate_candidate_scan_receipt(
+                args.output_csv,
+                expected_symbols=[item.strip() for item in explicit_symbols.split(",") if item.strip()],
+                minimum_valid_ratio=valid_ratio,
+            )
+        except CandidateSnapshotError as exc:
+            # Failed scan evidence may be shown provisionally but must not
+            # poison the scored cache or the day's first stable roster.
+            batch_freeze_allowed = False
+            print(f"盘中批次覆盖不足，仅保留当前观察结果，不冻结本批评分: {exc}")
     data_lag_days = _runtime_data_lag_days(latest)
     freshness_tier, coverage_tier, source_local_status = _source_runtime_metadata(
         actual_source,
@@ -5431,6 +5504,10 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
     strategy_weight_reasons: dict[str, str] = {}
 
     screen_frames = _drop_benchmark_frame(frames, args.benchmark_symbol)
+    scoring_frames = (
+        {symbol: frame for symbol, frame in screen_frames.items() if symbol in symbols}
+        if rotating_batch else screen_frames
+    )
     config = ScreeningConfig(
         mode=mode,
         min_avg_amount=min_avg_amount,
@@ -5446,7 +5523,7 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         screened_picks = list(candidate_snapshot.screened_picks)
     else:
         screened_picks = _enrich_pick_names(
-            _screen_universe_with_thresholds(screen_frames, config, thresholds),
+            _screen_universe_with_thresholds(scoring_frames, config, thresholds),
             screen_frames,
             realtime_source_name=actual_source,
         )
@@ -5472,7 +5549,8 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
             screened_picks,
             reason=status.reason,
         )
-    if candidate_snapshot is None and not as_of_raw and freeze_enabled:
+    if (candidate_snapshot is None and not as_of_raw and freeze_enabled
+            and batch_freeze_allowed):
         try:
             candidate_snapshot = freeze_scored_candidates(
                 session_date=snapshot_trading_date(today.isoformat()),
@@ -5487,7 +5565,8 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
                 max_price=float(thresholds.filter.max_price),
                 min_avg_amount=float(min_avg_amount),
                 picks=screened_picks,
-                path=candidate_snapshot_path(),
+                path=computation_path,
+                thresholds=thresholds,
             )
         except CandidateSnapshotError as exc:
             print(f"候选冻结写入失败，拒绝发布未冻结结果: {exc}")
@@ -5498,6 +5577,8 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         picks=screened_picks[:limit],
         latest=latest,
         mode=mode,
+        observation_frames=frames,
+        observation_missing_symbols=intraday_missing_symbols,
         run_metadata=replace(
             run_metadata_base,
             screened_count=len(screened_picks),
@@ -5745,6 +5826,8 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         picks=picks,
         latest=latest,
         mode=mode,
+        observation_frames=frames,
+        observation_missing_symbols=intraday_missing_symbols,
         run_metadata=run_metadata,
     )
 
@@ -6087,20 +6170,30 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         if portfolio_decisions:
             print("排序结果已生成")
 
-    if not as_of_raw and freeze_enabled:
+    if not as_of_raw and freeze_enabled and batch_freeze_allowed:
         try:
             if candidate_snapshot is None:
                 raise CandidateSnapshotError("缺少候选评分快照")
             candidate_snapshot = freeze_final_candidates(
                 candidate_snapshot,
                 picks,
-                path=candidate_snapshot_path(),
+                path=computation_path,
             )
             if candidate_snapshot.finalized:
                 picks = list(candidate_snapshot.final_picks)
+            if rotating_batch:
+                picks = session_candidate_view(
+                    candidate_snapshot, final_picks=picks, thresholds=thresholds
+                ) or []
+                run_metadata = replace(run_metadata, final_count=len(picks))
         except CandidateSnapshotError as exc:
             print(f"正式候选列表冻结失败，停止输出: {exc}")
             return 1
+
+    if rotating_batch:
+        picks = refresh_candidate_observations(
+            picks, frames, missing_symbols=intraday_missing_symbols,
+        )
 
     # 保存选股快照并在 ledger 写入前补齐候选状态，确保 report / ledger / paper 三端一致。
     if picks and persist_research_outputs:

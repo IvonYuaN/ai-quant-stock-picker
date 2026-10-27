@@ -5,6 +5,7 @@ import json
 import os
 import stat
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -107,7 +108,7 @@ def test_intraday_runtime_contract_uses_configured_benchmark_and_quality_gate() 
 
 def _write_python_stub(path: Path, repo_root: Path, args_path: Path) -> None:
     path.write_text(
-        """#!/usr/bin/env python3
+        """#!__AQSP_TEST_PYTHON__
 import csv
 import json
 import os
@@ -194,6 +195,37 @@ if args[:2] == ["-m", "aqsp"]:
     report_path = Path(value(args, "--report"))
     ledger_path = Path(value(args, "--ledger"))
     benchmark = value(args, "--benchmark-symbol")
+    # A fresh run receipt is independent of the number of surviving picks.
+    # Keep this stub's evidence synthetic while exercising the real validator.
+    if "--symbols" in args:
+        import hashlib
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        now = datetime.now(ZoneInfo("Asia/Shanghai"))
+        requested = value(args, "--symbols").split(",")
+        fetched_count = int(os.getenv("AQSP_TEST_FETCHED_COUNT", str(len(requested))))
+        fetched = requested[:fetched_count]
+        payload = {
+            "schema_version": 1,
+            "session_date": now.date().isoformat(),
+            "observed_at": now.isoformat(),
+            "request_fingerprint": "synthetic-batch",
+            "requested_symbols": requested,
+            "scanned_symbols": requested,
+            "fetched_symbols": fetched,
+            "valid_quotes": [{
+                "symbol": symbol, "source": "fixture",
+                "source_time": now.date().isoformat(),
+                "source_time_precision": "day", "timestamp_source": "bar_time",
+                "fetched_at": now.isoformat(),
+            } for symbol in fetched],
+            "missing_symbols": [symbol for symbol in requested if symbol not in fetched],
+        }
+        encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
+        payload["checksum"] = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+        csv_path.parent.mkdir(parents=True, exist_ok=True)
+        Path(str(csv_path) + ".scan.json").write_text(json.dumps(payload) + "\\n", encoding="utf-8")
     Path(os.environ["AQSP_TEST_ARGS"]).write_text(
         json.dumps(
             {
@@ -296,7 +328,7 @@ if args[:2] == ["-m", "aqsp"]:
     raise SystemExit(int(os.getenv("AQSP_TEST_CLI_EXIT_CODE", "0")))
 
 raise SystemExit(0)
-""",
+""".replace("__AQSP_TEST_PYTHON__", sys.executable),
         encoding="utf-8",
     )
     path.chmod(path.stat().st_mode | stat.S_IXUSR)

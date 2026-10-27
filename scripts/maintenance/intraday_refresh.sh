@@ -370,11 +370,12 @@ validate_intraday_batch_output() {
         log "[ERROR] 盘中批次产物缺少 CSV，拒绝提交 cursor"
         return 1
     fi
-    if ! scanned_count="$("$PYTHON_BIN" - "$batch_output_path" "$expected_count" "$min_valid_ratio" <<'AQSP_INTRADAY_BATCH_OUTPUT_CHECK'
+    if ! scanned_count="$("$PYTHON_BIN" - "$batch_output_path" "$expected_count" "$min_valid_ratio" "$INTRADAY_BATCH_SYMBOLS" <<'AQSP_INTRADAY_BATCH_OUTPUT_CHECK'
 import csv
 import math
 import sys
 from pathlib import Path
+from aqsp.services.candidate_freeze import validate_candidate_scan_receipt
 
 path = Path(sys.argv[1])
 expected = int(sys.argv[2])
@@ -400,7 +401,16 @@ if fetched < minimum:
     raise SystemExit(
         f"盘中批次有效取数低于最低覆盖: {fetched}/{resolved}，最低 {minimum}/{resolved}"
     )
-print(resolved)
+selected_symbols = [symbol for symbol in sys.argv[4].split(",") if symbol]
+if len(selected_symbols) != expected:
+    raise SystemExit("盘中选中批次代码数量不符")
+try:
+    scanned = validate_candidate_scan_receipt(
+        str(path), expected_symbols=selected_symbols, minimum_valid_ratio=ratio,
+    )
+except (ValueError, OSError) as exc:
+    raise SystemExit(f"盘中扫描凭据无效: {exc}") from exc
+print(scanned)
 AQSP_INTRADAY_BATCH_OUTPUT_CHECK
     )"; then
         log "[ERROR] 盘中批次实际覆盖不足，拒绝提交 cursor"
@@ -1832,7 +1842,7 @@ if [ "$INTRADAY_BATCH_ACTIVE" = "true" ] && \
    [ "$BATCH_COMMITTED" != "true" ]; then
     AQSP_INTRADAY_BATCH_SCANNED="$INTRADAY_BATCH_SCANNED" \
         "$PYTHON_BIN" "${PROJECT_ROOT}/scripts/prepare_intraday_batch.py" \
-        --cursor "$INTRADAY_CURSOR_PATH" --commit
+        --cursor "$INTRADAY_CURSOR_PATH" --commit --expected-symbols "$INTRADAY_BATCH_SYMBOLS"
     BATCH_COMMITTED="true"
     log "盘中批次已提交；partial/timeout 和消息与讨论 sidecar 不影响 cursor 推进"
 elif [ "$INTRADAY_BATCH_ACTIVE" = "true" ] && \
@@ -1891,7 +1901,7 @@ if [ "$INTRADAY_BATCH_ACTIVE" = "true" ] && \
     if validate_intraday_batch_output; then
         AQSP_INTRADAY_BATCH_SCANNED="$INTRADAY_BATCH_SCANNED" \
             "$PYTHON_BIN" "${PROJECT_ROOT}/scripts/prepare_intraday_batch.py" \
-            --cursor "$INTRADAY_CURSOR_PATH" --commit
+            --cursor "$INTRADAY_CURSOR_PATH" --commit --expected-symbols "$INTRADAY_BATCH_SYMBOLS"
         BATCH_COMMITTED="true"
         log "盘中批次已提交，下一轮继续覆盖剩余股票池"
     else
