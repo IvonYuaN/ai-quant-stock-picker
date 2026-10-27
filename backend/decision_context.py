@@ -55,6 +55,7 @@ class PositionDecisionContext:
     sector: ContextEvidence
     stock: ContextEvidence
     assessment: PositionAssessment
+    action_basis: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize display evidence without changing portfolio or alert state."""
@@ -449,6 +450,8 @@ def build_position_context(
         "减仓或退出：结合真实可卖数量、风险规则与已验证背景自行复核",
         "做T观察：仅有经过验证的日内条件后再评估，不代表当前可执行",
     )
+    from position_action_plan import build_action_basis
+
     return PositionDecisionContext(
         name,
         opened if isinstance(opened, str) else None,
@@ -457,4 +460,5 @@ def build_position_context(
         sector_context,
         stock_context,
         PositionAssessment(stance, title, reason, options, t_plan),
+        build_action_basis(holding, quote, stock_history, checked_at=current, joint_weakness=joint_weakness).to_dict(),
     )

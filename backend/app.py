@@ -13,7 +13,7 @@ import json
 import os
 import time as _time
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -811,20 +811,51 @@ def alerts_list(
 
 class AlertReviewPlanIn(BaseModel):
     choice: str
+    parameters: dict[str, Any] | None = None
+    expected_position: dict[str, Any] | None = None
 
 
 @app.post("/api/alerts/{event_id}/plan", tags=["持仓风险"], summary="记录人工处置方案，保留风险提醒")
 def alert_review_plan(event_id: str, body: AlertReviewPlanIn) -> dict:
     """Save a review path only; never writes a sale or changes risk thresholds."""
-    import alert_events
+    from position_plan_service import save_action_plan
 
     try:
-        plan = alert_events.record_review_plan(event_id, body.choice)
+        plan = save_action_plan(event_id, body.choice, body.parameters, body.expected_position)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     if plan is None:
         raise HTTPException(409, "提醒不存在或已失效，请刷新后重试")
     return {"data": plan}
+
+
+@app.get("/api/alerts/{event_id}/action-plan", tags=["持仓风险"], summary="读取当前持仓的条件操作计划依据")
+def alert_action_plan(event_id: str) -> dict:
+    """Read live source evidence and hypothetical costs; no notifications or trades."""
+    from position_plan_service import read_action_plan
+
+    result = read_action_plan(event_id)
+    if result is None:
+        raise HTTPException(409, "提醒或原持仓已失效，请刷新")
+    return {"data": result}
+
+
+class PositionDiscussionIn(BaseModel):
+    choice: str
+    expected_position: dict[str, Any]
+    llm: LLMConfig | None = None
+
+
+@app.post("/api/alerts/{event_id}/discussion", tags=["持仓风险"], summary="基于同一持仓证据进行三角色模型讨论")
+async def position_discussion(event_id: str, body: PositionDiscussionIn) -> dict:
+    """Explicit request only; no orders, notifications or score changes."""
+    from position_discussion import run_discussion
+
+    try:
+        result = await run_discussion(event_id, body.choice, body.expected_position, body.llm.model_dump() if body.llm else None)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {"data": result}
 
 
 @app.patch(

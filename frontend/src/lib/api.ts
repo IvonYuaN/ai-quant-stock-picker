@@ -388,6 +388,34 @@ export interface MacdChartEvidence {
   fast: number; slow: number; signal: number;
   points: { date: string; close: number; dif: number; dea: number }[];
 }
+export type ReviewChoice = "hold" | "reduce" | "t_watch";
+export interface PlanParameters {
+  quantity: number; sell_price: number; buy_price: number | null;
+  commission_rate: number; min_commission: number; stamp_tax_rate: number;
+  slippage_rate: number; fees_confirmed: boolean;
+}
+export interface PositionModelConfig { baseURL: string; apiKey: string; model: string }
+export interface DiscussionAction { action: "observe" | "sell_review" | "buy_review" | "pause"; price_ref: string | null; condition: string; invalidation: string }
+export interface PositionDiscussion {
+  status: "complete" | "partial" | "failed"; generated_at: string; model: string; mode: string;
+  choice: ReviewChoice; position_snapshot: ActionWorksheet["position_snapshot"]; quote_as_of: string | null;
+  price_refs: Record<string, { label: string; price: number; as_of: string; source: string }>;
+  rounds: Array<{ stage: string; opinions: Array<{ role: string; label: string; status: string; issue?: string;
+    opinion?: { summary: string; evidence_ids: string[]; uncertainties: string[]; actions: DiscussionAction[]; reply_to: string[]; challenge: string } }> }>;
+  summary: { conclusion: string; agreements: string[]; disagreements: string[]; missing_evidence: string[]; actions: DiscussionAction[] } | null;
+  notice: string;
+}
+export interface ActionWorksheet {
+  basis: { checked_at: string; quote_as_of: string | null; quote_source: string; quote_issue: string;
+    price: number | null; cost: number | null; shares: number | null; sellable_shares: number | null;
+    position_id: string | null; joint_weakness: boolean;
+    references: Array<{ label: string; price: number; as_of: string; source: string }> };
+  position_snapshot: { position_id: string | null; cost: number; shares: number; sellable_shares: number };
+  review_plan: { choice?: ReviewChoice; parameters?: PlanParameters; discussion?: PositionDiscussion };
+  scenario: { gross_spread: number; estimated_fees: number; net_cash: number; realized_pnl: number | null; economic_cost: number | null;
+    remaining_shares: number; cost_reduction_per_share: number | null; round_trip_positive: boolean | null; note: string } | null;
+  scenario_issue: string;
+}
 export interface DecisionEvidence {
   status: string; summary: string; as_of: string | null; source: string; evidence?: unknown;
 }
@@ -610,8 +638,11 @@ export const api = {
       `/alerts/${encodeURIComponent(id)}?action=${action}&note=${encodeURIComponent(note)}`,
       "PATCH",
     ),
-  alertReviewPlan: (id: string, choice: "hold" | "reduce" | "t_watch") =>
-    request<NonNullable<AlertEvent["review_plan"]>>(`/alerts/${encodeURIComponent(id)}/plan`, "POST", { choice }),
+  alertReviewPlan: (id: string, choice: ReviewChoice, parameters?: PlanParameters, expected_position?: ActionWorksheet["position_snapshot"]) =>
+    request<NonNullable<AlertEvent["review_plan"]>>(`/alerts/${encodeURIComponent(id)}/plan`, "POST", { choice, parameters, expected_position }),
+  alertActionPlan: (id: string) => get<ActionWorksheet>(`/alerts/${encodeURIComponent(id)}/action-plan`),
+  positionDiscussion: (id: string, choice: ReviewChoice, expected_position: ActionWorksheet["position_snapshot"], llm?: PositionModelConfig) =>
+    request<PositionDiscussion>("/alerts/" + encodeURIComponent(id) + "/discussion", "POST", { choice, expected_position, llm }),
   runLiveRiskCheck: (holding_days?: Record<string, number>, notify = true) =>
     request<LiveRiskCheckResult>("/live-risk/check", "POST", { holding_days, notify }),
   quote: (codes: string) => get<Record<string, Quote>>(`/quote?codes=${codes}`),

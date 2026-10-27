@@ -3703,3 +3703,30 @@
     .aq-sidebar, .aq-card, .aq-candidate-choice { transition: none; }
   }
 }
+
+/* Position worksheets reuse the alert card and collapse secondary evidence. */
+.aq-action-plan { margin-top: 1rem; line-height: 1.7; font-size: .85rem; }
+.aq-action-plan-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem; }
+.aq-action-plan h4 { font-weight: 600; margin: .5rem 0; }
+.aq-action-plan ol { list-style: decimal; padding-left: 1.3rem; margin: .8rem 0; }
+.aq-action-plan li { margin: .5rem 0; }
+.aq-action-plan-warning { color: hsl(var(--warning, 38 92% 50%)); border-left: 2px solid currentColor; padding-left: .6rem; margin: .6rem 0; }
+.aq-action-plan-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); gap: .65rem; margin: .8rem 0; }
+.aq-action-plan-fields label { display: grid; gap: .3rem; }
+.aq-action-plan-fields input { width: 100%; min-width: 0; min-height: 2.6rem; border: 1px solid hsl(var(--border)); border-radius: 4px; background: hsl(var(--background)); color: hsl(var(--foreground)); padding: .45rem .6rem; }
+.aq-action-plan-confirm { display: flex; align-items: flex-start; gap: .5rem; margin: .8rem 0; }
+.aq-action-plan-confirm input { margin-top: .4rem; }
+.aq-action-plan-result { border-top: 1px solid hsl(var(--border)); margin-top: 1rem; padding-top: .5rem; }
+.aq-action-plan-result dl { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: .75rem; margin: .6rem 0; }
+.aq-action-plan-result dt { color: hsl(var(--muted-foreground)); }
+.aq-action-plan-result dd { font-weight: 600; font-variant-numeric: tabular-nums; }
+
+.aq-action-plan-conditions, .aq-action-plan-fees { margin: .6rem 0; }
+.aq-action-plan-conditions ul { padding-left: 1rem; list-style: disc; }
+@media (max-width: 640px) { .aq-action-plan-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+.aq-position-discussion { margin: 14px 0; padding: 14px; border: 1px solid var(--aq-border, #34383c); border-radius: 8px; }
+.aq-position-discussion p { overflow-wrap: anywhere; }
+.aq-position-discussion input:not([type="checkbox"]) { width: 100%; min-width: 0; padding: 9px; background: transparent; border: 1px solid #4b5055; border-radius: 4px; }
+.aq-discussion-result { margin-top: 14px; }
+.aq-discussion-result article { padding: 10px 0; border-top: 1px solid #34383c; }
