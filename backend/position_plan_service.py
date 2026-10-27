@@ -8,13 +8,15 @@ import portfolio as pf
 from aqsp.core.time import now_shanghai
 from aqsp.utils.jsonl_io import advisory_lock
 from position_action_plan import build_action_basis, calculate_scenario
+from position_route_review import build_route_review, current_position_evidence, evidence_digest, risk_evidence_revision
 
 
 def read_action_plan(event_id: str) -> dict[str, Any] | None:
     """Refresh quote evidence, reject stale position identity, and reprice scenarios."""
     from decision_context import _session
 
-    event = next((row for row in ae.list_events() if row["id"] == event_id and row["status"] == "OPEN"), None)
+    events = ae.list_events()
+    event = next((row for row in events if row["id"] == event_id and row["status"] == "OPEN"), None)
     if event is None:
         return None
     portfolio = pf.get_portfolio()
@@ -25,20 +27,13 @@ def read_action_plan(event_id: str) -> dict[str, Any] | None:
     current = now_shanghai()
     old_context = event.get("position_context") or {}
     old_basis = old_context.get("action_basis") or {}
-    from decision_context import _source_date
-    from decision_context import _timely_quote
-    market_stamp = _source_date((old_context.get("market") or {}).get("as_of"), current)
-    sector_stamp = _source_date((old_context.get("sector") or {}).get("as_of"), current)
     # A saved assessment is not a permanent veto. Re-evaluate the current stock
     # quote and require the board evidence still to be timely.
     quote = holding.get("quote") or {}
-    change = quote.get("change_pct")
-    joint = bool((old_context.get("market") or {}).get("status") == "weak"
-                 and (old_context.get("sector") or {}).get("status") == "falling"
-                 and market_stamp and sector_stamp
-                 and market_stamp[0] == _session(current) and _timely_quote(sector_stamp, current)
-                 and isinstance(change, (int, float)) and not isinstance(change, bool) and change < 0)
-    basis = build_action_basis(holding, holding.get("quote"), None, checked_at=current, joint_weakness=joint).to_dict()
+    evidence = current_position_evidence(old_context, quote, current=current)
+    basis = build_action_basis(holding, holding.get("quote"), None, checked_at=current, joint_weakness=False).to_dict()
+    basis["joint_weakness"] = bool(not basis["quote_issue"] and evidence["market"]["status"] == "weak"
+                                   and evidence["sector"]["status"] == "falling" and evidence["stock"]["status"] == "falling")
     # Completed-day bars remain useful when the original check is recent enough;
     # never carry a previous session's daily references into a new completed day.
     completed = _session(current, completed=True)
@@ -74,7 +69,18 @@ def read_action_plan(event_id: str) -> dict[str, Any] | None:
         plan = {**plan, "discussion": None}
         if plan.get("parameters"):
             scenario, scenario_issue = None, "已回录新的卖出，先核对剩余仓位并重新保存试算"
+    matching = [row for row in events if row.get("status") == "OPEN" and row.get("symbol") == event["symbol"]
+                and row.get("position_id") == holding.get("position_id")]
+    review = build_route_review(holding, quote, basis, old_context, matching, current=current).to_dict()
+    revision = risk_evidence_revision(matching)
+    basis_id = evidence_digest({"risk_revision": revision, "evidence": review["evidence"],
+                                "basis": {key: value for key, value in basis.items() if key != "checked_at"}})
+    comparison = event.get("position_analysis")
+    if comparison and comparison.get("position_snapshot") != snapshot:
+        comparison = None
     return {"symbol": event["symbol"], "basis": basis, "position_snapshot": snapshot, "review_plan": plan,
+            "route_review": review, "comparison": comparison,
+            "analysis_basis_id": basis_id, "risk_revision": revision,
             "scenario": scenario, "scenario_issue": scenario_issue,
             "recorded_sale": recorded_sale,
             "sale_requires_review": sale_requires_review,

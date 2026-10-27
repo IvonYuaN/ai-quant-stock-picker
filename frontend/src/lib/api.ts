@@ -2,6 +2,7 @@
 // 后端未启动或数据源异常时抛 ApiError，页面据此优雅降级。
 import type { AqspLifecycleIndex, AqspSnapshotEnvelope, AqspSnapshotView, InfoStreamData } from "@/types/aqsp";
 import { createBrowserIdentity } from "./browser-session";
+import { readDiscussionStream } from "./discussion-stream";
 
 export type {
   AqspAgentDiscussion,
@@ -395,14 +396,20 @@ export interface PlanParameters {
   slippage_rate: number; fees_confirmed: boolean;
 }
 export interface PositionModelConfig { baseURL: string; apiKey: string; model: string }
+export interface PositionModelCatalog { catalog_id: string; current_model: string; models: string[]; checked_at: string; listed: boolean | null; directory_complete?: boolean; issue: string; notice: string }
 export interface DiscussionAction { action: "observe" | "sell_review" | "buy_review" | "pause"; price_ref: string | null; condition: string; invalidation: string }
 export interface PositionDiscussion {
+  summary_issue?: string;
   status: "complete" | "partial" | "failed"; generated_at: string; model: string; mode: string;
-  choice: ReviewChoice; position_snapshot: ActionWorksheet["position_snapshot"]; quote_as_of: string | null;
+  choice: ReviewChoice | null; position_snapshot: ActionWorksheet["position_snapshot"]; quote_as_of: string | null;
+  analysis_basis_id?: string;
+  evidence_snapshot?: { quote: { price: number | null; as_of: string | null; source: string }; market: { summary?: string; source?: string; as_of?: string }; sector: { summary?: string; source?: string; as_of?: string } };
   price_refs: Record<string, { label: string; price: number; as_of: string; source: string }>;
   rounds: Array<{ stage: string; opinions: Array<{ role: string; label: string; status: string; issue?: string;
     opinion?: { summary: string; evidence_ids: string[]; uncertainties: string[]; actions: DiscussionAction[]; reply_to: string[]; challenge: string } }> }>;
-  summary: { conclusion: string; agreements: string[]; disagreements: string[]; missing_evidence: string[]; actions: DiscussionAction[] } | null;
+  summary: { conclusion: string; agreements: string[]; disagreements: string[]; missing_evidence: string[]; actions: DiscussionAction[];
+    routes?: Array<{ choice: ReviewChoice; judgment: "investigate" | "not_now" | "insufficient"; reason: string; evidence_ids: string[]; needs: string[] }>;
+    focus_choice?: ReviewChoice | null; focus_reason?: string } | null;
   notice: string;
 }
 export interface ActionWorksheet {
@@ -418,6 +425,11 @@ export interface ActionWorksheet {
   scenario: { gross_spread: number; estimated_fees: number; net_cash: number; realized_pnl: number | null; economic_cost: number | null;
     remaining_shares: number; cost_reduction_per_share: number | null; round_trip_positive: boolean | null; note: string } | null;
   scenario_issue: string;
+  route_review?: { title: string; summary: string; unrealized_pnl_pct: number | null; recovery_to_cost_pct: number | null;
+    routes: Array<{ choice: ReviewChoice; status: "review" | "risk_review" | "paused" | "unknown"; reason: string; needs: string[] }>;
+    evidence: { market: DecisionEvidence; sector: DecisionEvidence; stock: DecisionEvidence }; missing_evidence: string[] };
+  comparison?: PositionDiscussion | null;
+  analysis_basis_id?: string;
 }
 export interface DecisionEvidence {
   status: string; summary: string; as_of: string | null; source: string; evidence?: unknown;
@@ -644,8 +656,17 @@ export const api = {
   alertReviewPlan: (id: string, choice: ReviewChoice, parameters?: PlanParameters, expected_position?: ActionWorksheet["position_snapshot"]) =>
     request<NonNullable<AlertEvent["review_plan"]>>(`/alerts/${encodeURIComponent(id)}/plan`, "POST", { choice, parameters, expected_position }),
   alertActionPlan: (id: string) => get<ActionWorksheet>(`/alerts/${encodeURIComponent(id)}/action-plan`),
-  positionDiscussion: (id: string, choice: ReviewChoice, expected_position: ActionWorksheet["position_snapshot"], llm?: PositionModelConfig) =>
-    request<PositionDiscussion>("/alerts/" + encodeURIComponent(id) + "/discussion", "POST", { choice, expected_position, llm }),
+  positionModels: (refresh = false) => get<PositionModelCatalog>(`/position-models${refresh ? "?refresh=true" : ""}`),
+  positionDiscussion: (id: string, choice: ReviewChoice | null, expected_position: ActionWorksheet["position_snapshot"], llm?: PositionModelConfig, server_model?: string) =>
+    request<PositionDiscussion>("/alerts/" + encodeURIComponent(id) + "/discussion", "POST", { choice, expected_position, llm, server_model }),
+  positionDiscussionStream: async (id: string, choice: ReviewChoice | null, expected_position: ActionWorksheet["position_snapshot"], progress: (stage: string) => void, signal: AbortSignal, llm?: PositionModelConfig, server_model?: string): Promise<PositionDiscussion> => {
+    const response = await fetch(`/api/alerts/${encodeURIComponent(id)}/discussion/stream`, {
+      method: "POST", headers: { ...authHeaders(), "Content-Type": "application/json" }, signal,
+      body: JSON.stringify({ choice, expected_position, llm, server_model }),
+    });
+    if (!response.ok) throw new ApiError(errorDetail(await response.json().catch(() => null)) || `分析请求失败 HTTP ${response.status}`, response.status);
+    return readDiscussionStream<PositionDiscussion>(response, progress);
+  },
   runLiveRiskCheck: (holding_days?: Record<string, number>, notify = true) =>
     request<LiveRiskCheckResult>("/live-risk/check", "POST", { holding_days, notify }),
   quote: (codes: string) => get<Record<string, Quote>>(`/quote?codes=${codes}`),

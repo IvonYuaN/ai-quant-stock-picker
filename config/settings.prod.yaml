@@ -22,7 +22,7 @@ llm:
   llm_provider: glm  # 生产环境默认使用稳定的免费 provider
   glm_model: glm-4.7-flash
   qwen_model: qwen-turbo
-  agnes_model: agnes-2.0-flash
+  agnes_model: agnes-3.0-flash
   siliconflow_model: Qwen/Qwen2.5-7B-Instruct
   siliconflow_free_only: true  # 生产环境启用免费模型白名单护栏
   openai_model: gpt-4o-mini

@@ -841,9 +841,27 @@ def alert_action_plan(event_id: str) -> dict:
 
 
 class PositionDiscussionIn(BaseModel):
-    choice: str
+    choice: str | None = None
     expected_position: dict[str, Any]
     llm: LLMConfig | None = None
+    server_model: str | None = Field(default=None, min_length=1, max_length=200)
+
+
+@app.get("/api/position-models", tags=["持仓风险"], summary="读取现有提供商型号目录，不自动更换配置")
+async def position_model_catalog(refresh: bool = False) -> dict:
+    """No key is returned; bounded discovery is separate from model inference."""
+    import asyncio
+    from pathlib import Path
+    import alert_events
+    from position_discussion import resolve_endpoint
+    from position_model_catalog import read_catalog
+
+    try:
+        endpoint = await asyncio.to_thread(resolve_endpoint, None)
+        result = await read_catalog(endpoint, Path(alert_events.CACHE_DIR), refresh=refresh)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {"data": result}
 
 
 @app.post("/api/alerts/{event_id}/discussion", tags=["持仓风险"], summary="基于同一持仓证据进行三角色模型讨论")
@@ -852,10 +870,20 @@ async def position_discussion(event_id: str, body: PositionDiscussionIn) -> dict
     from position_discussion import run_discussion
 
     try:
-        result = await run_discussion(event_id, body.choice, body.expected_position, body.llm.model_dump() if body.llm else None)
+        result = await run_discussion(event_id, body.choice, body.expected_position, body.llm.model_dump() if body.llm else None, body.server_model)
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
     return {"data": result}
+
+
+@app.post("/api/alerts/{event_id}/discussion/stream", tags=["持仓风险"], summary="报告讨论进度，断开时取消未完成请求")
+async def position_discussion_stream(event_id: str, body: PositionDiscussionIn) -> StreamingResponse:
+    """Keep progress flowing without changing reverse-proxy timeout settings."""
+    from position_discussion import stream_discussion
+
+    return StreamingResponse(stream_discussion(event_id, body.choice, body.expected_position,
+        body.llm.model_dump() if body.llm else None, body.server_model),
+        media_type="application/x-ndjson", headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
 
 
 @app.patch(

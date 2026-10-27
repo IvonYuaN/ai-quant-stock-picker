@@ -9,6 +9,7 @@ import { browserAlertRefreshSource, subscribeAlertRefresh } from "@/lib/alert-re
 import { formatEvidenceTime } from "@/lib/format";
 import { WatchlistActivity } from "./WatchlistActivity";
 import { PositionActionPlan } from "./PositionActionPlan";
+import { PositionRouteReview } from "./PositionRouteReview";
 import { PLAN_CHOICES } from "@/lib/position-plan";
 import { AlertEvidence } from "./AlertEvidence";
 import { ALERTS_CHANGED_EVENT, PORTFOLIO_CHANGED_EVENT, requestOperation, shanghaiDate } from "@/lib/operation";
@@ -17,11 +18,12 @@ type ReviewChoice = NonNullable<AlertEvent["review_plan"]>["choice"];
 
 function PositionAlert({ group, busy, onTransition, onPlan }: { group: PositionAlertGroup; busy: boolean; onTransition: (events: AlertEvent[], action: "handled" | "ignored") => void; onPlan: (event: AlertEvent, choice: ReviewChoice) => void }) {
   const { latest: event, holding } = group;
+  const [compareOpen, setCompareOpen] = useState(false);
   const context = event.position_context;
   const plan = group.events.map((row) => row.review_plan).filter((value) => !!value).sort((a, b) => b.updated_at.localeCompare(a.updated_at))[0];
   const stopEvent = group.events.find((row) => row.level === "L1");
   const hardStop = group.events.some((row) => row.level === "L1") || context?.assessment.stance === "risk_review";
-  const choices = <div className="aq-position-plan-options aq-beginner-options aq-route-choices" role="group" aria-label={`${group.symbol} 处置方案`}>{(Object.keys(PLAN_CHOICES) as ReviewChoice[]).map((choice) => <button key={choice} type="button" className="aq-btn" disabled={busy} aria-pressed={plan?.choice === choice} onClick={() => onPlan(event, choice)}><b>{PLAN_CHOICES[choice].title}</b><span>{PLAN_CHOICES[choice].benefit}</span><small>代价：{PLAN_CHOICES[choice].cost}</small></button>)}</div>;
+  const choices = <PositionRouteReview key={event.id} eventId={event.id} busy={busy} onChoose={(choice) => onPlan(event, choice)} />;
   return <article className="aq-position-alert" data-alert-symbol={group.symbol}>
     <header className="aq-position-alert-head"><div className="aq-alert-row-title"><Link to={`/stock/${group.symbol}`}><b>{group.name}</b></Link><span className="aq-code">{group.symbol}</span><Badge tone="warn">{hardStop ? "风险线已触发" : "需要复核"}</Badge>{!group.sellable ? <Badge>T+1 观察</Badge> : null}</div><span className="aq-note">提醒更新 {formatEvidenceTime(event.updated_at)}</span></header>
     <dl className="aq-position-alert-metrics">
@@ -30,9 +32,9 @@ function PositionAlert({ group, busy, onTransition, onPlan }: { group: PositionA
       <div><dt>检查时盈亏</dt><dd>{(event.pnl_pct * 100).toFixed(1)}%</dd></div>
       <div><dt>持有交易日</dt><dd>{context?.holding_trade_days == null ? "待补日期" : `${context.holding_trade_days} 天`}</dd></div>
     </dl>
-    <div className="aq-position-assessment aq-beginner-assessment"><span className="aq-beginner-label">现在发生了什么</span><strong>{context?.assessment.title || (hardStop ? "价格跌破了你的风险线" : "价格或趋势触发了风险提醒")}</strong><p>{stopEvent ? `检查价已跌破${stopEvent.threshold_at > 0 ? " " + formatAlertPrice(stopEvent.threshold_at) + " 元" : "你设定的"}风险线。请先判断能否承受继续下跌，再选处理方式。` : context?.assessment.reason || `${group.events.map((row) => ALERT_LEVEL_NAMES[row.level] || row.level).join("、")}已触发，需要重新核对风险。`}</p><small>选择后可以随时改，不会自动成交。</small></div>
+    {plan ? <div className="aq-position-assessment aq-beginner-assessment"><span className="aq-beginner-label">现在发生了什么</span><strong>{context?.assessment.title || (hardStop ? "价格跌破了你的风险线" : "价格或趋势触发了风险提醒")}</strong><p>{stopEvent ? `检查价已跌破${stopEvent.threshold_at > 0 ? " " + formatAlertPrice(stopEvent.threshold_at) + " 元" : "你设定的"}风险线。请先判断能否承受继续下跌，再选处理方式。` : context?.assessment.reason || `${group.events.map((row) => ALERT_LEVEL_NAMES[row.level] || row.level).join("、")}已触发，需要重新核对风险。`}</p><small>选择后可以随时改，不会自动成交。</small></div> : null}
     <details className="aq-beginner-details"><summary>为什么会出现这条提醒</summary>{context?.assessment.reason ? <p className="aq-note">{context.assessment.reason}</p> : null}<dl className="aq-position-context">{([ ["大盘", context?.market], ["板块", context?.sector], ["个股", context?.stock] ] as const).map(([label, evidence]) => <div key={label}><dt>{label}</dt><dd>{evidence?.summary || "暂时没有足够数据"}<small>{evidence?.source ? `${evidence.source} · ${formatEvidenceTime(evidence.as_of) || "时间待核验"}` : "缺少可核验数据"}</small></dd></div>)}</dl><AlertEvidence events={group.events} symbol={group.symbol} /></details>
-    <div className="aq-position-plan"><div className="aq-position-plan-heading"><b>{plan ? "你的跟进计划" : "三条路，各有什么代价"}</b>{plan ? <span>提醒仍保留</span> : null}</div>{plan ? <details className="aq-change-route" key={plan.choice}><summary>已选{PLAN_CHOICES[plan.choice].title} · 更换处理方式</summary>{choices}</details> : <><p className="aq-note">没有无代价的解套办法。先比较你愿意承担什么，再看对应步骤。</p>{choices}<p className="aq-note">{context?.assessment.t_plan.eligible === false ? `上次检查暂不具备做 T 条件：${context.assessment.t_plan.reason}` : "目前没有足够依据确认哪条路最适合你；做 T 还需核对走势、可卖数量和费用。"}</p></>}{plan ? <PositionActionPlan key={`${event.id}:${plan.choice}`} eventId={event.id} choice={plan.choice} /> : null}</div>
+    <div className="aq-position-plan"><div className="aq-position-plan-heading"><b>{plan ? "你的跟进计划" : "先看依据，再选处理方式"}</b>{plan ? <span>提醒仍保留</span> : null}</div>{plan ? <details className="aq-change-route" key={plan.choice} onToggle={(e) => setCompareOpen(e.currentTarget.open)}><summary>已选{PLAN_CHOICES[plan.choice].title} · 更换处理方式</summary>{compareOpen ? choices : null}</details> : <>{choices}</>}{plan ? <PositionActionPlan key={`${event.id}:${plan.choice}`} eventId={event.id} choice={plan.choice} /> : null}</div>
     <footer className="aq-position-alert-actions"><div>{group.sellable ? <button type="button" className="aq-btn" disabled={busy} onClick={() => requestOperation({ direction: "sell", code: group.symbol })}><ArrowUpRight aria-hidden="true" />回录已成交卖出</button> : <span className="aq-note">{event.t1_note || "当日新增数量不可卖"}</span>}</div><div><button type="button" className="aq-btn" disabled={busy} onClick={() => onTransition(group.events, "handled")}><Check aria-hidden="true" />已复核</button><button type="button" className="aq-btn aq-btn-icon" disabled={busy} title="忽略本仓位本次全部提醒" aria-label={`忽略 ${group.symbol} 提醒`} onClick={() => onTransition(group.events, "ignored")}><X aria-hidden="true" /></button></div></footer>
   </article>;
 }

@@ -164,8 +164,8 @@ def test_action_plan_joint_weakness_expires_when_quote_or_sector_recovers(plan_c
     events = ae._load()
     context = events[0]["position_context"]
     context["action_basis"]["joint_weakness"] = True
-    context["market"] = {"as_of": "2026-10-23", "status": "weak"}
-    context["sector"] = {"as_of": "2026-10-23T10:00:00+08:00", "status": "falling"}
+    context["market"] = {"as_of": "2026-10-23", "status": "weak", "source": "合成市场源"}
+    context["sector"] = {"as_of": "2026-10-23T10:00:00+08:00", "status": "falling", "source": "合成板块源"}
     ae._save(events)
     monkeypatch.setattr(pf.astock, "tencent_quote", lambda codes: {code: {**QUOTE, "change_pct": -1} for code in codes})
     assert client.get(f"/api/alerts/{event}/action-plan").json()["data"]["basis"]["joint_weakness"] is True
@@ -174,6 +174,18 @@ def test_action_plan_joint_weakness_expires_when_quote_or_sector_recovers(plan_c
     monkeypatch.setattr(pf.astock, "tencent_quote", lambda codes: {code: {**QUOTE, "change_pct": -1} for code in codes})
     monkeypatch.setattr(service, "now_shanghai", lambda: NOW.replace(hour=14))
     assert client.get(f"/api/alerts/{event}/action-plan").json()["data"]["basis"]["joint_weakness"] is False
+
+
+def test_action_plan_does_not_claim_joint_weakness_when_background_has_no_source(plan_client, monkeypatch) -> None:
+    client, event = plan_client
+    events = ae._load()
+    events[0]["position_context"]["market"] = {"as_of": "2026-10-23", "status": "weak"}
+    events[0]["position_context"]["sector"] = {"as_of": "2026-10-23T10:00:00+08:00", "status": "falling"}
+    ae._save(events)
+    monkeypatch.setattr(pf.astock, "tencent_quote", lambda codes: {code: {**QUOTE, "change_pct": -1} for code in codes})
+    data = client.get(f"/api/alerts/{event}/action-plan").json()["data"]
+    assert not data["basis"]["joint_weakness"]
+    assert data["route_review"]["evidence"]["market"]["status"] == "unknown"
 
 
 def test_action_plan_rejects_mid_commit_change_and_t1_locked_when_saving(plan_client, monkeypatch) -> None:

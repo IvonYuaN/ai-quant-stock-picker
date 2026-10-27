@@ -6,6 +6,7 @@ import fcntl
 import json
 import os
 from dataclasses import dataclass
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Any, Literal
 
@@ -18,13 +19,17 @@ import portfolio as pf
 from aqsp.core.time import now_shanghai
 from aqsp.utils.jsonl_io import advisory_lock
 from position_plan_service import read_action_plan
+from position_route_review import risk_evidence_revision
 
 
 @dataclass(frozen=True)
 class DiscussionLimits:
     """I/O budgets, not strategy thresholds: <=3 calls at once, no retries."""
-    role_timeout: float = 18.0
-    synthesis_timeout: float = 12.0
+    # Real 3.0 Flash cross-replies exceeded the former 18s cap. The streaming
+    # route reports progress while retaining finite per-phase I/O deadlines.
+    role_timeout: float = 30.0
+    synthesis_timeout: float = 25.0
+    heartbeat_seconds: float = 5.0
     max_tokens: int = 1400
     max_response_bytes: int = 100_000
 
@@ -72,6 +77,21 @@ class DiscussionSummary(BaseModel):
     actions: list[Observation] = Field(max_length=5)
 
 
+class RouteOpinion(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    choice: Literal["hold", "reduce", "t_watch"]
+    judgment: Literal["investigate", "not_now", "insufficient"]
+    reason: str = Field(min_length=1, max_length=450)
+    evidence_ids: list[str] = Field(min_length=1, max_length=12)
+    needs: list[str] = Field(max_length=5)
+
+
+class ComparisonSummary(DiscussionSummary):
+    routes: list[RouteOpinion] = Field(min_length=3, max_length=3)
+    focus_choice: Literal["hold", "reduce", "t_watch"] | None
+    focus_reason: str = Field(min_length=1, max_length=450)
+
+
 ROLES = {
     "trend": ("趋势分析", "评估持有和退出的证据，解释个股与大盘、板块是否一致。"),
     "t_review": ("做 T 评估", "评估先卖后买的条件、净差价与失败路径，允许不适合或证据不足。"),
@@ -98,7 +118,7 @@ def resolve_endpoint(config: dict[str, str] | None) -> ModelEndpoint:
         return ModelEndpoint(chat._resolve_base(config) + "/chat/completions", config["apiKey"], config["model"])
     from aqsp.utils.llm_safe import _make_client, _model_env_for_provider, choose_siliconflow_model
     provider = os.getenv("LLM_PROVIDER", "glm").strip().lower()
-    defaults = {"glm": "glm-4.7-flash", "qwen": "qwen-turbo", "agnes": "agnes-2.0-flash",
+    defaults = {"glm": "glm-4.7-flash", "qwen": "qwen-turbo", "agnes": "agnes-3.0-flash",
                 "deepseek": "deepseek-chat", "openai": "gpt-4o-mini",
                 "anthropic": "claude-3-5-haiku-20241022", "custom": "gpt-4o-mini"}
     model = _model_env_for_provider(provider)
@@ -155,6 +175,17 @@ def _parse(text: str, schema: type[BaseModel], evidence: dict[str, Any], prices:
     parsed = schema.model_validate_json(raw).model_dump()
     if any(key not in evidence for key in parsed.get("evidence_ids", [])):
         raise ValueError("模型引用不存在的证据")
+    if schema is ComparisonSummary:
+        if {row["choice"] for row in parsed["routes"]} != {"hold", "reduce", "t_watch"}:
+            raise ValueError("模型未完整比较三条路")
+        if any(key not in evidence for row in parsed["routes"] for key in row["evidence_ids"]):
+            raise ValueError("路线引用不存在的证据")
+        if guards["pause_t"] and (parsed["focus_choice"] == "t_watch" or any(
+            row["choice"] == "t_watch" and row["judgment"] == "investigate" for row in parsed["routes"]
+        )):
+            raise ValueError("模型路线比较与暂停做 T 条件冲突")
+        if (not guards["sellable_shares"] or guards.get("quote_issue")) and parsed["focus_choice"] == "reduce":
+            raise ValueError("模型路线比较与可卖或行情条件冲突")
     for action in parsed["actions"]:
         if action["price_ref"] is not None and action["price_ref"] not in prices:
             raise ValueError("模型引用不存在的观察价")
@@ -162,7 +193,7 @@ def _parse(text: str, schema: type[BaseModel], evidence: dict[str, Any], prices:
             raise ValueError("操作观察缺少来源价位")
         if guards["pause_t"] and action["action"] == "buy_review":
             raise ValueError("模型建议与风险暂停条件冲突")
-        if not guards["sellable_shares"] and action["action"] == "sell_review":
+        if (not guards["sellable_shares"] or guards.get("quote_issue")) and action["action"] == "sell_review":
             raise ValueError("模型建议与可卖底仓冲突")
     if schema is RoleOpinion and peers and (not parsed["challenge"].strip() or not parsed["reply_to"] or any(role not in peers for role in parsed["reply_to"])):
         raise ValueError("未形成有效的同行回应")
@@ -171,9 +202,42 @@ def _parse(text: str, schema: type[BaseModel], evidence: dict[str, Any], prices:
     return parsed
 
 
-async def run_discussion(event_id: str, choice: str, expected_position: dict[str, Any], config: dict[str, str] | None = None) -> dict[str, Any]:
+def output_schema(schema: type[BaseModel], evidence: dict[str, Any], prices: dict[str, Any], peers: set[str]) -> dict[str, Any]:
+    """Describe exact reference IDs before generation, then validate independently.
+
+    A schema shown in a prompt is not guaranteed enforcement by the provider.
+    The parser still rejects unsupported references; no repair or silent retry.
+    """
+    result = schema.model_json_schema()
+    containers = [result, *result.get("$defs", {}).values()]
+    for container in containers:
+        properties = container.get("properties", {})
+        if "evidence_ids" in properties:
+            properties["evidence_ids"]["items"] = {"type": "string", "enum": sorted(evidence)}
+        if "price_ref" in properties:
+            properties["price_ref"] = {"anyOf": [{"type": "string", "enum": sorted(prices)}, {"type": "null"}]} if prices else {"type": "null"}
+        if "reply_to" in properties:
+            properties["reply_to"]["items"] = {"type": "string", "enum": sorted(peers)}
+            if not peers:
+                properties["reply_to"]["maxItems"] = 0
+    return result
+
+
+def _model_failure(exc: Exception) -> dict[str, str]:
+    if isinstance(exc, ModelHTTPError):
+        return {"failure_kind": "upstream_status", "issue": f"模型接口 HTTP {exc.status_code}，未自动重试"}
+    if isinstance(exc, (TimeoutError, httpx.TimeoutException)):
+        return {"failure_kind": "timeout", "issue": "模型响应超时，未自动重试"}
+    if isinstance(exc, httpx.HTTPError):
+        return {"failure_kind": "transport", "issue": "模型连接未完成，未自动重试"}
+    return {"failure_kind": "invalid_output", "issue": "模型输出未通过结构、引用或约束校验，未作为有效意见使用"}
+
+
+async def run_discussion(event_id: str, choice: str | None, expected_position: dict[str, Any], config: dict[str, str] | None = None,
+                         server_model: str | None = None, on_progress: Callable[[str], None] | None = None) -> dict[str, Any]:
     """Discuss one server-built snapshot, commit only to an unchanged open position."""
-    if choice not in {"hold", "reduce", "t_watch"}:
+    comparison = choice is None
+    if not comparison and choice not in {"hold", "reduce", "t_watch"}:
         raise ValueError("未知处置方案")
     limits = DiscussionLimits()
     lease_path = Path(ae.CACHE_DIR) / ".position-discussion.lock"
@@ -187,72 +251,149 @@ async def run_discussion(event_id: str, choice: str, expected_position: dict[str
         if worksheet is None or worksheet["position_snapshot"] != expected_position:
             raise ValueError("持仓已变化或提醒已失效，请刷新")
         basis, plan = worksheet["basis"], worksheet["review_plan"]
-        if basis["quote_issue"]:
+        if basis["quote_issue"] and not comparison:
             raise ValueError("行情依据无效，请先刷新有效行情")
-        if plan.get("choice") != choice:
+        if not comparison and plan.get("choice") != choice:
             raise ValueError("方案已变化，请刷新后讨论")
-        if worksheet["scenario_issue"]:
+        if not comparison and worksheet["scenario_issue"]:
             raise ValueError("原测算已失效，请核对并重新保存参数后讨论")
         endpoint = await asyncio.to_thread(resolve_endpoint, config)
+        if server_model:
+            if config:
+                raise ValueError("本次自定义接口与服务器型号选择不能同时使用")
+            from position_model_catalog import read_catalog
+            catalog = await read_catalog(endpoint, Path(ae.CACHE_DIR))
+            if catalog.get("directory_complete", catalog.get("listed") is not None) and server_model not in catalog["models"]:
+                raise ValueError("所选型号未在当前提供商目录中，请刷新型号后重选；未自动替换")
+            endpoint = ModelEndpoint(endpoint.url, endpoint.key, server_model, endpoint.anthropic)
         event = next((row for row in ae.list_events() if row["id"] == event_id), None)
         if event is None:
             raise ValueError("提醒已失效")
-        context = event.get("position_context") or {}
+        context = worksheet["route_review"]["evidence"]
         prices = {f"price_{index}": ref for index, ref in enumerate(basis["references"])}
         evidence = {"holding": worksheet["position_snapshot"], "quote": {"price": basis["price"], "as_of": basis["quote_as_of"], "source": basis["quote_source"]},
                     "market": context.get("market", {"status": "unknown"}),
                     "sector": context.get("sector", {"status": "unknown"}),
-                    "risk_trigger": event.get("basis_json", {}), **prices}
-        guards = {"sellable_shares": basis["sellable_shares"], "pause_t": basis["joint_weakness"],
+                    "risk_trigger": {"checked_at": event.get("updated_at"), "basis": event.get("basis_json", {})},
+                    "route_constraints": worksheet["route_review"], **prices}
+        guards = {"sellable_shares": basis["sellable_shares"],
+                  "pause_t": bool(basis["joint_weakness"] or basis["quote_issue"] or not basis["sellable_shares"]),
+                  "quote_issue": basis["quote_issue"],
                   "t_plus_one": "当日买入不得当日再卖出", "no_orders": True,
                   "context_note": "market/sector/risk_trigger为原检查快照，须核对as_of，缺失或过期不是当前事实"}
-        common = {"symbol": worksheet["symbol"], "name": context.get("name", ""), "chosen_plan": choice,
+        common = {"symbol": worksheet["symbol"], "name": (event.get("position_context") or {}).get("name", ""), "chosen_plan": choice,
+                  "review_mode": "比较三条路，用户尚未通过本请求作出选择" if comparison else "核对已选方案",
                   "evidence": evidence, "price_refs": prices, "guards": guards,
-                  "saved_parameters": plan.get("parameters"), "scenario": worksheet["scenario"]}
+                  "saved_parameters": None if comparison else plan.get("parameters"),
+                  "scenario": None if comparison else worksheet["scenario"]}
         rounds: list[dict[str, Any]] = []
         async def opinion(role: str, peers: dict[str, Any] | None) -> dict[str, Any]:
             try:
                 raw = await call_model(endpoint, {**common, "role": ROLES[role][1],
-                    "task": "独立评估" if peers is None else "回应同行：指出同意、反对或尚不能判断的意见及证据，不必改变原判断",
-                    "peer_opinions": peers or {}, "output_schema": RoleOpinion.model_json_schema()}, limits.role_timeout, limits)
+                    "task": ("独立评估；每个文字字段用一句话，reply_to为空数组，challenge为空字符串" if peers is None else
+                             "回应同行：指出同意、反对或缺证，不必改变原判断；每个文字字段用一句话，reply_to只填peer_opinions的键"),
+                    "allowed_evidence_ids": sorted(evidence),
+                    "peer_opinions": peers or {}, "output_schema": output_schema(RoleOpinion, evidence, prices, set(peers or {}))}, limits.role_timeout, limits)
                 result = _parse(raw, RoleOpinion, evidence, prices, set(peers or {}), guards)
                 return {"role": role, "label": ROLES[role][0], "status": "ok", "opinion": result}
-            except ModelHTTPError as exc:
-                return {"role": role, "label": ROLES[role][0], "status": "failed", "issue": f"模型接口 HTTP {exc.status_code}，未生成该角色意见；未自动重试"}
-            except (ValueError, KeyError, TypeError, IndexError, AttributeError, RuntimeError, httpx.HTTPError, TimeoutError):
-                return {"role": role, "label": ROLES[role][0], "status": "failed", "issue": "本角色超时或输出未通过证据校验，可重试"}
+            except (ValueError, KeyError, TypeError, IndexError, AttributeError, RuntimeError, httpx.HTTPError, TimeoutError) as exc:
+                return {"role": role, "label": ROLES[role][0], "status": "failed", **_model_failure(exc)}
+        if on_progress:
+            on_progress("independent")
         initial = list(await asyncio.gather(*(opinion(role, None) for role in ROLES)))
         rounds.append({"stage": "independent", "opinions": initial})
         valid = {row["role"]: row["opinion"] for row in initial if row["status"] == "ok"}
         replies = []
         if len(valid) >= 2:
+            if on_progress:
+                on_progress("challenge")
             replies = list(await asyncio.gather(*(opinion(role, {key: value for key, value in valid.items() if key != role}) for role in valid)))
             rounds.append({"stage": "challenge", "opinions": replies})
         completed = [row for row in replies if row["status"] == "ok"]
         summary = None
+        summary_failure: dict[str, str] = {}
         if len(completed) >= 2:
+            if on_progress:
+                on_progress("synthesis")
             try:
-                raw = await call_model(endpoint, {**common, "task": "依据两轮意见给出所选方案的条件计划，保留分歧、缺口和不应操作情形，不以多数票定买卖",
-                    "rounds": rounds, "output_schema": DiscussionSummary.model_json_schema()}, limits.synthesis_timeout, limits)
-                summary = _parse(raw, DiscussionSummary, evidence, prices, set(), guards)
-            except (ValueError, KeyError, TypeError, IndexError, AttributeError, RuntimeError, httpx.HTTPError, TimeoutError):
-                summary = None
+                schema = ComparisonSummary if comparison else DiscussionSummary
+                task = ("比较持有、减仓、做T三条路各自适用的证据、代价、缺口及不宜条件；有依据时说明可优先核对哪条路，"
+                        "无依据时focus_choice=null。不要预设解套或买卖结论，不要求先填交易数量或费用，不自动选择。"
+                        if comparison else "依据两轮意见给出所选方案的条件计划，保留分歧、缺口和不应操作情形，不以多数票定买卖")
+                raw = await call_model(endpoint, {**common, "task": task,
+                    "rounds": rounds, "allowed_evidence_ids": sorted(evidence),
+                    "output_schema": output_schema(schema, evidence, prices, set())}, limits.synthesis_timeout, limits)
+                summary = _parse(raw, schema, evidence, prices, set(), guards)
+            except (ValueError, KeyError, TypeError, IndexError, AttributeError, RuntimeError, httpx.HTTPError, TimeoutError) as exc:
+                summary_failure = _model_failure(exc)
         result = {"status": "complete" if summary and len(completed) == len(ROLES) else "partial" if completed or valid else "failed",
                   "generated_at": now_shanghai().isoformat(), "model": endpoint.model,
                   "mode": "同一模型的三角色讨论", "choice": choice, "position_snapshot": expected_position,
                   "quote_as_of": basis["quote_as_of"], "price_refs": prices, "guards": guards,
+                  "evidence_snapshot": evidence,
+                  "analysis_basis_id": worksheet["analysis_basis_id"], "risk_revision": worksheet["risk_revision"],
                   "rounds": rounds, "summary": summary, "model_text_unverified": True,
+                  "summary_issue": summary_failure.get("issue", ""), "summary_failure_kind": summary_failure.get("failure_kind", ""),
                   "notice": "模型意见仅供人工复核；角色可能共享模型偏差，不是独立模型共识。仅检查格式、引用及结构化动作；模型自由文字未经交易语义验证，不是操作指令，不覆盖风险规则或自动成交。"}
         await asyncio.to_thread(_save_result, event_id, plan, expected_position, result)
         return result
+
+
+async def stream_discussion(event_id: str, choice: str | None, expected_position: dict[str, Any],
+                            config: dict[str, str] | None = None, server_model: str | None = None) -> AsyncIterator[str]:
+    """Yield bounded progress/result records; disconnect cancels pending I/O.
+
+    This is a request-local task, not an untracked worker or a persistent job.
+    The final result still follows the same tenant, position and evidence locks.
+    """
+    from contextlib import suppress
+
+    progress: asyncio.Queue[str] = asyncio.Queue()
+    task = asyncio.create_task(run_discussion(event_id, choice, expected_position, config, server_model, progress.put_nowait))
+    stage = "preparing"
+    try:
+        yield json.dumps({"event": "progress", "stage": stage}) + "\n"
+        while not task.done():
+            pending = asyncio.create_task(progress.get())
+            try:
+                done, _ = await asyncio.wait({task, pending}, timeout=DiscussionLimits().heartbeat_seconds,
+                                             return_when=asyncio.FIRST_COMPLETED)
+                if pending in done:
+                    stage = pending.result()
+                if task in done:
+                    break
+            finally:
+                if not pending.done():
+                    pending.cancel()
+                with suppress(asyncio.CancelledError):
+                    await pending
+            yield json.dumps({"event": "progress", "stage": stage}) + "\n"
+        try:
+            result = task.result()
+        except ValueError as exc:
+            yield json.dumps({"event": "error", "detail": str(exc)}, ensure_ascii=False) + "\n"
+        except Exception:  # noqa: BLE001 -- do not stream transport errors/secrets
+            yield json.dumps({"event": "error", "detail": "本次分析未完成，请刷新依据后重试"}, ensure_ascii=False) + "\n"
+        else:
+            yield json.dumps({"event": "result", "data": result}, ensure_ascii=False) + "\n"
+    finally:
+        if not task.done():
+            task.cancel()
+        with suppress(asyncio.CancelledError, Exception):
+            await task
 
 
 def _save_result(event_id: str, original_plan: dict[str, Any], snapshot: dict[str, Any], result: dict[str, Any]) -> None:
     with ae._LOCK, advisory_lock(ae._file()), pf._LOCK, advisory_lock(pf._pf_file()):
         events = ae._load()
         target = next((row for row in events if row["id"] == event_id and row["status"] == "OPEN"), None)
-        if target is None or any((target.get("review_plan") or {}).get(key) != original_plan.get(key) for key in ("choice", "updated_at", "parameters")):
+        comparison = result["choice"] is None
+        if target is None or (not comparison and any((target.get("review_plan") or {}).get(key) != original_plan.get(key) for key in ("choice", "updated_at", "parameters"))):
             raise ValueError("讨论期间方案已变化，请刷新；旧结论未写入")
+        matching = [row for row in events if row.get("status") == "OPEN" and row.get("symbol") == target["symbol"]
+                    and row.get("position_id") == target.get("position_id")]
+        if risk_evidence_revision(matching) != result["risk_revision"]:
+            raise ValueError("讨论期间风险检查依据已变化，请重新分析；旧结论未写入")
         holding = next((row for row in pf._load().get("holdings", []) if row.get("code") == target["symbol"] and row.get("position_id") == snapshot["position_id"]), None)
         if holding is None or any(holding.get(key) != snapshot[key] for key in ("position_id", "cost", "shares")):
             raise ValueError("讨论期间持仓已变化，旧结论未写入")
@@ -262,5 +403,8 @@ def _save_result(event_id: str, original_plan: dict[str, Any], snapshot: dict[st
             raise ValueError("讨论期间可卖底仓已变化，旧结论未写入")
         for row in events:
             if row.get("status") == "OPEN" and row.get("symbol") == target["symbol"] and row.get("position_id") == target.get("position_id"):
-                row["review_plan"] = {**row.get("review_plan", {}), "discussion": result}
+                if comparison:
+                    row["position_analysis"] = result
+                else:
+                    row["review_plan"] = {**row.get("review_plan", {}), "discussion": result}
         ae._save(events)
