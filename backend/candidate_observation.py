@@ -187,6 +187,7 @@ def research(code: str, current: datetime) -> tuple[dict[str, Any], list[str]]:
         gate = snap.get('recommendation_gate') or {}
         result = {'candidate': candidate, 'date': snap['selected_date'], 'generated_at': snap['generated_at'],
                   'stale_after': snap.get('stale_after'), 'source': snap.get('source'),
+                  'parameter_snapshot': snap.get('parameter_snapshot'),
                   'recommendation_gate': gate,
                   'debate': next((row for row in snap.get('debates', []) if row.get('symbol') == code), None)}
         return result, issues
@@ -198,6 +199,32 @@ def _positive(value: object) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     return float(value) if math.isfinite(value) and value > 0 else None
+
+
+def evidence_basis(report: dict[str, Any], evidence: dict[str, Any],
+                   own: dict[str, Any], quote: dict[str, Any], quote_valid: bool) -> dict[str, str]:
+    """Hash substantive facts, retaining the full original evidence for audit.
+
+    Snapshot publication/expiry and source refresh times are checked separately
+    on every read. They are not a new thesis. All candidate economic fields,
+    including technical/reference prices and news publication dates, remain in
+    the identity; only its data refresh timestamp is omitted.
+    """
+    candidate = {key: value for key, value in (report.get('candidate') or {}).items()
+                 if key != 'data_fetched_at'}
+    parts = {
+        'research_date': report.get('date'),
+        'parameters': report.get('parameter_snapshot'),
+        'candidate': candidate,
+        'risk_gate': report.get('recommendation_gate'),
+        'research_source': report.get('source'),
+        'debate': report.get('debate'),
+        'ownership': own,
+        'quote_source': {'valid': quote_valid, 'source': quote.get('source') or '腾讯行情'},
+        'directions': {key: {field: evidence[key].get(field) for field in ('status', 'source', 'industry')}
+                       for key in ('market', 'sector', 'stock')},
+    }
+    return {'schema': 'candidate-basis-v2', **{key: evidence_digest(value) for key, value in parts.items()}}
 
 
 def current_evidence(code: str, quote: dict[str, Any], *, current: datetime) -> dict[str, Any]:
@@ -233,15 +260,13 @@ def current_evidence(code: str, quote: dict[str, Any], *, current: datetime) -> 
     if isinstance(sector, dict) and not dc.position_quote_issue({'as_of': sector.get('membership_as_of')}, checked_at=current):
         identity = {'industry': sector.get('industry')}
     sector_fact = asdict(dc._sector_context(identity, overview, sector, current))
+    sector_fact['industry'] = identity.get('industry')
     stock_fact = asdict(dc._stock_context(quote, None, current))
     evidence = {'research': report, 'quote': {'price': quote.get('price'), 'as_of': stamp, 'source': quote.get('source') or '腾讯行情'},
                 'market': market_fact, 'sector': sector_fact, 'stock': stock_fact}
-    # A price tick does not invalidate an adopted intent; a direction or source
-    # availability change does. Research generation/version remains exact.
-    semantic = {'research': report, 'ownership': own, 'quote_valid': not bool(quote_issue),
-                'directions': {key: evidence[key]['status'] for key in ('market', 'sector', 'stock')}}
+    basis = evidence_basis(report, evidence, own, quote, not bool(quote_issue))
     return {'symbol': code, 'name': report.get('candidate', {}).get('display_name') or quote.get('name') or code,
-            'research_date': report.get('date'), 'evidence_version': evidence_digest(semantic), 'ownership': own,
+            'research_date': report.get('date'), 'evidence_version': evidence_digest(basis), 'evidence_basis': basis, 'ownership': own,
             'available': not issues, 'entry_blocked': entry_blocked, 'issues': issues, 'quote': quote, 'quote_issue': quote_issue,
             'evidence': evidence, 'price_refs': prices}
 
@@ -373,7 +398,7 @@ def adopt(code: str, body: dict[str, Any]) -> dict[str, Any]:
                         'price': ref['price'] if ref else None, 'price_ref': action['price_ref'] if action else None,
                         'source_ref': deepcopy(ref),
                         'comparator': comparator, 'adopted_at': current.isoformat(), 'discussion_id': result['id'],
-                        'evidence_version': value['evidence_version'], 'status': 'active'}
+                        'evidence_version': value['evidence_version'], 'evidence_basis': deepcopy(value['evidence_basis']), 'status': 'active'}
         row['observation'] = observation(value, row, current=current)
         remember(row, value)
         save_store(data)
@@ -411,7 +436,13 @@ def observation(value: dict[str, Any], row: dict[str, Any], *, current: datetime
     elif not value['available']:
         state, title, detail, reason = 'evidence_unavailable', '当前依据不可用，不能判断到价', '；'.join(value['issues']), 'source'
     elif watch.get('evidence_version') != value['evidence_version']:
-        state, title, detail, reason = 'needs_review', '研究或风险依据变化，重新分析', '原观察条件暂停作为当前入场依据', 'research_changed'
+        labels = {'research_date': '研究日期', 'parameters': '策略参数版本', 'candidate': '个股评分或研究证据',
+                  'risk_gate': '研究风险门禁', 'research_source': '研究来源', 'debate': '研究讨论结论',
+                  'ownership': '持仓归属', 'quote_source': '行情来源', 'directions': '大盘、板块或个股方向'}
+        previous, latest = watch.get('evidence_basis') or {}, value.get('evidence_basis') or {}
+        changes = [label for key, label in labels.items() if previous.get(key) != latest.get(key)]
+        detail = ('变化：' + '、'.join(changes) if previous.get('schema') == latest.get('schema') else '原观察使用旧版依据标识，需重新核对一次') + '；原观察条件暂停作为当前入场依据'
+        state, title, reason = 'needs_review', '研究或风险依据变化，重新分析', 'research_changed'
     elif value.get('entry_blocked') and watch['choice'] != 'defer':
         state, title, detail, reason = 'needs_review', '当前研究门禁阻塞', '先补齐研究验证，原入场条件不作为当前依据', 'risk_gate'
     elif watch['choice'] == 'defer':
