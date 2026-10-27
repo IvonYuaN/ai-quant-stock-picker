@@ -903,6 +903,34 @@ def position_constraints(position_id: str, body: PositionConstraintsIn) -> dict:
     return {"data": result}
 
 
+class PositionFollowupIn(BaseModel):
+    mode: str
+    expected_mode: str
+    expected_position: dict[str, Any] | None = None
+    expected_revision: str | None = None
+
+
+@app.get("/api/position-followups", tags=["持仓风险"])
+def position_followup_list() -> dict:
+    """Read last saved plan checks; never starts monitoring or notification."""
+    from position_followup_service import list_followups
+    return {"data": list_followups()}
+
+
+@app.post("/api/positions/{position_id}/followup", tags=["持仓风险"])
+def position_followup_preference(position_id: str, body: PositionFollowupIn) -> dict:
+    """Opt into existing-channel plan notifications without rewriting intent."""
+    from position_plan_service import PlanConflictError
+    from position_followup_service import save_followup_mode
+    try:
+        result = save_followup_mode(position_id, body.mode, body.expected_mode, body.expected_position, body.expected_revision)
+    except ValueError as exc:
+        raise HTTPException(409 if isinstance(exc, PlanConflictError) else 400, str(exc)) from exc
+    if result is None:
+        raise HTTPException(409, "原持仓不存在，请刷新")
+    return {"data": result}
+
+
 @app.post("/api/positions/{position_id}/discussion", tags=["持仓风险"])
 async def position_root_discussion(position_id: str, body: PositionDiscussionIn) -> dict:
     """Discuss the same canonical position from any of its entry paths."""
