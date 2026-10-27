@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { api, type ActionWorksheet, type PlanParameters, type ReviewChoice } from "@/lib/api";
 import { formatEvidenceTime } from "@/lib/format";
-import { beginnerPlan, planSteps, worksheetExpired } from "@/lib/position-plan";
+import { beginnerPlan, planJourney, planSteps, worksheetExpired } from "@/lib/position-plan";
+import { browserAlertRefreshSource, subscribeAlertRefresh } from "@/lib/alert-refresh";
 import { PositionDiscussionPanel } from "./PositionDiscussionPanel";
-import { ALERTS_CHANGED_EVENT } from "@/lib/operation";
+import { ALERTS_CHANGED_EVENT, requestOperation } from "@/lib/operation";
 
 type Draft = Record<"quantity" | "sell_price" | "buy_price" | "commission_rate" | "min_commission" | "stamp_tax_rate" | "slippage_rate", string>;
 const EMPTY: Draft = { quantity: "", sell_price: "", buy_price: "", commission_rate: "", min_commission: "", stamp_tax_rate: "", slippage_rate: "" };
@@ -21,6 +22,21 @@ export function PositionActionPlan({ eventId, choice }: { eventId: string; choic
   const editedPrices = useRef({ sell_price: false, buy_price: false });
   const inFlight = useRef(false);
   const generation = useRef(0);
+  const refreshLatest = useRef<() => Promise<void>>(async () => {});
+  const calculator = useRef<HTMLDetailsElement>(null);
+  const lastSaleKey = useRef("");
+  useEffect(() => {
+    const key = JSON.stringify(data?.recorded_sale ?? null);
+    if (data?.sale_requires_review && key !== lastSaleKey.current) {
+      if (calculator.current) calculator.current.open = false;
+      setSaved(false);
+    }
+    lastSaleKey.current = key;
+  }, [data?.recorded_sale, data?.sale_requires_review]);
+  useEffect(() => {
+    let initial = true;
+    return subscribeAlertRefresh(() => { if (initial) { initial = false; return; } void refreshLatest.current(); }, browserAlertRefreshSource());
+  }, []);
   useEffect(() => { const timer = window.setInterval(() => setTick(Date.now()), 15_000); return () => clearInterval(timer); }, []);
   useEffect(() => {
     const version = ++generation.current;
@@ -74,9 +90,22 @@ export function PositionActionPlan({ eventId, choice }: { eventId: string; choic
     } catch (reason) { if (generation.current === version) setError(reason instanceof Error ? reason.message : "测算保存失败，输入已保留"); }
     finally { inFlight.current = false; if (generation.current === version) setBusy(false); }
   }
+  refreshLatest.current = refresh;
+  async function confirmObservation() {
+    if (!data || inFlight.current) return;
+    inFlight.current = true; setBusy(true); setError("");
+    const version = ++generation.current;
+    try {
+      await api.alertReviewPlan(eventId, "hold", undefined, data.position_snapshot);
+      const next = await api.alertActionPlan(eventId);
+      if (generation.current === version) { setData(next); setTick(Date.now()); window.dispatchEvent(new Event(ALERTS_CHANGED_EVENT)); }
+    } catch (reason) { if (generation.current === version) setError(reason instanceof Error ? reason.message : "确认失败，请重试"); }
+    finally { inFlight.current = false; if (generation.current === version) setBusy(false); }
+  }
   const expired = !!data && worksheetExpired(data.basis, tick);
   const steps = data ? planSteps(choice, data.basis, { sell_price: Number(draft.sell_price), buy_price: Number(draft.buy_price), quantity: Number(draft.quantity) }) : [];
   const simple = data ? beginnerPlan(choice, data.basis, { sell_price: Number(draft.sell_price), buy_price: Number(draft.buy_price) }) : null;
+  const journey = data ? planJourney(choice, data, { sell_price: Number(draft.sell_price), buy_price: Number(draft.buy_price) }, tick) : null;
   const blocked = !data || data.review_plan.choice !== choice || !!simple?.paused || expired;
   const discussionBlocked = busy || blocked || dirty.current || !!data?.scenario_issue;
   const discussionBlockReason = busy ? "正在更新，请稍等。" : blocked ? "先处理上方暂停原因，更新行情后再分析。" : dirty.current ? "你修改了试算条件，请先在上方保存并试算，再让 AI 分析。" : data?.scenario_issue ? "先修正上方试算问题，再分析。" : "";
@@ -88,16 +117,18 @@ export function PositionActionPlan({ eventId, choice }: { eventId: string; choic
     {error ? <p role="alert">{error}。输入已保留。</p> : null}
     {data && simple ? <>
       <div className="aq-next-action" aria-live="polite">
-        <span className="aq-beginner-label">{simple.paused || expired ? "现在先暂停" : "下一步"}</span>
-        <h4>{expired ? "先更新行情，再决定下一步。" : simple.next}</h4>
-        {data.basis.quote_issue ? <p role="status">{data.basis.quote_issue}</p> : null}
-        {!expired && simple.then ? <p className="aq-next-then">{simple.then}</p> : null}
-        <p className="aq-next-cancel"><b>{choice === "t_watch" ? "什么时候不做了" : "什么时候重新考虑"}</b>{expired ? "旧价位只作参考，更新后再继续。" : simple.stop}</p>
+        <span className="aq-beginner-label">{journey?.saleReview ? "成交后的下一步" : "现在走到哪一步"}</span>
+        <h4>{journey?.label}</h4>
+        <p className="aq-journey-fact">{journey?.detail}</p>
+        {journey?.saleReview ? <><p className="aq-next-then">{choice === "t_watch" ? "先核对剩余持仓和这笔卖出的用途，再重新试算；只有实际买回后，才回录买入，不能把试算当成已完成。" : "先检查剩余仓位的风险；如需继续减仓，按当前余仓重新试算。"}</p>{choice === "hold" ? <button className="aq-btn" type="button" disabled={busy} onClick={() => void confirmObservation()}>已核对余仓，继续观察</button> : choice === "t_watch" ? <button className="aq-btn" type="button" onClick={() => requestOperation({ direction: "buy", code: data.symbol })}>我已实际买回 · 录入成交</button> : null}{data.basis.quote_issue || expired ? <p role="status">{data.basis.quote_issue || "行情已旧，先更新后再试算。"}</p> : null}</> : <>
+          {!expired && !simple.paused && !journey?.attention ? <><p className="aq-next-then"><b>接下来：</b>{simple.next}</p>{simple.then ? <p className="aq-next-then">{simple.then}</p> : null}</> : null}
+          <p className="aq-next-cancel"><b>{choice === "t_watch" ? "什么时候不做了" : "什么时候重新考虑"}</b>{expired ? "旧价位只作参考，更新后再继续。" : simple.stop}</p>
+        </>}
         <div className="aq-plan-meta"><span>{formatEvidenceTime(data.basis.quote_as_of)} · 可卖 {data.basis.sellable_shares ?? "待核对"} 股</span><button className="aq-btn" type="button" disabled={busy} onClick={() => void refresh()}>{busy ? "更新中…" : "更新行情"}</button></div>
-        <p className="aq-note">{editedPrices.current.sell_price || editedPrices.current.buy_price ? "含你设定的观察价" : "观察价取自已发生的高低点"}，到价仍需判断，不是买卖信号。</p>
+        <p className="aq-note">页面可见时每分钟更新，离开后不追踪到价或推送计划提醒。{editedPrices.current.sell_price || editedPrices.current.buy_price ? "含你设定的观察价。" : "观察价取自已发生的高低点。"}</p>
       </div>
       {choice === "t_watch" ? <p className="aq-note">做 T 是“先卖、后买”的差价尝试。操作前先试算费用；可能买不回来，也可能继续亏损。</p> : null}
-      {choice !== "hold" ? <details className="aq-plan-calculator">
+      {choice !== "hold" ? <details className="aq-plan-calculator" ref={calculator}>
         <summary>{showResult ? "调整这次试算" : choice === "t_watch" ? "算一下：这次做 T 能减少多少亏损" : "算一下：卖出后还剩多少"}</summary>
         <form onSubmit={(e) => { e.preventDefault(); void save(); }}>
           <p className="aq-note">这里只试算，不记录成交。价格可调整，股数由你填写。</p>
@@ -113,7 +144,7 @@ export function PositionActionPlan({ eventId, choice }: { eventId: string; choic
           {saved ? <p role="status">已保存，持仓没有变化。</p> : null}
         </form>
       </details> : null}
-      {data.scenario_issue ? <p role="status" className="aq-action-plan-warning">{data.scenario_issue}</p> : null}
+      {data.scenario_issue && !journey?.saleReview ? <p role="status" className="aq-action-plan-warning">{data.scenario_issue}</p> : null}
       {showResult && data.scenario ? <div className="aq-plan-outcome" role="status">
         <span className="aq-beginner-label">按你填写的价格成交后</span>
         <strong>{choice === "t_watch" ? data.scenario.net_cash === 0 ? "这次做 T 扣除费用后没有赚到差价" : data.scenario.round_trip_positive ? "这次预计多留下 " + data.scenario.net_cash.toFixed(2) + " 元" : "这次做 T 反而会多亏 " + Math.abs(data.scenario.net_cash).toFixed(2) + " 元" : "卖出后还剩 " + data.scenario.remaining_shares + " 股"}</strong>

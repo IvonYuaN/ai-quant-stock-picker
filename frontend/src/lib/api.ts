@@ -406,12 +406,15 @@ export interface PositionDiscussion {
   notice: string;
 }
 export interface ActionWorksheet {
+  symbol: string;
   basis: { checked_at: string; quote_as_of: string | null; quote_source: string; quote_issue: string;
     price: number | null; cost: number | null; shares: number | null; sellable_shares: number | null;
     position_id: string | null; joint_weakness: boolean;
     references: Array<{ label: string; price: number; as_of: string; source: string }> };
   position_snapshot: { position_id: string | null; cost: number; shares: number; sellable_shares: number };
-  review_plan: { choice?: ReviewChoice; parameters?: PlanParameters; discussion?: PositionDiscussion };
+  review_plan: { choice?: ReviewChoice; parameters?: PlanParameters; discussion?: PositionDiscussion; position_snapshot?: ActionWorksheet["position_snapshot"] };
+  recorded_sale?: { date: string; price: number; shares: number } | null;
+  sale_requires_review?: boolean;
   scenario: { gross_spread: number; estimated_fees: number; net_cash: number; realized_pnl: number | null; economic_cost: number | null;
     remaining_shares: number; cost_reduction_per_share: number | null; round_trip_positive: boolean | null; note: string } | null;
   scenario_issue: string;

@@ -17,7 +17,8 @@ def read_action_plan(event_id: str) -> dict[str, Any] | None:
     event = next((row for row in ae.list_events() if row["id"] == event_id and row["status"] == "OPEN"), None)
     if event is None:
         return None
-    holding = next((row for row in pf.get_portfolio()["holdings"] if row["code"] == event["symbol"]
+    portfolio = pf.get_portfolio()
+    holding = next((row for row in portfolio["holdings"] if row["code"] == event["symbol"]
                     and row.get("position_id") == event.get("position_id")), None)
     if holding is None:
         return None
@@ -59,8 +60,24 @@ def read_action_plan(event_id: str) -> dict[str, Any] | None:
                 scenario_issue = str(exc)
     if plan.get("discussion") and plan["discussion"].get("position_snapshot") != snapshot:
         plan = {**plan, "discussion": None}
+    # A user-entered sale is a fact, not proof that a T leg has completed.
+    # Match the durable portfolio receipt before showing any event-side copy.
+    last_sale = event.get("last_sale") or {}
+    receipt = next((row for row in portfolio.get("closed", [])
+                    if last_sale.get("operation_id") and row.get("operation_id") == last_sale["operation_id"]
+                    and row.get("position_id") == holding.get("position_id")
+                    and row.get("code") == event["symbol"]
+                    and all(row.get(key) == last_sale.get(key) for key in ("date", "price", "shares"))), None)
+    recorded_sale = {key: receipt[key] for key in ("date", "price", "shares")} if receipt else None
+    sale_requires_review = bool(receipt and plan.get("acknowledged_sale_id") != receipt["operation_id"])
+    if sale_requires_review:
+        plan = {**plan, "discussion": None}
+        if plan.get("parameters"):
+            scenario, scenario_issue = None, "已回录新的卖出，先核对剩余仓位并重新保存试算"
     return {"symbol": event["symbol"], "basis": basis, "position_snapshot": snapshot, "review_plan": plan,
             "scenario": scenario, "scenario_issue": scenario_issue,
+            "recorded_sale": recorded_sale,
+            "sale_requires_review": sale_requires_review,
             "simulation_only": True}
 
 
@@ -73,13 +90,14 @@ def save_action_plan(
     Legacy choice-only clients continue to work. Quotes/network are read before
     locks. Lock ordering matches sales: alerts then portfolio.
     """
-    if parameters is None:
+    confirm_observation = choice == "hold" and parameters is None and expected_position is not None
+    if parameters is None and not confirm_observation:
         return ae.record_review_plan(event_id, choice)
     worksheet = read_action_plan(event_id)
     if worksheet is None:
         return None
     basis = worksheet["basis"]
-    if basis["quote_issue"]:
+    if parameters is not None and basis["quote_issue"]:
         raise ValueError(f"请先刷新有效行情：{basis['quote_issue']}")
     if expected_position != worksheet["position_snapshot"]:
         raise ValueError("持仓已变化，请刷新操作计划后重新测算")
@@ -87,7 +105,8 @@ def save_action_plan(
         raise ValueError("同日大盘、板块和个股均走弱，暂停新增做 T 测算，先复核风险")
     # Calculate using trusted refreshed portfolio fields, not a client cost basis.
     holding = {**worksheet["position_snapshot"], "code": worksheet["symbol"]}
-    calculate_scenario(choice, parameters, holding)
+    if parameters is not None:
+        calculate_scenario(choice, parameters, holding)
     with ae._LOCK, advisory_lock(ae._file()), pf._LOCK, advisory_lock(pf._pf_file()):
         events = ae._load()
         target = next((row for row in events if row["id"] == event_id and row["status"] == "OPEN"), None)
@@ -101,7 +120,10 @@ def save_action_plan(
         if sellable != holding["sellable_shares"]:
             raise ValueError("可卖底仓已变化，请刷新后重算")
         plan = {"choice": choice, "updated_at": now_shanghai().isoformat(),
-                "parameters": parameters.copy(), "position_snapshot": worksheet["position_snapshot"]}
+                "position_snapshot": worksheet["position_snapshot"],
+                "acknowledged_sale_id": (target.get("last_sale") or {}).get("operation_id")}
+        if parameters is not None:
+            plan["parameters"] = parameters.copy()
         for row in events:
             if row.get("status") == "OPEN" and row.get("symbol") == target["symbol"] and row.get("position_id") == target.get("position_id"):
                 row["review_plan"] = plan.copy()

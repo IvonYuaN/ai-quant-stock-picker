@@ -3766,3 +3766,13 @@
   .aq-position-plan-options.aq-beginner-options .aq-btn { padding: .6rem .45rem; min-height: 76px; }
   .aq-next-action { padding: .65rem .75rem; }
 }
+
+/* Compare the cost of each route, then keep the selected journey in view. */
+.aq-route-choices .aq-btn > span { font-size: .78rem; font-weight: 400; line-height: 1.6; }
+.aq-route-choices .aq-btn > small { font-size: .73rem; line-height: 1.65; margin-top: .3rem; }
+.aq-change-route > summary { cursor: pointer; padding: .6rem 0; min-height: 44px; font-size: .8rem; color: hsl(var(--muted-foreground)); }
+.aq-journey-fact { font-variant-numeric: tabular-nums; margin: .4rem 0 .8rem; }
+@media (max-width: 640px) {
+  .aq-position-plan-options.aq-route-choices { grid-template-columns: 1fr; }
+  .aq-position-plan-options.aq-route-choices .aq-btn { min-height: 100px; padding: .8rem; }
+}

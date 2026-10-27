@@ -49,3 +49,27 @@ export function beginnerPlan(choice: ReviewChoice, basis: ActionWorksheet["basis
   if (choice === "reduce") return { next: `反弹到 ${price(sell)} 附近又转弱，再考虑卖出一部分。`, stop: `如果直接跌破 ${price(buy)}，别只等反弹，重新评估风险。`, paused: false };
   return { next: `先等反弹到 ${price(sell)} 附近转弱，再考虑卖出部分可卖持仓。`, then: `卖出成交后，回落到 ${price(buy)} 附近止跌，才考虑买回同样或更少股数。`, stop: "卖出后持续上涨，或回落后继续破低，都取消原回补计划。", paused: false };
 }
+
+export const PLAN_CHOICES = {
+  hold: { title: "先观察", benefit: "保留仓位，等走势更清楚", cost: "继续承担这只股票下跌的损失" },
+  reduce: { title: "先减仓", benefit: "减少后续下跌影响的钱", cost: "锁定卖出部分的当前盈亏，也可能错过反弹" },
+  t_watch: { title: "做 T 试算", benefit: "用部分持仓尝试赚取一次差价", cost: "要盯盘、付两次费用，卖出后可能买不回来" },
+} as const;
+
+/** Describe observable facts, never infer reversal, execution or suitability. */
+export function planJourney(choice: ReviewChoice, worksheet: ActionWorksheet, prices: { sell_price: number; buy_price: number }, now = Date.now()): { label: string; detail: string; attention: boolean; saleReview: boolean } {
+  const { basis, recorded_sale: sale, review_plan: plan } = worksheet;
+  const saved = plan.position_snapshot;
+  const positionChanged = !saved || ["position_id", "cost", "shares", "sellable_shares"].some((key) => saved[key as keyof typeof saved] !== worksheet.position_snapshot[key as keyof typeof saved]);
+  if (sale && (worksheet.sale_requires_review ?? positionChanged)) return { label: "已回录卖出，先核对后续", detail: `${sale.date} 已记录卖出 ${sale.shares} 股，成交价 ${sale.price.toFixed(2)} 元；当前剩 ${basis.shares ?? "待核对"} 股。${choice === "t_watch" ? "这笔卖出未确认属于本次做 T，先核对余仓，不沿用旧试算继续买回。" : "剩余仓位仍有涨跌风险，不沿用卖出前的试算。"}`, attention: true, saleReview: true };
+  if (worksheetExpired(basis, now) || basis.quote_issue || !basis.price) return { label: "先更新有效行情", detail: basis.quote_issue || "上次行情已不能用于当前判断，旧计划暂作参考。", attention: true, saleReview: false };
+  if (choice !== "hold" && !basis.sellable_shares) return { label: "今天先观察", detail: "当前没有可卖股份；等可以卖出后，再重新核对计划。", attention: true, saleReview: false };
+  if (basis.joint_weakness) return { label: choice === "t_watch" ? "先暂停做 T" : "先重新看风险", detail: "大盘、板块和个股同日走弱，不能只等反弹；先核对是否需要降低仓位。", attention: true, saleReview: false };
+  const sell = Number.isFinite(prices.sell_price) && prices.sell_price > 0 ? prices.sell_price : basis.references.find((row) => row.label === "本交易日已见高点")?.price ?? basis.references.find((row) => row.label === "最近完成日高点")?.price;
+  const buy = Number.isFinite(prices.buy_price) && prices.buy_price > 0 ? prices.buy_price : basis.references.find((row) => row.label === "本交易日已见低点")?.price ?? basis.references.find((row) => row.label === "最近完成日低点")?.price;
+  const current = basis.price;
+  if (!sell || !buy || !Number.isFinite(sell) || !Number.isFinite(buy) || sell <= 0 || buy <= 0) return { label: "先补观察价", detail: "没有有效参考价，还无法判断现在处于哪个位置。", attention: true, saleReview: false };
+  if (current < buy) return { label: "已低于观察低价，重新看风险", detail: `当前 ${current.toFixed(2)} 元，低于你正在看的 ${buy.toFixed(2)} 元。是否收回尚未确认，先复核风险，做 T 不继续沿用原回补计划。`, attention: true, saleReview: false };
+  if (current >= sell) return { label: choice === "hold" ? "已到观察高价，看能否站稳" : "已到观察卖价，转弱尚未确认", detail: `当前 ${current.toFixed(2)} 元，已到 ${sell.toFixed(2)} 元参考价。到价只说明位置变化，不能证明已经转弱或应该成交。`, attention: false, saleReview: false };
+  return { label: choice === "hold" ? "观察反弹是否延续" : "还在等观察价", detail: `当前 ${current.toFixed(2)} 元，到 ${sell.toFixed(2)} 元还差 ${(sell - current).toFixed(2)} 元。${choice === "hold" ? "继续关注是否破低。" : "暂未到价，不需要把计划当成立即卖出。"}`, attention: false, saleReview: false };
+}
