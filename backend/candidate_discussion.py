@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Callable
 from contextlib import suppress
-from datetime import timedelta
+from datetime import datetime, timedelta
 import fcntl
 import json
 import re
@@ -77,6 +77,8 @@ SYSTEM = '''你为尚未持有的A股候选提供人工研究复核，不下单�
 defer动作的price_ref必须为null，不建立到价条件。
 说明与讨论可以复述输入有来源的现价、涨跌幅和评分事实，不可把事实变成预测。
 不杜撰支撑、目标价、持仓和成本。
+只复述已给出的数字事实及其单位和来源日期，不自行计算新的百分比或价差，不预测涨跌幅。
+没有输入依据时保留缺口；不要新设价格容差、等待分钟数、放量倍数或仓位比例。
 entry_blocked为true时只能解释暂缓/补证：不得把入场路线标为investigate，不给入场动作。
 给新手简短结论、理由、下一步条件和失效条件；不输出隐藏推演过程。
 输出一个output_schema规定的JSON对象，不加Markdown围栏。'''
@@ -123,22 +125,63 @@ def parse(text: str, schema: type[BaseModel], value: dict[str, Any], peers: set[
     # Descriptive facts such as sourced percentage changes or scores are valid.
     # Only canonical source numbers are allowed; model prose is never a source.
     facts = [ref['price'] for ref in value['price_refs'].values()]
-    facts += [value.get('quote', {}).get('change_pct'),
-              evidence.get('research', {}).get('candidate', {}).get('score')]
+    percentages = [value.get('quote', {}).get('change_pct'), evidence.get('sector', {}).get('change_pct')]
+    percentages += [row.get('change_pct') for row in evidence.get('market', {}).get('indices', [])]
+    facts += [*percentages, evidence.get('research', {}).get('candidate', {}).get('score'),
+              *(evidence.get('market', {}).get('breadth_counts') or {}).values()]
+    sourced_percentages = {float(number) for number in percentages if type(number) in (int, float)}
     sourced = {float(number) for number in facts if type(number) in (int, float)}
     prices = {float(ref['price']) for ref in value['price_refs'].values()}
+    score = evidence.get('research', {}).get('candidate', {}).get('score')
+    counts = {float(number) for number in (evidence.get('market', {}).get('breadth_counts') or {}).values()
+              if type(number) in (int, float)}
+    research = evidence.get('research', {})
+    stamps = [research.get('date'), research.get('generated_at'), research.get('stale_after'),
+              research.get('candidate', {}).get('data_fetched_at'),
+              *(ref.get('as_of') for ref in value['price_refs'].values())]
+    date_tokens = {token for stamp in stamps if isinstance(stamp, str)
+                   for token in (stamp, stamp.split('T')[0]) if re.fullmatch(r'\d{4}-\d{2}-\d{2}(?:T.*)?', token)}
+    for stamp in stamps:
+        try:
+            parsed_stamp = datetime.fromisoformat(stamp)
+            if parsed_stamp.tzinfo is not None:
+                date_tokens.update(parsed_stamp.strftime(pattern) for pattern in ('%Y-%m-%d %H:%M', '%Y-%m-%d %H:%M:%S'))
+        except (ValueError, TypeError):
+            pass
+    def prose_without_source_dates(text: str) -> str:
+        prose = re.sub(rf"(?<!\d){re.escape(value['symbol'])}(?!\d)", '', text.replace('T+1', ''))
+        for token in sorted(date_tokens, key=len, reverse=True):
+            prose = re.sub(rf'(?<!\d){re.escape(token)}(?!\d)', '', prose)
+        return prose
     for action in parsed['actions']:
         for text in texts(action):
-            prose = re.sub(rf"(?<!\d){re.escape(value['symbol'])}(?!\d)", '', text.replace('T+1', ''))
+            prose = prose_without_source_dates(text)
+            # An action may explain a sourced sector percentage/score/count;
+            # units are checked below. Remaining bare numbers must be prices.
+            for suffix, allowed in ((r'[%％]', sourced_percentages), (r'分', {score}), (r'家', counts)):
+                prose = re.sub(rf'([-+]?\d+(?:\.\d+)?)\s*{suffix}',
+                               lambda match: '' if float(match[1]) in allowed else match[0], prose)
+            for prefix, allowed in ((r'评分', score), (r'上涨', (evidence.get('market', {}).get('breadth_counts') or {}).get('up')),
+                                    (r'下跌', (evidence.get('market', {}).get('breadth_counts') or {}).get('down'))):
+                prose = re.sub(rf'{prefix}\s*([-+]?\d+(?:\.\d+)?)(?=\s*(?:[，,、；;。!?！？：:]|$|仅为事实))',
+                               lambda match: '' if float(match[1]) == allowed else match[0], prose)
             if any(float(number) not in prices for number in re.findall(r'[-+]?\d+(?:\.\d+)?', prose)):
                 raise ValueError('模型动作的数字交易条件必须来自有源价格，不能用评分或涨幅充当价位')
     for text in texts(parsed):
         prose = re.sub(rf"(?<!\d){re.escape(value['symbol'])}(?!\d)", '', text.replace('T+1', ''))
         currency = re.findall(r'([-+]?\d+(?:\.\d+)?)\s*(?:元|块|角)', prose)
         percent = re.findall(r'([-+]?\d+(?:\.\d+)?)\s*[%％]', prose)
+        scores = re.findall(r'([-+]?\d+(?:\.\d+)?)\s*分', prose)
+        scores += re.findall(r'评分\s*([-+]?\d+(?:\.\d+)?)', prose)
+        breadth = re.findall(r'([-+]?\d+(?:\.\d+)?)\s*家', prose)
+        named_prices = re.findall(r'(?:现价|当前价|报价|价格|价位|目标价|止损|参考价|前收盘价|高点|低点|支撑位?|阻力位?|回落到|回落至|跌破|突破|高于|低于)\s*(?:为|是|在|约|至)?\s*([-+]?\d+(?:\.\d+)?)', prose)
         if any(float(number) not in prices for number in currency) or any(
-                float(number) != value.get('quote', {}).get('change_pct') for number in percent):
+                float(number) not in sourced_percentages for number in percent) or any(
+                float(number) != score for number in scores) or any(
+                float(number) not in counts for number in breadth) or any(
+                float(number) not in prices for number in named_prices) or re.search(r'\d+(?:\.\d+)?\s*(?:股|手)', prose):
             raise ValueError('模型数字事实无来源或单位与来源不符')
+        prose = prose_without_source_dates(text)
         if re.search(chinese_price, prose) or any(float(number) not in sourced for number in
                 re.findall(r'[-+]?\d+(?:\.\d+)?', prose)):
             raise ValueError('模型说明包含无来源的数字事实或数字交易条件')

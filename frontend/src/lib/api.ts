@@ -480,6 +480,7 @@ export interface CandidateWorkspace {
   available: boolean; entry_blocked: boolean; issues: string[]; quote: { price?: number | null; as_of?: string | null; quote_as_of?: string | null; source?: string };
   quote_issue: string; evidence: Record<string, unknown>; price_refs: Record<string, CandidatePriceReference>;
   discussion: CandidateDiscussion | null;
+  source_refresh?: { state: "updated" | "cached" | "partial" | "busy" | "unavailable"; issue: string };
   analysis: { status: "idle" | "running" | "complete" | "partial" | "failed" | "cancelled"; stage: string; run_id: string | null };
   watch: null | { choice: CandidateChoice; condition: string; invalidation: string; price: number | null; price_ref: string | null;
     source_ref: CandidatePriceReference | null; comparator: WatchComparator | null; adopted_at: string; discussion_id: string; status: "active" | "stopped" };
@@ -780,6 +781,7 @@ export const api = {
     request<ActionWorksheet>(`/positions/${encodeURIComponent(id)}/constraints`, "POST", { ...constraints, expected_position, expected_revision, reset_risk_baseline, expected_quote }),
   candidateObservations: () => get<{ items: CandidateWorkspace[] }>("/candidate-observations"),
   candidateObservation: (symbol: string) => get<CandidateWorkspace>(`/candidate-observations/${encodeURIComponent(symbol)}`),
+  refreshCandidateEvidence: (symbol: string) => request<CandidateWorkspace>(`/candidate-observations/${encodeURIComponent(symbol)}/strategy-evidence`, "POST", {}),
   candidateDiscussionStream: async (symbol: string, input: CandidateDiscussionInput, progress: (stage: string) => void, signal: AbortSignal): Promise<CandidateDiscussion> => {
     const response = await fetch(`/api/candidate-observations/${encodeURIComponent(symbol)}/discussion/stream`, {
       method: "POST", headers: { ...authHeaders(), "Content-Type": "application/json" }, signal, body: JSON.stringify(input),

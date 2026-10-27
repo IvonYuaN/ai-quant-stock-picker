@@ -42,7 +42,7 @@ import {
   StatePanel,
   Tag,
 } from "@/components/ui/primitives";
-import { useWorkspaceSnapshot, formatAqspTime } from "@/components/aqsp/useAqspSnapshot";
+import { useWorkspaceSnapshot } from "@/components/aqsp/useAqspSnapshot";
 import { buildDailyView } from "@/lib/daily-view";
 import { messagesForCandidate } from "@/lib/candidate-chain";
 import { debateProcessText, messageSourceUrl } from "@/lib/research-view";
@@ -50,6 +50,7 @@ import { todayResearchHref } from "@/lib/research-route";
 import { evidenceLabel, statusLabel } from "@/lib/display-labels";
 import { loadWatch, saveWatch, WATCHLIST_CHANGED_EVENT } from "@/lib/watchlist";
 import { CandidateObservationPanel } from "@/components/aqsp/CandidateObservationPanel";
+import { ResearchValidationContext } from "@/components/aqsp/ResearchValidationContext";
 import { OwnedPositionPlanEntry } from "@/components/aqsp/OwnedPositionPlanEntry";
 import { cn } from "@/lib/utils";
 
@@ -181,8 +182,7 @@ export function StockResearchPage() {
         {workspace.error ? <StatePanel tone="warn" action={<button type="button" className="aq-btn" onClick={workspace.refresh}>重试研究</button>}>{workspace.error}，暂不展示未核实的评分与依据。</StatePanel> : null}
         {view ? (
           <>
-            <div className="aq-tag-row"><Badge tone={view.isHistorical ? "neutral" : view.gate.tone}>{view.isHistorical ? "历史记录 · 仅供回看" : view.gate.label}</Badge><span className="aq-detail-muted">快照更新 {formatAqspTime(view.generatedAt)}</span></div>
-            <p className="aq-detail-muted">{view.isHistorical ? "以下为当时记录的研究依据，不表示当前推荐状态。" : view.gate.detail}</p>
+            {snapshot ? <ResearchValidationContext snapshot={snapshot} symbol={code} /> : null}
             {!row ? <EmptyState title="该股票不在所选日期候选中" detail={`${view.date} 未提供 ${code} 的 AQSP 评分与证据链，可查看独立行情和事件，也可加入自选。`} /> : (
               <>
                 <div className="aq-research-score"><strong className="aq-num">{row.scoreText}</strong><span>确定性评分</span><Tag tone={row.ready ? "ok" : "warn"}>{row.ready ? "依据已齐 · 可继续复核" : "证据待补 · 仅供观察"}</Tag><Tag>{statusLabel(row.status)}</Tag><Tag>{evidenceLabel(row.evidence)}</Tag></div>

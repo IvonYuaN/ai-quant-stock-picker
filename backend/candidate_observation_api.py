@@ -81,6 +81,15 @@ async def discuss_candidate(symbol: str, body: DiscussionInput) -> dict[str, Any
         raise _error(exc) from exc
 
 
+@router.post('/{symbol}/strategy-evidence')
+async def refresh_candidate_sources(symbol: str) -> dict[str, Any]:
+    """Refresh public market/sector evidence without adopting or creating a plan."""
+    try:
+        return {'data': await resources.refresh_sources(symbol)}
+    except (ValueError, DataError) as exc:
+        raise _error(exc) from exc
+
+
 @router.post('/{symbol}/discussion/stream')
 async def stream_candidate(symbol: str, body: DiscussionInput) -> StreamingResponse:
     """Request-local NDJSON; the generator owns cancellation and cleanup."""
