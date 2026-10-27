@@ -24,6 +24,7 @@ from test_position_action_plan import HOLDING, NOW, QUOTE, plan_client  # noqa: 
 def isolated_sources(tmp_path, monkeypatch):
     monkeypatch.setattr(market, '_MARKET_CACHE_DIR', str(tmp_path / 'market'))
     monkeypatch.setattr(market.time, 'time', lambda: NOW.timestamp())
+    monkeypatch.setattr(source, 'now_shanghai', lambda: NOW)
 
 
 def cache(key: str, value: object) -> None:
@@ -213,8 +214,10 @@ def test_strategy_evidence_post_refreshes_shared_sources_without_business_writes
     pid = before['holdings'][0]['position_id']
 
     async def fetch(codes, limits, completed):
+        from test_strategy_market_source import fact
         completed[source._sector_key(codes)] = {'002129': sector()}
         completed['strategy_indices'] = {'000001': {**QUOTE, 'change_pct': -2}}
+        completed['strategy_breadth'] = fact()
         return []
 
     monkeypatch.setattr(source, '_fetch_sources', fetch)

@@ -141,3 +141,20 @@ def test_candidate_time_rejects_ambiguous_history_clock_in_explanation() -> None
     row['summary'] = '来源10:00，仍需复核'
     with pytest.raises(ValueError):
         candidate.parse(json.dumps(row), candidate.CandidateOpinion, value, set())
+
+
+@pytest.mark.parametrize('kind,stamp', [('stock', '2026-10-27T10:00:08+08:00'),
+                                      ('index', '2026-10-27T10:00:05+08:00')])
+def test_model_time_accepts_typed_subsource_clock_when_independent_of_parent(kind: str, stamp: str) -> None:
+    evidence = deepcopy(EVIDENCE)
+    evidence['stock'] = {'source': '个股源', 'as_of': '2026-10-27T10:00:08+08:00'}
+    evidence['market'] = {'source': '指数源', 'as_of': STAMP,
+                          'indices': [{'name': '上证指数', 'as_of': '2026-10-27T10:00:05+08:00'}]}
+    row = deepcopy(OPINION)
+    row['actions'][0]['condition'] = f'依据{stamp}核对当前参考价9.1元'
+    validate_position_action_numbers(row, evidence, REFS)
+    # A subsource clock requires its typed source owner; arbitrary prose cannot
+    # authorize it, and original evidence still cannot authorize a current action.
+    evidence['stock' if kind == 'stock' else 'market']['source'] = ''
+    with pytest.raises(ValueError):
+        validate_position_action_numbers(row, evidence, REFS)

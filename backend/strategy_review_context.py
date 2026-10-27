@@ -193,6 +193,10 @@ def source_numbers(evidence: dict[str, Any], refs: dict[str, Any]) -> SourceNumb
         percentages.extend(row.get('change_pct') for row in market.get('indices', []))
     stamps = [row.get('as_of') for row in rows] + [market.get('as_of'), sector.get('as_of'), research.get('date'),
              research.get('generated_at'), research.get('stale_after'), candidate.get('data_fetched_at')]
+    if stock.get('source'):
+        stamps.append(stock.get('as_of'))
+    if market.get('source'):
+        stamps.extend(row.get('as_of') for row in market.get('indices', []) if isinstance(row, dict))
     return SourceNumbers(numbers([row.get('price') for row in rows]), numbers(percentages),
                          numbers([candidate.get('score')]) if candidate.get('data_source') else frozenset(),
                          numbers(list((market.get('breadth_counts') or {}).values())) if market.get('source') else frozenset(),

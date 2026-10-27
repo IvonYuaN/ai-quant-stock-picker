@@ -21,10 +21,13 @@ from typing import Any
 import httpx
 import pandas as pd
 
+from aqsp.core.time import now_shanghai
+
 import astock
 import decision_context as dc
 import market
 import position_context_source as sectors_source
+from strategy_market_source import fetch_strategy_breadth, valid_strategy_breadth
 
 
 @dataclass(frozen=True)
@@ -244,7 +247,9 @@ async def _fetch_sources(codes: tuple[str, ...], limits: StrategyEvidenceLimits,
             completed[_sector_key(codes)] = await sectors_source.fetch_position_sectors(codes, client, max_response_bytes=limits.max_response_bytes)
         async def indices() -> None:
             completed['strategy_indices'] = await _fetch_indices(client, limits)
-        results = await asyncio.gather(sector(), indices(), return_exceptions=True)
+        async def breadth() -> None:
+            completed['strategy_breadth'] = await fetch_strategy_breadth(client, max_response_bytes=limits.max_response_bytes)
+        results = await asyncio.gather(sector(), indices(), breadth(), return_exceptions=True)
     return ["部分行情源未完成；已取得的依据仍按源时点核验" for result in results if isinstance(result, BaseException)]
 
 
@@ -256,7 +261,7 @@ async def refresh_strategy_sources(codes: Sequence[str], *, checked_at: datetime
     if not symbols or len(symbols) > sectors_source.PositionContextSourceConfig().batch_size:
         return StrategyRefresh('unavailable', '当前股票代码不完整或超出单批依据预算')
     key = _sector_key(symbols)
-    if len(load_cached_strategy_sectors(symbols, checked_at=checked_at, limits=limits)) == len(symbols) and _cached('strategy_indices', checked_at):
+    if len(load_cached_strategy_sectors(symbols, checked_at=checked_at, limits=limits)) == len(symbols) and _indices(checked_at) and valid_strategy_breadth(_cached('strategy_breadth', checked_at), current=checked_at):
         return StrategyRefresh('cached')
     attempt_key = 'strategy_attempt_' + key
     attempt_keys = tuple('strategy_attempt_' + _sector_key([code]) for code in symbols)
@@ -271,7 +276,7 @@ async def refresh_strategy_sources(codes: Sequence[str], *, checked_at: datetime
         except BlockingIOError:
             return StrategyRefresh('busy', '已有策略依据正在刷新，当前保留可核验缓存')
         # A different request may have filled the same batch before this lease.
-        if len(load_cached_strategy_sectors(symbols, checked_at=checked_at, limits=limits)) == len(symbols) and _cached('strategy_indices', checked_at):
+        if len(load_cached_strategy_sectors(symbols, checked_at=checked_at, limits=limits)) == len(symbols) and _indices(checked_at) and valid_strategy_breadth(_cached('strategy_breadth', checked_at), current=checked_at):
             return StrategyRefresh('cached')
         if (_cached(attempt_key, checked_at, negative=True) is not None
                 or all(_cached(item, checked_at, negative=True) is not None for item in attempt_keys)):
@@ -294,10 +299,18 @@ async def refresh_strategy_sources(codes: Sequence[str], *, checked_at: datetime
                 market._write_cache(_sector_key([code]), {code: fact})
         if 'strategy_indices' in completed:
             market._write_cache('strategy_indices', completed['strategy_indices'])
+        if 'strategy_breadth' in completed:
+            market._write_cache('strategy_breadth', completed['strategy_breadth'])
         # A failed/partial batch cools subset retries too. Only this attempt
         # timestamp changes; failed sources never renew an old fact's TTL.
         for cache_key in {attempt_key, *attempt_keys}:
             market._write_cache(cache_key, {'checked_at': checked_at.isoformat()})
-        complete = len(sector_facts) == len(symbols) and bool(completed.get('strategy_indices'))
+        # Cache writes occur after I/O; validate against completion time, while
+        # retaining each fact's original source clock. The request's start time
+        # would reject every newly written cache as being in the future.
+        finished_at = now_shanghai()
+        complete = (len(load_cached_strategy_sectors(symbols, checked_at=finished_at, limits=limits)) == len(symbols)
+                    and _indices(finished_at) is not None
+                    and valid_strategy_breadth(_cached('strategy_breadth', finished_at), current=finished_at))
         return StrategyRefresh('partial' if issue or not complete else 'updated',
                                issue or ('部分来源未返回有效数据，缺失依据保持未知' if not complete else ''))

@@ -21,6 +21,7 @@ A, B = '002129', '600000'
 def isolated_cache(tmp_path, monkeypatch):
     monkeypatch.setattr(market, '_MARKET_CACHE_DIR', str(tmp_path / 'market'))
     monkeypatch.setattr(market.time, 'time', lambda: NOW.timestamp())
+    monkeypatch.setattr(source, 'now_shanghai', lambda: NOW)
 
 
 def sector(**patch) -> dict:
@@ -35,6 +36,9 @@ def fake_refresh(monkeypatch, rows: dict) -> list:
         calls.append(codes)
         completed[source._sector_key(codes)] = rows
         completed['strategy_indices'] = {'000001': {'as_of': NOW.isoformat(), 'change_pct': -2}}
+        completed['strategy_breadth'] = {'up': 800, 'down': 3000, 'flat': 0, 'total': 3800,
+            'as_of': NOW.isoformat(), 'latest_source_at': NOW.isoformat(),
+            'source': '东方财富全A逐只行情宽度', 'breadth': '偏弱'}
         return []
 
     monkeypatch.setattr(source, '_fetch_sources', fetch)
@@ -64,6 +68,7 @@ def test_strategy_sector_cache_keeps_source_stamp_when_quote_advances_during_req
     fact = sector(as_of=arrived.isoformat(), membership_as_of=arrived.isoformat())
     fake_refresh(monkeypatch, {A: fact})
     monkeypatch.setattr(market.time, 'time', lambda: arrived.timestamp())
+    monkeypatch.setattr(source, 'now_shanghai', lambda: arrived)
     assert asyncio.run(source.refresh_strategy_sources([A], checked_at=NOW)).state == 'updated'
     assert source.load_cached_strategy_sectors([A], checked_at=NOW) == {}
     assert source.load_cached_strategy_sectors([A], checked_at=arrived) == {A: fact}

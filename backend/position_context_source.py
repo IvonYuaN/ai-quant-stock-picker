@@ -17,6 +17,7 @@ class PositionContextSourceConfig:
     # Match the existing industry clist page size; bound optional explanation I/O.
     batch_size: int = 100
     timeout_seconds: int = 4
+    max_industry_pages: int = 8
 
 
 def _rows(payload: Any) -> list[dict]:
@@ -40,17 +41,48 @@ def _fetch(codes: tuple[str, ...], config: PositionContextSourceConfig) -> dict:
     ).json())
     if not memberships:
         return {}
-    sectors = _rows(astock.em_get(
-        "https://push2.eastmoney.com/api/qt/clist/get",
-        params={
-            "pn": 1, "pz": config.batch_size, "po": 1, "np": 1,
-            "fltt": 2, "invt": 2, "fid": "f3", "fs": "m:90+t:2",
-            "fields": "f14,f3,f124",
-        },
-        headers={"User-Agent": astock.UA},
-        timeout=config.timeout_seconds,
-    ).json())
+    sectors: list[dict] = []
+    for page in range(1, config.max_industry_pages + 1):
+        payload = astock.em_get(
+            "https://push2.eastmoney.com/api/qt/clist/get",
+            params=_industry_params(page, config), headers={"User-Agent": astock.UA},
+            timeout=config.timeout_seconds,
+        ).json()
+        if not _append_industry_page(payload, memberships, sectors, config):
+            break
+    else:
+        raise ValueError("行业依据超过分页预算")
     return _combine_rows(codes, memberships, sectors)
+
+
+def _industry_params(page: int, config: PositionContextSourceConfig) -> dict[str, Any]:
+    return {"pn": page, "pz": config.batch_size, "po": 0, "np": 1,
+            "fltt": 2, "invt": 2, "fid": "f12", "fs": "m:90+t:2", "fields": "f12,f14,f3,f124"}
+
+
+def _append_industry_page(payload: Any, memberships: list[dict], sectors: list[dict],
+                          config: PositionContextSourceConfig) -> bool:
+    """Return whether unmatched source memberships require another bounded page."""
+    rows = _rows(payload)
+    known = {row.get('f14') for row in sectors}
+    names = [row.get('f14') for row in rows]
+    if any(not isinstance(name, str) or not name.strip() or name in known for name in names) or len(set(names)) != len(names):
+        raise ValueError('行业分页重复或名称无效')
+    sectors.extend(rows)
+    targets = {row['f100'] for row in memberships if isinstance(row.get('f100'), str) and row['f100'].strip()}
+    if targets <= {row.get('f14') for row in sectors}:
+        return False
+    data = payload.get('data') if isinstance(payload, Mapping) else None
+    total = data.get('total') if isinstance(data, Mapping) else None
+    if total is not None:
+        if type(total) is not int or total < len(sectors):
+            raise ValueError('行业源总量无效')
+        if len(sectors) == total:
+            return False
+        if len(rows) != config.batch_size:
+            raise ValueError('行业分页不完整')
+        return True
+    return len(rows) == config.batch_size
 
 
 def _combine_rows(codes: tuple[str, ...], memberships: list[dict], sectors: list[dict]) -> dict:
@@ -115,7 +147,7 @@ async def fetch_position_sectors(codes: Sequence[str], client: httpx.AsyncClient
     if not symbols or len(symbols) > config.batch_size:
         return {}
 
-    async def get(url: str, params: dict[str, Any]) -> list[dict]:
+    async def get(url: str, params: dict[str, Any]) -> Any:
         import json
         chunks, size = [], 0
         async with client.stream("GET", url, params=params, headers={"User-Agent": astock.UA}) as response:
@@ -125,22 +157,19 @@ async def fetch_position_sectors(codes: Sequence[str], client: httpx.AsyncClient
                 if size > max_response_bytes:
                     raise ValueError("行业依据响应超过大小预算")
                 chunks.append(chunk)
-        return _rows(json.loads(b"".join(chunks)))
+        return json.loads(b"".join(chunks))
 
-    import asyncio
-    results = await asyncio.gather(
-        get("https://push2.eastmoney.com/api/qt/ulist.np/get", {
-            "secids": ",".join(f"{1 if astock.get_prefix(code) == 'sh' else 0}.{code}" for code in symbols),
-            "fields": "f12,f100,f124", "fltt": 2,
-        }),
-        get("https://push2.eastmoney.com/api/qt/clist/get", {
-            "pn": 1, "pz": config.batch_size, "po": 1, "np": 1,
-            "fltt": 2, "invt": 2, "fid": "f3", "fs": "m:90+t:2", "fields": "f14,f3,f124",
-        }),
-        return_exceptions=True,
-    )
-    for result in results:
-        if isinstance(result, BaseException):
-            raise result
-    memberships, sectors = results
+    memberships = _rows(await get("https://push2.eastmoney.com/api/qt/ulist.np/get", {
+        "secids": ",".join(f"{1 if astock.get_prefix(code) == 'sh' else 0}.{code}" for code in symbols),
+        "fields": "f12,f100,f124", "fltt": 2,
+    }))
+    if not memberships:
+        return {}
+    sectors: list[dict] = []
+    for page in range(1, config.max_industry_pages + 1):
+        payload = await get("https://push2.eastmoney.com/api/qt/clist/get", _industry_params(page, config))
+        if not _append_industry_page(payload, memberships, sectors, config):
+            break
+    else:
+        raise ValueError("行业依据超过分页预算")
     return _combine_rows(symbols, memberships, sectors)

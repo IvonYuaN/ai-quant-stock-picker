@@ -17,6 +17,7 @@ import position_strategy_evidence as sources
 @pytest.fixture
 def refresh(env, monkeypatch):
     monkeypatch.setattr(market.time, 'time', lambda: NOW.timestamp())
+    monkeypatch.setattr(sources, 'now_shanghai', lambda: NOW)
     calls = []
     async def fetch(codes, limits, completed):
         calls.append(codes)

@@ -199,17 +199,34 @@ def load_cached_market_overview(
 
     current = to_shanghai(checked_at or now_shanghai())
     root = Path(cache_dir or market._MARKET_CACHE_DIR)
+    value: Mapping[str, Any] | None = None
     try:
         entry = json.loads((root / "overview.json").read_text(encoding="utf-8"))
-        if not isinstance(entry, Mapping):
-            return None
-        timestamp = _number(entry.get("ts"))
-        if timestamp is None or not 0 <= current.timestamp() - timestamp <= market._TTL:
-            return None
-        value = entry.get("val")
-        return value if isinstance(value, Mapping) else None
+        if isinstance(entry, Mapping):
+            timestamp = _number(entry.get("ts"))
+            if timestamp is not None and 0 <= current.timestamp() - timestamp <= market._TTL:
+                candidate = entry.get("val")
+                if isinstance(candidate, Mapping):
+                    value = candidate
     except (OSError, ValueError, TypeError):
-        return None
+        pass
+    # Explicit strategy refresh owns an independent, small source-timed breadth
+    # cache. Reading it must never trigger the heavy emotion/flow producer.
+    try:
+        from strategy_market_source import valid_strategy_breadth
+        path = root / "strategy_breadth.json"
+        if not path.is_symlink():
+            with path.open("rb") as handle:
+                raw = handle.read(4097)
+            if len(raw) <= 4096:
+                entry = json.loads(raw)
+                timestamp = _number(entry.get("ts")) if isinstance(entry, Mapping) else None
+                fact = entry.get("val") if isinstance(entry, Mapping) else None
+                if timestamp is not None and 0 <= current.timestamp() - timestamp <= market._TTL and valid_strategy_breadth(fact, current=current):
+                    return {**(value or {}), "sentiment": fact}
+    except (OSError, ValueError, TypeError):
+        pass
+    return value
 
 
 def _market_context(
@@ -237,7 +254,7 @@ def _market_context(
         status,
         f"市场宽度{breadth or '尚未判定'}；{evidence[0]}",
         stamp[1],
-        "既有市场情绪快照/东方财富",
+        str(sentiment.get("source") or "既有市场情绪快照/东方财富"),
         evidence,
     )
 
