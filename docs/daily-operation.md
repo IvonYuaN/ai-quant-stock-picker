@@ -12,6 +12,18 @@ bash scripts/bt_task.sh daily
 
 `daily_run.sh` 只保留给本地 smoke run，默认 fail-closed，必须显式设置 `AQSP_ALLOW_LEGACY_ENTRY=1`。
 
+### 盘外空跑与主锁（#478，2026-10-27）
+
+`bt_task.sh intraday` 在交易日检查、午盘桥接之后，先检查北京时间
+09:35–11:30 / 13:05–14:57（含边界）；盘外只记录跳过，不进入
+`server_sync_and_run.sh`，因此不会抢占 22:30 `variant-refresh` 等任务的主锁。
+面板入口与 `intraday_refresh.sh` 共用 `scripts/maintenance/intraday_window.sh`，
+后者仍在同步/等待后再次检查，避免窗口规则漂移或排队跨时段。
+
+午盘桥接仍优先检查 11:35–12:30：未完成则走原同步与互斥链路，已完成则盘外退出。
+显式诊断开关 `AQSP_INTRADAY_REQUIRE_MARKET_HOURS=false` 保留原有用途；
+面板的交易日保护仍生效。该修复不改计划任务、环境配置或互斥策略。
+
 加载 launchd 任务（一次性）：
 ```bash
 export AQSP_PROJECT_ROOT="/absolute/path/to/AI量化选股"

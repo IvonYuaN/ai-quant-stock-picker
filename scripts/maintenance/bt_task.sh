@@ -489,6 +489,14 @@ case "$ACTION" in
                 exit 1
             fi
         fi
+        # A no-op must not acquire the shared runner lock (e.g. the 22:30
+        # variant refresh). Bridge first; both scan entries share one window.
+        # shellcheck disable=SC1090
+        source "$(dirname "$RUNTIME_PYTHON_HELPER")/intraday_window.sh"
+        if ! aqsp_intraday_window_open; then
+            log "当前不在盘中刷新时段，跳过（未进入主链路互斥锁）"
+            exit 0
+        fi
         export AQSP_RUNNER_SCRIPT=scripts/intraday_refresh.sh
         run_synced_task_with_result
         ;;

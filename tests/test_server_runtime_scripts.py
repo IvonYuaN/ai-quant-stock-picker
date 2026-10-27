@@ -833,6 +833,7 @@ def test_bt_task_propagates_intraday_runner_failure_to_cron(
     sync_script = scripts_dir / "server_sync_and_run.sh"
     shutil.copy2(PROJECT_ROOT / "scripts" / "bt_task.sh", bt_script)
     shutil.copy2(PROJECT_ROOT / "scripts" / "runtime_python.sh", scripts_dir)
+    shutil.copy2(PROJECT_ROOT / "scripts" / "intraday_window.sh", scripts_dir)
     shutil.copy2(PROJECT_ROOT / "scripts" / "server_sync_and_run.sh", sync_script)
     runner = scripts_dir / "intraday_refresh.sh"
     runner.write_text(
@@ -866,6 +867,7 @@ def test_bt_task_propagates_intraday_runner_failure_to_cron(
             "AQSP_RUNTIME_OVERLAY_MANIFEST": str(manifest),
             "AQSP_GIT_REMOTE": "origin",
             "AQSP_INTRADAY_MIDDAY_BRIDGE": "false",
+            "AQSP_INTRADAY_REQUIRE_MARKET_HOURS": "false",
         },
         check=False,
         capture_output=True,
