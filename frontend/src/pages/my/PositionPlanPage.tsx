@@ -11,6 +11,7 @@ import { LoadingState, StatePanel } from "@/components/ui/primitives";
 import { PositionActionPlan } from "@/components/aqsp/PositionActionPlan";
 import { PositionRouteComparison } from "@/components/aqsp/PositionRouteReview";
 import { PositionConstraintsForm } from "@/components/aqsp/PositionConstraintsForm";
+import { PositionFollowupPanel } from "@/components/aqsp/PositionFollowupPanel";
 
 export function PositionPlanPage() {
   const { positionId = "" } = useParams<{ positionId: string }>();
@@ -35,6 +36,12 @@ function PositionPlanWorkspace({ positionId }: { positionId: string }) {
   const accept = useCallback((next: ActionWorksheet) => {
     if (!active.current) return;
     generation.current++; pendingRead.current = null; setWorksheet(next); setLoading(false); setError("");
+  }, []);
+  const acceptFollowup = useCallback((next: ActionWorksheet) => {
+    if (!active.current) return;
+    generation.current++; pendingRead.current = null;
+    setWorksheet((previous) => previous && previous.position_id === next.position_id && previous.revision === next.revision ? { ...previous, followup: next.followup } : previous);
+    setLoading(false);
   }, []);
   const load = useCallback(async (): Promise<void> => {
     if (!positionId) return;
@@ -79,6 +86,8 @@ function PositionPlanWorkspace({ positionId }: { positionId: string }) {
     {actionError ? <p role="alert" className="aq-refresh-warning">{actionError}</p> : null}
     {worksheet ? <>
       <dl className="aq-position-workspace-facts">{!readonly ? <div><dt>行情价格</dt><dd>{worksheet.basis.price?.toFixed(2) ?? "待更新"} 元</dd></div> : null}<div><dt>{readonly ? "历史记录成本" : "当前记录成本"}</dt><dd>{worksheet.basis.cost?.toFixed(4) ?? "待核对"} 元</dd></div><div><dt>当前股份</dt><dd>{worksheet.basis.shares ?? "待核对"} 股</dd></div><div><dt>{readonly ? "持仓状态" : "当前可卖"}</dt><dd>{readonly ? "已清仓" : `${worksheet.basis.sellable_shares ?? "待核对"} 股`}</dd></div></dl>
+      {!readonly ? <p className="aq-note">当前页行情时点 {formatEvidenceTime(worksheet.basis.quote_as_of) || "待更新"}；与下方后台记录分别核对。</p> : null}
+      <PositionFollowupPanel key={positionId} worksheet={worksheet} disabled={unavailable} onSaved={acceptFollowup} />
       {readonly ? <section className="aq-plan-history" aria-label="已清仓的历史计划"><h2>这笔持仓已清仓，只读保留</h2><p>重新买入会产生另一笔持仓，不能继承这份旧计划。</p>{choice ? <p>当时选择：{PLAN_CHOICES[choice].title}</p> : <p>当时没有记录处理方式。</p>}{worksheet.recorded_sale ? <p>{worksheet.recorded_sale.date} 已记录卖出 {worksheet.recorded_sale.shares} 股，成交价 {worksheet.recorded_sale.price.toFixed(2)} 元。</p> : null}{worksheet.constraints ? <details><summary>查看当时个人条件</summary><p>盯盘：{({ available: "能持续看盘", occasional: "只能偶尔看一眼", unavailable: "没有时间盯盘", unknown: "未确定" })[worksheet.constraints.attention]}；新增资金：{worksheet.constraints.extra_cash == null ? "未知" : `${worksheet.constraints.extra_cash} 元`}；新增亏损上限：{worksheet.constraints.loss_limit == null ? "未知" : `${worksheet.constraints.loss_limit} 元`}。</p></details> : null}{worksheet.review_plan.parameters ? <details><summary>查看当时试算参数</summary><p>数量 {worksheet.review_plan.parameters.quantity} 股；卖价 {worksheet.review_plan.parameters.sell_price} 元{worksheet.review_plan.parameters.buy_price == null ? "" : `；回补价 ${worksheet.review_plan.parameters.buy_price} 元`}。这些是假设，不代表实际成交。</p></details> : null}{(worksheet.comparison || worksheet.review_plan.discussion) ? <details><summary>查看当时 AI 分析</summary>{[worksheet.comparison, worksheet.review_plan.discussion].filter(Boolean).map((row, index) => <div key={index}><p>{formatEvidenceTime(row!.generated_at)} · {row!.model}</p><p>{row!.summary?.conclusion || "当时未形成有效汇总"}</p></div>)}</details> : null}</section> : <>
         <PositionConstraintsForm worksheet={worksheet} disabled={unavailable} onSaved={accept} />
         {choice ? <section className="aq-plan-current" aria-label="当前处理计划"><div className="aq-position-plan-heading"><h2>已选{PLAN_CHOICES[choice].title}</h2><span>选择不等于成交</span></div><PositionActionPlan key={choice} target={target} choice={choice} worksheet={worksheet} onWorksheet={accept} disabled={unavailable} /><details className="aq-change-route" open={compareOpen} onToggle={(event) => setCompareOpen(event.currentTarget.open)}><summary>重新比较或更换处理方式</summary>{compareOpen ? <PositionRouteComparison worksheet={worksheet} target={target} busy={unavailable} error={error} onChoose={(next, basis) => void choose(next, basis)} showModel={false} /> : null}</details></section> : <section aria-label="了解情况与比较方案"><PositionRouteComparison worksheet={worksheet} target={target} busy={unavailable} error={error} onChoose={(next, basis) => void choose(next, basis)} onModelComplete={() => void load()} /></section>}

@@ -3818,3 +3818,24 @@
   .aq-position-workspace-facts { gap: .75rem; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .aq-position-workspace-facts dd { font-size: .92rem; }
 }
+
+/* Background observations have their own clock and stay readable on narrow screens. */
+.aq-followup-panel { border: 1px solid hsl(var(--border)); border-radius: 14px; padding: 20px; margin: 18px 0; min-width: 0; }
+.aq-followup-panel h2 { font-size: 1rem; margin: 0 0 12px; }
+.aq-followup-status { min-width: 0; overflow-wrap: anywhere; }
+.aq-followup-status p { margin: 8px 0; }
+.aq-followup-status small { display: block; color: hsl(var(--muted-foreground)); line-height: 1.6; }
+.aq-followup-status-compact strong { display: block; margin: 4px 0; font-size: .9rem; }
+.aq-followup-settings { border-top: 1px solid hsl(var(--border)); margin-top: 14px; padding-top: 12px; }
+.aq-followup-settings summary { min-height: 44px; padding: 8px 0; cursor: pointer; font-weight: 600; }
+.aq-followup-settings label { display: grid; gap: 8px; margin-top: 14px; min-width: 0; }
+.aq-followup-settings select { width: 100%; max-width: 100%; min-width: 0; min-height: 44px; padding: 10px; border: 1px solid hsl(var(--border)); border-radius: 8px; background: hsl(var(--background)); color: hsl(var(--foreground)); }
+.aq-followup-home { display: grid; gap: 10px; margin-top: 16px; }
+.aq-followup-home-row { display: flex; gap: 16px; align-items: center; justify-content: space-between; border: 1px solid hsl(var(--border)); border-radius: 12px; padding: 16px; min-width: 0; }
+.aq-followup-home-row > div { min-width: 0; overflow-wrap: anywhere; }
+.aq-followup-home-row > .aq-btn { flex-shrink: 0; }
+@media (max-width: 600px) {
+  .aq-followup-panel { padding: 16px; }
+  .aq-followup-home-row { align-items: stretch; flex-direction: column; gap: 10px; }
+  .aq-followup-home-row > .aq-btn { align-self: flex-start; }
+}

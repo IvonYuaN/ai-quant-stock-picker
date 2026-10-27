@@ -147,7 +147,7 @@ export function PositionActionPlan({ eventId, target, choice, worksheet, onWorks
           <p className="aq-next-cancel"><b>{choice === "t_watch" ? "什么时候不做了" : "什么时候重新考虑"}</b>{expired ? "旧价位只作参考，更新后再继续。" : simple.stop}</p>
         </>}
         <div className="aq-plan-meta"><span>{formatEvidenceTime(data.basis.quote_as_of)} · 可卖 {data.basis.sellable_shares ?? "待核对"} 股</span><button className="aq-btn" type="button" disabled={busy} onClick={() => void refresh()}>{busy ? "更新中…" : "更新行情"}</button></div>
-        <p className="aq-note">页面可见时每分钟更新，离开后不追踪到价或推送计划提醒。{editedPrices.current.sell_price || editedPrices.current.buy_price ? "含你设定的观察价。" : "观察价取自已发生的高低点。"}</p>
+        <p className="aq-note">页面可见时每分钟读取。后台只跟进已保存的观察价，检查时点见上方记录。{editedPrices.current.sell_price || editedPrices.current.buy_price ? "含你设定的观察价。" : "当前试算参考已发生的高低点，保存前不作为后台观察线。"}</p>
       </div>
       {choice === "t_watch" ? <p className="aq-note">做 T 是“先卖、后买”的差价尝试。操作前先试算费用；可能买不回来，也可能继续亏损。</p> : null}
       {choice !== "hold" ? <details className="aq-plan-calculator" ref={calculator}>

@@ -421,12 +421,20 @@ export interface PositionConstraints {
   risk_baseline: { price: number; shares: number; market_value: number; as_of: string; confirmed_at: string } | null;
 }
 export interface PlanTarget { kind: "position" | "alert"; id: string }
+export type FollowupMode = "off" | "changes" | "daily";
+export interface FollowupObservation {
+  position_id: string; symbol: string; name: string;
+  state: "waiting" | "price_watch" | "below_watch" | "paused" | "needs_review" | "evidence_unavailable" | "missing_prices" | "exited" | "unplanned";
+  title: string; detail: string; observed_at: string; quote_as_of: string | null;
+  revision: string; plan_key: string; position_snapshot: ActionWorksheet["position_snapshot"];
+}
 export interface ActionWorksheet {
   symbol: string;
   position_id?: string;
   name?: string;
   revision?: string;
   archived?: boolean;
+  followup?: { mode: FollowupMode; last_check: FollowupObservation | null; requires_refresh: boolean; issue: string };
   constraints?: PositionConstraints;
   constraints_issue?: string;
   risk_baseline_requires_confirmation?: boolean;
@@ -674,6 +682,9 @@ export const api = {
     request<NonNullable<AlertEvent["review_plan"]>>(`/alerts/${encodeURIComponent(id)}/plan`, "POST", { choice, parameters, expected_position, expected_revision }),
   alertActionPlan: (id: string) => get<ActionWorksheet>(`/alerts/${encodeURIComponent(id)}/action-plan`),
   positionActionPlan: (id: string) => get<ActionWorksheet>(`/positions/${encodeURIComponent(id)}/action-plan`),
+  positionFollowups: () => get<{ items: FollowupObservation[] }>("/position-followups"),
+  savePositionFollowup: (id: string, mode: FollowupMode, expected_mode: FollowupMode, expected_position: ActionWorksheet["position_snapshot"], expected_revision: string) =>
+    request<ActionWorksheet>(`/positions/${encodeURIComponent(id)}/followup`, "POST", { mode, expected_mode, expected_position, expected_revision }),
   savePositionPlan: (id: string, choice: ReviewChoice, expected_position: ActionWorksheet["position_snapshot"], expected_revision: string, parameters?: PlanParameters) =>
     request<ActionWorksheet["review_plan"]>(`/positions/${encodeURIComponent(id)}/plan`, "POST", { choice, parameters, expected_position, expected_revision }),
   savePositionConstraints: (id: string, constraints: Pick<PositionConstraints, "attention" | "extra_cash" | "loss_limit">, expected_position: ActionWorksheet["position_snapshot"], expected_revision: string, reset_risk_baseline = false, expected_quote?: { price: number | null; as_of: string | null }) =>
