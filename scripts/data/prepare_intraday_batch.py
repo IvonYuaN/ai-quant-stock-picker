@@ -8,6 +8,7 @@ import os
 import sys
 from pathlib import Path
 
+
 def _find_project_root(start: Path) -> Path:
     """向上寻找含 pyproject.toml 的目录（兼容脚本位于子目录/经根软链调用）。"""
     for candidate in (start, *start.parents):
@@ -64,12 +65,18 @@ def main() -> int:
         ),
     )
     parser.add_argument("--commit", action="store_true")
+    parser.add_argument("--expected-symbols", default="")
     parser.add_argument("--fail", default="")
     args = parser.parse_args()
     cursor = IntradayUniverseCursor(args.cursor)
     if args.commit:
         cursor.commit_current(
-            scanned_count=int(os.getenv("AQSP_INTRADAY_BATCH_SCANNED", "0"))
+            scanned_count=int(os.getenv("AQSP_INTRADAY_BATCH_SCANNED", "0")),
+            expected_symbols=(
+                tuple(args.expected_symbols.split(","))
+                if args.expected_symbols
+                else None
+            ),
         )
         return 0
     if args.fail:

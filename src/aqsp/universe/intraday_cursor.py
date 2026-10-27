@@ -9,7 +9,7 @@ from datetime import date
 from pathlib import Path
 
 from aqsp.core.time import now_shanghai
-from aqsp.utils.jsonl_io import atomic_write_text
+from aqsp.utils.jsonl_io import advisory_lock, atomic_write_text
 
 
 @dataclass(frozen=True)
@@ -48,6 +48,16 @@ class IntradayUniverseCursor:
         trade_date: date,
         batch_size: int,
     ) -> IntradayBatch:
+        with advisory_lock(self.path):
+            return self._select(symbols, trade_date=trade_date, batch_size=batch_size)
+
+    def _select(
+        self,
+        symbols: list[str] | tuple[str, ...],
+        *,
+        trade_date: date,
+        batch_size: int,
+    ) -> IntradayBatch:
         # Live liquidity rankings can reorder between refreshes. Cursor state
         # must track the current live membership, not transient ranking order.
         normalized = tuple(
@@ -65,6 +75,9 @@ class IntradayUniverseCursor:
             or current.get("universe_version") != version
             or int(current.get("universe_count") or 0) != len(normalized)
         ):
+            # A pool/date reset starts a new history. Retaining another pool's
+            # last success can collide when membership later returns to A.
+            current = {}
             offset = 0
             cycle_id = 1
         else:
@@ -93,6 +106,7 @@ class IntradayUniverseCursor:
                 "next_offset": batch.offset,
                 "cycle_id": batch.cycle_id,
                 "active_offset": batch.offset,
+                "active_cycle_id": batch.cycle_id,
                 "active_symbols": list(batch.symbols),
                 "active_batch_id": batch.batch_id,
                 "active_state": "selected",
@@ -100,23 +114,49 @@ class IntradayUniverseCursor:
         )
         return batch
 
-    def commit_current(self, *, scanned_count: int) -> None:
-        current = self._read()
-        if current.get("active_state") != "selected":
-            raise ValueError("no successful active intraday batch to commit")
-        batch = self._batch_from_state(current)
-        self.commit(batch, scanned_count=scanned_count)
+    def commit_current(
+        self,
+        *,
+        scanned_count: int,
+        expected_symbols: tuple[str, ...] | None = None,
+    ) -> None:
+        with advisory_lock(self.path):
+            current = self._read()
+            if current.get("active_state") not in {"selected", "committed"}:
+                raise ValueError("no successful active intraday batch to commit")
+            batch = self._batch_from_state(current)
+            if expected_symbols is not None and expected_symbols != batch.symbols:
+                raise ValueError(
+                    "scan receipt does not match the active intraday batch"
+                )
+            self._commit(batch, scanned_count=scanned_count)
 
     def fail_current(self, error: str) -> None:
-        current = self._read()
-        self.fail(self._batch_from_state(current), error)
+        with advisory_lock(self.path):
+            current = self._read()
+            self._fail(self._batch_from_state(current), error)
 
     def commit(self, batch: IntradayBatch, *, scanned_count: int) -> None:
+        with advisory_lock(self.path):
+            self._commit(batch, scanned_count=scanned_count)
+
+    def _commit(self, batch: IntradayBatch, *, scanned_count: int) -> None:
         if scanned_count != len(batch.symbols):
             raise ValueError(
                 "scanned_count must equal the selected batch size; "
                 f"expected={len(batch.symbols)} actual={scanned_count}"
             )
+        current = self._read()
+        if (
+            current.get("last_batch_id") == batch.batch_id
+            and current.get("last_batch_universe_version") == batch.universe_version
+        ):
+            return
+        if (
+            current.get("active_state") != "selected"
+            or self._batch_from_state(current) != batch
+        ):
+            raise ValueError("stale intraday batch cannot overwrite current cursor")
         next_offset = batch.offset + len(batch.symbols)
         cycle_id = batch.cycle_id
         if next_offset >= batch.universe_count:
@@ -132,17 +172,38 @@ class IntradayUniverseCursor:
                 "cycle_id": cycle_id,
                 "last_successful_offset": batch.offset,
                 "last_batch_id": batch.batch_id,
+                "last_batch_universe_version": batch.universe_version,
                 "scanned_count": scanned_count,
                 "coverage_pct": batch.coverage_pct,
                 "last_batch_finished_at": now_shanghai().isoformat(timespec="seconds"),
                 "last_error": "",
                 "active_state": "committed",
+                "active_offset": batch.offset,
+                "active_cycle_id": batch.cycle_id,
+                "active_symbols": list(batch.symbols),
+                "active_batch_id": batch.batch_id,
             }
         )
 
     def fail(self, batch: IntradayBatch, error: str) -> None:
+        with advisory_lock(self.path):
+            self._fail(batch, error)
+
+    def _fail(self, batch: IntradayBatch, error: str) -> None:
+        current = self._read()
+        if (
+            current.get("last_batch_id") == batch.batch_id
+            and current.get("last_batch_universe_version") == batch.universe_version
+        ):
+            return
+        if (
+            current.get("active_state") not in {"selected", "failed"}
+            or self._batch_from_state(current) != batch
+        ):
+            raise ValueError("stale intraday batch cannot fail current cursor")
         self._write(
             {
+                **current,
                 "trade_date": batch.trade_date,
                 "universe_version": batch.universe_version,
                 "universe_count": batch.universe_count,
@@ -150,7 +211,7 @@ class IntradayUniverseCursor:
                 "next_offset": batch.offset,
                 "cycle_id": batch.cycle_id,
                 "last_successful_offset": int(
-                    self._read().get("last_successful_offset") or 0
+                    current.get("last_successful_offset") or 0
                 ),
                 "scanned_count": 0,
                 "coverage_pct": round(batch.offset / batch.universe_count, 6),
@@ -177,7 +238,9 @@ class IntradayUniverseCursor:
         return IntradayBatch(
             trade_date=str(payload.get("trade_date") or ""),
             universe_version=str(payload.get("universe_version") or ""),
-            cycle_id=int(payload.get("cycle_id") or 1),
+            cycle_id=int(
+                payload.get("active_cycle_id", payload.get("cycle_id", 1)) or 1
+            ),
             offset=int(
                 payload.get("active_offset", payload.get("next_offset", 0)) or 0
             ),
