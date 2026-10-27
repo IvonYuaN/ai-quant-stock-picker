@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Callable
 from contextlib import suppress
-from datetime import datetime, timedelta
+from datetime import timedelta
 import fcntl
 import json
 import re
@@ -23,7 +23,8 @@ from aqsp.core.time import now_shanghai
 from aqsp.utils.jsonl_io import advisory_lock
 import candidate_observation as resources
 import position_discussion as transport
-from strategy_review_context import candidate_review_context, historical_numbers, model_review_evidence
+from strategy_review_context import candidate_review_context, historical_numbers, model_review_evidence, source_numbers
+from model_source_time import without_source_times
 
 Choice = Literal['pullback', 'confirmation', 'defer']
 
@@ -138,24 +139,10 @@ def parse(text: str, schema: type[BaseModel], value: dict[str, Any], peers: set[
     score = evidence.get('research', {}).get('candidate', {}).get('score')
     counts = {float(number) for number in (evidence.get('market', {}).get('breadth_counts') or {}).values()
               if type(number) in (int, float)}
-    research = evidence.get('research', {})
-    stamps = [research.get('date'), research.get('generated_at'), research.get('stale_after'),
-              research.get('candidate', {}).get('data_fetched_at'),
-              *(ref.get('as_of') for ref in value['price_refs'].values())]
-    date_tokens = {token for stamp in stamps if isinstance(stamp, str)
-                   for token in (stamp, stamp.split('T')[0]) if re.fullmatch(r'\d{4}-\d{2}-\d{2}(?:T.*)?', token)}
-    for stamp in stamps:
-        try:
-            parsed_stamp = datetime.fromisoformat(stamp)
-            if parsed_stamp.tzinfo is not None:
-                date_tokens.update(parsed_stamp.strftime(pattern) for pattern in ('%Y-%m-%d %H:%M', '%Y-%m-%d %H:%M:%S'))
-        except (ValueError, TypeError):
-            pass
+    date_tokens = source_numbers(evidence, value['price_refs']).stamps
     def prose_without_source_dates(text: str) -> str:
-        prose = re.sub(rf"(?<!\d){re.escape(value['symbol'])}(?!\d)", '', text.replace('T+1', ''))
-        for token in sorted(date_tokens, key=len, reverse=True):
-            prose = re.sub(rf'(?<!\d){re.escape(token)}(?!\d)', '', prose)
-        return prose
+        prose = without_source_times(text.replace('T+1', ''), date_tokens)
+        return re.sub(rf"(?<!\d){re.escape(value['symbol'])}(?!\d)", '', prose)
     for action in parsed['actions']:
         for text in texts(action):
             prose = prose_without_source_dates(text)
@@ -180,7 +167,7 @@ def parse(text: str, schema: type[BaseModel], value: dict[str, Any], peers: set[
     sourced |= history.prices | history.percentages | history.scores | history.counts
     date_tokens |= history.stamps
     for text in texts(parsed):
-        prose = re.sub(rf"(?<!\d){re.escape(value['symbol'])}(?!\d)", '', text.replace('T+1', ''))
+        prose = prose_without_source_dates(text)
         currency = re.findall(r'([-+]?\d+(?:\.\d+)?)\s*(?:元|块|角)', prose)
         percent = re.findall(r'([-+]?\d+(?:\.\d+)?)\s*[%％]', prose)
         scores = re.findall(r'([-+]?\d+(?:\.\d+)?)\s*分', prose)

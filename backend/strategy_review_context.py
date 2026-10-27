@@ -3,10 +3,10 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
-from datetime import datetime
 import math
 import re
 from typing import Any
+from model_source_time import trusted_source_stamps, without_source_times
 
 
 CANDIDATE_CHANGES = {
@@ -193,21 +193,10 @@ def source_numbers(evidence: dict[str, Any], refs: dict[str, Any]) -> SourceNumb
         percentages.extend(row.get('change_pct') for row in market.get('indices', []))
     stamps = [row.get('as_of') for row in rows] + [market.get('as_of'), sector.get('as_of'), research.get('date'),
              research.get('generated_at'), research.get('stale_after'), candidate.get('data_fetched_at')]
-    tokens: set[str] = set()
-    for stamp in stamps:
-        if not isinstance(stamp, str):
-            continue
-        try:
-            parsed = datetime.fromisoformat(stamp)
-        except ValueError:
-            continue
-        tokens.update((stamp, parsed.date().isoformat()))
-        if parsed.tzinfo is not None:
-            tokens.update(parsed.strftime(pattern) for pattern in ('%Y-%m-%d %H:%M', '%Y-%m-%d %H:%M:%S'))
     return SourceNumbers(numbers([row.get('price') for row in rows]), numbers(percentages),
                          numbers([candidate.get('score')]) if candidate.get('data_source') else frozenset(),
                          numbers(list((market.get('breadth_counts') or {}).values())) if market.get('source') else frozenset(),
-                         frozenset(tokens))
+                         trusted_source_stamps(stamps))
 
 
 def historical_numbers(context: dict[str, Any] | None) -> SourceNumbers:
@@ -222,18 +211,28 @@ def historical_numbers(context: dict[str, Any] | None) -> SourceNumbers:
 def validate_position_action_numbers(parsed: dict[str, Any], evidence: dict[str, Any], prices: dict[str, Any]) -> None:
     """Reject old/invented numeric action conditions even if supplied in history."""
     facts = source_numbers(evidence, prices)
+    history = historical_numbers({'original': evidence.get('adopted_plan')})
+    def validate_explanation_times(value: Any) -> None:
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if key not in {'actions', 'price_ref', 'evidence_ids', 'reply_to'}:
+                    validate_explanation_times(child)
+        elif isinstance(value, list):
+            for child in value:
+                validate_explanation_times(child)
+        elif isinstance(value, str):
+            without_source_times(value.replace('T+1', ''), facts.stamps | history.stamps)
+    validate_explanation_times(parsed)
     allowed = facts.prices
     stamps = facts.stamps
     for action in parsed.get('actions', []):
         for key in ('condition', 'invalidation'):
-            prose = action[key].replace('T+1', '')
+            prose = without_source_times(action[key].replace('T+1', ''), stamps)
             # Inspect currency before removing source dates: otherwise a model
             # can turn an allowed date into a fabricated price by adding 元.
             currency = re.findall(r'([-+]?\d+(?:\.\d+)?)\s*(?:元|块|角)', prose)
             if any(float(number) not in allowed for number in currency):
                 raise ValueError('模型动作的价格单位与当前有源价位不符')
-            for stamp in sorted(stamps, key=len, reverse=True):
-                prose = re.sub(rf'(?<!\d){re.escape(stamp)}(?!\d|\s*[元块角股手%％分家点倍])', '', prose)
             for suffix, values in ((r'[%％]', facts.percentages), (r'分', facts.scores), (r'家', facts.counts)):
                 prose = re.sub(rf'([-+]?\d+(?:\.\d+)?)\s*{suffix}',
                                lambda match: '' if float(match[1]) in values else match[0], prose)

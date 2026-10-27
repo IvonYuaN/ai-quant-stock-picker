@@ -1,0 +1,516 @@
+{
+  "capture_note": "Offline synthetic-evidence Agnes 3.0 Flash capture; raw role index2 was rejected for minute ISO source-time spelling. No credentials or production holdings.",
+  "value": {
+    "symbol": "600000",
+    "entry_blocked": false,
+    "evidence": {
+      "research": {
+        "candidate": {
+          "symbol": "600000",
+          "display_name": "合成候选",
+          "score": 75,
+          "freshness": "fresh",
+          "data_source": "synthetic",
+          "data_fetched_at": "2026-10-27T09:55:00+08:00",
+          "data_timestamp_source": "source_time",
+          "deterministic_reasons": [
+            "合成研究依据已变化，需复核原方案"
+          ]
+        },
+        "date": "2026-10-27",
+        "generated_at": "2026-10-27T09:55:00+08:00",
+        "stale_after": "2026-10-28T08:00:00+08:00",
+        "source": {
+          "status": "fresh"
+        },
+        "parameter_snapshot": null,
+        "recommendation_gate": {
+          "recommendation_allowed": true,
+          "status": "ready",
+          "reasons": []
+        },
+        "debate": null
+      },
+      "quote": {
+        "price": 10.2,
+        "change_pct": 2,
+        "as_of": "2026-10-27T10:00:00+08:00",
+        "source": "合成报价源"
+      },
+      "market": {
+        "status": "strong",
+        "summary": "市场宽度偏强；上涨 3000 家，下跌 1800 家",
+        "as_of": "2026-10-27T10:00:00+08:00",
+        "source": "既有市场情绪快照/东方财富",
+        "evidence": [
+          "上涨 3000 家，下跌 1800 家"
+        ],
+        "breadth_counts": {
+          "up": 3000.0,
+          "down": 1800.0
+        }
+      },
+      "sector": {
+        "status": "rising",
+        "summary": "合成银行涨跌幅 +1.00%",
+        "as_of": "2026-10-27T10:00:00+08:00",
+        "source": "合成板块源",
+        "evidence": [
+          "合成银行涨跌幅 +1.00%"
+        ],
+        "industry": "合成银行",
+        "change_pct": 1.0
+      },
+      "stock": {
+        "status": "rising",
+        "summary": "个股当日涨跌幅 +2.00%",
+        "as_of": "2026-10-27T10:00:00+08:00",
+        "source": "合成报价源",
+        "evidence": [
+          "当日涨跌幅 +2.00%"
+        ]
+      },
+      "adopted_plan": {
+        "choice": "pullback",
+        "condition": "到价后人工核对是否止跌",
+        "invalidation": "研究或风险变化后取消",
+        "comparator": "at_or_below",
+        "adopted_at": "2026-10-27T10:00:00+08:00",
+        "evidence_version": "b7ff438a3a779bd4631bcd769524be45065b5e95ff2712f25afe07b6d8d0979d",
+        "saved_at": "2026-10-27T10:00:00+08:00",
+        "price_ref": {
+          "label": "本交易日已见低点",
+          "price": 9.8,
+          "as_of": "2026-10-27T10:00:00+08:00",
+          "source": "合成报价源"
+        },
+        "evidence_snapshot": {
+          "research": {
+            "candidate": {
+              "symbol": "600000",
+              "display_name": "合成候选",
+              "score": 75,
+              "freshness": "fresh",
+              "data_source": "synthetic",
+              "data_fetched_at": "2026-10-27T09:55:00+08:00",
+              "data_timestamp_source": "source_time",
+              "deterministic_reasons": [
+                "合成量价依据"
+              ]
+            },
+            "date": "2026-10-27",
+            "generated_at": "2026-10-27T09:55:00+08:00",
+            "stale_after": "2026-10-28T08:00:00+08:00",
+            "source": {
+              "status": "fresh"
+            },
+            "parameter_snapshot": null,
+            "recommendation_gate": {
+              "recommendation_allowed": true,
+              "status": "ready",
+              "reasons": []
+            },
+            "debate": null
+          },
+          "quote": {
+            "price": 10.2,
+            "change_pct": 2,
+            "as_of": "2026-10-27T10:00:00+08:00",
+            "source": "合成报价源"
+          },
+          "market": {
+            "status": "strong",
+            "summary": "市场宽度偏强；上涨 3000 家，下跌 1800 家",
+            "as_of": "2026-10-27T10:00:00+08:00",
+            "source": "既有市场情绪快照/东方财富",
+            "evidence": [
+              "上涨 3000 家，下跌 1800 家"
+            ],
+            "breadth_counts": {
+              "up": 3000.0,
+              "down": 1800.0
+            }
+          },
+          "sector": {
+            "status": "rising",
+            "summary": "合成银行涨跌幅 +1.00%",
+            "as_of": "2026-10-27T10:00:00+08:00",
+            "source": "合成板块源",
+            "evidence": [
+              "合成银行涨跌幅 +1.00%"
+            ],
+            "industry": "合成银行",
+            "change_pct": 1.0
+          },
+          "stock": {
+            "status": "rising",
+            "summary": "个股当日涨跌幅 +2.00%",
+            "as_of": "2026-10-27T10:00:00+08:00",
+            "source": "合成报价源",
+            "evidence": [
+              "当日涨跌幅 +2.00%"
+            ]
+          }
+        },
+        "price_refs": {
+          "price": {
+            "label": "当前有源报价",
+            "price": 10.2,
+            "as_of": "2026-10-27T10:00:00+08:00",
+            "source": "合成报价源"
+          },
+          "last_close": {
+            "label": "行情源前收盘价",
+            "price": 10.0,
+            "as_of": "2026-10-27T10:00:00+08:00",
+            "source": "合成报价源"
+          },
+          "high": {
+            "label": "本交易日已见高点",
+            "price": 10.5,
+            "as_of": "2026-10-27T10:00:00+08:00",
+            "source": "合成报价源"
+          },
+          "low": {
+            "label": "本交易日已见低点",
+            "price": 9.8,
+            "as_of": "2026-10-27T10:00:00+08:00",
+            "source": "合成报价源"
+          }
+        },
+        "snapshot_complete": true
+      },
+      "review_changes": {
+        "changes": [
+          {
+            "category": "candidate",
+            "label": "个股评分或研究证据变化",
+            "before": {
+              "symbol": "600000",
+              "display_name": "合成候选",
+              "score": 75,
+              "freshness": "fresh",
+              "data_source": "synthetic",
+              "data_fetched_at": "2026-10-27T09:55:00+08:00",
+              "data_timestamp_source": "source_time",
+              "deterministic_reasons": [
+                "合成量价依据"
+              ]
+            },
+            "after": {
+              "symbol": "600000",
+              "display_name": "合成候选",
+              "score": 75,
+              "freshness": "fresh",
+              "data_source": "synthetic",
+              "data_fetched_at": "2026-10-27T09:55:00+08:00",
+              "data_timestamp_source": "source_time",
+              "deterministic_reasons": [
+                "合成研究依据已变化，需复核原方案"
+              ]
+            }
+          }
+        ],
+        "missing_evidence": [],
+        "material_changed": true,
+        "quote_updated": false
+      }
+    },
+    "price_refs": {
+      "price": {
+        "label": "当前有源报价",
+        "price": 10.2,
+        "as_of": "2026-10-27T10:00:00+08:00",
+        "source": "合成报价源"
+      },
+      "last_close": {
+        "label": "行情源前收盘价",
+        "price": 10.0,
+        "as_of": "2026-10-27T10:00:00+08:00",
+        "source": "合成报价源"
+      },
+      "high": {
+        "label": "本交易日已见高点",
+        "price": 10.5,
+        "as_of": "2026-10-27T10:00:00+08:00",
+        "source": "合成报价源"
+      },
+      "low": {
+        "label": "本交易日已见低点",
+        "price": 9.8,
+        "as_of": "2026-10-27T10:00:00+08:00",
+        "source": "合成报价源"
+      }
+    },
+    "quote": {
+      "price": 10.2,
+      "change_pct": 2,
+      "as_of": "2026-10-27T10:00:00+08:00",
+      "source": "合成报价源"
+    },
+    "review_context": {
+      "kind": "candidate",
+      "status": "adopted",
+      "original": {
+        "choice": "pullback",
+        "condition": "到价后人工核对是否止跌",
+        "invalidation": "研究或风险变化后取消",
+        "comparator": "at_or_below",
+        "adopted_at": "2026-10-27T10:00:00+08:00",
+        "evidence_version": "b7ff438a3a779bd4631bcd769524be45065b5e95ff2712f25afe07b6d8d0979d",
+        "saved_at": "2026-10-27T10:00:00+08:00",
+        "price_ref": {
+          "label": "本交易日已见低点",
+          "price": 9.8,
+          "as_of": "2026-10-27T10:00:00+08:00",
+          "source": "合成报价源"
+        },
+        "evidence_snapshot": {
+          "research": {
+            "candidate": {
+              "symbol": "600000",
+              "display_name": "合成候选",
+              "score": 75,
+              "freshness": "fresh",
+              "data_source": "synthetic",
+              "data_fetched_at": "2026-10-27T09:55:00+08:00",
+              "data_timestamp_source": "source_time",
+              "deterministic_reasons": [
+                "合成量价依据"
+              ]
+            },
+            "date": "2026-10-27",
+            "generated_at": "2026-10-27T09:55:00+08:00",
+            "stale_after": "2026-10-28T08:00:00+08:00",
+            "source": {
+              "status": "fresh"
+            },
+            "parameter_snapshot": null,
+            "recommendation_gate": {
+              "recommendation_allowed": true,
+              "status": "ready",
+              "reasons": []
+            },
+            "debate": null
+          },
+          "quote": {
+            "price": 10.2,
+            "change_pct": 2,
+            "as_of": "2026-10-27T10:00:00+08:00",
+            "source": "合成报价源"
+          },
+          "market": {
+            "status": "strong",
+            "summary": "市场宽度偏强；上涨 3000 家，下跌 1800 家",
+            "as_of": "2026-10-27T10:00:00+08:00",
+            "source": "既有市场情绪快照/东方财富",
+            "evidence": [
+              "上涨 3000 家，下跌 1800 家"
+            ],
+            "breadth_counts": {
+              "up": 3000.0,
+              "down": 1800.0
+            }
+          },
+          "sector": {
+            "status": "rising",
+            "summary": "合成银行涨跌幅 +1.00%",
+            "as_of": "2026-10-27T10:00:00+08:00",
+            "source": "合成板块源",
+            "evidence": [
+              "合成银行涨跌幅 +1.00%"
+            ],
+            "industry": "合成银行",
+            "change_pct": 1.0
+          },
+          "stock": {
+            "status": "rising",
+            "summary": "个股当日涨跌幅 +2.00%",
+            "as_of": "2026-10-27T10:00:00+08:00",
+            "source": "合成报价源",
+            "evidence": [
+              "当日涨跌幅 +2.00%"
+            ]
+          }
+        },
+        "price_refs": {
+          "price": {
+            "label": "当前有源报价",
+            "price": 10.2,
+            "as_of": "2026-10-27T10:00:00+08:00",
+            "source": "合成报价源"
+          },
+          "last_close": {
+            "label": "行情源前收盘价",
+            "price": 10.0,
+            "as_of": "2026-10-27T10:00:00+08:00",
+            "source": "合成报价源"
+          },
+          "high": {
+            "label": "本交易日已见高点",
+            "price": 10.5,
+            "as_of": "2026-10-27T10:00:00+08:00",
+            "source": "合成报价源"
+          },
+          "low": {
+            "label": "本交易日已见低点",
+            "price": 9.8,
+            "as_of": "2026-10-27T10:00:00+08:00",
+            "source": "合成报价源"
+          }
+        },
+        "snapshot_complete": true
+      },
+      "current": {
+        "symbol": "600000",
+        "evidence_version": "1103cef01c26e4177692e8553762d940aa4b460ad8bfe1e1ac91f68d2592191b",
+        "evidence_basis": {
+          "schema": "candidate-basis-v2",
+          "research_date": "385ceada9f6cde107bed820a0c01f937118b3f5a6e311a373842d551c925b39f",
+          "parameters": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+          "candidate": "a5b7c2366ec7b49a6b53adb1960effa29a6ffe880f24e563631d4734a065b52d",
+          "risk_gate": "56416f7acbbfb6625bf8ad60d651727a0078e092d1c282ce0efd5bf19c8df054",
+          "research_source": "54e22b82ecdea729c0d55dd59165bc06448123fb736679beaa30ec372667cb14",
+          "debate": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+          "ownership": "b79e7917727499f209920ece46f74094cac7b7ede0358bb3d314ba44ed8a3375",
+          "quote_source": "65d7f963be42499a9b5ae149460ea6215a0b994f5f4f01ef1a6e13c089ff504d",
+          "directions": "62006f3f26aa03d37e732400f0a327b6eb0cf20f8f4ba46bad2f0fc34583f324"
+        },
+        "ownership": {
+          "status": "unowned",
+          "position_id": null
+        },
+        "entry_blocked": false,
+        "evidence_snapshot": {
+          "research": {
+            "candidate": {
+              "symbol": "600000",
+              "display_name": "合成候选",
+              "score": 75,
+              "freshness": "fresh",
+              "data_source": "synthetic",
+              "data_fetched_at": "2026-10-27T09:55:00+08:00",
+              "data_timestamp_source": "source_time",
+              "deterministic_reasons": [
+                "合成研究依据已变化，需复核原方案"
+              ]
+            },
+            "date": "2026-10-27",
+            "generated_at": "2026-10-27T09:55:00+08:00",
+            "stale_after": "2026-10-28T08:00:00+08:00",
+            "source": {
+              "status": "fresh"
+            },
+            "parameter_snapshot": null,
+            "recommendation_gate": {
+              "recommendation_allowed": true,
+              "status": "ready",
+              "reasons": []
+            },
+            "debate": null
+          },
+          "quote": {
+            "price": 10.2,
+            "change_pct": 2,
+            "as_of": "2026-10-27T10:00:00+08:00",
+            "source": "合成报价源"
+          },
+          "market": {
+            "status": "strong",
+            "summary": "市场宽度偏强；上涨 3000 家，下跌 1800 家",
+            "as_of": "2026-10-27T10:00:00+08:00",
+            "source": "既有市场情绪快照/东方财富",
+            "evidence": [
+              "上涨 3000 家，下跌 1800 家"
+            ],
+            "breadth_counts": {
+              "up": 3000.0,
+              "down": 1800.0
+            }
+          },
+          "sector": {
+            "status": "rising",
+            "summary": "合成银行涨跌幅 +1.00%",
+            "as_of": "2026-10-27T10:00:00+08:00",
+            "source": "合成板块源",
+            "evidence": [
+              "合成银行涨跌幅 +1.00%"
+            ],
+            "industry": "合成银行",
+            "change_pct": 1.0
+          },
+          "stock": {
+            "status": "rising",
+            "summary": "个股当日涨跌幅 +2.00%",
+            "as_of": "2026-10-27T10:00:00+08:00",
+            "source": "合成报价源",
+            "evidence": [
+              "当日涨跌幅 +2.00%"
+            ]
+          }
+        },
+        "price_refs": {
+          "price": {
+            "label": "当前有源报价",
+            "price": 10.2,
+            "as_of": "2026-10-27T10:00:00+08:00",
+            "source": "合成报价源"
+          },
+          "last_close": {
+            "label": "行情源前收盘价",
+            "price": 10.0,
+            "as_of": "2026-10-27T10:00:00+08:00",
+            "source": "合成报价源"
+          },
+          "high": {
+            "label": "本交易日已见高点",
+            "price": 10.5,
+            "as_of": "2026-10-27T10:00:00+08:00",
+            "source": "合成报价源"
+          },
+          "low": {
+            "label": "本交易日已见低点",
+            "price": 9.8,
+            "as_of": "2026-10-27T10:00:00+08:00",
+            "source": "合成报价源"
+          }
+        }
+      },
+      "changes": [
+        {
+          "category": "candidate",
+          "label": "个股评分或研究证据变化",
+          "before": {
+            "symbol": "600000",
+            "display_name": "合成候选",
+            "score": 75,
+            "freshness": "fresh",
+            "data_source": "synthetic",
+            "data_fetched_at": "2026-10-27T09:55:00+08:00",
+            "data_timestamp_source": "source_time",
+            "deterministic_reasons": [
+              "合成量价依据"
+            ]
+          },
+          "after": {
+            "symbol": "600000",
+            "display_name": "合成候选",
+            "score": 75,
+            "freshness": "fresh",
+            "data_source": "synthetic",
+            "data_fetched_at": "2026-10-27T09:55:00+08:00",
+            "data_timestamp_source": "source_time",
+            "deterministic_reasons": [
+              "合成研究依据已变化，需复核原方案"
+            ]
+          }
+        }
+      ],
+      "missing_evidence": [],
+      "material_changed": true,
+      "quote_updated": false,
+      "notice": "原证据只用于采用时与现在的历史对比，不是当前行动依据；新增观察条件只能引用本次有效 price_refs。比较维持原路、调整或暂缓的依据，缺原证据时明确未知，不从现在倒推；本次分析不修改人工计划，也不要求重新选择。"
+    }
+  },
+  "raw_role": "{\n  \"summary\": \"已采用pullback路线（到本交易日低点9.8后人工核对是否止跌）。本次研究依据触发复核对：评分75未变但研究理由从“合成量价依据”变为“合成研究依据已变化，需复核原方案”（review_changes），但当前输入未提供具体哪些量价风险变了。当前报价10.2（有源报价，2026-10-27T10:00）高于原参考价9.8（本交易日已见低点，2026-10-27T10:00），且当日个股+2%、板块+1%、市场偏强，说明报价尚未回到原参考价。普通报价刷新不自动修改已采用条件，但研究证据变化属于原计划失效触发项（“研究或风险变化后取消”），在拿到更新且可核对的量价证据前，不宜继续按9.8执行，也不宜新设观察价。\",\n  \"evidence_ids\": [\n    \"adopted_plan\",\n    \"research\",\n    \"quote\",\n    \"stock\",\n    \"sector\",\n    \"market\",\n    \"review_changes\"\n  ],\n  \"uncertainties\": [\n    \"研究结论“已变化”未给出具体变化维度（量、价、流动性、行业政策等），无法判断是实质变差还是仅数据刷新。\",\n    \"原9.8本交易日低点在报价10.2上方/下方关系未知，且报价尚未触及9.8，是否构成“止跌”依据缺失。\",\n    \"未提供今日成交量、分时低点确认、是否放量等可用于人工核对的信息。\",\n    \"研究证据stale_after为2026-10-28T08:00，当前仍有效，但“已变化”提示原依据不可直接沿用。\"\n  ],\n  \"actions\": [\n    {\n      \"choice\": \"defer\",\n      \"price_ref\": null,\n      \"condition\": \"暂缓：等待研究端补充并交付“具体变化点”（例如量价结构、成交、关键价位是否有效）后，再评估是否恢复原9.8（本交易日已见低点，2026-10-27T10:00）的pullback路线，或改走confirmation路线并引用新的有效price_refs。\",\n      \"invalidation\": \"若后续输入明确说明研究变化仅数据刷新且量价依据仍成立，且报价回落至或低于9.8（本交易日已见低点，2026-10-27T10:00）并出现人工可核对的止跌迹象，可恢复pullback；若出现新的硬性风险或评分/推荐门变更，则维持暂缓。\"\n    }\n  ],\n  \"challenge\": \"\"\n}"
+}
