@@ -6,6 +6,7 @@ synthetic alert is created. Quote I/O happens before the alerts -> portfolio loc
 from __future__ import annotations
 
 from copy import deepcopy
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -101,8 +102,6 @@ def read_action_plan(event_id: str) -> dict[str, Any] | None:
 
 def read_position_plan(position_id: str) -> dict[str, Any] | None:
     """Read current quote evidence, personal constraints and one durable plan."""
-    from decision_context import _session
-
     # Do not invoke the legacy owner migration for an unknown tenant merely
     # because it guessed another tenant's position identity.
     if not Path(pf._pf_file()).is_file():
@@ -110,9 +109,17 @@ def read_position_plan(position_id: str) -> dict[str, Any] | None:
     # This established API lazily attaches IDs/rules for legacy holdings.
     pf.get_risk_rules()
     portfolio = pf.get_portfolio()
-    holding = next((row for row in portfolio['holdings'] if row.get('position_id') == position_id), None)
     with ae._LOCK, pf._LOCK:
         events, data = ae._load(), pf._load()
+    return build_position_worksheet(position_id, portfolio, data, events, current=now_shanghai())
+
+
+def build_position_worksheet(position_id: str, portfolio: dict[str, Any], data: dict[str, Any], events: list[dict[str, Any]],
+                             *, current: datetime, context: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    """Build from one already observed portfolio; no disk or network reads."""
+    from decision_context import _session
+
+    holding = next((row for row in portfolio['holdings'] if row.get('position_id') == position_id), None)
     root = _root(data, events, position_id)
     receipt = _receipt(data, position_id)
     archived = holding is None
@@ -126,11 +133,10 @@ def read_position_plan(position_id: str) -> dict[str, Any] | None:
     if not archived and (live is None or any(live.get(key) != holding.get(key) for key in ('cost', 'shares'))):
         raise PlanConflictError('读取期间持仓已变化，请刷新')
     holding = {**holding, **(_snapshot(live) if live else {}), 'risk_rules': [row for row in data.get('risk_rules', []) if row.get('position_id') == position_id]}
-    current = now_shanghai()
     same = _events_for(events, position_id)
     opened = [row for row in same if row.get('status') == 'OPEN']
     context_event = max(same, key=lambda row: str(row.get('updated_at', '')), default={})
-    old_context = context_event.get('position_context') or {}
+    old_context = context if context is not None else context_event.get('position_context') or {}
     quote = holding.get('quote') or {}
     evidence = current_position_evidence(old_context, quote, current=current)
     basis = build_action_basis(holding, quote, None, checked_at=current, joint_weakness=False).to_dict()
@@ -175,7 +181,8 @@ def read_position_plan(position_id: str) -> dict[str, Any] | None:
     comparison = root.get('comparison')
     if comparison and not archived and comparison.get('position_snapshot') != snapshot:
         comparison = None
-    return {'position_id': position_id, 'name': holding.get('name') or holding['code'], 'symbol': holding['code'],
+    from position_followup import followup_view
+    return {'followup': followup_view(root, revision, snapshot, current=current), 'position_id': position_id, 'name': holding.get('name') or holding['code'], 'symbol': holding['code'],
             'revision': revision, 'archived': archived, 'constraints': constraints, **details,
             'migration_issue': root.get('migration_issue', ''), 'basis': basis, 'position_snapshot': snapshot, 'review_plan': plan,
             'route_review': review, 'comparison': comparison, 'analysis_basis_id': basis_id, 'risk_revision': risk_revision,

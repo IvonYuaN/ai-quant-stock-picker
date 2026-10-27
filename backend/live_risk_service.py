@@ -56,6 +56,11 @@ def check_positions(
     holding_days_override: dict[str, int] | None = None, *, notify: bool = True
 ) -> dict:
     """Check current tenant positions; persist events and optional notifications."""
+    import alert_events
+    from position_followup import plan_key, risk_rule_key
+    with alert_events._LOCK, pf._LOCK:
+        initial_roots = pf._load().get("position_reviews", {})
+        expected_plan_keys = {position_id: plan_key(root, position_id) for position_id, root in initial_roots.items()}
     try:
         pf_data = pf.get_portfolio()
     except Exception as e:  # noqa: BLE001
@@ -202,7 +207,8 @@ def check_positions(
     serialized = [reminder.to_dict() for reminder in reminders]
     from position_context_source import load_position_sectors
 
-    sectors = load_position_sectors(sorted({row["symbol"] for row in serialized}))
+    planned_codes = {root.get("symbol") for root in initial_roots.values() if root.get("review_plan", {}).get("choice")}
+    sectors = load_position_sectors(sorted({row["symbol"] for row in serialized} | (planned_codes & active_codes)))
     contexts: dict[str, dict] = {}
     for holding in pf_data.get("holdings", []):
         code = holding["code"]
@@ -256,6 +262,22 @@ def check_positions(
         )
         notify_results = list(delivery.notify)
         suppressed = delivery.notify_suppressed
+    # Reuse this already fetched source batch; page reads never create checks.
+    from position_followup_service import check_plan_followups
+    try:
+        risk_notified = {str(event.get("position_id")) for event in alert_events.list_events()
+                         if event.get("rule_id") in eligible
+                         and str(event.get("last_notified_at") or "")[:10] == checked_at.date().isoformat()}
+        followup = check_plan_followups(pf_data, contexts, current=checked_at, notify=notify,
+                                       risk_notified_positions=risk_notified, expected_plan_keys=expected_plan_keys,
+                                       expected_rule_keys={position_id: risk_rule_key(rules, position_id) for position_id in initial_roots},
+                                       changed_symbols=set(committed.changed_symbols))
+        checks["skipped"].extend(followup["skipped"])
+        notify_results.extend(followup["notify"])
+        suppressed = suppressed or followup["notify_suppressed"]
+    except (OSError, ValueError, DataError):
+        logger.exception("position_plan_followup_failed")
+        checks["skipped"].append({"symbol": "", "level": "PLAN", "reason": "计划跟进未完成；已保存风险检查不受影响，请核对后台记录"})
     return {
         "reminders": serialized,
         "new_events": new_events,
@@ -293,7 +315,7 @@ def check_existing_tenants(*, notify: bool = False) -> dict:
             continue
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
-            if not isinstance(payload, dict) or not payload.get("holdings"):
+            if not isinstance(payload, dict) or not (payload.get("holdings") or payload.get("position_reviews")):
                 continue
             token = tenant.current_tenant.set(tid)
             try:
