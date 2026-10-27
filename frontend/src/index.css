@@ -3842,3 +3842,20 @@
   .aq-followup-home-row { align-items: stretch; flex-direction: column; gap: 10px; }
   .aq-followup-home-row > .aq-btn { align-self: flex-start; }
 }
+
+/* Actual executions: a short result first, auditable details on demand. */
+.aq-trade-journal { border: 1px solid var(--aq-border, #d6dbe0); border-radius: 12px; padding: 16px; margin: 12px 0; overflow-wrap: anywhere; }
+.aq-trade-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.aq-trade-title h3 { margin: 0; font-size: 16px; }
+.aq-trade-progress { display: flex; flex-wrap: wrap; gap: 8px 20px; margin: 14px 0 8px; }
+.aq-trade-net { font-weight: 600; margin: 8px 0; }
+.aq-trade-form { display: grid; gap: 12px; padding: 16px 0; border-top: 1px solid var(--aq-border, #d6dbe0); }
+.aq-trade-form label { display: grid; gap: 6px; min-width: 0; }
+.aq-trade-form select, .aq-trade-form input { width: 100%; min-width: 0; max-width: 100%; }
+.aq-trade-form .aq-action-plan-confirm { display: flex; align-items: flex-start; }
+.aq-trade-form .aq-action-plan-confirm input { width: auto; flex: 0 0 auto; margin-top: 4px; }
+.aq-trade-form h4, .aq-trade-form p { margin: 0; }
+.aq-trade-receipts { display: grid; gap: 12px; padding-left: 20px; }
+.aq-trade-receipts li { display: grid; gap: 4px; font-size: 13px; }
+.aq-trade-links > div { padding: 8px 0 12px; }
+@media (max-width: 480px) { .aq-trade-journal { padding: 12px; } .aq-trade-title { align-items: flex-start; } .aq-trade-title .aq-btn { flex-shrink: 0; } }

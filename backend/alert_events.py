@@ -462,7 +462,9 @@ def close_from_operation(
     with _LOCK, advisory_lock(_file()):
         events = _load()
         portfolio = pf.close_position(code, date, price, shares, cost, receipt_id)
-        receipt = next(row for row in portfolio["closed"] if row.get("operation_id") == receipt_id)
+        # The visible portfolio projection may hide old history; idempotency
+        # and alert reconciliation must use the durable raw receipt.
+        receipt = next(row for row in pf._load().get("closed", []) if row.get("operation_id") == receipt_id)
         position_id = receipt.get("position_id")
         stamp = _now_iso()
         changed = False
@@ -506,9 +508,12 @@ def close_from_event(event_id: str, date: str, price: float, shares: float) -> d
             # A monitor may expire the event between the durable sale and a failed
             # event write. The portfolio receipt, not the alert status, proves it
             # is safe to finish that interrupted disposition without another sale.
+            # Hidden history remains a durable idempotency receipt.  Reading the
+            # visible projection would make an interrupted retry look like a
+            # missing sale and could deduct the same fill twice.
             receipt_exists = any(
                 closed.get("operation_id") == operation_id
-                for closed in pf.get_portfolio().get("closed", [])
+                for closed in pf._load().get("closed", [])
             )
             if not receipt_exists:
                 raise ValueError("提醒已处理，不能重复回录")
@@ -519,7 +524,7 @@ def close_from_event(event_id: str, date: str, price: float, shares: float) -> d
         sale_receipt = next(
             (
                 closed
-                for closed in portfolio.get("closed", [])
+                for closed in pf._load().get("closed", [])
                 if closed.get("operation_id") == operation_id
             ),
             None,

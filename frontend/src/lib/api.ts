@@ -359,6 +359,35 @@ export interface PortfolioData {
   updated: string; last_refresh: string | null;
 }
 
+export interface TradeReceipt {
+  receipt_id: string; operation_id: string; tenant: string; position_id: string;
+  code: string; direction: "buy" | "sell"; date: string;
+  price: number; shares: number; actual_fees: number | null; recorded_at: string;
+}
+export interface TradeAllocation {
+  sell_receipt_id: string; buy_receipt_id: string; shares: number;
+  confirm_same_day_order: boolean; confirm_cross_position: boolean;
+}
+export interface TradeLink { link_id: string; allocations: TradeAllocation[]; }
+export interface TradeSummary {
+  sold_shares: number; bought_back_shares: number; unmatched_sell_shares: number;
+  gross_difference: number; allocated_fees: number | null; net_difference: number | null;
+  unmatched_sell_proceeds: number;
+  allocations: (TradeAllocation & { gross_difference: number; allocated_fees: number | null; net_difference: number | null })[];
+}
+export interface TradeJournal {
+  revision: string; code: string;
+  position: { position_id: string | null; revision: string; shares: number; cost: number; sellable_shares: number };
+  receipts: TradeReceipt[]; links: TradeLink[]; summary: TradeSummary;
+}
+export interface TradeInput {
+  operation_id: string; direction: "buy" | "sell"; code: string; date: string;
+  price: number; shares: number; actual_fees: number | null;
+  expected_position_id: string | null; expected_position_revision: string; alert_id?: string;
+}
+export interface TradeFeeInput { operation_id: string; expected_revision: string; actual_fees: number | null; }
+export interface TradeLinkInput { operation_id: string; expected_revision: string; allocations: TradeAllocation[]; }
+
 // P0-2 该卖提醒（后端 `backend/alert_events.py`，PRD 7.2 alert_event）
 /** 单条该卖提醒事件（收件箱数据源；站内红点 = status===OPEN）。 */
 export interface AlertEvent {
@@ -664,6 +693,10 @@ export const api = {
     request<PositionAlertRule>(`/portfolio/risk-rules/${encodeURIComponent(id)}`, "PATCH", patch),
   closeAlertPosition: (id: string, date: string, price: number, shares: number) =>
     request<{ event: AlertEvent; portfolio: PortfolioData }>(`/alerts/${encodeURIComponent(id)}/close`, "POST", { date, price, shares }),
+  tradeJournal: (code: string) => get<TradeJournal>(`/portfolio/trades?code=${encodeURIComponent(code)}`),
+  recordTrade: (input: TradeInput) => request<TradeJournal>("/portfolio/trades", "POST", input),
+  updateTradeFees: (receiptId: string, input: TradeFeeInput) => request<TradeJournal>(`/portfolio/trades/${encodeURIComponent(receiptId)}/fees`, "PATCH", input),
+  saveTradeLink: (linkId: string, input: TradeLinkInput) => request<TradeJournal>(`/portfolio/trade-links/${encodeURIComponent(linkId)}`, "PUT", input),
   removeClosed: (index: number) => request<PortfolioData>(`/portfolio/close?index=${index}`, "DELETE"),
 
   // ---- P0-2 该卖提醒（LIVE 风控 → alert_event → 站内收件箱 + 外发）----

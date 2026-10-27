@@ -6,6 +6,7 @@ export interface OperationTarget {
   direction?: "buy" | "sell";
   code?: string;
   alertId?: string;
+  positionId?: string;
 }
 
 export interface OperationInput {
@@ -14,6 +15,7 @@ export interface OperationInput {
   price: string;
   shares: string;
   date: string;
+  actualFees?: string;
 }
 
 export function shanghaiDate(current = new Date()): string {
@@ -27,6 +29,7 @@ export function operationError(input: OperationInput, today: string): string {
   if (!/^\d{6}$/.test(input.code.trim())) return "请输入 6 位股票代码";
   if (!Number.isFinite(Number(input.price)) || Number(input.price) <= 0) return "成交价格必须大于 0";
   if (!Number.isFinite(Number(input.shares)) || Number(input.shares) <= 0) return "成交数量必须大于 0";
+  if (input.actualFees?.trim() && (!Number.isFinite(Number(input.actualFees)) || Number(input.actualFees) < 0)) return "实际费用须为非负数字；未知可留空";
   if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date) || !Number.isFinite(Date.parse(input.date)) || new Date(`${input.date}T00:00:00Z`).toISOString().slice(0, 10) !== input.date) return "请输入有效成交日期";
   if (input.date > today) return "成交日期不能晚于上海当日";
   return "";

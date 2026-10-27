@@ -99,9 +99,16 @@ def _maybe_migrate_to_tenant() -> None:
     if os.path.exists(tf) or not os.path.exists(_legacy_local_pf()):
         return
     try:
+        with open(_legacy_local_pf(), encoding="utf-8") as source:
+            legacy = json.load(source)
+        # A legacy aggregate could be adopted by the original browser. Actual
+        # tenant-bound fills and their immutable receipts must never be cloned
+        # into a newly guessed browser identity.
+        if legacy.get("trade_receipts"):
+            return
         os.makedirs(_tenant_dir(), exist_ok=True)
         shutil.copy2(_legacy_local_pf(), tf)
-    except OSError:
+    except (OSError, json.JSONDecodeError):
         pass
 
 
@@ -165,6 +172,43 @@ def resolve_holding_days(
     return days
 
 
+def _apply_holding(
+    data: dict, code: str, shares: float, cost: float, opened_at: str,
+) -> dict:
+    """Mutate one loaded portfolio with a buy; caller owns lock and persistence.
+
+    This is a storage-free mutation, not a trade receipt. The journal keeps
+    actual price/fees separately rather than inferring them from averaged cost.
+    """
+    if not math.isfinite(shares) or shares <= 0 or not math.isfinite(cost):
+        raise ValueError("数量须为正数，成本须为有限数字")
+    _parse_opened_at(opened_at, today_shanghai())
+    for h in data["holdings"]:
+        if h["code"] == code:
+            lots = h.setdefault("lots", [{"shares": h["shares"], "opened_at": h.get("opened_at")}])
+            lots.append({"shares": shares, "opened_at": opened_at})
+            total = h["shares"] + shares
+            # 4 位小数：ETF/基金成本常见 3-4 位（issue #13），2-3 位会让市值/盈亏对不上账
+            h["cost"] = (
+                round((h["shares"] * h["cost"] + shares * cost) / total, 4)
+                if total
+                else cost
+            )
+            h["shares"] = total
+            # 合并保留最早开仓日：老数据无 opened_at 时保持缺省（老仓可卖），
+            # 两边都有时取更早的一个（保守：不把老仓误降成「当日买入」）。
+            prior = h.get("opened_at")
+            h["opened_at"] = min(prior, opened_at) if prior else prior
+            break
+    else:
+        data["holdings"].append(
+            {"code": code, "shares": shares, "cost": cost, "opened_at": opened_at,
+             "lots": [{"shares": shares, "opened_at": opened_at}]}
+        )
+    risk_rules.ensure_rules(data)
+    return next(h for h in data["holdings"] if h["code"] == code)
+
+
 def add_holding(
     code: str, shares: float, cost: float, opened_at: str | None = None,
     operation_id: str | None = None,
@@ -190,33 +234,13 @@ def add_holding(
     with _LOCK, advisory_lock(_pf_file()):
         d = _load()
         request = {"code": code, "shares": shares, "cost": cost, "opened_at": opened_at}
+        if operation_id and (operation_id in d.get("trade_mutations", {}) or any(row.get("operation_id") == operation_id for row in d.get("closed", []))):
+            raise ValueError("该操作编号已用于其他成交协议，不能重复记账")
         if operation_id and operation_id in d.get("operations", {}):
             if d["operations"][operation_id] != request:
                 raise ValueError("重复操作标识的成交内容不同")
             return get_portfolio()
-        for h in d["holdings"]:
-            if h["code"] == code:
-                lots = h.setdefault("lots", [{"shares": h["shares"], "opened_at": h.get("opened_at")}])
-                lots.append({"shares": shares, "opened_at": opened_at})
-                total = h["shares"] + shares
-                # 4 位小数：ETF/基金成本常见 3-4 位（issue #13），2-3 位会让市值/盈亏对不上账
-                h["cost"] = (
-                    round((h["shares"] * h["cost"] + shares * cost) / total, 4)
-                    if total
-                    else cost
-                )
-                h["shares"] = total
-                # 合并保留最早开仓日：老数据无 opened_at 时保持缺省（老仓可卖），
-                # 两边都有时取更早的一个（保守：不把老仓误降成「当日买入」）。
-                prior = h.get("opened_at")
-                h["opened_at"] = min(prior, opened_at) if prior else prior
-                break
-        else:
-            d["holdings"].append(
-                {"code": code, "shares": shares, "cost": cost, "opened_at": opened_at,
-                 "lots": [{"shares": shares, "opened_at": opened_at}]}
-            )
-        risk_rules.ensure_rules(d)
+        _apply_holding(d, code, shares, cost, opened_at)
         if operation_id:
             d.setdefault("operations", {})[operation_id] = request
         _save(d)
@@ -264,6 +288,74 @@ def remove_holding(code: str) -> dict:
     return get_portfolio()
 
 
+def _apply_close(
+    data: dict, code: str, date: str, price: float, shares: float, cost: float,
+    operation_id: str | None = None, *, require_holding: bool = False,
+    expected_position_id: str | None = None,
+) -> dict:
+    """Mutate one loaded portfolio with a FIFO T+1 sale, without I/O.
+
+    Caller validates idempotency before invoking this helper and saves the
+    portfolio and its durable journal receipt in the same transaction.
+    """
+    from datetime import date as date_type
+    try:
+        sold_at = date_type.fromisoformat(date)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("清仓日期必须为 YYYY-MM-DD") from exc
+    if sold_at.isoformat() != date or sold_at > today_shanghai():
+        raise ValueError("清仓日期必须为不晚于今天的 YYYY-MM-DD")
+    if not all(math.isfinite(v) for v in (price, shares, cost)) or price <= 0 or shares <= 0:
+        raise ValueError("成交价与数量须为有限正数")
+    data.setdefault("closed", [])
+    holding = next((h for h in data["holdings"] if h["code"] == code), None)
+    if require_holding and holding is None:
+        raise ValueError("持仓不存在，不能从提醒重复记账")
+    if expected_position_id and holding and holding.get("position_id") != expected_position_id:
+        raise ValueError("提醒对应旧持仓，不能用于回录当前新持仓")
+    if holding:
+        lots = holding.get("lots") or [{"shares": holding["shares"], "opened_at": holding.get("opened_at")}]
+        available = sum(float(lot["shares"]) for lot in lots if not lot.get("opened_at") or lot["opened_at"] < date)
+        if shares > available:
+            raise ValueError(f"T+1 可卖数量不足：当日可卖 {available:g} 股")
+        cost = float(holding["cost"])
+        remaining = shares
+        updated_lots = []
+        for lot in sorted(lots, key=lambda item: item.get("opened_at") or ""):
+            volume = float(lot["shares"])
+            if not lot.get("opened_at") or lot["opened_at"] < date:
+                consumed = min(volume, remaining)
+                volume -= consumed
+                remaining -= consumed
+            if volume > 0:
+                updated_lots.append({**lot, "shares": volume})
+        holding["shares"] -= shares
+        holding["lots"] = updated_lots
+        if holding["shares"] <= 0:
+            data["holdings"].remove(holding)
+            data["risk_rules"] = [r for r in data.get("risk_rules", []) if r["symbol"] != code]
+        elif updated_lots:
+            holding["opened_at"] = updated_lots[0].get("opened_at")
+    pnl = (price - cost) * shares
+    name = (holding.get("name") if holding else None) or code
+    data["closed"].append(
+        {
+            "code": code,
+            "name": name,
+            "date": date,
+            "price": price,
+            "shares": shares,
+            "cost": cost,
+            "pnl": round(pnl, 2),
+            "pnl_pct": round((price - cost) / cost * 100, 2) if cost else 0.0,
+            "operation_id": operation_id,
+            "position_id": holding.get("position_id") if holding else None,
+            "position_closed": bool(holding and holding["shares"] <= 0),
+        }
+    )
+    return data["closed"][-1]
+
+
 def close_position(
     code: str, date: str, price: float, shares: float, cost: float,
     operation_id: str | None = None, *, require_holding: bool = False,
@@ -287,58 +379,16 @@ def close_position(
     with _LOCK, advisory_lock(_pf_file()):
         d = _load()
         d.setdefault("closed", [])
+        if operation_id and (operation_id in d.get("trade_mutations", {}) or operation_id in d.get("operations", {})):
+            raise ValueError("该操作编号已用于其他成交协议，不能重复记账")
         existing = next((c for c in d["closed"] if operation_id and c.get("operation_id") == operation_id), None)
         if existing:
             if any(existing[k] != v for k, v in {"code": code, "date": date, "price": price, "shares": shares}.items()):
                 raise ValueError("重复操作标识的成交内容不同")
             return get_portfolio()
-        holding = next((h for h in d["holdings"] if h["code"] == code), None)
-        if require_holding and holding is None:
-            raise ValueError("持仓不存在，不能从提醒重复记账")
-        if expected_position_id and holding and holding.get("position_id") != expected_position_id:
-            raise ValueError("提醒对应旧持仓，不能用于回录当前新持仓")
-        if holding:
-            lots = holding.get("lots") or [{"shares": holding["shares"], "opened_at": holding.get("opened_at")}]
-            available = sum(float(lot["shares"]) for lot in lots if not lot.get("opened_at") or lot["opened_at"] < date)
-            if shares > available:
-                raise ValueError(f"T+1 可卖数量不足：当日可卖 {available:g} 股")
-            cost = float(holding["cost"])
-            remaining = shares
-            updated_lots = []
-            for lot in sorted(lots, key=lambda item: item.get("opened_at") or ""):
-                volume = float(lot["shares"])
-                if not lot.get("opened_at") or lot["opened_at"] < date:
-                    consumed = min(volume, remaining)
-                    volume -= consumed
-                    remaining -= consumed
-                if volume > 0:
-                    updated_lots.append({**lot, "shares": volume})
-            holding["shares"] -= shares
-            holding["lots"] = updated_lots
-            if holding["shares"] <= 0:
-                d["holdings"].remove(holding)
-                d["risk_rules"] = [r for r in d.get("risk_rules", []) if r["symbol"] != code]
-            elif updated_lots:
-                holding["opened_at"] = updated_lots[0].get("opened_at")
-        pnl = (price - cost) * shares
-        try:
-            name = astock.tencent_quote([code]).get(code, {}).get("name", code)
-        except Exception:
-            name = code
-        d["closed"].append(
-            {
-                "code": code,
-                "name": name,
-                "date": date,
-                "price": price,
-                "shares": shares,
-                "cost": cost,
-                "pnl": round(pnl, 2),
-                "pnl_pct": round((price - cost) / cost * 100, 2) if cost else 0.0,
-                "operation_id": operation_id,
-                "position_id": holding.get("position_id") if holding else None,
-                "position_closed": bool(holding and holding["shares"] <= 0),
-            }
+        _apply_close(
+            d, code, date, price, shares, cost, operation_id,
+            require_holding=require_holding, expected_position_id=expected_position_id,
         )
         _save(d)
     return get_portfolio()
@@ -347,9 +397,11 @@ def close_position(
 def remove_closed(index: int) -> dict:
     with _LOCK, advisory_lock(_pf_file()):
         d = _load()
-        cl = d.get("closed", [])
-        if 0 <= index < len(cl):
-            cl.pop(index)
+        # UI indices refer to the visible projection. Never erase the durable
+        # operation receipt: a retry must not deduct this sale a second time.
+        visible = [row for row in d.get("closed", []) if not row.get("history_hidden")]
+        if 0 <= index < len(visible):
+            visible[index]["history_hidden"] = True
             _save(d)
     return get_portfolio()
 
@@ -414,7 +466,7 @@ def get_portfolio() -> dict:
                     holding["name"] = name
             _save(latest)
     total_pnl = tmv - tcost
-    closed = d.get("closed", [])
+    closed = [row for row in d.get("closed", []) if not row.get("history_hidden")]
     return {
         "holdings": rows,
         "totals": {

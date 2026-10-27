@@ -51,6 +51,7 @@ import performance_bridge
 import source_health
 import tenant as _tenant
 import watchlist
+import trade_journal
 
 app = FastAPI(
     title="AQSP API",
@@ -619,6 +620,87 @@ class CloseIn(BaseModel):
     shares: float
     cost: float
     operation_id: str | None = Field(default=None, min_length=1, max_length=128)
+
+
+class TradeReceiptIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    operation_id: str = Field(min_length=1, max_length=128)
+    direction: str
+    code: str
+    date: str
+    price: float = Field(strict=True, gt=0, allow_inf_nan=False)
+    shares: float = Field(strict=True, gt=0, allow_inf_nan=False)
+    actual_fees: float | None = Field(default=None, strict=True, ge=0, allow_inf_nan=False)
+    expected_position_id: str | None = None
+    expected_position_revision: str
+    alert_id: str | None = Field(default=None, max_length=128)
+
+
+class TradeFeeIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    operation_id: str = Field(min_length=1, max_length=128)
+    expected_revision: str
+    actual_fees: float | None = Field(default=None, strict=True, ge=0, allow_inf_nan=False)
+
+
+class TradeAllocationIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    sell_receipt_id: str
+    buy_receipt_id: str
+    shares: float = Field(strict=True, gt=0, allow_inf_nan=False)
+    confirm_same_day_order: bool = Field(default=False, strict=True)
+    confirm_cross_position: bool = Field(default=False, strict=True)
+
+
+class TradeLinkIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    operation_id: str = Field(min_length=1, max_length=128)
+    expected_revision: str
+    allocations: list[TradeAllocationIn]
+
+
+@app.get("/api/portfolio/trades", tags=["持仓管理"])
+def portfolio_trades(code: str = Query(..., min_length=6, max_length=6)) -> dict:
+    try:
+        return {"data": trade_journal.read_journal(code.strip())}
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/api/portfolio/trades", tags=["持仓管理"])
+def portfolio_trade(receipt: TradeReceiptIn) -> dict:
+    try:
+        result = trade_journal.record_trade(trade_journal.TradeInput(**receipt.model_dump()))
+        return {"data": result}
+    except trade_journal.TradeConflictError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.patch("/api/portfolio/trades/{receipt_id}/fees", tags=["持仓管理"])
+def portfolio_trade_fees(receipt_id: str, fee: TradeFeeIn) -> dict:
+    try:
+        return {"data": trade_journal.update_fees(receipt_id, fee.actual_fees, fee.expected_revision, fee.operation_id)}
+    except trade_journal.TradeConflictError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.put("/api/portfolio/trade-links/{link_id}", tags=["持仓管理"])
+def portfolio_trade_link(link_id: str, link: TradeLinkIn) -> dict:
+    try:
+        allocations = [item.model_dump() for item in link.allocations]
+        return {"data": trade_journal.save_link(link_id, allocations, link.expected_revision, link.operation_id)}
+    except trade_journal.TradeConflictError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @app.post(
