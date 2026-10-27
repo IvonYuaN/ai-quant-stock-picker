@@ -3890,3 +3890,58 @@
   .aq-strategy-watch-price b { font-size: 22px; }
   .aq-strategy-actions .aq-row-actions { display: grid; grid-template-columns: 1fr; }
 }
+
+/* Candidate entry analysis: separate from position plans and dated score evidence. */
+.aq-candidate-observation, .aq-candidate-observation-list { margin: 22px 0; padding: 22px; border: 1px solid hsl(var(--border)); border-radius: 14px; background: hsl(var(--card)); min-width: 0; scroll-margin-top: 20px; }
+.aq-candidate-observation-head, .aq-candidate-watch-head, .aq-candidate-route-title, .aq-candidate-observation-row-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
+.aq-candidate-observation-head { margin-bottom: 16px; }
+.aq-candidate-observation h2, .aq-candidate-observation-list h2 { margin: 4px 0; font-size: 21px; line-height: 1.4; }
+.aq-candidate-observation h3, .aq-candidate-observation-list h3 { margin: 10px 0; font-size: 17px; }
+.aq-candidate-observation p, .aq-candidate-observation-list p { line-height: 1.7; overflow-wrap: anywhere; }
+.aq-candidate-observation small, .aq-candidate-observation-list small { color: hsl(var(--muted-foreground)); font-size: 11px; overflow-wrap: anywhere; }
+.aq-candidate-watch { margin-bottom: 20px; padding: 18px; background: color-mix(in srgb, hsl(var(--primary)) 5%, hsl(var(--card))); border: 1px solid hsl(var(--primary)); border-radius: 10px; }
+.aq-candidate-watch-warn { border-color: #b58035; }
+.aq-candidate-watch > small { display: block; margin-top: 8px; }
+.aq-candidate-watch-head > span, .aq-candidate-observation-row-head > span { color: hsl(var(--muted-foreground)); font-size: 12px; }
+.aq-candidate-watch-price { display: block; font-size: 22px; margin: 16px 0; font-variant-numeric: tabular-nums; }
+.aq-candidate-analysis-tools { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; margin: 20px 0; }
+.aq-candidate-model { flex: 1; min-width: min(100%, 210px); }
+.aq-candidate-model summary { cursor: pointer; color: hsl(var(--muted-foreground)); padding: 9px 0; font-size: 12px; overflow-wrap: anywhere; }
+.aq-candidate-model label, .aq-candidate-adopt > label:not(.aq-action-plan-confirm) { display: grid; gap: 8px; margin-bottom: 12px; font-size: 12px; }
+.aq-candidate-observation select { box-sizing: border-box; min-width: 0; width: 100%; padding: 9px; color: hsl(var(--foreground)); background: hsl(var(--card)); border: 1px solid hsl(var(--border)); border-radius: 7px; }
+.aq-candidate-conclusion { font-size: 16px; }
+.aq-candidate-route-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 20px 0; }
+.aq-candidate-route { min-width: 0; padding: 16px; border: 1px solid hsl(var(--border)); border-radius: 10px; }
+.aq-candidate-route-title h4 { margin: 0; font-size: 16px; }
+.aq-candidate-condition { border-top: 1px solid hsl(var(--border)); margin-top: 14px; padding-top: 14px; }
+.aq-candidate-condition-price strong { font-size: 22px; font-variant-numeric: tabular-nums; color: hsl(var(--primary)); }
+.aq-candidate-condition p b { display: block; color: hsl(var(--muted-foreground)); font-size: 11px; font-weight: 500; margin-bottom: 4px; }
+.aq-candidate-condition small { display: block; margin: 10px 0; }
+.aq-candidate-adopt { padding: 18px; border: 1px solid hsl(var(--primary)); border-radius: 10px; margin: 20px 0; }
+.aq-candidate-adopt h4 { margin: 0 0 16px; }
+.aq-candidate-discussion > details { margin-top: 20px; }
+.aq-candidate-discussion > details > summary { cursor: pointer; font-size: 12px; }
+.aq-candidate-discussion > details article { padding: 12px 0; border-bottom: 1px solid hsl(var(--border)); }
+.aq-candidate-observation-rows { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.aq-candidate-observation-row { min-width: 0; padding: 16px; border: 1px solid hsl(var(--border)); border-radius: 10px; }
+.aq-candidate-observation-row-head > a { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; }
+.aq-candidate-observation-row > .aq-btn { display: inline-flex; margin-top: 14px; }
+@media (max-width: 760px) {
+  .aq-candidate-route-grid, .aq-candidate-observation-rows { grid-template-columns: 1fr; }
+}
+@media (max-width: 420px) {
+  .aq-candidate-observation, .aq-candidate-observation-list { padding: 15px; margin: 18px 0; }
+  .aq-candidate-watch, .aq-candidate-route, .aq-candidate-adopt, .aq-candidate-observation-row { padding: 13px; }
+  .aq-candidate-adopt .aq-row-actions { display: grid; grid-template-columns: 1fr; }
+  .aq-candidate-observation .aq-btn, .aq-candidate-observation-list .aq-btn { white-space: normal; min-height: 40px; }
+}
+.aq-candidate-current-evidence { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border: 1px solid hsl(var(--border)); border-radius: 10px; margin: 16px 0; }
+.aq-candidate-current-evidence > div { min-width: 0; padding: 13px; }
+.aq-candidate-current-evidence > div + div { border-left: 1px solid hsl(var(--border)); }
+.aq-candidate-current-evidence b { font-size: 12px; }
+.aq-candidate-current-evidence p { font-size: 12px; margin: 6px 0; }
+.aq-candidate-adopt:focus { outline: 2px solid hsl(var(--primary)); outline-offset: 3px; }
+@media (max-width: 760px) {
+  .aq-candidate-current-evidence { grid-template-columns: 1fr; }
+  .aq-candidate-current-evidence > div + div { border-left: 0; border-top: 1px solid hsl(var(--border)); }
+}

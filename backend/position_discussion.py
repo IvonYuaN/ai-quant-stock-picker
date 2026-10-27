@@ -169,17 +169,17 @@ def resolve_endpoint(config: dict[str, str] | None) -> ModelEndpoint:
         client.close()
 
 
-async def call_model(endpoint: ModelEndpoint, payload: dict[str, Any], timeout: float, limits: DiscussionLimits) -> str:
+async def call_model(endpoint: ModelEndpoint, payload: dict[str, Any], timeout: float, limits: DiscussionLimits, *, system: str = SYSTEM) -> str:
     """Cancellable bounded request; no retries/tools/redirects or upstream body leaks."""
     headers = {"Content-Type": "application/json"}
     body: dict[str, Any] = {"model": endpoint.model, "max_tokens": limits.max_tokens,
                             "messages": [{"role": "user", "content": json.dumps(payload, ensure_ascii=False)}]}
     if endpoint.anthropic:
         headers.update({"x-api-key": endpoint.key, "anthropic-version": "2023-06-01"})
-        body["system"] = SYSTEM
+        body["system"] = system
     else:
         headers["Authorization"] = f"Bearer {endpoint.key}"
-        body["messages"].insert(0, {"role": "system", "content": SYSTEM})
+        body["messages"].insert(0, {"role": "system", "content": system})
     async def fetch() -> str:
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
             async with client.stream("POST", endpoint.url, headers=headers, json=body) as response:

@@ -52,6 +52,7 @@ import source_health
 import tenant as _tenant
 import watchlist
 import trade_journal
+from candidate_observation_api import router as candidate_observation_router
 
 app = FastAPI(
     title="AQSP API",
@@ -131,6 +132,7 @@ def _cors_origins(raw: str | None, public_mode: bool) -> list[str]:
 # 公网模式不接受通配符 CORS。未配置白名单时仍支持同源前端，但拒绝跨源浏览器请求。
 _raw_origins = os.environ.get("VR_ALLOW_ORIGINS")
 _ORIGINS = _cors_origins(_raw_origins, _PUBLIC_MODE)
+app.include_router(candidate_observation_router)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_ORIGINS,

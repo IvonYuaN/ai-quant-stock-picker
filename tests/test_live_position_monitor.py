@@ -153,3 +153,20 @@ def test_live_position_monitor_reports_gaps_when_history_skipped(
         ),
     )
     assert monitor.check_live_positions()[0].triggered is True
+
+
+@pytest.mark.parametrize('tenant_folder', ['', 'users/u_' + 'a' * 20])
+def test_live_position_monitor_runs_when_only_candidate_observation_exists(monitor_store, monkeypatch, tenant_folder):
+    (monitor_store / 'portfolio.json').unlink()
+    folder = monitor_store / tenant_folder
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / 'candidate-observations.json').write_text('{"schema_version":1,"resources":{}}')
+    captured = []
+    def run(command, **kwargs):
+        captured.append((command, kwargs))
+        return SimpleNamespace(stdout=json.dumps({'tenants_checked': 1, 'open_events': 0, 'skipped_checks': 0,
+                               'failed_tenants': 0, 'candidate_checks': 1, 'candidate_notifications': 0}))
+    monkeypatch.setattr(monitor.subprocess, 'run', run)
+    result = monitor.check_live_positions()
+    assert len(captured) == 1 and result[0].triggered is False
+    assert '候选观察已检查 1 项' in result[0].message

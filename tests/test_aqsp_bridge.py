@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from fastapi.routing import APIRoute
 
 
 BACKEND_DIR = Path(__file__).resolve().parents[1] / "backend"
@@ -695,7 +696,7 @@ def test_aqsp_bridge_exposes_no_portfolio_or_chat_write_route() -> None:
     aqsp_routes = {
         route.path: set(route.methods or ())
         for route in app_module.app.routes
-        if route.path.startswith("/api/aqsp")
+        if isinstance(route, APIRoute) and route.path.startswith("/api/aqsp")
     }
 
     assert aqsp_routes

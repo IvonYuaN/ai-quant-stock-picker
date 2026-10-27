@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from fastapi.routing import APIRoute
 
 import app as app_module
 
@@ -133,7 +134,7 @@ def _aqsp_routes() -> list[tuple[str, set[str]]]:
     return sorted(
         (route.path, set(route.methods or ()))
         for route in app_module.app.routes
-        if route.path.startswith("/api/aqsp")
+        if isinstance(route, APIRoute) and route.path.startswith("/api/aqsp")
     )
 
 

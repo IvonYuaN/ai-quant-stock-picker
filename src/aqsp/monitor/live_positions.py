@@ -65,9 +65,8 @@ def check_live_positions(
                 )
             ]
         return []
-    if not (data_root / "portfolio.json").is_file() and not any(
-        (data_root / "users").glob("*/portfolio.json")
-    ):
+    if not any((data_root / name).is_file() or any((data_root / 'users').glob('*/' + name))
+               for name in ('portfolio.json', 'candidate-observations.json')):
         return []
     from aqsp.monitor.checker import MonitorResult
 
@@ -97,6 +96,7 @@ def check_live_positions(
                 severity="warning",
                 message=(
                     f"持仓风控：已检查 {summary['tenants_checked']} 个数据桶；{summary['open_events']} 条未处理提醒；{summary['skipped_checks']} 项未能检查；{summary['failed_tenants']} 个数据桶失败"
+                    + (f"；候选观察已检查 {summary.get('candidate_checks', 0)} 项" if summary.get('candidate_checks') else '')
                 ),
                 details=summary,
             )

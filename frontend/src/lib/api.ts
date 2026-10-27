@@ -460,6 +460,38 @@ export interface PositionDiscussion {
     focus_choice?: ReviewChoice | null; focus_reason?: string } | null;
   notice: string;
 }
+export type CandidateChoice = "pullback" | "confirmation" | "defer";
+export interface CandidatePriceReference { label: string; price: number; as_of: string; source: string }
+export interface CandidateCondition { choice: CandidateChoice; price_ref: string | null; condition: string; invalidation: string }
+export interface CandidateDiscussion {
+  id: string; status: "complete" | "partial" | "failed"; generated_at: string; model: string; mode: string;
+  resource_version: number; evidence_version: string; research_date: string | null; quote_as_of: string | null;
+  price_refs: Record<string, CandidatePriceReference>; evidence_snapshot: Record<string, unknown>;
+  rounds: Array<{ stage: string; opinions: Array<{ role: string; label: string; status: string; issue?: string;
+    opinion?: { summary: string; evidence_ids: string[]; uncertainties: string[]; actions: CandidateCondition[]; reply_to: string[]; challenge: string } }> }>;
+  summary: null | { conclusion: string; agreements: string[]; disagreements: string[]; missing_evidence: string[];
+    routes: Array<{ choice: CandidateChoice; judgment: "investigate" | "not_now" | "insufficient"; reason: string; evidence_ids: string[]; needs: string[] }>;
+    focus_choice: CandidateChoice | null; focus_reason: string; actions: CandidateCondition[] };
+  summary_issue: string; elapsed_seconds: number; notice: string;
+}
+export interface CandidateWorkspace {
+  symbol: string; name: string; version: number; evidence_version: string; research_date: string | null;
+  ownership: { status: "unowned" | "owned" | "unavailable"; position_id: string | null };
+  available: boolean; entry_blocked: boolean; issues: string[]; quote: { price?: number | null; as_of?: string | null; quote_as_of?: string | null; source?: string };
+  quote_issue: string; evidence: Record<string, unknown>; price_refs: Record<string, CandidatePriceReference>;
+  discussion: CandidateDiscussion | null;
+  analysis: { status: "idle" | "running" | "complete" | "partial" | "failed" | "cancelled"; stage: string; run_id: string | null };
+  watch: null | { choice: CandidateChoice; condition: string; invalidation: string; price: number | null; price_ref: string | null;
+    source_ref: CandidatePriceReference | null; comparator: WatchComparator | null; adopted_at: string; discussion_id: string; status: "active" | "stopped" };
+  observation: null | { state: "waiting" | "price_watch" | "needs_review" | "evidence_unavailable" | "deferred" | "stopped";
+    title: string; detail: string; observed_at: string; quote_as_of: string | null; reason: string };
+}
+export interface CandidateDiscussionInput { expected_version: number; expected_evidence_version: string; llm?: PositionModelConfig; server_model?: string }
+export interface CandidateAdoptionInput {
+  expected_version: number; expected_evidence_version: string; discussion_id: string; generated_at: string;
+  choice: CandidateChoice; action_index: number | null; comparator: WatchComparator | null; operation_id: string;
+}
+
 export interface PositionConstraints {
   attention: "available" | "occasional" | "unavailable" | "unknown";
   extra_cash: number | null;
@@ -746,6 +778,17 @@ export const api = {
     request<ActionWorksheet["review_plan"]>(`/positions/${encodeURIComponent(id)}/plan`, "POST", { choice, parameters, expected_position, expected_revision }),
   savePositionConstraints: (id: string, constraints: Pick<PositionConstraints, "attention" | "extra_cash" | "loss_limit">, expected_position: ActionWorksheet["position_snapshot"], expected_revision: string, reset_risk_baseline = false, expected_quote?: { price: number | null; as_of: string | null }) =>
     request<ActionWorksheet>(`/positions/${encodeURIComponent(id)}/constraints`, "POST", { ...constraints, expected_position, expected_revision, reset_risk_baseline, expected_quote }),
+  candidateObservations: () => get<{ items: CandidateWorkspace[] }>("/candidate-observations"),
+  candidateObservation: (symbol: string) => get<CandidateWorkspace>(`/candidate-observations/${encodeURIComponent(symbol)}`),
+  candidateDiscussionStream: async (symbol: string, input: CandidateDiscussionInput, progress: (stage: string) => void, signal: AbortSignal): Promise<CandidateDiscussion> => {
+    const response = await fetch(`/api/candidate-observations/${encodeURIComponent(symbol)}/discussion/stream`, {
+      method: "POST", headers: { ...authHeaders(), "Content-Type": "application/json" }, signal, body: JSON.stringify(input),
+    });
+    if (!response.ok) throw new ApiError(errorDetail(await response.json().catch(() => null)) || `分析请求失败 HTTP ${response.status}`, response.status);
+    return readDiscussionStream<CandidateDiscussion>(response, progress);
+  },
+  adoptCandidateObservation: (symbol: string, input: CandidateAdoptionInput) => request<CandidateWorkspace>(`/candidate-observations/${encodeURIComponent(symbol)}/adopt`, "POST", input),
+  stopCandidateObservation: (symbol: string, expected_version: number, operation_id: string) => request<CandidateWorkspace>(`/candidate-observations/${encodeURIComponent(symbol)}/stop`, "POST", { expected_version, operation_id }),
   positionModels: (refresh = false) => get<PositionModelCatalog>(`/position-models${refresh ? "?refresh=true" : ""}`),
   positionDiscussion: (id: string, choice: ReviewChoice | null, expected_position: ActionWorksheet["position_snapshot"], llm?: PositionModelConfig, server_model?: string, expected_revision?: string) =>
     request<PositionDiscussion>("/alerts/" + encodeURIComponent(id) + "/discussion", "POST", { choice, expected_position, expected_revision, llm, server_model }),

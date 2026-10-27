@@ -49,6 +49,7 @@ import { debateProcessText, messageSourceUrl } from "@/lib/research-view";
 import { todayResearchHref } from "@/lib/research-route";
 import { evidenceLabel, statusLabel } from "@/lib/display-labels";
 import { loadWatch, saveWatch, WATCHLIST_CHANGED_EVENT } from "@/lib/watchlist";
+import { CandidateObservationPanel } from "@/components/aqsp/CandidateObservationPanel";
 import { OwnedPositionPlanEntry } from "@/components/aqsp/OwnedPositionPlanEntry";
 import { cn } from "@/lib/utils";
 
@@ -197,6 +198,8 @@ export function StockResearchPage() {
           </>
         ) : null}
       </section>
+
+      <CandidateObservationPanel symbol={code} researchDate={researchDate} historical={view?.isHistorical ?? false} />
 
       {view && row ? <section className="aq-detail-block">
         <SectionHeader title="同日消息与多空复核" description={`${view.date} 的个股证据，与下方实时行情分别呈现。`} count={`${datedMessages.length} 条消息`} />
