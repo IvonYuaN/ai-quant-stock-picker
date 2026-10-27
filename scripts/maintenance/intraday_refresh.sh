@@ -195,13 +195,13 @@ then
     exit 0
 fi
 
-NOW_HM=$((10#$(date +%H%M)))
-if is_truthy "$REQUIRE_MARKET_HOURS"; then
-    if ! { [ "$NOW_HM" -ge 935 ] && [ "$NOW_HM" -le 1130 ]; } && \
-       ! { [ "$NOW_HM" -ge 1305 ] && [ "$NOW_HM" -le 1457 ]; }; then
-        log "当前不在盘中刷新时段，跳过"
-        exit 0
-    fi
+# Recheck the same window after the panel's sync/lock wait, without a second
+# copy of the time boundaries. Standalone workers retain this guard as well.
+# shellcheck disable=SC1090
+source "$(dirname "$RUNTIME_PYTHON_HELPER")/intraday_window.sh"
+if ! aqsp_intraday_window_open; then
+    log "当前不在盘中刷新时段，跳过"
+    exit 0
 fi
 
 INTRADAY_SOURCE="${AQSP_INTRADAY_SOURCE:-online_first}"

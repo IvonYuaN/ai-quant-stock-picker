@@ -19,6 +19,7 @@ declare -A SYMLINKS=(
     ["daily_run.sh"]="maintenance/daily_run.sh"
     ["coldstart_daily.sh"]="maintenance/coldstart_daily.sh"
     ["intraday_refresh.sh"]="maintenance/intraday_refresh.sh"
+    ["intraday_window.sh"]="maintenance/intraday_window.sh"
     ["midday_refresh.sh"]="maintenance/midday_refresh.sh"
     ["variant_refresh.sh"]="maintenance/variant_refresh.sh"
     ["news_catalysts.sh"]="maintenance/news_catalysts.sh"
