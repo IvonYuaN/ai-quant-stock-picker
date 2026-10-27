@@ -1,7 +1,6 @@
 // 今日页顶部的市场环境条：一眼看到"今天外面什么脸色"。
 //
-// 这是判断"能不能动"的前提，此前完全缺失。取不到数据时**不占位**（返回 null），
-// 避免用一片空白暗示"市场没有行情"。
+// 市场依据缺失时明确保留未知，不能用空白暗示环境没有风险。
 import { Link } from "react-router-dom";
 import { ArrowRight, Globe2 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -27,7 +26,7 @@ export function MarketStrip() {
       </StatePanel>
     ) : null;
 
-  if (!summary) return <div className="aq-market-block">{failureNote}</div>;
+  if (!summary) return <div className="aq-market-block">{failureNote || <StatePanel tone="warn">市场环境依据暂缺，尚不能据此判断大盘和板块是否支持参与。<Link to="/market">查看市场来源</Link></StatePanel>}</div>;
 
   return (
     <div className="aq-market-block">

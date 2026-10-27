@@ -266,7 +266,7 @@ def current_evidence(code: str, quote: dict[str, Any], *, current: datetime) -> 
         sentiment = overview.get('sentiment') or {}
         market_fact['breadth_counts'] = {key: dc._number(sentiment.get(key)) for key in ('up', 'down')}
     stock_fact = asdict(dc._stock_context(quote, None, current))
-    evidence = {'research': report, 'quote': {'price': quote.get('price'), 'as_of': stamp, 'source': quote.get('source') or '腾讯行情'},
+    evidence = {'research': report, 'quote': {'price': quote.get('price'), 'change_pct': quote.get('change_pct'), 'as_of': stamp, 'source': quote.get('source') or '腾讯行情'},
                 'market': market_fact, 'sector': sector_fact, 'stock': stock_fact}
     basis = evidence_basis(report, evidence, own, quote, not bool(quote_issue))
     return {'symbol': code, 'name': report.get('candidate', {}).get('display_name') or quote.get('name') or code,
@@ -415,6 +415,9 @@ def adopt(code: str, body: dict[str, Any]) -> dict[str, Any]:
                         'price': ref['price'] if ref else None, 'price_ref': action['price_ref'] if action else None,
                         'source_ref': deepcopy(ref),
                         'comparator': comparator, 'adopted_at': current.isoformat(), 'discussion_id': result['id'],
+                        'evidence_snapshot': deepcopy(value['evidence']), 'price_refs': deepcopy(value['price_refs']),
+                        'evidence_identity': {'symbol': code},
+                        'ownership': deepcopy(value['ownership']),
                         'evidence_version': value['evidence_version'], 'evidence_basis': deepcopy(value['evidence_basis']), 'status': 'active'}
         row['observation'] = observation(value, row, current=current)
         remember(row, value)

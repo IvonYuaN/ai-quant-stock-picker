@@ -5,18 +5,18 @@
 //
 // 持仓读不到（后端未启动 / 未录入）时只降级为自选，**不影响选股本身**。
 import { useEffect, useState } from "react";
-import { api } from "@/lib/api";
+import { api, type Holding } from "@/lib/api";
 import { loadWatch, WATCHLIST_CHANGED_EVENT, WATCHLIST_STORAGE_KEY } from "@/lib/watchlist";
-import { EMPTY_OWNERSHIP, type OwnershipSets } from "@/lib/ownership";
+import { UNKNOWN_OWNERSHIP, ownershipFromCodes, type OwnershipSets } from "@/lib/ownership";
 import { PORTFOLIO_CHANGED_EVENT } from "@/lib/operation";
 
-export function useOwnership(): OwnershipSets {
-  const [sets, setSets] = useState<OwnershipSets>(EMPTY_OWNERSHIP);
+export function useOwnership(ownedHoldings?: readonly Holding[] | null): OwnershipSets {
+  const [sets, setSets] = useState<OwnershipSets>(UNKNOWN_OWNERSHIP);
 
   useEffect(() => {
     let alive = true;
     const syncWatchlist = () => {
-      setSets((prev) => ({ holdings: prev.holdings, watchlist: new Set(loadWatch()) }));
+      setSets((prev) => ({ ...prev, watchlist: new Set(loadWatch()) }));
     };
     const onStorage = (event: StorageEvent) => {
       if (event.key === WATCHLIST_STORAGE_KEY || event.key === null) syncWatchlist();
@@ -25,18 +25,19 @@ export function useOwnership(): OwnershipSets {
     window.addEventListener(WATCHLIST_CHANGED_EVENT, syncWatchlist);
     window.addEventListener("storage", onStorage);
 
-    const syncHoldings = () => { void api
+    const syncHoldings = () => {
+      if (ownedHoldings !== undefined) {
+        setSets(ownershipFromCodes(ownedHoldings === null ? null : ownedHoldings.filter((row) => row.shares > 0).map((row) => row.code), new Set(loadWatch())));
+        return;
+      }
+      void api
       .portfolio()
       .then((data) => {
         if (!alive) return;
-        setSets({
-          holdings: new Set(data.holdings.map((row) => row.code)),
-          // 重新读一次：期间用户可能刚改过自选
-          watchlist: new Set(loadWatch()),
-        });
+        setSets(ownershipFromCodes(data.holdings.filter((row) => row.shares > 0).map((row) => row.code), new Set(loadWatch())));
       })
       .catch(() => {
-        /* 持仓不可用时保留自选即可，不打扰选股 */
+        if (alive) setSets(ownershipFromCodes(null, new Set(loadWatch())));
       }); };
     syncHoldings();
     window.addEventListener(PORTFOLIO_CHANGED_EVENT, syncHoldings);
@@ -47,7 +48,9 @@ export function useOwnership(): OwnershipSets {
       window.removeEventListener("storage", onStorage);
       window.removeEventListener(PORTFOLIO_CHANGED_EVENT, syncHoldings);
     };
-  }, []);
+  }, [ownedHoldings]);
 
-  return sets;
+  return ownedHoldings === undefined ? sets : ownershipFromCodes(
+    ownedHoldings === null ? null : ownedHoldings.filter((row) => row.shares > 0).map((row) => row.code), sets.watchlist,
+  );
 }

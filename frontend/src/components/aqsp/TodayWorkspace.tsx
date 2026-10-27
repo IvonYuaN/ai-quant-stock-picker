@@ -28,8 +28,8 @@ import { StockDetailDrawer, type StockIntro } from "./StockDetailDrawer";
 import { CandidateSection } from "./sections/CandidateSection";
 import { MessageSection } from "./sections/MessageSection";
 import { DiscussionSection } from "./sections/DiscussionSection";
-import { AlertInbox } from "./AlertInbox";
-import { CandidateObservationList } from "./CandidateObservationList";
+import { TodayStrategyBoard, StrategyRecordDetails } from "./TodayStrategyBoard";
+import type { PortfolioData } from "@/lib/api";
 import type { AqspSnapshot } from "@/types/aqsp";
 import { ALERTS_CHANGED_EVENT, shanghaiDate } from "@/lib/operation";
 
@@ -61,7 +61,7 @@ function TodayHeader({
           <strong>{shanghaiDate()}</strong>
         </div>
         <p className="aq-page-sub">
-          先看持仓风险，再核对候选、消息与大盘。
+          先看大盘与板块，再复核自己的方案和候选条件。
         </p>
         <div className="aq-meta-row">
           <span>候选日期 {date || "待产出"}</span>
@@ -255,6 +255,7 @@ function ActiveSection({
 }
 
 export function TodayWorkspace() {
+  const [personalPortfolio, setPersonalPortfolio] = useState<PortfolioData | null>(null);
   const { data, loading, error, refresh, selectedDate, switching } = useWorkspaceSnapshot();
   const { hash } = useLocation();
   const active = resolveTodaySection(hash);
@@ -311,10 +312,9 @@ export function TodayWorkspace() {
         actions={view ? <ReviewExportButton view={view} /> : null}
       />
 
-      {/* 实盘该卖提醒（#431）：读的是实盘持仓的 LIVE 风控触发，与研究历史日期解耦——
-          切日期 / 本地快照缺失都不该让"今天能不能卖"这条风控提醒消失，故置于主分支外、最靠上。 */}
-      <AlertInbox />
-      <CandidateObservationList />
+      <MarketStrip />
+      <TodayStrategyBoard onPortfolio={setPersonalPortfolio} />
+      <StrategyRecordDetails />
 
       {data ? <DatePicker snapshot={data} /> : null}
 
@@ -324,11 +324,6 @@ export function TodayWorkspace() {
           <span>{error} · 上次更新 {formatAqspTime(data.generated_at)}</span>
         </div>
       ) : null}
-
-      {/* 本地研究快照缺失/读取中时，仍然展示**直接读公开源**的实时市场环境
-          （指数 / 涨跌家数 / 隔夜外围）。实时行情不该被本地重管线的产出卡住 ——
-          快照是本机算出来的，市场环境是别人网站上现成的，两者解耦。 */}
-      {!data ? <MarketStrip /> : null}
 
       {switching && error ? (
         <HeroState tone="warn" title={`无法读取 ${selectedDate} 的研究记录`} detail={`${error}。保留日期选择，重试或切换其他日期。`} action={<button type="button" className="aq-btn aq-btn-primary" onClick={refresh}><RefreshCw aria-hidden="true" />重试该日期</button>} />
@@ -353,9 +348,8 @@ export function TodayWorkspace() {
       ) : (
         <>
           {candidateSection ? (
-            <CandidateSection view={view} section={candidateSection} onPick={setPicked} />
+            <CandidateSection view={view} section={candidateSection} onPick={setPicked} ownedHoldings={personalPortfolio?.holdings ?? null} />
           ) : null}
-          <MarketStrip />
           <details className="aq-workspace-fold" open={active !== "candidates" || undefined} key={active}>
             <summary>消息证据与多空讨论 <span>{view.messages.length} 条消息 · {view.debates.length} 只复核</span></summary>
             <div className="aq-workspace-fold-body">

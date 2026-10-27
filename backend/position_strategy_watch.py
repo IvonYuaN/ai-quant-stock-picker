@@ -88,6 +88,10 @@ def _validate_result(worksheet: dict[str, Any], result: dict[str, Any] | None,
         raise ValueError('当前没有可卖股份，不能采用卖出观察条件')
     if value.source_discussion == 'plan' and result.get('choice') != value.choice:
         raise PlanConflictError('这份分析属于另一条路线，请重新比较后采用')
+    # Recheck older persisted model results too: a current reference ID cannot
+    # launder a different historical number hidden in the action prose.
+    from strategy_review_context import validate_position_action_numbers
+    validate_position_action_numbers({'actions': [action]}, original, result.get('price_refs') or {})
     return action, reference
 
 
@@ -107,11 +111,16 @@ def adopt_strategy_watch(position_id: str, value: StrategyWatchInput) -> dict[st
     result = _discussion(worksheet, value.source_discussion)
     current = now_shanghai()
     action, reference = _validate_result(worksheet, result, value, current)
-    watch = {'action': action['action'], 'price': reference['price'], 'comparator': value.comparator,
+    watch = {'choice': value.choice, 'action': action['action'], 'price': reference['price'], 'comparator': value.comparator,
              'condition': action['condition'], 'invalidation': action['invalidation'], 'price_ref': deepcopy(reference),
              'source_generated_at': value.generated_at, 'source_discussion': value.source_discussion,
              'source_analysis_basis_id': value.expected_analysis_basis_id, 'source_action_index': value.action_index,
-             'saved_at': current.isoformat(), 'evidence_snapshot': deepcopy(worksheet['route_review']['evidence']),
+             'saved_at': current.isoformat(), 'evidence_snapshot': {
+                 **deepcopy(worksheet['route_review']['evidence']), 'holding': deepcopy(value.expected_position),
+                 'quote': {'price': worksheet['basis']['price'], 'as_of': worksheet['basis']['quote_as_of'], 'source': worksheet['basis']['quote_source']},
+                 'risk_trigger': deepcopy(worksheet['risk_trigger'])},
+             'price_refs': deepcopy(result['price_refs']),
+             'evidence_identity': {'symbol': worksheet['symbol'], 'position_id': position_id},
              'position_snapshot': deepcopy(value.expected_position), 'trade_revision': worksheet['trade_revision'],
              'constraints': deepcopy(worksheet['constraints'])}
     with ae._LOCK, advisory_lock(ae._file()), pf._LOCK, advisory_lock(pf._pf_file()):

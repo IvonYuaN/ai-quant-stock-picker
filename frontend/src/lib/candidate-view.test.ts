@@ -42,6 +42,8 @@ const ownership = {
   watchlist: new Set(["600014", "600016", "600019", "600020"]),
 };
 const personal = { ...base, sort: "personal" as const, ownership };
+export const unknownOwnershipDoesNotFilterToFalseEmpty = selectCandidates(rows, { ...base, onlyOwned: true, ownership: { ...ownership, holdingsKnown: false } }).rows.length === rows.length;
+export const unknownOwnershipDoesNotKeepStaleHoldingMarks = selectCandidates(personalRows, { ...personal, ownership: { ...ownership, holdingsKnown: false } }).rows.every((row) => !row.hit_position);
 const personalGroups = groupCandidatesByOwnership(selectCandidates(personalRows, personal).rows);
 
 export const candidateViewContract = {

@@ -23,6 +23,7 @@ from aqsp.core.time import now_shanghai
 from aqsp.utils.jsonl_io import advisory_lock
 import candidate_observation as resources
 import position_discussion as transport
+from strategy_review_context import candidate_review_context, historical_numbers, model_review_evidence
 
 Choice = Literal['pullback', 'confirmation', 'defer']
 
@@ -81,6 +82,8 @@ defer动作的price_ref必须为null，不建立到价条件。
 没有输入依据时保留缺口；不要新设价格容差、等待分钟数、放量倍数或仓位比例。
 entry_blocked为true时只能解释暂缓/补证：不得把入场路线标为investigate，不给入场动作。
 给新手简短结论、理由、下一步条件和失效条件；不输出隐藏推演过程。
+review_context给出已采用路线、原条件及采用时与现在的差别。原依据只作历史对比，不能当作当前事实或行动价格。
+已采用时解释继续等待、调整或暂缓的依据；普通报价刷新不代表必须重选，不自动修改已采用条件。
 输出一个output_schema规定的JSON对象，不加Markdown围栏。'''
 
 
@@ -167,6 +170,15 @@ def parse(text: str, schema: type[BaseModel], value: dict[str, Any], peers: set[
                                lambda match: '' if float(match[1]) == allowed else match[0], prose)
             if any(float(number) not in prices for number in re.findall(r'[-+]?\d+(?:\.\d+)?', prose)):
                 raise ValueError('模型动作的数字交易条件必须来自有源价格，不能用评分或涨幅充当价位')
+    # Only historical explanations gain the original typed source facts. The
+    # action loop above has already checked exclusively the current namespace.
+    history = historical_numbers(value.get('review_context'))
+    prices |= history.prices
+    sourced_percentages |= history.percentages
+    counts |= history.counts
+    scores_allowed = {score} | history.scores
+    sourced |= history.prices | history.percentages | history.scores | history.counts
+    date_tokens |= history.stamps
     for text in texts(parsed):
         prose = re.sub(rf"(?<!\d){re.escape(value['symbol'])}(?!\d)", '', text.replace('T+1', ''))
         currency = re.findall(r'([-+]?\d+(?:\.\d+)?)\s*(?:元|块|角)', prose)
@@ -177,7 +189,7 @@ def parse(text: str, schema: type[BaseModel], value: dict[str, Any], peers: set[
         named_prices = re.findall(r'(?:现价|当前价|报价|价格|价位|目标价|止损|参考价|前收盘价|高点|低点|支撑位?|阻力位?|回落到|回落至|跌破|突破|高于|低于)\s*(?:为|是|在|约|至)?\s*([-+]?\d+(?:\.\d+)?)', prose)
         if any(float(number) not in prices for number in currency) or any(
                 float(number) not in sourced_percentages for number in percent) or any(
-                float(number) != score for number in scores) or any(
+                float(number) not in scores_allowed for number in scores) or any(
                 float(number) not in counts for number in breadth) or any(
                 float(number) not in prices for number in named_prices) or re.search(r'\d+(?:\.\d+)?\s*(?:股|手)', prose):
             raise ValueError('模型数字事实无来源或单位与来源不符')
@@ -245,6 +257,8 @@ async def run_discussion(code: str, expected_version: int, expected_evidence_ver
             raise resources.CandidateConflict('已有策略讨论进行中，请稍后重试') from exc
         value = await asyncio.to_thread(resources.workspace, code)
         resources.checked(value, expected_version, expected_evidence_version)
+        review_context = candidate_review_context(value)
+        model_value = {**value, 'evidence': model_review_evidence(value['evidence'], review_context), 'review_context': review_context}
         with advisory_lock(resources.store_path()):
             data = resources.load_store()
             row = resources.new_row(data, code)
@@ -267,7 +281,7 @@ async def run_discussion(code: str, expected_version: int, expected_evidence_ver
                 if catalog.get('directory_complete', catalog.get('listed') is not None) and server_model not in catalog['models']:
                     raise ValueError('所选型号不在当前提供商目录，请重新选择')
                 endpoint = transport.ModelEndpoint(endpoint.url, endpoint.key, server_model, endpoint.anthropic)
-            common = {'symbol': code, 'name': value['name'], 'evidence': value['evidence'], 'price_refs': value['price_refs'],
+            common = {'symbol': code, 'name': value['name'], 'evidence': model_value['evidence'], 'price_refs': value['price_refs'], 'review_context': review_context,
                       'entry_blocked': value['entry_blocked'], 'no_orders': True, 'no_position': True}
             def progress(stage: str) -> None:
                 _progress(code, run_id, stage)
@@ -277,8 +291,8 @@ async def run_discussion(code: str, expected_version: int, expected_evidence_ver
                 try:
                     raw = await transport.call_model(endpoint, {**common, 'role': ROLES[role][1],
                         'task': '独立评估' if peers is None else '回应同行的证据与反例，保留分歧；reply_to至少一个同行，challenge写实际回应',
-                        'peer_opinions': peers or {}, 'output_schema': schema_for(CandidateOpinion, value, set(peers or {}))}, limits.role_timeout, limits, system=SYSTEM)
-                    return {'role': role, 'label': ROLES[role][0], 'status': 'ok', 'opinion': parse(raw, CandidateOpinion, value, set(peers or {}))}
+                        'peer_opinions': peers or {}, 'output_schema': schema_for(CandidateOpinion, model_value, set(peers or {}))}, limits.role_timeout, limits, system=SYSTEM)
+                    return {'role': role, 'label': ROLES[role][0], 'status': 'ok', 'opinion': parse(raw, CandidateOpinion, model_value, set(peers or {}))}
                 except (ValueError, KeyError, TypeError, IndexError, RuntimeError, httpx.HTTPError, TimeoutError) as exc:
                     return {'role': role, 'label': ROLES[role][0], 'status': 'failed', **transport._model_failure(exc)}
             progress('independent')
@@ -297,14 +311,15 @@ async def run_discussion(code: str, expected_version: int, expected_evidence_ver
                 try:
                     raw = await transport.call_model(endpoint, {**common, 'rounds': rounds,
                         'task': '比较三路线的证据、代价、缺口和失效条件；给简短新手结论和下一步。门禁阻塞则只解释暂缓与补证。',
-                        'output_schema': schema_for(CandidateSummary, value, set())}, limits.synthesis_timeout, limits, system=SYSTEM)
-                    summary = parse(raw, CandidateSummary, value, set())
+                        'output_schema': schema_for(CandidateSummary, model_value, set())}, limits.synthesis_timeout, limits, system=SYSTEM)
+                    summary = parse(raw, CandidateSummary, model_value, set())
                 except (ValueError, KeyError, TypeError, IndexError, RuntimeError, httpx.HTTPError, TimeoutError) as exc:
                     issue = transport._model_failure(exc)['issue']
             result = {'id': uuid4().hex, 'status': 'complete' if summary and len(complete) == len(ROLES) else 'partial' if valid else 'failed',
                       'generated_at': now_shanghai().isoformat(), 'model': endpoint.model, 'mode': '同一模型的候选三角色讨论',
                       'resource_version': version, 'evidence_version': value['evidence_version'], 'research_date': value['research_date'],
                       'quote_as_of': value['evidence']['quote']['as_of'], 'price_refs': value['price_refs'], 'evidence_snapshot': value['evidence'],
+                      'review_context': review_context,
                       'entry_blocked': value['entry_blocked'], 'rounds': rounds, 'summary': summary, 'summary_issue': issue,
                       'elapsed_seconds': round(time.monotonic() - started, 2),
                       'notice': '同一模型角色可能共享偏差；仅供人工复核，不覆盖评分、硬风险或自动买卖。到价后仍需核验其他条件。'}

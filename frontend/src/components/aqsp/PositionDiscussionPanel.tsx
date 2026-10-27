@@ -1,3 +1,4 @@
+import { StrategyReviewContextPanel } from "./StrategyReviewContextPanel";
 import { useEffect, useRef, useState } from "react";
 import { api, isAqspAbortError, type ActionWorksheet, type DiscussionAction, type PositionDiscussion, type PositionModelCatalog, type PositionModelConfig, type PlanTarget, type ReviewChoice, type WatchComparator } from "@/lib/api";
 import { formatEvidenceTime } from "@/lib/format";
@@ -115,7 +116,7 @@ export function PositionDiscussionPanel({ eventId, target, choice, worksheet, di
     })}</ol>;
   }
   return <div className="aq-position-discussion" aria-label="AI 持仓方案讨论">
-    <div className="aq-action-plan-heading"><h4>{comparison ? "AI 帮我比较处理策略" : "AI 分析这条路线的下一步"}</h4><button type="button" className="aq-btn" disabled={disabled || !!worksheet.archived || !worksheet.revision || busy || adopting || (!custom && (selectedUnavailable || catalogBusy))} onClick={() => void discuss()}>{busy ? "正在分析…" : result ? "重新分析" : comparison ? "帮我比较" : "开始分析"}</button></div>
+    <div className="aq-action-plan-heading"><h4>{comparison ? "AI 帮我比较处理策略" : "AI 分析这条路线的下一步"}</h4><button type="button" className="aq-btn" disabled={disabled || !!worksheet.archived || !worksheet.revision || busy || adopting || (!custom && (selectedUnavailable || catalogBusy))} onClick={() => void discuss()}>{busy ? "正在分析…" : worksheet.review_plan.watch ? "AI 复核当前方案" : result ? "重新分析" : comparison ? "帮我比较" : "开始分析"}</button></div>
     <p className="aq-note">{comparison ? "无需先选方案或填写交易参数。分析只作参考，完成后由你选择。" : "从趋势、做 T 和风险三个角度核对这条路；缺少依据会说明，不预设必须买卖。"}</p>
     {disabled && disabledReason ? <p role="status">{disabledReason}</p> : null}
     {!custom && catalog?.listed === false ? <p role="status">默认型号可能已迭代，请展开模型设置，选择可用型号验证。</p> : null}
@@ -139,7 +140,7 @@ export function PositionDiscussionPanel({ eventId, target, choice, worksheet, di
       <p className="aq-note">分析时 {result.evidence_snapshot?.quote.price ?? "未知"} 元 · 当前 {worksheet.basis.price ?? "待更新"} 元；环境或风险变化需重核。</p>
       {result.evidence_snapshot ? <details><summary>分析当时使用的证据</summary><p>当时价格 {result.evidence_snapshot.quote.price ?? "未知"} 元 · {result.evidence_snapshot.quote.source || "来源待核验"} · {formatEvidenceTime(result.evidence_snapshot.quote.as_of)}</p>{(["market", "sector"] as const).map((key) => { const row = result.evidence_snapshot![key]; return <p key={key}>{key === "market" ? "大盘" : "板块"}：{row.summary || "依据不足"} · {row.source || "来源待核验"} · {formatEvidenceTime(row.as_of)}</p>; })}</details> : null}
       {disabled ? <p role="status">输入或行情依据已变化；以下为已保存的历史讨论。</p> : null}
-      {result.summary ? <>{comparison ? <><p className="aq-comparison-conclusion">{result.summary.conclusion}</p><p>{result.summary.focus_choice ? `可先核对${PLAN_CHOICES[result.summary.focus_choice].title}：` : "暂不选定路线："}{result.summary.focus_reason}</p><dl className="aq-comparison-routes">{result.summary.routes?.map((row) => <div key={row.choice}><dt>{PLAN_CHOICES[row.choice].title}<small>{({ investigate: "可进一步核对", not_now: "当前不宜", insufficient: "依据不足" })[row.judgment]}</small></dt><dd>{row.reason}{row.needs.length ? <small>还需：{row.needs.join("、")}</small> : null}</dd></div>)}</dl></> : <><p className="aq-comparison-conclusion">{result.summary.conclusion}</p></>}
+      {result.summary ? <><StrategyReviewContextPanel context={result.review_context} />{comparison ? <><p className="aq-comparison-conclusion">{result.summary.conclusion}</p><p>{result.summary.focus_choice ? `可先核对${PLAN_CHOICES[result.summary.focus_choice].title}：` : "暂不选定路线："}{result.summary.focus_reason}</p><dl className="aq-comparison-routes">{result.summary.routes?.map((row) => <div key={row.choice}><dt>{PLAN_CHOICES[row.choice].title}<small>{({ investigate: "可进一步核对", not_now: "当前不宜", insufficient: "依据不足" })[row.judgment]}</small></dt><dd>{row.reason}{row.needs.length ? <small>还需：{row.needs.join("、")}</small> : null}</dd></div>)}</dl></> : <><p className="aq-comparison-conclusion">{result.summary.conclusion}</p></>}
         {result.summary.actions.length ? <div className="aq-strategy-next"><h4>下一步等什么，什么时候改变计划</h4>{actions(result.summary.actions, true)}</div> : <p>当前证据还不足以给出具体买卖观察条件。</p>}
         {result.summary.disagreements.length ? <p>仍有分歧：{result.summary.disagreements.join("；")}</p> : null}
         {result.summary.missing_evidence.length ? <p>还缺什么：{result.summary.missing_evidence.join("；")}</p> : null}

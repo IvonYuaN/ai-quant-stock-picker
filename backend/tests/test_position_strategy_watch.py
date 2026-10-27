@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import timedelta
+import json
 
 import pytest
 
@@ -173,3 +174,111 @@ def test_strategy_discussion_can_explain_unsaved_route_when_fee_scenario_invalid
     assert response.json()['data']['summary']
     assert calls[-1]['saved_parameters'] is None and calls[-1]['scenario'] is None
     assert calls[-1]['scenario_issue']
+
+
+def test_position_review_compares_adopted_plan_without_changing_watch_when_quote_refreshes(strategy, monkeypatch) -> None:
+    client, position_id, body, _, calls = strategy
+    adopted = client.post(f'/api/positions/{position_id}/strategy-watch', json=body).json()['data']
+    watch = deepcopy(adopted['review_plan']['watch'])
+    monkeypatch.setattr(pf.astock, 'tencent_quote', lambda codes: {code: {**QUOTE, 'price': 9.3} for code in codes})
+    current = plans.read_position_plan(position_id)
+    response = client.post(f'/api/positions/{position_id}/discussion', json={
+        'choice': 'reduce', 'expected_position': current['position_snapshot'], 'expected_revision': current['revision']})
+    assert response.status_code == 200, response.text
+    context = response.json()['data']['review_context']
+    assert context['original']['choice'] == 'reduce' and context['original']['snapshot_complete']
+    assert context['original']['condition'] == watch['condition']
+    assert context['original']['invalidation'] == watch['invalidation']
+    assert context['quote_updated'] and not context['material_changed']
+    assert json.loads(json.dumps(calls[-1]['review_context'])) == context
+    assert plans.read_position_plan(position_id)['review_plan']['watch'] == watch
+
+
+def test_position_review_reports_constraints_and_position_change_when_original_watch_retained(strategy) -> None:
+    client, position_id, body, _, calls = strategy
+    client.post(f'/api/positions/{position_id}/strategy-watch', json=body)
+    data = pf._load()
+    data['holdings'][0]['shares'] -= 100
+    data['holdings'][0]['lots'][0]['shares'] -= 100
+    data['position_reviews'][position_id]['constraints']['attention'] = 'unavailable'
+    pf._save(data)
+    current = plans.read_position_plan(position_id)
+    response = client.post(f'/api/positions/{position_id}/discussion', json={
+        'choice': None, 'expected_position': current['position_snapshot'], 'expected_revision': current['revision']})
+    assert response.status_code == 200, response.text
+    context = response.json()['data']['review_context']
+    categories = {item['category'] for item in context['changes']}
+    assert {'position_snapshot', 'constraints'} <= categories
+    assert context['material_changed']
+    assert context['original']['position_snapshot']['shares'] == 1000
+    assert context['current']['position_snapshot']['shares'] == 900
+    assert calls[-1]['guards']['pause_t']
+
+
+def test_position_review_marks_legacy_missing_snapshot_and_original_route_when_not_saved(strategy) -> None:
+    client, position_id, body, _, _ = strategy
+    client.post(f'/api/positions/{position_id}/strategy-watch', json=body)
+    data = pf._load()
+    watch = data['position_reviews'][position_id]['review_plan']['watch']
+    watch.pop('choice')
+    watch.pop('evidence_snapshot')
+    pf._save(data)
+    current = plans.read_position_plan(position_id)
+    response = client.post(f'/api/positions/{position_id}/discussion', json={
+        'choice': None, 'expected_position': current['position_snapshot'], 'expected_revision': current['revision']})
+    context = response.json()['data']['review_context']
+    assert context['original']['evidence_snapshot'] == {} and not context['original']['snapshot_complete']
+    assert context['original']['choice'] is None and len(context['missing_evidence']) >= 2
+
+
+def test_position_review_never_inherits_previous_position_identity(strategy) -> None:
+    from strategy_review_context import position_review_context
+    client, position_id, body, _, _ = strategy
+    adopted = client.post(f'/api/positions/{position_id}/strategy-watch', json=body).json()['data']
+    adopted['review_plan']['watch']['position_snapshot']['position_id'] = 'previous-position'
+    context = position_review_context(adopted, {}, {})
+    assert context['status'] == 'identity_mismatch' and context['original'] is None
+
+
+def test_position_review_distinguishes_semantic_direction_from_local_check_timestamp(strategy) -> None:
+    from strategy_review_context import position_review_context
+    client, position_id, body, _, _ = strategy
+    adopted = client.post(f'/api/positions/{position_id}/strategy-watch', json=body).json()['data']
+    watch = adopted['review_plan']['watch']
+    evidence = deepcopy(watch['evidence_snapshot'])
+    evidence['quote']['checked_at'] = '2026-10-23T10:01:00+08:00'
+    normal = position_review_context(adopted, evidence, watch['price_refs'])
+    assert not normal['material_changed'] and not normal['quote_updated']
+    evidence['market'] = {'status': 'weak', 'source': '另一个合成源', 'as_of': NOW.isoformat()}
+    changed = position_review_context(adopted, evidence, watch['price_refs'])
+    assert any(row['category'] == 'market' for row in changed['changes'])
+    assert changed['material_changed'] and not changed['quote_updated']
+    evidence['quote']['source'] = '新行情源'
+    assert any(row['category'] == 'quote_source' for row in position_review_context(adopted, evidence, watch['price_refs'])['changes'])
+
+
+def test_position_review_discards_result_when_watch_is_stopped_during_discussion(strategy, monkeypatch) -> None:
+    client, position_id, body, _, _ = strategy
+    current = client.post(f'/api/positions/{position_id}/strategy-watch', json=body).json()['data']
+    original = discussion.call_model
+    async def changed(endpoint, payload, timeout, limits):
+        if 'rounds' in payload:
+            watches.stop_strategy_watch(position_id, current['position_snapshot'], current['revision'])
+        return await original(endpoint, payload, timeout, limits)
+    monkeypatch.setattr(discussion, 'call_model', changed)
+    response = client.post(f'/api/positions/{position_id}/discussion', json={
+        'choice': 'reduce', 'expected_position': current['position_snapshot'], 'expected_revision': current['revision']})
+    assert response.status_code == 409, response.text
+    saved = plans.read_position_plan(position_id)['review_plan']
+    assert saved['watch_stopped'] and 'watch' not in saved and not saved.get('discussion')
+
+
+def test_position_review_rechecks_legacy_action_prose_when_adopting_old_persisted_analysis(strategy) -> None:
+    client, position_id, body, _, _ = strategy
+    data = pf._load()
+    data['position_reviews'][position_id]['comparison']['summary']['actions'][0]['condition'] = '跌破8.8元后重新核对'
+    pf._save(data)
+    before = deepcopy(pf._load())
+    response = client.post(f'/api/positions/{position_id}/strategy-watch', json=body)
+    assert response.status_code == 400 and '当前有源' in response.text
+    assert pf._load() == before

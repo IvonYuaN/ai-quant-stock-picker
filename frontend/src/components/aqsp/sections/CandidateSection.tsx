@@ -17,7 +17,7 @@ import { toast } from "sonner";
 import { loadWatch, saveWatch } from "@/lib/watchlist";
 import { stockResearchHref } from "@/lib/research-route";
 import { cn } from "@/lib/utils";
-import { api, type ReviewRecord } from "@/lib/api";
+import { api, type Holding, type ReviewRecord } from "@/lib/api";
 import { evidenceLabel, statusLabel } from "@/lib/display-labels";
 import { useOwnership } from "../useOwnership";
 import type { CandidateRow, DailyView, SectionView } from "@/lib/daily-view";
@@ -29,7 +29,7 @@ import {
   strategyCounts,
   type CandidateSortKey,
 } from "@/lib/candidate-view";
-import { ownedKind, summarizeOwned, type OwnershipSets } from "@/lib/ownership";
+import { ownedKind, summarizeOwned, ownershipSummaryLabel, type OwnershipSets } from "@/lib/ownership";
 import {
   MAX_COMPARE_SYMBOLS,
   buildCompareMatrix,
@@ -434,6 +434,7 @@ function CandidateControls({
   onlyReady,
   strategy,
   hideOwned,
+  ownershipKnown,
   onChange,
 }: {
   rows: readonly CandidateRow[];
@@ -441,6 +442,7 @@ function CandidateControls({
   onlyReady: boolean;
   strategy: string | null;
   hideOwned: boolean;
+  ownershipKnown: boolean;
   onChange: (next: {
     sort?: CandidateSortKey;
     onlyReady?: boolean;
@@ -459,7 +461,7 @@ function CandidateControls({
           value={sort}
           onChange={(event) => onChange({ sort: event.target.value as CandidateSortKey })}
         >
-          <option value="personal">我的持仓 / 自选优先</option>
+          <option value="personal">{ownershipKnown ? "我的持仓 / 自选优先" : "自选优先 · 持仓待核"}</option>
           <option value="score">评分高→低</option>
           <option value="ready">可复核优先</option>
           <option value="evidence">证据多→少</option>
@@ -479,6 +481,7 @@ function CandidateControls({
 
       <button
         type="button"
+        disabled={!ownershipKnown}
         className={cn("aq-btn", hideOwned && "aq-btn-primary")}
         onClick={() => onChange({ hideOwned: !hideOwned, onlyOwned: false })}
         title="隐藏已经持有或已加入自选的候选，专注找新面孔"
@@ -493,10 +496,12 @@ export function CandidateSection({
   view,
   section,
   onPick,
+  ownedHoldings,
 }: {
   view: DailyView;
   section: SectionView;
   onPick?: (symbol: string) => void;
+  ownedHoldings?: readonly Holding[] | null;
 }) {
   const [sort, setSort] = useState<CandidateSortKey>("personal");
   const [onlyReady, setOnlyReady] = useState(false);
@@ -504,7 +509,8 @@ export function CandidateSection({
   const [hideOwned, setHideOwned] = useState(false);
   const [onlyOwned, setOnlyOwned] = useState(false);
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
-  const ownership = useOwnership();
+  const ownership = useOwnership(ownedHoldings);
+  const ownershipKnown = ownership.holdingsKnown !== false;
   // 历史复盘：看候选时同步看到「自己上次对这只票的判断」——决策时刻最有价值的镜子。
   // 取不到时静默降级（不影响候选研究主流程）。
   const [reviewsBySymbol, setReviewsBySymbol] = useState<Map<string, ReviewRecord[]>>(
@@ -561,8 +567,8 @@ export function CandidateSection({
     onlyReady,
     strategy,
     ownership,
-    onlyOwned,
-    exclude: hideOwned ? (row) => ownedKind(row.symbol, ownership) !== null : undefined,
+    onlyOwned: ownershipKnown && onlyOwned,
+    exclude: ownershipKnown && hideOwned ? (row) => ownedKind(row.symbol, ownership) !== null : undefined,
   });
   const visible = selection.rows;
   const visibleGroups = groupCandidatesByOwnership(visible);
@@ -602,9 +608,10 @@ export function CandidateSection({
       <div className="aq-tag-row">
         <Tag title={view.parameterSnapshot.detail}>{view.parameterSnapshot.label}</Tag>
         {view.frozenAt ? <Tag title={view.frozenAt}>当日候选已冻结 · {new Date(view.frozenAt).toLocaleTimeString("zh-CN", { timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit", hour12: false })}</Tag> : <Tag>冻结信息尚未生成</Tag>}
-        <Tag tone={owned.holding + owned.watchlist > 0 ? "primary" : "neutral"}>命中我的持仓 {owned.holding} · 自选 {owned.watchlist}</Tag>
-        <button type="button" className={cn("aq-btn", onlyOwned && "aq-btn-primary")} aria-pressed={onlyOwned} onClick={() => { setOnlyOwned(!onlyOwned); setHideOwned(false); }}>只看我的命中</button>
+        <Tag tone={!ownershipKnown ? "warn" : owned.holding + owned.watchlist > 0 ? "primary" : "neutral"}>{ownershipSummaryLabel(view.candidates.map((row) => row.symbol), ownership)}</Tag>
+        <button type="button" disabled={!ownershipKnown} className={cn("aq-btn", ownershipKnown && onlyOwned && "aq-btn-primary")} aria-pressed={ownershipKnown && onlyOwned} onClick={() => { setOnlyOwned(!onlyOwned); setHideOwned(false); }}>只看我的命中</button>
       </div>
+      {!ownershipKnown ? <p className="aq-note" role="status">持仓身份待确认，已暂停持仓筛选与计数；不影响查看候选研究。可用上方“更新关注事项”重试。</p> : null}
       {view.frozenAt ? <p className="aq-hint">评分、策略依据与参数身份沿用当日首次冻结；现价、新鲜度与消息按最新证据更新。</p> : null}
       {added.length > 0 ? (
         <section className="aq-candidate-increment" aria-label="盘中新增候选">
@@ -650,7 +657,8 @@ export function CandidateSection({
             sort={sort}
             onlyReady={onlyReady}
             strategy={strategy}
-            hideOwned={hideOwned}
+            hideOwned={ownershipKnown && hideOwned}
+            ownershipKnown={ownershipKnown}
             onChange={(next) => {
               if (next.sort !== undefined) setSort(next.sort);
               if (next.onlyReady !== undefined) setOnlyReady(next.onlyReady);

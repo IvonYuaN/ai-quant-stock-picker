@@ -11,3 +11,13 @@ export function scrollToHashTarget(
   target.scrollIntoView({ block: "start" });
   return true;
 }
+
+/** Call after conditional content mounts; cancel when the route or disclosure changes. */
+export function scheduleHashTargetScroll(
+  hash: string,
+  scheduler: Pick<Window, "requestAnimationFrame" | "cancelAnimationFrame"> = window,
+  documentRef: Pick<Document, "getElementById"> = document,
+): () => void {
+  const frame = scheduler.requestAnimationFrame(() => scrollToHashTarget(hash, documentRef));
+  return () => scheduler.cancelAnimationFrame(frame);
+}
