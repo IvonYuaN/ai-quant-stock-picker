@@ -1,0 +1,117 @@
+"""Pure current-evidence comparison before choosing a human position plan.
+
+Availability describes facts and constraints, never investment suitability or a
+new trading signal. No network, persistence, strategy weights or order actions.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+from collections.abc import Mapping, Sequence
+from dataclasses import asdict, dataclass
+from datetime import datetime
+from typing import Any
+
+from decision_context import _session, _source_date, _stock_context, _timely_quote
+
+
+@dataclass(frozen=True)
+class RouteReview:
+    choice: str
+    status: str
+    reason: str
+    needs: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class PositionRouteReview:
+    title: str
+    summary: str
+    unrealized_pnl_pct: float | None
+    recovery_to_cost_pct: float | None
+    routes: tuple[RouteReview, ...]
+    evidence: dict[str, Any]
+    missing_evidence: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a display contract, without selecting or mutating a plan."""
+        return asdict(self)
+
+
+def evidence_digest(value: Any) -> str:
+    """Identify source facts without hashing wall-clock read times or secrets."""
+    return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
+
+
+def risk_evidence_revision(events: Sequence[Mapping[str, Any]]) -> str:
+    """Exclude plans and discussions so analysis never invalidates itself."""
+    fields = ("id", "level", "threshold_at", "trigger_at", "basis_json", "position_context", "updated_at")
+    return evidence_digest([{key: row.get(key) for key in fields} for row in sorted(events, key=lambda row: str(row.get("id", "")))])
+
+
+def current_position_evidence(context: Mapping[str, Any], quote: Mapping[str, Any], *, current: datetime) -> dict[str, Any]:
+    """Use one source/time policy for both route display and joint-risk guards."""
+    evidence: dict[str, Any] = {}
+    for key, label in (("market", "大盘"), ("sector", "板块")):
+        row = context.get(key) or {}
+        stamp = _source_date(row.get("as_of"), current)
+        valid = bool(stamp and stamp[0] == _session(current)
+                     and (key == "market" or _timely_quote(stamp, current))
+                     and row.get("source") and row.get("status") in
+                     ({"weak", "strong", "neutral"} if key == "market" else {"falling", "rising", "flat"}))
+        evidence[key] = {**row, "summary": f"本交易日检查快照：{row.get('summary', '')}"} if valid else {
+            "status": "unknown", "summary": f"{label}当前依据待补：没有来源及时点均有效的证据",
+            "as_of": None, "source": "", "evidence": [],
+        }
+    evidence["stock"] = asdict(_stock_context(quote, None, current))
+    return evidence
+
+
+def build_route_review(
+    holding: Mapping[str, Any], quote: Mapping[str, Any],
+    basis: Mapping[str, Any], context: Mapping[str, Any],
+    events: Sequence[Mapping[str, Any]], *, current: datetime,
+) -> PositionRouteReview:
+    """Revalidate saved background times and compare constraints on one holding."""
+    evidence = current_position_evidence(context, quote, current=current)
+    missing = [f"{label}当前证据" for key, label in (("market", "大盘"), ("sector", "板块"), ("stock", "个股"))
+               if evidence[key]["status"] == "unknown"]
+    price, cost = basis.get("price"), holding.get("cost")
+    pnl = (price / cost - 1) * 100 if price and cost and cost > 0 else None
+    recovery = (cost / price - 1) * 100 if price and cost and cost > price else None
+    sellable = holding.get("sellable_shares") or 0
+    shares = holding.get("shares") or 0
+    hard = any(row.get("level") == "L1" for row in events)
+    issue = basis.get("quote_issue")
+    joint = basis["joint_weakness"]
+    title = "先核对风险，再决定怎么处理" if hard or joint else "先看这只持仓，再比较三条路"
+    if issue:
+        summary = f"当前行情尚不能用于判断：{issue}。可先查看持仓和风险记录，更新行情后再核对价位。"
+    elif joint:
+        summary = "大盘、所属板块和个股的同日弱势证据一致，先复核剩余仓位风险，暂停新增做 T 测算。"
+    elif hard:
+        summary = "风险线已触发，继续持有需要重新确认可承受损失；是否分批退出或观察，结合下面的当前证据决定。"
+    else:
+        summary = "先比较保留仓位、降低暴露和尝试差价的条件；当前涨跌或账面亏损都不足以单独决定路线。"
+    if hard and not issue:
+        threshold = next((row.get("threshold_at") for row in events if row.get("level") == "L1"), None)
+        if isinstance(threshold, (int, float)) and not isinstance(threshold, bool) and threshold > 0:
+            summary = f"上次检查触发风险线 {threshold:.2f} 元。" + (
+                f"当前价 {price:.2f} 元仍低于该线，继续持有需核对可承受损失。" if price < threshold else
+                f"当前价 {price:.2f} 元已回到该线上方，需重新检查规则；原提醒未自动解除。") + (
+                "三维同日弱势证据一致，暂停新增做 T 测算。" if joint else "请结合下面证据比较处理方式。")
+    hold = RouteReview("hold", "risk_review" if hard or joint else "review",
+                       f"继续保留 {shares:g} 股的后续涨跌敞口。" + ("已触发的风险仍需处理。" if hard else "需核对继续持有的依据。"),
+                       ("你可承受的后续损失", "继续持有的趋势依据"))
+    reduce = RouteReview("reduce", "paused" if issue or sellable <= 0 else "review",
+                         str(issue) if issue else "当前没有可卖底仓，先核对 T+1 和实际成交日期。" if sellable <= 0
+                         else f"当前 {shares:g} 股中可卖 {sellable:g} 股；卖出部分结算当前盈亏，并减少后续价格波动的影响。",
+                         ("愿意退出的数量与费用", "反弹未出现或继续走弱时如何处理"))
+    paused = bool(issue or sellable <= 0 or joint)
+    t_reason = (str(issue) if issue else "当前没有可卖底仓，无法先卖后买。" if sellable <= 0
+                else "三维同日走弱，先复核风险，暂停新增做 T 测算。" if joint
+                else f"可卖底仓 {sellable:g} 股，但已见高低点尚不能证明适合做 T；还需判断波动、成交条件和往返费用。")
+    t = RouteReview("t_watch", "paused" if paused else "unknown", t_reason,
+                    ("能否盯盘", "可核验的日内与流动性条件", "两腿费用及买不回时的安排"))
+    return PositionRouteReview(title, summary, pnl, recovery, (hold, reduce, t), evidence,
+                               tuple(missing + ["个人风险与资金约束", "做 T 的流动性及费用条件"]))

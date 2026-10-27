@@ -3,7 +3,7 @@
 支持多种免费/低价模型 API：
 - 智谱GLM-4.7-Flash (推荐首选)
 - 通义千问 qwen-turbo (新用户500万tokens免费180天)
-- Agnes AI agnes-2.0-flash (OpenAI 兼容接口)
+- Agnes AI agnes-3.0-flash (OpenAI 兼容接口)
 - 硅基流动 (注册送14元，部分模型永久免费)
 - DeepSeek (不免费，2元/百万tokens，效果最好)
 - OpenAI 兼容 / Anthropic / 自定义端点
@@ -371,7 +371,7 @@ def _invoke(
             model = _model_env_for_provider(provider) or {
                 "glm": "glm-4.7-flash",
                 "qwen": "qwen-turbo",
-                "agnes": "agnes-2.0-flash",
+                "agnes": "agnes-3.0-flash",
                 "deepseek": "deepseek-chat",
                 "openai": "gpt-4o-mini",
                 "anthropic": "claude-3-5-haiku-20241022",

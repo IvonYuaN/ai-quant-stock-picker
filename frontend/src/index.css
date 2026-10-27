@@ -3727,6 +3727,23 @@
 
 .aq-position-discussion { margin: 14px 0; padding: 14px; border: 1px solid var(--aq-border, #34383c); border-radius: 8px; }
 .aq-position-discussion p { overflow-wrap: anywhere; }
+.aq-route-diagnosis { display: grid; gap: .4rem; margin: .8rem 0; }
+.aq-route-diagnosis p { margin: 0; font-size: .85rem; line-height: 1.8; }
+.aq-route-review small, .aq-comparison-routes small { display: block; color: hsl(var(--muted-foreground)); font-size: .75rem; }
+.aq-route-review summary { min-height: 44px; padding: .65rem 0; cursor: pointer; font-size: .8rem; }
+.aq-route-option { display: flex; flex-direction: column; gap: .5rem; min-width: 0; padding: .8rem; border: 1px solid hsl(var(--border)); border-radius: 6px; }
+.aq-route-option-heading { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .4rem; }
+.aq-route-option-heading span { font-size: .73rem; color: hsl(var(--muted-foreground)); }
+.aq-route-option p { margin: 0; font-size: .8rem; line-height: 1.75; }
+.aq-route-option > .aq-btn { margin-top: auto !important; min-height: 44px !important; align-items: center !important; }
+.aq-model-selection { display: flex; flex-wrap: wrap; align-items: end; gap: .5rem; padding-bottom: .6rem; }
+.aq-model-selection label { flex: 1 1 180px; font-size: .8rem; }
+.aq-model-selection select { display: block; width: 100%; min-height: 44px; margin-top: .4rem; background: hsl(var(--background)); color: hsl(var(--foreground)); border: 1px solid hsl(var(--border)); border-radius: 4px; }
+.aq-model-selection p { flex-basis: 100%; }
+.aq-comparison-conclusion { border-left: 2px solid hsl(var(--primary)); padding-left: .7rem; line-height: 1.8; }
+.aq-comparison-routes > div { padding: .65rem 0; border-bottom: 1px solid hsl(var(--border)); }
+.aq-comparison-routes dt { font-size: .85rem; font-weight: 600; }
+.aq-comparison-routes dd { font-size: .8rem; line-height: 1.8; }
 .aq-position-discussion input:not([type="checkbox"]) { width: 100%; min-width: 0; padding: 9px; background: transparent; border: 1px solid #4b5055; border-radius: 4px; }
 .aq-discussion-result { margin-top: 14px; }
 .aq-discussion-result article { padding: 10px 0; border-top: 1px solid #34383c; }

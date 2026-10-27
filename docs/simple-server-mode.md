@@ -155,7 +155,7 @@ AQSP_ENABLE_AUTO_EVOLUTION=false
 - 现在支持角色级运行配置：`AQSP_DEBATE_ROLE_LLM`、`AQSP_DEBATE_ROLE_PROVIDERS`、`AQSP_DEBATE_ROLE_MODELS`。比如可以让 `bull` 走 Agnes、`risk_control` 关闭 LLM、`northbound` 走 GLM。
 - 当前多 agent 讨论主链路是多角色规则引擎，LLM 主要用于摘要增强，不会直接改写核心选股分数。
 - `AQSP_ENABLE_AUTO_EVOLUTION=true` 后，收盘链路会额外执行一次策略自进化检查。
-- `LLM_PROVIDER=agnes` 时会直接走 Agnes AI 官方 OpenAI 兼容端点，默认模型 `agnes-2.0-flash`。
+- `LLM_PROVIDER=agnes` 时会直接走 Agnes AI 官方 OpenAI 兼容端点，默认模型 `agnes-3.0-flash`。
 - 如果你改用 `LLM_PROVIDER=siliconflow`，建议同时设置 `SILICONFLOW_FREE_ONLY=true`，只允许免费白名单模型，避免意外扣费。
 - 现在支持 provider 专属模型变量：`GLM_MODEL`、`QWEN_MODEL`、`AGNES_MODEL`、`SILICONFLOW_MODEL`、`OPENAI_MODEL`、`ANTHROPIC_MODEL`、`CUSTOM_MODEL`。这样切换 provider 时不会被旧的全局 `LLM_MODEL` 串台。
 

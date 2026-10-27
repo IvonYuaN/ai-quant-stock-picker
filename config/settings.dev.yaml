@@ -21,7 +21,7 @@ llm:
   llm_provider: glm  # 默认使用智谱 GLM（永久免费）
   glm_model: glm-4.7-flash
   qwen_model: qwen-turbo
-  agnes_model: agnes-2.0-flash
+  agnes_model: agnes-3.0-flash
   siliconflow_model: Qwen/Qwen2.5-7B-Instruct
   siliconflow_free_only: true
   openai_model: gpt-4o-mini

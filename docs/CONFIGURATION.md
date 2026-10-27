@@ -156,8 +156,10 @@ QWEN_MODEL=qwen-turbo  # 或 qwen-plus, qwen-max
 ```bash
 LLM_PROVIDER=agnes
 AGNES_API_KEY=your_api_key
-AGNES_MODEL=agnes-2.0-flash
+AGNES_MODEL=agnes-3.0-flash
 ```
+
+型号会迭代，显式 `AGNES_MODEL` 优先，不会随代码示例自动升级。持仓分析中的“模型设置”可读取提供商当前目录并选择本设备使用的型号，无需重新输入服务器密钥；目录中的型号仍须实际验证文本能力与结果。未列出的旧型号会提示重选，读取目录失败不会冒充型号已下线。全局环境配置修改仍遵守线上授权流程。
 
 - **官网**：https://agnes-ai.com/
 - **特点**：OpenAI 兼容接口，适合直接接入

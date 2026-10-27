@@ -154,7 +154,7 @@ class LLMSettings(BaseSettings):
 
     # Agnes AI 配置
     agnes_api_key: str = Field(default="", alias="AGNES_API_KEY")
-    agnes_model: str = Field(default="agnes-2.0-flash", alias="AGNES_MODEL")
+    agnes_model: str = Field(default="agnes-3.0-flash", alias="AGNES_MODEL")
 
     # 硅基流动配置
     siliconflow_api_key: str = Field(default="", alias="SILICONFLOW_API_KEY")
