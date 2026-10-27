@@ -5137,6 +5137,7 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         CandidateSnapshotError,
         candidate_freeze_enabled,
         candidate_batch_snapshot_path,
+        candidate_close_snapshot_path,
         candidate_request_fingerprint,
         candidate_snapshot_path,
         freeze_final_candidates,
@@ -5198,6 +5199,9 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         not as_of_raw and _requires_intraday_overlay_task(normalized_task_id)
         and explicit_symbols.strip()
     )
+    closing_computation = (
+        mode == "close" and normalized_task_id in {"", "daily", "scheduled"}
+    )
     observation_symbols: list[str] = []
     if rotating_batch and freeze_enabled:
         try:
@@ -5226,10 +5230,20 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
                 "max_data_lag_days": int(max_data_lag_days),
                 "benchmark_symbol": str(args.benchmark_symbol),
                 "thresholds_version": thresholds.version,
+                **(
+                    {
+                        "thresholds_fingerprint": candidate_request_fingerprint(
+                            thresholds.to_dict()
+                        )
+                    }
+                    if closing_computation else {}
+                ),
             }
         )
         if rotating_batch:
             computation_path = candidate_batch_snapshot_path(candidate_fingerprint)
+        elif closing_computation:
+            computation_path = candidate_close_snapshot_path()
         try:
             candidate_snapshot = (
                 load_candidate_snapshot(

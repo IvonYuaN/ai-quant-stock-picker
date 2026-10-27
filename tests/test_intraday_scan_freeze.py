@@ -633,6 +633,94 @@ def test_scheduled_scan_does_not_freeze_seven_of_256_failed_coverage(_scheduler)
     assert len(seen["scores"]) == 2
 
 
+@pytest.mark.parametrize("task_id", ["daily", "scheduled", ""])
+def test_scheduled_close_fetches_own_pool_when_intraday_roster_is_frozen(
+    _scheduler, monkeypatch, task_id,
+):
+    cli, args, seen = _scheduler
+    intraday_symbols = [f"{i:06d}" for i in range(1, 257)]
+    intraday = _batch("legacy-intraday", intraday_symbols, [_pick("000001")])
+    freeze.session_candidate_view(intraday, final_picks=list(intraday.final_picks))
+    stable_bytes = freeze.candidate_snapshot_path().read_bytes()
+    monkeypatch.setenv("AQSP_RUN_TASK_ID", task_id)
+    monkeypatch.setattr(
+        cli, "_fetch_frames_for_cli_with_metadata", cli._fetch_special_strategy_frames
+    )
+    close_symbols = [f"{i:06d}" for i in range(1001, 1601)]
+    args.symbols = ",".join(close_symbols)
+    seen["valid_count"] = len(close_symbols)
+    for _ in range(2):
+        with pytest.raises(_StopAfterProvisional):
+            cli._run_scheduled_legacy(args)
+    assert seen["fetches"] == [close_symbols, close_symbols]
+    assert len(seen["scores"]) == 1
+    assert seen["metadata"].resolved_symbol_count == 600
+    record = json.loads(freeze.candidate_close_snapshot_path().read_text())
+    snapshot = freeze.load_candidate_snapshot(DAY, record["request_fingerprint"],
+                                              freeze.candidate_close_snapshot_path())
+    assert snapshot.resolved_symbols == tuple(close_symbols)
+    finalized = freeze.freeze_final_candidates(
+        snapshot, list(snapshot.screened_picks), freeze.candidate_close_snapshot_path()
+    )
+    assert "000001" not in {pick.symbol for pick in finalized.final_picks}
+    assert freeze.candidate_snapshot_path().read_bytes() == stable_bytes
+    assert not freeze.candidate_increment_path().exists()
+
+
+@pytest.mark.parametrize("mutation", ["symbols", "limit", "thresholds"])
+def test_scheduled_close_rejects_changed_identity_when_same_session_is_cached(
+    _scheduler, monkeypatch, capsys, mutation,
+):
+    cli, args, seen = _scheduler
+    monkeypatch.setenv("AQSP_RUN_TASK_ID", "daily")
+    monkeypatch.setattr(
+        cli, "_fetch_frames_for_cli_with_metadata", cli._fetch_special_strategy_frames
+    )
+    args.symbols = "600001,600002"
+    with pytest.raises(_StopAfterProvisional):
+        cli._run_scheduled_legacy(args)
+    close_bytes = freeze.candidate_close_snapshot_path().read_bytes()
+    if mutation == "symbols":
+        args.symbols = "600003"
+    elif mutation == "limit":
+        args.limit += 1
+    else:
+        original = cli.load_thresholds()
+        changed = replace(
+            original, composite=replace(
+                original.composite,
+                min_total_score=original.composite.min_total_score + 1,
+            ),
+        )
+        assert changed.version == original.version
+        monkeypatch.setattr(cli, "load_thresholds", lambda: changed)
+    assert cli._run_scheduled_legacy(args) == 1
+    assert "配置身份冲突" in capsys.readouterr().out
+    assert len(seen["fetches"]) == 1
+    assert freeze.candidate_close_snapshot_path().read_bytes() == close_bytes
+
+
+def test_close_cache_preserves_corrupt_intraday_record_without_reusing_it(
+    _scheduler, monkeypatch,
+):
+    cli, args, seen = _scheduler
+    stable = freeze.candidate_snapshot_path()
+    stable.write_text("corrupt legacy record\n")
+    monkeypatch.setenv("AQSP_RUN_TASK_ID", "daily")
+    monkeypatch.setattr(
+        cli, "_fetch_frames_for_cli_with_metadata", cli._fetch_special_strategy_frames
+    )
+    args.symbols = "600001"
+    with pytest.raises(_StopAfterProvisional):
+        cli._run_scheduled_legacy(args)
+    assert stable.read_text() == "corrupt legacy record\n"
+    assert len(seen["scores"]) == 1
+    close = freeze.candidate_close_snapshot_path()
+    close.write_text("corrupt closing record\n")
+    assert cli._run_scheduled_legacy(args) == 1
+    assert len(seen["scores"]) == 1
+
+
 def test_scheduled_scan_preserves_full_coverage_when_frozen_candidates_are_empty(
     _scheduler,
 ):

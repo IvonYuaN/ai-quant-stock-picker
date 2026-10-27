@@ -96,6 +96,17 @@ def candidate_batch_snapshot_path(request_fingerprint: str) -> Path:
     return root.parent / f"{root.stem}_batches" / f"{digest}.jsonl"
 
 
+def candidate_close_snapshot_path() -> Path:
+    """Isolate closing computations while retaining same-day identity checks.
+
+    Unlike rotating batch paths, this path does not include the request hash:
+    changing the closing pool/config must still fail rather than start over.
+    The intraday roster remains display evidence, never a closing-score cache.
+    """
+    root = candidate_snapshot_path()
+    return root.with_name(f"{root.stem}_close{root.suffix}")
+
+
 def _candidate_parameter_fingerprints(
     snapshot: CandidateComputationSnapshot,
     additional_picks: list[PickResult] | None = None,

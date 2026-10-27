@@ -2696,8 +2696,9 @@ def test_run_screen_injects_threshold_screening_config(
     assert "- 市场标签: unknown" not in report
 
 
+@pytest.mark.parametrize("intraday_frozen", [False, True])
 def test_run_scheduled_composite_rescore_updates_frozen_pick_results(
-    monkeypatch, tmp_path: Path
+    monkeypatch, tmp_path: Path, intraday_frozen: bool,
 ) -> None:
     import aqsp.cli as cli_mod
     from aqsp.core.types import PickResult
@@ -2952,6 +2953,34 @@ def test_run_scheduled_composite_rescore_updates_frozen_pick_results(
         notify=False,
     )
 
+    if intraday_frozen:
+        from aqsp.services import candidate_freeze as freeze
+
+        monkeypatch.setenv("AQSP_RUNTIME_DATA_ROOT", str(tmp_path))
+        monkeypatch.setenv("AQSP_RUN_TASK_ID", "daily")
+        monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date.fromisoformat(latest))
+        monkeypatch.setattr(freeze, "_current_trading_session_date", lambda: latest)
+        intraday = freeze.freeze_scored_candidates(
+            session_date=latest,
+            request_fingerprint="earlier-256-symbol-batch",
+            source="tencent",
+            data_latest_trade_date=latest,
+            thresholds_version="legacy-test",
+            regime="range",
+            strategy_weights={"momentum": 1},
+            resolved_symbols=["600003"],
+            min_price=1,
+            max_price=1000,
+            min_avg_amount=50_000_000,
+            picks=[],
+        )
+        freeze.freeze_final_candidates(intraday, [])
+        intraday_bytes = freeze.candidate_snapshot_path().read_bytes()
+        monkeypatch.setattr(
+            cli_mod, "append_predictions",
+            lambda path, picks, **kwargs: captured.update(ledger=list(picks)),
+        )
+
     exit_code = cli_mod.run_scheduled(args)
 
     assert exit_code == 0
@@ -2964,6 +2993,12 @@ def test_run_scheduled_composite_rescore_updates_frozen_pick_results(
     assert by_symbol["000001"].regime_score == 0.0
     assert by_symbol["000001"].score == 80.0
     assert by_symbol["000001"].rating == "buy_candidate"
+    if intraday_frozen:
+        assert {pick.symbol for pick in captured["ledger"]} == {"600519", "000001"}
+        assert freeze.candidate_snapshot_path().read_bytes() == intraday_bytes
+        close_record = json.loads(freeze.candidate_close_snapshot_path().read_text())
+        assert close_record["finalized"] is True
+        assert set(close_record["resolved_symbols"]) == {"600519", "000001"}
 
 
 def test_run_scheduled_skips_formal_ledger_writes_when_circuit_breaker_triggers(
