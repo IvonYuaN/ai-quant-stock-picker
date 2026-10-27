@@ -347,6 +347,7 @@ export interface PositionAlertRules {
   unsupported_levels: string[];
 }
 export interface ClosedPosition {
+  position_id?: string | null;
   code: string; name: string; date: string; price: number; shares: number; cost: number;
   pnl: number; pnl_pct: number;
 }
@@ -399,6 +400,7 @@ export interface PositionModelConfig { baseURL: string; apiKey: string; model: s
 export interface PositionModelCatalog { catalog_id: string; current_model: string; models: string[]; checked_at: string; listed: boolean | null; directory_complete?: boolean; issue: string; notice: string }
 export interface DiscussionAction { action: "observe" | "sell_review" | "buy_review" | "pause"; price_ref: string | null; condition: string; invalidation: string }
 export interface PositionDiscussion {
+  review_revision?: string;
   summary_issue?: string;
   status: "complete" | "partial" | "failed"; generated_at: string; model: string; mode: string;
   choice: ReviewChoice | null; position_snapshot: ActionWorksheet["position_snapshot"]; quote_as_of: string | null;
@@ -412,11 +414,26 @@ export interface PositionDiscussion {
     focus_choice?: ReviewChoice | null; focus_reason?: string } | null;
   notice: string;
 }
+export interface PositionConstraints {
+  attention: "available" | "occasional" | "unavailable" | "unknown";
+  extra_cash: number | null;
+  loss_limit: number | null;
+  risk_baseline: { price: number; shares: number; market_value: number; as_of: string; confirmed_at: string } | null;
+}
+export interface PlanTarget { kind: "position" | "alert"; id: string }
 export interface ActionWorksheet {
   symbol: string;
+  position_id?: string;
+  name?: string;
+  revision?: string;
+  archived?: boolean;
+  constraints?: PositionConstraints;
+  constraints_issue?: string;
+  risk_baseline_requires_confirmation?: boolean;
+  quantity_bounds?: { sellable_shares: number; buy_lot: number; extra_cash_limit: number | null; note: string };
   basis: { checked_at: string; quote_as_of: string | null; quote_source: string; quote_issue: string;
     price: number | null; cost: number | null; shares: number | null; sellable_shares: number | null;
-    position_id: string | null; joint_weakness: boolean;
+    position_id: string | null; joint_weakness: boolean; personal_pause_t?: boolean;
     references: Array<{ label: string; price: number; as_of: string; source: string }> };
   position_snapshot: { position_id: string | null; cost: number; shares: number; sellable_shares: number };
   review_plan: { choice?: ReviewChoice; parameters?: PlanParameters; discussion?: PositionDiscussion; position_snapshot?: ActionWorksheet["position_snapshot"] };
@@ -653,16 +670,21 @@ export const api = {
       `/alerts/${encodeURIComponent(id)}?action=${action}&note=${encodeURIComponent(note)}`,
       "PATCH",
     ),
-  alertReviewPlan: (id: string, choice: ReviewChoice, parameters?: PlanParameters, expected_position?: ActionWorksheet["position_snapshot"]) =>
-    request<NonNullable<AlertEvent["review_plan"]>>(`/alerts/${encodeURIComponent(id)}/plan`, "POST", { choice, parameters, expected_position }),
+  alertReviewPlan: (id: string, choice: ReviewChoice, parameters?: PlanParameters, expected_position?: ActionWorksheet["position_snapshot"], expected_revision?: string) =>
+    request<NonNullable<AlertEvent["review_plan"]>>(`/alerts/${encodeURIComponent(id)}/plan`, "POST", { choice, parameters, expected_position, expected_revision }),
   alertActionPlan: (id: string) => get<ActionWorksheet>(`/alerts/${encodeURIComponent(id)}/action-plan`),
+  positionActionPlan: (id: string) => get<ActionWorksheet>(`/positions/${encodeURIComponent(id)}/action-plan`),
+  savePositionPlan: (id: string, choice: ReviewChoice, expected_position: ActionWorksheet["position_snapshot"], expected_revision: string, parameters?: PlanParameters) =>
+    request<ActionWorksheet["review_plan"]>(`/positions/${encodeURIComponent(id)}/plan`, "POST", { choice, parameters, expected_position, expected_revision }),
+  savePositionConstraints: (id: string, constraints: Pick<PositionConstraints, "attention" | "extra_cash" | "loss_limit">, expected_position: ActionWorksheet["position_snapshot"], expected_revision: string, reset_risk_baseline = false, expected_quote?: { price: number | null; as_of: string | null }) =>
+    request<ActionWorksheet>(`/positions/${encodeURIComponent(id)}/constraints`, "POST", { ...constraints, expected_position, expected_revision, reset_risk_baseline, expected_quote }),
   positionModels: (refresh = false) => get<PositionModelCatalog>(`/position-models${refresh ? "?refresh=true" : ""}`),
-  positionDiscussion: (id: string, choice: ReviewChoice | null, expected_position: ActionWorksheet["position_snapshot"], llm?: PositionModelConfig, server_model?: string) =>
-    request<PositionDiscussion>("/alerts/" + encodeURIComponent(id) + "/discussion", "POST", { choice, expected_position, llm, server_model }),
-  positionDiscussionStream: async (id: string, choice: ReviewChoice | null, expected_position: ActionWorksheet["position_snapshot"], progress: (stage: string) => void, signal: AbortSignal, llm?: PositionModelConfig, server_model?: string): Promise<PositionDiscussion> => {
-    const response = await fetch(`/api/alerts/${encodeURIComponent(id)}/discussion/stream`, {
+  positionDiscussion: (id: string, choice: ReviewChoice | null, expected_position: ActionWorksheet["position_snapshot"], llm?: PositionModelConfig, server_model?: string, expected_revision?: string) =>
+    request<PositionDiscussion>("/alerts/" + encodeURIComponent(id) + "/discussion", "POST", { choice, expected_position, expected_revision, llm, server_model }),
+  positionDiscussionStream: async (id: string, choice: ReviewChoice | null, expected_position: ActionWorksheet["position_snapshot"], progress: (stage: string) => void, signal: AbortSignal, llm?: PositionModelConfig, server_model?: string, expected_revision?: string, targetKind: PlanTarget["kind"] = "alert"): Promise<PositionDiscussion> => {
+    const response = await fetch(`/api/${targetKind === "position" ? "positions" : "alerts"}/${encodeURIComponent(id)}/discussion/stream`, {
       method: "POST", headers: { ...authHeaders(), "Content-Type": "application/json" }, signal,
-      body: JSON.stringify({ choice, expected_position, llm, server_model }),
+      body: JSON.stringify({ choice, expected_position, expected_revision, llm, server_model }),
     });
     if (!response.ok) throw new ApiError(errorDetail(await response.json().catch(() => null)) || `分析请求失败 HTTP ${response.status}`, response.status);
     return readDiscussionStream<PositionDiscussion>(response, progress);

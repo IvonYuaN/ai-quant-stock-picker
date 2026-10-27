@@ -3793,3 +3793,28 @@
   .aq-position-plan-options.aq-route-choices { grid-template-columns: 1fr; }
   .aq-position-plan-options.aq-route-choices .aq-btn { min-height: 100px; padding: .8rem; }
 }
+
+/* One canonical position workspace, with optional personal inputs. */
+.aq-position-workspace { max-width: 66rem; }
+.aq-position-workspace-facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); padding: .85rem 0; gap: 1rem; border-bottom: 1px solid hsl(var(--border)); }
+.aq-position-workspace-facts dt { font-size: .75rem; color: hsl(var(--muted-foreground)); }
+.aq-position-workspace-facts dd { margin-top: .25rem; font-size: 1.1rem; font-variant-numeric: tabular-nums; }
+.aq-personal-conditions { border-bottom: 1px solid hsl(var(--border)); padding-bottom: .5rem; }
+.aq-personal-conditions > summary, .aq-plan-history summary { padding: .7rem 0; min-height: 44px; cursor: pointer; }
+.aq-personal-conditions > summary span { font-size: .75rem; color: hsl(var(--muted-foreground)); margin-left: .5rem; }
+.aq-constraints-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .8rem; margin: .8rem 0; }
+.aq-constraints-fields label { display: grid; gap: .4rem; font-size: .8rem; align-content: start; }
+.aq-constraints-fields input, .aq-constraints-fields select { width: 100%; min-width: 0; min-height: 44px; padding: .5rem; border: 1px solid hsl(var(--border)); border-radius: 5px; background: hsl(var(--background)); color: hsl(var(--foreground)); }
+.aq-plan-current > .aq-position-plan-heading { align-items: center; }
+.aq-plan-current h2, .aq-plan-history h2 { font-size: 1.15rem; font-weight: 650; }
+.aq-position-workspace-actions, .aq-plan-entry { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .75rem; }
+.aq-position-workspace-actions { border-top: 1px solid hsl(var(--border)); padding-top: 1rem; }
+.aq-position-workspace-actions p { width: 100%; }
+.aq-plan-entry > div { flex: 1; min-width: min(100%, 15rem); }
+.aq-plan-history { display: grid; gap: .8rem; line-height: 1.7; }
+@media (max-width: 640px) {
+  .aq-constraints-fields { grid-template-columns: minmax(0, 1fr); }
+  .aq-personal-conditions > summary span { display: block; margin: .25rem 0 0; }
+  .aq-position-workspace-facts { gap: .75rem; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .aq-position-workspace-facts dd { font-size: .92rem; }
+}

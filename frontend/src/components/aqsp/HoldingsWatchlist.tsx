@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { ArrowRight, Plus, RefreshCw, Star, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { api, type AlertEvent, type AqspCandidate, type PortfolioData, type Quote } from "@/lib/api";
@@ -8,6 +8,7 @@ import { holdingT1Status, shanghaiDate } from "@/lib/portfolio-view";
 import { addCodes, loadWatch, saveWatch, WATCHLIST_CHANGED_EVENT, WATCHLIST_STORAGE_KEY } from "@/lib/watchlist";
 import { changeClass, formatMoney, formatSignedPct } from "@/lib/format";
 import { WATCHLIST_ANCHOR_ID } from "@/lib/hash-navigation";
+import { positionPlanHref } from "@/lib/position-workspace";
 import { cn } from "@/lib/utils";
 import { Badge, EmptyState, SectionHeader, StatePanel } from "@/components/ui/primitives";
 
@@ -30,6 +31,7 @@ function numeric(value: number | undefined): string {
 
 /** 只合并视图，持仓继续由后端负责，自选继续使用原浏览器存储。 */
 export function HoldingsWatchlist({ portfolio, alerts, candidates, candidateDate, candidateStatus, renderRiskSettings }: Props) {
+  const location = useLocation();
   const [codes, setCodes] = useState(loadWatch);
   const [raw, setRaw] = useState("");
   const [sector, setSector] = useState("");
@@ -151,6 +153,7 @@ export function HoldingsWatchlist({ portfolio, alerts, candidates, candidateDate
               const holding = row.holding;
               const availability = holding as (typeof holding & { sellable_shares?: number; t1_locked_shares?: number });
               const researchLink = `/stock/${row.code}${candidateDate ? `?date=${encodeURIComponent(candidateDate)}` : ""}`;
+              const planHref = positionPlanHref(holding?.position_id, location.pathname + location.search + location.hash);
               const updated = holding ? portfolio?.last_refresh || portfolio?.updated : quoteTime;
               return (
                 <li className="aq-watch-row" key={row.code} data-symbol={row.code}>
@@ -183,6 +186,7 @@ export function HoldingsWatchlist({ portfolio, alerts, candidates, candidateDate
                     {holding && renderRiskSettings ? <div aria-label={`${row.code} 提醒规则`}>{renderRiskSettings(row.code)}</div> : null}
                   </div>
                   <div className="aq-watch-actions">
+                    {holding && planHref ? <Link className="aq-btn aq-btn-primary" to={planHref}>看处理计划 <ArrowRight aria-hidden="true" /></Link> : holding ? <span className="aq-note">持仓身份待核对，请刷新持仓</span> : null}
                     <Link className="aq-btn" to={researchLink}>查看依据 <ArrowRight aria-hidden="true" /></Link>
                     {holding ? <button className="aq-btn" type="button" onClick={() => openOperation("sell", row.code)}>录入卖出</button> : <button className="aq-btn" type="button" onClick={() => openOperation("buy", row.code)}>录入买入</button>}
                     {row.watched ? <button className="aq-btn aq-btn-icon" type="button" title={`移除 ${row.code} 自选`} aria-label={`移除 ${row.code} 自选`} onClick={() => { if (persist(codes.filter((code) => code !== row.code))) toast(`已移除 ${row.code} 自选`); }}><Trash2 aria-hidden="true" /></button> : <button className="aq-btn aq-btn-icon" type="button" title={`关注 ${row.code}`} aria-label={`关注 ${row.code}`} onClick={() => { if (persist([...codes, row.code])) toast(`已关注 ${row.code}`); }}><Star aria-hidden="true" /></button>}

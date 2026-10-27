@@ -9,6 +9,7 @@ import { RiskRuleEditor } from "@/components/aqsp/RiskRuleEditor";
 const TodayPage = lazy(() => import("@/pages/TodayPage").then((m) => ({ default: m.TodayPage })));
 const MarketPage = lazy(() => import("@/pages/MarketPage").then((m) => ({ default: m.MarketPage })));
 const HoldingsPage = lazy(() => import("@/pages/my/HoldingsPage").then((m) => ({ default: m.HoldingsPage })));
+const PositionPlanPage = lazy(() => import("@/pages/my/PositionPlanPage").then((m) => ({ default: m.PositionPlanPage })));
 const NotesPage = lazy(() => import("@/pages/my/NotesPage").then((m) => ({ default: m.NotesPage })));
 const ReportsPage = lazy(() => import("@/pages/my/ReportsPage").then((m) => ({ default: m.ReportsPage })));
 const StockResearchPage = lazy(() => import("@/pages/StockResearchPage").then((m) => ({ default: m.StockResearchPage })));
@@ -35,6 +36,7 @@ export const router = createBrowserRouter([
       { path: "/stream", element: <InfoStreamPage /> },
       { path: "/market", element: <MarketPage /> },
       { path: "/my/holdings", element: <HoldingsPage renderRiskSettings={(code) => <RiskRuleEditor code={code} />} /> },
+      { path: "/my/holdings/:positionId/plan", element: <PositionPlanPage /> },
       { path: "/my/notes", element: <NotesPage /> },
       { path: "/my/reports", element: <ReportsPage /> },
       { path: "/stock/:code", element: <StockResearchPage /> },

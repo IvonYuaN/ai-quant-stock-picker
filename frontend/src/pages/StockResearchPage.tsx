@@ -49,6 +49,7 @@ import { debateProcessText, messageSourceUrl } from "@/lib/research-view";
 import { todayResearchHref } from "@/lib/research-route";
 import { evidenceLabel, statusLabel } from "@/lib/display-labels";
 import { loadWatch, saveWatch, WATCHLIST_CHANGED_EVENT } from "@/lib/watchlist";
+import { OwnedPositionPlanEntry } from "@/components/aqsp/OwnedPositionPlanEntry";
 import { cn } from "@/lib/utils";
 
 function extractMessage(reason: unknown): string {
@@ -165,6 +166,7 @@ export function StockResearchPage() {
           <p className="aq-page-sub">{view ? `${view.date} · ${view.isHistorical ? "历史研究记录" : "当日研究快照"}` : workspace.error ? "研究快照暂不可用" : "研究快照读取中"} · 评分与依据来自同一日期</p>
         </div>
         <div className="aq-research-actions">
+          <OwnedPositionPlanEntry code={code} />
           <button type="button" className="aq-btn aq-btn-primary" onClick={addToWatchlist} disabled={watched}>
             {watched ? <Check aria-hidden="true" /> : <Star aria-hidden="true" />}{watched ? "已在自选" : "加入自选"}
           </button>
