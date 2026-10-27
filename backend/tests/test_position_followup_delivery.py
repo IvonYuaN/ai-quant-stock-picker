@@ -169,6 +169,88 @@ def test_position_followup_delivery_cancels_without_sending_when_position_change
     assert channel["run"]().suppressed and not channel["calls"]
 
 
+def test_position_followup_delivery_recovers_cancelled_work_when_new_observation_is_valid(channel: dict[str, Any]) -> None:
+    channel["run"](validate=lambda _: False)
+    fresh = {**candidate(), "observed_at": (NOW + timedelta(minutes=1)).isoformat(),
+             "quote_as_of": (NOW + timedelta(minutes=1)).isoformat(), "detail": "更新行情已复核"}
+    assert channel["run"]([fresh], validate=lambda _: False).suppressed
+    assert json.loads(channel["journal"].read_text())["batches"][0]["candidate"] == candidate()
+    result = channel["run"]([fresh])
+    assert not result.suppressed and len(channel["calls"]) == 1
+    assert "更新行情已复核" in channel["calls"][0][1]
+    later = {**fresh, "observed_at": (NOW + timedelta(minutes=2)).isoformat(), "detail": "成功后不再改写"}
+    assert channel["run"]([later]).suppressed
+    assert len(channel["calls"]) == 1
+    stored = json.loads(channel["journal"].read_text())["batches"][0]
+    assert stored["candidate"] == fresh and stored["sent_at"] and not stored["cancelled"]
+
+
+def test_position_followup_delivery_keeps_failure_cooldown_when_cancelled_work_recovers(channel: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    failed: list[str] = []
+
+    def fail(markdown: str, **kwargs: Any) -> list[NotifyResult]:
+        failed.append(markdown)
+        return [NotifyResult("synthetic", False, "stub")]
+
+    with monkeypatch.context() as patch:
+        patch.setattr(runtime, "dispatch_notification", fail)
+        channel["run"]()
+    fresh = {**candidate(), "observed_at": (NOW + timedelta(minutes=1)).isoformat(),
+             "quote_as_of": (NOW + timedelta(minutes=1)).isoformat(), "detail": "失败后更新行情"}
+    # This call only cancels the original content, even with a fresh incoming row.
+    channel["run"]([fresh], validate=lambda row: row == fresh)
+    stored = json.loads(channel["journal"].read_text())["batches"][0]
+    assert stored["cancelled"] and stored["candidate"] == candidate()
+    assert channel["run"]([fresh]).suppressed
+    assert len(failed) == 1 and not channel["calls"]
+    assert json.loads(channel["runtime"].read_text())["failed"]
+    channel["clock"][0] += timedelta(minutes=61)
+    assert not channel["run"]([fresh]).suppressed
+    assert len(channel["calls"]) == 1 and "失败后更新行情" in channel["calls"][0][1]
+
+
+@pytest.mark.parametrize("guard", ["pending", "uncertain"])
+def test_position_followup_delivery_does_not_rearm_when_prior_send_might_exist(channel: dict[str, Any], guard: str) -> None:
+    channel["run"](validate=lambda _: False)
+    if guard == "pending":
+        runtime.reserve_notification(kind=candidate()["key"], markdown=delivery._render(candidate()), state_path=channel["runtime"])
+        channel["clock"][0] += timedelta(days=2)  # Even expired pending is uncertain.
+    else:
+        journal = json.loads(channel["journal"].read_text())
+        journal["batches"][0]["uncertain"] = True
+        channel["journal"].write_text(json.dumps(journal))
+    fresh = {**candidate(), "observed_at": (NOW + timedelta(days=3)).isoformat(), "detail": "不能重臂"}
+    assert channel["run"]([fresh]).suppressed
+    stored = json.loads(channel["journal"].read_text())["batches"][0]
+    assert stored["candidate"] == candidate() and stored["cancelled"]
+    assert not channel["calls"]
+
+
+def test_position_followup_delivery_restores_success_before_cancelled_recovery(channel: dict[str, Any]) -> None:
+    channel["run"](validate=lambda _: False)
+    runtime.mark_notification_sent(kind=candidate()["key"], markdown=delivery._render(candidate()), state_path=channel["runtime"])
+    fresh = {**candidate(), "observed_at": (NOW + timedelta(minutes=1)).isoformat(), "detail": "不能覆盖已有成功"}
+    assert channel["run"]([fresh]).suppressed and not channel["calls"]
+    stored = json.loads(channel["journal"].read_text())["batches"][0]
+    assert stored["sent_at"] and stored["candidate"] == candidate()
+
+
+@pytest.mark.parametrize("change", [
+    {"observed_at": NOW.isoformat()},
+    {"quote_as_of": (NOW - timedelta(minutes=1)).isoformat()},
+    {"quote_as_of": None},
+    {"position_id": "another-position"},
+    {"symbol": "000001"},
+    {"state": "below"},
+    {"mode": "daily"},
+])
+def test_position_followup_delivery_keeps_cancelled_when_observation_regresses(channel: dict[str, Any], change: dict[str, Any]) -> None:
+    channel["run"](validate=lambda _: False)
+    fresh = {**candidate(), "observed_at": (NOW + timedelta(minutes=1)).isoformat(), **change}
+    assert channel["run"]([fresh]).suppressed and not channel["calls"]
+    assert json.loads(channel["journal"].read_text())["batches"][0]["cancelled"]
+
+
 def test_position_followup_delivery_does_not_send_when_prepare_write_fails(channel: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
     def fail(*args: Any) -> None:
         raise OSError("synthetic prepare failure")

@@ -1,7 +1,8 @@
 """Durable tenant-local delivery of human position-plan observations.
 
 The caller owns semantic keys and freshness/position validation. This module
-freezes the first candidate for each key and never changes its notification.
+freezes each notification; only cancelled work proven not to have sent may
+accept a newer valid observation.
 No portfolio lock is held across outbound I/O; only this delivery journal is
 locked. An uncertain send requires a durable success receipt before recovery.
 """
@@ -154,6 +155,20 @@ def _sent_receipt(batch: _Batch, state: dict[str, Any]) -> str | None:
     return _timestamp(receipt["updated_at"])
 
 
+def _updated_observation(previous: dict[str, Any], candidate: dict[str, Any]) -> bool:
+    """Re-arm only the same semantic event with newer, non-regressing evidence."""
+    if any(previous[field] != candidate[field] for field in ("position_id", "symbol", "state", "mode")):
+        return False
+    if datetime.fromisoformat(candidate["observed_at"]) <= datetime.fromisoformat(previous["observed_at"]):
+        return False
+    previous_source = previous.get("quote_as_of")
+    current_source = candidate.get("quote_as_of")
+    return previous_source is None or (
+        current_source is not None
+        and datetime.fromisoformat(current_source) >= datetime.fromisoformat(previous_source)
+    )
+
+
 def deliver_followup_notifications(
     candidates: list[dict[str, Any]], *, validate: Callable[[dict[str, Any]], bool],
 ) -> FollowupDeliveryResult:
@@ -161,7 +176,8 @@ def deliver_followup_notifications(
 
     The caller must encode its frequency period in ``key`` and only call this
     function when notifications are enabled. ``validate`` receives the original
-    frozen candidate, must recheck current ownership/plan/freshness, and must
+    frozen candidate (or newer observation when cancelled unsent work recovers),
+    must recheck current ownership/plan/freshness, and must
     release any portfolio locks before returning. OSError/DataError propagate;
     an incomplete durable write never licenses another outbound attempt.
     """
@@ -196,9 +212,22 @@ def deliver_followup_notifications(
             key = batch.candidate["key"]
             if key not in incoming:
                 continue
-            if batch.sent_at or batch.cancelled:
+            if batch.sent_at:
                 suppressed = True
                 continue
+            if batch.cancelled:
+                candidate = incoming[key]
+                if (batch.uncertain or key in state.get("pending", {})
+                        or not _updated_observation(batch.candidate, candidate)
+                        or not validate(deepcopy(candidate))):
+                    suppressed = True
+                    continue
+                # Keep the runtime key and failed receipt: refreshed content must
+                # not bypass the existing failure cooldown. Never do this on the
+                # same iteration that first invalidates an old frozen candidate.
+                batch = _Batch(deepcopy(candidate), _render(candidate), now_shanghai().isoformat())
+                batches[index] = batch
+                _save_batches(journal, batches)
             if batch.uncertain:
                 suppressed = True
                 messages.append("position-plan blocked: 上次外发结果未确认，已停止重复发送；请核对渠道记录")
