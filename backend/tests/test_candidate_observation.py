@@ -632,3 +632,109 @@ def test_candidate_defer_stays_quiet_on_refresh_but_reviews_new_evidence(env):
     assert resources.workspace('600000')['observation']['state'] == 'deferred'
     data['data']['candidates'][0]['deterministic_reasons'].append('新的有源依据')
     assert monitor.check_candidates()['needs_review'] == 1
+
+
+def test_candidate_review_preserves_adoption_snapshot_when_quote_only_refreshes(env) -> None:
+    client, _, quote, calls = env
+    value, result = analyze(env)
+    adopted = client.post('/api/candidate-observations/600000/adopt', json=adoption(value, result)).json()['data']
+    frozen = deepcopy(adopted['watch'])
+    assert frozen['evidence_snapshot']['quote']['price'] == QUOTE['price']
+    quote['price'] = 10.3
+    _, reviewed = analyze(env)
+    context = reviewed['review_context']
+    assert context['status'] == 'adopted' and context['original']['snapshot_complete']
+    assert context['original']['choice'] == 'pullback'
+    assert context['original']['condition'] == frozen['condition']
+    assert context['original']['invalidation'] == frozen['invalidation']
+    assert context['quote_updated'] and not context['material_changed'] and context['changes'] == []
+    assert json.loads(json.dumps(calls[-1]['review_context'])) == context
+    assert 'adopted_plan' in calls[-1]['evidence'] and 'review_changes' in calls[-1]['evidence']
+    assert client.get('/api/candidate-observations/600000').json()['data']['watch'] == frozen
+    assert 'tenant' not in json.dumps(context)
+
+
+def test_candidate_review_compares_original_evidence_and_keeps_old_prices_out_of_actions(env) -> None:
+    client, data, quote, _ = env
+    value, result = analyze(env)
+    frozen = client.post('/api/candidate-observations/600000/adopt', json=adoption(value, result)).json()['data']['watch']
+    data['data']['candidates'][0]['score'] = 80
+    quote.update(price=10.7, low=9.1, high=11, last_close=10.3)
+    _, reviewed = analyze(env)
+    context = reviewed['review_context']
+    assert context['original']['evidence_snapshot']['research']['candidate']['score'] == 75
+    assert context['current']['evidence_snapshot']['research']['candidate']['score'] == 80
+    assert any(row['category'] == 'candidate' for row in context['changes'])
+    value = resources.workspace('600000')
+    value['review_context'] = context
+    row = opinion()
+    row['summary'] = '采用时低点9.8元，评分75分；现在评分80分，原价仅作历史对比。'
+    assert discussion.parse(json.dumps(row), discussion.CandidateOpinion, value, set())
+    row['actions'][0]['condition'] = '跌破9.8元后重新核对'
+    with pytest.raises(ValueError, match='有源价格'):
+        discussion.parse(json.dumps(row), discussion.CandidateOpinion, value, set())
+    row['actions'][0]['condition'] = '等有源参考价后核对'
+    row['summary'] = '采用时低点123.45元'
+    with pytest.raises(ValueError, match='无来源|单位'):
+        discussion.parse(json.dumps(row), discussion.CandidateOpinion, value, set())
+    assert resources.workspace('600000')['watch'] == frozen
+
+
+def test_candidate_review_marks_missing_original_evidence_without_using_last_workspace(env) -> None:
+    client, _, _, _ = env
+    value, result = analyze(env)
+    client.post('/api/candidate-observations/600000/adopt', json=adoption(value, result))
+    data = resources.load_store()
+    watch = data['resources']['600000']['watch']
+    for key in ('evidence_snapshot', 'price_refs', 'evidence_identity'):
+        watch.pop(key)
+    resources.save_store(data)
+    _, reviewed = analyze(env)
+    original = reviewed['review_context']['original']
+    assert original['condition'] == watch['condition']
+    assert original['evidence_snapshot'] == {} and not original['snapshot_complete']
+    assert reviewed['review_context']['missing_evidence']
+
+
+def test_candidate_review_refuses_foreign_symbol_snapshot_when_stored_watch_identity_differs(env) -> None:
+    client, _, _, _ = env
+    value, result = analyze(env)
+    client.post('/api/candidate-observations/600000/adopt', json=adoption(value, result))
+    data = resources.load_store()
+    data['resources']['600000']['watch']['evidence_identity']['symbol'] = '000001'
+    resources.save_store(data)
+    _, reviewed = analyze(env)
+    assert reviewed['review_context']['status'] == 'identity_mismatch'
+    assert reviewed['review_context']['original'] is None
+    assert reviewed['review_context']['missing_evidence']
+
+
+def test_candidate_review_does_not_read_another_tenant_adoption(env) -> None:
+    client, _, _, calls = env
+    value, result = analyze(env)
+    client.post('/api/candidate-observations/600000/adopt', json=adoption(value, result))
+    headers = {'X-User-Id': 'review-other-user'}
+    other = client.get('/api/candidate-observations/600000', headers=headers).json()['data']
+    response = client.post('/api/candidate-observations/600000/discussion', headers=headers, json={
+        'expected_version': other['version'], 'expected_evidence_version': other['evidence_version']})
+    assert response.status_code == 200, response.text
+    assert response.json()['data']['review_context']['status'] == 'not_adopted'
+    assert calls[-1]['review_context']['original'] is None
+    assert client.get('/api/candidate-observations/600000').json()['data']['watch']['status'] == 'active'
+
+
+def test_candidate_review_rejects_stale_commit_when_adopted_watch_stops_during_model(env, monkeypatch) -> None:
+    client, _, _, _ = env
+    value, result = analyze(env)
+    adopted = client.post('/api/candidate-observations/600000/adopt', json=adoption(value, result)).json()['data']
+    original = transport.call_model
+    async def changed(endpoint, payload, timeout, limits, *, system):
+        if 'rounds' in payload:
+            resources.stop('600000', {'expected_version': adopted['version'] + 1, 'operation_id': 'stop-during-review'})
+        return await original(endpoint, payload, timeout, limits, system=system)
+    monkeypatch.setattr(transport, 'call_model', changed)
+    response = client.post('/api/candidate-observations/600000/discussion', json={
+        'expected_version': adopted['version'], 'expected_evidence_version': adopted['evidence_version']})
+    assert response.status_code == 409
+    stored = resources.load_store()['resources']['600000']
+    assert stored['watch']['status'] == 'stopped' and stored['discussion']['id'] == result['id']

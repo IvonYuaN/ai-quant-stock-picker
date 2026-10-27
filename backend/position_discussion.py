@@ -133,8 +133,11 @@ SYSTEM = """你为用户已有持仓提供人工复核意见，不下单、不�
 不预设看多、看空或必须做T，不以多数票代替证据；可保留分歧或拒绝给价。
 给简短结论、依据与失效条件，不输出隐含思维过程；不保证解套或收益。
 价格只能通过price_ref引用price_refs中的ID，不自行生成价位、仓位比例或收益预测。
-已见高低点是观察参考，不是已验证支撑阻力。不得在文字中另写数字价位或交易数量。
+已见高低点是观察参考，不是已验证支撑阻力。说明可复述输入有来源的当前或历史数字事实，标明时点，不自行计算新价位或交易数量。
+新行动条件中的数字只可复述当前有源事实，不能把原方案价格续用为新条件；price_ref始终只引用本次有效ID。
 遵守guards；暂停做T时不能建议回补，当日买入股份受T+1限制。
+review_context提供已采用方案的原路线、条件、失效条件与采用时和现在的差别，历史依据只用于对比。
+解释维持原路、调整或暂缓的依据；普通行情刷新不要求重选，旧价不能用于新的行动条件，不自动修改已采用方案。
 输出一个符合output_schema的JSON对象，不加Markdown围栏。"""
 
 
@@ -213,6 +216,8 @@ def _parse(text: str, schema: type[BaseModel], evidence: dict[str, Any], prices:
     if raw.startswith(fence) and raw.endswith(fence):
         raw = raw.split("\n", 1)[1].rsplit(fence, 1)[0]
     parsed = schema.model_validate_json(raw).model_dump()
+    from strategy_review_context import validate_position_action_numbers
+    validate_position_action_numbers(parsed, evidence, prices)
     if any(key not in evidence for key in parsed.get("evidence_ids", [])):
         raise ValueError("模型引用不存在的证据")
     if schema is ComparisonSummary:
@@ -327,14 +332,19 @@ async def run_discussion(event_id: str, choice: str | None, expected_position: d
                     "stock": context.get("stock", {"status": "unknown"}),
                     "risk_trigger": worksheet["risk_trigger"], "personal_constraints": worksheet["constraints"],
                     "route_constraints": worksheet["route_review"], **prices}
+        from strategy_review_context import model_review_evidence, position_review_context
+        review_context = position_review_context(worksheet, evidence, prices)
+        evidence = model_review_evidence(evidence, review_context)
         guards = {"sellable_shares": basis["sellable_shares"],
                   "pause_t": bool(basis["joint_weakness"] or basis["quote_issue"] or not basis["sellable_shares"] or basis.get("personal_pause_t")),
                   "quote_issue": basis["quote_issue"],
                   "t_plus_one": "当日买入不得当日再卖出", "no_orders": True,
                   "context_note": "market/sector/risk_trigger为原检查快照，须核对as_of，缺失或过期不是当前事实"}
         common = {"symbol": worksheet["symbol"], "name": worksheet["name"], "chosen_plan": choice,
-                  "review_mode": "比较三条路，用户尚未通过本请求作出选择" if comparison else "核对已选方案",
+                  "review_mode": ("对已采用方案作变化复核，比较维持、调整或暂缓，不自动选择" if review_context['status'] == 'adopted'
+                                  else "比较三条路，用户尚未通过本请求作出选择" if comparison else "核对已选方案"),
                   "evidence": evidence, "price_refs": prices, "guards": guards,
+                  "review_context": review_context,
                   "saved_parameters": None if comparison or worksheet['scenario_issue'] else plan.get("parameters"),
                   "scenario": None if comparison or worksheet['scenario_issue'] else worksheet["scenario"],
                   "scenario_issue": worksheet['scenario_issue'],
@@ -391,6 +401,7 @@ async def run_discussion(event_id: str, choice: str | None, expected_position: d
                   "mode": "同一模型的三角色讨论", "choice": choice, "position_snapshot": expected_position,
                   "quote_as_of": basis["quote_as_of"], "price_refs": prices, "guards": guards,
                   "evidence_snapshot": evidence,
+                  "review_context": review_context,
                   "analysis_basis_id": worksheet["analysis_basis_id"], "risk_revision": worksheet["risk_revision"],
                   "review_revision": worksheet["revision"], "position_id": worksheet["position_id"],
                   "rounds": rounds, "summary": summary, "model_text_unverified": True,
