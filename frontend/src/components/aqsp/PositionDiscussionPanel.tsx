@@ -4,8 +4,8 @@ import { formatEvidenceTime } from "@/lib/format";
 
 const actionLabels = { observe: "继续观察", sell_review: "卖出复核", buy_review: "回补复核", pause: "暂停操作" };
 
-export function PositionDiscussionPanel({ eventId, choice, worksheet, disabled }: {
-  eventId: string; choice: ReviewChoice; worksheet: ActionWorksheet; disabled: boolean;
+export function PositionDiscussionPanel({ eventId, choice, worksheet, disabled, disabledReason }: {
+  eventId: string; choice: ReviewChoice; worksheet: ActionWorksheet; disabled: boolean; disabledReason?: string;
 }) {
   const [result, setResult] = useState<PositionDiscussion | null>(worksheet.review_plan.discussion ?? null);
   const [config, setConfig] = useState<PositionModelConfig>({ baseURL: "", model: "", apiKey: "" });
@@ -29,12 +29,13 @@ export function PositionDiscussionPanel({ eventId, choice, worksheet, disabled }
   }
   function actions(rows: DiscussionAction[]) {
     return <ol>{rows.map((row, index) => { const reference = result?.price_refs[row.price_ref ?? ""]; return <li key={index}>
-      <b>{actionLabels[row.action]}</b>{reference ? <> · {reference.price.toFixed(2)} 元（{reference.label}，{formatEvidenceTime(reference.as_of)}）</> : null}<details><summary>模型提出的条件与失效理由（原文待核对）</summary><p>{row.condition}</p><p>失效 / 取消条件：{row.invalidation}</p><p className="aq-note">自由文字未经交易语义验证，不是成交指令；有效动作与价位以上方服务端校验字段为准。</p></details>
+      <b>{actionLabels[row.action]}</b>{reference ? <> · {reference.price.toFixed(2)} 元（{reference.label}，{formatEvidenceTime(reference.as_of)}）</> : null}<details><summary>查看操作条件和取消理由</summary><p>{row.condition}</p><p>失效 / 取消条件：{row.invalidation}</p><p className="aq-note">AI 的解释可能有误，请结合上方行情与风险核对。</p></details>
     </li>; })}</ol>;
   }
   return <div className="aq-position-discussion" aria-label="AI 持仓方案讨论">
-    <div className="aq-action-plan-heading"><h4>AI 方案讨论</h4><button type="button" className="aq-btn" disabled={disabled || busy} onClick={() => void discuss()}>{busy ? "三角色分析与交叉复核中…" : result ? "重新讨论当前方案" : "分析当前方案"}</button></div>
-    <p className="aq-note">趋势、做 T、风控分别分析，再回应彼此意见。最多 7 次模型调用，逐阶段限时；不预设必须买卖。</p>
+    <div className="aq-action-plan-heading"><h4>帮我看这条路是否合适</h4><button type="button" className="aq-btn" disabled={disabled || busy} onClick={() => void discuss()}>{busy ? "正在分析…" : result ? "重新分析" : "开始分析"}</button></div>
+    <p className="aq-note">从趋势、做 T 和风险三个角度核对这条路；缺少依据会说明，不预设必须买卖。</p>
+    {disabled && disabledReason ? <p role="status">{disabledReason}</p> : null}
     <details><summary>模型接口设置 · {custom ? "本次输入" : "使用服务器已有配置"}</summary>
       <label className="aq-action-plan-confirm"><input type="checkbox" checked={custom} disabled={busy} onChange={(event) => setCustom(event.target.checked)} />本次使用已有 OpenAI 兼容接口</label>
       {custom ? <div className="aq-action-plan-fields">{(["baseURL", "model", "apiKey"] as const).map((key) => <label key={key}>{({ baseURL: "接口地址", model: "模型名称", apiKey: "API Key" })[key]}<input aria-label={key} type={key === "apiKey" ? "password" : "text"} autoComplete="off" disabled={busy} value={config[key]} onChange={(event) => setConfig({ ...config, [key]: event.target.value })} /></label>)}</div> : null}
@@ -47,7 +48,7 @@ export function PositionDiscussionPanel({ eventId, choice, worksheet, disabled }
       <p className="aq-note">{result.mode} · {result.model} · {formatEvidenceTime(result.generated_at)} · {result.status === "complete" ? "讨论完成" : result.status === "partial" ? "部分完成" : "未完成"}</p>
       <p className="aq-note">讨论行情快照 {formatEvidenceTime(result.quote_as_of)}；这是生成时意见，后续行情变化需重新核对。</p>
       {disabled ? <p role="status">输入或行情依据已变化；以下为已保存的历史讨论。</p> : null}
-      {result.summary ? <><p className="aq-note">以下为模型提出的复核观察；自由文字未作交易语义验证，当前风险约束仍以持仓检查为准。</p>{actions(result.summary.actions)}<details><summary>模型汇总观点（未经交易语义验证）</summary><p>{result.summary.conclusion}</p></details>
+      {result.summary ? <><p className="aq-note">以下是 AI 提出的观察条件，可能有误，不能代替你的成交确认。</p>{actions(result.summary.actions)}<details><summary>查看 AI 的解释（需自行核对）</summary><p>{result.summary.conclusion}</p></details>
         {result.summary.disagreements.length ? <p>仍有分歧：{result.summary.disagreements.join("；")}</p> : null}
         {result.summary.missing_evidence.length ? <p>还缺什么：{result.summary.missing_evidence.join("；")}</p> : null}
         {result.summary.agreements.length ? <details><summary>共同认可的依据</summary><ul>{result.summary.agreements.map((line, i) => <li key={i}>{line}</li>)}</ul></details> : null}

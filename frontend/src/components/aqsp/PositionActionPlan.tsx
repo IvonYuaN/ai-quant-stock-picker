@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, type ActionWorksheet, type PlanParameters, type ReviewChoice } from "@/lib/api";
 import { formatEvidenceTime } from "@/lib/format";
-import { planSteps, worksheetExpired } from "@/lib/position-plan";
+import { beginnerPlan, planSteps, worksheetExpired } from "@/lib/position-plan";
 import { PositionDiscussionPanel } from "./PositionDiscussionPanel";
 import { ALERTS_CHANGED_EVENT } from "@/lib/operation";
 
@@ -18,6 +18,7 @@ export function PositionActionPlan({ eventId, choice }: { eventId: string; choic
   const [saved, setSaved] = useState(false);
   const [tick, setTick] = useState(Date.now());
   const dirty = useRef(false);
+  const editedPrices = useRef({ sell_price: false, buy_price: false });
   const inFlight = useRef(false);
   const generation = useRef(0);
   useEffect(() => { const timer = window.setInterval(() => setTick(Date.now()), 15_000); return () => clearInterval(timer); }, []);
@@ -30,6 +31,7 @@ export function PositionActionPlan({ eventId, choice }: { eventId: string; choic
       if (next.review_plan.choice && next.review_plan.choice !== choice) window.dispatchEvent(new Event(ALERTS_CHANGED_EVENT));
       if (!dirty.current) {
         const stored = next.review_plan.choice === choice ? next.review_plan.parameters : undefined;
+        editedPrices.current = { sell_price: !!stored, buy_price: !!stored };
         const high = next.basis.references.find((row) => row.label === "本交易日已见高点") ?? next.basis.references.find((row) => row.label === "最近完成日高点");
         const low = next.basis.references.find((row) => row.label === "本交易日已见低点") ?? next.basis.references.find((row) => row.label === "最近完成日低点");
         setDraft(stored ? { quantity: String(stored.quantity), sell_price: String(stored.sell_price), buy_price: stored.buy_price == null ? "" : String(stored.buy_price), commission_rate: String(stored.commission_rate * 100), min_commission: String(stored.min_commission), stamp_tax_rate: String(stored.stamp_tax_rate * 100), slippage_rate: String(stored.slippage_rate * 100) } : { ...EMPTY, sell_price: high ? high.price.toFixed(2) : "", buy_price: low ? low.price.toFixed(2) : "" });
@@ -43,7 +45,16 @@ export function PositionActionPlan({ eventId, choice }: { eventId: string; choic
     if (inFlight.current) return;
     inFlight.current = true; setBusy(true); setError("");
     const version = ++generation.current;
-    try { const next = await api.alertActionPlan(eventId); if (generation.current === version) { setData(next); setTick(Date.now()); if (next.review_plan.choice && next.review_plan.choice !== choice) window.dispatchEvent(new Event(ALERTS_CHANGED_EVENT)); } }
+    try {
+      const next = await api.alertActionPlan(eventId);
+      if (generation.current === version) {
+        setData(next); setTick(Date.now());
+        const high = next.basis.references.find((row) => row.label === "本交易日已见高点") ?? next.basis.references.find((row) => row.label === "最近完成日高点");
+        const low = next.basis.references.find((row) => row.label === "本交易日已见低点") ?? next.basis.references.find((row) => row.label === "最近完成日低点");
+        setDraft((previous) => ({ ...previous, sell_price: editedPrices.current.sell_price ? previous.sell_price : high?.price.toFixed(2) ?? "", buy_price: editedPrices.current.buy_price ? previous.buy_price : low?.price.toFixed(2) ?? "" }));
+        if (next.review_plan.choice && next.review_plan.choice !== choice) window.dispatchEvent(new Event(ALERTS_CHANGED_EVENT));
+      }
+    }
     catch (reason) { if (generation.current === version) setError(reason instanceof Error ? reason.message : "刷新失败，输入已保留"); }
     finally { inFlight.current = false; if (generation.current === version) setBusy(false); }
   }
@@ -58,40 +69,60 @@ export function PositionActionPlan({ eventId, choice }: { eventId: string; choic
       await api.alertReviewPlan(eventId, choice, parameters, data.position_snapshot);
       const next = await api.alertActionPlan(eventId);
       if (generation.current !== version) return;
-      setData(next); dirty.current = false; setSaved(true); setTick(Date.now());
+      setData(next); dirty.current = false; editedPrices.current = { sell_price: true, buy_price: choice === "t_watch" }; setSaved(true); setTick(Date.now());
       window.dispatchEvent(new Event(ALERTS_CHANGED_EVENT));
     } catch (reason) { if (generation.current === version) setError(reason instanceof Error ? reason.message : "测算保存失败，输入已保留"); }
     finally { inFlight.current = false; if (generation.current === version) setBusy(false); }
   }
   const expired = !!data && worksheetExpired(data.basis, tick);
-  const blocked = !data || data.review_plan.choice !== choice || !!data.basis.quote_issue || expired || (choice === "t_watch" && (data.basis.joint_weakness || !data.basis.sellable_shares));
-  function field(key: keyof Draft, label: string) {
-    return <label>{label}<input aria-label={label} disabled={busy} type="number" min="0" step={key === "quantity" ? "1" : "any"} value={draft[key]} onChange={(e) => { dirty.current = true; setSaved(false); setDraft({ ...draft, [key]: e.target.value }); }} /></label>;
-  }
   const steps = data ? planSteps(choice, data.basis, { sell_price: Number(draft.sell_price), buy_price: Number(draft.buy_price), quantity: Number(draft.quantity) }) : [];
+  const simple = data ? beginnerPlan(choice, data.basis, { sell_price: Number(draft.sell_price), buy_price: Number(draft.buy_price) }) : null;
+  const blocked = !data || data.review_plan.choice !== choice || !!simple?.paused || expired;
+  const discussionBlocked = busy || blocked || dirty.current || !!data?.scenario_issue;
+  const discussionBlockReason = busy ? "正在更新，请稍等。" : blocked ? "先处理上方暂停原因，更新行情后再分析。" : dirty.current ? "你修改了试算条件，请先在上方保存并试算，再让 AI 分析。" : data?.scenario_issue ? "先修正上方试算问题，再分析。" : "";
+  function field(key: keyof Draft, label: string) {
+    return <label>{label}<input aria-label={label} disabled={busy} type="number" min="0" step={key === "quantity" ? "1" : "any"} value={draft[key]} onChange={(e) => { if (key === "sell_price" || key === "buy_price") editedPrices.current[key] = true; dirty.current = true; setSaved(false); setDraft({ ...draft, [key]: e.target.value }); }} /></label>;
+  }
+  const showResult = data?.scenario && data.review_plan.choice === choice && !dirty.current;
   return <section className="aq-action-plan" aria-label={titles[choice]}>
-    <div className="aq-action-plan-heading"><h4>{titles[choice]}</h4><button className="aq-btn" type="button" disabled={busy} onClick={() => void refresh()}>{busy ? "核对中…" : "刷新计划依据"}</button></div>
-    {error ? <p role="alert">{error}。输入已保留，可刷新重试。</p> : null}
-    {data ? <>
-      <p className="aq-note">行情 {formatEvidenceTime(data.basis.quote_as_of)} · {data.basis.quote_source} · 现价 {data.basis.price?.toFixed(2) ?? "待补"} · 可卖底仓 {data.basis.sellable_shares ?? "待核对"} 股</p>
-      {data.basis.quote_issue || expired ? <p role="status" className="aq-action-plan-warning">{data.basis.quote_issue || "计划依据需刷新"}；以下仅保留历史参考，暂停保存新测算。</p> : null}
-      {data.basis.joint_weakness ? <p className="aq-action-plan-warning">三维同日走弱，暂停新增做 T 测算，优先复核风险处置。</p> : null}
-      <PositionDiscussionPanel key={JSON.stringify([eventId, choice, data.position_snapshot, data.review_plan.parameters])} eventId={eventId} choice={choice} worksheet={data} disabled={busy || expired || !!data.basis.quote_issue || data.review_plan.choice !== choice || dirty.current || !!data.scenario_issue} />
-      <ol>{steps.slice(0, 2).map((step) => <li key={step}>{step}</li>)}</ol><details className="aq-action-plan-conditions"><summary>暂停、费用与退出条件</summary><ul>{steps.slice(2).map((step) => <li key={step}>{step}</li>)}</ul></details>
-      <details><summary>观察价位依据（不是已验证买卖信号）</summary>{data.basis.references.length ? data.basis.references.map((row) => <p key={row.label}>{row.label} {row.price.toFixed(2)} · {row.source} · {formatEvidenceTime(row.as_of)}</p>) : <p>缺少有效高低点，不能生成条件价；请刷新行情。可在数据完整后自行调整观察价。</p>}</details>
-      {choice !== "hold" ? <form onSubmit={(e) => { e.preventDefault(); void save(); }}>
-        <p className="aq-note">价位预填自上方观察高低点，可自行调整；数量和费用需你确认。测算不记录买卖。</p>
-        <div className="aq-action-plan-fields">{field("quantity", "本批数量（股）")}{field("sell_price", "假设卖出价（元）")}{choice === "t_watch" ? field("buy_price", "假设回补价（元）") : null}</div>
-        <details className="aq-action-plan-fees" key={confirmed ? "confirmed" : "unconfirmed"} open={confirmed ? undefined : true}><summary>费用假设 · {confirmed ? "已确认，可调整" : "待填写确认"}</summary><div className="aq-action-plan-fields">{field("commission_rate", "双边佣金率（%）")}{field("min_commission", "单边最低佣金（元）")}{field("stamp_tax_rate", "卖出税费率（%）")}{field("slippage_rate", "单边滑点（%）")}</div></details>
-        <label className="aq-action-plan-confirm"><input type="checkbox" disabled={busy} checked={confirmed} onChange={(e) => { setConfirmed(e.target.checked); dirty.current = true; setSaved(false); }} />已核对费用假设（显式填 0 表示不计该项），不代表实际成交费用</label>
-        <button type="submit" className="aq-btn" disabled={busy || blocked}>保存并测算本批计划</button>
-        {saved ? <p role="status">计划已保存并重新测算，持仓未变更。</p> : null}
-      </form> : null}
+    {error ? <p role="alert">{error}。输入已保留。</p> : null}
+    {data && simple ? <>
+      <div className="aq-next-action" aria-live="polite">
+        <span className="aq-beginner-label">{simple.paused || expired ? "现在先暂停" : "下一步"}</span>
+        <h4>{expired ? "先更新行情，再决定下一步。" : simple.next}</h4>
+        {data.basis.quote_issue ? <p role="status">{data.basis.quote_issue}</p> : null}
+        {!expired && simple.then ? <p className="aq-next-then">{simple.then}</p> : null}
+        <p className="aq-next-cancel"><b>{choice === "t_watch" ? "什么时候不做了" : "什么时候重新考虑"}</b>{expired ? "旧价位只作参考，更新后再继续。" : simple.stop}</p>
+        <div className="aq-plan-meta"><span>{formatEvidenceTime(data.basis.quote_as_of)} · 可卖 {data.basis.sellable_shares ?? "待核对"} 股</span><button className="aq-btn" type="button" disabled={busy} onClick={() => void refresh()}>{busy ? "更新中…" : "更新行情"}</button></div>
+        <p className="aq-note">{editedPrices.current.sell_price || editedPrices.current.buy_price ? "含你设定的观察价" : "观察价取自已发生的高低点"}，到价仍需判断，不是买卖信号。</p>
+      </div>
+      {choice === "t_watch" ? <p className="aq-note">做 T 是“先卖、后买”的差价尝试。操作前先试算费用；可能买不回来，也可能继续亏损。</p> : null}
+      {choice !== "hold" ? <details className="aq-plan-calculator">
+        <summary>{showResult ? "调整这次试算" : choice === "t_watch" ? "算一下：这次做 T 能减少多少亏损" : "算一下：卖出后还剩多少"}</summary>
+        <form onSubmit={(e) => { e.preventDefault(); void save(); }}>
+          <p className="aq-note">这里只试算，不记录成交。价格可调整，股数由你填写。</p>
+          <div className="aq-action-plan-fields">{field("quantity", "这次股数")}{field("sell_price", "打算卖到多少元")}{choice === "t_watch" ? field("buy_price", "打算多少元买回") : null}</div>
+          <details className="aq-action-plan-fees">
+            <summary>{confirmed ? "交易费用 · 已确认" : "交易费用 · 试算前需填写一次"}</summary>
+            <p className="aq-note">按你的券商收费填写；填 0 表示本次不计该项。</p>
+            <div className="aq-action-plan-fields">{field("commission_rate", "每边佣金（%）")}{field("min_commission", "每边最低佣金（元）")}{field("stamp_tax_rate", "卖出税费（%）")}{field("slippage_rate", "预留成交价偏差（%）")}</div>
+            <label className="aq-action-plan-confirm"><input type="checkbox" disabled={busy} checked={confirmed} onChange={(e) => { setConfirmed(e.target.checked); dirty.current = true; setSaved(false); }} />我已核对这些费用</label>
+          </details>
+          <button type="submit" className="aq-btn aq-btn-primary" disabled={busy || blocked}>{busy ? "试算中…" : "保存并试算"}</button>
+          {blocked ? <p className="aq-note">请先处理上方暂停原因，再试算。</p> : !confirmed ? <p className="aq-note">先展开“交易费用”填写并确认。</p> : null}
+          {saved ? <p role="status">已保存，持仓没有变化。</p> : null}
+        </form>
+      </details> : null}
       {data.scenario_issue ? <p role="status" className="aq-action-plan-warning">{data.scenario_issue}</p> : null}
-      {data.scenario && data.review_plan.choice === choice && !dirty.current ? <div className="aq-action-plan-result"><h4>情景测算 · {expired || data.basis.quote_issue ? "旧依据，需刷新" : "以本批假设成交为前提"}</h4>
-        {choice === "t_watch" && !data.scenario.round_trip_positive ? <p className="aq-action-plan-warning">净差价不为正，这笔做 T 没有降低经济成本。</p> : null}
-        <dl><div><dt>{choice === "t_watch" ? "本批净差价" : "卖出净回收"}</dt><dd>{data.scenario.net_cash.toFixed(2)} 元</dd></div>{data.scenario.realized_pnl != null ? <div><dt>本批预计已实现盈亏</dt><dd>{data.scenario.realized_pnl.toFixed(2)} 元</dd></div> : null}<div><dt>预计往返/单边成本</dt><dd>{data.scenario.estimated_fees.toFixed(2)} 元</dd></div><div><dt>完成后持股</dt><dd>{data.scenario.remaining_shares} 股</dd></div>{data.scenario.cost_reduction_per_share != null ? <div><dt>本批每股经济成本减少</dt><dd>{data.scenario.cost_reduction_per_share.toFixed(4)} 元/股</dd></div> : null}<div><dt>测算经济成本</dt><dd>{data.scenario.economic_cost?.toFixed(4) ?? "已无剩余仓位"}{data.scenario.economic_cost != null ? " 元/股" : ""}</dd></div></dl>
-        <p className="aq-note">{data.scenario.note}</p></div> : null}
-    </> : !error ? <p role="status">正在读取真实持仓与行情依据…</p> : null}
+      {showResult && data.scenario ? <div className="aq-plan-outcome" role="status">
+        <span className="aq-beginner-label">按你填写的价格成交后</span>
+        <strong>{choice === "t_watch" ? data.scenario.net_cash === 0 ? "这次做 T 扣除费用后没有赚到差价" : data.scenario.round_trip_positive ? "这次预计多留下 " + data.scenario.net_cash.toFixed(2) + " 元" : "这次做 T 反而会多亏 " + Math.abs(data.scenario.net_cash).toFixed(2) + " 元" : "卖出后还剩 " + data.scenario.remaining_shares + " 股"}</strong>
+        <p>{choice === "t_watch" ? "已扣除你填写的费用。它只是这一次的差价，不代表已回本。" : "这次预计盈亏 " + data.scenario.realized_pnl?.toFixed(2) + " 元，已计入你填写的费用。"}</p>
+        {expired || data.basis.quote_issue ? <p className="aq-action-plan-warning">行情已旧，更新后再核对这次试算。</p> : null}
+        <details><summary>查看计算明细</summary><dl><div><dt>扣除费用</dt><dd>{data.scenario.estimated_fees.toFixed(2)} 元</dd></div><div><dt>净回收 / 净差价</dt><dd>{data.scenario.net_cash.toFixed(2)} 元</dd></div><div><dt>完成后股数</dt><dd>{data.scenario.remaining_shares} 股</dd></div><div><dt>测算经济成本</dt><dd>{data.scenario.economic_cost?.toFixed(4) ?? "无剩余仓位"}{data.scenario.economic_cost == null ? "" : " 元/股"}</dd></div></dl><p className="aq-note">{data.scenario.note}</p></details>
+      </div> : null}
+      <details className="aq-plan-help"><summary>还拿不准？让 AI 帮你分析</summary><PositionDiscussionPanel key={JSON.stringify([eventId, choice, data.position_snapshot, data.review_plan.parameters])} eventId={eventId} choice={choice} worksheet={data} disabled={discussionBlocked} disabledReason={discussionBlockReason} /></details>
+      <details className="aq-plan-help"><summary>查看价位来源和完整条件</summary><p className="aq-note">这些价格来自已发生的高低点，只作观察参考，不代表到价就该买卖。</p>{data.basis.references.map((row) => <p key={row.label}>{row.label} {row.price.toFixed(2)} 元 · {row.source} · {formatEvidenceTime(row.as_of)}</p>)}<ul>{steps.map((step) => <li key={step}>{step}</li>)}</ul></details>
+    </> : !error ? <p role="status">正在读取持仓和行情…</p> : null}
   </section>;
 }
