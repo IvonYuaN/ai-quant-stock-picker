@@ -193,7 +193,8 @@ export function StockResearchPage() {
                   <div className="aq-research-evidence"><p className="aq-label">下一观察与风险</p><p>{row.nextStep || "等待新增证据后复核。"}</p>{debate?.primary_risk_gate ? <StatePanel tone="warn">{debate.primary_risk_gate}</StatePanel> : <p className="aq-detail-muted">个股级风险结论尚未记录，不代表无风险。</p>}{debate?.next_trigger ? <p className="aq-detail-muted">下一验证：{debate.next_trigger}</p> : null}</div>
                 </div>
                 {row.metrics.length ? <dl className="aq-research-kv">{row.metrics.map((metric) => <div key={metric.key}><dt>{metric.label}</dt><dd>{metric.value}</dd></div>)}</dl> : null}
-                {row.breakdown.length ? <details className="aq-drawer"><summary className="aq-drawer-summary">评分拆解与数据来源</summary><div className="aq-drawer-body"><ul className="aq-reason-list">{row.breakdown.map((item) => <li key={item}>{item}</li>)}</ul><p className="aq-detail-muted">{row.provenance || "来源未记录"}</p></div></details> : row.provenance ? <p className="aq-detail-muted">来源：{row.provenance}</p> : null}
+                {row.technicalProvenance ? <details className="aq-detail-muted"><summary>{row.technicalProvenance.summary}</summary><p>{row.technicalProvenance.detail}</p></details> : null}
+                {row.breakdown.length ? <details className="aq-drawer"><summary className="aq-drawer-summary">评分拆解与数据来源</summary><div className="aq-drawer-body"><ul className="aq-reason-list">{row.breakdown.map((item) => <li key={item}>{item}</li>)}</ul><p className="aq-detail-muted">快照行情：{row.provenance || "来源未记录"}</p></div></details> : row.provenance ? <p className="aq-detail-muted">快照行情：{row.provenance}</p> : null}
               </>
             )}
           </>

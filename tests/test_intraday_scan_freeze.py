@@ -856,3 +856,20 @@ def test_scheduled_scan_does_not_cache_reduced_resolver_membership(
         cli._run_scheduled_legacy(args)
     assert seen["fetches"][-1] == selected
     assert len(seen["scores"]) == 2
+
+
+def test_candidate_refresh_preserves_original_technical_source_and_never_backfills_legacy() -> None:
+    original = _pick("600001", 88)
+    source = {"source": "original_source", "as_of": DAY, "precision": "day", "timestamp_source": "bar_date",
+              "research_date": DAY, "parameter_snapshot": {"fingerprint": "original"}, "metrics": {"volume_ratio": 1.42}}
+    original = replace(original, metrics={"technical_source": source, "volume_ratio": 1.42})
+    latest_frame = _frame("600001")
+    latest_frame["close"] = 11.5
+    latest_frame.attrs["source_name"] = "latest_source"
+    refreshed = freeze.refresh_candidate_observations([original], {"600001": latest_frame})[0]
+    assert refreshed.metrics["technical_source"] == source
+    assert refreshed.metrics["volume_ratio"] == 1.42
+    assert refreshed.metrics["data_source"] == "latest_source"
+    assert refreshed.close == 11.5
+    legacy = freeze.refresh_candidate_observations([_pick("600001")], {"600001": latest_frame})[0]
+    assert "technical_source" not in legacy.metrics

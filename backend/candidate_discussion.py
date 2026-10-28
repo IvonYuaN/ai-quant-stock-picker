@@ -24,7 +24,12 @@ from aqsp.utils.jsonl_io import advisory_lock
 import candidate_observation as resources
 import position_discussion as transport
 from strategy_review_context import candidate_review_context, historical_numbers, model_review_evidence, source_numbers
-from model_source_time import without_source_times
+from model_source_time import trusted_source_stamps, without_source_times
+from candidate_technical_evidence import (
+    historical_technical_evidence, mask_indicator_names, mask_technical_facts, model_technical_context,
+    model_technical_evidence, reject_unmatched_technical_numbers, technical_evidence,
+    technical_evidence_from_dict,
+)
 
 Choice = Literal['pullback', 'confirmation', 'defer']
 
@@ -80,6 +85,8 @@ defer动作的price_ref必须为null，不建立到价条件。
 说明与讨论可以复述输入有来源的现价、涨跌幅和评分事实，不可把事实变成预测。
 不杜撰支撑、目标价、持仓和成本。
 只复述已给出的数字事实及其单位和来源日期，不自行计算新的百分比或价差，不预测涨跌幅。
+research.technical_evidence是经核验的冻结研究指标。只引用status=available里的facts，并在同句明确“冻结研究”；指标为原源时点的研究依据，不是实时重算。量比用倍、动能/偏离用%、RSI12/MACD柱/KDJ-J按原名称与数值，不能换周期、换单位或计算阈值；source_defined代表周期未记录，不自行补造。解释它们对三条路线的支持、反证和不足，不据单个指标保证买卖结果。
+技术数字只写在解释中，不写进actions.condition/invalidation；买卖条件需当前证据再次核验，不把冻结量比、动能或RSI数值设成触发门槛。旧采用指标只在明确“采用时/原研究”的历史比较句中引用。
 没有输入依据时保留缺口；不要新设价格容差、等待分钟数、放量倍数或仓位比例。
 entry_blocked为true时只能解释暂缓/补证：不得把入场路线标为investigate，不给入场动作。仅保留旧候选、未进入本轮新研究时同样处理；原有已采用观察仍按独立的当前依据检查，不因覆盖提示本身失效。
 给新手简短结论、理由、下一步条件和失效条件；不输出隐藏推演过程。
@@ -130,6 +137,7 @@ def parse(text: str, schema: type[BaseModel], value: dict[str, Any], peers: set[
     # Only canonical source numbers are allowed; model prose is never a source.
     facts = [ref['price'] for ref in value['price_refs'].values()]
     percentages = [value.get('quote', {}).get('change_pct'), evidence.get('sector', {}).get('change_pct')]
+    percentages.append(evidence.get('stock', {}).get('change_pct'))
     percentages += [row.get('change_pct') for row in evidence.get('market', {}).get('indices', [])]
     facts += [*percentages, evidence.get('research', {}).get('candidate', {}).get('score'),
               *(evidence.get('market', {}).get('breadth_counts') or {}).values()]
@@ -145,7 +153,8 @@ def parse(text: str, schema: type[BaseModel], value: dict[str, Any], peers: set[
         return re.sub(rf"(?<!\d){re.escape(value['symbol'])}(?!\d)", '', prose)
     for action in parsed['actions']:
         for text in texts(action):
-            prose = prose_without_source_dates(text)
+            prose = mask_indicator_names(prose_without_source_dates(text))
+            reject_unmatched_technical_numbers(prose)
             # An action may explain a sourced sector percentage/score/count;
             # units are checked below. Remaining bare numbers must be prices.
             for suffix, allowed in ((r'[%％]', sourced_percentages), (r'分', {score}), (r'家', counts)):
@@ -166,8 +175,23 @@ def parse(text: str, schema: type[BaseModel], value: dict[str, Any], peers: set[
     scores_allowed = {score} | history.scores
     sourced |= history.prices | history.percentages | history.scores | history.counts
     date_tokens |= history.stamps
+    research_facts = evidence.get('research') or {}
+    technical = technical_evidence_from_dict(research_facts.get('technical_evidence'), current=now_shanghai())
+    if technical.status != 'available':
+        technical = technical_evidence(research_facts, current=now_shanghai())
+    old_technical = historical_technical_evidence(value.get('review_context'))
+    date_tokens |= trusted_source_stamps([technical.as_of, technical.research_date,
+                                         old_technical.as_of, old_technical.research_date])
     for text in texts(parsed):
         prose = prose_without_source_dates(text)
+        # A historical sentence uses only its own namespace, even if a current
+        # metric happens to have the same numeric value.
+        prose = ''.join(mask_technical_facts(piece, old_technical, historical=True)
+                        if re.search(r'(?:采用时|原冻结|历史)', piece)
+                        else mask_technical_facts(piece, technical)
+                        for piece in re.split(r'(?<=[。；;\n])', prose))
+        prose = mask_indicator_names(prose)
+        reject_unmatched_technical_numbers(prose)
         currency = re.findall(r'([-+]?\d+(?:\.\d+)?)\s*(?:元|块|角)', prose)
         percent = re.findall(r'([-+]?\d+(?:\.\d+)?)\s*[%％]', prose)
         scores = re.findall(r'([-+]?\d+(?:\.\d+)?)\s*分', prose)
@@ -180,7 +204,6 @@ def parse(text: str, schema: type[BaseModel], value: dict[str, Any], peers: set[
                 float(number) not in counts for number in breadth) or any(
                 float(number) not in prices for number in named_prices) or re.search(r'\d+(?:\.\d+)?\s*(?:股|手)', prose):
             raise ValueError('模型数字事实无来源或单位与来源不符')
-        prose = prose_without_source_dates(text)
         if re.search(chinese_price, prose) or any(float(number) not in sourced for number in
                 re.findall(r'[-+]?\d+(?:\.\d+)?', prose)):
             raise ValueError('模型说明包含无来源的数字事实或数字交易条件')
@@ -271,7 +294,11 @@ async def run_discussion(code: str, expected_version: int, expected_evidence_ver
                 if catalog.get('directory_complete', catalog.get('listed') is not None) and server_model not in catalog['models']:
                     raise ValueError('所选型号不在当前提供商目录，请重新选择')
                 endpoint = transport.ModelEndpoint(endpoint.url, endpoint.key, server_model, endpoint.anthropic)
-            common = {'symbol': code, 'name': value['name'], 'evidence': model_value['evidence'], 'price_refs': value['price_refs'], 'review_context': review_context,
+            public_context = model_technical_context(review_context)
+            public_evidence = model_technical_evidence(model_value['evidence'])
+            if 'adopted_plan' in public_evidence:
+                public_evidence['adopted_plan'] = public_context['original']
+            common = {'symbol': code, 'name': value['name'], 'evidence': public_evidence, 'price_refs': value['price_refs'], 'review_context': public_context,
                       'entry_blocked': discussion_entry_blocked, 'no_orders': True, 'no_position': True}
             def progress(stage: str) -> None:
                 _progress(code, run_id, stage)

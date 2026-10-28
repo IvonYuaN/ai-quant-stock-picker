@@ -891,3 +891,34 @@ def test_candidate_requires_review_when_run_availability_changes_but_not_failure
     data['data']['source'].update(run_status='completed', run_detail='恢复成功')
     data['data']['recommendation_gate'] = original_gate
     assert resources.workspace('600000')['evidence_version'] == value['evidence_version']
+
+
+def test_candidate_retains_adopted_plan_when_real_snapshot_close_metric_only_refreshes(env):
+    client, data, quote, _ = env
+    candidate = data['data']['candidates'][0]
+    candidate['technical_metrics'] = [{'key': 'close', 'label': '现价', 'value': '10.20'},
+                                      {'key': 'volume_ratio', 'label': '量比', 'value': '1.42x'}]
+    candidate['technical_basis'] = None
+    value, result = analyze(env)
+    frozen = client.post('/api/candidate-observations/600000/adopt', json=adoption(value, result)).json()['data']['watch']
+    # Emulate a legacy close-inclusive hash without changing its saved evidence.
+    saved = resources.load_store()
+    watch = saved['resources']['600000']['watch']
+    old_candidate = watch['evidence_snapshot']['research']['candidate']
+    old_candidate = {key: val for key, val in old_candidate.items() if key not in {'data_fetched_at', 'coverage_note'}}
+    watch['evidence_basis']['candidate'] = resources.evidence_digest(old_candidate)
+    watch['evidence_version'] = resources.evidence_digest(watch['evidence_basis'])
+    resources.save_store(saved)
+    saved_watch = deepcopy(watch)
+    candidate['technical_metrics'][0].update(value='10.30', label='现价（最新）')
+    candidate['data_fetched_at'] = '2026-10-27T09:59:00+08:00'
+    quote['price'] = 10.3
+    updated = resources.workspace('600000')
+    assert updated['evidence_version'] == value['evidence_version']
+    assert updated['observation']['state'] == 'waiting'
+    from strategy_review_context import candidate_review_context
+    assert not candidate_review_context(updated)['material_changed']
+    assert resources.load_store()['resources']['600000']['watch'] == saved_watch
+    assert frozen['price'] == saved_watch['price']
+    candidate['technical_metrics'][1]['value'] = '1.43x'
+    assert resources.workspace('600000')['observation']['state'] == 'needs_review'

@@ -396,6 +396,8 @@ def refresh_candidate_observations(
     result = []
     for pick in picks:
         quote = evidence.get(pick.symbol, {})
+        # technical_source belongs to the scored bar. Quote receipt metadata
+        # below must never replace or backfill that original research basis.
         metrics = {
             **pick.metrics,
             "data_source": quote.get("source", ""),

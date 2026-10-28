@@ -7,6 +7,7 @@ from dataclasses import replace
 import pandas as pd
 
 from aqsp.core.errors import FreshnessError
+from aqsp.core.time import SHANGHAI_TZ
 from aqsp.candidate_quality import assess_short_term_quality
 from aqsp.data.source_readiness import source_role_for_workload
 from aqsp.data.validation import DataValidator
@@ -418,6 +419,12 @@ def score_symbol(
             "bias20_pct": round(bias20, 2),
             "volume_ratio": round(volume_ratio, 2),
             "rsi12": round(rsi12, 2),
+            "macd_hist": float(row["macd_hist"]),
+            "technical_source": _technical_source_snapshot(frame, row, {
+                "ret5_pct": ret5, "ret20_pct": ret20, "bias20_pct": bias20,
+                "volume_ratio": volume_ratio, "rsi12": rsi12,
+                "macd_hist": row.get("macd_hist"),
+            }),
             "quality_gate_status": quality.action,
             "quality_gate_reasons": tuple(dict.fromkeys(quality.reasons)),
             "paper_review_eligible": quality.paper_review_eligible,
@@ -481,6 +488,36 @@ def score_symbol(
             len(strategy_ids), score, len(risks), volume_ratio, scoring
         ),
     )
+
+
+def _technical_source_snapshot(
+    frame: pd.DataFrame, row: pd.Series, metrics: dict[str, object]
+) -> dict[str, object] | None:
+    """Capture the actual scored bar and numeric inputs before quote refresh.
+
+    Source bars often expose only a date. Do not invent a closing timestamp or
+    treat the HTTP/DB receipt time as the market's source time. The runtime
+    parameter identity is attached once by the existing CLI provenance helper.
+    None explicitly means the source bar/metadata cannot be authenticated.
+    """
+    source = _text(frame.attrs.get("source_name"))
+    try:
+        stamp = pd.Timestamp(row["date"])
+        if pd.isna(stamp) or not source:
+            return None
+        precision = "day" if stamp == stamp.normalize() else "timestamp"
+        if stamp.tzinfo is None:
+            stamp = stamp.tz_localize(SHANGHAI_TZ)
+        source_date = stamp.tz_convert(SHANGHAI_TZ).date().isoformat()
+        values = {key: float(value) for key, value in metrics.items()
+                  if not isinstance(value, bool) and isinstance(value, (int, float)) and math.isfinite(value)}
+        if not values:
+            return None
+        return {"source": source, "as_of": source_date if precision == "day" else stamp.isoformat(),
+                "precision": precision, "timestamp_source": "bar_date" if precision == "day" else "bar_time",
+                "research_date": source_date, "parameter_snapshot": None, "metrics": values}
+    except (TypeError, ValueError, KeyError, OverflowError):
+        return None
 
 
 def _strategy_frame_guard_reason(symbol: str, frame: pd.DataFrame) -> str:

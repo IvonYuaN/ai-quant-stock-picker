@@ -1,7 +1,20 @@
 import { api, type CandidateDiscussion, type CandidateWorkspace } from "./api";
-import { CANDIDATE_CHOICES, candidateAdoptionInput, candidateAdoptionIssue, candidateDiscussionIssue, candidateDiscussionKey, candidateEvidenceRows, candidateObservationView, candidateResearchHref, candidateWorkspaceIssue, currentCandidateObservations } from "./candidate-observation";
+import { CANDIDATE_CHOICES, candidateAdoptionInput, candidateAdoptionIssue, candidateDiscussionIssue, candidateDiscussionKey, candidateEvidenceRows, candidateObservationView, candidateResearchHref, candidateTechnicalView, candidateWorkspaceIssue, currentCandidateObservations } from "./candidate-observation";
 
 const stamp = "2026-10-27T10:00:00+08:00";
+const technicalFixture = { status: "available", scope: "frozen_research", source: "原研究源", as_of: stamp, precision: "timestamp", facts: [{ key: "volume_ratio", value: 1.42, unit: "ratio", period: "source_defined" }, { key: "ret5_pct", value: 3.5, unit: "percent", period: "5_trading_days" }] };
+export const technicalEvidenceContracts = {
+  typedFactsHaveTheirOwnUnits: candidateTechnicalView({ research: { technical_evidence: technicalFixture } }).facts.map((fact) => fact.value).join(" / ") === "1.42倍 / +3.5%",
+  rawDisplayMetricsCannotSupplyDiscussionFacts: candidateTechnicalView({ research: { candidate: { technical_metrics: [{ key: "volume_ratio", label: "量比", value: "1.42x" }], data_source: "最新报价源", data_fetched_at: stamp } } }).facts.length === 0,
+  rejectedSourceCannotExposeOldNumbers: candidateTechnicalView({ research: { technical_evidence: { ...technicalFixture, status: "unavailable", issues: ["原源时点无效"] } } }).facts.length === 0,
+  rejectedSourceExplainsMissingEvidence: candidateTechnicalView({ research: { technical_evidence: { ...technicalFixture, status: "unavailable", issues: ["原源时点无效"] } } }).detail === "原源时点无效",
+  priceLikeMetricCannotBecomeTechnicalFact: candidateTechnicalView({ research: { technical_evidence: { ...technicalFixture, facts: [{ key: "stop_loss", value: 8, unit: "index" }, { key: "volume_ratio", value: 1.42, unit: "percent" }] } } }).facts.length === 0,
+  technicalEvidenceDoesNotClaimLiveConfirmation: candidateTechnicalView({ research: { technical_evidence: technicalFixture } }).detail.includes("不能据此认定当前量价条件已满足"),
+  dailyEvidenceRetainsDatePrecision: (() => { const view = candidateTechnicalView({ research: { technical_evidence: { ...technicalFixture, precision: "day", as_of: "2026-10-27" } } }); return view.asOf === "2026-10-27" && view.precision === "day" && view.facts.length === 2; })(),
+  dateCannotBeInventedTimestamp: candidateTechnicalView({ research: { technical_evidence: { ...technicalFixture, precision: "timestamp", as_of: "2026-10-27" } } }).facts.length === 0,
+  precisionCannotBeGuessed: candidateTechnicalView({ research: { technical_evidence: { ...technicalFixture, precision: undefined } } }).facts.length === 0,
+  invalidDailySourceRemainsUnknown: candidateTechnicalView({ research: { technical_evidence: { ...technicalFixture, precision: "day", as_of: "2026-02-30" } } }).asOf === null,
+};
 const ref = { label: "合成前收盘价", price: 10, as_of: stamp, source: "合成行情源" };
 const discussion: CandidateDiscussion = { id: "discussion-1", status: "complete", generated_at: stamp, model: "synthetic-model", mode: "合成三角色", resource_version: 1, evidence_version: "evidence-1", research_date: "2026-10-27", quote_as_of: stamp, price_refs: { previous: ref }, evidence_snapshot: {}, rounds: [],
   summary: { conclusion: "合成比较，不作交易指令", agreements: [], disagreements: ["需要核对承接"], missing_evidence: [], focus_choice: "pullback", focus_reason: "先核对来源位置", routes: [

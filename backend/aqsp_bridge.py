@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 
 from aqsp.core.time import now_shanghai
 from aqsp.portfolio.parameter_snapshot import ParameterSnapshot, parse_parameter_snapshot
+from aqsp.web.home_snapshot import HomeSnapshotTechnicalBasis, technical_basis_from_dict
 
 
 DEFAULT_SNAPSHOT_PATH = "data/runtime/home_dashboard_snapshot.json"
@@ -79,6 +80,7 @@ class AQSPCandidate:
     evidence_status: str = "证据不足"
     score_breakdown: tuple[str, ...] = ()
     technical_metrics: tuple[AQSPTechnicalMetric, ...] = ()
+    technical_basis: HomeSnapshotTechnicalBasis | None = None
     data_source: str = ""
     data_fetched_at: str = ""
     data_timestamp_source: str = ""
@@ -1482,6 +1484,7 @@ def _parse_candidate(payload: object) -> AQSPCandidate:
             "evidence_status",
             "score_breakdown",
             "technical_metrics",
+            "technical_basis",
             "data_source",
             "data_fetched_at",
             "data_timestamp_source",
@@ -1521,6 +1524,7 @@ def _parse_candidate(payload: object) -> AQSPCandidate:
                 item.get("technical_metrics", []), "candidate.technical_metrics"
             )
         ),
+        technical_basis=_parse_technical_basis(item.get("technical_basis")),
         data_source=_optional_text(item.get("data_source"), "candidate.data_source"),
         data_fetched_at=_optional_text(
             item.get("data_fetched_at"), "candidate.data_fetched_at"
@@ -1529,7 +1533,9 @@ def _parse_candidate(payload: object) -> AQSPCandidate:
             item.get("data_timestamp_source"), "candidate.data_timestamp_source"
         ),
         freshness=_optional_text(item.get("freshness"), "candidate.freshness"),
-        coverage_note=_optional_text(item.get("coverage_note"), "candidate.coverage_note"),
+        coverage_note=_optional_text(
+            item.get("coverage_note"), "candidate.coverage_note"
+        ),
         news_catalyst_summary=_optional_text(
             item.get("news_catalyst_summary"), "candidate.news_catalyst_summary"
         ),
@@ -1544,6 +1550,13 @@ def _parse_candidate(payload: object) -> AQSPCandidate:
             "candidate.news_catalyst_published_at",
         ),
     )
+
+
+def _parse_technical_basis(payload: object) -> HomeSnapshotTechnicalBasis | None:
+    try:
+        return technical_basis_from_dict(payload)
+    except (TypeError, ValueError) as exc:
+        raise AQSPSnapshotUnavailable("candidate.technical_basis 无效") from exc
 
 
 def _parse_technical_metric(payload: object) -> AQSPTechnicalMetric:

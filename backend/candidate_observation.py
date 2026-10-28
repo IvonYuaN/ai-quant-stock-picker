@@ -30,6 +30,8 @@ from aqsp.utils.jsonl_io import advisory_lock, atomic_write_text
 from position_route_review import evidence_digest
 import position_strategy_evidence as sources
 from strategy_direction import direction_identity
+from candidate_technical_evidence import technical_evidence
+from strategy_review_context import candidate_research_identity, comparable_candidate_basis
 
 
 @dataclass(frozen=True)
@@ -198,6 +200,7 @@ def research(code: str, current: datetime) -> tuple[dict[str, Any], list[str]]:
                   'parameter_snapshot': snap.get('parameter_snapshot'),
                   'recommendation_gate': gate,
                   'debate': next((row for row in snap.get('debates', []) if row.get('symbol') == code), None)}
+        result['technical_evidence'] = technical_evidence(result, current=current).to_dict()
         return result, issues
     except (aqsp_bridge.AQSPBridgeError, OSError, ValueError, KeyError, TypeError):
         return {}, ['当前候选研究不可用；历史研究不能作为新的观察依据']
@@ -219,8 +222,7 @@ def evidence_basis(report: dict[str, Any], evidence: dict[str, Any],
     the identity; refresh time and display-only coverage notes are omitted.
     Source validity and the current risk gate are checked independently.
     """
-    candidate = {key: value for key, value in (report.get('candidate') or {}).items()
-                 if key not in {'data_fetched_at', 'coverage_note'}}
+    candidate = candidate_research_identity(report.get('candidate') or {})
     source = report.get('source')
     if isinstance(source, dict):
         # Run provenance is retained in evidence_snapshot, but a publication or
@@ -499,12 +501,12 @@ def observation(value: dict[str, Any], row: dict[str, Any], *, current: datetime
         state, title, detail, reason = 'needs_review', '持仓状态变化，重核候选计划', '已有持仓或状态不可读，请使用持仓策略核对', 'ownership'
     elif not value['available']:
         state, title, detail, reason = 'evidence_unavailable', '当前依据不可用，不能判断到价', '；'.join(value['issues']), 'source'
-    elif watch.get('evidence_version') != value['evidence_version']:
+    elif comparable_candidate_basis(watch) != value.get('evidence_basis'):
         labels = {'research_date': '研究日期', 'parameters': '策略参数版本', 'candidate': '个股评分或研究证据',
                   'candidate_invalidation': '候选明确失效',
                   'risk_gate': '研究风险门禁', 'research_source': '研究来源', 'debate': '研究讨论结论',
                   'ownership': '持仓归属', 'quote_source': '行情来源', 'directions': '大盘、板块或个股方向'}
-        previous, latest = watch.get('evidence_basis') or {}, value.get('evidence_basis') or {}
+        previous, latest = comparable_candidate_basis(watch), value.get('evidence_basis') or {}
         changes = [label for key, label in labels.items() if previous.get(key) != latest.get(key)]
         detail = ('变化：' + '、'.join(changes) if previous.get('schema') == latest.get('schema') else '原观察使用旧版依据标识，需重新核对一次') + '；原观察条件暂停作为当前入场依据'
         state, title, reason = 'needs_review', '研究或风险依据变化，重新分析', 'research_changed'

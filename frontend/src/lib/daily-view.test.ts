@@ -236,6 +236,23 @@ export const dailyViewContract = {
   chainIsWarnWhenPartiallyReady: view.chain.tone === "warn",
   chainDetailReportsRatio: view.chainDetail.includes("1/2"),
   keyMetricPrefersRet20: view.candidates[0].keyMetric === "20日涨幅 +18.4%",
+  legacyTechnicalMetricsDoNotBorrowLatestQuoteSource:
+    buildDailyView({ ...dailyViewFixture, candidates: [{ ...dailyViewFixture.candidates[0], data_source: "最新报价源", data_fetched_at: "2026-09-11T15:30:00+08:00" }] }).candidates[0].technicalProvenance?.summary.includes("待核验") === true,
+  frozenTechnicalSourceSurvivesQuoteRefresh:
+    buildDailyView({ ...dailyViewFixture, candidates: [{ ...dailyViewFixture.candidates[0], data_source: "最新报价源", data_fetched_at: "2026-09-11T15:30:00+08:00", technical_basis: {
+      source: "原研究源", as_of: "2026-09-11T10:00:00+08:00", precision: "timestamp", timestamp_source: "provider", research_date: "2026-09-11",
+      parameter_snapshot: { version: "v1", effective_from: "2026-09-01", fingerprint: "a".repeat(64) }, facts: [],
+    } }] }).candidates[0].technicalProvenance?.detail.includes("原研究源 · 2026-09-11T10:00:00+08:00") === true,
+  futureTechnicalSourceIsNotPresentedAsVerified:
+    buildDailyView({ ...dailyViewFixture, candidates: [{ ...dailyViewFixture.candidates[0], technical_basis: {
+      source: "未来来源", as_of: "2026-09-12T10:00:00+08:00", precision: "timestamp", timestamp_source: "provider", research_date: "2026-09-11",
+      parameter_snapshot: { version: "v1", effective_from: "2026-09-01", fingerprint: "a".repeat(64) }, facts: [],
+    } }] }).candidates[0].technicalProvenance?.summary.includes("待核验") === true,
+  dailyTechnicalSourceDoesNotInventClockTime:
+    buildDailyView({ ...dailyViewFixture, candidates: [{ ...dailyViewFixture.candidates[0], technical_basis: {
+      source: "原日线源", as_of: "2026-09-11", precision: "day", timestamp_source: "frame.date", research_date: "2026-09-11",
+      parameter_snapshot: { version: "v1", effective_from: "2026-09-01", fingerprint: "a".repeat(64) }, facts: [],
+    } }] }).candidates[0].technicalProvenance?.detail.includes("2026-09-11（日线）") === true,
 
   /* ---- 诚实回退：数据缺失不伪装成 0 ---- */
   missingVariantSuiteSaysUnrecorded:

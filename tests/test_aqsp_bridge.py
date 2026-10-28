@@ -1014,3 +1014,44 @@ def test_aqsp_bridge_does_not_replace_newer_run_with_older_sidecar(tmp_path, mon
     monkeypatch.setenv('AQSP_RESEARCH_SURFACE_SNAPSHOT', str(path))
     monkeypatch.setenv('AQSP_INTRADAY_STATUS', str(state))
     assert client.get('/api/aqsp/snapshot').json()['data']['source']['run_status'] == 'completed'
+
+
+def test_aqsp_bridge_keeps_typed_indicator_basis_separate_from_current_quote() -> None:
+    payload = _snapshot("2026-07-11")["candidates"][0]
+    payload["technical_basis"] = {
+        "source": "original_source",
+        "as_of": "2026-07-11T09:10:00+08:00",
+        "precision": "timestamp",
+        "timestamp_source": "bar_time",
+        "research_date": "2026-07-11",
+        "parameter_snapshot": {
+            "version": "v1",
+            "effective_from": "2026-07-01",
+            "fingerprint": "a" * 64,
+        },
+        "facts": [
+            {
+                "key": "volume_ratio",
+                "value": 1.42,
+                "unit": "ratio",
+                "period": "source_defined",
+            }
+        ],
+    }
+    payload["data_source"] = "latest_quote_source"
+    payload["data_fetched_at"] = "2026-07-11T09:20:00+08:00"
+    parsed = aqsp_bridge._parse_candidate(payload).to_dict()
+    assert parsed["technical_basis"]["source"] == "original_source"
+    assert parsed["technical_basis"]["as_of"] == "2026-07-11T09:10:00+08:00"
+    assert parsed["technical_basis"]["facts"][0]["value"] == 1.42
+    assert parsed["data_source"] == "latest_quote_source"
+    payload.pop("technical_basis")
+    assert aqsp_bridge._parse_candidate(payload).technical_basis is None
+
+
+@pytest.mark.parametrize("basis", [{}, {"source": "s"}, [], True])
+def test_aqsp_bridge_rejects_malformed_indicator_basis(basis) -> None:
+    payload = _snapshot("2026-07-11")["candidates"][0]
+    payload["technical_basis"] = basis
+    with pytest.raises(aqsp_bridge.AQSPSnapshotUnavailable, match="technical_basis"):
+        aqsp_bridge._parse_candidate(payload)

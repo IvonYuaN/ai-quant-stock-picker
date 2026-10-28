@@ -717,3 +717,30 @@ def test_load_thresholds_allows_explicit_missing_fallback(tmp_path) -> None:
     thresholds = load_thresholds(str(tmp_path / "missing.yaml"), allow_missing=True)
 
     assert thresholds.version
+
+
+def test_strategy_captures_original_bar_and_numeric_indicators_before_quote_refresh() -> None:
+    frame = _frame("600001", 0.004, 1.8)
+    frame.attrs.update(source_name="tencent", fetched_at="2099-01-01T00:00:00+08:00", timestamp_source="received_at")
+    pick = score_symbol("600001", frame, ScreeningConfig(min_avg_amount=1), ScoringThresholds())
+    assert pick is not None
+    source = pick.metrics["technical_source"]
+    assert source["source"] == "tencent"
+    assert source["as_of"] == "2025-04-30"
+    assert source["precision"] == "day"
+    assert source["timestamp_source"] == "bar_date"
+    assert source["parameter_snapshot"] is None
+    assert set(source["metrics"]) == {"ret5_pct", "ret20_pct", "volume_ratio", "rsi12", "macd_hist", "bias20_pct"}
+    assert source["metrics"]["macd_hist"] == pick.metrics["macd_hist"]
+    assert "kdj_j" not in source["metrics"]
+
+
+def test_strategy_preserves_original_intraday_bar_precision_without_receipt_time() -> None:
+    from aqsp.strategy import _technical_source_snapshot
+    frame = _frame("600001", 0.004, 1.8)
+    frame.attrs["source_name"] = "tencent"
+    row = pd.Series({"date": "2026-10-28T10:25:00+08:00"})
+    source = _technical_source_snapshot(frame, row, {"volume_ratio": 1.42})
+    assert source["as_of"] == "2026-10-28T10:25:00+08:00"
+    assert source["precision"] == "timestamp"
+    assert source["timestamp_source"] == "bar_time"

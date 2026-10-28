@@ -82,6 +82,7 @@ from aqsp.web.home_snapshot import (
     HomeSnapshotPhase,
     HomeSnapshotSource,
     HomeSnapshotTechnicalMetric,
+    HomeSnapshotTechnicalBasis,
     HomeSnapshotUniverse,
     HomeSnapshotHolding,
     HomeSnapshotVariant,
@@ -421,6 +422,18 @@ def _candidate_technical_metrics(
     return tuple(metrics)
 
 
+def _candidate_technical_basis(
+    candidate: Any, *, selected_date: str
+) -> HomeSnapshotTechnicalBasis | None:
+    """Read only original typed provenance, never latest quote metadata."""
+    basis = getattr(candidate, "technical_basis", None)
+    identity = getattr(candidate, "parameter_snapshot", None)
+    if (not isinstance(basis, HomeSnapshotTechnicalBasis)
+            or basis.research_date != selected_date or basis.parameter_snapshot != identity):
+        return None
+    return basis
+
+
 def _has_candidate_deterministic_evidence(candidate: Any) -> bool:
     try:
         score = float(getattr(candidate, "score", 0.0) or 0.0)
@@ -448,7 +461,9 @@ def _candidate_freshness(candidate: Any) -> str:
     return ""
 
 
-def _snapshot_candidate(candidate: Any) -> HomeSnapshotCandidate | None:
+def _snapshot_candidate(
+    candidate: Any, *, selected_date: str = ""
+) -> HomeSnapshotCandidate | None:
     symbol = _text(getattr(candidate, "symbol", ""))
     if not symbol:
         return None
@@ -479,6 +494,9 @@ def _snapshot_candidate(candidate: Any) -> HomeSnapshotCandidate | None:
         score_breakdown=score_breakdown,
         evidence_status=("有独立规则证据" if reasons else "证据不足"),
         technical_metrics=_candidate_technical_metrics(candidate),
+        technical_basis=_candidate_technical_basis(
+            candidate, selected_date=selected_date
+        ),
         data_source=data_source,
         data_fetched_at=_text(getattr(candidate, "data_fetched_at", "")),
         data_timestamp_source=_text(getattr(candidate, "data_timestamp_source", "")),
@@ -563,7 +581,7 @@ def _snapshot_candidates_with_parameters(
         for item in ordered:
             if card_kind(item) != wanted_kind:
                 continue
-            candidate = _snapshot_candidate(item)
+            candidate = _snapshot_candidate(item, selected_date=selected_date)
             if candidate is None or candidate.symbol in symbols:
                 continue
             if wanted_kind == "recommendation" and not is_home_recommendation(

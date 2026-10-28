@@ -1807,6 +1807,11 @@ def _attach_runtime_weight_snapshot(
             metrics={
                 **pick.metrics,
                 "strategy_weight_snapshot": snapshot,
+                **({"technical_source": {
+                    **pick.metrics["technical_source"],
+                    "parameter_snapshot": snapshot.get("parameter_snapshot"),
+                }} if isinstance(pick.metrics.get("technical_source"), dict)
+                    and pick.metrics["technical_source"].get("parameter_snapshot") is None else {}),
             },
         )
         for pick in picks

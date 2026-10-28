@@ -3155,3 +3155,44 @@ def test_variant_refresh_facts_reports_unknown_when_metadata_invalid(monkeypatch
     monkeypatch.setenv('AQSP_VARIANT_REFRESH_STATUS', str(status_path))
     monkeypatch.setattr(write_home_snapshot, 'now_shanghai', lambda: datetime(2026, 10, 28, 23, tzinfo=ZoneInfo('Asia/Shanghai')))
     assert write_home_snapshot._variant_refresh_facts()['refresh_status'] == 'unknown'
+
+
+def _candidate_with_original_technical_basis() -> SimpleNamespace:
+    from aqsp.portfolio.parameter_snapshot import ParameterSnapshot
+    from aqsp.web.home_snapshot import HomeSnapshotTechnicalBasis, HomeSnapshotTechnicalFact
+    card = _candidate("600001", 88.0)
+    card.parameter_snapshot = ParameterSnapshot("v1", "2026-07-01", "a" * 64)
+    card.technical_basis = HomeSnapshotTechnicalBasis(
+        source="eastmoney", as_of="2026-07-10", precision="day", timestamp_source="bar_date",
+        research_date="2026-07-10", parameter_snapshot=card.parameter_snapshot,
+        facts=(HomeSnapshotTechnicalFact("volume_ratio", 1.42, "ratio", "source_defined"),))
+    return card
+
+
+def test_snapshot_candidate_preserves_typed_indicator_basis_when_original_source_complete() -> None:
+    card = _candidate_with_original_technical_basis()
+    card.data_fetched_at = "2026-07-10T15:00:00+08:00"
+    candidate = write_home_snapshot._snapshot_candidate(card, selected_date="2026-07-10")
+    assert candidate is not None and candidate.technical_basis == card.technical_basis
+    assert candidate.technical_basis.as_of == "2026-07-10"
+    assert candidate.technical_basis.precision == "day"
+    assert candidate.data_fetched_at == card.data_fetched_at
+
+
+@pytest.mark.parametrize("field,value", [("parameter_snapshot", None), ("technical_basis", None), ("technical_basis", {})])
+def test_snapshot_candidate_omits_indicator_basis_when_original_identity_missing(field, value) -> None:
+    card = _candidate_with_original_technical_basis()
+    setattr(card, field, value)
+    candidate = write_home_snapshot._snapshot_candidate(card, selected_date="2026-07-10")
+    assert candidate is not None and candidate.technical_basis is None
+
+
+def test_snapshot_candidate_does_not_mint_indicator_basis_from_latest_source_metadata() -> None:
+    card = _candidate("600001", 88.0)
+    from aqsp.portfolio.parameter_snapshot import ParameterSnapshot
+    card.parameter_snapshot = ParameterSnapshot("v1", "2026-07-01", "a" * 64)
+    candidate = write_home_snapshot._snapshot_candidate(card, selected_date="2026-07-10")
+    assert candidate is not None and candidate.technical_basis is None
+    card = _candidate_with_original_technical_basis()
+    candidate = write_home_snapshot._snapshot_candidate(card, selected_date="2026-07-11")
+    assert candidate is not None and candidate.technical_basis is None

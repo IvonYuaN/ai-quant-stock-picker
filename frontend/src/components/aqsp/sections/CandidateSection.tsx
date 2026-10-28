@@ -222,14 +222,14 @@ function CandidateDetailCard({
       ) : null}
 
       {row.metrics.length > 0 ? (
-        <div className="aq-metric-grid">
+        <><div className="aq-metric-grid">
           {row.metrics.map((metric) => (
             <div key={metric.key}>
               <span>{metric.label}</span>
               <b>{metric.value}</b>
             </div>
           ))}
-        </div>
+        </div>{row.technicalProvenance ? <details className="aq-provenance"><summary>{row.technicalProvenance.summary}</summary><p>{row.technicalProvenance.detail}</p></details> : null}</>
       ) : null}
 
       {row.breakdown.length > 0 ? (
@@ -257,7 +257,7 @@ function CandidateDetailCard({
         </p>
       ) : null}
 
-      {row.provenance ? <p className="aq-provenance">数据源：{row.provenance}</p> : null}
+      {row.provenance ? <p className="aq-provenance">快照行情：{row.provenance}</p> : null}
       {row.coverageNote ? <p className="aq-note" role="status">{row.coverageNote}</p> : null}
     </Card>
   );
