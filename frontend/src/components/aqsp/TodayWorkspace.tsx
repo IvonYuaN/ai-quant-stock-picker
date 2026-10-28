@@ -1,11 +1,7 @@
 // 「今日研究」页的编排层。
 //
-// 版面顺序 = 判断顺序：
-//   页头（哪一天 / 数据可不可信 / 刷新）
-//   → 常驻块（跨市主线 → 当天结论 → 门禁 → 研究链与阶段）
-//   → 页签（候选 / 证据 / 讨论）
-//
-// 常驻块不随页签变化，所以"今天能不能动"永远第一眼可见；页签只承载细节。
+// 先看市场/行业，再进入候选理由、AI路线及持续跟进。
+// 已有风险与方案变化保持在候选前可见；研究过程与记账不占主入口。
 // 所有派生都在 daily-view 里完成，本文件不做业务判断。
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
@@ -19,6 +15,8 @@ import {
   type SectionView,
 } from "@/lib/daily-view";
 import { formatResearchDate } from "@/lib/research-view";
+import { stockResearchHref } from "@/lib/research-route";
+import { scheduleHashTargetScroll } from "@/lib/hash-navigation";
 import { formatAqspTime, isAqspSnapshotStale, useWorkspaceSnapshot } from "./useAqspSnapshot";
 import { MarketStrip } from "./MarketStrip";
 import { ReviewExportButton } from "./ReviewExportButton";
@@ -54,14 +52,14 @@ function TodayHeader({
       <div>
         <p className="aq-eyebrow">
           <Compass aria-hidden="true" />
-          AQSP · T+1 决策工作台
+          AQSP · 今日投资研究
         </p>
         <div className="aq-title-row">
-          <h1>今日决策</h1>
+          <h1>今日研究台</h1>
           <strong>{shanghaiDate()}</strong>
         </div>
         <p className="aq-page-sub">
-          先看大盘与板块，再复核自己的方案和候选条件。
+          先看大盘与行业，再研究选股理由和 AI 路线；采用条件后继续跟进。
         </p>
         <div className="aq-meta-row">
           <span>候选日期 {date || "待产出"}</span>
@@ -257,7 +255,8 @@ function ActiveSection({
 export function TodayWorkspace() {
   const [personalPortfolio, setPersonalPortfolio] = useState<PortfolioData | null>(null);
   const { data, loading, error, refresh, selectedDate, switching } = useWorkspaceSnapshot();
-  const { hash } = useLocation();
+  const location = useLocation();
+  const { hash } = location;
   const active = resolveTodaySection(hash);
   const [searchParams, setSearchParams] = useSearchParams();
   // `?symbol=` 让命令面板 / 分享链接能直接打开某只股票的详情
@@ -278,14 +277,24 @@ export function TodayWorkspace() {
 
   // 日期未对齐时不给页面任何"当前日期"的展示模型，从根上杜绝张冠李戴。
   const view = data && !switching ? buildDailyView(data) : null;
+  const researchReady = !!view;
+  useEffect(() => {
+    if (["#market-context", "#candidates", "#discussion", "#strategy-followups"].includes(hash)) {
+      return scheduleHashTargetScroll(hash);
+    }
+  }, [hash, researchReady]);
 
-  // 首屏即选股：候选段固定顶到最上面，其余段（为什么 / 多空观点）走下方页签。
+  // 候选保持主区，原始消息和研究验证按需展开。
   const candidateSection = view?.sections.find((section) => section.id === "candidates");
   const detailSections = view ? view.sections.filter((section) => section.id !== "candidates") : [];
   const activeDetailId =
     detailSections.some((section) => section.id === active) ? active : detailSections[0]?.id ?? "";
 
   const targetDate = selectedDate || data?.selected_date || "";
+  const firstCandidate = view?.candidates.find((row) => row.symbol);
+  const discussionHref = firstCandidate && view
+    ? stockResearchHref(firstCandidate.symbol, view.date)
+    : `/today${location.search}#discussion`;
 
   // 抽屉只展示 AQSP 自己的判断；落在当天候选里时才有评分与证据链
   const pickedRow = picked ? view?.candidates.find((row) => row.symbol === picked) : undefined;
@@ -312,9 +321,17 @@ export function TodayWorkspace() {
         actions={view ? <ReviewExportButton view={view} /> : null}
       />
 
-      <MarketStrip />
+      <section id="market-context" className="aq-market-anchor" aria-label="市场与行业方向">
+        <MarketStrip />
+      </section>
+      <nav className="aq-decision-path" aria-label="今日研究路径">
+        <Link to={`/today${location.search}#market-context`}><span>01</span><b>大盘与行业</b></Link>
+        <Link to={`/today${location.search}#candidates`}><span>02</span><b>选股理由</b></Link>
+        <Link to={discussionHref}><span>03</span><b>{view?.isHistorical ? "回看个股分析" : "AI讨论与路线"}</b></Link>
+        <Link to={`/today${location.search}#strategy-followups`}><span>04</span><b>买卖条件与跟进</b></Link>
+      </nav>
+
       <TodayStrategyBoard onPortfolio={setPersonalPortfolio} />
-      <StrategyRecordDetails />
 
       {data ? <DatePicker snapshot={data} /> : null}
 
@@ -350,7 +367,7 @@ export function TodayWorkspace() {
           {candidateSection ? (
             <CandidateSection view={view} section={candidateSection} onPick={setPicked} ownedHoldings={personalPortfolio?.holdings ?? null} />
           ) : null}
-          <details className="aq-workspace-fold" open={active !== "candidates" || undefined} key={active}>
+          <details id="discussion" className="aq-workspace-fold" open={active !== "candidates" || undefined} key={active}>
             <summary>消息证据与多空讨论 <span>{view.messages.length} 条消息 · {view.debates.length} 只复核</span></summary>
             <div className="aq-workspace-fold-body">
               <SectionTabs active={activeDetailId} sections={detailSections} />
@@ -367,6 +384,8 @@ export function TodayWorkspace() {
           </details>
         </>
       )}
+
+      <StrategyRecordDetails />
 
       <StockDetailDrawer symbol={picked} onClose={closeDrawer} intro={intro} />
     </div>

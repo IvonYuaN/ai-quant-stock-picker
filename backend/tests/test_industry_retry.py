@@ -82,6 +82,28 @@ def test_gives_up_after_max_attempts(monkeypatch, no_sleep) -> None:
     assert len(calls) == astock._INDUSTRY_ATTEMPTS  # 有限次，不是死循环
 
 
+def test_industry_rows_keep_vendor_time_for_market_context(monkeypatch) -> None:
+    """行业榜给前端来源行情时间；不得用接口取数时刻冒充数据时点。"""
+    stamp = 1792380457
+    requested: list[str] = []
+
+    class Response:
+        def json(self):
+            return {"data": {"diff": [{"f14": "银行", "f3": 1.2, "f12": "BK0475", "f104": 8,
+                                         "f105": 2, "f124": stamp}]}}
+
+    def fake_get(_url, *, params, **_kwargs):
+        requested.extend(params["fields"].split(","))
+        return Response()
+
+    monkeypatch.setattr(astock, "em_get", fake_get)
+    result = astock._industry_comparison_once(5)
+
+    assert "f124" in requested
+    assert result["top"][0]["as_of"] == astock.epoch_iso(stamp)
+    assert result["bottom"][0]["as_of"] == astock.epoch_iso(stamp)
+
+
 # --------------------------------------------------------------------------
 # /api/industry：空结果只占 60 秒负缓存，不占满 5 分钟
 # --------------------------------------------------------------------------

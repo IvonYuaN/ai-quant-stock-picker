@@ -101,9 +101,9 @@ const turnoverFixture = [
 ] satisfies TurnoverStock[];
 
 const industryFixture = {
-  top: [{ rank: 1, name: "电池", change_pct: 3.2, code: "BK1033", up_count: 55, down_count: 7 }],
+  top: [{ rank: 1, name: "电池", change_pct: 3.2, code: "BK1033", up_count: 55, down_count: 7, as_of: "2026-09-11T15:00:00+08:00" }],
   // 后端可能给出 "-" 这类占位串，必须归一成 null
-  bottom: [{ rank: 100, name: "地产", change_pct: "-", code: "BK0451", up_count: 8, down_count: 80 }],
+  bottom: [{ rank: 100, name: "地产", change_pct: "-", code: "BK0451", up_count: 8, down_count: 80, as_of: "2026-09-11T15:00:00+08:00" }],
   total: 100,
 } satisfies IndustryData;
 
@@ -151,6 +151,8 @@ export const marketViewContract = {
   /* ---- 成交额榜与行业榜 ---- */
   turnoverIsMapped: full.turnover.length === 1 && full.turnover[0].amount === 42e8,
   industryTotalIsKept: full.industryTotal === 100,
+  industrySourceTimeIsKept: full.industryUpdated === "2026-09-11T15:00:00+08:00" && full.industryTop[0].asOf === full.industryUpdated,
+  missingIndustrySourceTimeStaysMissing: buildMarketView({ industry: { total: 1, top: [{ ...industryFixture.top[0], as_of: null }], bottom: [] } }).industryUpdated === "",
   industryPlaceholderBecomesNull: full.industryBottom[0].changePct === null,
   industryBottomIsReversed: full.industryBottom[0].name === "地产",
   updatedIsKept: full.updated === "2026-09-11 15:30",
@@ -221,9 +223,12 @@ export const marketViewContract = {
       },
     }),
   )?.tone === "neutral",
-  // 没有涨跌家数时退化为按指数涨跌个数判断，而不是直接说"未知"
-  stripFallsBackToIndices:
-    marketStripSummary(buildMarketView({ indices: indicesFixture }))?.headline.includes("2 个指数中 1 个上涨") === true,
+  // 指数涨跌不能替代全市场宽度；来源缺失时不生成方向性结论。
+  indicesAloneCannotClaimMarketStrength: (() => {
+    const summary = marketStripSummary(buildMarketView({ indices: indicesFixture }));
+    return summary?.tone === "neutral" && summary.headline.includes("市场宽度未取得");
+  })(),
+  sectorOnlyDataRemainsVisible: marketStripSummary(buildMarketView({ industry: industryFixture })) !== null,
   stripHeadlineCountsBreadth: marketStripSummary(full)?.headline.includes("上涨 3200") === true,
 
   /* ---- 证据链（#317 W3）：数据时间取该组最新的一条，不是取数时刻 ---- */

@@ -2563,6 +2563,27 @@
     min-width: 0;
     gap: 0.4rem;
   }
+  .aq-market-direction-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+  .aq-market-direction-head > div { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0.5rem; }
+  .aq-market-direction-head > div > span { color: hsl(var(--muted-foreground)); font-size: 0.84rem; }
+  .aq-market-source-times { color: hsl(var(--muted-foreground)); font-size: 0.72rem; }
+  .aq-industry-directions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.4rem 1rem;
+    border-top: 1px solid hsl(var(--border) / 0.7);
+    padding-top: 0.45rem;
+  }
+  .aq-industry-directions > div { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0.35rem 0.7rem; min-width: 0; }
+  .aq-industry-directions > div > b { color: hsl(var(--muted-foreground)); font-size: 0.74rem; }
+  .aq-industry-directions > div > span { display: inline-flex; gap: 0.25rem; font-size: 0.8rem; }
+  .aq-industry-directions > small { grid-column: 1 / -1; color: hsl(var(--muted-foreground)); font-size: 0.7rem; }
+  .aq-industry-missing { margin: 0; color: hsl(var(--muted-foreground)); font-size: 0.76rem; }
   .aq-index-chips,
   .aq-global-chips,
   .aq-breadth-chips {
@@ -3105,6 +3126,33 @@
     line-height: 1.5;
     color: hsl(var(--muted-foreground));
   }
+}
+
+.aq-decision-path {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.65rem;
+  margin-block: 0.35rem 0.75rem;
+}
+.aq-decision-path a {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-height: 44px;
+  border-bottom: 1px solid hsl(var(--border));
+  color: hsl(var(--foreground));
+  text-decoration: none;
+}
+.aq-decision-path a:hover { color: hsl(var(--primary)); border-color: hsl(var(--primary) / 0.6); }
+.aq-decision-path a:focus-visible { outline: 2px solid hsl(var(--primary)); outline-offset: 3px; }
+.aq-decision-path a span { color: hsl(var(--primary)); font: 600 0.78rem var(--font-mono); }
+.aq-decision-path a b { font-size: 0.86rem; }
+@media (max-width: 600px) {
+  .aq-decision-path { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.25rem 0.65rem; }
+  .aq-market-direction-head { align-items: flex-start; }
+  .aq-market-direction-head .aq-strip-link { min-height: 40px; white-space: nowrap; }
+  .aq-industry-directions { grid-template-columns: minmax(0, 1fr); }
+  .aq-industry-directions > small { grid-column: 1; }
 }
 
 /* ------------------------------------------------------------ 响应式 */

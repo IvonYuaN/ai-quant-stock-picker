@@ -181,7 +181,7 @@ function CandidateDetailCard({
         <LifecycleTag lifecycle={lifecycle} historyWindow={historyWindow} />
       </div>
       <div className="aq-candidate-actions">
-        <Link className="aq-btn aq-btn-primary" to={stockResearchHref(row.symbol, date)}>完整研究 <ArrowRight aria-hidden="true" /></Link>
+        <Link className="aq-btn aq-btn-primary" to={stockResearchHref(row.symbol, date)}>看理由与 AI 讨论 <ArrowRight aria-hidden="true" /></Link>
         <button type="button" className="aq-btn" onClick={toggleWatch} aria-pressed={watched}><Star aria-hidden="true" fill={watched ? "currentColor" : "none"} />{watched ? "已自选" : "加入自选"}</button>
         {onPick && row.symbol ? (
           <button type="button" className="aq-btn aq-btn-icon" onClick={() => onPick(row.symbol)} title="查看个股详情">
@@ -599,8 +599,8 @@ export function CandidateSection({
   return (
     <section id={section.id} className="aq-candidate-workspace">
       <SectionHeader
-        title="候选研究"
-        description="选择标的查看依据，加入自选持续跟踪。"
+        title="选股与 AI 研究"
+        description="先看为什么入选、依据是否齐全，再进入个股讨论和路线比较。"
         count={section.count}
       >
         <Badge tone={view.chain.tone}>{view.chain.label}</Badge>
@@ -612,7 +612,7 @@ export function CandidateSection({
         <Tag tone={!ownershipKnown ? "warn" : owned.holding + owned.watchlist > 0 ? "primary" : "neutral"}>{ownershipSummaryLabel(view.candidates.map((row) => row.symbol), ownership)}</Tag>
         <button type="button" disabled={!ownershipKnown} className={cn("aq-btn", ownershipKnown && onlyOwned && "aq-btn-primary")} aria-pressed={ownershipKnown && onlyOwned} onClick={() => { setOnlyOwned(!onlyOwned); setHideOwned(false); }}>只看我的命中</button>
       </div>
-      {!ownershipKnown ? <p className="aq-note" role="status">持仓身份待确认，已暂停持仓筛选与计数；不影响查看候选研究。可用上方“更新关注事项”重试。</p> : null}
+      {!ownershipKnown ? <p className="aq-note" role="status">持仓身份待确认，已暂停持仓筛选与计数；不影响查看候选研究。可用上方“更新跟进状态”重试。</p> : null}
       {view.frozenAt ? <p className="aq-hint">评分、策略依据与参数身份沿用当日首次冻结；现价、新鲜度与消息按最新证据更新。</p> : null}
       {added.length > 0 ? (
         <section className="aq-candidate-increment" aria-label="盘中新增候选">

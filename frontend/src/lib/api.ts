@@ -587,7 +587,7 @@ export interface LiveRiskCheckResult {
 }
 
 // 行业涨跌幅：东财对停牌/无数据的板块会给 "-" 占位串，故不能只声明 number。
-export interface IndustryRow { rank: number; name: string; change_pct: number | string; code: string; up_count: number; down_count: number }
+export interface IndustryRow { rank: number; name: string; change_pct: number | string; code: string; up_count: number; down_count: number; as_of?: string | null }
 export interface IndustryData { top: IndustryRow[]; bottom: IndustryRow[]; total: number }
 
 // 全球市场（美股 / 港股，使用东财域内公开行情源）

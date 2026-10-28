@@ -29,14 +29,14 @@ export function TodayStrategyBoard({ onPortfolio }: { onPortfolio?: (portfolio: 
     return () => { active.current = false; stop(); window.removeEventListener(PORTFOLIO_CHANGED_EVENT, sync); window.removeEventListener(CANDIDATE_OBSERVATIONS_CHANGED_EVENT, sync); };
   }, [load]);
   const view = sources ? buildTodayStrategy(sources) : null;
-  return <section className="aq-today-strategy" aria-label="今日策略会诊">
-    <header className="aq-today-strategy-head"><div><p className="aq-eyebrow">从大方向到下一步</p><h2>今天先看这几件事</h2><p>先复核已有风险与方案变化，再看候选参与条件。</p></div><button type="button" className="aq-btn" disabled={loading} onClick={() => void load()}>{loading ? "读取中…" : "更新关注事项"}</button></header>
+  return <section id="strategy-followups" className="aq-today-strategy" aria-label="持续策略跟进">
+    <header className="aq-today-strategy-head"><div><p className="aq-eyebrow">已有方案 · 持续跟进</p><h2>已有风险和方案，有什么需要重核</h2><p>这里只汇总已保存的观察和变化；到价表示核验报价，不代表买卖或成交。</p></div><button type="button" className="aq-btn" disabled={loading} onClick={() => void load()}>{loading ? "读取中…" : "更新跟进状态"}</button></header>
     {!view ? <p role="status">正在核对持仓、已选方案与候选观察…</p> : <>
       {view.issues.length ? <div className="aq-refresh-warning" role="status"><strong>部分跟进状态待确认</strong>{view.issues.map((issue) => <span key={issue}>{issue}</span>)}</div> : null}
       {view.items.length ? <div className="aq-strategy-attention-list">{view.items.map((item, index) => <StrategyAttentionItem item={item} index={index} key={item.key} />)}</div> : <p>{view.noHoldings ? "还没有持仓需要跟进。先从候选中选一只，让 AI 比较参与条件，再保存观察。" : "本次没有读到需优先展示的跟进事项；不代表没有风险。"}</p>}
       {view.total > 3 ? <p className="aq-note">优先展示 3 项，其余 {view.total - 3} 项可在下方完整记录中查看。</p> : null}
       {view.noHoldings ? <a className="aq-btn" href="#candidates">看候选，分析参与条件</a> : null}
-      <p className="aq-note">这里汇总已保存的记录，不启动新的风险检查或 AI 分析。</p>
+      <p className="aq-note">新方案从上方候选研究进入；持仓策略可从“我的持仓”打开。这里不启动新的风险检查或 AI 分析。</p>
     </>}
   </section>;
 }
