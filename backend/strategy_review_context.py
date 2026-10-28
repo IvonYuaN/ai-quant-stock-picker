@@ -7,6 +7,7 @@ import math
 import re
 from typing import Any
 from model_source_time import trusted_source_stamps, without_source_times
+from strategy_direction import direction_identity
 
 
 CANDIDATE_CHANGES = {
@@ -33,8 +34,7 @@ def _at(value: dict[str, Any], path: tuple[str, ...]) -> Any:
 
 
 def _direction(evidence: dict[str, Any]) -> dict[str, Any]:
-    return {key: {field: (evidence.get(key) or {}).get(field) for field in ('status', 'source', 'industry')}
-            for key in ('market', 'sector', 'stock')}
+    return direction_identity(evidence)
 
 
 def _quote_facts(evidence: dict[str, Any]) -> dict[str, Any]:
@@ -122,6 +122,8 @@ def position_review_context(worksheet: dict[str, Any], evidence: dict[str, Any],
     context.update(status='adopted', original=original)
     if not original['snapshot_complete']:
         context['missing_evidence'].append('原记录未保存采用时完整证据，仅比较已留存的条件和来源，不从当前行情倒推')
+    if watch.get('direction_schema') != 'direction-v1':
+        context['missing_evidence'].append('原方向依据版本缺失或不兼容，方向变化无法完整核验；需核对当前证据后重新采用')
     if original['choice'] is None:
         context['missing_evidence'].append('原采用路线未单独保存，当前路线不能冒充原路线')
     for key, label in (('market', '大盘依据变化'), ('sector', '板块依据变化'), ('stock', '个股方向变化')):

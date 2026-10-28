@@ -1,7 +1,16 @@
-import type { ActionWorksheet, PositionDiscussion, ReviewChoice, StrategyWatchInput, WatchComparator } from "./api";
+import type { ActionWorksheet, DecisionEvidence, PositionDiscussion, ReviewChoice, StrategyWatchInput, WatchComparator } from "./api";
 import { worksheetExpired } from "./position-plan";
 
 export const WATCH_COMPARATORS: Record<WatchComparator, string> = { at_or_above: "达到或高于", at_or_below: "达到或低于" };
+
+/** Same premise fields as backend strategy_direction; quote ticks are excluded. */
+export function strategyDirectionKey(evidence?: Partial<Record<"market" | "sector" | "stock", Partial<DecisionEvidence>>>): string {
+  return JSON.stringify((["market", "sector", "stock"] as const).map((key) => {
+    const fact = evidence?.[key];
+    const base = [fact?.status || "unknown", fact?.source ?? null, fact?.industry ?? null];
+    return key === "market" ? [...base, fact?.breadth ?? null, (fact?.indices ?? []).map((row) => [row.name, row.source ?? null, Number.isFinite(row.change_pct) ? row.change_pct > 0 ? "up" : row.change_pct < 0 ? "down" : "flat" : "unknown"]).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))) ] : base;
+  }));
+}
 
 /** A confirmation belongs to the exact model result the user reviewed. */
 export function discussionSourceKey(result: PositionDiscussion | null): string {
@@ -22,7 +31,7 @@ export function discussionStrategyCurrent(result: PositionDiscussion | null, wor
   if (!Number.isFinite(age) || age < 0 || age > 900_000 || worksheet.archived) return false;
   const current = worksheet.route_review?.evidence;
   if (!result.evidence_snapshot || !current) return false;
-  return (["market", "sector", "stock"] as const).every((key) => (result.evidence_snapshot?.[key]?.status ?? "unknown") === current[key].status);
+  return strategyDirectionKey(result.evidence_snapshot) === strategyDirectionKey(current);
 }
 
 /** Only a validated summary can be explicitly adopted; role drafts remain evidence. */
@@ -63,7 +72,8 @@ export function strategyWatchState(worksheet: ActionWorksheet, now = Date.now())
   if (worksheet.review_plan.choice === "t_watch" && sameIntent && pausePending && (["market", "sector", "stock"] as const).some((key) => (worksheet.route_review?.evidence[key]?.status ?? "unknown") === "unknown")) return { title: "三维暂停依据尚未核清", detail: "部分大盘、板块或个股证据缺失，不能视为原暂停已解除；先核对来源，不沿用原回补条件。" };
   if (constraintsKey(watch.constraints) !== constraintsKey(worksheet.constraints) || watch.trade_revision !== worksheet.trade_revision) return { title: "原策略对应的持仓或条件已变化", detail: "重新保存试算不会更新原 AI 观察条件；请按最新持仓和个人条件重新分析后采用。" };
   if (!Number.isFinite(watch.price) || watch.price <= 0 || (watch.comparator !== "at_or_above" && watch.comparator !== "at_or_below")) return { title: "已保存观察条件不可核验", detail: "观察价或比较方向不完整，请重新分析并采用。" };
-  if ((["market", "sector", "stock"] as const).some((key) => (watch.evidence_snapshot?.[key]?.status ?? "unknown") !== (worksheet.route_review?.evidence[key]?.status ?? "unknown"))) return { title: "原策略依据发生变化，重新分析", detail: "大盘、板块或个股的方向或证据可用性与采用时不同，先核对变化再决定是否保留原条件。" };
+  if (watch.direction_schema !== "direction-v1") return { title: "原方向依据需要重新核对", detail: "旧方案未保存完整方向身份，请核对当前证据后重新分析并采用。" };
+  if (strategyDirectionKey(watch.evidence_snapshot) !== strategyDirectionKey(worksheet.route_review?.evidence)) return { title: "原策略依据发生变化，重新分析", detail: "大盘、板块或个股的方向、来源或行业归属与采用时不同，先核对变化再决定是否保留原条件。" };
   const reached = watch.comparator === "at_or_above" ? worksheet.basis.price >= watch.price : worksheet.basis.price <= watch.price;
   return { title: reached ? "已到观察价，核对下一步条件" : "正在等待策略条件", detail: `当前 ${worksheet.basis.price.toFixed(2)} 元；报价${WATCH_COMPARATORS[watch.comparator]} ${watch.price.toFixed(2)} 元时提示复核。${reached ? "到价尚不能确认下方的转弱、止跌等条件。" : ""}` };
 }

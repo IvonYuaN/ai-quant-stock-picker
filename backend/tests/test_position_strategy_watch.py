@@ -282,3 +282,50 @@ def test_position_review_rechecks_legacy_action_prose_when_adopting_old_persiste
     response = client.post(f'/api/positions/{position_id}/strategy-watch', json=body)
     assert response.status_code == 400 and '当前有源' in response.text
     assert pf._load() == before
+
+
+@pytest.mark.parametrize(('dimension', 'field', 'changed'), [
+    ('sector', 'industry', '合成新行业'), ('market', 'source', '另一个合成源'),
+    ('market', 'breadth', '普涨'),
+])
+def test_strategy_watch_same_status_premise_change_requires_review(strategy, dimension, field, changed) -> None:
+    client, position_id, body, _, _ = strategy
+    value = client.post(f'/api/positions/{position_id}/strategy-watch', json=body).json()['data']
+    root = pf._load()['position_reviews'][position_id]
+    value['route_review']['evidence'][dimension][field] = changed
+    value['basis']['price'] = value['review_plan']['watch']['price']
+    observed = observe_plan(value, root, current=NOW)
+    assert observed.state == 'needs_review' and observed.reason == 'evidence_changed'
+    from strategy_review_context import position_review_context
+    comparison = position_review_context(value, value['route_review']['evidence'], {})
+    assert comparison['material_changed']
+
+
+def test_strategy_watch_source_change_during_discussion_rejects_adoption(strategy, monkeypatch) -> None:
+    client, position_id, body, _, _ = strategy
+    original = watches.read_position_plan
+    def changed(identity):
+        value = original(identity)
+        value['route_review']['evidence']['market']['source'] = '另一个当前源'
+        return value
+    monkeypatch.setattr(watches, 'read_position_plan', changed)
+    before = deepcopy(pf._load())
+    response = client.post(f'/api/positions/{position_id}/strategy-watch', json=body)
+    assert response.status_code == 409 and '依据已变化' in response.text
+    assert pf._load() == before
+
+
+def test_strategy_watch_legacy_identity_requires_explicit_review_without_rewriting_snapshot(strategy) -> None:
+    client, position_id, body, _, _ = strategy
+    value = client.post(f'/api/positions/{position_id}/strategy-watch', json=body).json()['data']
+    root = pf._load()['position_reviews'][position_id]
+    value['review_plan']['watch'].pop('direction_schema')
+    original = deepcopy(value['review_plan']['watch']['evidence_snapshot'])
+    result = observe_plan(value, root, current=NOW)
+    assert result.reason == 'evidence_changed' and '旧方案' in result.detail
+    from strategy_review_context import position_review_context
+    context = position_review_context(value, original, {})
+    assert any('原方向依据版本' in issue for issue in context['missing_evidence'])
+    assert not context['material_changed']
+    assert context['original']['evidence_snapshot'] == original
+    assert value['review_plan']['watch']['evidence_snapshot'] == original

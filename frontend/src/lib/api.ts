@@ -430,6 +430,7 @@ export interface PositionModelCatalog { catalog_id: string; current_model: strin
 export interface DiscussionAction { action: "observe" | "sell_review" | "buy_review" | "pause"; price_ref: string | null; condition: string; invalidation: string }
 export type WatchComparator = "at_or_above" | "at_or_below";
 export interface StrategyWatch {
+  direction_schema?: string;
   action: DiscussionAction["action"]; price: number; comparator: WatchComparator;
   condition: string; invalidation: string;
   price_ref: { label: string; price: number; source: string; as_of: string };
@@ -437,7 +438,7 @@ export interface StrategyWatch {
   position_snapshot?: ActionWorksheet["position_snapshot"];
   constraints?: PositionConstraints;
   trade_revision?: string;
-  evidence_snapshot?: Partial<Record<"market" | "sector" | "stock", { status?: string }>>;
+  evidence_snapshot?: Partial<Record<"market" | "sector" | "stock", Partial<DecisionEvidence>>>;
 }
 export interface StrategyWatchInput {
   choice: ReviewChoice; source_discussion: "comparison" | "plan";
@@ -466,7 +467,7 @@ export interface PositionDiscussion {
   status: "complete" | "partial" | "failed"; generated_at: string; model: string; mode: string;
   choice: ReviewChoice | null; position_snapshot: ActionWorksheet["position_snapshot"]; quote_as_of: string | null;
   analysis_basis_id?: string;
-  evidence_snapshot?: { quote: { price: number | null; as_of: string | null; source: string }; market: { status?: string; summary?: string; source?: string; as_of?: string }; sector: { status?: string; summary?: string; source?: string; as_of?: string }; stock?: { status?: string; summary?: string; source?: string; as_of?: string } };
+  evidence_snapshot?: { quote: { price: number | null; as_of: string | null; source: string }; market: Partial<DecisionEvidence>; sector: Partial<DecisionEvidence>; stock?: Partial<DecisionEvidence> };
   price_refs: Record<string, { label: string; price: number; as_of: string; source: string }>;
   rounds: Array<{ stage: string; opinions: Array<{ role: string; label: string; status: string; issue?: string;
     opinion?: { summary: string; evidence_ids: string[]; uncertainties: string[]; actions: DiscussionAction[]; reply_to: string[]; challenge: string } }> }>;
@@ -559,6 +560,8 @@ export interface ActionWorksheet {
 }
 export interface DecisionEvidence {
   status: string; summary: string; as_of: string | null; source: string; evidence?: unknown;
+  industry?: string | null; breadth?: string | null;
+  indices?: Array<{ name: string; source?: string; change_pct: number; as_of?: string }>;
 }
 export interface PositionDecisionContext {
   name: string; opened_at: string | null; holding_trade_days: number | null;

@@ -1,7 +1,7 @@
 import type { ActionWorksheet, FollowupObservation, PositionDiscussion } from "./api";
 import { calculationDraftRequiresReview } from "../components/aqsp/PositionActionPlan";
 import { draftNeedsReview } from "./position-workspace";
-import { discussionSourceKey, discussionStrategyCurrent, strategyWatchInput, strategyWatchIssue, strategyWatchState } from "./strategy-watch";
+import { discussionSourceKey, discussionStrategyCurrent, strategyWatchInput, strategyWatchIssue, strategyWatchState, strategyDirectionKey } from "./strategy-watch";
 
 const stamp = "2026-10-27T10:00:00+08:00";
 const now = Date.parse(stamp);
@@ -9,13 +9,18 @@ const evidence = { market: { status: "strong", summary: "合成大盘", as_of: s
 const reference = { label: "合成观察高点", price: 10, as_of: stamp, source: "合成源" };
 const worksheet: ActionWorksheet = { symbol: "600000", position_id: "p1", revision: "r1", trade_revision: "trade-1", constraints: { attention: "available", extra_cash: 1000, loss_limit: null, risk_baseline: null }, analysis_basis_id: "current-numeric-quote-basis", basis: { checked_at: stamp, quote_as_of: stamp, quote_source: "合成源", quote_issue: "", price: 9.8, cost: 12, shares: 1000, sellable_shares: 1000, position_id: "p1", joint_weakness: false, references: [reference] }, position_snapshot: { position_id: "p1", cost: 12, shares: 1000, sellable_shares: 1000 }, review_plan: {}, scenario: null, scenario_issue: "", route_review: { title: "合成", summary: "合成", unrealized_pnl_pct: null, recovery_to_cost_pct: null, routes: [], evidence, missing_evidence: [] } };
 const discussion: PositionDiscussion = { status: "complete", generated_at: stamp, model: "synthetic", mode: "合成", choice: null, position_snapshot: worksheet.position_snapshot, quote_as_of: stamp, review_revision: "r1", analysis_basis_id: "original-model-basis", evidence_snapshot: { ...evidence, quote: { price: 9.7, as_of: stamp, source: "合成源" } }, price_refs: { p0: reference }, rounds: [], summary: { conclusion: "合成", agreements: [], disagreements: [], missing_evidence: [], actions: [{ action: "sell_review", price_ref: "p0", condition: "核对转弱证据", invalidation: "板块转弱则重新分析" }] }, notice: "合成" };
-const watch = { action: "sell_review" as const, comparator: "at_or_above" as const, price: 10, condition: "核对转弱证据", invalidation: "板块转弱则重新分析", price_ref: reference, source_generated_at: stamp, saved_at: stamp, position_snapshot: worksheet.position_snapshot, constraints: worksheet.constraints, trade_revision: worksheet.trade_revision, evidence_snapshot: evidence };
+const watch = { direction_schema: "direction-v1", action: "sell_review" as const, comparator: "at_or_above" as const, price: 10, condition: "核对转弱证据", invalidation: "板块转弱则重新分析", price_ref: reference, source_generated_at: stamp, saved_at: stamp, position_snapshot: worksheet.position_snapshot, constraints: worksheet.constraints, trade_revision: worksheet.trade_revision, evidence_snapshot: evidence };
 const tracked = { ...worksheet, review_plan: { choice: "reduce" as const, watch } };
 const pausedObservation: FollowupObservation = { position_id: "p1", symbol: "600000", name: "合成", state: "paused", title: "原做 T 计划先暂停", detail: "合成", observed_at: stamp, quote_as_of: stamp, revision: "r1", plan_key: "intent-1", position_snapshot: worksheet.position_snapshot, reason: "joint_weakness", joint_pause_pending: true };
 const unknownEvidence = { ...evidence, sector: { ...evidence.sector, status: "unknown" } };
 const pending: ActionWorksheet = { ...tracked, review_plan: { choice: "t_watch", watch: { ...watch, evidence_snapshot: unknownEvidence } }, basis: { ...worksheet.basis, price: 11 }, route_review: { ...worksheet.route_review!, evidence: unknownEvidence }, followup: { mode: "changes", current_plan_key: "intent-1", last_check: pausedObservation, requires_refresh: false, issue: "" } };
 const throws = (fn: () => unknown) => { try { fn(); return false; } catch { return true; } };
 export const strategyWatchContract = {
+  sameStateIndustryChangeRejectsAdoption: !discussionStrategyCurrent(discussion, { ...worksheet, route_review: { ...worksheet.route_review!, evidence: { ...evidence, sector: { ...evidence.sector, industry: "银行" } } } }, now),
+  sameStateSourceChangeRequiresReview: strategyWatchState({ ...tracked, route_review: { ...worksheet.route_review!, evidence: { ...evidence, market: { ...evidence.market, source: "新来源" } } } }, now)?.title === "原策略依据发生变化，重新分析",
+  legacyDirectionNeedsExplicitReview: strategyWatchState({ ...tracked, review_plan: { choice: "reduce", watch: { ...watch, direction_schema: undefined } } }, now)?.title === "原方向依据需要重新核对",
+  indexTurnChangesDirection: strategyDirectionKey({ ...evidence, market: { ...evidence.market, indices: [{ name: "上证指数", change_pct: 1 }] } }) !== strategyDirectionKey({ ...evidence, market: { ...evidence.market, indices: [{ name: "上证指数", change_pct: -1 }] } }),
+  indexTickDoesNotChangeDirection: strategyDirectionKey({ ...evidence, market: { ...evidence.market, indices: [{ name: "上证指数", change_pct: 1 }] } }) === strategyDirectionKey({ ...evidence, market: { ...evidence.market, indices: [{ name: "上证指数", change_pct: 2 }] } }),
   regeneratedDiscussionNeedsNewConfirmation: discussionSourceKey(discussion) !== discussionSourceKey({ ...discussion, generated_at: "2026-10-27T10:00:01+08:00" }),
   changedModelBasisNeedsNewConfirmation: discussionSourceKey(discussion) !== discussionSourceKey({ ...discussion, analysis_basis_id: "new-basis" }),
   replacedSummaryNeedsNewConfirmation: discussionSourceKey(discussion) !== discussionSourceKey({ ...discussion, summary: { ...discussion.summary!, conclusion: "新的不同结论" } }),

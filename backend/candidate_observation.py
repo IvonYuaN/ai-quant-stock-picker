@@ -28,6 +28,7 @@ from aqsp.core.time import now_shanghai
 from aqsp.utils.jsonl_io import advisory_lock, atomic_write_text
 from position_route_review import evidence_digest
 import position_strategy_evidence as sources
+from strategy_direction import direction_identity
 
 
 @dataclass(frozen=True)
@@ -228,12 +229,11 @@ def evidence_basis(report: dict[str, Any], evidence: dict[str, Any],
         'debate': report.get('debate'),
         'ownership': own,
         'quote_source': {'valid': quote_valid, 'source': quote.get('source') or '腾讯行情'},
-        'directions': {key: {field: evidence[key].get(field) for field in ('status', 'source', 'industry')}
-                       for key in ('market', 'sector', 'stock')},
+        'directions': direction_identity(evidence),
     }
     if report.get('candidate_invalidation'):
         parts['candidate_invalidation'] = True
-    return {'schema': 'candidate-basis-v2', **{key: evidence_digest(value) for key, value in parts.items()}}
+    return {'schema': 'candidate-basis-v3', **{key: evidence_digest(value) for key, value in parts.items()}}
 
 
 def current_evidence(code: str, quote: dict[str, Any], *, current: datetime) -> dict[str, Any]:
@@ -272,7 +272,11 @@ def current_evidence(code: str, quote: dict[str, Any], *, current: datetime) -> 
     sector_fact['change_pct'] = dc._number(sector.get('change_pct')) if sector and sector_fact['status'] != 'unknown' else None
     if market_fact['status'] != 'unknown' and overview:
         sentiment = overview.get('sentiment') or {}
+        market_fact['breadth'] = sentiment.get('breadth')
         market_fact['breadth_counts'] = {key: dc._number(sentiment.get(key)) for key in ('up', 'down')}
+    indices = sources._indices(current)
+    if indices and market_fact['status'] != 'unknown':
+        market_fact['indices'] = indices['indices']
     stock_fact = asdict(dc._stock_context(quote, None, current))
     evidence = {'research': report, 'quote': {'price': quote.get('price'), 'change_pct': quote.get('change_pct'), 'as_of': stamp, 'source': quote.get('source') or '腾讯行情'},
                 'market': market_fact, 'sector': sector_fact, 'stock': stock_fact}
