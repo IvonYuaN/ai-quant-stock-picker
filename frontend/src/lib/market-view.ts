@@ -80,6 +80,7 @@ export interface IndustryRowView {
   changePct: number | null;
   upCount: number;
   downCount: number;
+  asOf: string | null;
 }
 
 export interface BreadthView {
@@ -139,6 +140,8 @@ export interface MarketView {
   industryTop: IndustryRowView[];
   industryBottom: IndustryRowView[];
   industryTotal: number;
+  /** 行业榜供应商行情时点；未提供 f124 时留空，不用 API 取数时间代替。 */
+  industryUpdated: string;
   updated: string;
 }
 
@@ -238,6 +241,7 @@ function toIndustryRow(item: IndustryRow): IndustryRowView {
     changePct: Number.isFinite(raw) ? raw : null,
     upCount: item.up_count,
     downCount: item.down_count,
+    asOf: item.as_of ?? null,
   };
 }
 
@@ -311,6 +315,10 @@ export function buildMarketView(input: MarketInput): MarketView {
       .map(toIndustryRow)
       .reverse(),
     industryTotal: input.industry?.total ?? 0,
+    industryUpdated: latestAsOf([
+      ...asArray<IndustryRow>(input.industry?.top),
+      ...asArray<IndustryRow>(input.industry?.bottom),
+    ]),
     updated: input.overview?.updated ?? "",
   };
 }
@@ -327,10 +335,11 @@ export interface MarketStripSummary {
 
 export function marketStripSummary(view: MarketView | null): MarketStripSummary | null {
   if (!view) return null;
-  if (view.indices.length === 0 && !view.breadth && view.global.length === 0) return null;
+  if (view.indices.length === 0 && !view.breadth && view.global.length === 0 &&
+      view.industryTop.length === 0 && view.industryBottom.length === 0 &&
+      view.sectorsTop.length === 0 && view.sectorsBottom.length === 0) return null;
 
   const breadth = view.breadth;
-  const indexUp = view.indices.filter((item) => item.changePct > 0).length;
   const indexTotal = view.indices.length;
 
   let tone: Tone = "neutral";
@@ -348,8 +357,11 @@ export function marketStripSummary(view: MarketView | null): MarketStripSummary 
       headline = `中性震荡 · 上涨 ${breadth.up} / 下跌 ${breadth.down}`;
     }
   } else if (indexTotal > 0) {
-    tone = indexUp > indexTotal / 2 ? "ok" : indexUp === 0 ? "warn" : "neutral";
-    headline = `${indexTotal} 个指数中 ${indexUp} 个上涨`;
+    // 指数涨跌不是全市场宽度或所属板块方向的替身。
+    tone = "neutral";
+    headline = `市场宽度未取得 · 仅有 ${indexTotal} 个指数报价`;
+  } else if (view.industryTop.length || view.industryBottom.length) {
+    headline = "大盘方向未取得 · 当前只有行业榜数据";
   }
 
   return { indices: view.indices, breadth, global: view.global, headline, tone };

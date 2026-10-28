@@ -38,10 +38,10 @@ const ladder: LadderRow[] = [
   { boards: 5, count: 2, plus: true },
 ];
 const industries = [
-  { rank: 1, name: "电池", code: "BK1", changePct: 3.2, upCount: 55, downCount: 7 },
-  { rank: 2, name: "矿业", code: "BK2", changePct: -1.5, upCount: 8, downCount: 20 },
+  { rank: 1, name: "电池", code: "BK1", changePct: 3.2, upCount: 55, downCount: 7, asOf: null },
+  { rank: 2, name: "矿业", code: "BK2", changePct: -1.5, upCount: 8, downCount: 20, asOf: null },
   // 占位串已被上游归一成 null，这里必须被过滤掉而不是画成 0
-  { rank: 3, name: "地产", code: "BK3", changePct: null, upCount: 0, downCount: 0 },
+  { rank: 3, name: "地产", code: "BK3", changePct: null, upCount: 0, downCount: 0, asOf: null },
 ];
 
 const sectorChart = sectorFlowOption(sectors, "dark");

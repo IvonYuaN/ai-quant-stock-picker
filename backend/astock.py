@@ -1461,7 +1461,7 @@ def _industry_comparison_once(top_n: int) -> dict:
         "invt": "2",
         "fid": "f3",  # fid=f3 + po=1：按涨跌幅降序，否则 top/bottom 切片非涨幅序（a-stock-data §3.7）
         "fs": "m:90+t:2",
-        "fields": "f2,f3,f4,f12,f13,f14,f104,f105,f128,f136,f140,f141,f207",
+        "fields": "f2,f3,f4,f12,f13,f14,f104,f105,f124,f128,f136,f140,f141,f207",
     }
     try:
         d = em_get(
@@ -1482,6 +1482,8 @@ def _industry_comparison_once(top_n: int) -> dict:
             "rank": i + 1,
             "name": it.get("f14", ""),
             "change_pct": it.get("f3", 0),
+            # 行业榜用于大方向判断时必须保留供应商行情时点，不能拿接口取数时间代替。
+            "as_of": epoch_iso(it.get("f124")),
             "code": it.get("f12", ""),
             "up_count": it.get("f104", 0),
             "down_count": it.get("f105", 0),
