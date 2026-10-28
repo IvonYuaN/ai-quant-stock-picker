@@ -1159,7 +1159,7 @@ def test_recommendation_gate_allows_technical_candidate_without_news_dependency(
     gate = write_home_snapshot._recommendation_gate(
         provider,
         runtime,
-        SimpleNamespace(status="完成", lag_days=0),
+        SimpleNamespace(status="fresh", lag_days=0),
         "来源失败",
         evaluated_at=datetime(2026, 7, 10, 15, 1, tzinfo=ZoneInfo("Asia/Shanghai")),
         candidates=(candidate,),
@@ -1167,6 +1167,22 @@ def test_recommendation_gate_allows_technical_candidate_without_news_dependency(
     )
 
     assert gate.recommendation_allowed is True
+
+
+@pytest.mark.parametrize('state', ['', 'unknown', '未记录', '完成', 'run_completed', 'partial_failed'])
+def test_recommendation_gate_blocks_when_quote_freshness_is_not_verified(state: str, monkeypatch) -> None:
+    monkeypatch.delenv('AQSP_RESEARCH_DISPLAY_OVERRIDE', raising=False)
+    provider = _Provider()
+    candidate = write_home_snapshot._snapshot_candidate(_candidate('600010', 88.0))
+    assert candidate is not None
+    candidate = replace(candidate, news_catalyst_summary='')
+    chain = write_home_snapshot.HomeSnapshotResearchChain(status='linked', candidate_symbols=('600010',),
+        debated_symbols=('600010',), variant_candidate_symbols=('600010',), variant_review_symbols=('600010',))
+    gate = write_home_snapshot._recommendation_gate(provider, provider.runtime_overview('2026-07-10'),
+        SimpleNamespace(status=state, lag_days=0), '可用',
+        evaluated_at=datetime(2026, 7, 10, 15, 1, tzinfo=ZoneInfo('Asia/Shanghai')),
+        candidates=(candidate,), research_chain=chain)
+    assert gate.recommendation_allowed is False
 
 
 def test_recommendation_gate_blocks_unlinked_variant_validation() -> None:
@@ -2736,7 +2752,7 @@ def test_snapshot_source_uses_intraday_provenance_for_completed_day(
     )
 
     source = write_home_snapshot._snapshot_source(
-        SimpleNamespace(), SimpleNamespace(source_status={}), selected_date="2026-07-09"
+        SimpleNamespace(), SimpleNamespace(source_status={}), selected_date="2026-07-09", task_id="intraday"
     )
 
     assert source.effective == "tencent"
@@ -2753,6 +2769,7 @@ def test_snapshot_source_surfaces_latest_intraday_failure_over_old_run_status(
         json.dumps(
             {
                 "status": "failed",
+                "task_id": "intraday", "updated_at": "2026-07-10T10:00:00+08:00",
                 "reason": "盘中任务被中断，保留上一版盘中产物",
                 "provenance": {
                     "actual_source": "tencent",
@@ -2772,10 +2789,12 @@ def test_snapshot_source_surfaces_latest_intraday_failure_over_old_run_status(
             lag_days=0,
         ),
         SimpleNamespace(source_status={}),
-        selected_date="2026-07-10",
+        selected_date="2026-07-10", task_id="intraday",
     )
 
-    assert source.status == "盘中任务失败：盘中任务被中断，保留上一版盘中产物"
+    assert source.run_status == "failed"
+    assert source.run_detail == "盘中任务被中断，保留上一版盘中产物"
+    assert source.status == "未记录"  # A risk/run status cannot certify quote freshness.
 
 
 def test_snapshot_source_surfaces_running_intraday_over_old_run_status(
@@ -2786,6 +2805,7 @@ def test_snapshot_source_surfaces_running_intraday_over_old_run_status(
         json.dumps(
             {
                 "status": "running",
+                "task_id": "intraday", "updated_at": "2026-07-10T10:00:00+08:00",
                 "reason": "正在解析实时股票池",
                 "provenance": {
                     "actual_source": "tencent",
@@ -2805,10 +2825,12 @@ def test_snapshot_source_surfaces_running_intraday_over_old_run_status(
             lag_days=0,
         ),
         SimpleNamespace(source_status={}),
-        selected_date="2026-07-10",
+        selected_date="2026-07-10", task_id="intraday",
     )
 
-    assert source.status == "盘中刷新中：正在解析实时股票池"
+    assert source.run_status == "running"
+    assert source.run_detail == "正在解析实时股票池"
+    assert source.status == "未记录"
 
 
 def test_write_home_snapshot_builds_optional_four_day_index(monkeypatch) -> None:
@@ -3073,3 +3095,63 @@ def test_write_home_snapshot_cli_rejects_shared_snapshot_and_index_path(
                 "2026-07-10",
             ]
         )
+
+
+def test_snapshot_source_ignores_other_task_failure_when_building_daily(monkeypatch, tmp_path) -> None:
+    status_path = tmp_path / 'intraday.json'
+    status_path.write_text(json.dumps({'task_id': 'intraday', 'status': 'failed',
+                                     'updated_at': '2026-10-28T14:00:00+08:00', 'reason': '盘中失败'}))
+    monkeypatch.setenv('AQSP_INTRADAY_STATUS', str(status_path))
+    source = write_home_snapshot._snapshot_source(SimpleNamespace(run_status='completed'),
+        SimpleNamespace(source_status={'status': 'fresh'}), selected_date='2026-10-28', task_id='main_chain')
+    assert source.status == 'fresh' and source.task_id == 'main_chain'
+    assert not source.run_status and not source.run_detail
+
+
+def test_snapshot_source_attributes_research_to_resolved_view_when_trigger_is_maintenance() -> None:
+    source = write_home_snapshot._snapshot_source(SimpleNamespace(run_status='completed'),
+        SimpleNamespace(task_id='main_chain', source_status={'status': 'fresh'}),
+        selected_date='2026-10-28', task_id='variant-refresh')
+    assert source.task_id == 'main_chain'
+    assert source.status == 'fresh' and not source.run_status
+
+
+def test_snapshot_source_uses_view_metadata_when_runtime_belongs_to_another_task() -> None:
+    source = write_home_snapshot._snapshot_source(
+        SimpleNamespace(task_id='intraday', run_status='partial_failed', effective_source='tencent',
+            data_latest_trade_date='2026-10-27', lag_days=1),
+        SimpleNamespace(task_id='main_chain', source_status={'actual_source': 'sina',
+            'data_latest_trade_date': '2026-10-28', 'lag_days': '0', 'health_label': '可用'}),
+        selected_date='2026-10-28', task_id='main_chain')
+    assert source.task_id == 'main_chain'
+    assert source.effective == 'sina' and source.latest_trade_date == '2026-10-28' and source.lag_days == 0
+    assert source.status == '未记录' and not source.run_status
+
+
+@pytest.mark.parametrize('state', ['waiting', 'staged', 'failed', 'completed'])
+def test_variant_suite_preserves_published_history_when_new_refresh_changes(monkeypatch, tmp_path, state) -> None:
+    payload = {'schema_version': 'variant-suite-v2', 'generated_at': '2026-10-26T22:00:00+08:00',
+               'end_date': '2026-10-26', 'variants': [{}] * 24, 'universe': {'selected_symbols': 600}}
+    monkeypatch.setattr(write_home_snapshot, '_variant_results_payload', lambda: (payload, ''))
+    status_path = tmp_path / 'refresh.json'
+    status_path.write_text(json.dumps({'status': state, 'generated_at': '2026-10-28T22:00:00+08:00',
+                                      'end_date': '2026-10-28', 'profiles_staged': 6, 'profiles_total': 24,
+                                      'message': '合成状态'}))
+    monkeypatch.setenv('AQSP_VARIANT_REFRESH_STATUS', str(status_path))
+    monkeypatch.setattr(write_home_snapshot, 'now_shanghai', lambda: datetime(2026, 10, 28, 23, tzinfo=ZoneInfo('Asia/Shanghai')))
+    suite = write_home_snapshot._variant_suite_snapshot()
+    assert suite.end_date == '2026-10-26' and suite.variant_count == 24 and not suite.last_error
+    assert suite.refresh_status == state and suite.refresh_end_date == '2026-10-28'
+    assert suite.profiles_staged == 6 and suite.profiles_total == 24
+
+
+@pytest.mark.parametrize('patch', [{'generated_at': '2099-10-28T22:00:00+08:00'},
+                                  {'generated_at': '2026-10-28T22:00:00'},
+                                  {'profiles_staged': True}, {'profiles_staged': 25}, {'end_date': '2099-01-01'}])
+def test_variant_refresh_facts_reports_unknown_when_metadata_invalid(monkeypatch, tmp_path, patch) -> None:
+    status_path = tmp_path / 'refresh.json'
+    status_path.write_text(json.dumps({'status': 'staged', 'generated_at': '2026-10-28T22:00:00+08:00',
+                                      'end_date': '2026-10-28', 'profiles_staged': 6, 'profiles_total': 24, **patch}))
+    monkeypatch.setenv('AQSP_VARIANT_REFRESH_STATUS', str(status_path))
+    monkeypatch.setattr(write_home_snapshot, 'now_shanghai', lambda: datetime(2026, 10, 28, 23, tzinfo=ZoneInfo('Asia/Shanghai')))
+    assert write_home_snapshot._variant_refresh_facts()['refresh_status'] == 'unknown'

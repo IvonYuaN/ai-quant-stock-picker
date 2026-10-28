@@ -264,6 +264,12 @@ class HomeSnapshotVariantSuite:
     coverage_pct: float = 0.0
     filters: str = ""
     last_error: str = ""
+    refresh_status: str = ""
+    refresh_generated_at: str = ""
+    refresh_end_date: str = ""
+    refresh_detail: str = ""
+    profiles_staged: int = 0
+    profiles_total: int = 0
 
 
 @dataclass(frozen=True)
@@ -289,6 +295,10 @@ class HomeSnapshotSource:
     latest_trade_date: str
     lag_days: int
     status: str
+    task_id: str = ""
+    run_status: str = ""
+    run_updated_at: str = ""
+    run_detail: str = ""
 
 
 @dataclass(frozen=True)
@@ -1082,6 +1092,10 @@ def _fit_index_to_byte_budget(index: HomeSnapshotIndex) -> HomeSnapshotIndex:
             effective=_bounded_index_text(minimal.source.effective),
             latest_trade_date=_bounded_index_text(minimal.source.latest_trade_date),
             status=_bounded_index_text(minimal.source.status),
+            task_id=_bounded_index_text(minimal.source.task_id),
+            run_status=_bounded_index_text(minimal.source.run_status),
+            run_updated_at=_bounded_index_text(minimal.source.run_updated_at),
+            run_detail=_bounded_index_text(minimal.source.run_detail),
         ),
         coldstart=replace(
             minimal.coldstart,
@@ -1107,6 +1121,10 @@ def _fit_index_to_byte_budget(index: HomeSnapshotIndex) -> HomeSnapshotIndex:
             batch_id=_bounded_index_text(minimal.variant_suite.batch_id),
             filters="",
             last_error="",
+            refresh_status=_bounded_index_text(minimal.variant_suite.refresh_status),
+            refresh_generated_at=_bounded_index_text(minimal.variant_suite.refresh_generated_at),
+            refresh_end_date=_bounded_index_text(minimal.variant_suite.refresh_end_date),
+            refresh_detail=_bounded_index_text(minimal.variant_suite.refresh_detail),
         ),
         research_chain=HomeSnapshotResearchChain(
             status="blocked",
@@ -1365,6 +1383,13 @@ def _variant_suite_from_dict(payload: object) -> HomeSnapshotVariantSuite:
             "coverage_pct",
             "filters",
             "last_error",
+            "refresh_status",
+            "refresh_generated_at",
+            "refresh_end_date",
+            "refresh_detail",
+            "profiles_staged",
+            "profiles_total",
+
         },
     )
     return HomeSnapshotVariantSuite(
@@ -1394,6 +1419,12 @@ def _variant_suite_from_dict(payload: object) -> HomeSnapshotVariantSuite:
         last_error=_optional_text(
             mapping.get("last_error"), "variant_suite.last_error"
         ),
+        refresh_status=_optional_text(mapping.get("refresh_status"), "variant_suite.refresh_status"),
+        refresh_generated_at=_optional_text(mapping.get("refresh_generated_at"), "variant_suite.refresh_generated_at"),
+        refresh_end_date=_optional_text(mapping.get("refresh_end_date"), "variant_suite.refresh_end_date"),
+        refresh_detail=_optional_text(mapping.get("refresh_detail"), "variant_suite.refresh_detail"),
+        profiles_staged=_integer(mapping.get("profiles_staged", 0), "variant_suite.profiles_staged"),
+        profiles_total=_integer(mapping.get("profiles_total", 0), "variant_suite.profiles_total"),
     )
 
 
@@ -1771,6 +1802,7 @@ def _source_from_dict(payload: object) -> HomeSnapshotSource:
         mapping,
         {"effective", "latest_trade_date", "lag_days", "status"},
         "source",
+        optional={"task_id", "run_status", "run_updated_at", "run_detail"},
     )
     return HomeSnapshotSource(
         effective=_text(mapping["effective"], "source.effective"),
@@ -1779,6 +1811,10 @@ def _source_from_dict(payload: object) -> HomeSnapshotSource:
         ),
         lag_days=_integer(mapping["lag_days"], "source.lag_days"),
         status=_text(mapping["status"], "source.status"),
+        task_id=_optional_text(mapping.get("task_id"), "source.task_id"),
+        run_status=_optional_text(mapping.get("run_status"), "source.run_status"),
+        run_updated_at=_optional_text(mapping.get("run_updated_at"), "source.run_updated_at"),
+        run_detail=_optional_text(mapping.get("run_detail"), "source.run_detail"),
     )
 
 

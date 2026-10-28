@@ -45,6 +45,7 @@ from aqsp.core.time import (
     to_shanghai,
 )
 from aqsp.core.errors import DataError
+from aqsp.web.research_status import FAILED_RESEARCH_RUNS, intraday_run, source_time
 from aqsp.market_context import MarketContextArtifact, build_market_context_artifact
 from aqsp.news.catalysts import (
     CatalystEvent,
@@ -1738,7 +1739,7 @@ def _intraday_running_summary() -> str:
 
 
 def _snapshot_source(
-    runtime: Any, task_view: Any, *, selected_date: str
+    runtime: Any, task_view: Any, *, selected_date: str, task_id: str = ""
 ) -> HomeSnapshotSource:
     source_status = getattr(task_view, "source_status", {}) or {}
     if not isinstance(source_status, dict):
@@ -1747,11 +1748,17 @@ def _snapshot_source(
     intraday_state = _read_json_object(
         _runtime_json_path("AQSP_INTRADAY_STATUS", "data/intraday_refresh_status.json")
     )
-    intraday_status = _text(intraday_state.get("status"))
+    # A maintenance invocation can render another task's research. Attribute
+    # the evidence to the resolved view, never to the writer's trigger name.
+    selected_task = _text(getattr(task_view, "task_id", "")) or task_id or _text(getattr(runtime, "task_id", ""))
+    same_runtime_task = bool(selected_task and _text(getattr(runtime, "task_id", "")) == selected_task)
+    run = intraday_run(intraday_state, selected_date, current=now_shanghai()) if selected_task == "intraday" else None
+    if selected_task != "intraday":
+        provenance = {}
     latest_trade_date = _first_text(
-        getattr(runtime, "data_latest_trade_date", ""),
         source_status.get("data_latest_trade_date"),
         provenance.get("latest_trade_date"),
+        getattr(runtime, "data_latest_trade_date", "") if same_runtime_task else "",
         "未记录",
     )
     completed_date = latest_completed_trading_day().isoformat()
@@ -1759,35 +1766,32 @@ def _snapshot_source(
         latest_trade_date = completed_date
     return HomeSnapshotSource(
         effective=_first_text(
-            getattr(runtime, "effective_source", ""),
-            getattr(runtime, "requested_source", ""),
             source_status.get("effective_source"),
             source_status.get("actual_source"),
             provenance.get("actual_source"),
             provenance.get("requested_source"),
+            getattr(runtime, "effective_source", "") if same_runtime_task else "",
+            getattr(runtime, "requested_source", "") if same_runtime_task else "",
+            source_status.get("requested_source"),
             "未记录",
         ),
         latest_trade_date=latest_trade_date,
         lag_days=_lag_days(
             _first_text(
-                getattr(runtime, "lag_days", ""),
                 source_status.get("lag_days"),
                 provenance.get("lag_days"),
+                getattr(runtime, "lag_days", "") if same_runtime_task else "",
             )
         ),
         status=_first_text(
-            (
-                _intraday_failure_summary()
-                if intraday_status in {"failed", "error", "partial_failed"}
-                else ""
-            ),
-            _intraday_running_summary() if intraday_status == "running" else "",
-            getattr(runtime, "run_status", ""),
             source_status.get("status"),
-            provenance.get("status"),
-            getattr(runtime, "source_reason", ""),
+            provenance.get("status") if selected_task == "intraday" else "",
             "未记录",
         ),
+        task_id=selected_task,
+        run_status=run.status if run else "",
+        run_updated_at=run.updated_at if run else "",
+        run_detail=run.detail if run else "",
     )
 
 
@@ -1979,7 +1983,8 @@ def _recommendation_gate(
     # visible in the message section without hiding a valid quote-based pick.
     raw_lag_days = getattr(source, "lag_days", None)
     lag_days = 999 if raw_lag_days in (None, "") else int(raw_lag_days)
-    freshness_ok = source_status not in {"", "failed", "stale"} and lag_days <= 0
+    freshness_ok = (source_status.lower() in {"fresh", "current", "realtime", "实时", "新鲜"} and lag_days == 0
+                    and getattr(source, "run_status", "") not in FAILED_RESEARCH_RUNS)
     paper_ledger_path = getattr(provider, "paper_ledger_path", None)
     paper_tracking_days = (
         count_paper_tracking_days(str(paper_ledger_path)) if paper_ledger_path else 0
@@ -2325,17 +2330,41 @@ def _variant_refresh_status_error() -> str:
     return ""
 
 
+def _variant_refresh_facts() -> dict[str, Any]:
+    """Refresh progress never replaces or certifies the published artifact."""
+    raw = _read_json_object(_runtime_json_path("AQSP_VARIANT_REFRESH_STATUS", "data/runtime/variant_refresh_status.json"))
+    if not raw:
+        return {}
+    stamp = source_time(raw.get("generated_at"), current=now_shanghai())
+    allowed = {"waiting", "staged", "completed", "timed_out", "skipped_lock", "rejected", "failed"}
+    state = _text(raw.get("status"))
+    counts = [raw.get(key, 0) for key in ("profiles_staged", "profiles_total")]
+    if stamp is None or state not in allowed or any(type(value) is not int or value < 0 for value in counts) or counts[0] > counts[1]:
+        return {"refresh_status": "unknown", "refresh_detail": "验证刷新记录的时点、状态或进度不可核验"}
+    end_date = _text(raw.get("end_date"))
+    if end_date:
+        try:
+            if date.fromisoformat(end_date).isoformat() != end_date or end_date > stamp.date().isoformat():
+                raise ValueError("future date")
+        except ValueError:
+            return {"refresh_status": "unknown", "refresh_detail": "验证刷新目标日期不可核验"}
+    return {"refresh_status": state, "refresh_generated_at": stamp.isoformat(), "refresh_end_date": end_date,
+            "refresh_detail": _text(raw.get("reason") or raw.get("message"))[:500],
+            "profiles_staged": counts[0], "profiles_total": counts[1]}
+
+
 def _variant_suite_snapshot() -> HomeSnapshotVariantSuite:
     """Read bounded metadata from the isolated experiment artifact."""
     payload, error = _variant_results_payload()
+    refresh = _variant_refresh_facts()
     if not payload:
         universe = _universe_snapshot()
         if universe.last_error:
             return HomeSnapshotVariantSuite(
-                last_error=f"变体等待：{universe.last_error}"
+                last_error=f"变体等待：{universe.last_error}", **refresh
             )
         return HomeSnapshotVariantSuite(
-            last_error=_variant_refresh_status_error() or error
+            last_error=_variant_refresh_status_error() or error, **refresh
         )
     universe = payload.get("universe")
     if not isinstance(universe, dict):
@@ -2356,6 +2385,7 @@ def _variant_suite_snapshot() -> HomeSnapshotVariantSuite:
         cycle_id=int(universe.get("cycle_id") or 0),
         coverage_pct=float(universe.get("coverage_pct") or 0.0),
         filters=_text(universe.get("filters")),
+        **refresh,
     )
 
 
@@ -2774,7 +2804,7 @@ def build_home_snapshot(
     runtime = provider.runtime_overview(selected_date)
     universe = _universe_snapshot()
     generated_at = to_shanghai(now_shanghai()).isoformat(timespec="seconds")
-    source = _snapshot_source(runtime, task_view, selected_date=selected_date)
+    source = _snapshot_source(runtime, task_view, selected_date=selected_date, task_id=selected_task_id)
     candidates, parameter_snapshot = _snapshot_candidates_with_parameters(
         payload, selected_date=selected_date
     )

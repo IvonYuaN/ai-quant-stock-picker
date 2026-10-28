@@ -133,6 +133,13 @@ export interface AqspVariantSuite {
   coverage_pct: number;
   filters: string;
   last_error: string;
+  /** Refresh execution facts, separate from the last valid historical results. */
+  refresh_status?: string;
+  refresh_generated_at?: string;
+  refresh_end_date?: string;
+  refresh_detail?: string;
+  profiles_staged?: number;
+  profiles_total?: number;
 }
 
 export interface AqspVariantHolding {
@@ -185,6 +192,11 @@ export interface AqspSourceHealth {
   latest_trade_date: string;
   lag_days: number;
   status: string;
+  task_id?: string;
+  /** Research execution events do not describe quote freshness. */
+  run_status?: string;
+  run_updated_at?: string;
+  run_detail?: string;
 }
 
 export interface AqspSnapshot {

@@ -33,8 +33,57 @@ build();
 const readyGate = { recommendation_allowed: true, status: "ready", reasons: [] };
 const acceptedStates = ["fresh", "current", "realtime", "实时", "新鲜"];
 const rejectedStates = ["", "unknown", "failed", "stale", "失败", "过期", "ready", "partial", "toString"];
+const refreshSuite = { ...snapshot.variant_suite!, refresh_status: "staged", refresh_generated_at: "2026-10-27T09:58:00+08:00",
+  refresh_end_date: "2026-10-27", refresh_detail: "当前分段已保存，等待后续分段", profiles_staged: 2, profiles_total: 6 };
+const refreshed = (patch: Partial<typeof refreshSuite> = {}) => build({ variant_suite: { ...refreshSuite, ...patch } });
+const sourceRun = { ...snapshot.source, task_id: "intraday", run_status: "failed", run_updated_at: "2026-10-27T09:58:00+08:00", run_detail: "本轮研究未完成" };
+const refreshedHtml = renderToStaticMarkup(createElement(ResearchValidationContext, { snapshot: { ...snapshot, variant_suite: refreshSuite, source: sourceRun }, symbol: "000001", now }));
+const archiveHtml = renderToStaticMarkup(createElement(ResearchValidationContext, { snapshot: { ...snapshot, variant_suite: refreshSuite, source: sourceRun, meta: { historical: true, stale: false } }, symbol: "000001", now }));
 
 export const researchValidationContextChecks = {
+  stagedRefreshDoesNotHideHistoricalResult: refreshed().history.date === "2026-10-26" && refreshed().history.status === "历史结果已生成" && refreshed().refresh?.status === "当日验证分段进行中",
+  refreshProgressIsStrategyProfilesOnly: refreshed().refresh?.progress.includes("2/6 组策略配置已暂存") && refreshed().refresh?.progress.includes("不是候选覆盖数"),
+  refreshPrimarySummaryExposesStaging: refreshed().summary.includes("分段进行中") && refreshed().summary.includes("2026-10-26"),
+  allWriterRefreshStatesHaveHonestLabels: [
+    ["waiting", "当日验证等待中"], ["staged", "当日验证分段进行中"], ["completed", "当日验证运行已结束"],
+    ["timed_out", "当日验证本轮超时"], ["skipped_lock", "当日验证等待运行资源"], ["rejected", "当日验证本轮未被接纳"], ["failed", "当日验证本轮失败"],
+  ].map(([refresh_status, label]) => refreshed({ refresh_status }).refresh?.status === label),
+  failedRefreshDoesNotCorruptOldResults: refreshed({ refresh_status: "failed", refresh_detail: "本轮超时" }).history.status === "历史结果已生成" && !refreshed({ refresh_status: "failed" }).gaps.some((gap) => gap.includes("损坏")),
+  refreshFailureRemainsVisibleAlongsideOldSuccess: refreshed({ refresh_status: "failed" }).summary.includes("本轮失败") && refreshed({ refresh_status: "failed" }).history.detail.includes("6 个纸面变体"),
+  completedRefreshDoesNotPromoteOldCandidateCoverage: refreshed({ refresh_status: "completed" }).candidate.validation === "当日候选验证待完成" && refreshed({ refresh_status: "completed" }).recommendation.status === "正式推荐未放行",
+  completedRefreshDoesNotInventMissingCoverage: build({ variant_suite: { ...refreshSuite, refresh_status: "completed", end_date: "2026-10-27" } }).candidate.validation === "当日候选验证待完成",
+  refreshCompletionExplicitlyNotValidationSuccess: refreshed({ refresh_status: "completed" }).refresh?.detail.includes("运行结束不等于这只候选已覆盖或正式推荐已放行"),
+  absentRefreshRecordCannotBeCalledWaiting: current.refresh?.status === "当日验证进度待核实",
+  unknownRefreshStatesRemainUnknown: ["unknown", "", "toString", "future_status"].map((refresh_status) => refreshed({ refresh_status }).refresh?.status === "当日验证运行状态未知"),
+  invalidProfileCountersNeverClaimProgress: [{ profiles_staged: -1 }, { profiles_staged: 7 }, { profiles_staged: 1.5 }, { profiles_total: 0 }, { profiles_total: Number.NaN }].map((patch) => refreshed(patch).refresh?.progress === ""),
+  missingRefreshClockDoesNotClaimCurrent: refreshed({ refresh_generated_at: "" }).refresh?.status === "当日验证进度待核实",
+  naiveRefreshClockDoesNotClaimCurrent: refreshed({ refresh_generated_at: "2026-10-27T09:58:00" }).refresh?.status === "当日验证进度待核实",
+  futureRefreshClockDoesNotClaimCurrent: refreshed({ refresh_generated_at: "2026-10-27T10:00:01+08:00" }).refresh?.status === "当日验证进度待核实",
+  impossibleRefreshClockDoesNotClaimCurrent: refreshed({ refresh_generated_at: "2026-02-30T09:58:00+08:00" }).refresh?.status === "当日验证进度待核实",
+  previousDayRefreshIsHistorical: refreshed({ refresh_generated_at: "2026-10-26T23:58:00+08:00", refresh_end_date: "2026-10-26" }).refresh?.status === "历史验证刷新记录",
+  previousDayRunWithCurrentTargetIsNotCurrent: refreshed({ refresh_generated_at: "2026-10-26T23:58:00+08:00" }).refresh?.status === "验证刷新日期不匹配",
+  currentRunWithPreviousOrFutureTargetIsNotCurrent: ["2026-10-26", "2026-10-28"].map((refresh_end_date) => refreshed({ refresh_end_date }).refresh?.status === "验证刷新日期不匹配"),
+  invalidTargetDateDoesNotClaimCurrent: refreshed({ refresh_end_date: "2026-02-30" }).refresh?.status === "当日验证进度待核实",
+  refreshDayUsesShanghaiRatherThanIsoPrefix: refreshed({ refresh_generated_at: "2026-10-26T17:58:00Z" }).refresh?.status === "当日验证分段进行中",
+  historicalPageOmitsCurrentRefreshAndSourceRun: build({ meta: { historical: true, stale: false }, variant_suite: refreshSuite, source: sourceRun }).refresh === null && build({ meta: { historical: true, stale: false }, variant_suite: refreshSuite, source: sourceRun }).sourceRun === null,
+  sourceRunFailureIsSeparateFromQuoteFreshness: build({ source: sourceRun }).sourceRun?.status === "研究任务失败" && !build({ source: sourceRun }).gaps.includes("总体行情来源未确认为当前有效状态。") && sourceRun.status === "fresh",
+  sourceRunCompletionCannotBypassRecommendationGate: build({ source: { ...sourceRun, run_status: "completed" } }).recommendation.status === "正式推荐未放行",
+  failedRunNeverDisplaysOldReadyGate: ["failed", "error", "partial_failed", "unknown", "unrecognized"].map((run_status) => {
+    const view = build({ source: { ...sourceRun, run_status }, recommendation_gate: readyGate });
+    return view.recommendation.status === "研究任务待核实 · 仅供观察" && view.nextStep.includes("暂不据此采用入场条件") &&
+      view.gaps.some((gap) => gap.includes("有效运行记录")) && !view.gaps.includes("总体行情来源未确认为当前有效状态。");
+  }),
+  unverifiedRunClockNeverDisplaysOldReadyGate: ["", "2026-10-27T09:58:00", "2026-10-27T10:00:01+08:00", "2026-10-26T09:58:00+08:00"].map((run_updated_at) =>
+    build({ source: { ...sourceRun, run_status: "completed", run_updated_at }, recommendation_gate: readyGate }).recommendation.status === "研究任务待核实 · 仅供观察"),
+  normalRunDoesNotInventFailure: ["running", "completed", "success", "ok", "skipped"].map((run_status) =>
+    build({ source: { ...sourceRun, run_status }, recommendation_gate: readyGate }).recommendation.status === "原门禁已放行 · 仍需人工复核"),
+  sourceRunHasNoAssumedScheduledTime: !refreshed().refresh?.detail.includes("22:30") && !build({ source: sourceRun }).sourceRun?.detail.includes("22:30"),
+  invalidSourceRunClockCannotClaimTodayComplete: ["", "2026-10-27T10:00:01+08:00", "2026-10-27T09:58:00"].map((run_updated_at) => build({ source: { ...sourceRun, run_status: "completed", run_updated_at } }).sourceRun?.status === "研究任务状态待核实"),
+  oldSourceRunDoesNotOverrideCurrentFacts: build({ source: { ...sourceRun, run_updated_at: "2026-10-26T09:58:00+08:00" } }).sourceRun?.status === "历史研究任务记录",
+  unknownSourceRunStateIsNotCompletion: build({ source: { ...sourceRun, run_status: "toString" } }).sourceRun?.status === "研究任务状态未知",
+  sourceRunCompletionCannotRepairStaleQuoteState: build({ source: { ...sourceRun, status: "stale", run_status: "completed" }, recommendation_gate: readyGate }).recommendation.status === "依据待核实 · 仅供观察",
+  renderShowsRefreshWithoutClaimingProfileCoverage: refreshedHtml.includes("当日验证分段进行中") && refreshedHtml.includes("2/6 组策略配置已暂存") && refreshedHtml.includes("研究任务失败") && refreshedHtml.includes("研究任务待核实 · 仅供观察"),
+  archiveRenderNeverLeaksCurrentExecution: !archiveHtml.includes("本次验证刷新") && !archiveHtml.includes("分段进行中") && !archiveHtml.includes("研究任务失败"),
   yesterdayResultRetainsActualDate: current.history.date === "2026-10-26" && current.history.status === "历史结果已生成",
   todayCandidateRetainsOwnDate: current.candidate.date === "2026-10-27" && current.candidate.validation === "当日候选验证待完成",
   dateDifferenceInPrimaryExplanation: current.summary.includes("2026-10-26") && current.summary.includes("2026-10-27"),

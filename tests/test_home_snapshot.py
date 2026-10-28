@@ -117,6 +117,47 @@ def test_home_snapshot_round_trips_bounded_home_payload(tmp_path) -> None:
     assert json.loads(source.read_text(encoding="utf-8"))["schema_version"] == "v1"
 
 
+def test_home_snapshot_preserves_runtime_facts_when_single_and_index_round_trip(tmp_path) -> None:
+    snapshot = _snapshot(stale_after="2026-07-12T09:30:00+08:00")
+    snapshot = replace(snapshot, source=replace(snapshot.source, task_id="intraday",
+        run_status="completed", run_updated_at=snapshot.generated_at, run_detail="运行完成"),
+        variant_suite=HomeSnapshotVariantSuite(end_date="2026-07-10", variant_count=24,
+            refresh_status="staged", refresh_generated_at=snapshot.generated_at,
+            refresh_end_date="2026-07-11", profiles_staged=8, profiles_total=24,
+            refresh_detail="历史结果保留，本轮仍在暂存"))
+    target = tmp_path / "home.json"
+    write_home_dashboard_snapshot(target, snapshot)
+    loaded = load_home_dashboard_snapshot(target)
+    assert loaded is not None
+    assert loaded.source == snapshot.source
+    assert loaded.variant_suite == snapshot.variant_suite
+    index = HomeSnapshotIndex(schema_version=HOME_SNAPSHOT_INDEX_SCHEMA_VERSION,
+        generated_at=snapshot.generated_at, stale_after=snapshot.stale_after,
+        selected_date=snapshot.selected_date,
+        days=(HomeSnapshotDay(date=snapshot.selected_date, snapshot=snapshot),))
+    target = tmp_path / "index.json"
+    write_home_snapshot_index(target, index)
+    result = load_home_snapshot_for_date(target, snapshot.selected_date)
+    assert result is not None
+    assert result.source == snapshot.source
+    assert result.variant_suite == snapshot.variant_suite
+
+
+@pytest.mark.parametrize("section,key,value", [
+    ("source", "task_id", []), ("source", "run_status", True),
+    ("source", "run_updated_at", 123), ("source", "run_detail", {}),
+    ("variant_suite", "refresh_status", True), ("variant_suite", "refresh_generated_at", []),
+    ("variant_suite", "refresh_end_date", 123), ("variant_suite", "refresh_detail", {}),
+    ("variant_suite", "profiles_staged", True), ("variant_suite", "profiles_total", "24"),
+])
+def test_home_snapshot_rejects_runtime_facts_when_field_type_invalid(tmp_path, section, key, value) -> None:
+    payload = _snapshot().to_dict()
+    payload[section][key] = value
+    target = tmp_path / "bad.json"
+    target.write_text(json.dumps(payload), encoding="utf-8")
+    assert load_home_dashboard_snapshot(target) is None
+
+
 def test_home_snapshot_round_trips_role_evidence_when_agent_views_are_present(tmp_path) -> None:
     debate = HomeSnapshotDebate(
         symbol="603019", display_name="合成候选", conclusion="等待确认",

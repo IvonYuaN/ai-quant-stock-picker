@@ -196,8 +196,8 @@ def test_strategy_evidence_async_sector_fetch_uses_two_batches_and_bounds_respon
 
     def handle(request):
         calls.append(str(request.url))
-        rows = [{'f12': '002129', 'f100': '银行', 'f124': int(NOW.timestamp())}] if '/ulist.np/' in str(request.url) else [{'f14': '银行', 'f3': -2, 'f124': int(NOW.timestamp())}]
-        return httpx.Response(200, json={'data': {'diff': rows}})
+        rows = [{'f12': '002129', 'f100': '银行', 'f124': int(NOW.timestamp())}] if '/ulist.np/' in str(request.url) else [{'f14': '银行', 'f3': -200, 'f124': int(NOW.timestamp())}]
+        return httpx.Response(200, json={'data': {'total': len(rows), 'diff': rows}})
 
     async def run(limit):
         async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
@@ -205,6 +205,8 @@ def test_strategy_evidence_async_sector_fetch_uses_two_batches_and_bounds_respon
 
     result = asyncio.run(run(10000))
     assert result['002129']['industry'] == '银行' and len(calls) == 2
+    assert result['002129']['change_pct'] == -2
+    assert 'data.eastmoney.com/dataapi/bkzj/getbkzj' in calls[1]
     assert 'secids=0.002129%2C1.600000' in calls[0]
     with pytest.raises(ValueError, match='大小预算'):
         asyncio.run(run(10))

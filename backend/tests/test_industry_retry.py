@@ -8,6 +8,7 @@ prod 实测（2026-10-19）：同一分钟内 `/api/industry?top=21` 返回
 from __future__ import annotations
 
 import pytest
+import json
 from fastapi.testclient import TestClient
 
 import app as app_module
@@ -88,12 +89,15 @@ def test_industry_rows_keep_vendor_time_for_market_context(monkeypatch) -> None:
     requested: list[str] = []
 
     class Response:
-        def json(self):
-            return {"data": {"diff": [{"f14": "银行", "f3": 1.2, "f12": "BK0475", "f104": 8,
-                                         "f105": 2, "f124": stamp}]}}
+        content = json.dumps({"data": {"total": 1, "diff": [{"f14": "银行", "f3": 120,
+            "f12": "BK0475", "f104": 8, "f105": 2, "f124": stamp}]}}).encode()
 
-    def fake_get(_url, *, params, **_kwargs):
-        requested.extend(params["fields"].split(","))
+        def raise_for_status(self):
+            pass
+
+    def fake_get(url, *, params, **_kwargs):
+        assert url == "https://data.eastmoney.com/dataapi/bkzj/getbkzj"
+        requested.extend(params["key"].split(","))
         return Response()
 
     monkeypatch.setattr(astock, "em_get", fake_get)
@@ -102,6 +106,8 @@ def test_industry_rows_keep_vendor_time_for_market_context(monkeypatch) -> None:
     assert "f124" in requested
     assert result["top"][0]["as_of"] == astock.epoch_iso(stamp)
     assert result["bottom"][0]["as_of"] == astock.epoch_iso(stamp)
+    assert result["top"][0]["change_pct"] == 1.2
+    assert result["top"][0]["source"] == "东方财富行业行情 dataapi"
 
 
 # --------------------------------------------------------------------------
