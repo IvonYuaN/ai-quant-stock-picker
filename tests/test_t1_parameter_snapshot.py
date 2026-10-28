@@ -416,7 +416,7 @@ def test_parameter_snapshot_preserves_identity_when_same_trading_session_refresh
     ]
     assert candidate.data_fetched_at.endswith("14:00:00+08:00")
     assert candidate.research_status == "参数身份变化 · 仅观察"
-    assert "首次冻结" in candidate.context
+    assert candidate.context == original.context
     assert current.generated_at.endswith("14:00:00+08:00")
     next_day = replace(_snapshot("2026-10-26"), parameter_snapshot=_identity("changed"))
     write_home_dashboard_snapshot(path, next_day)

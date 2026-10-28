@@ -22,7 +22,7 @@ export type Tone = "ok" | "warn" | "neutral";
 
 /** 一个让"今天不能/不该动"的阻塞项。 */
 export interface DecisionBlocker {
-  kind: "gate" | "cold_start" | "stale" | "decay" | "empty";
+  kind: "gate" | "cold_start" | "stale" | "decay" | "invalidation" | "coverage" | "empty";
   tone: Tone;
   title: string;
   detail: string;
@@ -37,6 +37,10 @@ export interface DecisionCandidate {
   nextStep: string;
   strategies: string;
   evidence: string;
+  coverageNote: string;
+  invalidated: boolean;
+  statusMessage: string;
+  actionable: boolean;
 }
 
 /** 一行策略健康度：命中率（仅在样本足够时）+ 是否处于退化预警。 */
@@ -76,9 +80,16 @@ export interface DecisionView {
 // ---------------------------------------------------------------------------
 
 export function projectCandidates(snapshot: AqspSnapshot): DecisionCandidate[] {
+  const invalidatedSymbols = new Set(asArray<unknown>(snapshot.candidate_changes as readonly unknown[])
+    .map((raw) => asRecord(raw))
+    .filter((change) => asString(change.status) === "invalidated")
+    .map((change) => asString(change.symbol))
+    .filter(Boolean));
   const rows: DecisionCandidate[] = asArray<unknown>(snapshot.candidates as readonly unknown[])
     .map((raw) => {
       const r = asRecord(raw) as Partial<AqspCandidate>;
+      const coverageNote = asString(r.coverage_note);
+      const invalidated = asString(r.research_status) === "日内已失效" || invalidatedSymbols.has(asString(r.symbol));
       return {
         symbol: asString(r.symbol),
         name: asString(r.display_name, asString(r.symbol)),
@@ -87,11 +98,15 @@ export function projectCandidates(snapshot: AqspSnapshot): DecisionCandidate[] {
         nextStep: asString(r.next_step),
       strategies: strategyListLabel(asArray<unknown>(r.strategies as readonly unknown[]).map((s) => asString(s))),
         evidence: asString(r.evidence_status),
+        coverageNote,
+        invalidated,
+        statusMessage: invalidated ? "已明确失效 · 仅观察" : coverageNote ? "本轮无新研究 · 仅观察" : "",
+        actionable: !coverageNote && !invalidated,
       };
     })
     .filter((row) => row.symbol !== "");
-  // 决策层先给"评分最高"的排前：同一份候选，决策排序与全量研究页可能不同。
-  return rows.sort((a, b) => b.score - a.score);
+  // 当前有研究的候选排前，再按评分排序；保留名单仍展示但不混入本轮可推进数。
+  return rows.sort((a, b) => Number(b.actionable) - Number(a.actionable) || b.score - a.score);
 }
 
 // ---------------------------------------------------------------------------
@@ -100,6 +115,7 @@ export function projectCandidates(snapshot: AqspSnapshot): DecisionCandidate[] {
 
 export function decisionBlockers(snapshot: AqspSnapshot, perf: PerformanceView): DecisionBlocker[] {
   const out: DecisionBlocker[] = [];
+  const candidates = projectCandidates(snapshot);
   const gate = snapshot.recommendation_gate;
   const presentation = gatePresentation(gate);
   const snapshotStale = isAqspSnapshotStale(snapshot);
@@ -156,12 +172,22 @@ export function decisionBlockers(snapshot: AqspSnapshot, perf: PerformanceView):
   }
 
   // 5) 无任何候选（gate 放行也没得选）
-  if (projectCandidates(snapshot).length === 0) {
+  if (candidates.length === 0) {
     out.push({
       kind: "empty",
       tone: "neutral",
       title: "今日无候选",
       detail: "当日流水线没有产出候选，无可下手的标的。",
+    });
+  } else if (!candidates.some((candidate) => candidate.actionable)) {
+    const hasInvalidated = candidates.some((candidate) => candidate.invalidated);
+    out.push({
+      kind: hasInvalidated ? "invalidation" : "coverage",
+      tone: "warn",
+      title: hasInvalidated ? "候选明确失效或仍需复核" : "本轮没有可推进的新研究",
+      detail: hasInvalidated
+        ? "已明确失效的候选不得沿用旧条件；已采用观察需复核。其余保留候选不能作为本轮新入场依据。"
+        : "旧候选和原讨论仍可回看、继续未变化的既有观察；它们不代表本轮新结论，也不能据此采用新的入场条件。",
     });
   }
 
@@ -189,16 +215,19 @@ export function strategyLines(perf: PerformanceView): DecisionStrategyLine[] {
 
 function buildHeadline(v: Omit<DecisionView, "headline">): string {
   if (v.canAct && v.candidates.length > 0) {
-    return `可动：${v.candidates.length} 个候选，评分最高 ${v.candidates[0].name}（${v.candidates[0].score}）`;
+    const actionable = v.candidates.filter((candidate) => candidate.actionable);
+    return `可动：${actionable.length} 个本轮候选，评分最高 ${actionable[0].name}（${actionable[0].score}）`;
   }
   if (v.blockers.length === 0) return "暂无明确结论";
-  // 取最重的一条阻塞项当主句（gate > decay > stale > cold_start > empty）
+  // 取最重的一条阻塞项当主句（gate > decay > stale > invalidation > coverage > cold_start > empty）
   const priority: Record<DecisionBlocker["kind"], number> = {
     gate: 0,
     decay: 1,
     stale: 2,
-    cold_start: 3,
-    empty: 4,
+    invalidation: 3,
+    coverage: 4,
+    cold_start: 5,
+    empty: 6,
   };
   const top = [...v.blockers].sort((a, b) => priority[a.kind] - priority[b.kind])[0];
   return top.title;
@@ -214,7 +243,7 @@ export function buildDecision(snapshot: AqspSnapshot, perf: PerformanceView, sta
     !perf.coldStart &&
     !perf.stale &&
     !blockers.some((b) => b.kind === "decay") &&
-    candidates.length > 0;
+    candidates.some((candidate) => candidate.actionable);
 
   const draft = {
     date: snapshot.selected_date,
@@ -242,6 +271,6 @@ export function formatHitRate(line: DecisionStrategyLine): string {
 
 /** 候选表在 gate 未放行时整表降级为"观察"，禁止暗示可下单。 */
 export function tableMode(snapshot: AqspSnapshot, perf: PerformanceView): "act" | "observe" {
-  const blocked = decisionBlockers(snapshot, perf).some((b) => b.kind === "gate");
+  const blocked = decisionBlockers(snapshot, perf).some((b) => b.kind === "gate" || b.kind === "coverage" || b.kind === "invalidation");
   return blocked ? "observe" : "act";
 }

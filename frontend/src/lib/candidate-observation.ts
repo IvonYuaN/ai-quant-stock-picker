@@ -37,6 +37,7 @@ export function candidateAdoptionIssue(result: CandidateDiscussion | null, works
   if (!route) return "本次分析没有这条路线，请重新核对。";
   if (choice === "defer") return "";
   if (workspace.entry_blocked) return "当前研究门禁阻塞，先比较原因或暂缓，不建立入场到价观察。";
+  if (workspace.new_entry_blocked) return workspace.new_entry_block_reason || workspace.coverage_note || "当前依据不能建立新的入场条件。";
   const action = index === null ? undefined : result.summary.actions[index];
   const reference = action?.price_ref ? result.price_refs[action.price_ref] : undefined;
   if (!action || action.choice !== choice || !reference || !Number.isFinite(reference.price) || reference.price <= 0 || !reference.source || !Number.isFinite(Date.parse(reference.as_of))) return "这项条件缺少可核验的来源价位，暂不建立到价观察。";

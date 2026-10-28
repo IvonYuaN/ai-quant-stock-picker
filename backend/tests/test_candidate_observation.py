@@ -504,7 +504,8 @@ def test_candidate_model_rejects_wrong_fact_unit_when_number_is_sourced_score(en
         discussion.parse(json.dumps(row), discussion.CandidateOpinion, value, set())
 
 
-def test_candidate_keeps_adopted_price_and_notification_identity_when_writer_only_refreshes_times(env, monkeypatch):
+@pytest.mark.parametrize('coverage_note', ['', '本轮无新研究；保留原依据与讨论'])
+def test_candidate_keeps_adopted_price_and_notification_identity_when_writer_only_refreshes_times(env, monkeypatch, coverage_note):
     client, data, quote, _ = env
     value, result = analyze(env)
     original_evidence = deepcopy(result['evidence_snapshot'])
@@ -525,6 +526,8 @@ def test_candidate_keeps_adopted_price_and_notification_identity_when_writer_onl
         data['data']['generated_at'] = later.isoformat()
         data['data']['stale_after'] = (later + timedelta(hours=8)).isoformat()
         data['data']['candidates'][0]['data_fetched_at'] = later.isoformat()
+        if coverage_note:
+            data['data']['candidates'][0]['coverage_note'] = coverage_note if minute == 1 else ''
         checked = monitor.check_candidates(notify=True)
         assert checked['price_watch'] == 1 and checked['needs_review'] == 0
         current = resources.workspace('600000')
@@ -532,6 +535,107 @@ def test_candidate_keeps_adopted_price_and_notification_identity_when_writer_onl
         assert current['watch']['price'] == 9.8 and current['watch']['source_ref'] == result['price_refs']['low']
         assert current['discussion']['evidence_snapshot'] == original_evidence
     assert len(sent) == 1
+
+
+def test_candidate_keeps_adopted_watch_when_real_writer_omits_and_restores_candidate(env, tmp_path):
+    from dataclasses import replace
+    from aqsp.web.home_snapshot import (
+        HomeDashboardSnapshot, HomeSnapshotCandidate, HomeSnapshotColdstart,
+        HomeSnapshotSource, HomeSnapshotRecommendationGate,
+        write_home_dashboard_snapshot, load_home_dashboard_snapshot,
+    )
+
+    client, data, quote, _ = env
+    raw = data['data']['candidates'][0]
+    original = HomeSnapshotCandidate(
+        symbol='600000', display_name='合成候选', score=75,
+        research_status='优先复核', next_step='原观察条件', context='原研究依据',
+        deterministic_reasons=('合成量价依据',), freshness='fresh', data_source='synthetic',
+        data_fetched_at=raw['data_fetched_at'], data_timestamp_source='source_time',
+    )
+    first = HomeDashboardSnapshot(
+        schema_version='v1', generated_at=data['data']['generated_at'],
+        selected_date='2026-10-27', available_dates=('2026-10-27',), candidates=(original,),
+        summaries=(), source=HomeSnapshotSource('synthetic', '2026-10-27', 0, 'fresh'),
+        coldstart=HomeSnapshotColdstart('ready', ''), stale_after=data['data']['stale_after'],
+        recommendation_gate=HomeSnapshotRecommendationGate(True, 'ready', ()),
+    )
+    path = tmp_path / 'writer-home.json'
+    write_home_dashboard_snapshot(path, first)
+    data['data'] = load_home_dashboard_snapshot(path).to_dict()
+    value, result = analyze(env)
+    assert client.post('/api/candidate-observations/600000/adopt', json=adoption(value, result)).status_code == 200
+    for candidates in ((), (), (original,)):
+        write_home_dashboard_snapshot(path, replace(first, candidates=candidates))
+        data['data'] = load_home_dashboard_snapshot(path).to_dict()
+        current = resources.workspace('600000')
+        assert current['evidence_version'] == value['evidence_version']
+        assert current['observation']['state'] == 'waiting'
+        assert current['watch']['price'] == result['price_refs']['low']['price']
+
+
+def test_candidate_rejects_new_entry_adoption_when_only_original_research_is_preserved(env):
+    client, data, _, _ = env
+    value, result = analyze(env)
+    data['data']['candidates'][0]['coverage_note'] = '本轮无新研究'
+    response = client.post('/api/candidate-observations/600000/adopt', json=adoption(value, result))
+    assert response.status_code == 409
+    assert '本轮无新研究' in response.text
+    assert resources.workspace('600000')['watch'] is None
+
+
+def test_candidate_coverage_only_allows_defer_analysis_and_preserves_existing_watch(env):
+    client, data, _, calls = env
+    value, original = analyze(env)
+    adopted = client.post('/api/candidate-observations/600000/adopt', json=adoption(value, original)).json()['data']
+    data['data']['candidates'][0]['coverage_note'] = '本轮无新研究；保留原依据'
+    current = client.get('/api/candidate-observations/600000').json()['data']
+    assert current['entry_blocked'] is False
+    assert current['new_entry_blocked'] is True
+    assert current['watch']['status'] == 'active'
+    # Current discussion receives a separate entry restriction while the old
+    # adopted watch remains valid because the substantive evidence is unchanged.
+    result = client.post('/api/candidate-observations/600000/discussion', json={
+        'expected_version': current['version'], 'expected_evidence_version': current['evidence_version']})
+    assert result.status_code == 200, result.text
+    discussion_result = result.json()['data']
+    assert discussion_result['summary']['focus_choice'] == 'defer'
+    assert all(route['judgment'] != 'investigate' for route in discussion_result['summary']['routes'] if route['choice'] != 'defer')
+    assert all(action['choice'] == 'defer' for action in discussion_result['summary']['actions'])
+    assert len(calls) == 14
+    # The refreshed resource retains the exact existing watch; no coverage-only
+    # transition manufactures a thesis change or consumes its price notification.
+    latest = client.get('/api/candidate-observations/600000').json()['data']
+    assert latest['watch'] == adopted['watch']
+    assert latest['observation']['state'] == 'waiting'
+
+
+@pytest.mark.parametrize('invalidation_kind', ['candidate_change', 'research_status'])
+def test_candidate_explicit_invalidation_blocks_new_entry_and_pauses_existing_watch(env, invalidation_kind):
+    client, data, _, _ = env
+    value, original = analyze(env)
+    adopted = client.post('/api/candidate-observations/600000/adopt', json=adoption(value, original)).json()['data']
+    if invalidation_kind == 'candidate_change':
+        data['data']['candidate_changes'] = [{'symbol': '600000', 'display_name': '合成候选', 'status': 'invalidated'}]
+    else:
+        data['data']['candidates'][0]['research_status'] = '日内已失效'
+    current = client.get('/api/candidate-observations/600000').json()['data']
+    assert current['new_entry_blocked'] is True
+    assert '明确失效' in current['new_entry_block_reason']
+    assert current['observation']['state'] == 'needs_review'
+    assert current['observation']['reason'] == 'research_changed'
+    result = client.post('/api/candidate-observations/600000/discussion', json={
+        'expected_version': current['version'], 'expected_evidence_version': current['evidence_version']})
+    assert result.status_code == 200, result.text
+    discussion_result = result.json()['data']
+    assert discussion_result['summary']['focus_choice'] == 'defer'
+    assert all(route['judgment'] != 'investigate' for route in discussion_result['summary']['routes'] if route['choice'] != 'defer')
+    latest = client.get('/api/candidate-observations/600000').json()['data']
+    response = client.post('/api/candidate-observations/600000/adopt', json=adoption(
+        latest, discussion_result, operation_id='adopt-invalidated'))
+    assert response.status_code == 409
+    assert '明确失效' in response.text
+    assert client.get('/api/candidate-observations/600000').json()['data']['watch'] == adopted['watch']
 
 
 @pytest.mark.parametrize('change,label', [

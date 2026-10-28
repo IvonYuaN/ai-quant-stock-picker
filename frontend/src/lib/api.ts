@@ -493,7 +493,9 @@ export interface CandidateDiscussion {
 export interface CandidateWorkspace {
   symbol: string; name: string; version: number; evidence_version: string; research_date: string | null;
   ownership: { status: "unowned" | "owned" | "unavailable"; position_id: string | null };
-  available: boolean; entry_blocked: boolean; issues: string[]; quote: { price?: number | null; as_of?: string | null; quote_as_of?: string | null; source?: string };
+  available: boolean; entry_blocked: boolean; new_entry_blocked?: boolean; new_entry_block_reason?: string;
+  coverage_note?: string; issues: string[];
+  quote: { price?: number | null; as_of?: string | null; quote_as_of?: string | null; source?: string };
   quote_issue: string; evidence: Record<string, unknown>; price_refs: Record<string, CandidatePriceReference>;
   discussion: CandidateDiscussion | null;
   source_refresh?: { state: "updated" | "cached" | "partial" | "busy" | "unavailable"; issue: string };

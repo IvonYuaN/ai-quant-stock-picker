@@ -16,6 +16,7 @@ export interface AqspCandidate {
   data_fetched_at?: string;
   data_timestamp_source?: string;
   freshness?: string;
+  coverage_note?: string;
 }
 
 export interface AqspMessage {

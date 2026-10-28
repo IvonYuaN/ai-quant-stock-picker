@@ -155,6 +155,18 @@ export const dailyViewFixture = {
   },
 } satisfies AqspSnapshot;
 
+const missingCoverageFixture = buildDailyView({
+  ...dailyViewFixture,
+  candidates: dailyViewFixture.candidates.map((candidate) => ({
+    ...candidate, coverage_note: "本轮无新研究；保留原依据与讨论",
+  })),
+});
+export const missingCoverageKeepsCandidateAndDiscussion =
+  missingCoverageFixture.candidates[0].symbol === "300750" &&
+  missingCoverageFixture.candidates[0].debateConclusion === dailyViewFixture.debates[0].conclusion &&
+  missingCoverageFixture.candidates[0].coverageNote === "本轮无新研究；保留原依据与讨论" &&
+  !missingCoverageFixture.candidates[0].ready;
+
 const variantSuiteFixture = {
   schema_version: "v1",
   generated_at: "2026-09-11T15:00:00+08:00",

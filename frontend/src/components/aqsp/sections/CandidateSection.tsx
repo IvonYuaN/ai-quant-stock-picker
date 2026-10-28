@@ -258,6 +258,7 @@ function CandidateDetailCard({
       ) : null}
 
       {row.provenance ? <p className="aq-provenance">数据源：{row.provenance}</p> : null}
+      {row.coverageNote ? <p className="aq-note" role="status">{row.coverageNote}</p> : null}
     </Card>
   );
 }

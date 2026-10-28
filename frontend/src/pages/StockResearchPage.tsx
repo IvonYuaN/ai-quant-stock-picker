@@ -187,6 +187,7 @@ export function StockResearchPage() {
               <>
                 <div className="aq-research-score"><strong className="aq-num">{row.scoreText}</strong><span>确定性评分</span><Tag tone={row.ready ? "ok" : "warn"}>{row.ready ? "依据已齐 · 可继续复核" : "证据待补 · 仅供观察"}</Tag><Tag>{statusLabel(row.status)}</Tag><Tag>{evidenceLabel(row.evidence)}</Tag></div>
                 {row.context ? <p className="aq-card-summary">{row.context}</p> : null}
+                {row.coverageNote ? <StatePanel tone="warn">{row.coverageNote}</StatePanel> : null}
                 <div className="aq-research-columns">
                   <div className="aq-research-evidence"><p className="aq-label">为什么入选</p>{row.reasons.length ? <ul className="aq-reason-list">{row.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul> : <p className="aq-detail-muted">选股依据尚未记录。</p>}<p className="aq-detail-muted">命中策略：{row.strategies || "未记录"}</p></div>
                   <div className="aq-research-evidence"><p className="aq-label">下一观察与风险</p><p>{row.nextStep || "等待新增证据后复核。"}</p>{debate?.primary_risk_gate ? <StatePanel tone="warn">{debate.primary_risk_gate}</StatePanel> : <p className="aq-detail-muted">个股级风险结论尚未记录，不代表无风险。</p>}{debate?.next_trigger ? <p className="aq-detail-muted">下一验证：{debate.next_trigger}</p> : null}</div>

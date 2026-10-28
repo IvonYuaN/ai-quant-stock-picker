@@ -70,6 +70,7 @@ class HomeSnapshotCandidate:
     news_catalyst_source: str = ""
     news_catalyst_url: str = ""
     news_catalyst_published_at: str = ""
+    coverage_note: str = ""
 
     @property
     def has_deterministic_evidence(self) -> bool:
@@ -97,7 +98,7 @@ HOME_NON_RECOMMENDATION_MARKERS = (
 def is_home_recommendation(candidate: HomeSnapshotCandidate) -> bool:
     """Return whether a candidate may appear in the homepage recommendation cards."""
     status = candidate.research_status.strip()
-    if not status or any(
+    if candidate.coverage_note or not status or any(
         marker in status for marker in HOME_NON_RECOMMENDATION_MARKERS
     ):
         return False
@@ -666,11 +667,18 @@ def _freeze_home_candidates(
                 )
             )
         )
-    # A new candidate cannot carry a debate into the frozen roster, and a removed
-    # candidate must not retain an old ready conclusion after its evidence vanished.
-    debates = tuple(
-        debate for debate in current.debates if debate.symbol in original_symbols
-    )
+    # Missing another batch is not a change to the original thesis. Preserve its
+    # discussion with the original candidate source time; do not carry a new
+    # symbol's discussion into the frozen roster or upgrade the current gate.
+    debates_by_symbol = {debate.symbol: debate for debate in current.debates
+                         if debate.symbol in original_symbols}
+    for debate in existing.debates:
+        latest = current_by_symbol.get(debate.symbol)
+        if latest is None or latest.coverage_note:
+            debates_by_symbol.setdefault(debate.symbol, debate)
+    debates = tuple(debates_by_symbol[symbol] for symbol in
+                    (candidate.symbol for candidate in candidates)
+                    if symbol in debates_by_symbol)
     chain = current.research_chain
     return replace(
         current,
@@ -709,11 +717,28 @@ def _refresh_frozen_candidate(
     same_parameters: bool,
 ) -> HomeSnapshotCandidate:
     """Keep the first score and all its evidence attached to the first identity."""
-    if latest is None or latest.research_status == "日内已失效":
+    if latest is not None and latest.research_status == "日内已失效":
         return replace(
             original,
             research_status="日内已失效",
             next_step="已不符合本轮候选条件，保留当日记录供复核",
+            coverage_note="",
+        )
+    if original.research_status == "日内已失效" and (latest is None or latest.coverage_note):
+        # An explicit invalidation survives a later batch omission. Do not pair
+        # it with the generic note that absence alone does not imply invalidation.
+        return replace(original, coverage_note="")
+    if latest is None or latest.coverage_note:
+        # A persisted single-file result may be frozen again by the index.
+        # Carry only its safety status, never its scores or source timestamps.
+        status = latest.research_status if latest is not None else original.research_status
+        next_step = latest.next_step if latest is not None else original.next_step
+        if not same_parameters:
+            status = "参数身份变化 · 仅观察"
+            next_step = "评分与策略依据沿用首次冻结；当前参数身份变化或未验证，按原快照复核。"
+        return replace(
+            original, research_status=status, next_step=next_step,
+            coverage_note="本轮无新研究；保留原依据与讨论，请核对原来源时点。未入本轮名单不代表策略失效。",
         )
     status, next_step = latest.research_status, latest.next_step
     if not same_parameters:
@@ -726,7 +751,7 @@ def _refresh_frozen_candidate(
             next_step = latest.next_step
         elif not is_home_recommendation(latest) and latest.next_step:
             next_step += f"最新约束：{latest.next_step}"
-    elif is_home_recommendation(latest) and not is_home_recommendation(original):
+    elif is_home_recommendation(latest) and not is_home_recommendation(replace(original, coverage_note="")):
         status = "继续观察（冻结评分待复核）"
         next_step = "评分与策略依据保持首次冻结，按原快照及最新风险证据复核。"
     elif is_home_recommendation(latest):
@@ -750,15 +775,10 @@ def _refresh_frozen_candidate(
         metrics = (replace(latest_close, label="现价（最新）"), *metrics)[
             :MAX_HOME_SNAPSHOT_TECHNICAL_METRICS
         ]
-    note = "评分与策略依据为首次冻结；现价与新鲜度按最新数据展示"
-    context = original.context
-    if note not in context:
-        context = f"{context} / {note}" if context else note
     return replace(
         original,
         research_status=status,
         next_step=next_step,
-        context=context,
         technical_metrics=metrics,
         data_source=latest.data_source,
         data_fetched_at=latest.data_fetched_at,
@@ -768,6 +788,7 @@ def _refresh_frozen_candidate(
         news_catalyst_source=latest.news_catalyst_source,
         news_catalyst_url=latest.news_catalyst_url,
         news_catalyst_published_at=latest.news_catalyst_published_at,
+        coverage_note=latest.coverage_note,
     )
 
 
@@ -1449,6 +1470,7 @@ def _candidate_from_dict(payload: object) -> HomeSnapshotCandidate:
             "news_catalyst_source",
             "news_catalyst_url",
             "news_catalyst_published_at",
+            "coverage_note",
         },
     )
     return HomeSnapshotCandidate(
@@ -1488,6 +1510,7 @@ def _candidate_from_dict(payload: object) -> HomeSnapshotCandidate:
             mapping.get("data_timestamp_source"), "candidate.data_timestamp_source"
         ),
         freshness=_optional_text(mapping.get("freshness"), "candidate.freshness"),
+        coverage_note=_optional_text(mapping.get("coverage_note"), "candidate.coverage_note"),
         news_catalyst_summary=_optional_text(
             mapping.get("news_catalyst_summary"), "candidate.news_catalyst_summary"
         ),

@@ -44,6 +44,8 @@ export const candidateObservationContracts = {
   missingPriceSourceCannotAdopt: candidateAdoptionIssue({ ...discussion, price_refs: { previous: { ...ref, source: "" } } }, workspace, "pullback", 0, "at_or_below").includes("来源价位"),
   invalidPriceCannotAdopt: candidateAdoptionIssue({ ...discussion, price_refs: { previous: { ...ref, price: Number.NaN } } }, workspace, "pullback", 0, "at_or_below").includes("来源价位"),
   gateBlocksEntryButAllowsExplanation: candidateWorkspaceIssue(blocked) === "" && candidateAdoptionIssue(discussion, blocked, "confirmation", 1, "at_or_above").includes("门禁阻塞"),
+  invalidatedResearchCannotAdoptNewEntry: candidateAdoptionIssue(discussion, { ...workspace, new_entry_blocked: true, new_entry_block_reason: "候选已有明确失效状态" }, "pullback", 0, "at_or_below").includes("明确失效"),
+  missingCurrentResearchCannotAdoptNewEntry: candidateAdoptionIssue(discussion, { ...workspace, new_entry_blocked: true, coverage_note: "本轮无新研究" }, "pullback", 0, "at_or_below").includes("本轮无新研究"),
   deferralDoesNotCreatePriceDirection: deferred.choice === "defer" && deferred.action_index === null && deferred.comparator === null,
   operationIdentityRequired: throws(() => candidateAdoptionInput(discussion, workspace, "pullback", 0, "at_or_below", "")),
   regeneratedResultClearsOldConfirmation: candidateDiscussionKey(discussion) !== candidateDiscussionKey({ ...discussion, id: "discussion-2" }),

@@ -119,6 +119,7 @@ export interface CandidateRow {
   metrics: readonly MetricView[];
   breakdown: readonly string[];
   provenance: string;
+  coverageNote?: string;
 }
 
 export interface MessageRow {
@@ -354,8 +355,9 @@ function buildCandidateRows(snapshot: AqspSnapshot): CandidateRow[] {
       score: candidate.score,
       scoreText: Number.isFinite(candidate.score) ? candidate.score.toFixed(1) : "—",
       status: candidate.research_status || "状态未记录",
+      coverageNote: candidate.coverage_note || "",
       evidence: candidate.evidence_status || "证据未记录",
-      ready: !(snapshot.candidate_changes ?? []).some(
+      ready: !candidate.coverage_note && !(snapshot.candidate_changes ?? []).some(
         (change) => change.symbol === symbol && change.status === "invalidated",
       ) && candidateResearchReady(snapshot, symbol),
       strategies: strategyListLabel(candidate.strategies),
