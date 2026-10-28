@@ -18,6 +18,7 @@ from aqsp.utils.jsonl_io import advisory_lock
 from decision_context import position_quote_issue
 from position_followup import FollowupDefaults
 from position_plan_service import PlanConflictError, _checked_root, _store_root, read_position_plan
+from strategy_direction import direction_identity
 
 
 @dataclass(frozen=True)
@@ -63,11 +64,10 @@ def _validate_result(worksheet: dict[str, Any], result: dict[str, Any] | None,
         raise PlanConflictError('当前行情不可核验，尚未采用观察条件')
     # Normal quote ticks do not invalidate a discussion while it is running.
     # A changed semantic premise does: do not inherit old strength after a turn.
-    for key in ('market', 'sector', 'stock'):
-        before = original.get(key) or original.get('route_constraints', {}).get('evidence', {}).get(key, {})
-        after = worksheet['route_review']['evidence'].get(key, {})
-        if before.get('status', 'unknown') != after.get('status', 'unknown'):
-            raise PlanConflictError('大盘、板块或个股依据已变化，请先重新分析；旧条件未采用')
+    before = {key: original.get(key) or original.get('route_constraints', {}).get('evidence', {}).get(key, {})
+              for key in ('market', 'sector', 'stock')}
+    if direction_identity(before) != direction_identity(worksheet['route_review']['evidence']):
+        raise PlanConflictError('大盘、板块或个股依据已变化，请先重新分析；旧条件未采用')
     actions = result['summary'].get('actions') or []
     if type(value.action_index) is not int or not 0 <= value.action_index < len(actions):
         raise ValueError('请选择这份分析中的有效观察条件')
@@ -111,7 +111,7 @@ def adopt_strategy_watch(position_id: str, value: StrategyWatchInput) -> dict[st
     result = _discussion(worksheet, value.source_discussion)
     current = now_shanghai()
     action, reference = _validate_result(worksheet, result, value, current)
-    watch = {'choice': value.choice, 'action': action['action'], 'price': reference['price'], 'comparator': value.comparator,
+    watch = {'direction_schema': 'direction-v1', 'choice': value.choice, 'action': action['action'], 'price': reference['price'], 'comparator': value.comparator,
              'condition': action['condition'], 'invalidation': action['invalidation'], 'price_ref': deepcopy(reference),
              'source_generated_at': value.generated_at, 'source_discussion': value.source_discussion,
              'source_analysis_basis_id': value.expected_analysis_basis_id, 'source_action_index': value.action_index,

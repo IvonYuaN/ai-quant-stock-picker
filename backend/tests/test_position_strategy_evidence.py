@@ -51,6 +51,45 @@ def test_strategy_evidence_uses_current_cache_when_no_alert_exists(tmp_path):
     assert not (tmp_path / 'absent.db').exists()
 
 
+def test_strategy_evidence_monitor_projection_matches_read_projection(tmp_path) -> None:
+    from decision_context import build_position_context, load_cached_market_overview
+    from strategy_direction import direction_identity
+    cache('overview', {'sentiment': {'date': '20261023', 'up': 800, 'down': 3000, 'breadth': '偏弱'}})
+    cache(source._sector_key(['002129']), {'002129': sector()})
+    cache('strategy_indices', {'000001': {**QUOTE, 'name': '合成上证', 'change_pct': -1}})
+    overview = load_cached_market_overview(checked_at=NOW)
+    value = sector()
+    raw = build_position_context({**HOLDING, 'industry': value['industry']}, [], quote=QUOTE,
+                                 market_overview=overview, sector_snapshot=value, checked_at=NOW).to_dict()
+    monitor = source.enrich_strategy_context(raw, overview, value, checked_at=NOW)
+    read = context(tmp_path / 'absent.db')
+    assert direction_identity(monitor) == direction_identity(read)
+    assert read['market']['breadth'] == '偏弱' and read['sector']['industry'] == '银行'
+
+
+def test_strategy_evidence_shared_components_cool_down_across_different_symbol_sets(monkeypatch) -> None:
+    calls: list[str] = []
+    async def sectors(codes, *args, **kwargs):
+        calls.append('sector')
+        return {code: sector() for code in codes}
+    async def indices(*args, **kwargs):
+        calls.append('indices')
+        raise ValueError('unavailable')
+    async def breadth(*args, **kwargs):
+        calls.append('breadth')
+        raise ValueError('unavailable')
+    monkeypatch.setattr(sector_source, 'fetch_position_sectors', sectors)
+    monkeypatch.setattr(source, '_fetch_indices', indices)
+    monkeypatch.setattr(source, 'fetch_strategy_breadth', breadth)
+    first = asyncio.run(source.refresh_strategy_sources(['002129'], checked_at=NOW))
+    second = asyncio.run(source.refresh_strategy_sources(['600000'], checked_at=NOW))
+    assert first.state == second.state == 'partial'
+    assert calls.count('sector') == 2
+    assert calls.count('indices') == calls.count('breadth') == 1
+    assert source._cached('strategy_indices', NOW) is None
+    assert source._cached('strategy_breadth', NOW) is None
+
+
 @pytest.mark.parametrize('patch', [{'membership_as_of': None}, {'membership_as_of': '2026-10-22T10:00:00+08:00'},
                                   {'as_of': '2026-10-22T10:00:00+08:00'}])
 def test_strategy_evidence_keeps_sector_unknown_when_source_unverified(tmp_path, patch):

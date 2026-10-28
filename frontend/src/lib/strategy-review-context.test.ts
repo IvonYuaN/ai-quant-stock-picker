@@ -12,6 +12,7 @@ const noAdoption = renderToStaticMarkup(createElement(StrategyReviewContextPanel
 const mismatch = renderToStaticMarkup(createElement(StrategyReviewContextPanel, { context: { ...context, status: "identity_mismatch" } }));
 const missing = renderToStaticMarkup(createElement(StrategyReviewContextPanel, { context: { ...context, original: { ...context.original!, snapshot_complete: false }, missing_evidence: ["原大盘证据缺失"] } }));
 export const strategyReviewContextContracts = {
+  marketDirectionChangesAreReadable: reviewEvidenceText({ market: { breadth: "偏弱", indices: [{ name: "上证指数", direction: "down", source: "指数源" }] } }).includes("市场宽度：偏弱；指数背景：名称：上证指数；涨跌方向：下跌；来源：指数源"),
   compatibilityWithoutNewField: noContext === "" && noAdoption === "",
   defaultDisclosureCollapsed: html.includes('<details class="aq-strategy-review-context">') && !html.includes(' open=""'),
   stableReviewSummary: html.includes("原方案与当前依据对比"),
@@ -23,6 +24,7 @@ export const strategyReviewContextContracts = {
   oldMissingEvidenceNeverBackfilled: missing.includes("原采用时的证据没有完整保存") && missing.includes("原大盘证据缺失"),
   identityMismatchCannotRevealForeignOriginal: mismatch.includes("身份不一致") && !mismatch.includes("回落后核对承接") && !mismatch.includes("原板块走强"),
   quoteOnlyIsNotMaterialChange: strategyReviewView({ ...context, material_changed: false })?.state.includes("报价变化本身不代表原方案已失效") === true,
+  incompletePremisesCannotClaimStablePlan: strategyReviewView({ ...context, material_changed: false, missing_evidence: ["原方向依据版本缺失"] })?.state.includes("尚不能确认原方案是否仍然成立") === true,
   noForcedDecisionWhenStable: strategyReviewView({ ...context, material_changed: false, quote_updated: false })?.state.includes("未记录到实质依据变化") === true,
   unknownSourceDoesNotBecomeCurrentFact: reviewEvidenceText(null) === "未保存或不可用",
   evidenceTextNeverBecomesRawJson: reviewEvidenceText({ status: "unknown", summary: "板块缺失" }) === "状态：未知；依据：板块缺失",

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+import json
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -152,6 +154,39 @@ def test_t1_context_uses_actual_quote_name_date_and_risk_when_checked(workstatio
         assert "不等于必须一次性清仓" in context["assessment"]["reason"]
         assert context["assessment"]["t_plan"]["eligible"] is None
         assert "可记录做T观察意向" in context["assessment"]["t_plan"]["reason"]
+
+
+@pytest.mark.parametrize('background', [False, True])
+def test_t1_check_preserves_typed_direction_facts_when_manual_or_background(workstation, monkeypatch, background):
+    import decision_context
+    import live_risk_service as service
+    import position_context_source
+    import position_strategy_evidence as evidence
+
+    stamp = '2026-10-23T10:00:00+08:00'
+    overview = {'sentiment': {'date': '20261023', 'up': 800, 'down': 3000, 'breadth': '偏弱'}}
+    sector = {'industry': '银行', 'name': '银行', 'membership_as_of': stamp,
+              'as_of': stamp, 'change_pct': -2, 'source': '合成板块源'}
+    indices = {'status': 'unknown', 'source': '合成指数源', 'as_of': stamp, 'summary': '合成指数',
+               'evidence': [], 'indices': [{'name': '合成上证', 'change_pct': -1, 'source': '合成指数源', 'as_of': stamp}]}
+    monkeypatch.setattr(decision_context, 'load_cached_market_overview', lambda: overview)
+    monkeypatch.setattr(position_context_source, 'load_position_sectors', lambda codes: {'600000': sector})
+    monkeypatch.setattr(evidence, '_indices', lambda current: indices)
+    pf.add_holding('600000', 100, 10, '2026-10-22')
+    for level in ('L2', 'L4'):
+        pf.update_risk_rule(f'600000-{level}', {'enabled': False})
+    if background:
+        result = service.check_positions(notify=False, strategy_sectors={'600000': sector})
+    else:
+        response = workstation.post('/api/live-risk/check', json={'notify': False})
+        assert response.status_code == 200
+        result = response.json()['data']
+    assert result['reminders']
+    for reminder in result['reminders']:
+        context = reminder['position_context']
+        assert context['sector']['industry'] == '银行'
+        assert context['market']['breadth'] == '偏弱'
+        assert context['market']['indices'] == indices['indices']
 
 
 def test_t1_batch_receipt_keeps_newer_daily_time_when_recovered(workstation):
@@ -706,7 +741,7 @@ def test_t1_tenant_monitor_keeps_context_when_one_portfolio_fails(
         )
     called = []
 
-    def fake_check(*, notify):
+    def fake_check(*, notify, strategy_sectors):
         called.append(tenant.current_tenant.get())
         assert notify is False
         if tenant.current_tenant.get() == user_b:
@@ -714,11 +749,132 @@ def test_t1_tenant_monitor_keeps_context_when_one_portfolio_fails(
         return {"checks": {"skipped": []}}
 
     monkeypatch.setattr(service, "check_positions", fake_check)
+    monkeypatch.setattr(service, "_refresh_shared_strategy_sources", lambda codes: ({}, {"state": "skipped"}))
     result = service.check_existing_tenants()
     assert called == [user_a, user_b]
     assert result["tenants_checked"] == 1 and result["failed_tenants"] == 1
     assert tenant.current_tenant.get() == "local"
     assert user_a not in str(result) and "600000" not in str(result)
+
+
+@pytest.mark.parametrize("has_positions", [True, False])
+def test_t1_tenant_monitor_refreshes_shared_sources_once_for_positions_and_candidates(
+    workstation, monkeypatch, tmp_path, has_positions
+):
+    import candidate_monitor
+    import live_risk_service as service
+    import position_strategy_evidence
+
+    user_a = "u_" + "a" * 20
+    user_folder = tmp_path / "users" / user_a
+    if has_positions:
+        user_folder.mkdir(parents=True)
+        (tmp_path / "portfolio.json").write_text(
+            '{"holdings": [{"code": "600000"}]}', encoding="utf-8"
+        )
+        (user_folder / "portfolio.json").write_text(
+            '{"holdings": [{"code": "600000"}]}', encoding="utf-8"
+        )
+    candidate_store = {
+        "schema_version": 1,
+        "resources": {
+            "600001": {
+                "symbol": "600001", "version": 1, "operations": {},
+                "watch": {"status": "active", "choice": "defer", "id": "w",
+                          "condition": "等待", "invalidation": "失效", "evidence_version": "e",
+                          "discussion_id": "d", "adopted_at": "2026-10-23T10:00:00+08:00"},
+                "discussion": None,
+            }
+        },
+    }
+    (tmp_path / "candidate-observations.json").write_text(json.dumps(candidate_store), encoding="utf-8")
+    refreshed, checked, positions, candidates = [], [], [], []
+
+    async def refresh(codes, *, checked_at):
+        refreshed.append(tuple(codes))
+        return SimpleNamespace(to_dict=lambda: {"state": "updated", "issue": ""})
+
+    monkeypatch.setattr(position_strategy_evidence, "refresh_strategy_sources", refresh)
+    monkeypatch.setattr(
+        position_strategy_evidence,
+        "load_cached_strategy_sectors",
+        lambda codes, *, checked_at: checked.append(tuple(codes)) or {},
+    )
+
+    def fake_positions(*, notify, strategy_sectors):
+        positions.append((tenant.current_tenant.get(), dict(strategy_sectors)))
+        return {"checks": {"skipped": []}}
+
+    monkeypatch.setattr(service, "check_positions", fake_positions)
+    monkeypatch.setattr(candidate_monitor, "check_candidates", lambda *, notify: candidates.append(tenant.current_tenant.get()) or {"checked": 1, "notified": 0})
+
+    result = service.check_existing_tenants(notify=False)
+    expected_codes = ("600000", "600001") if has_positions else ("600001",)
+    assert refreshed == [expected_codes]
+    assert checked == [expected_codes]
+    assert {item[0] for item in positions} == ({"local", user_a} if has_positions else set())
+    assert candidates == ["local"]
+    assert result["strategy_evidence_refresh"]["state"] == "updated"
+    assert result["tenants_checked"] == (2 if has_positions else 1)
+    if not has_positions:
+        assert not (tmp_path / "portfolio.json").exists()
+
+
+@pytest.mark.parametrize("state", ["busy", "partial"])
+def test_t1_shared_strategy_refresh_status_does_not_block_risk_check(
+    workstation, monkeypatch, state
+):
+    import live_risk_service as service
+    import position_strategy_evidence
+
+    pf.add_holding("600000", 100, 10, "2026-10-22")
+    for level in ("L2", "L4"):
+        pf.update_risk_rule(f"600000-{level}", {"enabled": False})
+
+    async def refresh(*args, **kwargs):
+        return SimpleNamespace(to_dict=lambda: {"state": state, "issue": "来源忙"})
+
+    monkeypatch.setattr(position_strategy_evidence, "refresh_strategy_sources", refresh)
+    monkeypatch.setattr(position_strategy_evidence, "load_cached_strategy_sectors", lambda *args, **kwargs: {})
+    import position_context_source
+    monkeypatch.setattr(position_context_source, "load_position_sectors", lambda *args: pytest.fail("monitor must not refetch industry"))
+    result = service.check_existing_tenants()
+    assert result["strategy_evidence_refresh"] == {"state": state, "issue": "来源忙"}
+    assert result["tenants_checked"] == 1 and result["failed_tenants"] == 0
+    assert {event["level"] for event in ae.list_events(status="OPEN")} == {"L1", "L5"}
+
+
+def test_t1_shared_strategy_refresh_reports_unavailable_when_batch_exceeds_budget(workstation, monkeypatch):
+    import live_risk_service as service
+    import position_strategy_evidence
+
+    codes = tuple(f"{index:06d}" for index in range(101))
+    monkeypatch.setattr(position_strategy_evidence, "_fetch_sources", lambda *args: pytest.fail("oversized batch must not fetch"))
+    cached, result = service._refresh_shared_strategy_sources(codes)
+    assert cached == {} and result["state"] == "unavailable"
+    assert "预算" in result["issue"]
+
+
+def test_t1_tenant_monitor_keeps_collected_positions_when_candidate_store_corrupt(workstation, monkeypatch, tmp_path):
+    import live_risk_service as service
+    import position_strategy_evidence
+
+    pf.add_holding("600000", 100, 10, "2026-10-22")
+    for level in ("L2", "L4"):
+        pf.update_risk_rule(f"600000-{level}", {"enabled": False})
+    (tmp_path / "candidate-observations.json").write_text("{broken", encoding="utf-8")
+    calls = []
+
+    async def refresh(codes, *, checked_at):
+        calls.append(tuple(codes))
+        return SimpleNamespace(to_dict=lambda: {"state": "partial", "issue": ""})
+
+    monkeypatch.setattr(position_strategy_evidence, "refresh_strategy_sources", refresh)
+    monkeypatch.setattr(position_strategy_evidence, "load_cached_strategy_sectors", lambda *args, **kwargs: {})
+    result = service.check_existing_tenants()
+    assert calls == [("600000",)]
+    assert result["failed_tenants"] == 1
+    assert {event["level"] for event in ae.list_events(status="OPEN")} == {"L1", "L5"}
 
 
 def test_t1_engine_macd_cross_when_raw_history_ends_below_signal(workstation):

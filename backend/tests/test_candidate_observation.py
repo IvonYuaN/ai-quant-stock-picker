@@ -254,10 +254,12 @@ def test_candidate_model_commit_rejects_during_research_change(env, monkeypatch)
     assert resources.workspace('600000')['discussion'] is None
 
 
-def test_candidate_monitor_finds_zero_position_tenant_when_only_candidate_resource_exists(env):
+def test_candidate_monitor_finds_zero_position_tenant_when_only_candidate_resource_exists(env, monkeypatch):
     client, _, _, _ = env
     value, result = analyze(env)
     assert client.post('/api/candidate-observations/600000/adopt', json=adoption(value, result)).status_code == 200
+    monkeypatch.setattr(live_risk_service, '_refresh_shared_strategy_sources',
+                        lambda codes: ({}, {'state': 'skipped'}))
     summary = live_risk_service.check_existing_tenants(notify=False)
     assert summary['candidate_checks'] == 1 and summary['tenants_checked'] == 1 and summary['failed_tenants'] == 0
     assert not (resources.root() / 'portfolio.json').exists()

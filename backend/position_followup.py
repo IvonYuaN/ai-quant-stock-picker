@@ -8,6 +8,7 @@ from typing import Any
 
 from aqsp.core.errors import DataError
 from position_route_review import evidence_digest
+from strategy_direction import direction_identity
 
 FOLLOWUP_MODES = frozenset({'off', 'changes', 'daily'})
 ATTENTION_STATES = frozenset({'price_watch', 'below_watch', 'paused', 'needs_review', 'evidence_unavailable'})
@@ -134,8 +135,9 @@ def observe_plan(worksheet: dict[str, Any], root: dict[str, Any], *, current: da
             state, title, detail, reason = 'needs_review', '原策略对应的持仓或条件已变化', '即使重新保存了试算，原AI观察条件也需按最新持仓、费用和个人条件重新分析后采用。', 'watch_changed'
         elif target is None or comparator not in {'at_or_above', 'at_or_below'}:
             state, title, detail, reason = 'needs_review', '已保存观察条件不可核验', '观察价或比较方向不完整，请重新分析并采用；未沿用损坏条件。', 'watch_invalid'
-        elif any((watch.get('evidence_snapshot', {}).get(key, {}).get('status', 'unknown')
-                  != evidence.get(key, {}).get('status', 'unknown')) for key in ('market', 'sector', 'stock')):
+        elif watch.get('direction_schema') != 'direction-v1':
+            state, title, detail, reason = 'needs_review', '原方向依据需要重新核对', '旧方案未保存完整方向身份；请比较当前证据后重新分析并采用，不从现在倒填原依据。', 'evidence_changed'
+        elif direction_identity(watch.get('evidence_snapshot') or {}) != direction_identity(evidence):
             state, title, detail, reason = 'needs_review', '原策略依据发生变化，重新分析', '大盘、板块或个股的方向/证据可用性与采用时不同；先核对变化，再决定是否保留原条件。', 'evidence_changed'
         else:
             reached = basis['price'] >= target if comparator == 'at_or_above' else basis['price'] <= target

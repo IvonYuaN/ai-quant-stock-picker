@@ -169,7 +169,8 @@ def _indices(current: datetime) -> dict[str, Any] | None:
         change = dc._number(quote.get('change_pct'))
         stamp = quote.get('as_of') or astock.parse_gtimg_time(quote.get('quote_time'))
         if change is not None and stamp:
-            values.append({'name': str(quote.get('name') or code), 'change_pct': change, 'as_of': stamp})
+            values.append({'name': str(quote.get('name') or code), 'change_pct': change, 'as_of': stamp,
+                           'source': str(quote.get('source') or '腾讯指数行情')})
     if not values:
         return None
     facts = [f"{row['name']} {row['change_pct']:+.2f}%" for row in values]
@@ -204,6 +205,16 @@ def load_strategy_context(holding: Mapping[str, Any], codes: Sequence[str], hist
     context = dc.build_position_context(current_holding, [], quote=holding.get('quote'), stock_history=history,
                                         market_overview=overview, sector_snapshot=sector,
                                         checked_at=checked_at).to_dict()
+    return enrich_strategy_context(context, overview, sector, checked_at=checked_at)
+
+
+def enrich_strategy_context(context: dict[str, Any], overview: Mapping[str, Any] | None,
+                            sector: Mapping[str, Any] | None, *, checked_at: datetime) -> dict[str, Any]:
+    """Project the same cached typed direction facts for GET and monitor reads.
+
+    No source refresh or tenant writes. The context and sector have already
+    passed source/time validation; index cache reads validate their own clocks.
+    """
     # ContextEvidence's display schema omits numeric/identity fields. Project
     # only source-validated typed facts here, never recover them from its prose.
     market_fact = context['market']
@@ -212,6 +223,7 @@ def load_strategy_context(holding: Mapping[str, Any], codes: Sequence[str], hist
         counts = {key: dc._number(sentiment.get(key)) for key in ('up', 'down')} if isinstance(sentiment, Mapping) else {}
         if counts and all(value is not None and value >= 0 for value in counts.values()):
             market_fact['breadth_counts'] = counts
+            market_fact['breadth'] = sentiment.get('breadth')
     if sector is not None and context['sector']['status'] != 'unknown':
         context['sector'].update(industry=sector['industry'], change_pct=dc._number(sector['change_pct']))
     indices = _indices(checked_at)
@@ -241,13 +253,25 @@ async def _fetch_indices(client: httpx.AsyncClient, limits: StrategyEvidenceLimi
 
 async def _fetch_sources(codes: tuple[str, ...], limits: StrategyEvidenceLimits,
                          completed: dict[str, Any]) -> list[str]:
+    current = now_shanghai()
+    requested: list[str] = []
+    completed['_attempted_components'] = requested
     async with httpx.AsyncClient(timeout=limits.total_timeout_seconds, trust_env=False,
                                  follow_redirects=False) as client:
         async def sector() -> None:
+            if len(load_cached_strategy_sectors(codes, checked_at=current, limits=limits)) == len(codes):
+                return
             completed[_sector_key(codes)] = await sectors_source.fetch_position_sectors(codes, client, max_response_bytes=limits.max_response_bytes)
         async def indices() -> None:
+            if _indices(current) or _cached('strategy_component_attempt_indices', current, negative=True) is not None:
+                return
+            requested.append('indices')
             completed['strategy_indices'] = await _fetch_indices(client, limits)
         async def breadth() -> None:
+            if (valid_strategy_breadth(_cached('strategy_breadth', current), current=current)
+                    or _cached('strategy_component_attempt_breadth', current, negative=True) is not None):
+                return
+            requested.append('breadth')
             completed['strategy_breadth'] = await fetch_strategy_breadth(client, max_response_bytes=limits.max_response_bytes)
         results = await asyncio.gather(sector(), indices(), breadth(), return_exceptions=True)
     return ["部分行情源未完成；已取得的依据仍按源时点核验" for result in results if isinstance(result, BaseException)]
@@ -301,6 +325,10 @@ async def refresh_strategy_sources(codes: Sequence[str], *, checked_at: datetime
             market._write_cache('strategy_indices', completed['strategy_indices'])
         if 'strategy_breadth' in completed:
             market._write_cache('strategy_breadth', completed['strategy_breadth'])
+        # Market components are shared by every symbol/tenant. Changing a
+        # symbol set must not bypass their failure cooldown or repeat full-A I/O.
+        for component in completed.get('_attempted_components', []):
+            market._write_cache('strategy_component_attempt_' + component, {'checked_at': checked_at.isoformat()})
         # A failed/partial batch cools subset retries too. Only this attempt
         # timestamp changes; failed sources never renew an old fact's TTL.
         for cache_key in {attempt_key, *attempt_keys}:

@@ -5,9 +5,12 @@ from __future__ import annotations
 import math
 import json
 import re
+import asyncio
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 import structlog
 import portfolio as pf
+from aqsp.core.errors import DataError
 
 logger = structlog.get_logger(__name__)
 
@@ -53,9 +56,16 @@ def _live_risk_alert_markdown(events: list[dict]) -> str:
 
 
 def check_positions(
-    holding_days_override: dict[str, int] | None = None, *, notify: bool = True
+    holding_days_override: dict[str, int] | None = None, *, notify: bool = True,
+    strategy_sectors: Mapping[str, Mapping[str, object]] | None = None,
 ) -> dict:
-    """Check current tenant positions; persist events and optional notifications."""
+    """Check current tenant positions; persist events and optional notifications.
+
+    ``strategy_sectors`` is supplied only by the scheduler's shared refresh.  A
+    mapping, including an empty mapping, means cache-only: optional industry
+    evidence must not open another upstream request during this check.  Direct
+    API callers keep the legacy cache/SWR path when it is omitted.
+    """
     import alert_events
     from position_followup import plan_key, risk_rule_key
     with alert_events._LOCK, pf._LOCK:
@@ -205,10 +215,17 @@ def check_positions(
 
     overview = load_cached_market_overview()
     serialized = [reminder.to_dict() for reminder in reminders]
-    from position_context_source import load_position_sectors
-
     planned_codes = {root.get("symbol") for root in initial_roots.values() if root.get("review_plan", {}).get("choice")}
-    sectors = load_position_sectors(sorted({row["symbol"] for row in serialized} | (planned_codes & active_codes)))
+    sector_codes = sorted({row["symbol"] for row in serialized} | (planned_codes & active_codes))
+    if strategy_sectors is None:
+        from position_context_source import load_position_sectors
+
+        sectors = load_position_sectors(sector_codes)
+    else:
+        sectors = {
+            code: value for code, value in strategy_sectors.items()
+            if code in sector_codes and isinstance(value, Mapping)
+        }
     contexts: dict[str, dict] = {}
     for holding in pf_data.get("holdings", []):
         code = holding["code"]
@@ -228,6 +245,9 @@ def check_positions(
             sector_snapshot=sector,
             checked_at=checked_at,
         ).to_dict()
+        from position_strategy_evidence import enrich_strategy_context
+
+        contexts[code] = enrich_strategy_context(contexts[code], overview, sector, checked_at=checked_at)
     for row in serialized:
         row["position_context"] = contexts.get(str(row["symbol"]))
 
@@ -288,6 +308,81 @@ def check_positions(
     }
 
 
+def _tenant_folders(root: Path) -> list[Path]:
+    """Return valid tenant data directories in stable order."""
+    folders = [root]
+    users = root / "users"
+    if users.is_dir() and not users.is_symlink():
+        folders += sorted({path.parent for pattern in ('*/portfolio.json', '*/candidate-observations.json')
+                           for path in users.glob(pattern)})
+    return [
+        folder for folder in folders
+        if not folder.is_symlink()
+        and not folder.parent.is_symlink()
+        and folder.is_dir()
+    ]
+
+
+def _collect_strategy_codes(folders: Sequence[Path]) -> tuple[str, ...]:
+    """Collect position and active-candidate codes without any network I/O."""
+    import candidate_observation
+    import tenant
+
+    codes: set[str] = set()
+    for folder in folders:
+        tid = "local" if folder == Path(pf.CACHE_DIR) else folder.name
+        if tid != "local" and not re.fullmatch(r"[uk]_[0-9a-f]{20}", tid):
+            continue
+        portfolio_path = folder / "portfolio.json"
+        candidate_path = folder / "candidate-observations.json"
+        try:
+            if portfolio_path.is_file() and not portfolio_path.is_symlink():
+                payload = json.loads(portfolio_path.read_text(encoding="utf-8"))
+                holdings = payload.get("holdings", []) if isinstance(payload, dict) else []
+                if isinstance(holdings, list):
+                    codes.update(
+                        row.get("code") for row in holdings
+                        if isinstance(row, dict) and isinstance(row.get("code"), str)
+                        and re.fullmatch(r"[0-9]{6}", row["code"])
+                    )
+            if candidate_path.is_file() and not candidate_path.is_symlink():
+                token = tenant.current_tenant.set(tid)
+                try:
+                    resources = candidate_observation.load_store().get("resources", {})
+                finally:
+                    tenant.current_tenant.reset(token)
+                if isinstance(resources, dict):
+                    codes.update(
+                        code for code, row in resources.items()
+                        if re.fullmatch(r"[0-9]{6}", str(code))
+                        and isinstance(row, dict)
+                        and isinstance(row.get("watch"), dict)
+                        and row["watch"].get("status") == "active"
+                    )
+        except (DataError, OSError, ValueError, TypeError, KeyError):
+            # The normal tenant loop reports this bucket as failed.  One bad
+            # bucket must not prevent optional evidence for healthy buckets.
+            continue
+    return tuple(sorted(codes))
+
+
+def _refresh_shared_strategy_sources(codes: Sequence[str]) -> tuple[dict[str, Mapping[str, object]], dict[str, str]]:
+    """Refresh shared market/industry evidence once, then read its cache."""
+    if not codes:
+        return {}, {"state": "skipped", "issue": "没有持仓或活跃候选"}
+    try:
+        from aqsp.core.time import now_shanghai
+        from position_strategy_evidence import load_cached_strategy_sectors, refresh_strategy_sources
+
+        result = asyncio.run(refresh_strategy_sources(codes, checked_at=now_shanghai()))
+        checked_at = now_shanghai()
+        cached = load_cached_strategy_sectors(codes, checked_at=checked_at)
+        return cached, result.to_dict()
+    except (DataError, OSError, ValueError, TypeError, RuntimeError, asyncio.CancelledError):
+        logger.warning("shared_strategy_evidence_unavailable")
+        return {}, {"state": "partial", "issue": "共享大盘/板块依据刷新失败，缺失项保持未知"}
+
+
 def check_existing_tenants(*, notify: bool = False) -> dict:
     """Monitor only existing persisted tenant portfolios; never migrate or seed data.
 
@@ -297,11 +392,9 @@ def check_existing_tenants(*, notify: bool = False) -> dict:
     import tenant
 
     root = Path(pf.CACHE_DIR)
-    candidates = [root]
-    users = root / "users"
-    if users.is_dir() and not users.is_symlink():
-        candidates += sorted({path.parent for pattern in ('*/portfolio.json', '*/candidate-observations.json')
-                              for path in users.glob(pattern)})
+    candidates = _tenant_folders(root)
+    strategy_codes = _collect_strategy_codes(candidates)
+    strategy_sectors, strategy_refresh = _refresh_shared_strategy_sources(strategy_codes)
     summary: dict = {
         "tenants_checked": 0,
         "open_events": 0,
@@ -309,6 +402,7 @@ def check_existing_tenants(*, notify: bool = False) -> dict:
         "failed_tenants": 0,
         "candidate_checks": 0,
         "candidate_notifications": 0,
+        "strategy_evidence_refresh": strategy_refresh,
     }
     for folder in candidates:
         if folder.is_symlink() or folder.parent.is_symlink() or not folder.is_dir():
@@ -329,7 +423,7 @@ def check_existing_tenants(*, notify: bool = False) -> dict:
             token = tenant.current_tenant.set(tid)
             try:
                 if has_positions:
-                    result = check_positions(notify=notify)
+                    result = check_positions(notify=notify, strategy_sectors=strategy_sectors)
                     summary['skipped_checks'] += len(result['checks']['skipped'])
                     import alert_events
                     summary['open_events'] += len(alert_events.list_events(status='OPEN'))
