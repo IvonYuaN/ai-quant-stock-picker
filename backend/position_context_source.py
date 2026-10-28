@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -10,14 +11,26 @@ from typing import Any
 import httpx
 
 import astock
+from industry_source_contract import (
+    INDUSTRY_PARAMS as _INDUSTRY_PARAMS,
+    INDUSTRY_REFERER,
+    INDUSTRY_SOURCE,
+    INDUSTRY_URL as _INDUSTRY_URL,
+    IndustrySourceLimits,
+    parse_industry_rows,
+)
 
 
 @dataclass(frozen=True)
-class PositionContextSourceConfig:
-    # Match the existing industry clist page size; bound optional explanation I/O.
+class PositionContextSourceConfig(IndustrySourceLimits):
+    # Bound public explanation I/O, independently of trading thresholds.
     batch_size: int = 100
-    timeout_seconds: int = 4
-    max_industry_pages: int = 8
+
+
+# The clist endpoint can reject a request while ulist still works. Use the same
+# public dataapi contract already used by aqsp.data.concept_board (#333), with
+# industry rather than concept membership. The pure parser owns the units.
+_INDUSTRY_HEADERS = {"User-Agent": astock.UA, "Referer": INDUSTRY_REFERER}
 
 
 def _rows(payload: Any) -> list[dict]:
@@ -29,7 +42,15 @@ def _rows(payload: Any) -> list[dict]:
 
 
 def _fetch(codes: tuple[str, ...], config: PositionContextSourceConfig) -> dict:
-    memberships = _rows(astock.em_get(
+    def get(url: str, *, params: dict, headers: dict) -> Any:
+        response = astock.em_get(url, params=params, headers=headers, timeout=config.timeout_seconds)
+        response.raise_for_status()
+        raw = response.content
+        if len(raw) > config.max_response_bytes:
+            raise ValueError("行业依据响应超过大小预算")
+        return json.loads(raw)
+
+    memberships = _rows(get(
         "https://push2.eastmoney.com/api/qt/ulist.np/get",
         params={
             "secids": ",".join(f"{1 if astock.get_prefix(code) == 'sh' else 0}.{code}" for code in codes),
@@ -37,61 +58,30 @@ def _fetch(codes: tuple[str, ...], config: PositionContextSourceConfig) -> dict:
             "fltt": 2,
         },
         headers={"User-Agent": astock.UA},
-        timeout=config.timeout_seconds,
-    ).json())
+    ))
     if not memberships:
         return {}
-    sectors: list[dict] = []
-    for page in range(1, config.max_industry_pages + 1):
-        payload = astock.em_get(
-            "https://push2.eastmoney.com/api/qt/clist/get",
-            params=_industry_params(page, config), headers={"User-Agent": astock.UA},
-            timeout=config.timeout_seconds,
-        ).json()
-        if not _append_industry_page(payload, memberships, sectors, config):
-            break
-    else:
-        raise ValueError("行业依据超过分页预算")
+    sectors = _parse_industries(get(_INDUSTRY_URL, params=_INDUSTRY_PARAMS,
+                                    headers=_INDUSTRY_HEADERS), config)
     return _combine_rows(codes, memberships, sectors)
 
 
-def _industry_params(page: int, config: PositionContextSourceConfig) -> dict[str, Any]:
-    return {"pn": page, "pz": config.batch_size, "po": 0, "np": 1,
-            "fltt": 2, "invt": 2, "fid": "f12", "fs": "m:90+t:2", "fields": "f12,f14,f3,f124"}
-
-
-def _append_industry_page(payload: Any, memberships: list[dict], sectors: list[dict],
-                          config: PositionContextSourceConfig) -> bool:
-    """Return whether unmatched source memberships require another bounded page."""
-    rows = _rows(payload)
-    known = {row.get('f14') for row in sectors}
-    names = [row.get('f14') for row in rows]
-    if any(not isinstance(name, str) or not name.strip() or name in known for name in names) or len(set(names)) != len(names):
-        raise ValueError('行业分页重复或名称无效')
-    sectors.extend(rows)
-    targets = {row['f100'] for row in memberships if isinstance(row.get('f100'), str) and row['f100'].strip()}
-    if targets <= {row.get('f14') for row in sectors}:
-        return False
-    data = payload.get('data') if isinstance(payload, Mapping) else None
-    total = data.get('total') if isinstance(data, Mapping) else None
-    if total is not None:
-        if type(total) is not int or total < len(sectors):
-            raise ValueError('行业源总量无效')
-        if len(sectors) == total:
-            return False
-        if len(rows) != config.batch_size:
-            raise ValueError('行业分页不完整')
-        return True
-    return len(rows) == config.batch_size
+def _parse_industries(payload: Any, config: PositionContextSourceConfig) -> list[dict]:
+    """Validate the complete single response and normalize dataapi percentages."""
+    return parse_industry_rows(payload, max_rows=config.max_industry_rows)
 
 
 def _combine_rows(codes: tuple[str, ...], memberships: list[dict], sectors: list[dict]) -> dict:
     by_name = {row.get("f14"): row for row in sectors if isinstance(row.get("f14"), str)}
     result = {}
+    seen: set[str] = set()
     for row in memberships:
         code, industry = str(row.get("f12") or ""), row.get("f100")
         if code not in codes or not isinstance(industry, str) or not industry.strip():
             continue
+        if code in seen:
+            raise ValueError('同代码行业归属重复，不能确认唯一板块')
+        seen.add(code)
         sector = by_name.get(industry)
         if sector is None:
             continue
@@ -101,7 +91,7 @@ def _combine_rows(codes: tuple[str, ...], memberships: list[dict], sectors: list
             "name": industry,
             "change_pct": sector.get("f3"),
             "as_of": astock.epoch_iso(sector.get("f124")),
-            "source": "东方财富行业行情（同源个股行业归属）",
+            "source": INDUSTRY_SOURCE + "（同源个股行业归属）",
         }
     return result
 
@@ -109,7 +99,7 @@ def _combine_rows(codes: tuple[str, ...], memberships: list[dict], sectors: list
 def load_position_sectors(codes: Sequence[str]) -> Mapping[str, Mapping[str, Any]]:
     """Use the existing shared TTL/negative cache; failures remain unknown.
 
-    At most one bounded stock batch and one industry batch per cache refresh.
+    At most one stock batch and one complete industry response per refresh.
     Source times remain intact even when SWR returns an older cached response.
     No per-stock requests, inferred concepts, portfolio writes or akshare import.
     """
@@ -148,9 +138,9 @@ async def fetch_position_sectors(codes: Sequence[str], client: httpx.AsyncClient
         return {}
 
     async def get(url: str, params: dict[str, Any]) -> Any:
-        import json
         chunks, size = [], 0
-        async with client.stream("GET", url, params=params, headers={"User-Agent": astock.UA}) as response:
+        async with client.stream("GET", url, params=params,
+                                 headers=_INDUSTRY_HEADERS if url == _INDUSTRY_URL else {"User-Agent": astock.UA}) as response:
             response.raise_for_status()
             async for chunk in response.aiter_bytes():
                 size += len(chunk)
@@ -165,11 +155,5 @@ async def fetch_position_sectors(codes: Sequence[str], client: httpx.AsyncClient
     }))
     if not memberships:
         return {}
-    sectors: list[dict] = []
-    for page in range(1, config.max_industry_pages + 1):
-        payload = await get("https://push2.eastmoney.com/api/qt/clist/get", _industry_params(page, config))
-        if not _append_industry_page(payload, memberships, sectors, config):
-            break
-    else:
-        raise ValueError("行业依据超过分页预算")
+    sectors = _parse_industries(await get(_INDUSTRY_URL, _INDUSTRY_PARAMS), config)
     return _combine_rows(symbols, memberships, sectors)

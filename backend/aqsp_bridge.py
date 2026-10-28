@@ -197,6 +197,10 @@ class AQSPSource:
     latest_trade_date: str
     lag_days: int
     status: str
+    task_id: str = ""
+    run_status: str = ""
+    run_updated_at: str = ""
+    run_detail: str = ""
 
 
 @dataclass(frozen=True)
@@ -287,6 +291,12 @@ class AQSPVariantSuite:
     coverage_pct: float = 0.0
     filters: str = ""
     last_error: str = ""
+    refresh_status: str = ""
+    refresh_generated_at: str = ""
+    refresh_end_date: str = ""
+    refresh_detail: str = ""
+    profiles_staged: int = 0
+    profiles_total: int = 0
 
 
 @dataclass(frozen=True)
@@ -647,6 +657,8 @@ def snapshot_payload(selected_date: str | None = None) -> dict[str, Any]:
         snapshot,
         historical=_is_historical(surface, selected_date),
     )
+    if not _is_historical(surface, selected_date):
+        _apply_latest_intraday_failure(payload)
     payload["available_dates"] = list(surface.available_dates)
     return payload
 
@@ -696,14 +708,36 @@ def _apply_latest_intraday_failure(payload: dict[str, Any]) -> None:
         status = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return
-    if not isinstance(status, dict) or status.get("status") not in {
-        "failed",
-        "error",
-        "partial_failed",
-    }:
+    if not isinstance(status, dict):
         return
     source = payload.get("source")
     if not isinstance(source, dict):
+        return
+    if source.get("task_id"):
+        if source["task_id"] != "intraday":
+            return
+        from aqsp.core.time import now_shanghai
+        from aqsp.web.research_status import intraday_run, source_time
+
+        current = now_shanghai()
+        run = intraday_run(status, str(payload.get("selected_date") or ""), current=current)
+        previous = source_time(source.get("run_updated_at"), current=current)
+        latest = source_time(run.updated_at, current=current)
+        if previous is not None and (latest is None or latest < previous):
+            return
+        source.update(run_status=run.status, run_updated_at=run.updated_at, run_detail=run.detail)
+        from aqsp.web.research_status import FAILED_RESEARCH_RUNS
+
+        if run.status in FAILED_RESEARCH_RUNS and isinstance(payload.get("recommendation_gate"), dict):
+            payload["recommendation_gate"] = {
+                "recommendation_allowed": False,
+                "status": "research_run_not_ready",
+                "reasons": [run.detail or "当前盘中研究运行未就绪，保留原记录等待核验"],
+            }
+        return
+    # Legacy snapshots have no task identity. Keep their conservative failure
+    # behavior until a writer publishes an explicitly scoped replacement.
+    if status.get("status") not in {"failed", "error", "partial_failed"}:
         return
     reason = str(status.get("reason") or status.get("detail") or "").strip()
     source["status"] = f"盘中任务失败：{reason}" if reason else "盘中任务失败"
@@ -1302,6 +1336,13 @@ def _parse_variant_suite(payload: object) -> AQSPVariantSuite:
             "coverage_pct",
             "filters",
             "last_error",
+            "refresh_status",
+            "refresh_generated_at",
+            "refresh_end_date",
+            "refresh_detail",
+            "profiles_staged",
+            "profiles_total",
+
         },
     )
     return AQSPVariantSuite(
@@ -1329,6 +1370,12 @@ def _parse_variant_suite(payload: object) -> AQSPVariantSuite:
         coverage_pct=float(item.get("coverage_pct", 0.0) or 0.0),
         filters=_optional_text(item.get("filters"), "variant_suite.filters"),
         last_error=_optional_text(item.get("last_error"), "variant_suite.last_error"),
+        refresh_status=_optional_text(item.get("refresh_status"), "variant_suite.refresh_status"),
+        refresh_generated_at=_optional_text(item.get("refresh_generated_at"), "variant_suite.refresh_generated_at"),
+        refresh_end_date=_optional_text(item.get("refresh_end_date"), "variant_suite.refresh_end_date"),
+        refresh_detail=_optional_text(item.get("refresh_detail"), "variant_suite.refresh_detail"),
+        profiles_staged=_integer(item.get("profiles_staged", 0), "variant_suite.profiles_staged"),
+        profiles_total=_integer(item.get("profiles_total", 0), "variant_suite.profiles_total"),
     )
 
 
@@ -1830,13 +1877,18 @@ def _parse_message(payload: object) -> AQSPMessage:
 def _parse_source(payload: object) -> AQSPSource:
     item = _object(payload, "source")
     _check_keys(
-        item, {"effective", "latest_trade_date", "lag_days", "status"}, "source"
+        item, {"effective", "latest_trade_date", "lag_days", "status"}, "source",
+        {"task_id", "run_status", "run_updated_at", "run_detail"}
     )
     return AQSPSource(
         effective=_text(item["effective"], "source.effective"),
         latest_trade_date=_text(item["latest_trade_date"], "source.latest_trade_date"),
         lag_days=_integer(item["lag_days"], "source.lag_days"),
         status=_text(item["status"], "source.status"),
+        task_id=_optional_text(item.get("task_id"), "source.task_id"),
+        run_status=_optional_text(item.get("run_status"), "source.run_status"),
+        run_updated_at=_optional_text(item.get("run_updated_at"), "source.run_updated_at"),
+        run_detail=_optional_text(item.get("run_detail"), "source.run_detail"),
     )
 
 

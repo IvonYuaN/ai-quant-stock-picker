@@ -1452,31 +1452,27 @@ def market_breadth_counts() -> dict | None:
 
 def _industry_comparison_once(top_n: int) -> dict:
     """单次取数。失败/空 diff 一律返回 total=0，不抛异常（fail-soft）。"""
-    params = {
-        "pn": "1",
-        "pz": "100",
-        "po": "1",
-        "np": "1",
-        "fltt": "2",
-        "invt": "2",
-        "fid": "f3",  # fid=f3 + po=1：按涨跌幅降序，否则 top/bottom 切片非涨幅序（a-stock-data §3.7）
-        "fs": "m:90+t:2",
-        "fields": "f2,f3,f4,f12,f13,f14,f104,f105,f124,f128,f136,f140,f141,f207",
-    }
+    from industry_source_contract import (
+        INDUSTRY_PARAMS, INDUSTRY_REFERER, INDUSTRY_SOURCE, INDUSTRY_URL,
+        IndustrySourceLimits, parse_industry_rows,
+    )
+
+    limits = IndustrySourceLimits()
     try:
-        d = em_get(
-            "https://push2.eastmoney.com/api/qt/clist/get",
-            params=params,
-            headers={"User-Agent": UA},
-            timeout=15,
-        ).json()
+        response = em_get(INDUSTRY_URL, params=INDUSTRY_PARAMS,
+                          headers={"User-Agent": UA, "Referer": INDUSTRY_REFERER},
+                          timeout=limits.timeout_seconds)
+        response.raise_for_status()
+        raw = response.content
+        if len(raw) > limits.max_response_bytes:
+            raise ValueError("行业依据响应超过大小预算")
+        items = parse_industry_rows(json.loads(raw), max_rows=limits.max_industry_rows)
     except Exception:
         return {"top": [], "bottom": [], "total": 0}
-    items = d.get("data", {}).get("diff", [])
-    if isinstance(items, dict):
-        items = list(items.values())
-    if not items:
-        return {"top": [], "bottom": [], "total": 0}
+    # dataapi key controls requested fields, not a guaranteed ranking. Sort the
+    # complete valid source rows, then slice; do not rank absent values as zero.
+    items = sorted((item for item in items if item['f3'] is not None),
+                   key=lambda item: (-item['f3'], item['f14']))
     rows = [
         {
             "rank": i + 1,
@@ -1484,6 +1480,7 @@ def _industry_comparison_once(top_n: int) -> dict:
             "change_pct": it.get("f3", 0),
             # 行业榜用于大方向判断时必须保留供应商行情时点，不能拿接口取数时间代替。
             "as_of": epoch_iso(it.get("f124")),
+            "source": INDUSTRY_SOURCE,
             "code": it.get("f12", ""),
             "up_count": it.get("f104", 0),
             "down_count": it.get("f105", 0),
@@ -1494,11 +1491,10 @@ def _industry_comparison_once(top_n: int) -> dict:
 
 
 def industry_comparison(top_n: int = 20) -> dict:
-    """全行业涨跌幅排名（东财行业板块，~100 个行业）：板块级涨跌 / 涨跌家数 / 领涨。
+    """全行业层级涨跌幅排名（东财 dataapi）：板块级涨跌 / 涨跌家数。
 
-    东财 clist 会偶发返回空 ``diff``（prod 实测：同一分钟内 ``top=21`` 空、
-    ``top=22/23/24`` 正常）。单次空就判定「源没数据」会把整块面板误报成不可用，
-    故空结果重试一次；两次都空才如实返回 ``total=0``（调用方据此不缓存）。
+    使用和个股策略分析相同的完整行业响应与数值合同。保留空结果一次短重试及
+    API负缓存；不以加总行业涨跌家数推断全A宽度，层级行业可能包含同一股票。
     """
     data: dict = {"top": [], "bottom": [], "total": 0}
     for attempt in range(_INDUSTRY_ATTEMPTS):

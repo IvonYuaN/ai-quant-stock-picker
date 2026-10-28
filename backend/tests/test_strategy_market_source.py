@@ -153,30 +153,35 @@ def test_strategy_refresh_reports_partial_when_shape_complete_but_source_time_in
     assert dc.load_cached_market_overview(checked_at=NOW) is None
 
 
-def test_industry_source_finds_matching_industry_after_first_100_when_second_page_contains_target() -> None:
+def test_industry_source_finds_matching_industry_after_first_100_when_complete_dataapi_response() -> None:
     calls = []
     def handle(request):
         calls.append(str(request.url))
         if '/ulist.' in request.url.path:
             return httpx.Response(200, json={'data': {'diff': [{'f12': '002129', 'f100': '银行', 'f124': int(NOW.timestamp())}]}})
-        rows = [{'f14': f'其他行业{i}', 'f3': 1, 'f124': int(NOW.timestamp())} for i in range(100)] if request.url.params['pn'] == '1' else [{'f14': '银行', 'f3': -1, 'f124': int(NOW.timestamp())}]
+        assert request.url.path == '/dataapi/bkzj/getbkzj'
+        rows = [{'f14': f'其他行业{i}', 'f3': 100, 'f124': int(NOW.timestamp())} for i in range(100)] + [{'f14': '银行', 'f3': -100, 'f124': int(NOW.timestamp())}]
         return httpx.Response(200, json={'data': {'total': 101, 'diff': rows}})
     async def run():
         async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
             return await industries.fetch_position_sectors(['002129'], client, max_response_bytes=20000)
     value = asyncio.run(run())
     assert value['002129']['industry'] == '银行' and value['002129']['as_of'] == NOW.isoformat()
-    assert len(calls) == 3 and 'pn=2' in calls[-1]
+    assert value['002129']['change_pct'] == -1
+    assert len(calls) == 2 and 'code=m%3A90%2Bt%3A2' in calls[-1]
 
 
-@pytest.mark.parametrize('last', [{'data': {'total': 101, 'diff': []}}, {'data': {'total': 101, 'diff': [{'f14': '其他行业0'}]}}])
-def test_industry_source_rejects_incomplete_or_duplicate_page_when_target_not_found(last) -> None:
-    first = {'data': {'total': 101, 'diff': [{'f14': f'其他行业{i}'} for i in range(100)]}}
-    rows: list[dict] = []
-    members = [{'f100': '银行'}]
-    assert industries._append_industry_page(first, members, rows, industries.PositionContextSourceConfig())
+@pytest.mark.parametrize('payload', [
+    {'data': {'total': 101, 'diff': []}},
+    {'data': {'total': 2, 'diff': [{'f14': '银行'}, {'f14': '银行'}]}},
+    {'data': {'total': True, 'diff': [{'f14': '银行'}]}},
+    {'data': {'total': 801, 'diff': []}},
+    {'data': {'total': 1, 'diff': [{'f14': ''}]}},
+    {'data': {'diff': [{'f14': '银行'}]}},
+])
+def test_industry_source_rejects_incomplete_or_duplicate_dataapi_response_when_invalid(payload) -> None:
     with pytest.raises(ValueError):
-        industries._append_industry_page(last, members, rows, industries.PositionContextSourceConfig())
+        industries._parse_industries(payload, industries.PositionContextSourceConfig())
 
 
 def test_strategy_breadth_preserves_existing_overview_fields_when_independent_cache_is_valid(monkeypatch, tmp_path) -> None:
@@ -204,8 +209,8 @@ def test_strategy_refresh_cancels_real_breadth_page_when_total_deadline_expires(
             return httpx.Response(200, content=index_body)
         if '/ulist.' in request.url.path:
             return httpx.Response(200, json={'data': {'diff': [{'f12': '002129', 'f100': '银行', 'f124': int(NOW.timestamp())}]}})
-        if request.url.params['fs'] == 'm:90+t:2':
-            return httpx.Response(200, json={'data': {'total': 1, 'diff': [{'f14': '银行', 'f3': -2, 'f124': int(NOW.timestamp())}]}})
+        if request.url.path == '/dataapi/bkzj/getbkzj':
+            return httpx.Response(200, json={'data': {'total': 1, 'diff': [{'f14': '银行', 'f3': -200, 'f124': int(NOW.timestamp())}]}})
         if request.url.params['pn'] == '1':
             return httpx.Response(200, json={'data': {'total': 1001, 'diff': [row(f'{i:06d}', 1) for i in range(1000)]}})
         active.add('breadth-second-page')

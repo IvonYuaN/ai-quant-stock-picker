@@ -844,3 +844,50 @@ def test_candidate_review_rejects_stale_commit_when_adopted_watch_stops_during_m
     assert response.status_code == 409
     stored = resources.load_store()['resources']['600000']
     assert stored['watch']['status'] == 'stopped' and stored['discussion']['id'] == result['id']
+
+
+@pytest.mark.parametrize('state', ['failed', 'partial_failed', 'unknown'])
+def test_candidate_blocks_entry_when_run_failed_even_with_fresh_quotes(env, state):
+    client, data, _, _ = env
+    data['data']['source'].update(status='fresh', task_id='intraday', run_status=state)
+    value, result = analyze(env)
+    assert value['entry_blocked'] and result['summary']['focus_choice'] == 'defer'
+
+
+def test_candidate_preserves_adopted_watch_when_only_run_provenance_changes(env):
+    client, data, _, _ = env
+    value, result = analyze(env)
+    original_evidence = deepcopy(result['evidence_snapshot'])
+    assert client.post('/api/candidate-observations/600000/adopt', json=adoption(value, result)).status_code == 200
+    for task, state, detail in (
+        ('intraday', 'running', '正在刷新'),
+        ('intraday', 'completed', '研究已完成'),
+        ('main_chain', '', ''),
+    ):
+        data['data']['source'].update(task_id=task, run_status=state,
+                                      run_updated_at=NOW.isoformat(), run_detail=detail)
+        current = resources.workspace('600000')
+        assert current['evidence_version'] == value['evidence_version']
+        assert current['observation']['state'] == 'waiting'
+        assert current['watch']['price'] == result['price_refs']['low']['price']
+        assert current['discussion']['evidence_snapshot'] == original_evidence
+
+
+def test_candidate_requires_review_when_run_availability_changes_but_not_failure_wording(env):
+    client, data, _, _ = env
+    value, result = analyze(env)
+    assert client.post('/api/candidate-observations/600000/adopt', json=adoption(value, result)).status_code == 200
+    data['data']['source'].update(task_id='intraday', run_status='failed',
+                                  run_updated_at=NOW.isoformat(), run_detail='研究失败')
+    original_gate = deepcopy(data['data']['recommendation_gate'])
+    data['data']['recommendation_gate'] = {'recommendation_allowed': False,
+                                          'status': 'research_run_not_ready', 'reasons': ['研究失败']}
+    failed = resources.workspace('600000')
+    assert failed['evidence_version'] != value['evidence_version']
+    assert failed['observation']['state'] == 'needs_review' and failed['entry_blocked']
+    data['data']['source'].update(run_status='partial_failed', run_detail='补充失败详情')
+    data['data']['recommendation_gate']['reasons'] = ['补充失败详情']
+    assert resources.workspace('600000')['evidence_version'] == failed['evidence_version']
+    data['data']['source'].update(run_status='completed', run_detail='恢复成功')
+    data['data']['recommendation_gate'] = original_gate
+    assert resources.workspace('600000')['evidence_version'] == value['evidence_version']

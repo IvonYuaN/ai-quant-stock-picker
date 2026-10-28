@@ -25,6 +25,7 @@ import portfolio as pf
 import tenant
 from aqsp.core.errors import DataError
 from aqsp.core.time import now_shanghai
+from aqsp.web.research_status import FAILED_RESEARCH_RUNS
 from aqsp.utils.jsonl_io import advisory_lock, atomic_write_text
 from position_route_review import evidence_digest
 import position_strategy_evidence as sources
@@ -220,12 +221,27 @@ def evidence_basis(report: dict[str, Any], evidence: dict[str, Any],
     """
     candidate = {key: value for key, value in (report.get('candidate') or {}).items()
                  if key not in {'data_fetched_at', 'coverage_note'}}
+    source = report.get('source')
+    if isinstance(source, dict):
+        # Run provenance is retained in evidence_snapshot, but a publication or
+        # normal job transition is not a new investment thesis. Only loss of
+        # run availability changes this part; omit false for legacy identity.
+        source = {key: value for key, value in source.items()
+                  if key not in {'task_id', 'run_status', 'run_updated_at', 'run_detail'}}
+        if report['source'].get('run_status') in FAILED_RESEARCH_RUNS:
+            source['run_unavailable'] = True
+    gate = report.get('recommendation_gate')
+    if (isinstance(gate, dict) and gate.get('status') == 'research_run_not_ready'
+            and isinstance(source, dict) and source.get('run_unavailable') is True):
+        # The bridge projects the run detail into this gate's sole reason. Its
+        # wording is operational metadata, not another risk-state transition.
+        gate = {**gate, 'reasons': ['research_run_unavailable']}
     parts = {
         'research_date': report.get('date'),
         'parameters': report.get('parameter_snapshot'),
         'candidate': candidate,
-        'risk_gate': report.get('recommendation_gate'),
-        'research_source': report.get('source'),
+        'risk_gate': gate,
+        'research_source': source,
         'debate': report.get('debate'),
         'ownership': own,
         'quote_source': {'valid': quote_valid, 'source': quote.get('source') or '腾讯行情'},
@@ -241,6 +257,7 @@ def current_evidence(code: str, quote: dict[str, Any], *, current: datetime) -> 
     report, issues = research(code, current)
     gate = report.get('recommendation_gate') or {}
     entry_blocked = (gate.get('recommendation_allowed') is not True
+                     or (report.get('source') or {}).get('run_status') in FAILED_RESEARCH_RUNS
                      or str((report.get('source') or {}).get('status') or '').lower()
                      not in {'fresh', 'current', 'realtime', '实时', '新鲜'})
     own = ownership(code)

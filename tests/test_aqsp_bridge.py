@@ -959,3 +959,58 @@ def test_aqsp_bridge_candidate_lifecycle_counts_streak_over_snapshot_dates(
     assert lifecycles["600002"]["first_seen"] == "2026-07-14"
     # 锚定日不在榜的票不出现
     assert "600003" not in lifecycles
+
+
+@pytest.mark.parametrize('scope', ['main_chain', 'closing_review'])
+def test_aqsp_bridge_keeps_daily_source_when_old_intraday_task_failed(tmp_path, monkeypatch, scope) -> None:
+    payload = _snapshot('2026-07-14')
+    payload['source'].update(task_id=scope, status='fresh')
+    path = _write_single(tmp_path, payload)
+    state = tmp_path / 'intraday.json'
+    state.write_text(json.dumps({'status': 'partial_failed', 'task_id': 'intraday',
+                                'updated_at': '2026-07-14T14:00:00+08:00', 'reason': '旧盘中事件'}))
+    monkeypatch.setenv('AQSP_RESEARCH_SURFACE_SNAPSHOT', str(path))
+    monkeypatch.setenv('AQSP_INTRADAY_STATUS', str(state))
+    response = client.get('/api/aqsp/snapshot')
+    assert response.status_code == 200
+    result = response.json()['data']
+    assert result['source']['status'] == 'fresh' and not result['source']['run_status']
+    assert aqsp_bridge.snapshot_payload()['source'] == result['source']
+
+
+@pytest.mark.parametrize('state', ['partial_failed', 'completed'])
+def test_aqsp_bridge_projects_current_run_separately_without_changing_quote_or_plan(tmp_path, monkeypatch, state) -> None:
+    payload = _snapshot('2026-07-14')
+    payload['source'].update(task_id='intraday', status='fresh')
+    payload['recommendation_gate'] = {'recommendation_allowed': True, 'status': 'ready', 'reasons': []}
+    payload['variant_suite'] = {'end_date': '2026-07-13', 'variant_count': 24,
+                               'refresh_status': 'staged', 'refresh_generated_at': '2026-07-14T22:00:00+08:00',
+                               'refresh_end_date': '2026-07-14', 'profiles_staged': 6, 'profiles_total': 24}
+    path = _write_single(tmp_path, payload)
+    original = path.read_bytes()
+    status_path = tmp_path / 'intraday.json'
+    status_path.write_text(json.dumps({'status': state, 'task_id': 'intraday',
+                                     'updated_at': '2026-07-14T14:00:00+08:00', 'reason': '合成运行事件'}))
+    monkeypatch.setenv('AQSP_RESEARCH_SURFACE_SNAPSHOT', str(path))
+    monkeypatch.setenv('AQSP_INTRADAY_STATUS', str(status_path))
+    result = client.get('/api/aqsp/snapshot').json()['data']
+    assert result['source']['status'] == 'fresh' and result['source']['run_status'] == state
+    assert result['source']['run_detail'] == '合成运行事件'
+    assert result['candidates'][0]['score'] == payload['candidates'][0]['score']
+    assert result['recommendation_gate']['recommendation_allowed'] is (state == 'completed')
+    assert result['variant_suite']['end_date'] == '2026-07-13'
+    assert result['variant_suite']['refresh_status'] == 'staged'
+    assert aqsp_bridge.snapshot_payload()['source'] == result['source']
+    assert path.read_bytes() == original
+
+
+def test_aqsp_bridge_does_not_replace_newer_run_with_older_sidecar(tmp_path, monkeypatch) -> None:
+    payload = _snapshot('2026-07-14')
+    payload['source'].update(task_id='intraday', status='fresh', run_status='completed',
+                             run_updated_at='2026-07-14T14:30:00+08:00')
+    path = _write_single(tmp_path, payload)
+    state = tmp_path / 'intraday.json'
+    state.write_text(json.dumps({'status': 'failed', 'task_id': 'intraday', 'updated_at': '2026-07-14T14:00:00+08:00'}))
+    monkeypatch.setenv('AQSP_RESEARCH_SURFACE_SNAPSHOT', str(path))
+    monkeypatch.setenv('AQSP_INTRADAY_STATUS', str(state))
+    assert client.get('/api/aqsp/snapshot').json()['data']['source']['run_status'] == 'completed'

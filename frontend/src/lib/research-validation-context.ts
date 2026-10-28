@@ -7,11 +7,25 @@ import { isAqspSnapshotStale } from "./snapshot-freshness";
 // Matches candidate_observation.research/current_evidence; this is display context,
 // never a substitute for the authoritative workspace's available/entry_blocked.
 const CURRENT_SOURCE_STATES = new Set(["fresh", "current", "realtime", "实时", "新鲜"]);
+const REFRESH_STATES = new Map(Object.entries({ waiting: "当日验证等待中", staged: "当日验证分段进行中", completed: "当日验证运行已结束",
+  timed_out: "当日验证本轮超时", skipped_lock: "当日验证等待运行资源", rejected: "当日验证本轮未被接纳", failed: "当日验证本轮失败" }));
+const SOURCE_RUN_STATES = new Map(Object.entries({ running: "研究任务进行中", failed: "研究任务失败", error: "研究任务失败", partial_failed: "研究任务部分失败",
+  completed: "研究任务已结束", success: "研究任务已结束", ok: "研究任务已结束", skipped: "研究任务本轮跳过" }));
+
+export interface ResearchRunContext {
+  status: string;
+  detail: string;
+  generatedAt: string;
+  endDate: string;
+  progress: string;
+}
 
 export interface ResearchValidationContext {
   historical: boolean;
   summary: string;
   history: { date: string; status: string; detail: string };
+  refresh: ResearchRunContext | null;
+  sourceRun: ResearchRunContext | null;
   candidate: { date: string; discussion: string; validation: string; sourceTime: string };
   recommendation: { status: string; reasons: readonly string[] };
   gaps: readonly string[];
@@ -49,6 +63,41 @@ export function researchValidationContext(
     const timestamp = Date.parse(value);
     return Number.isFinite(timestamp) && (allowFuture || timestamp <= now);
   };
+  const sourceDay = (value: string | undefined): string => validTimestamp(value)
+    ? new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(value!))
+    : "";
+  const refresh = historical ? null : (() => {
+    const day = sourceDay(suite?.refresh_generated_at);
+    const endDate = validDate(suite?.refresh_end_date) ? suite.refresh_end_date : "";
+    const base = { generatedAt: day ? suite!.refresh_generated_at! : "", endDate: endDate || "未记录", progress: "" };
+    if (!day || !endDate) return { ...base, status: "当日验证进度待核实", detail: "刷新时点或目标截至日未取得、无效或在未来；不能判断今日验证是否已运行，历史结果仍单独保留。" };
+    if (day !== snapshot.selected_date || endDate !== snapshot.selected_date) return {
+      ...base, status: day < snapshot.selected_date && endDate < snapshot.selected_date ? "历史验证刷新记录" : "验证刷新日期不匹配",
+      detail: `这条运行记录属于 ${day}，目标截至 ${endDate}；不能代表 ${snapshot.selected_date} 的验证进度。`,
+    };
+    const staged = suite?.profiles_staged;
+    const total = suite?.profiles_total;
+    const progress = Number.isInteger(staged) && Number.isInteger(total) && staged! >= 0 && total! > 0 && staged! <= total!
+      ? `${staged}/${total} 组策略配置已暂存；不是候选覆盖数，也不代表验证通过。` : "";
+    const status = REFRESH_STATES.get(suite?.refresh_status || "") || "当日验证运行状态未知";
+    const detail = [suite?.refresh_detail, progress, "运行进度与历史结果分开；运行结束不等于这只候选已覆盖或正式推荐已放行。"].filter(Boolean).join(" ");
+    return { ...base, progress, status, detail };
+  })();
+  const sourceRun = historical || !(snapshot.source.run_status || snapshot.source.run_updated_at || snapshot.source.run_detail) ? null : (() => {
+    const day = sourceDay(snapshot.source.run_updated_at);
+    const base = { generatedAt: day ? snapshot.source.run_updated_at! : "", endDate: "", progress: "" };
+    if (!day) return { ...base, status: "研究任务状态待核实", detail: "运行事件时点缺失、无效或在未来，不能作为今日任务完成或行情有效的依据。" };
+    if (day !== snapshot.selected_date) return { ...base, status: day < snapshot.selected_date ? "历史研究任务记录" : "研究任务日期不匹配", detail: `运行事件属于 ${day}，不能代表 ${snapshot.selected_date} 的研究状态。` };
+    const status = SOURCE_RUN_STATES.get(snapshot.source.run_status || "") || "研究任务状态未知";
+    return { ...base, status, detail: [snapshot.source.run_detail, "任务运行状态不等于行情新鲜度，也不代替正式推荐门禁。"].filter(Boolean).join(" ") };
+  })();
+  // Runtime uncertainty is separate from quote freshness. A ready gate from an
+  // older snapshot must not hide a failed or unverified current run record.
+  const sourceRunUnavailable = Boolean(sourceRun && (
+    sourceDay(snapshot.source.run_updated_at) !== snapshot.selected_date ||
+    !SOURCE_RUN_STATES.has(snapshot.source.run_status || "") ||
+    ["failed", "error", "partial_failed"].includes(snapshot.source.run_status || "")
+  ));
   const sourceIssues: string[] = [];
   if (!currentSource(snapshot.source.status) || snapshot.source.lag_days > 0) sourceIssues.push("总体行情来源未确认为当前有效状态。");
   if (candidate && !currentSource(candidate.freshness || snapshot.source.status)) sourceIssues.push("这只候选的来源未确认为当前有效状态。");
@@ -72,6 +121,7 @@ export function researchValidationContext(
     : "这只候选尚无当日实验池覆盖记录。");
   if (!historical && stale) gaps.push("当前研究已过期，需先取得有效数据。");
   if (!historical) gaps.push(...sourceIssues);
+  if (sourceRunUnavailable && sourceRun) gaps.push(`${sourceRun.status}；先核对本研究日的有效运行记录。`);
   if (chain?.blocker && !gaps.includes(chain.blocker)) gaps.push(chain.blocker);
 
   const historyStatus = historyFuture ? "日期不匹配" : !hasResults ? "结果待补" : historyCurrent ? "当日结果已生成" : "历史结果已生成";
@@ -83,6 +133,8 @@ export function researchValidationContext(
     ? "这里只回看当时依据；判断当前机会，请返回今日研究后重新核对。"
     : stale || sourceUnavailable
       ? "先刷新有效研究与行情；恢复前仅核对缺口，不据此采用入场条件。"
+      : sourceRunUnavailable
+        ? "先核对本研究日的有效运行记录；可继续看 AI 的支持、反证与缺证，暂不据此采用入场条件。"
       : !candidate
         ? "返回今日候选查看已有研究对象，也可保留自选等待入选。"
         : presentation === "ready"
@@ -94,12 +146,14 @@ export function researchValidationContext(
     : "本候选参数身份未记录；历史变体也未提供可比对的参数指纹。";
   return {
     historical,
-    summary: historical
+    summary: (historical
       ? `${snapshot.selected_date} 的历史候选记录；以下不表示当前推荐状态。`
       : historyDate && historyDate < snapshot.selected_date
         ? `历史策略结果截至 ${historyDate}；${snapshot.selected_date} 的候选研究和验证需分别核对。`
-        : `${snapshot.selected_date} 的候选研究、实验覆盖与正式推荐资格分别如下。`,
+        : `${snapshot.selected_date} 的候选研究、实验覆盖与正式推荐资格分别如下。`) + (refresh ? ` ${refresh.status}。` : ""),
     history: { date: historyDate || "未记录", status: historyStatus, detail: historyDetail },
+    refresh,
+    sourceRun,
     candidate: {
       date: snapshot.selected_date,
       discussion: !candidate ? "无同日候选记录" : discussionRecorded ? "同日多空讨论已记录" : "同日多空讨论待补",
@@ -111,6 +165,7 @@ export function researchValidationContext(
         : presentation === "unavailable" ? "推荐状态未取得"
           : stale ? "依据失效 · 仅供观察"
             : sourceUnavailable ? "依据待核实 · 仅供观察"
+            : sourceRunUnavailable ? "研究任务待核实 · 仅供观察"
             : presentation === "ready" ? "原门禁已放行 · 仍需人工复核" : "正式推荐未放行",
       reasons,
     },

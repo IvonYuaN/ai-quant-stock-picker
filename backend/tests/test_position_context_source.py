@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+import json
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -43,14 +44,15 @@ def position_store(tmp_path, monkeypatch):
 def _upstream(monkeypatch, *, membership=None, sector=None):
     calls = []
     members = [{"f12": "600000", "f100": "银行", "f124": STAMP}] if membership is None else membership
-    sectors = [{"f14": "银行", "f3": -2, "f124": STAMP}] if sector is None else sector
+    sectors = [{"f14": "银行", "f3": -200, "f124": STAMP}] if sector is None else sector
 
     class Response:
         def __init__(self, rows):
             self.rows = rows
+            self.content = json.dumps({"data": {"total": len(rows), "diff": rows}}).encode()
 
-        def json(self):
-            return {"data": {"diff": self.rows}}
+        def raise_for_status(self):
+            pass
 
     def fetch(url, **kwargs):
         calls.append((url, kwargs))
@@ -77,6 +79,8 @@ def test_position_context_reaches_joint_weakness_when_portfolio_has_no_industry(
     service.check_positions(notify=False)
     assert len(calls) == 2  # batched source + board; second check uses shared cache
     assert calls[0][1]["params"]["secids"] == "1.600000"
+    assert calls[1][0] == source._INDUSTRY_URL
+    assert calls[1][1]["params"] == {"key": "f3,f104,f105,f124", "code": "m:90+t:2"}
     assert all(call[1]["timeout"] == source.PositionContextSourceConfig().timeout_seconds for call in calls)
     assert "industry" not in pf._load()["holdings"][0]
 
