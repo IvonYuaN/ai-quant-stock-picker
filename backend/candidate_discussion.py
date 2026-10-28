@@ -81,7 +81,7 @@ defer动作的price_ref必须为null，不建立到价条件。
 不杜撰支撑、目标价、持仓和成本。
 只复述已给出的数字事实及其单位和来源日期，不自行计算新的百分比或价差，不预测涨跌幅。
 没有输入依据时保留缺口；不要新设价格容差、等待分钟数、放量倍数或仓位比例。
-entry_blocked为true时只能解释暂缓/补证：不得把入场路线标为investigate，不给入场动作。
+entry_blocked为true时只能解释暂缓/补证：不得把入场路线标为investigate，不给入场动作。仅保留旧候选、未进入本轮新研究时同样处理；原有已采用观察仍按独立的当前依据检查，不因覆盖提示本身失效。
 给新手简短结论、理由、下一步条件和失效条件；不输出隐藏推演过程。
 review_context给出已采用路线、原条件及采用时与现在的差别。原依据只作历史对比，不能当作当前事实或行动价格。
 已采用时解释继续等待、调整或暂缓的依据；普通报价刷新不代表必须重选，不自动修改已采用条件。
@@ -244,8 +244,11 @@ async def run_discussion(code: str, expected_version: int, expected_evidence_ver
             raise resources.CandidateConflict('已有策略讨论进行中，请稍后重试') from exc
         value = await asyncio.to_thread(resources.workspace, code)
         resources.checked(value, expected_version, expected_evidence_version)
+        discussion_entry_blocked = value['new_entry_blocked']
         review_context = candidate_review_context(value)
-        model_value = {**value, 'evidence': model_review_evidence(value['evidence'], review_context), 'review_context': review_context}
+        model_value = {**value, 'entry_blocked': discussion_entry_blocked,
+                       'evidence': model_review_evidence(value['evidence'], review_context),
+                       'review_context': review_context}
         with advisory_lock(resources.store_path()):
             data = resources.load_store()
             row = resources.new_row(data, code)
@@ -269,7 +272,7 @@ async def run_discussion(code: str, expected_version: int, expected_evidence_ver
                     raise ValueError('所选型号不在当前提供商目录，请重新选择')
                 endpoint = transport.ModelEndpoint(endpoint.url, endpoint.key, server_model, endpoint.anthropic)
             common = {'symbol': code, 'name': value['name'], 'evidence': model_value['evidence'], 'price_refs': value['price_refs'], 'review_context': review_context,
-                      'entry_blocked': value['entry_blocked'], 'no_orders': True, 'no_position': True}
+                      'entry_blocked': discussion_entry_blocked, 'no_orders': True, 'no_position': True}
             def progress(stage: str) -> None:
                 _progress(code, run_id, stage)
                 if on_progress:
@@ -307,7 +310,7 @@ async def run_discussion(code: str, expected_version: int, expected_evidence_ver
                       'resource_version': version, 'evidence_version': value['evidence_version'], 'research_date': value['research_date'],
                       'quote_as_of': value['evidence']['quote']['as_of'], 'price_refs': value['price_refs'], 'evidence_snapshot': value['evidence'],
                       'review_context': review_context,
-                      'entry_blocked': value['entry_blocked'], 'rounds': rounds, 'summary': summary, 'summary_issue': issue,
+                      'entry_blocked': discussion_entry_blocked, 'rounds': rounds, 'summary': summary, 'summary_issue': issue,
                       'elapsed_seconds': round(time.monotonic() - started, 2),
                       'notice': '同一模型角色可能共享偏差；仅供人工复核，不覆盖评分、硬风险或自动买卖。到价后仍需核验其他条件。'}
             latest = await asyncio.to_thread(resources.workspace, code)
@@ -318,7 +321,8 @@ async def run_discussion(code: str, expected_version: int, expected_evidence_ver
                 if row['version'] != version or row.get('analysis', {}).get('run_id') != run_id or resources.ownership(code)['status'] != 'unowned':
                     raise resources.CandidateConflict('讨论期间候选观察或持仓状态已变化，旧结果未保存')
                 locked_value = resources.current_evidence(code, latest['quote'], current=now_shanghai())
-                if not locked_value['available'] or locked_value['evidence_version'] != expected_evidence_version:
+                if (not locked_value['available'] or locked_value['evidence_version'] != expected_evidence_version
+                        or locked_value['new_entry_blocked'] != discussion_entry_blocked):
                     raise resources.CandidateConflict('保存讨论时研究或风险依据已变化，旧结果未保存')
                 row['discussion'] = result
                 row['analysis'] = {'status': result['status'], 'stage': 'finished', 'run_id': run_id}

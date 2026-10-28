@@ -96,7 +96,7 @@ export function DecisionPanel({ snapshot }: { snapshot: AqspSnapshot }) {
       <SectionHeader
         icon={decision?.canAct ? ClipboardCheck : OctagonPause}
         title="今天能不能买"
-        description="综合「筛选是否放行 · 候选质量 · 历史命中 · 台账新鲜度」一句话结论"
+        description="综合筛选门禁、当轮候选研究、策略健康与台账时效，区分本轮新研究和保留观察"
         count={
           <Badge tone={mode === "act" ? "ok" : "warn"}>
             {mode === "act" ? "可动" : "仅观察"}
@@ -139,7 +139,7 @@ export function DecisionPanel({ snapshot }: { snapshot: AqspSnapshot }) {
                 <th className="aq-num">评分</th>
                 <th>状态</th>
                 <th>关联策略</th>
-                <th>{mode === "act" ? "下一步" : "观察动作"}</th>
+                <th>下一步 / 观察动作</th>
               </tr>
             </thead>
             <tbody>
@@ -150,9 +150,9 @@ export function DecisionPanel({ snapshot }: { snapshot: AqspSnapshot }) {
                     <span className="aq-decision-cand-name">{row.name}</span>
                   </td>
                   <td className="aq-num">{row.score}</td>
-                  <td>{statusLabel(row.status)}</td>
+                  <td>{row.statusMessage ? <Tag tone="warn">{row.statusMessage}</Tag> : statusLabel(row.status)}</td>
                   <td>{row.strategies || "—"}</td>
-                  <td>{row.nextStep || "—"}</td>
+                  <td>{row.invalidated ? "已采用观察需重新复核" : row.coverageNote || row.nextStep || "—"}</td>
                 </tr>
               ))}
             </tbody>

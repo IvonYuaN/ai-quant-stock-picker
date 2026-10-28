@@ -155,6 +155,37 @@ export const decisionContract: Record<string, boolean> = {
   "projectCandidates 按评分降序":
     projectCandidates(snapshotFixture()).map((c) => c.symbol).join("|") === "600519|000858",
   "projectCandidates 空快照安全": projectCandidates(snapshotFixture({ candidates: [] })).length === 0,
+  "缺少本轮研究的旧候选只作为观察": (() => {
+    const snapshot = snapshotFixture();
+    snapshot.candidates = snapshot.candidates.map((row, index) => index === 0
+      ? { ...row, coverage_note: "本轮无新研究" }
+      : row);
+    const view = buildDecision(snapshot, healthyPerf(), "");
+    return view.candidates[0].actionable && !view.candidates[1].actionable && view.canAct && view.headline.includes("1 个本轮候选");
+  })(),
+  "仅有旧候选不能显示可动": (() => {
+    const snapshot = snapshotFixture();
+    snapshot.candidates = snapshot.candidates.map((row) => ({ ...row, coverage_note: "本轮无新研究" }));
+    const view = buildDecision(snapshot, healthyPerf(), "");
+    return !view.canAct && tableMode(snapshot, healthyPerf()) === "observe"
+      && view.blockers.some((blocker) => blocker.kind === "coverage");
+  })(),
+  "明确失效的候选不能推进": (() => {
+    const snapshot = snapshotFixture();
+    snapshot.candidates = snapshot.candidates.map((row) => ({ ...row, research_status: "日内已失效" }));
+    snapshot.candidate_changes = [{ symbol: "600519", display_name: "贵州茅台", status: "invalidated" }];
+    const view = buildDecision(snapshot, healthyPerf(), "");
+    return !view.canAct && view.candidates.every((candidate) => !candidate.actionable)
+      && tableMode(snapshot, healthyPerf()) === "observe";
+  })(),
+  "未失效候选仍可推进且失效行只观察": (() => {
+    const snapshot = snapshotFixture();
+    snapshot.candidate_changes = [{ symbol: "600519", display_name: "贵州茅台", status: "invalidated" }];
+    const view = buildDecision(snapshot, healthyPerf(), "");
+    return view.canAct && view.candidates.find((candidate) => candidate.symbol === "600519")?.actionable === false
+      && view.candidates.find((candidate) => candidate.symbol === "600519")?.statusMessage.includes("已明确失效") === true
+      && view.candidates.find((candidate) => candidate.symbol === "000858")?.actionable === true;
+  })(),
 
   // 走门放行 + 健康 → 可动
   "gate放行+健康+有候选 ⇒ canAct": buildDecision(snapshotFixture(), healthyPerf(), "").canAct === true,

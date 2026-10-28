@@ -186,7 +186,12 @@ def research(code: str, current: datetime) -> tuple[dict[str, Any], list[str]]:
         if not candidate.get('data_source') or not candidate.get('data_timestamp_source'):
             issues.append('候选研究来源信息不完整')
         gate = snap.get('recommendation_gate') or {}
-        result = {'candidate': candidate, 'date': snap['selected_date'], 'generated_at': snap['generated_at'],
+        candidate_change = next((row for row in snap.get('candidate_changes', [])
+                                 if row.get('symbol') == code and row.get('status') == 'invalidated'), None)
+        invalidated = candidate.get('research_status') == '日内已失效' or candidate_change is not None
+        result = {'candidate': candidate,
+                  'candidate_invalidation': (candidate_change or {'status': 'invalidated'}) if invalidated else None,
+                  'date': snap['selected_date'], 'generated_at': snap['generated_at'],
                   'stale_after': snap.get('stale_after'), 'source': snap.get('source'),
                   'parameter_snapshot': snap.get('parameter_snapshot'),
                   'recommendation_gate': gate,
@@ -209,10 +214,11 @@ def evidence_basis(report: dict[str, Any], evidence: dict[str, Any],
     Snapshot publication/expiry and source refresh times are checked separately
     on every read. They are not a new thesis. All candidate economic fields,
     including technical/reference prices and news publication dates, remain in
-    the identity; only its data refresh timestamp is omitted.
+    the identity; refresh time and display-only coverage notes are omitted.
+    Source validity and the current risk gate are checked independently.
     """
     candidate = {key: value for key, value in (report.get('candidate') or {}).items()
-                 if key != 'data_fetched_at'}
+                 if key not in {'data_fetched_at', 'coverage_note'}}
     parts = {
         'research_date': report.get('date'),
         'parameters': report.get('parameter_snapshot'),
@@ -225,6 +231,8 @@ def evidence_basis(report: dict[str, Any], evidence: dict[str, Any],
         'directions': {key: {field: evidence[key].get(field) for field in ('status', 'source', 'industry')}
                        for key in ('market', 'sector', 'stock')},
     }
+    if report.get('candidate_invalidation'):
+        parts['candidate_invalidation'] = True
     return {'schema': 'candidate-basis-v2', **{key: evidence_digest(value) for key, value in parts.items()}}
 
 
@@ -269,9 +277,20 @@ def current_evidence(code: str, quote: dict[str, Any], *, current: datetime) -> 
     evidence = {'research': report, 'quote': {'price': quote.get('price'), 'change_pct': quote.get('change_pct'), 'as_of': stamp, 'source': quote.get('source') or '腾讯行情'},
                 'market': market_fact, 'sector': sector_fact, 'stock': stock_fact}
     basis = evidence_basis(report, evidence, own, quote, not bool(quote_issue))
+    coverage_note = str((report.get('candidate') or {}).get('coverage_note') or '')
+    candidate_invalidation = report.get('candidate_invalidation')
+    entry_reason = (
+        '候选已有明确失效状态，旧观察需复核，不能采用新的入场条件' if candidate_invalidation else
+        coverage_note if coverage_note else
+        '当前研究门禁阻塞，先补齐研究验证或暂缓' if entry_blocked else ''
+    )
     return {'symbol': code, 'name': report.get('candidate', {}).get('display_name') or quote.get('name') or code,
             'research_date': report.get('date'), 'evidence_version': evidence_digest(basis), 'evidence_basis': basis, 'ownership': own,
-            'available': not issues, 'entry_blocked': entry_blocked, 'issues': issues, 'quote': quote, 'quote_issue': quote_issue,
+            'available': not issues, 'entry_blocked': entry_blocked,
+            'new_entry_blocked': entry_blocked or bool(coverage_note) or bool(candidate_invalidation),
+            'new_entry_block_reason': entry_reason, 'coverage_note': coverage_note,
+            'candidate_invalidation': candidate_invalidation,
+            'issues': issues, 'quote': quote, 'quote_issue': quote_issue,
             'evidence': evidence, 'price_refs': prices}
 
 
@@ -390,8 +409,12 @@ def adopt(code: str, body: dict[str, Any]) -> dict[str, Any]:
         choice, index, comparator = body['choice'], body.get('action_index'), body.get('comparator')
         if choice not in {'pullback', 'confirmation', 'defer'}:
             raise ValueError('未知候选路线')
-        if value['entry_blocked'] and choice != 'defer':
-            raise CandidateConflict('当前研究门禁阻塞，只能暂缓或补证，不能采用入场观察')
+        if refreshed['new_entry_blocked'] and choice != 'defer' and refreshed['candidate_invalidation']:
+            raise CandidateConflict(refreshed['new_entry_block_reason'])
+        if refreshed['coverage_note'] and choice != 'defer':
+            raise CandidateConflict('本轮无新研究，保留已有观察；补齐本轮依据后再采用新的入场条件')
+        if value['new_entry_blocked'] and choice != 'defer':
+            raise CandidateConflict(value['new_entry_block_reason'] or '当前研究门禁阻塞，只能暂缓或补证，不能采用入场观察')
         action, ref = None, None
         if choice == 'defer':
             if index is not None or comparator is not None:
@@ -457,6 +480,7 @@ def observation(value: dict[str, Any], row: dict[str, Any], *, current: datetime
         state, title, detail, reason = 'evidence_unavailable', '当前依据不可用，不能判断到价', '；'.join(value['issues']), 'source'
     elif watch.get('evidence_version') != value['evidence_version']:
         labels = {'research_date': '研究日期', 'parameters': '策略参数版本', 'candidate': '个股评分或研究证据',
+                  'candidate_invalidation': '候选明确失效',
                   'risk_gate': '研究风险门禁', 'research_source': '研究来源', 'debate': '研究讨论结论',
                   'ownership': '持仓归属', 'quote_source': '行情来源', 'directions': '大盘、板块或个股方向'}
         previous, latest = watch.get('evidence_basis') or {}, value.get('evidence_basis') or {}

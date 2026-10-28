@@ -150,7 +150,7 @@ function CandidateObservationWorkspace({ symbol, researchDate, historical }: { s
     return <div key={index} className="aq-candidate-condition"><div className="aq-candidate-condition-price">{reference ? <strong>{reference.price.toFixed(2)} 元</strong> : <span>{row.choice === "defer" ? "不建立到价条件" : "价位依据待补"}</span>}</div>
       <p><b>先满足什么</b>{row.condition}</p><p><b>何时取消或重核</b>{row.invalidation}</p>
       {reference ? <small>{reference.label} · {reference.source} · {formatEvidenceTime(reference.as_of)}</small> : null}
-      {row.choice !== "defer" ? <button type="button" className="aq-btn" disabled={locked || analyzing || !!workspaceIssue || !!currentIssue || data?.entry_blocked || !reference || !routeReady} onClick={() => choose(row.choice, index)}>采用这项条件</button> : null}
+      {row.choice !== "defer" ? <button type="button" className="aq-btn" disabled={locked || analyzing || !!workspaceIssue || !!currentIssue || data?.new_entry_blocked || !reference || !routeReady} onClick={() => choose(row.choice, index)}>采用这项条件</button> : null}
       {row.choice !== "defer" && !routeReady ? <p className="aq-note">这条路线当前不宜或依据待补，补齐依据后重新分析再采用。</p> : null}
     </div>;
   }
@@ -176,6 +176,7 @@ function CandidateObservationWorkspace({ symbol, researchDate, historical }: { s
         </select></label><button type="button" className="aq-btn" disabled={busy || catalogBusy} onClick={() => void loadModels(true)}>{catalogBusy ? "读取中…" : "刷新可用型号"}</button>{selectedUnavailable ? <p role="status">此前型号已不在当前目录，请重新选择；未自动切换。</p> : catalog?.listed === false ? <p role="status">默认型号未在当前目录中，请核对型号设置。</p> : null}{catalogError || catalog?.issue ? <p role="status">{catalogError || catalog?.issue}</p> : null}<p className="aq-note">型号可能迭代；本次分析使用所选接口配置，不改变确定性评分。</p></details>
       </div>
       {data.entry_blocked ? <p role="status" className="aq-note">当前研究门禁阻塞。可以分析为什么等待或暂缓，暂不建立入场到价条件。</p> : null}
+      {!data.entry_blocked && data.new_entry_blocked ? <p role="status" className="aq-note">{data.new_entry_block_reason || data.coverage_note || "当前依据不能建立新的入场条件。已有观察继续按原依据核对变化。"}</p> : null}
       {analyzing ? <div role="status"><p>{stages[discussing ? stage : data.analysis.stage] || "后台正在分析；刷新可恢复当前进度。"}</p>{discussing ? <button type="button" className="aq-btn" onClick={() => controller.current?.abort()}>停止等待本次分析</button> : null}</div> : null}
       {actionError ? <p role="alert">{actionError}</p> : null}
       {result ? <section className="aq-candidate-discussion" aria-label="AI 入场条件比较"><details key={`${result.id}:${adoptedResult}`} open={!adoptedResult}><summary>{adoptedResult ? "查看采用时的 AI 比较" : "查看 AI 入场条件比较"}</summary><p className="aq-note">{result.mode} · {result.model} · {formatEvidenceTime(result.generated_at)} · 研究日期 {result.research_date || "待核对"}</p>
