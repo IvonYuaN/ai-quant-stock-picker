@@ -8,6 +8,7 @@ import re
 from typing import Any
 from model_source_time import trusted_source_stamps, without_source_times
 from strategy_direction import direction_identity
+from position_route_review import evidence_digest
 
 
 CANDIDATE_CHANGES = {
@@ -40,6 +41,34 @@ def _direction(evidence: dict[str, Any]) -> dict[str, Any]:
 def _quote_facts(evidence: dict[str, Any]) -> dict[str, Any]:
     quote = evidence.get('quote') or {}
     return {key: quote.get(key) for key in ('price', 'change_pct', 'as_of', 'source')}
+
+
+def candidate_research_identity(candidate: dict[str, Any]) -> dict[str, Any]:
+    """Latest displayed close is a quote tick, not a frozen research premise."""
+    result = {key: deepcopy(value) for key, value in candidate.items()
+              if key not in {'data_fetched_at', 'coverage_note'} and not (key == 'technical_basis' and value is None)}
+    if isinstance(result.get('technical_metrics'), list):
+        result['technical_metrics'] = [row for row in result['technical_metrics']
+                                       if not isinstance(row, dict) or row.get('key') != 'close']
+    return result
+
+
+def comparable_candidate_basis(watch: dict[str, Any]) -> dict[str, Any]:
+    """Normalize verified legacy close-inclusive identity without rewriting intent.
+
+    Missing or mismatched saved evidence stays unverified. Only the old exact
+    candidate hash can be mapped to its quote-independent equivalent; all other
+    basis parts and all frozen technical/risk facts remain unchanged.
+    """
+    basis = deepcopy(watch.get('evidence_basis') or {})
+    candidate = (((watch.get('evidence_snapshot') or {}).get('research') or {}).get('candidate') or {})
+    identity = watch.get('evidence_identity') or {}
+    if (basis.get('schema') == 'candidate-basis-v3' and candidate.get('symbol')
+            and candidate.get('symbol') == identity.get('symbol')):
+        legacy = {key: value for key, value in candidate.items() if key not in {'data_fetched_at', 'coverage_note'}}
+        if basis.get('candidate') == evidence_digest(legacy):
+            basis['candidate'] = evidence_digest(candidate_research_identity(candidate))
+    return basis
 
 
 def _change(category: str, label: str, before: Any, after: Any) -> dict[str, Any]:
@@ -85,7 +114,7 @@ def candidate_review_context(value: dict[str, Any]) -> dict[str, Any]:
     context.update(status='adopted', original=original)
     if not original['snapshot_complete']:
         context['missing_evidence'].append('原记录未保存采用时完整证据，只能核对已保存的路线、条件与身份，不能还原当时行情或评分')
-    previous, latest = watch.get('evidence_basis') or {}, value.get('evidence_basis') or {}
+    previous, latest = comparable_candidate_basis(watch), value.get('evidence_basis') or {}
     if previous.get('schema') != latest.get('schema'):
         context['missing_evidence'].append('原依据版本缺失或不兼容，实质变化无法完整核验')
     else:

@@ -943,3 +943,162 @@ def test_compact_index_snapshot_keeps_multi_agent_debate_evidence() -> None:
     assert compacted.debates[0].agent_views == ()
     assert compacted.debates[0].round_summaries == ()
     assert compacted.debates[0].uncertainty_points == ()
+
+
+def _technical_basis_payload() -> dict[str, object]:
+    return {
+        "source": "eastmoney",
+        "as_of": "2026-07-11T09:10:00+08:00",
+        "precision": "timestamp",
+        "timestamp_source": "bar_time",
+        "research_date": "2026-07-11",
+        "parameter_snapshot": {
+            "version": "v1",
+            "effective_from": "2026-07-01",
+            "fingerprint": "a" * 64,
+        },
+        "facts": [
+            {
+                "key": "volume_ratio",
+                "value": 1.42,
+                "unit": "ratio",
+                "period": "source_defined",
+            }
+        ],
+    }
+
+
+def test_home_snapshot_retains_original_indicator_basis_when_quote_refreshes_and_index_roundtrips(
+    tmp_path,
+) -> None:
+    basis = home_snapshot.technical_basis_from_dict(_technical_basis_payload())
+    original = replace(
+        _candidate("600001"),
+        technical_basis=basis,
+        technical_metrics=(
+            home_snapshot.HomeSnapshotTechnicalMetric("close", "现价", "12.00"),
+            home_snapshot.HomeSnapshotTechnicalMetric("volume_ratio", "量比", "1.42x"),
+        ),
+        data_source="eastmoney",
+        data_fetched_at=basis.as_of,
+    )
+    latest_basis = replace(
+        basis,
+        as_of="2026-07-11T09:20:00+08:00",
+        facts=(
+            home_snapshot.HomeSnapshotTechnicalFact(
+                "volume_ratio", 9.0, "ratio", "source_defined"
+            ),
+        ),
+    )
+    latest = replace(
+        original,
+        technical_basis=latest_basis,
+        data_fetched_at=latest_basis.as_of,
+        data_source="latest_quote_source",
+        technical_metrics=(
+            home_snapshot.HomeSnapshotTechnicalMetric("close", "现价", "13.00"),
+            home_snapshot.HomeSnapshotTechnicalMetric("volume_ratio", "量比", "9.00x"),
+        ),
+    )
+    first = _snapshot(candidates=(original,), stale_after="2026-07-12T09:30:00+08:00")
+    refreshed = replace(first, candidates=(latest,))
+    target = tmp_path / "home.json"
+    write_home_dashboard_snapshot(target, first)
+    write_home_dashboard_snapshot(target, refreshed)
+    loaded = load_home_dashboard_snapshot(target)
+    assert loaded is not None
+    candidate = loaded.candidates[0]
+    assert candidate.technical_basis == basis
+    assert candidate.data_fetched_at == latest_basis.as_of
+    assert candidate.data_source == "latest_quote_source"
+    assert {metric.key: metric.value for metric in candidate.technical_metrics} == {
+        "close": "13.00",
+        "volume_ratio": "1.42x",
+    }
+    index = HomeSnapshotIndex(
+        schema_version=HOME_SNAPSHOT_INDEX_SCHEMA_VERSION,
+        generated_at=loaded.generated_at,
+        stale_after=loaded.stale_after,
+        selected_date=loaded.selected_date,
+        days=(HomeSnapshotDay(loaded.selected_date, loaded),),
+    )
+    index_path = tmp_path / "index.json"
+    write_home_snapshot_index(index_path, index)
+    restored = load_home_snapshot_for_date(index_path, loaded.selected_date)
+    assert restored is not None and restored.candidates[0].technical_basis == basis
+    legacy = home_snapshot._refresh_frozen_candidate(
+        replace(original, technical_basis=None), latest, same_parameters=True
+    )
+    assert legacy.technical_basis is None
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("source", ""),
+        ("as_of", "2026-07-11T09:10:00"),
+        ("research_date", "2026-7-11"),
+        ("timestamp_source", ""),
+        ("parameter_snapshot", None),
+        ("facts", []),
+    ],
+)
+def test_home_snapshot_rejects_indicator_basis_when_source_contract_invalid(
+    field, value
+) -> None:
+    payload = _technical_basis_payload()
+    payload[field] = value
+    with pytest.raises(ValueError):
+        home_snapshot.technical_basis_from_dict(payload)
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("key", "close"),
+        ("value", True),
+        ("value", "1.42"),
+        ("value", float("nan")),
+        ("unit", "percent"),
+        ("period", "5_trading_days"),
+    ],
+)
+def test_home_snapshot_rejects_typed_indicator_fact_when_key_type_or_unit_invalid(
+    field, value
+) -> None:
+    payload = _technical_basis_payload()
+    payload["facts"][0][field] = value
+    with pytest.raises(ValueError):
+        home_snapshot.technical_basis_from_dict(payload)
+
+
+def test_home_snapshot_rejects_indicator_basis_when_fact_duplicated() -> None:
+    payload = _technical_basis_payload()
+    payload["facts"] *= 2
+    with pytest.raises(ValueError, match="duplicate"):
+        home_snapshot.technical_basis_from_dict(payload)
+
+
+@pytest.mark.parametrize("precision,source,stamp", [
+    ("day", "bar_date", "2026-07-11"), ("timestamp", "bar_time", "2026-07-11T09:10:00+08:00"),
+    ("timestamp", "vendor", "2026-07-11T09:10:00+08:00"),
+])
+def test_home_snapshot_accepts_original_source_precision_without_inventing_timestamp(precision, source, stamp) -> None:
+    payload = _technical_basis_payload()
+    payload.update(precision=precision, timestamp_source=source, as_of=stamp)
+    basis = home_snapshot.technical_basis_from_dict(payload)
+    assert basis.as_of == stamp and basis.precision == precision
+
+
+@pytest.mark.parametrize("precision,source,stamp", [
+    ("day", "received_at", "2026-07-11"), ("day", "bar_time", "2026-07-11"),
+    ("timestamp", "received_at", "2026-07-11T09:10:00+08:00"),
+    ("timestamp", "cache_write_time", "2026-07-11T09:10:00+08:00"),
+    ("timestamp", "bar_time", "2026-07-11"), ("unknown", "vendor", "2026-07-11"),
+])
+def test_home_snapshot_rejects_original_source_when_precision_or_time_kind_invalid(precision, source, stamp) -> None:
+    payload = _technical_basis_payload()
+    payload.update(precision=precision, timestamp_source=source, as_of=stamp)
+    with pytest.raises(ValueError):
+        home_snapshot.technical_basis_from_dict(payload)

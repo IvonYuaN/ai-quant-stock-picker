@@ -47,6 +47,88 @@ class HomeSnapshotTechnicalMetric:
     value: str
 
 
+TECHNICAL_FACT_SPECS = {
+    "ret5_pct": ("percent", "5_trading_days"),
+    "ret20_pct": ("percent", "20_trading_days"),
+    "volume_ratio": ("ratio", "source_defined"),
+    "rsi12": ("index", "12_trading_days"),
+    "macd_hist": ("index", "source_defined"),
+    "kdj_j": ("index", "source_defined"),
+    "bias20_pct": ("percent", "20_trading_days"),
+}
+
+
+@dataclass(frozen=True)
+class HomeSnapshotTechnicalFact:
+    """One typed research fact; it never supplies an actionable price."""
+
+    key: str
+    value: float
+    unit: str
+    period: str
+
+    def __post_init__(self) -> None:
+        if (
+            self.key not in TECHNICAL_FACT_SPECS
+            or (self.unit, self.period) != TECHNICAL_FACT_SPECS[self.key]
+        ):
+            raise ValueError("technical fact has an unsupported key, unit or period")
+        _number(self.value, "technical fact.value")
+
+
+@dataclass(frozen=True)
+class HomeSnapshotTechnicalBasis:
+    """Original source identity frozen with the research indicators, not quotes.
+
+    as_of is the original source timestamp. There is no claimed computation
+    timestamp: upstream research does not provide one independently.
+    """
+
+    source: str
+    as_of: str
+    precision: str
+    timestamp_source: str
+    research_date: str
+    parameter_snapshot: ParameterSnapshot
+    facts: tuple[HomeSnapshotTechnicalFact, ...]
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.source, str)
+            or not self.source.strip()
+            or not isinstance(self.timestamp_source, str)
+            or not self.timestamp_source.strip()
+        ):
+            raise ValueError("technical basis requires original source metadata")
+        if self.precision == "day":
+            _validate_date(self.as_of, "technical basis.as_of")
+            if self.timestamp_source != "bar_date":
+                raise ValueError("day technical basis requires bar_date source")
+        elif self.precision == "timestamp":
+            _parse_timestamp(self.as_of, "technical basis.as_of")
+            if self.timestamp_source not in {"bar_time", "vendor"}:
+                raise ValueError("timestamp technical basis requires original bar/vendor time")
+        else:
+            raise ValueError("technical basis requires explicit source precision")
+        _validate_date(self.research_date, "technical basis.research_date")
+        if (
+            not isinstance(self.parameter_snapshot, ParameterSnapshot)
+            or self.parameter_snapshot.effective_from > self.research_date
+        ):
+            raise ValueError("technical basis requires effective parameter identity")
+        if (
+            not isinstance(self.facts, tuple)
+            or not self.facts
+            or len(self.facts) > len(TECHNICAL_FACT_SPECS)
+            or any(
+                not isinstance(fact, HomeSnapshotTechnicalFact) for fact in self.facts
+            )
+        ):
+            raise ValueError("technical basis requires bounded typed facts")
+        if len({fact.key for fact in self.facts}) != len(self.facts):
+            raise ValueError("technical basis must not duplicate fact keys")
+
+
 @dataclass(frozen=True)
 class HomeSnapshotCandidate:
     """One bounded deterministic candidate card for the home page."""
@@ -62,6 +144,7 @@ class HomeSnapshotCandidate:
     score_breakdown: tuple[str, ...] = ()
     evidence_status: str = "证据不足"
     technical_metrics: tuple[HomeSnapshotTechnicalMetric, ...] = ()
+    technical_basis: HomeSnapshotTechnicalBasis | None = None
     data_source: str = ""
     data_fetched_at: str = ""
     data_timestamp_source: str = ""
@@ -1493,6 +1576,7 @@ def _candidate_from_dict(payload: object) -> HomeSnapshotCandidate:
             "score_breakdown",
             "evidence_status",
             "technical_metrics",
+            "technical_basis",
             "data_source",
             "data_fetched_at",
             "data_timestamp_source",
@@ -1533,6 +1617,7 @@ def _candidate_from_dict(payload: object) -> HomeSnapshotCandidate:
                 mapping.get("technical_metrics", ()), "candidate.technical_metrics"
             )
         ),
+        technical_basis=technical_basis_from_dict(mapping.get("technical_basis")),
         data_source=_optional_text(mapping.get("data_source"), "candidate.data_source"),
         data_fetched_at=_optional_text(
             mapping.get("data_fetched_at"), "candidate.data_fetched_at"
@@ -1541,7 +1626,9 @@ def _candidate_from_dict(payload: object) -> HomeSnapshotCandidate:
             mapping.get("data_timestamp_source"), "candidate.data_timestamp_source"
         ),
         freshness=_optional_text(mapping.get("freshness"), "candidate.freshness"),
-        coverage_note=_optional_text(mapping.get("coverage_note"), "candidate.coverage_note"),
+        coverage_note=_optional_text(
+            mapping.get("coverage_note"), "candidate.coverage_note"
+        ),
         news_catalyst_summary=_optional_text(
             mapping.get("news_catalyst_summary"), "candidate.news_catalyst_summary"
         ),
@@ -1555,6 +1642,49 @@ def _candidate_from_dict(payload: object) -> HomeSnapshotCandidate:
             mapping.get("news_catalyst_published_at"),
             "candidate.news_catalyst_published_at",
         ),
+    )
+
+
+def technical_basis_from_dict(payload: object) -> HomeSnapshotTechnicalBasis | None:
+    """Read optional typed research provenance; never infer it from a quote."""
+    if payload is None:
+        return None
+    mapping = _mapping(payload, "technical basis")
+    _require_keys(
+        mapping,
+        {
+            "source",
+            "as_of",
+            "precision",
+            "timestamp_source",
+            "research_date",
+            "parameter_snapshot",
+            "facts",
+        },
+        "technical basis",
+    )
+    facts: list[HomeSnapshotTechnicalFact] = []
+    for item in _list(mapping["facts"], "technical basis.facts"):
+        fact = _mapping(item, "technical fact")
+        _require_keys(fact, {"key", "value", "unit", "period"}, "technical fact")
+        facts.append(
+            HomeSnapshotTechnicalFact(
+                key=_text(fact["key"], "technical fact.key"),
+                value=_number(fact["value"], "technical fact.value"),
+                unit=_text(fact["unit"], "technical fact.unit"),
+                period=_text(fact["period"], "technical fact.period"),
+            )
+        )
+    return HomeSnapshotTechnicalBasis(
+        source=_text(mapping["source"], "technical basis.source"),
+        as_of=_text(mapping["as_of"], "technical basis.as_of"),
+        precision=_text(mapping["precision"], "technical basis.precision"),
+        timestamp_source=_text(
+            mapping["timestamp_source"], "technical basis.timestamp_source"
+        ),
+        research_date=_text(mapping["research_date"], "technical basis.research_date"),
+        parameter_snapshot=parse_parameter_snapshot(mapping["parameter_snapshot"]),
+        facts=tuple(facts),
     )
 
 
@@ -1952,6 +2082,14 @@ def _validate_snapshot(snapshot: HomeDashboardSnapshot) -> None:
         isinstance(value, HomeSnapshotCandidate) for value in snapshot.candidates
     ):
         raise ValueError("candidates must contain HomeSnapshotCandidate values")
+    if any(
+        candidate.technical_basis is not None
+        and not isinstance(candidate.technical_basis, HomeSnapshotTechnicalBasis)
+        for candidate in snapshot.candidates
+    ):
+        raise ValueError(
+            "candidate.technical_basis must contain typed original provenance"
+        )
     candidate_symbols = tuple(value.symbol for value in snapshot.candidates)
     if len(set(candidate_symbols)) != len(candidate_symbols):
         raise ValueError("candidates must not contain duplicate symbols")

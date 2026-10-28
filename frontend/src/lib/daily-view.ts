@@ -119,6 +119,7 @@ export interface CandidateRow {
   metrics: readonly MetricView[];
   breakdown: readonly string[];
   provenance: string;
+  technicalProvenance?: { summary: string; detail: string };
   coverageNote?: string;
 }
 
@@ -344,9 +345,23 @@ function buildCandidateRows(snapshot: AqspSnapshot): CandidateRow[] {
     const debate = debates.get(symbol);
     const metrics = (candidate.technical_metrics ?? []).map((metric) => ({
       key: metric.key,
-      label: metric.label,
+      label: metric.key === "close" ? "快照现价（单独更新）" : metric.label,
       value: metric.value,
     }));
+    const basis = candidate.technical_basis;
+    const validDay = basis?.precision === "day" && /^\d{4}-\d{2}-\d{2}$/.test(basis.as_of)
+      && Number.isFinite(Date.parse(basis.as_of)) && new Date(Date.parse(basis.as_of)).toISOString().slice(0, 10) === basis.as_of
+      && basis.as_of <= snapshot.selected_date;
+    const validTimestamp = basis?.precision === "timestamp" && /(?:Z|[+-]\d{2}:\d{2})$/.test(basis.as_of)
+      && Number.isFinite(Date.parse(basis.as_of)) && Date.parse(basis.as_of) <= Date.parse(snapshot.generated_at);
+    const sourceRecorded = !!basis?.source && (validDay || validTimestamp)
+      && basis.research_date === snapshot.selected_date;
+    const technicalProvenance = metrics.some((metric) => metric.key !== "close") ? {
+      summary: sourceRecorded ? `冻结研究依据 · ${basis.research_date}` : "冻结研究依据 · 原来源未记录或待核验",
+      detail: sourceRecorded
+        ? `原行情来源：${basis.source} · ${basis.as_of}${basis.precision === "day" ? "（日线）" : ""}；参数 ${basis.parameter_snapshot?.version || "未记录"}。这些指标随原研究保留，现价刷新不代表指标重算。`
+        : "原指标来源与时点未核验，不能用最新报价的时点代替，也不能据此认定当前买卖条件成立。",
+    } : undefined;
     const keyMetric =
       metrics.find((metric) => metric.key === "ret20_pct") ?? metrics[0] ?? null;
     return {
@@ -371,8 +386,9 @@ function buildCandidateRows(snapshot: AqspSnapshot): CandidateRow[] {
       context: candidate.context,
       reasons: candidate.deterministic_reasons,
       metrics,
+      technicalProvenance,
       breakdown: candidate.score_breakdown ?? [],
-      provenance: [candidate.data_source, candidate.freshness].filter(Boolean).join(" · "),
+      provenance: [candidate.data_source, candidate.data_fetched_at, candidate.freshness].filter(Boolean).join(" · "),
     };
   });
 }

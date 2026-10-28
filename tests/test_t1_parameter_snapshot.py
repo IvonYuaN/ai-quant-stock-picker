@@ -579,3 +579,55 @@ def test_parameter_snapshot_pick_archive_freezes_identity_when_same_day_repeats(
     Pick.metrics = {"strategy_weight_snapshot": _weights("changed")}
     save_snapshot([Pick()], str(path), "2026-10-23")
     assert path.read_bytes() == original
+
+
+def _original_technical_source() -> dict[str, object]:
+    return {"source": "original_source", "as_of": "2026-10-23", "precision": "day", "timestamp_source": "bar_date",
+            "research_date": "2026-10-23", "parameter_snapshot": None,
+            "metrics": {"volume_ratio": 1.424, "ret5_pct": 3.5, "macd_hist": 0.1234}}
+
+
+def test_parameter_snapshot_transports_original_technical_source_through_actual_csv_and_writer(tmp_path) -> None:
+    from scripts import write_home_snapshot
+    source = _original_technical_source()
+    pick = PickResult("600001", "样本", "2026-10-23", 10, 70, "watch", "next_open", 10, 9.5, 11, "10%",
+                      metrics={"technical_source": source, "volume_ratio": 1.424, "ret5_pct": 3.5, "macd_hist": 0.1234,
+                               "data_source": "latest_quote_source", "data_fetched_at": "2026-10-23T15:00:00+08:00"})
+    picks = _attach_runtime_weight_snapshot([pick], thresholds=Thresholds(version="test-1", effective_from="2026-10-13"),
+        regime="stable_bull", strategy_weights={"momentum": 0.3, "price_volume_corr": 0.3}, strategy_weight_reasons={})
+    assert source["parameter_snapshot"] is None
+    assert picks[0].metrics["technical_source"]["parameter_snapshot"] == asdict(_identity())
+    to_dataframe(picks).to_csv(tmp_path / "latest.csv", index=False)
+    provider = _provider(tmp_path)
+    cards = provider._build_detail_cards(provider._task_signal_rows("intraday"))
+    assert len(cards) == 1 and cards[0].technical_basis is not None
+    basis = cards[0].technical_basis
+    assert basis.parameter_snapshot == _identity()
+    assert basis.source == "original_source" and basis.as_of == "2026-10-23" and basis.precision == "day"
+    assert {fact.key: fact.value for fact in basis.facts} == {"volume_ratio": 1.42, "ret5_pct": 3.5, "macd_hist": 0.123}
+    assert cards[0].macd_hist == 0.1234
+    snapshot_candidate = write_home_snapshot._snapshot_candidate(cards[0], selected_date="2026-10-23")
+    assert snapshot_candidate.technical_basis == basis
+    assert snapshot_candidate.data_source == "latest_quote_source"
+    assert snapshot_candidate.data_fetched_at == "2026-10-23T15:00:00+08:00"
+
+
+@pytest.mark.parametrize("bad", [True, "1.42", float("inf"), float("nan")])
+def test_parameter_snapshot_rejects_original_numeric_source_when_typed_value_invalid(bad) -> None:
+    from aqsp.web.data_provider import _technical_basis_for_row
+    source = _original_technical_source()
+    source["parameter_snapshot"] = asdict(_identity())
+    source["metrics"]["volume_ratio"] = bad
+    assert _technical_basis_for_row(_row(technical_source=source)) is None
+
+
+def test_parameter_snapshot_does_not_rebind_original_indicator_identity_when_new_runtime_attaches() -> None:
+    source = _original_technical_source()
+    source["parameter_snapshot"] = asdict(_identity("old"))
+    pick = PickResult("600001", "样本", "2026-10-23", 10, 70, "watch", "next_open", 10, 9.5, 11, "10%", metrics={"technical_source": source})
+    updated = _attach_runtime_weight_snapshot([pick], thresholds=Thresholds(version="test-1", effective_from="2026-10-13"),
+        regime="stable_bull", strategy_weights={"momentum": 0.3, "price_volume_corr": 0.3}, strategy_weight_reasons={})[0]
+    assert updated.metrics["technical_source"]["parameter_snapshot"] == asdict(_identity("old"))
+    from aqsp.web.data_provider import _technical_basis_for_row
+    row = to_dataframe([updated]).iloc[0].to_dict()
+    assert _technical_basis_for_row(row) is None

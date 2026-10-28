@@ -12,11 +12,23 @@ export interface AqspCandidate {
   evidence_status: string;
   score_breakdown?: readonly string[];
   technical_metrics?: readonly { key: string; label: string; value: string }[];
+  /** Original frozen technical facts; independent of later quote refreshes. */
+  technical_basis?: AqspTechnicalBasis | null;
   data_source?: string;
   data_fetched_at?: string;
   data_timestamp_source?: string;
   freshness?: string;
   coverage_note?: string;
+}
+
+export interface AqspTechnicalBasis {
+  source: string;
+  as_of: string;
+  precision: "day" | "timestamp";
+  timestamp_source: string;
+  research_date: string;
+  parameter_snapshot: AqspParameterSnapshot;
+  facts: readonly { key: string; value: number; unit: "percent" | "ratio" | "index"; period: string }[];
 }
 
 export interface AqspMessage {

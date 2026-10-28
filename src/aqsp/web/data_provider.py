@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import logging
 import math
@@ -36,6 +37,9 @@ from aqsp.strategies.thresholds import load_thresholds
 from aqsp.strategy import rating_for_score
 from aqsp.data.source_readiness import source_supports_workload, workload_fit_for_source
 from aqsp.web.archive_safety import sanitize_research_lines
+from aqsp.web.home_snapshot import (
+    HomeSnapshotTechnicalBasis, TECHNICAL_FACT_SPECS, technical_basis_from_dict,
+)
 from aqsp.web.live_candidate_view import (
     LIVE_CANDIDATE_LIMIT,
     LiveArtifactMetadata,
@@ -179,6 +183,43 @@ def _technical_metric_value(
         if value is not None and math.isfinite(value):
             return value
     return None
+
+
+def _technical_basis_for_row(row: dict[str, Any]) -> HomeSnapshotTechnicalBasis | None:
+    """Project only a scored row's independent original source, including CSVs."""
+    raw = row.get("technical_source")
+    if raw is None and isinstance(row.get("metrics"), dict):
+        raw = row["metrics"].get("technical_source")
+    if isinstance(raw, str):
+        if len(raw) > 65536:
+            return None
+        try:
+            raw = json.loads(raw)
+        except (TypeError, ValueError, RecursionError):
+            try:
+                raw = ast.literal_eval(raw)
+            except (SyntaxError, ValueError, TypeError, RecursionError):
+                return None
+    if not isinstance(raw, dict) or set(raw) != {"source", "as_of", "precision", "timestamp_source", "research_date", "parameter_snapshot", "metrics"}:
+        return None
+    identity = parameter_snapshot_from_candidate_row(row)
+    if identity is None or not isinstance(raw.get("metrics"), dict):
+        return None
+    precisions = {"ret5_pct": 2, "ret20_pct": 2, "volume_ratio": 2,
+                  "rsi12": 1, "macd_hist": 3, "kdj_j": 1, "bias20_pct": 2}
+    facts = []
+    for key, value in raw["metrics"].items():
+        if key not in TECHNICAL_FACT_SPECS or isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+            return None
+        unit, period = TECHNICAL_FACT_SPECS[key]
+        facts.append({"key": key, "value": round(float(value), precisions[key]), "unit": unit, "period": period})
+    try:
+        basis = technical_basis_from_dict({key: value for key, value in raw.items() if key != "metrics"} | {"facts": facts})
+        if basis is None or basis.parameter_snapshot != identity:
+            return None
+        return basis
+    except (TypeError, ValueError):
+        return None
 
 
 def _runtime_pct(value: Any) -> str:
@@ -403,10 +444,12 @@ class DashboardCandidateSpotlight:
     ret20_pct: float | None = None
     volume_ratio: float | None = None
     rsi12: float | None = None
+    macd_hist: float | None = None
     bias20_pct: float | None = None
     stop_loss: float | None = None
     take_profit: float | None = None
     parameter_snapshot: ParameterSnapshot | None = None
+    technical_basis: HomeSnapshotTechnicalBasis | None = None
 
 
 @dataclass(frozen=True)
@@ -878,11 +921,13 @@ class DashboardCandidateCard:
     ret20_pct: float | None = None
     volume_ratio: float | None = None
     rsi12: float | None = None
+    macd_hist: float | None = None
     bias20_pct: float | None = None
     stop_loss: float | None = None
     take_profit: float | None = None
     research_recommendation: bool = False
     parameter_snapshot: ParameterSnapshot | None = None
+    technical_basis: HomeSnapshotTechnicalBasis | None = None
 
 
 @dataclass(frozen=True)
@@ -1224,6 +1269,7 @@ class DashboardDataProvider:
                     parameter_snapshot=parameter_snapshot_from_candidate_row(
                         merged_row
                     ),
+                    technical_basis=_technical_basis_for_row(merged_row),
                     action_label=action_label,
                     status_label=status_label,
                     blocker=blocker,
@@ -1291,6 +1337,7 @@ class DashboardDataProvider:
                     ret20_pct=_technical_metric_value(merged_row, "ret20_pct"),
                     volume_ratio=_technical_metric_value(merged_row, "volume_ratio"),
                     rsi12=_technical_metric_value(merged_row, "rsi12"),
+                    macd_hist=_technical_metric_value(merged_row, "macd_hist"),
                     bias20_pct=_technical_metric_value(merged_row, "bias20_pct"),
                     stop_loss=_technical_metric_value(merged_row, "stop_loss"),
                     take_profit=_technical_metric_value(merged_row, "take_profit"),
@@ -5084,6 +5131,7 @@ class DashboardDataProvider:
             display_name=self._symbol_name(merged_row),
             score=float(merged_row.get("score") or 0.0),
             parameter_snapshot=parameter_snapshot_from_candidate_row(merged_row),
+            technical_basis=_technical_basis_for_row(merged_row),
             action_label=self._action_label(merged_row),
             status_label=self._candidate_status(merged_row),
             blocker=self._candidate_blocker_text(merged_row),
@@ -5113,6 +5161,7 @@ class DashboardDataProvider:
             ret20_pct=_technical_metric_value(merged_row, "ret20_pct"),
             volume_ratio=_technical_metric_value(merged_row, "volume_ratio"),
             rsi12=_technical_metric_value(merged_row, "rsi12"),
+            macd_hist=_technical_metric_value(merged_row, "macd_hist"),
             bias20_pct=_technical_metric_value(merged_row, "bias20_pct"),
             stop_loss=_technical_metric_value(merged_row, "stop_loss"),
             take_profit=_technical_metric_value(merged_row, "take_profit"),
@@ -6396,6 +6445,7 @@ class DashboardDataProvider:
                     rank_label=self._rank_label(index, row, task_id=task_id),
                     score=float(row.get("score") or 0.0),
                     parameter_snapshot=parameter_snapshot_from_candidate_row(row),
+                    technical_basis=_technical_basis_for_row(row),
                     action_label=self._action_label(row),
                     status_label=self._candidate_status(row),
                     decision_note=self._decision_note(row),
@@ -6442,6 +6492,7 @@ class DashboardDataProvider:
                     ret20_pct=_technical_metric_value(row, "ret20_pct"),
                     volume_ratio=_technical_metric_value(row, "volume_ratio"),
                     rsi12=_technical_metric_value(row, "rsi12"),
+                    macd_hist=_technical_metric_value(row, "macd_hist"),
                     bias20_pct=_technical_metric_value(row, "bias20_pct"),
                     stop_loss=_technical_metric_value(row, "stop_loss"),
                     take_profit=_technical_metric_value(row, "take_profit"),

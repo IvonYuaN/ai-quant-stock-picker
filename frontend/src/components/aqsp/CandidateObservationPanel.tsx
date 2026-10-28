@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { api, isAqspAbortError, type CandidateChoice, type CandidateDiscussion, type CandidateWorkspace, type PositionModelCatalog, type WatchComparator } from "@/lib/api";
 import { browserAlertRefreshSource, subscribeAlertRefresh } from "@/lib/alert-refresh";
-import { CANDIDATE_CHOICES, CANDIDATE_OBSERVATIONS_CHANGED_EVENT, candidateAdoptionInput, candidateAdoptionIssue, candidateDiscussionIssue, candidateDiscussionKey, candidateEvidenceRows, candidateObservationView, candidateWorkspaceIssue } from "@/lib/candidate-observation";
+import { CANDIDATE_CHOICES, CANDIDATE_OBSERVATIONS_CHANGED_EVENT, candidateAdoptionInput, candidateAdoptionIssue, candidateDiscussionIssue, candidateDiscussionKey, candidateEvidenceRows, candidateObservationView, candidateTechnicalView, candidateWorkspaceIssue } from "@/lib/candidate-observation";
 import { readLocalPreference, writeLocalPreference } from "@/lib/browser-session";
 import { formatEvidenceTime } from "@/lib/format";
 import { PORTFOLIO_CHANGED_EVENT } from "@/lib/operation";
@@ -12,6 +12,15 @@ import { WATCH_COMPARATORS } from "@/lib/strategy-watch";
 
 const stages: Record<string, string> = { preparing: "正在核对当前候选与行情…", independent: "三个角色正在分别评估入场条件…", challenge: "正在相互核对机会、风险与缺证…", synthesis: "正在整理三条路和下一步条件…" };
 const judgments = { investigate: "可以进一步核对", not_now: "当前不宜", insufficient: "依据待补" };
+
+function TechnicalEvidence({ evidence }: { evidence: Record<string, unknown> }) {
+  const view = candidateTechnicalView(evidence);
+  const sourceTime = view.asOf ? `${formatEvidenceTime(view.asOf)}${view.precision === "day" ? "（日线）" : ""}` : "";
+  return <details className="aq-detail-muted"><summary>{view.title}{sourceTime ? ` · 原行情 ${sourceTime}` : " · 待核验"}</summary>
+    {view.facts.length ? <dl className="aq-research-kv">{view.facts.map((fact) => <div key={fact.key}><dt>{fact.label}</dt><dd>{fact.value}</dd></div>)}</dl> : null}
+    <p>{view.detail}</p>{sourceTime ? <small>{view.source} · {sourceTime}</small> : null}
+  </details>;
+}
 
 export function CandidateObservationPanel({ symbol, researchDate, historical = false }: { symbol: string; researchDate?: string | null; historical?: boolean }) {
   const location = useLocation();
@@ -142,7 +151,7 @@ function CandidateObservationWorkspace({ symbol, researchDate, historical }: { s
   const planHref = data?.ownership.status === "owned" ? positionPlanHref(data.ownership.position_id, `/stock/${symbol}`) : null;
   const observation = data ? candidateObservationView(data) : null;
   const adoptedResult = !!result && data?.watch?.discussion_id === result.id;
-  const evidence = data && !workspaceIssue ? <div className="aq-candidate-current-evidence" aria-label="当前候选三维依据">{candidateEvidenceRows(data).map((row) => <div key={row.key}><b>{row.label}</b><p>{row.summary}</p><small>{row.source} · {formatEvidenceTime(row.asOf) || "时点待核对"}</small></div>)}</div> : null;
+  const evidence = data && !workspaceIssue ? <><div className="aq-candidate-current-evidence" aria-label="当前候选三维依据">{candidateEvidenceRows(data).map((row) => <div key={row.key}><b>{row.label}</b><p>{row.summary}</p><small>{row.source} · {formatEvidenceTime(row.asOf) || "时点待核对"}</small></div>)}</div><TechnicalEvidence evidence={data.evidence} /></> : null;
   function choose(choice: CandidateChoice, index: number | null) { setSelection({ choice, index }); setComparator(""); setConfirmedSource(""); setActionError(""); }
   function condition(row: NonNullable<CandidateDiscussion["summary"]>["actions"][number], index: number) {
     const reference = result?.price_refs[row.price_ref ?? ""];
@@ -193,7 +202,7 @@ function CandidateObservationWorkspace({ symbol, researchDate, historical }: { s
           </form> : null}
           {result.summary.disagreements.length ? <p>仍有分歧：{result.summary.disagreements.join("；")}</p> : null}{result.summary.missing_evidence.length ? <p>还缺什么：{result.summary.missing_evidence.join("；")}</p> : null}
         </> : <p role="status">尚无通过核验的汇总条件。{result.summary_issue || "可查看已完成角色，核对缺证后重试。"}</p>}
-        <details><summary>查看三角色讨论与证据</summary>{result.rounds.map((round, index) => <div key={index}><h4>{round.stage === "independent" ? "独立分析" : "相互回应"}</h4>{round.opinions.map((row) => <article key={row.role}><b>{row.label}</b>{row.opinion ? <><p>{row.opinion.summary}</p>{row.opinion.challenge ? <p>回应：{row.opinion.challenge}</p> : null}{row.opinion.uncertainties.length ? <p>待核实：{row.opinion.uncertainties.join("；")}</p> : null}<small>引用：{row.opinion.evidence_ids.join("、")}</small></> : <p>{row.issue || "本角色未完成"}</p>}</article>)}</div>)}<p className="aq-note">{result.notice}</p></details>
+        <details><summary>查看三角色讨论与证据</summary><TechnicalEvidence evidence={result.evidence_snapshot} />{result.rounds.map((round, index) => <div key={index}><h4>{round.stage === "independent" ? "独立分析" : "相互回应"}</h4>{round.opinions.map((row) => <article key={row.role}><b>{row.label}</b>{row.opinion ? <><p>{row.opinion.summary}</p>{row.opinion.challenge ? <p>回应：{row.opinion.challenge}</p> : null}{row.opinion.uncertainties.length ? <p>待核实：{row.opinion.uncertainties.join("；")}</p> : null}<small>引用：{row.opinion.evidence_ids.join("、")}</small></> : <p>{row.issue || "本角色未完成"}</p>}</article>)}</div>)}<p className="aq-note">{result.notice}</p></details>
       </details></section> : null}
     </> : null}
   </section>;

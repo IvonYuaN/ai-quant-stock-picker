@@ -85,3 +85,40 @@ export function candidateEvidenceRows(workspace: CandidateWorkspace): Array<{ ke
       source: typeof value.source === "string" && value.source ? value.source : "来源待补", asOf: typeof value.as_of === "string" ? value.as_of : null };
   });
 }
+
+/** Only server-validated facts are shown here; raw display metrics are not evidence. */
+export function candidateTechnicalView(evidence: Record<string, unknown>): {
+  title: string; detail: string; source: string; asOf: string | null; precision: "day" | "timestamp" | null;
+  facts: Array<{ key: string; label: string; value: string }>;
+} {
+  const research = evidence.research && typeof evidence.research === "object" ? evidence.research as Record<string, unknown> : {};
+  const raw = research.technical_evidence;
+  const basis = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
+  const source = typeof basis.source === "string" ? basis.source : "";
+  const day = basis.precision === "day" && typeof basis.as_of === "string" && /^\d{4}-\d{2}-\d{2}$/.test(basis.as_of)
+    && Number.isFinite(Date.parse(basis.as_of)) && new Date(Date.parse(basis.as_of)).toISOString().slice(0, 10) === basis.as_of;
+  const timestamp = basis.precision === "timestamp" && typeof basis.as_of === "string" && /(?:Z|[+-]\d{2}:\d{2})$/.test(basis.as_of) && Number.isFinite(Date.parse(basis.as_of));
+  const asOf = day || timestamp ? String(basis.as_of) : null;
+  const labels: Record<string, { label: string; unit: string }> = {
+    ret5_pct: { label: "5日动能", unit: "percent" }, ret20_pct: { label: "20日动能", unit: "percent" },
+    volume_ratio: { label: "量比", unit: "ratio" }, rsi12: { label: "RSI12", unit: "index" },
+    macd_hist: { label: "MACD柱", unit: "index" }, kdj_j: { label: "KDJ-J", unit: "index" },
+    bias20_pct: { label: "MA20偏离", unit: "percent" },
+  };
+  const available = basis.status === "available" && basis.scope === "frozen_research" && !!source && !!asOf;
+  const facts = available && Array.isArray(basis.facts) ? basis.facts.flatMap((raw) => {
+    if (!raw || typeof raw !== "object") return [];
+    const fact = raw as Record<string, unknown>;
+    const known = typeof fact.key === "string" && Object.prototype.hasOwnProperty.call(labels, fact.key) ? labels[fact.key] : undefined;
+    if (!known || fact.unit !== known.unit || typeof fact.value !== "number" || !Number.isFinite(fact.value)) return [];
+    const value = fact.unit === "percent" ? `${fact.value >= 0 ? "+" : ""}${fact.value}%` : fact.unit === "ratio" ? `${fact.value}倍` : String(fact.value);
+    return [{ key: String(fact.key), label: known.label, value }];
+  }) : [];
+  const issues = Array.isArray(basis.issues) ? basis.issues.filter((item): item is string => typeof item === "string" && !!item).join("；") : "";
+  return {
+    title: "冻结研究依据",
+    detail: available && facts.length ? "用于核对原入选理由与反证；当前报价另行更新，不能据此认定当前量价条件已满足。" : issues || "原技术指标的来源与时点尚未核验，AI 不将旧展示数字当成当前事实。",
+    source: available ? source : "来源待核验", asOf: available ? asOf : null,
+    precision: available ? day ? "day" : "timestamp" : null, facts,
+  };
+}
