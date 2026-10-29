@@ -1,3 +1,4 @@
+import { PositionConditionChecks } from "./PositionConditionChecks";
 import { useEffect, useRef, useState } from "react";
 import { api, type ActionWorksheet, type PlanParameters, type PlanTarget, type ReviewChoice } from "@/lib/api";
 import { formatEvidenceTime } from "@/lib/format";
@@ -166,8 +167,9 @@ export function PositionActionPlan({ eventId, target, choice, worksheet, onWorks
         <span className="aq-beginner-label">已采用 · 后台跟踪这项条件</span><h3>{watchState.title}</h3><p>{watchState.detail}</p>
         <div className="aq-strategy-watch-price"><b>{WATCH_COMPARATORS[watch.comparator]} {watch.price.toFixed(2)} 元</b><span>{watch.action === "buy_review" ? "考虑回补前复核" : watch.action === "sell_review" ? "考虑卖出前复核" : "观察变化"}</span></div>
         <p><b>到价后看：</b>{watch.condition}</p><p><b>取消或重核：</b>{watch.invalidation}</p>
-        <small>{watch.price_ref.label} · {watch.price_ref.source} · {formatEvidenceTime(watch.price_ref.as_of)}</small>
-        <p className="aq-note">到价会提示复核，不会自动确认转弱、止跌或成交。外发提醒可在后台跟进中开启。</p>
+        <small>{watch.price_ref?.label || "原价格引用待核对"} · {watch.price_ref?.source || "来源待核对"} · {formatEvidenceTime(watch.price_ref?.as_of)}</small>
+        <PositionConditionChecks worksheet={data} now={tick} />
+        <p className="aq-note">到价仍需核对完整买卖前提；通知设置见后台跟进。</p>
         <button type="button" className="aq-btn" disabled={busy} onClick={() => void stopWatch()}>停止这项跟踪</button>
       </section> : data.review_plan.watch_stopped && watchState ? <div className="aq-strategy-empty" role="status"><h3>{watchState.title}</h3><p>{watchState.detail}</p></div> : !data.review_plan.parameters ? <div className="aq-strategy-empty"><h3>路线已选，下一步先明确条件</h3><p>让 AI 结合当前大盘、板块、个股与个人条件，分析什么情况下继续、何时考虑买卖、何时取消。采用后再持续跟踪，不必先填股数和费用。</p></div> : null}
       <div className="aq-strategy-model"><PositionDiscussionPanel key={JSON.stringify([planTarget, choice, data.position_snapshot, data.review_plan.parameters])} target={planTarget} choice={choice} worksheet={data} disabled={discussionBlocked} disabledReason={discussionBlockReason} onWorksheet={(next) => { receive(next); report.current?.(next); }} onComplete={() => void refresh()} /></div>

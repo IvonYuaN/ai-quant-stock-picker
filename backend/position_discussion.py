@@ -19,6 +19,7 @@ import alert_events as ae
 import chat
 from aqsp.core.time import now_shanghai
 from position_plan_service import read_action_plan, read_position_plan, save_position_discussion
+import strategy_conditions as conditions
 
 
 @dataclass(frozen=True)
@@ -87,6 +88,8 @@ class Observation(BaseModel):
     price_ref: str | None = None
     condition: str = Field(min_length=1, max_length=350)
     invalidation: str = Field(min_length=1, max_length=350)
+    prerequisite_ids: list[str] = Field(default_factory=list, max_length=len(conditions.DEFINITIONS))
+    invalidation_ids: list[str] = Field(default_factory=list, max_length=len(conditions.DEFINITIONS))
 
 
 class RoleOpinion(BaseModel):
@@ -139,6 +142,7 @@ SYSTEM = """你为用户已有持仓提供人工复核意见，不下单、不�
 review_context提供已采用方案的原路线、条件、失效条件与采用时和现在的差别，历史依据只用于对比。
 quote_updated只表示报价相对采用时是否发生变化；false不表示报价过期，新鲜度以源时点和guards为准。
 解释维持原路、调整或暂缓的依据；普通行情刷新不要求重选，旧价不能用于新的行动条件，不自动修改已采用方案。
+condition_catalog列出可机检的现有方向条件；可自由选择相关prerequisite_ids前提和invalidation_ids失效ID，也可留空，不要求固定分析步骤。只引用目录ID，未登记的文字前提仍需人工复核；方向匹配不证明止跌、放量或突破有效，不解除guards或做T卖后买限制。
 输出一个符合output_schema的JSON对象，不加Markdown围栏。"""
 
 
@@ -233,6 +237,10 @@ def _parse(text: str, schema: type[BaseModel], evidence: dict[str, Any], prices:
         if (not guards["sellable_shares"] or guards.get("quote_issue")) and parsed["focus_choice"] == "reduce":
             raise ValueError("模型路线比较与可卖或行情条件冲突")
     for action in parsed["actions"]:
+        conditions.validate_selection(action['prerequisite_ids'], action['invalidation_ids'])
+        offered = set(guards.get('condition_ids', []))
+        if any(identifier not in offered for identifier in action['prerequisite_ids'] + action['invalidation_ids']):
+            raise ValueError('模型引用未提供的可监控条件')
         if action["price_ref"] is not None and action["price_ref"] not in prices:
             raise ValueError("模型引用不存在的观察价")
         if action["action"] in {"sell_review", "buy_review"} and action["price_ref"] is None:
@@ -249,7 +257,7 @@ def _parse(text: str, schema: type[BaseModel], evidence: dict[str, Any], prices:
 
 
 def output_schema(schema: type[BaseModel], evidence: dict[str, Any], prices: dict[str, Any], peers: set[str],
-                  limits: DiscussionLimits | None = None) -> dict[str, Any]:
+                  limits: DiscussionLimits | None = None, condition_catalog: dict[str, Any] | None = None) -> dict[str, Any]:
     """Describe exact reference IDs before generation, then validate independently.
 
     A schema shown in a prompt is not guaranteed enforcement by the provider.
@@ -265,6 +273,9 @@ def output_schema(schema: type[BaseModel], evidence: dict[str, Any], prices: dic
         if "price_ref" in properties:
             properties["price_ref"] = {"anyOf": [{"type": "string", "enum": sorted(prices)}, {"type": "null"}]} if prices else {"type": "null"}
             properties["price_ref"]["description"] = "sell_review或buy_review必须引用price_refs中的ID；observe/pause允许null"
+        for field in ('prerequisite_ids', 'invalidation_ids'):
+            if field in properties:
+                properties[field]['items'] = {'type': 'string', 'enum': [item['id'] for item in (condition_catalog or {}).get('items', [])]}
         if "reply_to" in properties:
             properties["reply_to"]["items"] = {"type": "string", "enum": sorted(peers)}
             if not peers:
@@ -351,7 +362,9 @@ async def run_discussion(event_id: str, choice: str | None, expected_position: d
         from strategy_review_context import model_review_evidence, position_review_context
         review_context = position_review_context(worksheet, evidence, prices)
         evidence = model_review_evidence(evidence, review_context)
-        guards = {"sellable_shares": basis["sellable_shares"],
+        from position_followup import condition_facts
+        catalog = conditions.condition_catalog(condition_facts(worksheet, current=now_shanghai()))
+        guards = {"condition_ids": [item['id'] for item in catalog['items']], "sellable_shares": basis["sellable_shares"],
                   "pause_t": bool(basis["joint_weakness"] or basis["quote_issue"] or not basis["sellable_shares"] or basis.get("personal_pause_t")),
                   "quote_issue": basis["quote_issue"],
                   "t_plus_one": "当日买入不得当日再卖出", "no_orders": True,
@@ -360,7 +373,7 @@ async def run_discussion(event_id: str, choice: str | None, expected_position: d
                   "review_mode": ("对已采用方案作变化复核，比较维持、调整或暂缓，不自动选择" if review_context['status'] == 'adopted'
                                   else "比较三条路，用户尚未通过本请求作出选择" if comparison else "核对已选方案"),
                   "evidence": evidence, "price_refs": prices, "guards": guards,
-                  "review_context": review_context,
+                  "review_context": review_context, "condition_catalog": catalog,
                   "saved_parameters": None if comparison or worksheet['scenario_issue'] else plan.get("parameters"),
                   "scenario": None if comparison or worksheet['scenario_issue'] else worksheet["scenario"],
                   "scenario_issue": worksheet['scenario_issue'],
@@ -373,7 +386,7 @@ async def run_discussion(event_id: str, choice: str | None, expected_position: d
                     "task": ("独立评估；每个文字字段用一句话，reply_to为空数组，challenge为空字符串" if peers is None else
                              "回应同行：指出同意、反对或缺证，不必改变原判断；每个文字字段用一句话。reply_to至少填一个peer_opinions的键，challenge必须写实际回应，不能留空"),
                     "allowed_evidence_ids": sorted(evidence),
-                    "peer_opinions": peers or {}, "output_schema": output_schema(RoleOpinion, evidence, prices, set(peers or {}))}, limits.role_timeout, limits)
+                    "peer_opinions": peers or {}, "output_schema": output_schema(RoleOpinion, evidence, prices, set(peers or {}), condition_catalog=catalog)}, limits.role_timeout, limits)
                 result = _parse(raw, RoleOpinion, evidence, prices, set(peers or {}), guards)
                 return {"role": role, "label": ROLES[role][0], "status": "ok", "opinion": result,
                         "elapsed_seconds": round(time.monotonic() - call_started, 2)}
@@ -411,7 +424,7 @@ async def run_discussion(event_id: str, choice: str | None, expected_position: d
                     "rounds": rounds if len(completed) == len(ROLES) else [{"stage": "validated_latest", "opinions": synthesis_opinions}],
                     "synthesis_opinions": synthesis_opinions, "synthesis_basis": synthesis_basis,
                     "allowed_evidence_ids": sorted(evidence),
-                    "output_schema": output_schema(schema, evidence, prices, set(), limits)}, limits.synthesis_timeout, limits)
+                    "output_schema": output_schema(schema, evidence, prices, set(), limits, condition_catalog=catalog)}, limits.synthesis_timeout, limits)
                 summary = _parse(raw, schema, evidence, prices, set(), guards)
             except (ValueError, KeyError, TypeError, IndexError, AttributeError, RuntimeError, httpx.HTTPError, TimeoutError) as exc:
                 summary_failure = _model_failure(exc)
@@ -423,7 +436,7 @@ async def run_discussion(event_id: str, choice: str | None, expected_position: d
                   "mode": "同一模型的三角色讨论", "choice": choice, "position_snapshot": expected_position,
                   "quote_as_of": basis["quote_as_of"], "price_refs": prices, "guards": guards,
                   "evidence_snapshot": evidence,
-                  "review_context": review_context,
+                  "review_context": review_context, "condition_catalog": catalog,
                   "analysis_basis_id": worksheet["analysis_basis_id"], "risk_revision": worksheet["risk_revision"],
                   "review_revision": worksheet["revision"], "position_id": worksheet["position_id"],
                   "rounds": rounds, "summary": summary, "synthesis_basis": synthesis_basis, "model_text_unverified": True,

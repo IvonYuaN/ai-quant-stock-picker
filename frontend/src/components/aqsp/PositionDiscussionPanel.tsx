@@ -1,3 +1,4 @@
+import { PositionActionChecks } from "./PositionConditionChecks";
 import { StrategyReviewContextPanel } from "./StrategyReviewContextPanel";
 import { useEffect, useRef, useState } from "react";
 import { api, isAqspAbortError, type ActionWorksheet, type DiscussionAction, type PositionDiscussion, type PositionModelCatalog, type PositionModelConfig, type PlanTarget, type ReviewChoice, type WatchComparator } from "@/lib/api";
@@ -103,11 +104,12 @@ export function PositionDiscussionPanel({ eventId, target, choice, worksheet, di
         <div className="aq-strategy-action-title"><b>{actionLabels[row.action]}</b>{reference ? <strong>{reference.price.toFixed(2)} 元</strong> : null}</div>
         <p><span>等什么</span>{row.condition}</p><p><span>何时取消</span>{row.invalidation}</p>
         {reference ? <small>{reference.label} · {reference.source} · {formatEvidenceTime(reference.as_of)}</small> : null}
+        {canAdopt && result ? <PositionActionChecks action={row} result={result} /> : null}
         {trackable ? <>
           {selectedAction !== index ? <button type="button" className="aq-btn" disabled={disabled || busy || adopting || !evidenceMatches} onClick={() => { setSelectedAction(index); setComparator(""); setWatchConfirmed(""); setWatchChoice(choice ?? (row.action === "buy_review" ? "t_watch" : "")); }}>采用这项条件并跟踪</button> : <form className="aq-strategy-adopt" onSubmit={(event) => { event.preventDefault(); void adopt(); }}>
             <label>我的处理路线<select aria-label="采用条件的处理路线" className="aq-input" value={watchChoice} disabled={adopting} onChange={(event) => { setWatchChoice(event.target.value as ReviewChoice | ""); setWatchConfirmed(""); }} required><option value="">请选择</option>{(Object.keys(PLAN_CHOICES) as ReviewChoice[]).map((key) => <option key={key} value={key} disabled={row.action === "buy_review" && key !== "t_watch"}>{PLAN_CHOICES[key].title}</option>)}</select></label>
             <label>什么报价变化提醒我<select aria-label="观察价触发方向" className="aq-input" value={comparator} disabled={adopting} onChange={(event) => { setComparator(event.target.value as WatchComparator | ""); setWatchConfirmed(""); }} required><option value="">请核对条件后选择</option><option value="at_or_above">达到或高于 {reference.price.toFixed(2)} 元</option><option value="at_or_below">达到或低于 {reference.price.toFixed(2)} 元</option></select></label>
-            <p className="aq-note">后台只核对报价和环境变化；上方转弱、止跌等文字条件到时仍需复核。</p>
+            <p className="aq-note">后台核对已登记前提、失效条件与报价；其余文字条件到时仍需人工复核。</p>
             <label className="aq-action-plan-confirm"><input type="checkbox" checked={!!sourceKey && watchConfirmed === sourceKey} disabled={adopting} onChange={(event) => setWatchConfirmed(event.target.checked ? sourceKey : "")} />我已核对这条路线、观察方向和取消条件</label>
             {issue ? <p role="status">{issue}</p> : null}
             <div className="aq-row-actions"><button type="submit" className="aq-btn aq-btn-primary" disabled={disabled || busy || adopting || watchConfirmed !== sourceKey || !!issue}>{adopting ? "保存中…" : "确认采用并跟踪"}</button><button type="button" className="aq-btn" disabled={adopting} onClick={() => setSelectedAction(null)}>暂不采用</button></div>

@@ -9,6 +9,7 @@ from typing import Any
 from aqsp.core.errors import DataError
 from position_route_review import evidence_digest
 from strategy_direction import direction_identity
+import strategy_conditions as conditions
 
 FOLLOWUP_MODES = frozenset({'off', 'changes', 'daily'})
 ATTENTION_STATES = frozenset({'price_watch', 'below_watch', 'paused', 'needs_review', 'evidence_unavailable'})
@@ -35,6 +36,7 @@ class FollowupObservation:
     position_snapshot: dict[str, Any]
     reason: str
     joint_pause_pending: bool = False
+    condition_checks: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize an observation; timestamps remain source/inspection times."""
@@ -91,10 +93,84 @@ def risk_rule_key(rules: list[dict[str, Any]], position_id: str) -> str:
     return evidence_digest(sorted(rows, key=lambda row: str(row['id'])))
 
 
+def condition_facts(worksheet: dict[str, Any], *, current: datetime) -> dict[str, conditions.ConditionFact]:
+    """Adapt source-guarded position evidence without disk/network access."""
+    from decision_context import position_quote_issue
+    from strategy_market_source import BREADTH_SOURCE
+
+    evidence = worksheet.get('route_review', {}).get('evidence', {})
+    basis = worksheet.get('basis', {})
+    result = {}
+    for key in ('market', 'sector', 'quote'):
+        fact = ({'price': basis.get('price'), 'source': basis.get('quote_source'), 'as_of': basis.get('quote_as_of')}
+                if key == 'quote' else evidence.get(key) or {})
+        source, stamp = fact.get('source'), fact.get('as_of')
+        valid = bool(isinstance(source, str) and source and not position_quote_issue({'as_of': stamp}, checked_at=current))
+        observed = fact.get('price') if key == 'quote' else fact.get('status')
+        if key == 'market':
+            valid = valid and source == BREADTH_SOURCE and observed in {'weak', 'neutral', 'strong'}
+        elif key == 'sector':
+            valid = valid and bool(fact.get('industry')) and observed in {'falling', 'flat', 'rising'}
+        else:
+            valid = valid and not basis.get('quote_issue') and _price(observed) is not None
+        result[key] = conditions.ConditionFact(observed, source if isinstance(source, str) else '',
+                                                stamp if isinstance(stamp, str) else None, bool(valid))
+    return result
+
+
+def watch_contract(watch: dict[str, Any], position_id: str) -> dict[str, Any] | None:
+    """Bind a position-only contract back to the exact adopted watch operands."""
+    if 'condition_contract' not in watch:
+        return None
+    frozen = conditions.validate_contract(watch['condition_contract'])
+    reference = watch.get('price_ref') or {}
+    if not isinstance(reference, dict):
+        raise ValueError('持仓冻结观察价引用结构无效，请重新核对')
+    if _price(reference.get('price')) != _price(watch.get('price')):
+        raise ValueError('持仓冻结观察价与原引用不一致')
+    expected = conditions.freeze_position_contract(frozen['prerequisite_ids'], frozen['invalidation_ids'],
+        price_predicate={'price_ref': watch.get('source_price_ref'), 'comparator': watch.get('comparator'),
+                         'price': watch.get('price'), 'source': reference.get('source'), 'as_of': reference.get('as_of')},
+        condition=watch['condition'], invalidation=watch['invalidation'],
+        origin={'kind': 'position', 'position_id': position_id, 'analysis_basis_id': watch.get('source_analysis_basis_id'),
+                'source_discussion': watch.get('source_discussion'), 'generated_at': watch.get('source_generated_at'),
+                'action_index': watch.get('source_action_index'), 'choice': watch.get('choice'),
+                'action': watch.get('action'), 'price_ref': watch.get('source_price_ref')})
+    if frozen != expected:
+        raise ValueError('冻结条件合同与已采用持仓观察不一致')
+    return frozen
+
+
+def strategy_condition_checks(worksheet: dict[str, Any], *, current: datetime) -> dict[str, Any] | None:
+    """Expose checks even behind risk/changed-premise pauses; never relax them."""
+    plan = worksheet.get('review_plan') or {}
+    watch = plan.get('watch')
+    if not watch or plan.get('watch_stopped') or worksheet.get('archived'):
+        return None
+    frozen = watch_contract(watch, worksheet['position_id'])
+    reference = watch.get('price_ref') or {}
+    if not isinstance(reference, dict):
+        raise ValueError('持仓观察价引用结构无效，请重新核对')
+    legacy_price = None
+    if (frozen is None and _price(watch.get('price')) is not None
+            and watch.get('comparator') in {'at_or_above', 'at_or_below'}
+            and all(isinstance(reference.get(key), str) and reference[key] for key in ('source', 'as_of'))):
+        legacy_price = {'price_ref': 'legacy_position_price', 'comparator': watch['comparator'], 'price': watch['price'],
+                        'source': reference['source'], 'as_of': reference['as_of']}
+    return conditions.evaluate_contract(frozen, condition_facts(worksheet, current=current),
+        legacy_price=legacy_price, legacy_condition=str(watch.get('condition') or ''),
+        legacy_invalidation=str(watch.get('invalidation') or ''))
+
+
 def observe_plan(worksheet: dict[str, Any], root: dict[str, Any], *, current: datetime) -> FollowupObservation:
     """Describe saved prices only; reaching them proves neither reversal nor fill."""
     plan, basis = worksheet['review_plan'], worksheet['basis']
     choice = plan.get('choice')
+    check_issue = ''
+    try:
+        checks = strategy_condition_checks(worksheet, current=current)
+    except (ValueError, KeyError, TypeError) as exc:
+        checks, check_issue = None, str(exc)
     previous = saved_observation(root) or {}
     evidence = worksheet.get('route_review', {}).get('evidence', {})
     unresolved_pause = (choice == 't_watch'
@@ -129,10 +205,16 @@ def observe_plan(worksheet: dict[str, Any], root: dict[str, Any], *, current: da
         watch = plan['watch']
         target = _price(watch.get('price'))
         comparator = watch.get('comparator')
-        if (watch.get('position_snapshot') != worksheet['position_snapshot']
+        if check_issue:
+            state, title, detail, reason = 'needs_review', '已保存条件需要重新核对', check_issue, 'watch_invalid'
+        elif (watch.get('position_snapshot') != worksheet['position_snapshot']
                 or watch.get('constraints') != worksheet.get('constraints')
                 or watch.get('trade_revision') != worksheet.get('trade_revision')):
             state, title, detail, reason = 'needs_review', '原策略对应的持仓或条件已变化', '即使重新保存了试算，原AI观察条件也需按最新持仓、费用和个人条件重新分析后采用。', 'watch_changed'
+        elif choice == 't_watch' and watch.get('action') == 'buy_review' and not worksheet.get('recorded_sale'):
+            state, title, detail, reason = 'needs_review', '先核对实际卖出，再观察买回', '做T须先卖后买；尚未读到这笔持仓的实际卖出记录，不能把到价视为回补条件成立。', 't_sale_required'
+        elif watch.get('action') == 'sell_review' and not basis.get('sellable_shares'):
+            state, title, detail, reason = 'needs_review', '当前没有可卖股份', '请先核对T+1与可卖底仓；条件匹配不解除当日买入不可卖出的限制。', 't_plus_one'
         elif target is None or comparator not in {'at_or_above', 'at_or_below'}:
             state, title, detail, reason = 'needs_review', '已保存观察条件不可核验', '观察价或比较方向不完整，请重新分析并采用；未沿用损坏条件。', 'watch_invalid'
         elif watch.get('direction_schema') != 'direction-v1':
@@ -144,7 +226,18 @@ def observe_plan(worksheet: dict[str, Any], root: dict[str, Any], *, current: da
             direction = '达到或高于' if comparator == 'at_or_above' else '达到或低于'
             condition = str(watch.get('condition') or '核对原分析提出的其他条件')
             invalidation = str(watch.get('invalidation') or '依据变化时重新分析')
-            if reached:
+            if (checks and checks['mode'] == 'registered' and (checks['summary'] in {'review', 'unknown'}
+                    or (checks['summary'] == 'waiting' and any(item['role'] == 'prerequisite' and item['status'] == 'unmet'
+                                                              for item in checks['items'])))):
+                summary = checks['summary']
+                state = 'needs_review' if summary == 'review' else 'evidence_unavailable' if summary == 'unknown' else 'waiting'
+                title = '原策略失效条件已出现，重新分析' if summary == 'review' else '条件尚缺有效依据' if summary == 'unknown' else '正在跟踪尚未满足的策略前提'
+                reason = 'strategy_invalidation' if summary == 'review' else 'strategy_condition_unknown' if summary == 'unknown' else 'strategy_prerequisite'
+                pending = [item['label'] for item in checks['items'] if (item['role'] == 'invalidation' and item['status'] == 'met')
+                           or (item['role'] != 'manual' and item['status'] == 'unknown')
+                           or (item['role'] == 'prerequisite' and item['status'] == 'unmet')]
+                detail = '；'.join(pending) + '。先核对这些条件；到价不表示买卖前提成立。'
+            elif reached:
                 state, title, reason = 'price_watch', '已到策略观察价，核验买卖前提', 'strategy_price'
                 detail = f"本次报价 {basis['price']:.2f} 元，{direction}你采用的 {target:.2f} 元。下一步核验：{condition}；取消条件：{invalidation}。报价只证明到价，其他条件尚未自动确认。"
             else:
@@ -166,7 +259,7 @@ def observe_plan(worksheet: dict[str, Any], root: dict[str, Any], *, current: da
     return FollowupObservation(worksheet['position_id'], worksheet['symbol'], worksheet['name'], state, title, detail,
                                current.isoformat(), basis.get('quote_as_of'), worksheet['revision'],
                                plan_key(root, worksheet['position_id']), worksheet['position_snapshot'], reason,
-                               bool(choice == 't_watch' and not worksheet['archived'] and (unresolved_pause or basis.get('joint_weakness'))))
+                               bool(choice == 't_watch' and not worksheet['archived'] and (unresolved_pause or basis.get('joint_weakness'))), checks)
 
 
 def followup_view(root: dict[str, Any], revision: str, snapshot: dict[str, Any], *, current: datetime) -> dict[str, Any]:
@@ -200,5 +293,7 @@ def notification_key(root: dict[str, Any], observation: dict[str, Any], *, curre
         return None
     period = current.date().isoformat() if mode == 'daily' else 'changes'
     digest = evidence_digest({'position_id': observation['position_id'], 'plan': observation['plan_key'],
-                              'state': observation['state'], 'reason': observation['reason'], 'period': period})
+                              'state': observation['state'], 'reason': observation['reason'], 'period': period,
+                              **({'conditions': observation['condition_checks']['digest']}
+                                 if (observation.get('condition_checks') or {}).get('mode') == 'registered' else {})})
     return 'position-plan|' + digest

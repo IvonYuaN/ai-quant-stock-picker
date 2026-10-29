@@ -71,12 +71,23 @@ def _text(value: str) -> str:
     return re.sub(r"([\\`*_{}\[\]()<>#!|])", r"\\\1", line)
 
 
+def _condition_line(candidate: dict[str, Any]) -> tuple[str, ...]:
+    checks = candidate.get('condition_checks') or {}
+    if checks.get('mode') != 'registered':
+        return ()
+    labels = {'met': '已满足', 'unmet': '未满足', 'unknown': '缺依据', 'manual_required': '需人工核验'}
+    rows = [f"{_text(item['label'])}：{'已触发' if item['role'] == 'invalidation' and item['status'] == 'met' else labels.get(item['status'], '待核对')}"
+            for item in checks.get('items', []) if item.get('role') != 'manual']
+    return ('条件核对：' + '；'.join(rows),) if rows else ()
+
+
 def _render(candidate: dict[str, Any]) -> str:
     href = "https://lh.ifidy.cn/my/holdings/" + quote(candidate["position_id"], safe="") + "/plan"
     return "\n".join((
         "# 持仓计划有变化 · 待复核", "",
         f"**{_text(candidate['name'])} {_text(candidate['symbol'])}** · {_text(candidate['title'])}",
         _text(candidate["detail"]),
+        *_condition_line(candidate),
         f"检查时点：{_timestamp(candidate['observed_at'])}",
         f"行情源时点：{_timestamp(candidate['quote_as_of']) if candidate.get('quote_as_of') else '缺失，不能作为当前到价依据'}",
         f"[查看处理计划]({href})", "",

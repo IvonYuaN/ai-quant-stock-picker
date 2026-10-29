@@ -63,7 +63,7 @@ export const strategyWatchContract = {
   invalidSourceDoesNotTrack: strategyWatchIssue(discussion, { ...worksheet, basis: { ...worksheet.basis, quote_issue: "源失败" } }, 0, "reduce", "at_or_above", now).includes("行情不可用"),
   watchWaitsBeforePrice: strategyWatchState(tracked, now)?.title === "正在等待策略条件",
   priceEqualityOnlyMeansReview: strategyWatchState({ ...tracked, basis: { ...tracked.basis, price: 10 } }, now)?.detail.includes("尚不能确认") === true,
-  belowComparatorWorks: strategyWatchState({ ...tracked, review_plan: { choice: "t_watch", watch: { ...watch, comparator: "at_or_below", action: "buy_review" } } }, now)?.title.includes("已到") === true,
+  belowComparatorWorks: strategyWatchState({ ...tracked, recorded_sale: { date: "2026-10-27", price: 10, shares: 100 }, review_plan: { choice: "t_watch", watch: { ...watch, comparator: "at_or_below", action: "buy_review" } } }, now)?.title.includes("已到") === true,
   staleQuoteNeverShowsPriceReached: strategyWatchState({ ...tracked, basis: { ...tracked.basis, price: 11 } }, now + 61_000)?.title === "等待有效行情",
   changedHoldingRequiresReview: strategyWatchState({ ...tracked, position_snapshot: { ...worksheet.position_snapshot, shares: 800 } }, now)?.title.includes("持仓已变化") === true,
   changedConstraintsInvalidateReachedPrice: strategyWatchState({ ...tracked, constraints: { ...worksheet.constraints!, extra_cash: 500 }, basis: { ...worksheet.basis, price: 11 } }, now)?.title === "原策略对应的持仓或条件已变化",
