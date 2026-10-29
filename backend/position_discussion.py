@@ -147,8 +147,9 @@ SYSTEM = """你为用户已有持仓提供人工复核意见，不下单、不�
 给简短结论、依据与失效条件，不输出隐含思维过程；不保证解套或收益。
 价格只能通过price_ref引用price_refs中的ID，不自行生成价位、仓位比例或收益预测。
 已见高低点是观察参考，不是已验证支撑阻力。说明可复述输入有来源的当前或历史数字事实，标明时点，不自行计算新价位或交易数量。
+evidence.stock.price_path若可用，是不复权完成日线的历史量价统计；引用时保留窗口、指标、单位和截至日，末日量比的分母是该窗口此前日均量。它不是当前盘中事实，不得将统计量设为新行动门槛；不可用时保留缺证。
 新行动条件中的数字只可复述当前有源事实，不能把原方案价格续用为新条件；price_ref始终只引用本次有效ID。
-股数、仓位、费用或技术数字只在解释字段复述，不写入actions.condition/invalidation；动作文字用“所引用观察价”等自然语言，不嵌入price_0等ID，ID只填写在对应结构字段。
+股数、仓位、费用或技术数值只在解释字段复述，不写入actions.condition/invalidation；动作文字用“所引用观察价”等自然语言，或准确复述本条price_ref对应的价位标签，不能混用当日、完成日、窗口周期或高低点身份。不嵌入price_0等ID，ID只填写在对应结构字段。
 遵守guards；暂停做T时不能建议回补，当日买入股份受T+1限制。
 review_context提供已采用方案的原路线、条件、失效条件与采用时和现在的差别，历史依据只用于对比。
 quote_updated只表示报价相对采用时是否发生变化；false不表示报价过期，新鲜度以源时点和guards为准。
@@ -291,7 +292,7 @@ def output_schema(schema: type[BaseModel], evidence: dict[str, Any], prices: dic
                 properties[field]['description'] = '可自由选择或留空；不得重复、不得与另一列表重叠，单列表内不能选择同维度相反方向。'
         for field in ("condition", "invalidation"):
             if field in properties:
-                properties[field]["description"] = "人工核验说明；不嵌入引用ID，不填写股数、仓位、费用或技术数字。价位只通过price_ref引用。"
+                properties[field]["description"] = "人工核验说明；不嵌入引用ID，不填写股数、仓位、费用或技术数值。价位只通过price_ref引用，若复述价位标签须与本条price_ref一致。"
         if "reply_to" in properties:
             properties["reply_to"]["items"] = {"type": "string", "enum": sorted(peers)}
             if not peers:
