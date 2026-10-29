@@ -144,3 +144,68 @@ def test_position_model_action_schema_requires_price_only_for_buy_or_sell() -> N
     assert rule['if']['properties']['action']['enum'] == ['sell_review', 'buy_review']
     assert rule['then']['required'] == ['price_ref']
     assert rule['then']['properties']['price_ref'] == {'type': 'string', 'enum': ['price_0']}
+
+
+@pytest.mark.parametrize('reference,condition,invalidation,issue', [
+    (None, '观察大盘与行业方向是否延续', '方向变化后重新复核', None),
+    ('price_0', '核对所引用观察价附近的价格行为', '所引用观察价不再支持原判断时复核', None),
+    ('price_0', '观察本交易日已见低点附近的价格行为', '本交易日已见低点被有效跌破后复核', None),
+    (None, '观察本交易日已见低点附近的价格行为', '方向变化后重新复核', 'action_evidence'),
+    ('price_0', '观察本交易日已见低点附近的价格行为', '行情源前收盘价不再支持时复核', 'action_evidence'),
+    (None, '继续持有1000股，观察大盘与行业方向', '方向变化后重新复核', 'action_numbers'),
+])
+def test_position_model_keeps_explanation_facts_separate_when_one_observation_has_one_price_identity(
+    reference: str | None, condition: str, invalidation: str, issue: str | None,
+) -> None:
+    prices = {'price_0': {**PRICES['price_0'], 'label': '本交易日已见低点'},
+              'price_1': {**PRICES['price_0'], 'label': '行情源前收盘价'}}
+    row = deepcopy(OPINION)
+    row['summary'] = '已有1000股持仓，现有股数只是判断背景，不代表新的操作数量。'
+    row['actions'] = [{'action': 'observe', 'price_ref': reference, 'condition': condition, 'invalidation': invalidation}]
+    if issue:
+        with pytest.raises(ModelContractError) as error:
+            discussion._parse(json.dumps(row), discussion.RoleOpinion, EVIDENCE, prices, set(),
+                              {'sellable_shares': 1000, 'pause_t': False})
+        assert error.value.code == issue
+    else:
+        parsed = discussion._parse(json.dumps(row), discussion.RoleOpinion, EVIDENCE, prices, set(),
+                                   {'sellable_shares': 1000, 'pause_t': False})
+        assert parsed['summary'] == row['summary']
+        assert parsed['actions'][0]['condition'] == condition
+
+
+def test_position_model_explains_field_responsibilities_in_every_discussion_phase(discussion_client: tuple[Any, ...]) -> None:
+    client, event, worksheet, calls = discussion_client
+    result = client.post(f'/api/alerts/{event}/discussion', json={
+        'choice': None, 'expected_position': worksheet['position_snapshot'], 'expected_revision': worksheet['revision']})
+    assert result.status_code == 200 and result.json()['data']['status'] == 'complete'
+    assert len(calls) == 7
+    for payload in calls:
+        schema = payload['output_schema']
+        explanation = schema['properties']['conclusion' if 'rounds' in payload else 'summary']['description']
+        assert '解释' in explanation and '历史量价' in explanation
+        fields = schema['$defs']['Observation']['properties']
+        assert '共用的唯一价位身份' in fields['price_ref']['description']
+        assert all('null时不点名任何价位' in fields[key]['description'] for key in ('condition', 'invalidation'))
+        assert payload['guards']['no_orders'] and set(fields['price_ref']['anyOf'][0]['enum']) == set(payload['price_refs'])
+
+
+def test_position_model_preserves_full_audit_when_all_generation_phases_use_references(discussion_client: tuple[Any, ...]) -> None:
+    client, event, worksheet, calls = discussion_client
+    result = client.post(f'/api/alerts/{event}/discussion', json={
+        'choice': None, 'expected_position': worksheet['position_snapshot'], 'expected_revision': worksheet['revision']}).json()['data']
+    full = result['evidence_snapshot']
+    assert result['status'] == 'complete' and len(calls) == 7
+    for payload in calls:
+        generated = json.loads(json.dumps(payload['evidence']))
+        assert set(generated) == set(full)
+        assert generated['holding'] == full['holding'] == worksheet['position_snapshot']
+        assert generated['stock'] == full['stock']
+        for key in ('market', 'sector', 'stock'):
+            assert generated['route_constraints']['evidence'][key] == {'evidence_ref': key}
+            assert full['route_constraints']['evidence'][key] == full[key]
+        for key, price in result['price_refs'].items():
+            assert generated[key] == {'price_ref': key}
+            assert full[key] == payload['price_refs'][key] == price
+    stored = client.get(f'/api/alerts/{event}/action-plan').json()['data']['comparison']
+    assert stored['evidence_snapshot'] == full
