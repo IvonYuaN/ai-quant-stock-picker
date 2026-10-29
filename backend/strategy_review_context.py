@@ -7,6 +7,8 @@ import math
 import re
 from typing import Any
 from model_source_time import trusted_source_stamps, without_source_times
+from model_contract import ModelContractError
+from strategy_conditions import DEFINITIONS
 from strategy_direction import direction_identity
 from position_route_review import evidence_digest
 
@@ -243,6 +245,19 @@ def historical_numbers(context: dict[str, Any] | None) -> SourceNumbers:
     return source_numbers(original.get('evidence_snapshot') or {}, refs)
 
 
+def contains_action_reference(text: str, prices: dict[str, Any]) -> bool:
+    """Recognize reference syntax before its numeric suffix can look like a price."""
+    if re.search(r'price_\d+', text, flags=re.I):
+        return True
+    families = '|'.join(sorted({re.escape(item.id.split(':', 1)[0]) for item in DEFINITIONS}))
+    if re.search(rf'(?:{families}):[A-Za-z0-9_]+:v[A-Za-z0-9_]*', text, flags=re.I):
+        return True
+    identifiers = (*prices, *(item.id for item in DEFINITIONS))
+    return any(isinstance(identifier, str) and identifier and re.search(
+        rf'(?<![A-Za-z0-9_]){re.escape(identifier)}(?![A-Za-z0-9_])', text)
+        for identifier in identifiers)
+
+
 def validate_position_action_numbers(parsed: dict[str, Any], evidence: dict[str, Any], prices: dict[str, Any]) -> None:
     """Reject old/invented numeric action conditions even if supplied in history."""
     facts = source_numbers(evidence, prices)
@@ -267,20 +282,28 @@ def validate_position_action_numbers(parsed: dict[str, Any], evidence: dict[str,
     stamps = facts.stamps
     for action in parsed.get('actions', []):
         for key in ('condition', 'invalidation'):
-            validate_price_path_claims(action[key], path, action=True)
+            if contains_action_reference(action[key], prices):
+                raise ModelContractError('embedded_reference')
             reference = prices.get(action.get('price_ref'))
-            prose = mask_action_reference_identity(action[key], path, reference)
+            try:
+                validate_price_path_claims(action[key], path, action=True)
+                prose = mask_action_reference_identity(action[key], path, reference)
+            except ValueError as exc:
+                raise ModelContractError('action_evidence') from exc
             # Once prose names this price_ref's typed identity, an explicit
             # price must describe that same reference, not another allowed
             # high/low that happens to share the global price namespace.
             field_prices = (frozenset(price for price in allowed if price == reference.get('price')) if prose != action[key]
                             and isinstance(reference, dict) else allowed)
-            prose = without_source_times(prose.replace('T+1', ''), stamps)
+            try:
+                prose = without_source_times(prose.replace('T+1', ''), stamps)
+            except ValueError as exc:
+                raise ModelContractError('action_numbers') from exc
             # Inspect currency before removing source dates: otherwise a model
             # can turn an allowed date into a fabricated price by adding 元.
             currency = re.findall(r'([-+]?\d+(?:\.\d+)?)\s*(?:元|块|角)', prose)
             if any(float(number) not in field_prices for number in currency):
-                raise ValueError('模型动作的价格单位与当前有源价位不符')
+                raise ModelContractError('action_numbers')
             for suffix, values in ((r'[%％]', facts.percentages), (r'分', facts.scores), (r'家', facts.counts)):
                 prose = re.sub(rf'([-+]?\d+(?:\.\d+)?)\s*{suffix}',
                                lambda match: '' if float(match[1]) in values else match[0], prose)
@@ -291,4 +314,4 @@ def validate_position_action_numbers(parsed: dict[str, Any], evidence: dict[str,
                              rf'(?:跌破|回落到|价位|价格|到达|高于|低于|止损(?:在)?|目标价|突破|支撑|阻力)\s*[{chinese_numbers}]+')
             if re.search(chinese_price, prose) or re.search(r'\d+(?:\.\d+)?\s*(?:股|手|[%％]|分|家|点|倍)', prose) or any(
                     float(number) not in field_prices for number in re.findall(r'[-+]?\d+(?:\.\d+)?', prose)):
-                raise ValueError('模型动作的数字条件只能引用当前有源价位，历史价不能作为新行动条件')
+                raise ModelContractError('action_numbers')

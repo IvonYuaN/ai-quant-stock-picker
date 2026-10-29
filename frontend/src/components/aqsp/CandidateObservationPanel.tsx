@@ -1,4 +1,5 @@
 import { StrategyReviewContextPanel } from "./StrategyReviewContextPanel";
+import { DiscussionFailures } from "./DiscussionFailures";
 import { CandidateConditionChecks, CandidateActionChecks } from "./CandidateConditionChecks";
 import { candidateChecksView } from "@/lib/candidate-conditions";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -125,7 +126,6 @@ function CandidateObservationWorkspace({ symbol, researchDate, historical }: { s
         ...(model ? { server_model: model } : {}) }, (nextStage) => { if (active.current) setStage(nextStage); }, controller.current.signal);
       if (active.current) {
         setData((previous) => previous ? { ...previous, discussion: next, analysis: { status: next.status, stage: "", run_id: null } } : previous);
-        if (!next.summary) setActionError(next.summary_issue || "尚未形成有效汇总；保留已完成角色，可核对后重试。");
       }
     } catch (reason) { if (active.current) setActionError(isAqspAbortError(reason) ? "已停止等待；正在核对服务端最后状态。" : `${reason instanceof Error ? reason.message : "分析未完成"}。未自动重试，先核对已保存结果。`); }
     finally { controller.current = null; if (active.current) { setDiscussing(false); await recover(); } mutation.current = false; if (active.current) setBusy(false); }
@@ -209,7 +209,8 @@ function CandidateObservationWorkspace({ symbol, researchDate, historical }: { s
             {adoptionIssue ? <p role="status">{adoptionIssue}</p> : null}<div className="aq-row-actions"><button type="submit" className="aq-btn aq-btn-primary" disabled={locked || analyzing || !!workspaceIssue || !!adoptionIssue || !sourceKey || confirmedSource !== sourceKey}>确认采用候选观察</button><button type="button" className="aq-btn" disabled={busy} onClick={clearConfirmation}>暂不采用</button></div>
           </form> : null}
           {result.summary.disagreements.length ? <p>仍有分歧：{result.summary.disagreements.join("；")}</p> : null}{result.summary.missing_evidence.length ? <p>还缺什么：{result.summary.missing_evidence.join("；")}</p> : null}
-        </> : <p role="status">尚无通过核验的汇总条件。{result.summary_issue || "可查看已完成角色，核对缺证后重试。"}</p>}
+        </> : <p role="status">尚无通过核验的汇总条件。{!result.summary_failure_kind && result.summary_issue ? result.summary_issue : "可查看已完成角色，核对缺证后重试。"}</p>}
+        <DiscussionFailures result={result} />
         <details><summary>查看三角色讨论与证据</summary><TechnicalEvidence evidence={result.evidence_snapshot} />{result.rounds.map((round, index) => <div key={index}><h4>{round.stage === "independent" ? "独立分析" : "相互回应"}</h4>{round.opinions.map((row) => <article key={row.role}><b>{row.label}</b>{row.opinion ? <><p>{row.opinion.summary}</p>{row.opinion.challenge ? <p>回应：{row.opinion.challenge}</p> : null}{row.opinion.uncertainties.length ? <p>待核实：{row.opinion.uncertainties.join("；")}</p> : null}<small>引用：{row.opinion.evidence_ids.join("、")}</small></> : <p>{row.issue || "本角色未完成"}</p>}</article>)}</div>)}<p className="aq-note">{result.notice}</p></details>
       </details></section> : null}
     </> : null}

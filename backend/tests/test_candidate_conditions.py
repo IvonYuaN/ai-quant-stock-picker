@@ -7,6 +7,7 @@ from datetime import timedelta
 import json
 
 import pytest
+from model_contract import ModelContractError
 
 import candidate_discussion as discussion
 import candidate_monitor as monitor
@@ -306,5 +307,5 @@ def test_candidate_conditions_defer_cannot_promise_ignored_action_predicates(env
     row = opinion()
     row['actions'][0].update(choice='defer', price_ref=None)
     row['actions'][0][field] = ['sector:falling:v1']
-    with pytest.raises(ValueError, match='暂缓路线当前不采用'):
+    with pytest.raises(ModelContractError, match='可监控条件'):
         discussion.parse(json.dumps(row), discussion.CandidateOpinion, value, set())

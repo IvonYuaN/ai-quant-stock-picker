@@ -3849,6 +3849,10 @@
 .aq-position-discussion input:not([type="checkbox"]) { width: 100%; min-width: 0; padding: 9px; background: transparent; border: 1px solid #4b5055; border-radius: 4px; }
 .aq-discussion-result { margin-top: 14px; }
 .aq-discussion-result article { padding: 10px 0; border-top: 1px solid #34383c; }
+.aq-discussion-failures { margin: .8rem 0; padding: .7rem .9rem; border-left: 3px solid hsl(var(--warning)); background: hsl(var(--warning) / .06); min-width: 0; }
+.aq-discussion-failures h5 { margin-bottom: .4rem; font-weight: 600; }
+.aq-discussion-failures ul { display: grid; gap: .35rem; list-style: disc; padding-left: 1.2rem; overflow-wrap: anywhere; }
+.aq-discussion-failures > summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; }
 
 /* Beginner flow: one decision at a time, evidence on demand. */
 .aq-beginner-assessment { display: grid; gap: .35rem; padding: .3rem 0 .3rem .8rem; }
