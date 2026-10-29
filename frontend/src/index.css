@@ -3647,6 +3647,22 @@
   .aq-selected-candidate .aq-metric-grid span,
   .aq-selected-candidate .aq-metric-grid b { white-space: normal; overflow: visible; overflow-wrap: anywhere; }
   .aq-candidate-actions { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.8rem 0; }
+  .aq-candidate-decision { display: grid; gap: 0.85rem; min-width: 0; padding: 1.1rem; border: 1px solid hsl(var(--primary) / 0.35); border-radius: 0.75rem; background: hsl(var(--card)); }
+  .aq-candidate-decision-head, .aq-candidate-decision-card-head { display: flex; justify-content: space-between; align-items: start; gap: 0.8rem; }
+  .aq-candidate-decision-head > div > span { color: hsl(var(--primary)); font-size: 0.73rem; font-weight: 700; }
+  .aq-candidate-decision-head h3 { margin: 0.15rem 0 0; font-size: 1.1rem; }
+  .aq-candidate-decision-context { display: grid; gap: 0.2rem; margin: 0; font-size: 0.84rem; }
+  .aq-candidate-decision-context small { color: hsl(var(--muted-foreground)); overflow-wrap: anywhere; }
+  .aq-candidate-decision-conclusion { margin: 0; padding: 0.75rem; border-radius: 0.45rem; background: hsl(var(--primary) / 0.09); line-height: 1.55; font-size: 0.86rem; }
+  .aq-candidate-decision-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr)); gap: 0.7rem; }
+  .aq-candidate-decision-card { display: grid; align-content: start; gap: 0.55rem; min-width: 0; padding: 0.85rem; border: 1px solid hsl(var(--border)); border-radius: 0.55rem; background: hsl(var(--muted) / 0.18); }
+  .aq-candidate-decision-card-head h4 { margin: 0; font-size: 0.95rem; }
+  .aq-candidate-decision-card-head .aq-code { font-size: 0.72rem; }
+  .aq-candidate-decision-card p { display: grid; gap: 0.15rem; margin: 0; font-size: 0.78rem; line-height: 1.55; overflow-wrap: anywhere; }
+  .aq-candidate-decision-card p b { color: hsl(var(--muted-foreground)); font-size: 0.7rem; }
+  .aq-candidate-decision-card > .aq-btn { width: fit-content; margin-top: 0.3rem; }
+  .aq-candidate-decision-metrics { min-width: 0; border-top: 1px solid hsl(var(--border)); padding-top: 0.55rem; }
+  .aq-candidate-decision-metrics summary { min-height: 2.5rem; display: flex; align-items: center; cursor: pointer; font-size: 0.8rem; color: hsl(var(--muted-foreground)); }
   .aq-workspace-fold { min-width: 0; border-top: 1px solid hsl(var(--border)); }
   .aq-workspace-fold > summary { display: list-item; cursor: pointer; padding: 1rem 0; font-size: 0.9rem; font-weight: 600; }
   .aq-workspace-fold > summary span { margin-left: 0.6rem; font-size: 0.75rem; font-weight: 400; color: hsl(var(--muted-foreground)); }
@@ -3735,6 +3751,8 @@
     .aq-candidate-choice { min-height: 4.25rem; padding: 0.7rem; }
     .aq-selected-candidate { padding: 0.9rem; }
     .aq-candidate-actions .aq-btn { font-size: 0.75rem; }
+    .aq-candidate-decision { padding: 0.8rem; }
+    .aq-candidate-decision-head { flex-wrap: wrap; }
     .aq-candidate-filters summary { flex-wrap: wrap; }
     .aq-workspace-fold > summary span { display: block; margin: 0.3rem 0 0 1rem; }
     .aq-watch-row { grid-template-columns: minmax(0, 1fr); gap: 0.85rem; }

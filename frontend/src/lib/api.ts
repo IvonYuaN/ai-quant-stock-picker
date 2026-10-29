@@ -154,12 +154,13 @@ async function request<T>(
   path: string,
   method: "GET" | "POST" | "PUT" | "DELETE" | "PATCH" = "GET",
   body?: unknown,
+  options?: AqspRequestOptions,
 ): Promise<T> {
-  const payload = await requestPayload(path, method, body);
+  const payload = await requestPayload(path, method, body, options);
   return (hasDataField(payload) && payload.data != null ? payload.data : payload) as T;
 }
 
-const get = <T>(path: string) => request<T>(path, "GET");
+const get = <T>(path: string, options?: AqspRequestOptions) => request<T>(path, "GET", undefined, options);
 const getEnvelope = <T>(path: string, options?: AqspRequestOptions): Promise<T> =>
   requestPayload(path, "GET", undefined, options) as Promise<T>;
 
@@ -845,7 +846,7 @@ export const api = {
   savePositionConstraints: (id: string, constraints: Pick<PositionConstraints, "attention" | "extra_cash" | "loss_limit">, expected_position: ActionWorksheet["position_snapshot"], expected_revision: string, reset_risk_baseline = false, expected_quote?: { price: number | null; as_of: string | null }) =>
     request<ActionWorksheet>(`/positions/${encodeURIComponent(id)}/constraints`, "POST", { ...constraints, expected_position, expected_revision, reset_risk_baseline, expected_quote }),
   candidateObservations: () => get<{ items: CandidateWorkspace[] }>("/candidate-observations"),
-  candidateObservation: (symbol: string) => get<CandidateWorkspace>(`/candidate-observations/${encodeURIComponent(symbol)}`),
+  candidateObservation: (symbol: string, options?: AqspRequestOptions) => get<CandidateWorkspace>(`/candidate-observations/${encodeURIComponent(symbol)}`, options),
   refreshCandidateEvidence: (symbol: string) => request<CandidateWorkspace>(`/candidate-observations/${encodeURIComponent(symbol)}/strategy-evidence`, "POST", {}),
   candidateDiscussionStream: async (symbol: string, input: CandidateDiscussionInput, progress: (stage: string) => void, signal: AbortSignal): Promise<CandidateDiscussion> => {
     const response = await fetch(`/api/candidate-observations/${encodeURIComponent(symbol)}/discussion/stream`, {

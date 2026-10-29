@@ -17,7 +17,7 @@ import { toast } from "sonner";
 import { loadWatch, saveWatch } from "@/lib/watchlist";
 import { stockResearchHref } from "@/lib/research-route";
 import { cn } from "@/lib/utils";
-import { api, type Holding, type ReviewRecord } from "@/lib/api";
+import { api, type CandidateWorkspace, type Holding, type ReviewRecord } from "@/lib/api";
 import { evidenceLabel, statusLabel } from "@/lib/display-labels";
 import { useOwnership } from "../useOwnership";
 import type { CandidateRow, DailyView, SectionView } from "@/lib/daily-view";
@@ -33,24 +33,82 @@ import { ownedKind, summarizeOwned, ownershipSummaryLabel, type OwnershipSets } 
 import {
   MAX_COMPARE_SYMBOLS,
   buildCompareMatrix,
+  buildCandidateDecisionComparison,
   parseCompareSymbols,
   toggleCompareSymbol,
 } from "@/lib/candidate-compare";
 
 /** 并排对比：最后筛剩几只时，摆开看才分得出该先动哪只。 */
+const COMPARISON_READ_TIMEOUT_MS = 12_000;
+
 function ComparePanel({
   rows,
   symbols,
   onRemove,
+  date,
+  historical,
+  generatedAt,
 }: {
   rows: readonly CandidateRow[];
   symbols: readonly string[];
   onRemove: (symbol: string) => void;
+  date: string;
+  historical: boolean;
+  generatedAt: string;
 }) {
   const matrix = buildCompareMatrix(rows, symbols);
+  const [workspaces, setWorkspaces] = useState<Record<string, CandidateWorkspace | null>>({});
+  const [retry, setRetry] = useState(0);
+  const selectionKey = symbols.join("|");
+  useEffect(() => {
+    let active = true;
+    setWorkspaces({});
+    const controllers: AbortController[] = [];
+    if (!historical) {
+      for (const symbol of symbols) {
+        const controller = new AbortController();
+        controllers.push(controller);
+        const timeout = window.setTimeout(() => controller.abort(), COMPARISON_READ_TIMEOUT_MS);
+        void api.candidateObservation(symbol, { signal: controller.signal })
+          .then((workspace) => { if (active) setWorkspaces((previous) => ({ ...previous, [symbol]: workspace })); })
+          .catch(() => { if (active) setWorkspaces((previous) => ({ ...previous, [symbol]: null })); })
+          .finally(() => window.clearTimeout(timeout));
+      }
+    }
+    return () => { active = false; controllers.forEach((controller) => controller.abort()); };
+  }, [selectionKey, date, historical, generatedAt, retry]);
+  const loading = !historical && symbols.every((symbol) => workspaces[symbol] === undefined);
+  const pending = historical ? 0 : symbols.filter((symbol) => workspaces[symbol] === undefined).length;
+  const comparison = buildCandidateDecisionComparison(rows, symbols, workspaces, date, historical);
   if (matrix.columns.length < 2) return null;
   return (
-    <div className="aq-table-wrap">
+    <section className="aq-candidate-decision" aria-label="同日候选取舍">
+      <div className="aq-candidate-decision-head">
+        <div><span>同日取舍 · {date}</span><h3>先研究哪只，哪只继续等？</h3></div>
+        {!historical ? <button className="aq-btn" type="button" onClick={() => setRetry((value) => value + 1)}>重新核对证据</button> : null}
+      </div>
+      {loading ? <p className="aq-hint" role="status">正在核对同日大盘、板块、个股与后台跟进…</p> : (
+        <>
+          {pending > 0 ? <p className="aq-hint" role="status">还有 {pending} 只候选证据读取中；先看已取得的事实，暂不横向排序。</p> : null}
+          <p className="aq-candidate-decision-context"><b>{comparison.context}</b><small>{comparison.contextSource}</small></p>
+          <p className="aq-candidate-decision-conclusion" role="status">{comparison.conclusion}</p>
+          <div className="aq-candidate-decision-grid">
+            {comparison.cards.map((card) => (
+              <article className="aq-candidate-decision-card" key={card.symbol}>
+                <div className="aq-candidate-decision-card-head"><div><h4>{card.name}</h4><span className="aq-code">{card.symbol}</span></div><button type="button" className="aq-btn aq-btn-icon" onClick={() => onRemove(card.symbol)} aria-label={`移除 ${card.name}`}>×</button></div>
+                <p><b>支持</b><span>{card.support}</span></p>
+                <p><b>反证 / 缺口</b><span>{card.counter}</span></p>
+                <p><b>板块</b><span>{card.sector}</span></p>
+                <p><b>该票 AI 分歧</b><span>{card.debate}</span></p>
+                <p><b>接下来等</b><span>{card.next}</span></p>
+                <Link to={`${stockResearchHref(card.symbol, date)}#candidate-observation`} className="aq-btn">看 AI 讨论、观察条件与跟进 <ArrowRight aria-hidden="true" /></Link>
+              </article>
+            ))}
+          </div>
+        </>
+      )}
+      <details className="aq-candidate-decision-metrics"><summary>展开原始指标对比</summary>
+      <div className="aq-table-wrap">
       <table className="aq-table">
         <thead>
           <tr>
@@ -84,7 +142,8 @@ function ComparePanel({
           ))}
         </tbody>
       </table>
-    </div>
+      </div></details>
+    </section>
   );
 }
 
@@ -586,13 +645,12 @@ export function CandidateSection({
   // 并排对比的所选标的放在 URL 上（与所选交易日同一套原则），但用 replace ——
   // 这是视图微调，不该在浏览器历史里堆一串记录。
   const [searchParams, setSearchParams] = useSearchParams();
-  const compareSymbols = parseCompareSymbols(
-    searchParams.get("cmp"),
-    view.candidates.map((row) => row.symbol),
-  );
+  const compareSymbols = searchParams.has("cmp")
+    ? parseCompareSymbols(searchParams.get("cmp"), view.candidates.map((row) => row.symbol))
+    : visible.slice(0, 2).map((row) => row.symbol);
   const setCompareSymbols = (next: string[]) => {
     const params = new URLSearchParams(searchParams);
-    if (next.length === 0) params.delete("cmp");
+    if (next.length === 0) params.set("cmp", "none");
     else params.set("cmp", next.join(","));
     setSearchParams(params, { replace: true });
   };
@@ -712,8 +770,12 @@ export function CandidateSection({
               </div>
               {compareSymbols.length >= 2 ? (
                 <ComparePanel
+                  key={`${view.date}:${view.generatedAt}:${compareSymbols.join("|")}`}
                   rows={view.candidates}
                   symbols={compareSymbols}
+                  date={view.date}
+                  historical={view.isHistorical}
+                  generatedAt={view.generatedAt}
                   onRemove={(symbol) =>
                     setCompareSymbols(toggleCompareSymbol(compareSymbols, symbol))
                   }
