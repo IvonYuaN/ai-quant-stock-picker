@@ -129,73 +129,84 @@ export function HoldingsWatchlist({ portfolio, alerts, candidates, candidateDate
     }
   }
 
+  const renderGroup = (group: (typeof groups)[number]) => (
+    <section className={group.kind === "triggered" || group.kind === "holding" ? "aq-section" : "aq-watch-group"} key={group.kind} data-holding-group={group.kind}>
+      <SectionHeader title={group.label} count={`${group.rows.length} 只`} description={group.kind === "triggered" ? "按已记录提醒优先展示；当日新仓仍受 T+1 限制。" : undefined} />
+      <ul className="aq-watch-list" aria-label={group.label}>
+        {group.rows.map((row) => {
+          const holding = row.holding;
+          const availability = holding as (typeof holding & { sellable_shares?: number; t1_locked_shares?: number });
+          const researchLink = `/stock/${row.code}${candidateDate ? `?date=${encodeURIComponent(candidateDate)}` : ""}`;
+          const planHref = positionPlanHref(holding?.position_id, location.pathname + location.search + location.hash);
+          const updated = holding ? portfolio?.last_refresh || portfolio?.updated : quoteTime;
+          return (
+            <li className="aq-watch-row" key={row.code} data-symbol={row.code}>
+              <div className="aq-watch-identity">
+                <Link to={researchLink}><strong>{row.name}</strong></Link>
+                <span className="aq-code">{row.code}</span>
+                <div className="aq-tag-row">{holding ? <Badge>持仓</Badge> : <Badge>自选</Badge>}{holding?.risk_rules?.some((rule) => rule.enabled) ? <Badge>强化盯盘 · 已关联规则</Badge> : null}{holding && row.watched ? <Badge>已关注</Badge> : null}{row.candidate ? <Badge tone="ok">今日候选</Badge> : null}</div>
+                {holding ? <Badge tone={holdingT1Status(holding.opened_at, shanghaiDate()).tone}>{holdingT1Status(holding.opened_at, shanghaiDate()).label}</Badge> : null}
+                {availability && typeof availability.sellable_shares === "number" ? <span className="aq-note">可卖 {availability.sellable_shares} 股{availability.t1_locked_shares ? ` · 今日锁定 ${availability.t1_locked_shares} 股` : ""}</span> : null}
+              </div>
+              <dl className="aq-watch-metrics">
+                <div><dt>现价</dt><dd className="aq-num">{numeric(holding?.price ?? row.quote?.price)}</dd></div>
+                {holding ? <>
+                  <div><dt>持仓 / 股</dt><dd className="aq-num">{holding.shares}</dd></div>
+                  <div><dt>成本价</dt><dd className="aq-num">{numeric(holding.cost)}</dd></div>
+                  <div><dt>市值</dt><dd className="aq-num">{formatMoney(holding.market_value)}</dd></div>
+                  <div><dt>浮动盈亏</dt><dd className={cn("aq-num", changeClass(holding.pnl))}>{formatMoney(holding.pnl)}</dd></div>
+                  <div><dt>收益率</dt><dd className={cn("aq-num", changeClass(holding.pnl_pct))}>{formatSignedPct(holding.pnl_pct)}</dd></div>
+                </> : <>
+                  <div><dt>涨跌幅</dt><dd className={cn("aq-num", changeClass(row.quote?.change_pct))}>{row.quote ? formatSignedPct(row.quote.change_pct) : "—"}</dd></div>
+                  <div><dt>换手率</dt><dd className="aq-num">{row.quote ? `${numeric(row.quote.turnover_pct)}%` : "—"}</dd></div>
+                </>}
+              </dl>
+              <div className="aq-watch-research" style={{ minWidth: 0, overflowWrap: "anywhere" }}>
+                {row.alerts.length ? <div className="aq-watch-risk-facts">
+                  <p className="aq-watch-risk-summary">{row.alerts.length} 项风险触发 · 需要复核持有依据</p>
+                  {row.alerts.map((alert) => <div key={alert.id}><span className="aq-note">{alert.level}</span><p>{alert.basis_json.rule || alert.t1_note || "查看今日提醒中的触发依据"}</p></div>)}
+                  <p className="aq-note">这是规则触发事实；持有、减仓或做 T 的适用性，在处理计划中结合大盘与板块分析。</p>
+                </div> : null}
+                {row.sectors.length ? <details><summary className="aq-note">所属板块 · {row.sectors.length} 个</summary><div className="aq-tag-row">{row.sectors.map((name) => <button key={name} className="aq-tag aq-tag-neutral" type="button" onClick={() => setSector(name)} title={`只看${name}`}>{name}</button>)}</div></details> : <span>板块待补</span>}
+                {row.sectors[0] ? <button className="aq-tag aq-tag-neutral" style={{ justifySelf: "start" }} type="button" onClick={() => setSector(row.sectors[0])}>{row.sectors[0]}</button> : null}
+                <div className="aq-watch-quote-meta"><p className="aq-note">{holding ? "行情更新" : "行情读取"}：{updated || "尚未取得"}</p>
+                {holding?.opened_at ? <p className="aq-note">首次开仓：{holding.opened_at}</p> : null}</div>
+              </div>
+              <div className="aq-watch-actions">
+                {holding && planHref ? <Link className="aq-btn aq-btn-primary" to={planHref}>看处理计划 <ArrowRight aria-hidden="true" /></Link> : holding ? <span className="aq-note">持仓身份待核对，请刷新持仓</span> : null}
+                <Link className="aq-btn" to={researchLink}>查看依据 <ArrowRight aria-hidden="true" /></Link>
+                {holding ? <button className="aq-btn" type="button" onClick={() => openOperation("sell", row.code)}>录入卖出</button> : <button className="aq-btn" type="button" onClick={() => openOperation("buy", row.code)}>录入买入</button>}
+                {row.watched ? <button className="aq-btn aq-btn-icon" type="button" title={`移除 ${row.code} 自选`} aria-label={`移除 ${row.code} 自选`} onClick={() => { if (persist(codes.filter((code) => code !== row.code))) toast(`已移除 ${row.code} 自选`); }}><Trash2 aria-hidden="true" /></button> : <button className="aq-btn aq-btn-icon" type="button" title={`关注 ${row.code}`} aria-label={`关注 ${row.code}`} onClick={() => { if (persist([...codes, row.code])) toast(`已关注 ${row.code}`); }}><Star aria-hidden="true" /></button>}
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+
   return (
-    <div id={WATCHLIST_ANCHOR_ID} className="aq-watchlist-area">
-      <form className="aq-watch-entry" onSubmit={addWatch}>
-        <label htmlFor="holding-watch-codes">添加自选</label>
-        <div className="aq-row-actions">
-          <input id="holding-watch-codes" className="aq-input" value={raw} onChange={(event) => setRaw(event.target.value)} placeholder="股票代码，支持一次添加多只" autoComplete="off" />
-          <button type="submit" className="aq-btn"><Plus aria-hidden="true" /> 添加自选</button>
-          <button type="button" className="aq-btn aq-btn-icon" title="刷新自选行情与板块" aria-label="刷新自选行情与板块" disabled={loading || !allCodes.length} onClick={() => setReload((value) => value + 1)}><RefreshCw className={cn(loading && "aq-spin")} aria-hidden="true" /></button>
-        </div>
-        <p className="aq-note">自选列表保留在此浏览器；移出动作会留下当前身份的审计记录。{candidateStatus}</p>
-      </form>
+    <div className="aq-watchlist-area">
       {quoteError ? <StatePanel tone="warn">行情读取失败：{quoteError}。关注记录仍保留，价格可能为上次读取结果。<button className="aq-btn" type="button" disabled={loading} onClick={() => setReload((value) => value + 1)}>重试行情</button></StatePanel> : null}
       {sectorError ? <StatePanel tone="warn">部分板块读取失败，未取得资料的标的显示“板块待补”。<button className="aq-btn" type="button" onClick={() => setReload((value) => value + 1)}>重试板块</button></StatePanel> : null}
       {sector ? <div className="aq-row-actions"><Badge tone="neutral">板块：{sector}</Badge><button type="button" className="aq-btn" onClick={() => setSector("")}>显示全部</button></div> : null}
-      {!allCodes.length && portfolio ? <EmptyState icon={Star} title="还没有持仓或自选" detail="成交后点“我操作了”录入；想继续跟踪的股票可直接加入自选。" /> : null}
       {sector && groups.every((group) => !group.rows.length) ? <EmptyState title="该板块没有匹配记录" detail="可以清除板块筛选查看全部持仓和自选。" /> : null}
-      {groups.filter((group) => group.rows.length).map((group) => (
-        <section className="aq-section" key={group.kind} data-holding-group={group.kind}>
-          <SectionHeader title={group.label} count={`${group.rows.length} 只`} description={group.kind === "triggered" ? "按已记录提醒优先展示；当日新仓仍受 T+1 限制。" : undefined} />
-          <ul className="aq-watch-list" aria-label={group.label}>
-            {group.rows.map((row) => {
-              const holding = row.holding;
-              const availability = holding as (typeof holding & { sellable_shares?: number; t1_locked_shares?: number });
-              const researchLink = `/stock/${row.code}${candidateDate ? `?date=${encodeURIComponent(candidateDate)}` : ""}`;
-              const planHref = positionPlanHref(holding?.position_id, location.pathname + location.search + location.hash);
-              const updated = holding ? portfolio?.last_refresh || portfolio?.updated : quoteTime;
-              return (
-                <li className="aq-watch-row" key={row.code} data-symbol={row.code}>
-                  <div className="aq-watch-identity">
-                    <Link to={researchLink}><strong>{row.name}</strong></Link>
-                    <span className="aq-code">{row.code}</span>
-                    <div className="aq-tag-row">{holding ? <Badge>持仓</Badge> : <Badge>自选</Badge>}{holding?.risk_rules?.some((rule) => rule.enabled) ? <Badge>强化盯盘 · 已关联规则</Badge> : null}{holding && row.watched ? <Badge>已关注</Badge> : null}{row.candidate ? <Badge tone="ok">今日候选</Badge> : null}</div>
-                    {holding ? <Badge tone={holdingT1Status(holding.opened_at, shanghaiDate()).tone}>{holdingT1Status(holding.opened_at, shanghaiDate()).label}</Badge> : null}
-                    {availability && typeof availability.sellable_shares === "number" ? <span className="aq-note">可卖 {availability.sellable_shares} 股{availability.t1_locked_shares ? ` · 今日锁定 ${availability.t1_locked_shares} 股` : ""}</span> : null}
-                  </div>
-                  <dl className="aq-watch-metrics">
-                    <div><dt>现价</dt><dd className="aq-num">{numeric(holding?.price ?? row.quote?.price)}</dd></div>
-                    {holding ? <>
-                      <div><dt>持仓 / 股</dt><dd className="aq-num">{holding.shares}</dd></div>
-                      <div><dt>成本价</dt><dd className="aq-num">{numeric(holding.cost)}</dd></div>
-                      <div><dt>市值</dt><dd className="aq-num">{formatMoney(holding.market_value)}</dd></div>
-                      <div><dt>浮动盈亏</dt><dd className={cn("aq-num", changeClass(holding.pnl))}>{formatMoney(holding.pnl)}</dd></div>
-                      <div><dt>收益率</dt><dd className={cn("aq-num", changeClass(holding.pnl_pct))}>{formatSignedPct(holding.pnl_pct)}</dd></div>
-                    </> : <>
-                      <div><dt>涨跌幅</dt><dd className={cn("aq-num", changeClass(row.quote?.change_pct))}>{row.quote ? formatSignedPct(row.quote.change_pct) : "—"}</dd></div>
-                      <div><dt>换手率</dt><dd className="aq-num">{row.quote ? `${numeric(row.quote.turnover_pct)}%` : "—"}</dd></div>
-                    </>}
-                  </dl>
-                  <div className="aq-watch-research" style={{ minWidth: 0, overflowWrap: "anywhere" }}>
-                    {row.alerts.map((alert) => <div key={alert.id}><Badge tone="warn">{alert.level} · {alert.action_hint || "待复核"}</Badge><p>{alert.basis_json.rule || alert.t1_note || "查看今日提醒中的触发依据"}</p></div>)}
-                    {row.sectors.length ? <details><summary className="aq-note">所属板块 · {row.sectors.length} 个</summary><div className="aq-tag-row">{row.sectors.map((name) => <button key={name} className="aq-tag aq-tag-neutral" type="button" onClick={() => setSector(name)} title={`只看${name}`}>{name}</button>)}</div></details> : <span>板块待补</span>}
-                    {row.sectors[0] ? <button className="aq-tag aq-tag-neutral" style={{ justifySelf: "start" }} type="button" onClick={() => setSector(row.sectors[0])}>{row.sectors[0]}</button> : null}
-                    <p className="aq-note">{holding ? "行情更新" : "行情读取"}：{updated || "尚未取得"}</p>
-                    {holding?.opened_at ? <p className="aq-note">首次开仓：{holding.opened_at}</p> : null}
-                  </div>
-                  <div className="aq-watch-actions">
-                    {holding && planHref ? <Link className="aq-btn aq-btn-primary" to={planHref}>看处理计划 <ArrowRight aria-hidden="true" /></Link> : holding ? <span className="aq-note">持仓身份待核对，请刷新持仓</span> : null}
-                    <Link className="aq-btn" to={researchLink}>查看依据 <ArrowRight aria-hidden="true" /></Link>
-                    {holding ? <button className="aq-btn" type="button" onClick={() => openOperation("sell", row.code)}>录入卖出</button> : <button className="aq-btn" type="button" onClick={() => openOperation("buy", row.code)}>录入买入</button>}
-                    {row.watched ? <button className="aq-btn aq-btn-icon" type="button" title={`移除 ${row.code} 自选`} aria-label={`移除 ${row.code} 自选`} onClick={() => { if (persist(codes.filter((code) => code !== row.code))) toast(`已移除 ${row.code} 自选`); }}><Trash2 aria-hidden="true" /></button> : <button className="aq-btn aq-btn-icon" type="button" title={`关注 ${row.code}`} aria-label={`关注 ${row.code}`} onClick={() => { if (persist([...codes, row.code])) toast(`已关注 ${row.code}`); }}><Star aria-hidden="true" /></button>}
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        </section>
-      ))}
+      {groups.filter((group) => group.rows.length && (group.kind === "triggered" || group.kind === "holding")).map(renderGroup)}
+      {portfolio && !portfolio.holdings.length ? <section className="aq-section"><SectionHeader title="持仓事实" /><EmptyState title="尚未录入已有持仓" detail="可以先研究候选、加入自选；已有真实成交可点“我操作了”补录。" /></section> : null}
+      <section id={WATCHLIST_ANCHOR_ID} className="aq-section" aria-label="我的自选">
+        <SectionHeader title="我的自选" description="关注标的与当前持仓分开查看；加入自选不会生成持仓。" count={`${codes.length} 只`} />
+        <form className="aq-watch-entry" onSubmit={addWatch}>
+          <label htmlFor="holding-watch-codes">添加自选</label>
+          <div className="aq-row-actions">
+            <input id="holding-watch-codes" className="aq-input" value={raw} onChange={(event) => setRaw(event.target.value)} placeholder="股票代码，支持一次添加多只" autoComplete="off" />
+            <button type="submit" className="aq-btn"><Plus aria-hidden="true" /> 添加自选</button>
+            <button type="button" className="aq-btn aq-btn-icon" title="刷新自选行情与板块" aria-label="刷新自选行情与板块" disabled={loading || !allCodes.length} onClick={() => setReload((value) => value + 1)}><RefreshCw className={cn(loading && "aq-spin")} aria-hidden="true" /></button>
+          </div>
+          <p className="aq-note">自选列表保留在此浏览器；移出动作会留下当前身份的审计记录。{candidateStatus}</p>
+        </form>
+        {groups.filter((group) => group.rows.length && group.kind !== "triggered" && group.kind !== "holding").map(renderGroup)}
+        {!groups.some((group) => group.rows.length && group.kind !== "triggered" && group.kind !== "holding") ? <p className="aq-note">暂无独立自选标的；已关注的持仓在上方显示。</p> : null}
+      </section>
       {renderRiskSettings && portfolio?.holdings.length ? <section className="aq-section aq-risk-rules-section" aria-label="风险规则">
         <SectionHeader
           title="风险规则"

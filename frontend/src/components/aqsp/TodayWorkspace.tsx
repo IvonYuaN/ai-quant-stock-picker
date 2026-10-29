@@ -321,9 +321,6 @@ export function TodayWorkspace() {
         actions={view ? <ReviewExportButton view={view} /> : null}
       />
 
-      <section id="market-context" className="aq-market-anchor" aria-label="市场与行业方向">
-        <MarketStrip />
-      </section>
       <nav className="aq-decision-path" aria-label="今日研究路径">
         <Link to={`/today${location.search}#market-context`}><span>01</span><b>大盘与行业</b></Link>
         <Link to={`/today${location.search}#candidates`}><span>02</span><b>选股理由</b></Link>
@@ -332,6 +329,10 @@ export function TodayWorkspace() {
       </nav>
 
       {data ? <DatePicker snapshot={data} /> : null}
+
+      <section id="market-context" className="aq-section aq-market-anchor" aria-label="市场与行业方向">
+        <MarketStrip />
+      </section>
 
       {error && data && !switching ? (
         <div className="aq-refresh-warning" role="alert">
@@ -365,6 +366,13 @@ export function TodayWorkspace() {
           {candidateSection ? (
             <CandidateSection view={view} section={candidateSection} onPick={setPicked} ownedHoldings={personalPortfolio?.holdings ?? null} />
           ) : null}
+        </>
+      )}
+
+      <TodayStrategyBoard onPortfolio={setPersonalPortfolio} />
+
+      {view && data ? (
+        <section className="aq-secondary-modules" aria-label="研究证据与历史记录">
           <details id="discussion" className="aq-workspace-fold" open={active !== "candidates" || undefined} key={active}>
             <summary>消息证据与多空讨论 <span>{view.messages.length} 条消息 · {view.debates.length} 只复核</span></summary>
             <div className="aq-workspace-fold-body">
@@ -372,13 +380,6 @@ export function TodayWorkspace() {
               <div className="aq-active-section" aria-live="polite"><ActiveSection view={view} active={activeDetailId} /></div>
             </div>
           </details>
-        </>
-      )}
-
-      <TodayStrategyBoard onPortfolio={setPersonalPortfolio} />
-
-      {view && data ? (
-        <>
           <details className="aq-workspace-fold">
             <summary>研究过程与验证依据</summary>
             <div className="aq-workspace-fold-body"><PersistentBlock view={view} /><DecisionPanel snapshot={data} /></div>
@@ -387,9 +388,9 @@ export function TodayWorkspace() {
             <summary>收盘复盘与历史验证</summary>
             <div className="aq-workspace-fold-body"><ClosingReviewPanel /></div>
           </details>
-        </>
-      ) : null}
-      <StrategyRecordDetails />
+          <StrategyRecordDetails />
+        </section>
+      ) : <StrategyRecordDetails />}
 
       <StockDetailDrawer symbol={picked} onClose={closeDrawer} intro={intro} />
     </div>

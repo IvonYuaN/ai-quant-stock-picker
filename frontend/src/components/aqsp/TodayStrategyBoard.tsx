@@ -29,7 +29,7 @@ export function TodayStrategyBoard({ onPortfolio }: { onPortfolio?: (portfolio: 
     return () => { active.current = false; stop(); window.removeEventListener(PORTFOLIO_CHANGED_EVENT, sync); window.removeEventListener(CANDIDATE_OBSERVATIONS_CHANGED_EVENT, sync); };
   }, [load]);
   const view = sources ? buildTodayStrategy(sources) : null;
-  return <section id="strategy-followups" className="aq-today-strategy" aria-label="持续策略跟进">
+  return <section id="strategy-followups" className="aq-section aq-today-strategy" aria-label="持续策略跟进">
     <header className="aq-today-strategy-head"><div><p className="aq-eyebrow">已有方案 · 持续跟进</p><h2>已有风险和方案，有什么需要重核</h2><p>这里只汇总已保存的观察和变化；到价表示核验报价，不代表买卖或成交。</p></div><button type="button" className="aq-btn" disabled={loading} onClick={() => void load()}>{loading ? "读取中…" : "更新跟进状态"}</button></header>
     {!view ? <p role="status">正在核对持仓、已选方案与候选观察…</p> : <>
       {view.issues.length ? <div className="aq-refresh-warning" role="status"><strong>部分跟进状态待确认</strong>{view.issues.map((issue) => <span key={issue}>{issue}</span>)}</div> : null}

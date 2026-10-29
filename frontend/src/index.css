@@ -899,11 +899,13 @@
   .aq-section {
     display: grid;
     min-width: 0;
-    gap: 0.5rem;
-    border: 1px solid hsl(var(--border) / 0.85);
+    gap: 1rem;
+    border: 1px solid hsl(var(--border));
     border-radius: 0.65rem;
-    background: hsl(var(--card) / 0.35);
-    padding: 1.15rem;
+    background: hsl(var(--card));
+    padding: 1.25rem;
+    align-content: start;
+    scroll-margin-top: 1rem;
   }
   .aq-section-lab {
     border-style: dashed;
@@ -917,6 +919,7 @@
     padding-bottom: 0.65rem;
     border-bottom: 1px solid hsl(var(--border) / 0.7);
   }
+  .aq-section-head-main { min-width: 0; }
   .aq-section-head-main h2 {
     margin-top: 0.2rem;
     font-size: 1.26rem;
@@ -929,8 +932,9 @@
   }
   .aq-section-head-side {
     display: flex;
-    flex-shrink: 0;
+    flex-wrap: wrap;
     align-items: center;
+    justify-content: flex-end;
     gap: 0.5rem;
   }
   .aq-section-count {
@@ -2909,14 +2913,13 @@
   .aq-total-card b {
     font-size: 1.104rem;
   }
-  .aq-holdings-next { gap: 0.9rem; }
-  .aq-next-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.75rem; }
-  .aq-next-item { display: grid; gap: 0.35rem; min-width: 0; padding: 0.9rem; border: 1px solid hsl(var(--border) / 0.85); border-radius: 0.65rem; background: hsl(var(--muted) / 0.22); }
-  .aq-next-item > span { color: hsl(var(--muted-foreground)); font-size: 0.75rem; }
-  .aq-next-item > strong { font-size: 1rem; }
-  .aq-next-item > p { margin: 0; color: hsl(var(--muted-foreground)); font-size: 0.78rem; line-height: 1.55; }
-  .aq-next-warn { border-color: hsl(var(--warning) / 0.5); background: hsl(var(--warning) / 0.06); }
-  .aq-next-ok { border-color: hsl(var(--success) / 0.35); }
+  .aq-holdings-summary .aq-total-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 1rem; }
+  .aq-holdings-summary .aq-total-card { border: 0; background: transparent; border-radius: 0; padding: 0.25rem 0; min-width: 0; }
+  .aq-holdings-summary .aq-total-card b { font-size: 1.1rem; overflow-wrap: anywhere; }
+  .aq-holdings-status { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.4rem 1.25rem; border-top: 1px solid hsl(var(--border)); padding-top: 0.8rem; font-size: 0.85rem; }
+  .aq-holdings-status > span, .aq-holdings-status > p { color: hsl(var(--muted-foreground)); font-size: 0.78rem; }
+  .aq-holdings-status > p { flex-basis: 100%; margin: 0; }
+
   .aq-closing-form {
     display: grid;
     gap: 0.45rem;
@@ -3403,13 +3406,6 @@
     box-shadow: 0 1px 0 hsl(0 0% 100% / 0.04) inset, 0 16px 40px -22px hsl(0 0% 0% / 1);
   }
 
-  .aq-section {
-    background: hsl(var(--card) / 0.9);
-    border: 1px solid hsl(var(--border) / 0.85);
-    border-radius: 0.8rem;
-    box-shadow: 0 1px 0 hsl(0 0% 100% / 0.025) inset, 0 8px 24px -20px hsl(0 0% 0% / 0.9);
-  }
-
   .aq-total-card {
     background: hsl(var(--card) / 0.96);
     border: 1px solid hsl(var(--border) / 0.9);
@@ -3501,7 +3497,6 @@
   .aq-page-head .aq-page-sub { font-size: 0.82rem; }
   .aq-card, .aq-section, .aq-total-card { border-radius: 0.5rem; box-shadow: none; }
   .aq-card:hover { transform: none; box-shadow: none; }
-  .aq-section { padding: 0; border: 0; background: transparent; }
   .aq-mobile-bar, .aq-mobile-nav, .aq-mobile-tools { display: none; }
   .aq-btn { min-height: 2.5rem; border-radius: 0.35rem; }
   .aq-workspace-summary { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(17rem, 1fr); gap: 1.5rem; border-top: 1px solid hsl(var(--border)); border-bottom: 1px solid hsl(var(--border)); padding: 1rem 0; }
@@ -3635,7 +3630,17 @@
   .aq-candidate-roster-group + .aq-candidate-roster-group { border-top: 1px solid hsl(var(--border)); }
   .aq-candidate-roster-group-head { display: flex; justify-content: space-between; align-items: center; padding: 0.55rem 0.9rem; color: hsl(var(--muted-foreground)); font-size: 0.72rem; background: hsl(var(--muted) / 0.22); }
   .aq-candidate-roster-group-head strong { color: hsl(var(--foreground)); font-size: 0.76rem; }
-  .aq-watchlist-area { scroll-margin-top: 1rem; }
+  .aq-watchlist-area { display: grid; min-width: 0; gap: 1.5rem; }
+  .aq-market-anchor .aq-market-strip { padding: 0; border: 0; background: transparent; }
+  .aq-module-group { display: grid; min-width: 0; gap: 1rem; }
+  .aq-module-group > .aq-section-head { border: 0; padding: 0.4rem 0 0; }
+  .aq-module-group > .aq-section-head .aq-eyebrow { color: hsl(var(--primary)); }
+  .aq-secondary-modules { display: grid; min-width: 0; gap: 0.75rem; }
+  .aq-watch-group { display: grid; min-width: 0; gap: 0.75rem; }
+  .aq-watch-risk-summary { font-weight: 600; color: hsl(var(--warning)); }
+  .aq-watch-risk-facts { display: grid; gap: 0.5rem; }
+  .aq-watch-risk-facts > div { display: grid; gap: 0.3rem; }
+  .aq-watch-quote-meta { display: flex; flex-wrap: wrap; gap: 0.35rem 1rem; }
   .aq-candidate-choice { display: grid; grid-template-columns: 1.4rem minmax(0, 1fr) auto; gap: 0.65rem; align-items: center; width: 100%; min-height: 5rem; padding: 0.9rem; text-align: left; border-top: 1px solid hsl(var(--border) / 0.7); border-left: 3px solid transparent; transition: background 140ms ease; }
   .aq-candidate-choice:hover { background: hsl(var(--muted) / 0.6); }
   .aq-candidate-choice-active { background: hsl(var(--primary) / 0.07); border-left-color: hsl(var(--primary)); }
@@ -3671,25 +3676,27 @@
   .aq-candidate-decision-card > .aq-btn { width: fit-content; margin-top: 0.3rem; }
   .aq-candidate-decision-metrics { min-width: 0; border-top: 1px solid hsl(var(--border)); padding-top: 0.55rem; }
   .aq-candidate-decision-metrics summary { min-height: 2.5rem; display: flex; align-items: center; cursor: pointer; font-size: 0.8rem; color: hsl(var(--muted-foreground)); }
-  .aq-workspace-fold { min-width: 0; border-top: 1px solid hsl(var(--border)); }
-  .aq-workspace-fold > summary { display: list-item; cursor: pointer; padding: 1rem 0; font-size: 0.9rem; font-weight: 600; }
+  .aq-workspace-fold { min-width: 0; border: 1px solid hsl(var(--border)); border-radius: 0.65rem; background: hsl(var(--card)); }
+  .aq-workspace-fold > summary { display: list-item; cursor: pointer; padding: 1rem 1.25rem; font-size: 0.9rem; font-weight: 600; overflow-wrap: anywhere; }
   .aq-workspace-fold > summary span { margin-left: 0.6rem; font-size: 0.75rem; font-weight: 400; color: hsl(var(--muted-foreground)); }
-  .aq-workspace-fold-body { display: grid; min-width: 0; gap: 1rem; padding: 0.2rem 0 1rem; }
+  .aq-workspace-fold-body { display: grid; min-width: 0; gap: 1rem; padding: 0.25rem 1.25rem 1.25rem; }
   .aq-watch-summary { display: flex; flex-wrap: wrap; gap: 0.75rem 1.5rem; border-block: 1px solid hsl(var(--border)); padding: 1rem 0; font-size: 0.82rem; color: hsl(var(--muted-foreground)); }
   .aq-watch-summary b { color: hsl(var(--foreground)); }
   .aq-watch-entry { display: grid; gap: 0.6rem; padding: 0.5rem 0; }
+  .aq-watch-entry .aq-row-actions { justify-content: flex-start; }
   .aq-watch-entry > label { font-size: 0.85rem; font-weight: 600; }
   .aq-watch-entry input { flex: 1; min-width: 9rem; max-width: 28rem; }
-  .aq-watch-list { min-width: 0; border-top: 1px solid hsl(var(--border)); }
-  .aq-watch-row { display: grid; grid-template-columns: minmax(7rem, 0.75fr) minmax(14rem, 1.3fr) minmax(10rem, 1fr) auto; gap: 1rem; align-items: center; padding: 1.2rem 0; border-bottom: 1px solid hsl(var(--border)); }
+  .aq-watch-list { display: grid; min-width: 0; gap: 1rem; }
+  .aq-watch-row { display: grid; grid-template-columns: minmax(10rem, 0.8fr) minmax(0, 1.5fr); gap: 1rem 1.5rem; align-items: start; padding: 1.1rem; border: 1px solid hsl(var(--border)); border-radius: 0.5rem; }
   .aq-watch-identity { display: grid; gap: 0.2rem; }
   .aq-watch-identity a:hover { color: hsl(var(--primary)); }
   .aq-watch-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.65rem; }
   .aq-watch-metrics dt, .aq-research-kv dt { font-size: 0.73rem; color: hsl(var(--muted-foreground)); }
   .aq-watch-metrics dd { font-size: 0.95rem; font-weight: 600; font-variant-numeric: tabular-nums; }
-  .aq-watch-research { display: grid; gap: 0.3rem; font-size: 0.78rem; }
+  .aq-watch-research { display: grid; grid-column: 1 / -1; gap: 0.65rem; border-top: 1px solid hsl(var(--border)); padding-top: 0.8rem; font-size: 0.78rem; }
   .aq-watch-research > span { color: hsl(var(--muted-foreground)); }
   .aq-watch-actions, .aq-research-actions { display: flex; flex-wrap: wrap; gap: 0.45rem; align-items: center; }
+  .aq-watch-actions { grid-column: 1 / -1; padding-top: 0.3rem; }
   .aq-risk-rules-section { margin-top: 0.25rem; }
   .aq-risk-stock-list { display: grid; gap: 0.45rem; }
   .aq-risk-stock { border-top: 1px solid hsl(var(--border) / 0.75); }
@@ -3720,8 +3727,7 @@
   .aq-research-kv dd { font-size: 1rem; font-weight: 600; }
   @media (max-width: 1100px) {
     .aq-content { padding-inline: 1.2rem; }
-    .aq-watch-row { grid-template-columns: minmax(7rem, 1fr) minmax(14rem, 1.8fr); }
-    .aq-watch-actions { justify-content: flex-end; }
+    .aq-watch-row { grid-template-columns: minmax(8rem, 0.8fr) minmax(0, 1.5fr); }
     .aq-workspace-summary { grid-template-columns: minmax(0, 1.3fr) minmax(15rem, 1fr); gap: 1rem; }
   }
   @media (max-width: 767px) {
@@ -3779,7 +3785,11 @@
     .aq-candidate-filters summary { flex-wrap: wrap; }
     .aq-workspace-fold > summary span { display: block; margin: 0.3rem 0 0 1rem; }
     .aq-watch-row { grid-template-columns: minmax(0, 1fr); gap: 0.85rem; }
-    .aq-next-grid { grid-template-columns: minmax(0, 1fr); }
+    .aq-holdings-summary .aq-total-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.7rem; }
+    .aq-holdings-summary .aq-total-card:last-child { grid-column: 1 / -1; }
+    .aq-holdings-summary .aq-total-card b { font-size: 0.95rem; }
+    .aq-watch-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .aq-watch-metrics dd { overflow-wrap: anywhere; }
     .aq-watch-entry .aq-row-actions { flex-wrap: wrap; }
     .aq-watch-entry input { width: 100%; max-width: none; flex-basis: 100%; }
     .aq-watch-actions { justify-content: flex-start; }
@@ -4039,9 +4049,9 @@
 }
 
 /* Today strategy: one ordered reading path, with original controls on demand. */
-.aq-today-strategy { border-block: 1px solid hsl(var(--border)); padding-block: 24px; }
+.aq-today-strategy { gap: 1rem; }
 .aq-today-strategy-head { display: flex; align-items: start; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
-.aq-today-strategy-head h2 { font-size: 24px; margin: 4px 0 8px; text-wrap: balance; }
+.aq-today-strategy-head h2 { font-size: 1.15rem; margin: 4px 0 8px; text-wrap: balance; }
 .aq-today-strategy-head p { color: hsl(var(--muted-foreground)); margin: 0; }
 .aq-strategy-attention-list { display: grid; }
 .aq-strategy-attention { display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; gap: 16px; padding: 22px 0; align-items: start; border-top: 1px solid hsl(var(--border)); }

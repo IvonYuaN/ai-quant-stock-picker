@@ -1,5 +1,5 @@
 import type { AlertEvent, AqspCandidate, Holding } from "./api";
-import { buildHoldingGroups, normalizeHoldingSectors, currentHoldingCandidates } from "./holding-view";
+import { buildHoldingGroups, normalizeHoldingSectors, currentHoldingCandidates, currentPositionAlerts } from "./holding-view";
 import { dailyViewFixture } from "./daily-view.test";
 
 const holdingFixture = (code: string): Holding => ({
@@ -51,4 +51,15 @@ export const holdingGroupContract = {
   invalidatedCandidateHasNoCurrentMatch: currentHoldingCandidates({ ...dailyViewFixture, stale_after: "2099-10-23T10:00:00+08:00", meta: { ...dailyViewFixture.meta!, historical: false, stale: false }, candidate_changes: [{ symbol: dailyViewFixture.candidates[0].symbol, display_name: "", status: "invalidated" }] }).every((row) => row.symbol !== dailyViewFixture.candidates[0].symbol),
   freshCandidateRetainsMatch: currentHoldingCandidates({ ...dailyViewFixture, stale_after: "2099-10-23T10:00:00+08:00", meta: { ...dailyViewFixture.meta!, historical: false, stale: false }, candidate_changes: [] }).length === dailyViewFixture.candidates.length,
   missingCoverageRetainsExistingMatch: currentHoldingCandidates({ ...dailyViewFixture, candidates: dailyViewFixture.candidates.map((row) => ({ ...row, coverage_note: "本轮无新研究" })), stale_after: "2099-10-23T10:00:00+08:00", meta: { ...dailyViewFixture.meta!, historical: false, stale: false }, candidate_changes: [] }).length === dailyViewFixture.candidates.length,
+};
+
+const currentPositionFixture = { ...holdingFixture("600519"), position_id: "current-position" };
+export const currentPositionAlertContract = {
+  multipleRulesKeepAllFacts: currentPositionAlerts([currentPositionFixture], [alertFixture("600519"), { ...alertFixture("600519"), id: "another-rule", level: "L5" }]).length === 2,
+  closedRemindersDoNotReopen: currentPositionAlerts([currentPositionFixture], [alertFixture("600519", "HANDLED"), alertFixture("600519", "EXPIRED"), alertFixture("600519", "IGNORED")]).length === 0,
+  oldPositionDoesNotFollowReentry: currentPositionAlerts([currentPositionFixture], [{ ...alertFixture("600519"), position_id: "old-position" }]).length === 0,
+  currentIdentityKeepsRisk: currentPositionAlerts([currentPositionFixture], [{ ...alertFixture("600519"), position_id: "current-position" }]).length === 1,
+  legacyRiskWithoutPositionStillVisible: currentPositionAlerts([currentPositionFixture], [alertFixture("600519")]).length === 1,
+  unrelatedSymbolDoesNotAddAttention: currentPositionAlerts([currentPositionFixture], [alertFixture("000001")]).length === 0,
+  noHoldingsHaveNoPositionAttention: currentPositionAlerts([], [alertFixture("600519")]).length === 0,
 };

@@ -34,7 +34,6 @@ import {
 import { changeClass, formatSignedPct } from "@/lib/format";
 import {
   Badge,
-  Card,
   EmptyState,
   HeroState,
   LoadingState,
@@ -177,7 +176,8 @@ export function StockResearchPage() {
         </div>
       </header>
 
-      <section className="aq-research-summary" aria-label="同日研究摘要">
+      <section className="aq-section aq-research-summary" aria-label="同日研究摘要">
+        <SectionHeader title="所选日研究" description="候选资格、评分与研究依据属于所选日期；当前行情在下方独立显示。" />
         {workspace.loading && !view ? <LoadingState label="正在读取所选日期的研究依据…" /> : null}
         {workspace.error ? <StatePanel tone="warn" action={<button type="button" className="aq-btn" onClick={workspace.refresh}>重试研究</button>}>{workspace.error}，暂不展示未核实的评分与依据。</StatePanel> : null}
         {view ? (
@@ -201,9 +201,12 @@ export function StockResearchPage() {
         ) : null}
       </section>
 
-      <CandidateObservationPanel symbol={code} researchDate={researchDate} historical={view?.isHistorical ?? false} />
+      <section className="aq-section" aria-label="参与条件与跟进">
+        <SectionHeader title="参与条件与跟进" description="结合当前证据比较路线，保存条件后持续核验。" />
+        <CandidateObservationPanel symbol={code} researchDate={researchDate} historical={view?.isHistorical ?? false} />
+      </section>
 
-      {view && row ? <section className="aq-detail-block">
+      {view && row ? <section className="aq-section">
         <SectionHeader title="同日消息与多空复核" description={`${view.date} 的个股证据，与下方实时行情分别呈现。`} count={`${datedMessages.length} 条消息`} />
         <div className="aq-research-columns">
           <div className="aq-research-evidence"><p className="aq-label">可引用消息</p>{datedMessages.length ? datedMessages.map((message, index) => <article className="aq-event-row" key={`${message.title}-${index}`}><a className="aq-radar-title" href={messageSourceUrl(message)} target="_blank" rel="noreferrer">{message.title}<ExternalLink aria-hidden="true" /></a><p className="aq-detail-muted">{message.source} · {message.published_at}</p>{message.summary ? <p>{message.summary}</p> : null}{message.validation_signals?.length ? <p className="aq-detail-muted">确认条件：{message.validation_signals.join("；")}</p> : null}{message.invalidation_signals?.length ? <p className="aq-detail-muted">失效条件：{message.invalidation_signals.join("；")}</p> : null}</article>) : <EmptyState title="暂无同日可引用消息" detail="缺少关联股票代码及原文链接的消息，不作为个股依据。" />}</div>
@@ -211,9 +214,8 @@ export function StockResearchPage() {
         </div>
       </section> : null}
 
-      <SectionHeader title="实时行情" description="当前接口返回的行情快照，不作为历史日期的价格证据。" />
-
-      <Card className="aq-research-quote">
+      <section className="aq-section aq-research-quote">
+        <SectionHeader title="实时行情" description="当前接口返回的行情快照，不作为历史日期的价格证据。" />
         {loading ? <LoadingState label="正在读取行情与催化…" /> : null}
         {quoteError ? <StatePanel tone="warn" action={<button type="button" className="aq-btn" onClick={() => setReload((value) => value + 1)}>重试行情与事件</button>}>{quoteError}，行情降级；下方催化仍可看。</StatePanel> : null}
         {!loading && !currentQuote ? (
@@ -235,9 +237,9 @@ export function StockResearchPage() {
             </p>
           </div>
         ) : null}
-      </Card>
+      </section>
 
-      <section className="aq-detail-block">
+      <section className="aq-section">
         <SectionHeader
           number="02"
           title="相关新闻催化"
@@ -253,7 +255,7 @@ export function StockResearchPage() {
         ))}
       </section>
 
-      <section className="aq-detail-block">
+      <section className="aq-section">
         <SectionHeader
           number="03"
           title="事件面"

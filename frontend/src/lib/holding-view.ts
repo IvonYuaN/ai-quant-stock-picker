@@ -74,6 +74,13 @@ export function buildHoldingGroups(input: {
   return groups;
 }
 
+/** 风险总览和持仓分组共用当前仓位的开放提醒；旧仓提醒不串到重新买入。 */
+export function currentPositionAlerts(holdings: readonly Holding[], alerts: readonly AlertEvent[]): AlertEvent[] {
+  return alerts.filter((alert) => alert.status === "OPEN" && holdings.some((holding) =>
+    holding.code === alert.symbol && (!alert.position_id || alert.position_id === holding.position_id),
+  ));
+}
+
 /** 板块接口无资料时保留空值，不从股票名称猜所属行业。 */
 export function normalizeHoldingSectors(raw: unknown): string[] {
   if (!raw || typeof raw !== "object") return [];
