@@ -83,7 +83,10 @@ def _validate_candidate(candidate: dict[str, Any], *, source_portfolio: dict[str
             return False
     except (KeyError, TypeError, ValueError):
         return False
-    if candidate['state'] in {'price_watch', 'below_watch', 'paused'}:
+    # A recent check cannot renew the quote behind a current-risk assertion.
+    # Sale/plan-change reviews remain useful even without current price evidence.
+    if (candidate['state'] in {'price_watch', 'below_watch', 'paused'}
+            or (observation.get('state') == 'needs_review' and observation.get('reason') == 'risk')):
         from decision_context import position_quote_issue
         if position_quote_issue({'as_of': candidate.get('quote_as_of')}, checked_at=current):
             return False

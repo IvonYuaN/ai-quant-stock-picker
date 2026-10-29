@@ -194,6 +194,63 @@ def test_position_followup_rechecks_before_send_when_mode_plan_or_freshness_chan
     assert not followup_service._validate_candidate(candidate)
 
 
+@pytest.fixture
+def hold_risk_followup(plan_client, monkeypatch) -> tuple[str, dict]:
+    from aqsp.web.live_candidate_view import LiveCandidateViewConfig
+
+    client, _ = plan_client
+    position_id, value = setup_plan(client, choice='hold', parameters=None)
+    followup_service.save_followup_mode(position_id, 'changes', 'off', value['position_snapshot'], value['revision'])
+    monkeypatch.setattr(followup_service, 'now_shanghai', lambda: NOW)
+    portfolio = pf.get_portfolio()
+    portfolio['holdings'][0]['quote'] = {
+        **QUOTE, 'quote_time': (NOW - LiveCandidateViewConfig().max_age).strftime('%Y%m%d%H%M%S')}
+    observation = followup_service.check_plan_followups(portfolio, {}, current=NOW)['observations'][0]
+    assert (observation['state'], observation['reason'], observation['condition_checks']) == ('needs_review', 'risk', None)
+    root = pf._load()['position_reviews'][position_id]
+    return position_id, {**observation, 'mode': 'changes', 'key': notification_key(root, observation, current=NOW)}
+
+
+def test_position_followup_rejects_risk_notification_when_quote_expires_before_send(hold_risk_followup, monkeypatch) -> None:
+    _, candidate = hold_risk_followup
+    assert followup_service._validate_candidate(candidate)
+    # The inspection is only a minute old; its original source is now expired.
+    monkeypatch.setattr(followup_service, 'now_shanghai', lambda: NOW + timedelta(minutes=1))
+    assert not followup_service._validate_candidate(candidate)
+
+
+@pytest.mark.parametrize('quote_as_of', [None, 'malformed', '2026-10-23', '2026-10-23T10:00:00'])
+def test_position_followup_rejects_risk_notification_when_source_time_unverifiable(hold_risk_followup, quote_as_of) -> None:
+    position_id, candidate = hold_risk_followup
+    data = pf._load()
+    data['position_reviews'][position_id]['followup']['quote_as_of'] = quote_as_of
+    pf._save(data)
+    assert not followup_service._validate_candidate({**candidate, 'quote_as_of': quote_as_of})
+
+
+@pytest.mark.parametrize('reason', ['sale', 'plan_changed'])
+@pytest.mark.parametrize('quote_as_of', [None, '2026-10-23T09:00:00+08:00'])
+def test_position_followup_keeps_non_price_review_when_quote_unavailable(hold_risk_followup, reason, quote_as_of) -> None:
+    position_id, _ = hold_risk_followup
+    data = pf._load()
+    root = data['position_reviews'][position_id]
+    if reason == 'sale':
+        data['closed'] = [{'position_id': position_id, 'code': root['symbol'], 'date': '2026-10-23',
+                           'price': 9.2, 'shares': 100, 'operation_id': 'synthetic-sale'}]
+    else:
+        root['review_plan']['position_snapshot']['cost'] += 1
+    pf._save(data)
+    worksheet = plans.read_position_plan(position_id)
+    worksheet['basis']['quote_as_of'] = quote_as_of
+    worksheet['basis']['quote_issue'] = '行情过期'
+    observation = observe_plan(worksheet, root, current=NOW).to_dict()
+    assert (observation['state'], observation['reason']) == ('needs_review', reason)
+    data['position_reviews'][position_id]['followup'] = observation
+    pf._save(data)
+    candidate = {**observation, 'mode': 'changes', 'key': notification_key(root, observation, current=NOW)}
+    assert followup_service._validate_candidate(candidate)
+
+
 def test_position_followup_notify_false_does_not_consume_quota_when_price_is_reached(plan_client, monkeypatch) -> None:
     from aqsp import notification_runtime
     from aqsp.notifier import NotifyResult
