@@ -19,4 +19,5 @@ export const ownershipDisplayContracts = {
   knownEmptyStillRendersZeroAndEnablesFilters: knownEmpty.includes("命中我的持仓 0")
     && !/<button[^>]*disabled=""[^>]*>只看我的命中<\/button>/.test(knownEmpty),
   unknownKeepsResearchCandidatesVisible: unknown.includes("宁德时代") && unknown.includes("招商银行"),
+  twoCandidatesOpenDecisionComparison: knownEmpty.includes("先研究哪只，哪只继续等？") && knownEmpty.includes("正在核对同日大盘"),
 };

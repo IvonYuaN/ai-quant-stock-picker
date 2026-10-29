@@ -4,11 +4,13 @@ import { api, isAqspAbortError } from "./api";
 // Keep the cancellation contract type-checked without issuing a network request.
 const controller = new AbortController();
 type SnapshotOptions = Parameters<typeof api.aqspSnapshot>[1];
+type CandidateOptions = Parameters<typeof api.candidateObservation>[1];
 const snapshotRequestOptions: NonNullable<SnapshotOptions> = {
   signal: controller.signal,
 };
 
 export const aqspRequestCancellationContract = {
   acceptsSignal: snapshotRequestOptions.signal === controller.signal,
+  candidateReadAcceptsSignal: ({ signal: controller.signal } satisfies NonNullable<CandidateOptions>).signal === controller.signal,
   recognizesAbort: isAqspAbortError(Object.assign(new Error(), { name: "AbortError" })),
 };
