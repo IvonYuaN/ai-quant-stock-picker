@@ -592,7 +592,7 @@ export interface ActionWorksheet {
     references: Array<{ label: string; price: number; as_of: string; source: string }> };
   position_snapshot: { position_id: string | null; cost: number; shares: number; sellable_shares: number };
   review_plan: { choice?: ReviewChoice; watch?: StrategyWatch; watch_stopped?: boolean; parameters?: PlanParameters; discussion?: PositionDiscussion; position_snapshot?: ActionWorksheet["position_snapshot"] };
-  recorded_sale?: { date: string; price: number; shares: number } | null;
+  recorded_sale?: { id?: string; date: string; price: number; shares: number } | null;
   sale_requires_review?: boolean;
   scenario: { gross_spread: number; estimated_fees: number; net_cash: number; realized_pnl: number | null; economic_cost: number | null;
     remaining_shares: number; cost_reduction_per_share: number | null; round_trip_positive: boolean | null; note: string } | null;
@@ -848,6 +848,7 @@ export const api = {
     request<NonNullable<AlertEvent["review_plan"]>>(`/alerts/${encodeURIComponent(id)}/plan`, "POST", { choice, parameters, expected_position, expected_revision }),
   alertActionPlan: (id: string) => get<ActionWorksheet>(`/alerts/${encodeURIComponent(id)}/action-plan`),
   positionActionPlan: (id: string) => get<ActionWorksheet>(`/positions/${encodeURIComponent(id)}/action-plan`),
+  reviewPositionSale: (id: string, input: { expected_position: ActionWorksheet["position_snapshot"]; expected_revision: string; expected_sale_id: string }) => request<ActionWorksheet>(`/positions/${encodeURIComponent(id)}/sale-review`, "POST", input),
   refreshStrategyEvidence: (id: string) => request<ActionWorksheet>(`/positions/${encodeURIComponent(id)}/strategy-evidence`, "POST", {}),
   adoptStrategyWatch: (id: string, input: StrategyWatchInput) => request<ActionWorksheet>(`/positions/${encodeURIComponent(id)}/strategy-watch`, "POST", input),
   stopStrategyWatch: (id: string, expected_position: ActionWorksheet["position_snapshot"], expected_revision: string) => request<ActionWorksheet>(`/positions/${encodeURIComponent(id)}/strategy-watch/stop`, "POST", { expected_position, expected_revision }),

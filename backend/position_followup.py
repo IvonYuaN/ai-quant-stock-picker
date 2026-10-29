@@ -183,10 +183,10 @@ def observe_plan(worksheet: dict[str, Any], root: dict[str, Any], *, current: da
         state, title, detail, reason = 'exited', '这笔持仓已清仓', '历史计划停止当前跟进；重新买入不沿用原计划。', 'exited'
     elif not choice:
         state, title, detail, reason = 'unplanned', '还没有选择处理方式', '可以先比较三条路；尚未建立后台观察条件。', 'unplanned'
-    elif plan.get('watch_stopped'):
-        state, title, detail, reason = 'unplanned', '你已停止这项策略跟踪', '原观察条件不再监控，也不自动回退到旧试算价位；可重新分析后采用新条件。持仓风险规则仍按原设置检查。', 'watch_stopped'
     elif worksheet.get('sale_requires_review'):
         state, title, detail, reason = 'needs_review', '成交后需要重核余仓', '已有新的真实卖出回录；请核对剩余股份和用途，不能沿用原试算继续回补。', 'sale'
+    elif plan.get('watch_stopped'):
+        state, title, detail, reason = 'unplanned', '你已停止这项策略跟踪', '原观察条件不再监控，也不自动回退到旧试算价位；可重新分析后采用新条件。持仓风险规则仍按原设置检查。', 'watch_stopped'
     elif (plan.get('position_snapshot') != worksheet['position_snapshot']
           or plan.get('constraints_version', 0) != root.get('constraints_version', 0)):
         state, title, detail, reason = 'needs_review', '计划条件已变化，先重新核对', '持仓、可卖股份或个人条件与保存时不同；原价位与试算暂停作为当前操作依据。', 'plan_changed'

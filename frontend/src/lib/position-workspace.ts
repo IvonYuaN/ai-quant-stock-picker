@@ -27,6 +27,13 @@ export function worksheetGuard(worksheet: ActionWorksheet): { expected_position:
   return { expected_position: worksheet.position_snapshot, expected_revision: worksheet.revision };
 }
 
+/** Confirm only the sale and remaining position the user is currently seeing. */
+export function saleReviewGuard(worksheet: ActionWorksheet): ReturnType<typeof worksheetGuard> & { expected_sale_id: string } {
+  const guard = worksheetGuard(worksheet);
+  if (!worksheet.sale_requires_review || !worksheet.recorded_sale?.id?.trim()) throw new Error("最新卖出凭据待核对，请更新当前持仓后再确认。");
+  return { ...guard, expected_sale_id: worksheet.recorded_sale.id };
+}
+
 export async function savePlanChoice(target: PlanTarget, worksheet: ActionWorksheet, choice: ReviewChoice, parameters?: PlanParameters): Promise<ActionWorksheet> {
   const guard = worksheetGuard(worksheet);
   if (target.kind === "position") await api.savePositionPlan(target.id, choice, guard.expected_position, guard.expected_revision, parameters);

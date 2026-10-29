@@ -976,6 +976,24 @@ def position_review_plan(position_id: str, body: AlertReviewPlanIn) -> dict:
     return {"data": result}
 
 
+class PositionSaleReviewIn(BaseModel):
+    model_config = {"extra": "forbid"}
+    expected_position: dict[str, Any]
+    expected_revision: str = Field(min_length=1)
+    expected_sale_id: str = Field(min_length=1)
+
+
+@app.post("/api/positions/{position_id}/sale-review", tags=["持仓策略"])
+def position_sale_review(position_id: str, body: PositionSaleReviewIn) -> dict:
+    """Human review of the latest sale and remaining position, without fees/orders."""
+    from position_plan_service import PlanConflictError, confirm_position_sale_review
+    try:
+        return {"data": confirm_position_sale_review(position_id, body.expected_position,
+                                                     body.expected_revision, body.expected_sale_id)}
+    except ValueError as exc:
+        raise HTTPException(409 if isinstance(exc, PlanConflictError) else 400, str(exc)) from exc
+
+
 class PositionConstraintsIn(BaseModel):
     attention: str
     extra_cash: Any = None

@@ -157,6 +157,10 @@ def test_position_workspace_recovers_sale_without_event_and_archives_when_closed
     assert value['position_snapshot']['shares'] == 800
     assert value['sale_requires_review'] is True
     assert client.post(f'/api/positions/{position_id}/plan', json={'choice': 'hold', **guards(value)}).status_code == 200
+    value = worksheet(client, position_id)
+    assert value['sale_requires_review'] is True
+    assert client.post(f'/api/positions/{position_id}/sale-review', json={
+        **guards(value), 'expected_sale_id': value['recorded_sale']['id']}).status_code == 200
     assert worksheet(client, position_id)['sale_requires_review'] is False
     pf.close_position('002129', '2026-10-23', 9.4, 800, 12, operation_id='no-alert-exit')
     archived = worksheet(client, position_id)
