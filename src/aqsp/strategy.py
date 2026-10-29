@@ -421,9 +421,12 @@ def score_symbol(
             "rsi12": round(rsi12, 2),
             "macd_hist": float(row["macd_hist"]),
             "technical_source": _technical_source_snapshot(frame, row, {
-                "ret5_pct": ret5, "ret20_pct": ret20, "bias20_pct": bias20,
-                "volume_ratio": volume_ratio, "rsi12": rsi12,
-                "macd_hist": row.get("macd_hist"),
+                "ret5_pct": _nullable_technical_number(row.get("ret_5"), scale=100),
+                "ret20_pct": _nullable_technical_number(row.get("ret_20"), scale=100),
+                "bias20_pct": _nullable_technical_number(row.get("bias20")),
+                "volume_ratio": _nullable_technical_number(row.get("volume_ratio")),
+                "rsi12": _nullable_technical_number(row.get("rsi12")),
+                "macd_hist": _nullable_technical_number(row.get("macd_hist")),
             }),
             "quality_gate_status": quality.action,
             "quality_gate_reasons": tuple(dict.fromkeys(quality.reasons)),
@@ -490,6 +493,19 @@ def score_symbol(
     )
 
 
+def _nullable_technical_number(value: object, *, scale: float = 1) -> float | None:
+    """Keep undefined indicators unknown rather than certify scoring fallbacks.
+
+    None means the source metric is absent, non-numeric or non-finite. A scale
+    only converts a source return fraction to percentage points; it never fills
+    missing data or changes the scorer's existing fallback behavior.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value) * scale
+    return number if math.isfinite(number) else None
+
+
 def _technical_source_snapshot(
     frame: pd.DataFrame, row: pd.Series, metrics: dict[str, object]
 ) -> dict[str, object] | None:
@@ -501,6 +517,9 @@ def _technical_source_snapshot(
     None explicitly means the source bar/metadata cannot be authenticated.
     """
     source = _text(frame.attrs.get("source_name"))
+    history_source = _text(frame.attrs.get("historical_source"))
+    if source and history_source and history_source != source:
+        source = f"{source} / 历史窗口:{history_source}"
     try:
         stamp = pd.Timestamp(row["date"])
         if pd.isna(stamp) or not source:

@@ -43,7 +43,7 @@ def technical_evidence_from_dict(payload: object, *, current: datetime) -> Techn
         result = technical_evidence({'candidate': {'technical_basis': basis},
                                      'date': payload['research_date'],
                                      'generated_at': current.isoformat()}, current=current)
-        if result.status != 'available' or result.scope != 'frozen_research' or payload['issues']:
+        if result.status != 'available' or payload['scope'] != 'frozen_research' or payload['issues'] not in ([], ()):
             return TechnicalEvidence(issues=('冻结技术依据重新校验失败',))
         return result
     except (TypeError, ValueError, KeyError, AttributeError, OverflowError):
@@ -61,6 +61,11 @@ def technical_evidence(research: dict[str, Any], *, current: datetime) -> Techni
     if not raw:
         return TechnicalEvidence(issues=('原技术指标来源未记录，不能用最新报价时点代替',))
     try:
+        # Bridge dataclasses use tuples before the HTTP JSON boundary. The
+        # strict snapshot reader has already validated them; normalize only
+        # this container without parsing display strings or altering numbers.
+        if isinstance(raw, dict) and isinstance(raw.get('facts'), tuple):
+            raw = {**raw, 'facts': list(raw['facts'])}
         basis = technical_basis_from_dict(raw)
         if basis is None:
             raise ValueError('missing basis')
@@ -95,7 +100,10 @@ def historical_technical_evidence(context: dict[str, Any] | None) -> TechnicalEv
         saved_at = datetime.fromisoformat(original.get('saved_at') or original.get('adopted_at') or '')
     except (ValueError, TypeError):
         return TechnicalEvidence()
-    return technical_evidence((original.get('evidence_snapshot') or {}).get('research') or {}, current=saved_at)
+    research = (original.get('evidence_snapshot') or {}).get('research') or {}
+    if 'technical_evidence' in research:
+        return technical_evidence_from_dict(research['technical_evidence'], current=saved_at)
+    return technical_evidence(research, current=saved_at)
 
 
 def model_technical_evidence(evidence: dict[str, Any]) -> dict[str, Any]:
@@ -178,8 +186,7 @@ def mask_indicator_names(text: str) -> str:
 
 def reject_unmatched_technical_numbers(text: str) -> None:
     """Catch wrong units/periods even when the same number is a valid price."""
-    names = r'(?:量比|RSI|MACD|KDJ|MA\s*\d+|动能|涨跌幅|均线偏离|乖离率)'
-    valid_frozen = re.search(r'冻结研究[^。；;!?！？\n]*(?:指标|量比|动能|RSI|MACD|KDJ|均线)', text, flags=re.IGNORECASE)
-    if ((not valid_frozen and re.search(rf'{names}[^，,。；;!?！？\n]*{_NUMBER}', text, flags=re.IGNORECASE))
-            or (not valid_frozen and re.search(rf'(?:{_NUMBER}|[零〇一二两三四五六七八九十百千万]+)\s*(?:倍|[xX×]|点)', text))):
+    names = r'(?:指标|量比|RSI|MACD|KDJ|MA\s*\d+|动能|涨跌幅|均线偏离|乖离率)'
+    if (re.search(rf'{names}[^，,。；;!?！？\n]*{_NUMBER}', text, flags=re.IGNORECASE)
+            or re.search(rf'(?:{_NUMBER}|[零〇一二两三四五六七八九十百千万]+)\s*(?:倍|[xX×]|点)', text)):
         raise ValueError('模型技术事实无来源或单位周期不符；数字交易条件不能借用冻结指标')

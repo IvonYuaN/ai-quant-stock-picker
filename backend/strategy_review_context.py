@@ -47,7 +47,7 @@ def candidate_research_identity(candidate: dict[str, Any]) -> dict[str, Any]:
     """Latest displayed close is a quote tick, not a frozen research premise."""
     result = {key: deepcopy(value) for key, value in candidate.items()
               if key not in {'data_fetched_at', 'coverage_note'} and not (key == 'technical_basis' and value is None)}
-    if isinstance(result.get('technical_metrics'), list):
+    if isinstance(result.get('technical_metrics'), (list, tuple)):
         result['technical_metrics'] = [row for row in result['technical_metrics']
                                        if not isinstance(row, dict) or row.get('key') != 'close']
     return result

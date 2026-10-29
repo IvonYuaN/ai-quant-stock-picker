@@ -744,3 +744,58 @@ def test_strategy_preserves_original_intraday_bar_precision_without_receipt_time
     assert source["as_of"] == "2026-10-28T10:25:00+08:00"
     assert source["precision"] == "timestamp"
     assert source["timestamp_source"] == "bar_time"
+
+
+def test_strategy_omits_undefined_rsi_fact_when_flat_prices_use_scoring_fallback() -> None:
+    frame = _frame("600001", 0.0)
+    frame.loc[:, ["open", "high", "low", "close"]] = [10.0, 10.2, 9.8, 10.0]
+    assert pd.isna(enrich_indicators(frame).iloc[-1]["rsi12"])
+    pick = score_symbol("600001", frame, ScreeningConfig(min_avg_amount=1), ScoringThresholds())
+    assert pick is not None
+    # Existing deterministic scoring continues using its historical fallback.
+    assert pick.metrics["rsi12"] == 0
+    assert "rsi12" not in pick.metrics["technical_source"]["metrics"]
+    assert pick.metrics["technical_source"]["metrics"]["ret5_pct"] == 0
+
+
+def test_strategy_typed_source_matches_actual_finite_indicator_values_without_changing_score(monkeypatch) -> None:
+    import aqsp.strategy as strategy
+    frame = _frame("600001", 0.004, 1.8)
+    row = enrich_indicators(frame).iloc[-1]
+    pick = score_symbol("600001", frame, ScreeningConfig(min_avg_amount=1), ScoringThresholds())
+    assert pick is not None
+    facts = pick.metrics["technical_source"]["metrics"]
+    assert facts == pytest.approx({
+        "ret5_pct": row["ret_5"] * 100,
+        "ret20_pct": row["ret_20"] * 100,
+        "bias20_pct": row["bias20"],
+        "volume_ratio": row["volume_ratio"],
+        "rsi12": row["rsi12"],
+        "macd_hist": row["macd_hist"],
+    })
+    monkeypatch.setattr(strategy, "_technical_source_snapshot", lambda *args: None)
+    without_metadata = score_symbol("600001", frame, ScreeningConfig(min_avg_amount=1), ScoringThresholds())
+    assert without_metadata is not None
+    assert (pick.score, pick.rating, pick.reasons, pick.risks, pick.stop_loss, pick.take_profit) == (
+        without_metadata.score, without_metadata.rating, without_metadata.reasons,
+        without_metadata.risks, without_metadata.stop_loss, without_metadata.take_profit)
+
+
+@pytest.mark.parametrize("value", [None, True, False, "1.42", [], {}, float("nan"), float("inf"), -float("inf")])
+def test_strategy_omits_indicator_fact_when_raw_value_is_not_a_finite_typed_number(value) -> None:
+    from aqsp.strategy import _nullable_technical_number, _technical_source_snapshot
+    assert _nullable_technical_number(value) is None
+    assert _nullable_technical_number(value, scale=100) is None
+    frame = _frame("600001", 0.004)
+    source = _technical_source_snapshot(frame, pd.Series({"date": "2026-10-28"}),
+        {"rsi12": _nullable_technical_number(value), "ret5_pct": 3.5})
+    assert source["metrics"] == {"ret5_pct": 3.5}
+
+
+def test_strategy_technical_source_records_historical_window_when_current_bar_is_overlaid() -> None:
+    from aqsp.strategy import _technical_source_snapshot
+    frame = pd.DataFrame()
+    frame.attrs.update(source_name="tencent", historical_source="sqlite_db")
+    source = _technical_source_snapshot(frame, pd.Series({"date": "2026-10-28"}), {"volume_ratio": 1.42})
+    assert source is not None and source["source"] == "tencent / 历史窗口:sqlite_db"
+    assert source["as_of"] == "2026-10-28" and source["precision"] == "day"
