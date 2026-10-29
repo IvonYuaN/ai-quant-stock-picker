@@ -28,6 +28,7 @@ import decision_context as dc
 import market
 import position_context_source as sectors_source
 from strategy_market_source import fetch_strategy_breadth, valid_strategy_breadth
+from position_price_path import build_completed_price_path, price_path_explanations
 
 
 @dataclass(frozen=True)
@@ -36,6 +37,8 @@ class StrategyEvidenceLimits:
     total_timeout_seconds: float = 8.0
     max_response_bytes: int = 500_000
     history_rows: int = 2
+    # Reuse the briefing's existing 5/20-bar explanatory windows, no signal gate.
+    price_path_rows: int = 20
     sqlite_timeout_seconds: float = 0.1
     max_cache_bytes: int = 500_000
 
@@ -123,8 +126,9 @@ def load_cached_strategy_sectors(codes: Sequence[str], *, checked_at: datetime,
     return result
 
 
-def _history(path: Path, code: str, current: datetime, limits: StrategyEvidenceLimits) -> pd.DataFrame | None:
-    """Read only the last two completed raw bars from the existing tenant cache.
+def _history(path: Path, code: str, current: datetime, limits: StrategyEvidenceLimits,
+             *, with_volume: bool = False) -> pd.DataFrame | None:
+    """Read two reference bars, or one bounded 20-bar raw explanatory window.
 
     Never initialize/migrate a DB or fetch missing history during a page read.
     Schema/provenance failures leave the references absent rather than inferred.
@@ -135,18 +139,22 @@ def _history(path: Path, code: str, current: datetime, limits: StrategyEvidenceL
     try:
         with sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True,
                              timeout=limits.sqlite_timeout_seconds) as connection:
+            columns = {row[1] for row in connection.execute('PRAGMA table_info(ohlcv)')}
+            if with_volume and 'volume' not in columns:
+                return None
+            extra = (', volume' + (', suspended' if 'suspended' in columns else '')) if with_volume else ''
             frame = pd.read_sql_query(
-                "SELECT date, high, low, close, source, fetched_at, timestamp_source FROM ohlcv "
+                "SELECT date, high, low, close, source, fetched_at, timestamp_source" + extra + " FROM ohlcv "
                 "WHERE symbol=? AND price_mode='raw' AND workload='historical' AND date<=? "
                 "ORDER BY date DESC LIMIT ?", connection,
-                params=(code, completed.isoformat(), limits.history_rows),
+                params=(code, completed.isoformat(), limits.price_path_rows if with_volume else limits.history_rows),
             )
-        if frame.empty or any(not isinstance(value, str) or not value.strip()
-                              for column in ('source', 'fetched_at', 'timestamp_source') for value in frame[column]):
+        if frame.empty or (not with_volume and any(not isinstance(value, str) or not value.strip()
+                              for column in ('source', 'fetched_at', 'timestamp_source') for value in frame[column])):
             return None
-        if len(set(frame['source'])) != 1:
+        if not with_volume and len(set(frame['source'])) != 1:
             return None
-        for value in frame['fetched_at']:
+        for value in (() if with_volume else frame['fetched_at']):
             stamp = datetime.fromisoformat(value)
             if stamp.tzinfo is None or stamp.utcoffset() is None or stamp > current:
                 return None
@@ -202,9 +210,18 @@ def load_strategy_context(holding: Mapping[str, Any], codes: Sequence[str], hist
         current_holding.pop('sector', None)
         sector = None
     history = _history(history_path, str(holding['code']), checked_at, limits)
+    price_path = build_completed_price_path(_history(history_path, code, checked_at, limits, with_volume=True),
+                                            current=checked_at)
     context = dc.build_position_context(current_holding, [], quote=holding.get('quote'), stock_history=history,
                                         market_overview=overview, sector_snapshot=sector,
                                         checked_at=checked_at).to_dict()
+    context['stock']['price_path'] = price_path.to_dict()
+    context['stock']['evidence'] = (*context['stock']['evidence'], *price_path_explanations(price_path))
+    if price_path.status == 'available':
+        context['action_basis']['references'] = [*context['action_basis']['references'], *(
+            {'label': f'最近完成日截至{row.window}根日线窗口{label}', 'price': price,
+             'as_of': row.end_date, 'source': price_path.source}
+            for row in price_path.windows for label, price in (('低点', row.low), ('高点', row.high)))]
     return enrich_strategy_context(context, overview, sector, checked_at=checked_at)
 
 

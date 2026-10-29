@@ -754,7 +754,12 @@ def test_candidate_review_preserves_adoption_snapshot_when_quote_only_refreshes(
     assert context['original']['condition'] == frozen['condition']
     assert context['original']['invalidation'] == frozen['invalidation']
     assert context['quote_updated'] and not context['material_changed'] and context['changes'] == []
-    assert json.loads(json.dumps(calls[-1]['review_context'])) == context
+    projected = json.loads(json.dumps(calls[-1]['review_context']))
+    expected = {**context, 'current': {key: row for key, row in context['current'].items()
+                                      if key not in {'evidence_snapshot', 'price_refs'}}}
+    assert projected == expected
+    assert calls[-1]['evidence']['quote'] == context['current']['evidence_snapshot']['quote']
+    assert calls[-1]['price_refs'] == context['current']['price_refs']
     assert 'adopted_plan' in calls[-1]['evidence'] and 'review_changes' in calls[-1]['evidence']
     assert client.get('/api/candidate-observations/600000').json()['data']['watch'] == frozen
     assert 'tenant' not in json.dumps(context)

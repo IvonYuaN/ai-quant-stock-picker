@@ -190,7 +190,11 @@ def test_position_review_compares_adopted_plan_without_changing_watch_when_quote
     assert context['original']['condition'] == watch['condition']
     assert context['original']['invalidation'] == watch['invalidation']
     assert context['quote_updated'] and not context['material_changed']
-    assert json.loads(json.dumps(calls[-1]['review_context'])) == context
+    expected = {**context, 'current': {key: row for key, row in context['current'].items()
+                                      if key not in {'evidence_snapshot', 'price_refs'}}}
+    assert json.loads(json.dumps(calls[-1]['review_context'])) == expected
+    assert calls[-1]['evidence']['quote'] == context['current']['evidence_snapshot']['quote']
+    assert calls[-1]['price_refs'] == context['current']['price_refs']
     assert plans.read_position_plan(position_id)['review_plan']['watch'] == watch
 
 

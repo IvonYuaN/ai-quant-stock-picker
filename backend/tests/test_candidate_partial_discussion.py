@@ -44,8 +44,10 @@ def test_candidate_partial_discussion_keeps_full_challenge_mode_when_all_roles_f
     assert result['synthesis_basis'] == {'mode': 'challenge', 'participating_roles': ['trend', 'entry', 'risk'],
                                         'missing_roles': [], 'unreviewed_roles': []}
     assert len(calls) == 7
-    assert [item['stage'] for item in calls[-1]['synthesis_opinions']] == ['challenge'] * 3
-    assert calls[-1]['rounds'] == [{'stage': 'validated_latest', 'opinions': calls[-1]['synthesis_opinions']}]
+    assert 'synthesis_opinions' not in calls[-1]
+    assert [item['stage'] for item in calls[-1]['rounds'][0]['opinions']] == ['challenge'] * 3
+    assert 'evidence_snapshot' not in calls[0]['review_context']['current']
+    assert 'price_refs' not in calls[0]['review_context']['current']
 
 
 def test_candidate_partial_discussion_uses_valid_initial_after_one_peer_timeout(env, monkeypatch):
@@ -54,7 +56,7 @@ def test_candidate_partial_discussion_uses_valid_initial_after_one_peer_timeout(
     assert result['synthesis_basis'] == {'mode': 'partial_initial', 'participating_roles': ['trend', 'entry'],
                                         'missing_roles': ['risk'], 'unreviewed_roles': ['trend']}
     assert len(calls) == 6  # three initial, two replies, one summary; no retry
-    selected = {item['role']: item for item in calls[-1]['synthesis_opinions']}
+    selected = {item['role']: item for item in calls[-1]['rounds'][0]['opinions']}
     assert selected['trend']['stage'] == 'independent' and selected['trend']['opinion']['summary'] == '初轮有效trend'
     assert selected['entry']['stage'] == 'challenge' and selected['entry']['opinion']['summary'] == '回应有效entry'
     assert '拒绝原文标记' not in json.dumps(calls[-1], ensure_ascii=False)
@@ -69,7 +71,7 @@ def test_candidate_partial_discussion_can_summarize_two_initials_when_all_replie
                              reply_failures={'trend': 'timeout', 'entry': 'invalid'})
     assert result['status'] == 'partial' and result['summary']
     assert result['synthesis_basis']['unreviewed_roles'] == ['trend', 'entry']
-    assert all(item['stage'] == 'independent' for item in calls[-1]['synthesis_opinions'])
+    assert all(item['stage'] == 'independent' for item in calls[-1]['rounds'][0]['opinions'])
     assert '拒绝原文标记' not in json.dumps(calls[-1], ensure_ascii=False)
 
 
@@ -103,7 +105,7 @@ def test_candidate_partial_discussion_preserves_existing_two_replies_path_as_par
     assert result['synthesis_basis']['mode'] == 'challenge'
     assert result['synthesis_basis']['unreviewed_roles'] == []
     assert result['synthesis_basis']['missing_roles'] == ['risk']
-    assert len(calls[-1]['synthesis_opinions']) == 2
+    assert len(calls[-1]['rounds'][0]['opinions']) == 2
 
 
 def test_candidate_partial_discussion_keeps_initial_when_single_reply_times_out(env, monkeypatch):
@@ -112,6 +114,6 @@ def test_candidate_partial_discussion_keeps_initial_when_single_reply_times_out(
     assert result['synthesis_basis'] == {'mode': 'challenge', 'participating_roles': ['trend', 'entry', 'risk'],
                                         'missing_roles': [], 'unreviewed_roles': ['trend']}
     assert len(calls) == 7
-    selected = calls[-1]['synthesis_opinions']
+    selected = calls[-1]['rounds'][0]['opinions']
     assert len(selected) == 3 and selected[0]['stage'] == 'independent'
     assert all(row['status'] == 'ok' for row in calls[-1]['rounds'][0]['opinions'])

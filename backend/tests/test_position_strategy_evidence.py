@@ -20,6 +20,7 @@ import position_context_source as sector_source
 import position_strategy_evidence as source
 from position_route_review import current_position_evidence
 from test_position_action_plan import HOLDING, NOW, QUOTE, plan_client  # noqa: F401 -- pytest fixture
+from test_position_price_path import frame as price_path_frame
 
 
 @pytest.fixture(autouse=True)
@@ -147,6 +148,98 @@ def test_strategy_evidence_ignores_history_when_schema_invalid(tmp_path):
     path = tmp_path / 'history.db'
     sqlite3.connect(path).close()
     assert source._history(path, '002129', NOW, source.StrategyEvidenceLimits()) is None
+
+
+def write_price_path(path: Path) -> None:
+    values = price_path_frame().assign(symbol='002129', price_mode='raw', workload='historical')
+    with sqlite3.connect(path) as connection:
+        values.to_sql('ohlcv', connection, index=False)
+
+
+def test_strategy_evidence_exposes_completed_windows_without_losing_source_or_mutating_cache(tmp_path) -> None:
+    path = tmp_path / 'history.db'
+    write_price_path(path)
+    before = path.read_bytes()
+    result = context(path)
+    raw = result['stock']['price_path']
+    checked = current_position_evidence(result, QUOTE, current=NOW)['stock']['price_path']
+    assert raw['status'] == checked['status'] == 'available'
+    assert raw['windows'] == checked['windows']
+    assert raw['as_of'] == '2026-10-22' and raw['source'] == 'synthetic'
+    refs = result['action_basis']['references']
+    assert any(row['label'] == '最近完成日截至20根日线窗口高点' and row['price'] == 12.9 for row in refs)
+    assert all('支撑' not in row['label'] for row in refs)
+    assert any('非实时量比' in row for row in result['stock']['evidence'])
+    assert path.read_bytes() == before
+
+
+def test_strategy_evidence_preserves_old_price_contract_when_volume_column_missing(tmp_path) -> None:
+    path = tmp_path / 'history.db'
+    history(path)
+    result = context(path)
+    assert result['stock']['price_path']['status'] == 'unavailable'
+    assert any(row['label'] == '最近完成日高点' and row['price'] == 10 for row in result['action_basis']['references'])
+
+
+def test_strategy_evidence_keeps_actual_missing_reason_when_volume_window_is_unusable(tmp_path) -> None:
+    path = tmp_path / 'history.db'
+    write_price_path(path)
+    with sqlite3.connect(path) as connection:
+        connection.execute("UPDATE ohlcv SET volume=0 WHERE date='2026-10-22'")
+    result = context(path)
+    checked = current_position_evidence(result, QUOTE, current=NOW)
+    assert checked['stock']['price_path']['status'] == 'unavailable'
+    assert '无成交量' in '；'.join(checked['stock']['price_path']['issues'])
+    assert any(row['label'] == '最近完成日高点' for row in result['action_basis']['references'])
+
+
+def test_strategy_evidence_api_and_model_receive_same_completed_window_facts(plan_client, monkeypatch) -> None:
+    import position_discussion as discussion
+    from test_position_discussion import COMPARISON, OPINION
+    client, event = plan_client
+    write_price_path(Path(pf._tenant_dir()) / 'live-risk-history.db')
+    data = client.get(f'/api/alerts/{event}/action-plan').json()['data']
+    path = data['route_review']['evidence']['stock']['price_path']
+    before = pf._load()
+    assert path['status'] == 'available'
+    assert any(row['label'].startswith('最近完成日截至20') for row in data['basis']['references'])
+    calls = []
+    monkeypatch.setattr(discussion, 'resolve_endpoint', lambda config: discussion.ModelEndpoint('https://model.invalid', 'private', 'synthetic'))
+    async def model(endpoint, payload, timeout, limits):
+        calls.append(payload)
+        if 'rounds' in payload:
+            return json.dumps(COMPARISON, ensure_ascii=False)
+        peers = payload['peer_opinions']
+        return json.dumps({**OPINION, 'reply_to': list(peers)[:1], 'challenge': '仍需当前成交量确认' if peers else ''}, ensure_ascii=False)
+    monkeypatch.setattr(discussion, 'call_model', model)
+    result = client.post(f'/api/alerts/{event}/discussion', json={'expected_position': data['position_snapshot'],
+                                                               'expected_revision': data['revision']})
+    assert result.status_code == 200, result.text
+    assert result.json()['data']['status'] == 'complete'
+    assert len(calls) == 7 and all(json.loads(json.dumps(row['evidence']['stock']['price_path'])) == path for row in calls)
+    assert {key: value for key, value in pf._load().items() if key != 'position_reviews'} == {
+        key: value for key, value in before.items() if key != 'position_reviews'}
+
+
+def test_strategy_evidence_appends_window_references_without_reindexing_original_prices(tmp_path) -> None:
+    path = tmp_path / 'history.db'
+    write_price_path(path)
+    extended = context(path)['action_basis']['references']
+    with sqlite3.connect(path) as connection:
+        connection.execute('ALTER TABLE ohlcv DROP COLUMN volume')
+    original = context(path)['action_basis']['references']
+    assert extended[:len(original)] == list(original)
+    assert len(extended) == len(original) + 4
+
+
+def test_strategy_evidence_excludes_unfinished_raw_bar_when_reading_completed_windows(tmp_path) -> None:
+    path = tmp_path / 'history.db'
+    write_price_path(path)
+    with sqlite3.connect(path) as connection:
+        connection.execute("INSERT INTO ohlcv SELECT '2026-10-23',999,0.01,500,999999,source,fetched_at,timestamp_source,0,symbol,price_mode,workload FROM ohlcv LIMIT 1")
+    result = context(path)['stock']['price_path']
+    assert result['status'] == 'available'
+    assert all(row['end_date'] == '2026-10-22' and row['high'] < 999 for row in result['windows'])
 
 
 def test_strategy_evidence_refresh_cancels_tasks_before_releasing_lease(monkeypatch):
