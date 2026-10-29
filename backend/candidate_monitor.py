@@ -6,6 +6,7 @@ semantic keys and durable receipts survive restarts, uncertain sends fail closed
 from __future__ import annotations
 
 from copy import deepcopy
+from datetime import datetime
 import json
 from pathlib import Path
 import re
@@ -17,6 +18,7 @@ from aqsp.core.errors import DataError
 from aqsp.core.time import now_shanghai
 from aqsp.utils.jsonl_io import advisory_lock, atomic_write_text
 from position_route_review import evidence_digest
+from position_followup import FollowupDefaults
 import strategy_conditions as conditions
 
 
@@ -57,14 +59,24 @@ def _render(batch: dict[str, Any]) -> str:
                       footer))
 
 
-def _validate(batch: dict[str, Any]) -> bool:
+def _validate(batch: dict[str, Any], *, source_quote: dict[str, Any] | None = None) -> bool:
     """Recheck frozen intent and current sources immediately before outbound I/O."""
+    checked_at = now_shanghai()
+    try:
+        stamp = datetime.fromisoformat(batch['observation']['observed_at'])
+        age = (checked_at - stamp).total_seconds()
+        if stamp.utcoffset() is None or age < 0 or age > FollowupDefaults().max_check_age_seconds:
+            return False
+    except (KeyError, TypeError, ValueError):
+        return False
     data = resources.load_store()
     row = data['resources'].get(batch['symbol'])
     if not row or row['version'] != batch['version'] or row.get('watch') != batch['watch']:
         return False
-    value = resources.workspace(batch['symbol'])
-    current = resources.observation(value, row, current=now_shanghai())
+    # A monitor round already fetched a bounded batch. Revalidate its original
+    # source clock and current research/ownership instead of N extra quote calls.
+    value = resources.workspace(batch['symbol'], quote=source_quote, current=checked_at)
+    current = resources.observation(value, row, current=checked_at)
     if current['state'] != batch['observation']['state'] or current['reason'] != batch['observation']['reason']:
         return False
     frozen_checks = batch['observation'].get('condition_checks')
@@ -103,6 +115,10 @@ def deliver(batch: dict[str, Any]) -> bool:
     from aqsp.notification_runtime import dispatch_notification_once, notification_content_hash
     journal_path = resources.root() / 'candidate-observation-delivery.json'
     runtime_path = resources.root() / 'notify-state-candidate-observation.json'
+    # This round's quote is validation input, never part of a durable message or
+    # its identity. Old journals remain byte-stable and retain their source times.
+    source_quote = batch.get('_source_quote')
+    batch = {key: value for key, value in batch.items() if key != '_source_quote'}
     with advisory_lock(journal_path):
         journal = _read(journal_path, {'schema_version': 1, 'batches': {}})
         if journal.get('schema_version') != 1 or not isinstance(journal.get('batches'), dict):
@@ -127,10 +143,10 @@ def deliver(batch: dict[str, Any]) -> bool:
         if frozen['sent'] or frozen['uncertain']:
             return False
         if frozen['cancelled']:
-            if batch['observation']['observed_at'] <= frozen['candidate']['observation']['observed_at'] or not _validate(batch):
+            if batch['observation']['observed_at'] <= frozen['candidate']['observation']['observed_at'] or not _validate(batch, source_quote=source_quote):
                 return False
             frozen.update(candidate=deepcopy(batch), markdown=_render(batch), cancelled=False)
-        if not _validate(frozen['candidate']):
+        if not _validate(frozen['candidate'], source_quote=source_quote):
             frozen['cancelled'] = True
             atomic_write_text(journal_path, json.dumps(journal, ensure_ascii=False, allow_nan=False))
             return False
@@ -184,6 +200,6 @@ def check_candidates(*, notify: bool = False) -> dict[str, int]:
                     'state': observed['state'], 'reason': observed['reason'],
                     **({'conditions': observed['condition_checks']['digest']} if (observed.get('condition_checks') or {}).get('mode') == 'registered' else {})})
             batch = {'key': key, 'symbol': code, 'name': value['name'], 'version': active[code]['version'],
-                     'watch': active[code]['watch'], 'observation': observed}
+                     'watch': active[code]['watch'], 'observation': observed, '_source_quote': deepcopy(quotes.get(code, {}))}
             result['notified'] += int(deliver(batch))
     return result
