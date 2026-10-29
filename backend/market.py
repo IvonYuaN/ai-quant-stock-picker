@@ -14,6 +14,7 @@ from collections import Counter
 from datetime import datetime, timezone, timedelta
 
 import astock
+from astock import _now_shanghai as now_shanghai
 import gstock
 import source_health
 
@@ -177,48 +178,51 @@ def breadth_label(up: int | float, down: int | float) -> str:
     return breadth
 
 
-def _sentiment(emotion: dict | None = None) -> dict:
-    """市场情绪：涨跌家数/涨停跌停/宽度（#417 起改东财口径）。
+def _valid_breadth(value: object, *, current: datetime | None = None) -> bool:
+    from strategy_market_source import valid_strategy_breadth
 
-    **为什么换源**：乐咕乐股 2026-10-19 起把页面换成反爬 JS 挑战页（akshare 默认
-    UA / Chrome UA 均只拿到「安全验证」页，无 UA 403），`stock_market_activity_legu`
-    再也解析不出表 ⇒ 整块 sentiment 恒空、前端 BreadthBlock 直接消失（#417）。
+    return valid_strategy_breadth(value, current=current or now_shanghai())
 
-    新口径（全部来自东财，与既有板块/涨停池同源）：
-    - 涨跌家数：全 A **逐只 f3 计数**（`astock.market_breadth_counts`）；
-    - 涨停/跌停：复用东财涨停板四池的 `zt_count`/`dt_count`（调用方传入 emotion，
-      避免重复打池子；未传入时本函数自取，有 5min 缓存）；
-    - `zt_real`/`dt_real`：乐咕专有口径无法忠实复现 ⇒ **置 0 而不是编一个数**
-      （前端 `ztReal || zt` 自动回退到原始家数）；
-    - `active`：乐咕专有口径 ⇒ 空串（前端不显示该行）；
-    - `speculation`：原阈值是按「真实涨停」调的，输入换成涨停家数后语义已变 ⇒
-      **空串**，等阈值口径重议后再上（阈值改动是红线，不偷偷沿用旧档位）；
-    - `date`：涨停池 resolve 出的交易日（W3 证据链：数据时间，非取数时刻）。
+
+def _breadth_date(value: dict) -> str:
+    """Shanghai session date of an already validated source clock."""
+    return datetime.fromisoformat(value["as_of"]).astimezone(BEIJING).date().isoformat()
+
+
+def sanitize_market_overview(value: dict, *, current: datetime | None = None) -> dict:
+    """Strip unauthenticated breadth on every read, including pre-fix caches.
+
+    Independent limit-pool counters may survive; their date cannot authenticate
+    full-market quotes. Never mutate the shared cache value in place.
     """
+    sentiment = value.get("sentiment")
+    if not isinstance(sentiment, dict):
+        return {**value, "sentiment": {}}
+    if _valid_breadth(sentiment, current=current):
+        clean = {**sentiment, "date": _breadth_date(sentiment)}
+        if clean.get("limit_pool_date") != clean["date"]:
+            clean.update(zt=None, dt=None, zt_real=0, dt_real=0)
+        return {**value, "sentiment": clean}
+    pool = ({key: sentiment[key] for key in ("zt", "dt", "zt_real", "dt_real", "limit_pool_date")
+             if key in sentiment} if sentiment.get("limit_pool_date") else {})
+    return {**value, "sentiment": pool}
+
+
+def _sentiment(emotion: dict | None = None) -> dict:
+    """Keep full-market source facts independent from limit-pool evidence."""
     counts = _breadth_counts()
-    if not counts or (counts.get("up", 0) + counts.get("down", 0) + counts.get("flat", 0)) <= 0:
-        # None = 源取数失败；全 0 = 真实交易日的不可能事件。二者都不是「全市场平盘」，
-        # 一律以空对象交「未返回」，绝不拿 0 冒充（#417 / #419 同款三态纪律）。
-        return {}
-    up, down, flat = counts["up"], counts["down"], counts["flat"]
     if emotion is None:
         emotion = get_short_term_emotion() or {}
-    zt = emotion.get("zt_count")
-    dt = emotion.get("dt_count")
-    breadth = breadth_label(up, down)
-    return {
-        "up": up,
-        "down": down,
-        "flat": flat,
-        "zt": zt,
-        "zt_real": 0,
-        "dt": dt,
-        "dt_real": 0,
-        "active": "",
-        "breadth": breadth,
-        "speculation": "",
-        "date": str(emotion.get("date") or ""),
-    }
+    pool = {}
+    if emotion.get("zt_count") is not None or emotion.get("dt_count") is not None:
+        pool = {"zt": emotion.get("zt_count"), "dt": emotion.get("dt_count"),
+                "zt_real": 0, "dt_real": 0, "limit_pool_date": str(emotion.get("date") or "")}
+    if not _valid_breadth(counts):
+        return pool
+    value = {**counts, "zt": emotion.get("zt_count"), "dt": emotion.get("dt_count"),
+            "zt_real": 0, "dt_real": 0, "active": "", "speculation": "",
+            "date": _breadth_date(counts), "limit_pool_date": str(emotion.get("date") or "")}
+    return sanitize_market_overview({"sentiment": value})["sentiment"]
 
 
 def _sectors() -> list[dict]:
@@ -257,9 +261,9 @@ def get_overview() -> dict:
             "updated": datetime.now(BEIJING).strftime("%Y-%m-%d %H:%M"),
         }
 
-    return _cached(
+    return sanitize_market_overview(_cached(
         "overview", build, valid=lambda v: bool(v.get("sentiment") or v.get("sectors"))
-    )
+    ))
 
 
 def _emotion() -> dict:
@@ -407,9 +411,12 @@ def _emotion_assessment(
         ]
         # 宽度维度：#417 起走东财全 A 逐只 f3 计数（乐咕换源）。取数失败时
         # `_breadth_counts()` 返回 None ⇒ 归一成 {}，0/0 让该维度降级为 None。
-        breadth = _breadth_counts() or {}
+        breadth = _breadth_counts()
+        trade_date = f"{resolved[:4]}-{resolved[4:6]}-{resolved[6:]}"
+        if not _valid_breadth(breadth) or _breadth_date(breadth) != trade_date:
+            breadth = {}
         snapshot = EmotionSnapshot(
-            trade_date=f"{resolved[:4]}-{resolved[4:6]}-{resolved[6:]}",
+            trade_date=trade_date,
             zt_count=len(zt),
             dt_count=dt_count,
             zb_count=zb_count,
@@ -432,14 +439,31 @@ def _emotion_assessment(
                 str(p.get("hybk") or "") for p in zt
             ),
         )
-        return assess(snapshot).as_dict()
+        return {**assess(snapshot).as_dict(), "breadth_contract_version": 1,
+                "breadth_evidence": dict(breadth) if breadth else None}
     except Exception:
         return {}
 
 
 def get_short_term_emotion() -> dict:
     """短线情绪（含缓存，5 分钟）。"""
-    return _cached("emotion", _emotion)
+    value = _cached("emotion", _emotion)
+    model = value.get("emotion_model")
+    if not isinstance(model, dict):
+        return value
+    evidence = model.get("breadth_evidence")
+    dimensions = model.get("dimensions")
+    dimension = dimensions.get("breadth") if isinstance(dimensions, dict) else None
+    if (type(model.get("breadth_contract_version")) is int
+            and model["breadth_contract_version"] == 1
+            and isinstance(dimension, dict)
+            and ((evidence is None and dimension.get("score") is None)
+                 or (_valid_breadth(evidence)
+                     and _breadth_date(evidence) == model.get("trade_date")))):
+        return value
+    # Old cached aggregates may include the unverified 100/0 sample. Keep the
+    # independent limit-pool payload, never relabel or silently recompute scores.
+    return {key: item for key, item in value.items() if key != "emotion_model"}
 
 
 def get_turnover_top() -> dict:

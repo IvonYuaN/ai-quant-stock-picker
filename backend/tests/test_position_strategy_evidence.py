@@ -2,6 +2,8 @@
 # ruff: noqa: F811 -- import a reusable isolated API fixture
 from __future__ import annotations
 
+from breadth_fixtures import complete_breadth
+
 import asyncio
 import fcntl
 import json
@@ -42,7 +44,7 @@ def context(path: Path, **holding) -> dict:
 
 
 def test_strategy_evidence_uses_current_cache_when_no_alert_exists(tmp_path):
-    cache('overview', {'sentiment': {'date': '20261023', 'up': 800, 'down': 3000, 'breadth': '偏弱'}})
+    cache('overview', {'sentiment': complete_breadth(NOW)})
     cache(source._sector_key(['002129']), {'002129': sector()})
     result = context(tmp_path / 'absent.db')
     assert result['market']['status'] == 'weak'
@@ -54,7 +56,7 @@ def test_strategy_evidence_uses_current_cache_when_no_alert_exists(tmp_path):
 def test_strategy_evidence_monitor_projection_matches_read_projection(tmp_path) -> None:
     from decision_context import build_position_context, load_cached_market_overview
     from strategy_direction import direction_identity
-    cache('overview', {'sentiment': {'date': '20261023', 'up': 800, 'down': 3000, 'breadth': '偏弱'}})
+    cache('overview', {'sentiment': complete_breadth(NOW)})
     cache(source._sector_key(['002129']), {'002129': sector()})
     cache('strategy_indices', {'000001': {**QUOTE, 'name': '合成上证', 'change_pct': -1}})
     overview = load_cached_market_overview(checked_at=NOW)
@@ -299,7 +301,7 @@ def test_strategy_evidence_discards_refresh_when_position_changes(plan_client, m
 
 def test_strategy_evidence_projects_typed_facts_into_real_review_validator_without_prose_parsing(tmp_path) -> None:
     from strategy_review_context import validate_position_action_numbers
-    cache('overview', {'sentiment': {'date': '20261023', 'up': 800, 'down': 3000, 'breadth': '偏弱'}})
+    cache('overview', {'sentiment': complete_breadth(NOW)})
     cache(source._sector_key(['002129']), {'002129': sector(change_pct=1)})
     loaded = context(tmp_path / 'absent.db')
     evidence = current_position_evidence(loaded, {**QUOTE, 'change_pct': 2}, current=NOW)

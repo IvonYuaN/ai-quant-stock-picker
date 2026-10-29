@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from breadth_fixtures import complete_breadth
+
 from datetime import date, datetime
 import json
 from zoneinfo import ZoneInfo
@@ -31,7 +33,7 @@ def position_store(tmp_path, monkeypatch):
     monkeypatch.setattr(decision_context, "now_shanghai", lambda: NOW)
     monkeypatch.setattr(market, "_MARKET_CACHE_DIR", str(tmp_path / "market"))
     monkeypatch.setattr(decision_context, "load_cached_market_overview", lambda: {
-        "sentiment": {"date": "20261023", "up": 800, "down": 3000, "breadth": "偏弱"},
+        "sentiment": complete_breadth(NOW),
     })
     quote = {"name": "合成持仓", "price": 8, "quote_time": "20261023100000", "change_pct": -2}
     monkeypatch.setattr(pf.astock, "tencent_quote", lambda codes: {code: quote.copy() for code in codes})

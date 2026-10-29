@@ -87,6 +87,9 @@ export interface BreadthView {
   up: number;
   down: number;
   flat: number;
+  total: number;
+  source: string;
+  asOf: string;
   /** 涨停家数（东财涨停池口径）；null = 池子取数失败，不是「0 家涨停」。 */
   zt: number | null;
   ztReal: number;
@@ -247,21 +250,21 @@ function toIndustryRow(item: IndustryRow): IndustryRowView {
 
 function buildBreadth(overview: MarketOverview | null | undefined): BreadthView | null {
   const s = overview?.sentiment;
-  if (!s) return null;
-  const up = s.up ?? 0;
-  const down = s.down ?? 0;
-  const flat = s.flat ?? 0;
-  // 全 0 视为「源没给数据」，返回 null 让页面显示「未返回」。
-  //
-  // 后端在源失败时返回的是**空对象** `{}`（不是 null），而 `{}` 是真值 ⇒ 下面的
-  // `?? 0` 会把每个字段兜成 0，页面就渲染成「上涨 0 / 下跌 0 / 平盘 0」。
-  // 那不是「没有数据」，而是一句**关于市场的假陈述**（读起来像全市场平盘），
-  // 比什么都不显示更糟。真实交易日不可能 0 家上涨、0 家下跌、0 家平盘。
-  if (up === 0 && down === 0 && flat === 0) return null;
+  if (!s || s.coverage_complete !== true || s.source !== "东方财富全A逐只行情宽度") return null;
+  // The API verifies source age on every read, including old SWR caches. The
+  // client also rejects legacy/partial payloads; a pool date proves no coverage.
+  const { up, down, flat, total, as_of: asOf, latest_source_at: latest } = s;
+  if (![up, down, flat, total].every((value) => typeof value === "number" && Number.isSafeInteger(value) && value >= 0) ||
+      total === undefined || up + down + flat > total || up + down + flat <= 0) return null;
+  const sourceTime = (stamp: unknown): stamp is string => typeof stamp === "string" && /T.*(?:Z|[+-]\d{2}:\d{2})$/.test(stamp) && Number.isFinite(Date.parse(stamp));
+  if (!sourceTime(asOf) || !sourceTime(latest) || Date.parse(asOf) > Date.parse(latest)) return null;
   return {
     up,
     down,
     flat: s.flat ?? 0,
+    total,
+    source: s.source,
+    asOf,
     zt: s.zt ?? null,
     ztReal: s.zt_real ?? 0,
     dt: s.dt ?? null,
@@ -345,17 +348,14 @@ export function marketStripSummary(view: MarketView | null): MarketStripSummary 
   let tone: Tone = "neutral";
   let headline = "市场环境未记录";
   if (breadth) {
-    const ratio = breadth.upDownRatio;
-    if (breadth.breadth === "普涨" || (ratio != null && ratio >= 2.5)) {
+    // Reuse the authenticated server band; do not reinterpret a label as the
+    // number of decliners or maintain a second set of classification cutoffs.
+    if (["普涨", "偏强"].includes(breadth.breadth)) {
       tone = "ok";
-      headline = `普涨格局 · 上涨 ${breadth.up} / 下跌 ${breadth.down}`;
-    } else if (breadth.breadth === "冰点" || (ratio != null && ratio < 0.7)) {
+    } else if (["冰点", "偏弱"].includes(breadth.breadth)) {
       tone = "warn";
-      headline = `普跌格局 · 上涨 ${breadth.up} / 下跌 ${breadth.down}`;
-    } else {
-      tone = "neutral";
-      headline = `中性震荡 · 上涨 ${breadth.up} / 下跌 ${breadth.down}`;
     }
+    headline = `市场宽度${breadth.breadth || "未判定"} · 上涨 ${breadth.up} / 下跌 ${breadth.down}`;
   } else if (indexTotal > 0) {
     // 指数涨跌不是全市场宽度或所属板块方向的替身。
     tone = "neutral";

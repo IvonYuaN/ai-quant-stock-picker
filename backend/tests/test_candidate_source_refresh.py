@@ -1,6 +1,8 @@
 """Candidate source recovery is explicit, shared, bounded and plan independent."""
 from __future__ import annotations
 
+from breadth_fixtures import complete_breadth
+
 import asyncio
 from copy import deepcopy
 import json
@@ -114,7 +116,7 @@ def test_candidate_model_describes_sourced_index_and_breadth_facts_without_inven
     row['summary'] = '指数当前-0.5%，不等于市场整体转弱。'
     assert discussion.parse(json.dumps(row), discussion.CandidateOpinion, value, set())
     monkeypatch.setattr(resources.dc, 'load_cached_market_overview', lambda **kwargs: {
-        'sentiment': {'as_of': NOW.isoformat(), 'up': 3000, 'down': 1800, 'breadth': '偏强'},
+        'sentiment': complete_breadth(NOW, up=3000, down=1800),
     })
     value = client.get('/api/candidate-observations/600000').json()['data']
     row['summary'] = '上涨3000家、下跌1800家，仍需核对板块。'

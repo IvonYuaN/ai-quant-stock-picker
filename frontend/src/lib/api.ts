@@ -177,6 +177,9 @@ export interface IndexQuote {
 
 export interface MarketSentiment {
   up: number; down: number; flat: number;
+  /** 全A完整覆盖与供应商行情时点；旧缓存缺字段时不能作为市场宽度。 */
+  coverage_complete?: boolean; total?: number; source?: string;
+  as_of?: string; latest_source_at?: string;
   /**
    * 涨停/跌停家数（东财涨停池口径）。null = 池子取数失败 —— 不是「0 家涨停」，
    * 前端必须显示「—」而不是 0（三态纪律：#417 换源后二者来源不同，失败不互相冒充）。

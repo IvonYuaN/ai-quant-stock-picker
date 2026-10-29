@@ -207,7 +207,7 @@ def load_cached_market_overview(
             if timestamp is not None and 0 <= current.timestamp() - timestamp <= market._TTL:
                 candidate = entry.get("val")
                 if isinstance(candidate, Mapping):
-                    value = candidate
+                    value = market.sanitize_market_overview(dict(candidate), current=current)
     except (OSError, ValueError, TypeError):
         pass
     # Explicit strategy refresh owns an independent, small source-timed breadth
@@ -235,12 +235,11 @@ def _market_context(
     sentiment = overview.get("sentiment") if overview else None
     if not isinstance(sentiment, Mapping):
         return _unknown("市场背景未知：没有可用市场快照")
-    stamp = _source_date(sentiment.get("as_of") or sentiment.get("date"), current)
-    if stamp is None or stamp[0] != _session(current):
-        return _unknown("市场背景未知：源交易日缺失、过期或错误")
-    up, down = _number(sentiment.get("up")), _number(sentiment.get("down"))
-    if up is None or down is None or min(up, down) < 0 or up + down <= 0:
-        return _unknown("市场背景未知：涨跌家数不完整")
+    from strategy_market_source import valid_strategy_breadth
+
+    if not valid_strategy_breadth(dict(sentiment), current=current):
+        return _unknown("市场背景未知：全市场覆盖、来源或行情时点未通过核验")
+    up, down = sentiment["up"], sentiment["down"]
     breadth = str(sentiment.get("breadth") or "")
     status = {
         "冰点": "weak",
@@ -253,8 +252,8 @@ def _market_context(
     return ContextEvidence(
         status,
         f"市场宽度{breadth or '尚未判定'}；{evidence[0]}",
-        stamp[1],
-        str(sentiment.get("source") or "既有市场情绪快照/东方财富"),
+        str(sentiment["as_of"]),
+        str(sentiment["source"]),
         evidence,
     )
 
