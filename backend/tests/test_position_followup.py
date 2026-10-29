@@ -219,6 +219,42 @@ def test_position_followup_rejects_risk_notification_when_quote_expires_before_s
     assert not followup_service._validate_candidate(candidate)
 
 
+def test_position_followup_delivers_once_after_expired_risk_is_replaced_by_fresh_check(hold_risk_followup, monkeypatch) -> None:
+    import json
+    from pathlib import Path
+    from aqsp import notification_runtime as runtime
+    from aqsp.notifier import NotifyResult
+    import position_followup_delivery as delivery
+
+    _, candidate = hold_risk_followup
+    sent = []
+    current = NOW + timedelta(minutes=1)
+    for module in (followup_service, delivery, runtime):
+        monkeypatch.setattr(module, 'now_shanghai', lambda: current)
+
+    def dispatch(markdown: str, **kwargs) -> list[NotifyResult]:
+        sent.append(markdown)
+        return [NotifyResult('synthetic', True, 'stub')]
+
+    monkeypatch.setattr(runtime, 'dispatch_notification', dispatch)
+    before = deepcopy(pf._load())
+    result = delivery.deliver_followup_notifications([candidate], validate=followup_service._validate_candidate)
+    assert result.suppressed and not sent
+    assert not (Path(ae._tenant_dir()) / 'notify-state-position-plan.json').exists()
+    assert pf._load() == before
+    journal = Path(ae._tenant_dir()) / 'position-plan-delivery.json'
+    assert json.loads(journal.read_text())['batches'][0]['cancelled']
+
+    portfolio = pf.get_portfolio()
+    portfolio['holdings'][0]['quote'] = {**QUOTE, 'quote_time': current.strftime('%Y%m%d%H%M%S')}
+    refreshed = followup_service.check_plan_followups(portfolio, {}, current=current, notify=True)
+    assert refreshed['observations'][0]['reason'] == 'risk'
+    assert refreshed['notify'] and len(sent) == 1
+    assert '当前风险线仍触发' in sent[0] and current.isoformat() in sent[0]
+    followup_service.check_plan_followups(portfolio, {}, current=current, notify=True)
+    assert len(sent) == 1
+
+
 @pytest.mark.parametrize('quote_as_of', [None, 'malformed', '2026-10-23', '2026-10-23T10:00:00'])
 def test_position_followup_rejects_risk_notification_when_source_time_unverifiable(hold_risk_followup, quote_as_of) -> None:
     position_id, candidate = hold_risk_followup
