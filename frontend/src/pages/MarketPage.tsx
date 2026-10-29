@@ -21,6 +21,7 @@ import { industryOption, ladderOption, sectorFlowOption } from "@/lib/chart-opti
 import { useThemeMode } from "@/lib/theme-mode";
 import { sectionAvailability, summarizeSourceHealth, type MarketView } from "@/lib/market-view";
 import { useMarketData, useSourceHealth } from "@/components/aqsp/useMarketData";
+import { MARKET_SECTION_LABELS, type MarketSection } from "@/lib/market-load";
 import { StockDetailDrawer } from "@/components/aqsp/StockDetailDrawer";
 
 function IndexCards({ view }: { view: MarketView }) {
@@ -335,13 +336,14 @@ function GlobalBlock({ view }: { view: MarketView }) {
 }
 
 export function MarketPage() {
-  const { view, loading, failedSections, refresh } = useMarketData();
+  const { view, loading, failedSections, pendingSections, refresh } = useMarketData();
   const sources = useSourceHealth();
   const sourceNotice = summarizeSourceHealth(sources);
   const [picked, setPicked] = useState<string | null>(null);
   const availability = view ? sectionAvailability(view) : null;
 
   const section = (opts: {
+    source: MarketSection;
     title: string;
     description: string;
     icon: typeof Activity;
@@ -353,7 +355,11 @@ export function MarketPage() {
     return (
       <section className="aq-section">
         <SectionHeader title={opts.title} description={opts.description} icon={opts.icon} />
-        {opts.available ? (
+        {pendingSections.includes(opts.source) ? (
+          <LoadingState label={`正在读取${MARKET_SECTION_LABELS[opts.source]}…`} />
+        ) : failedSections.includes(MARKET_SECTION_LABELS[opts.source]) ? (
+          <StatePanel tone="warn">此项读取失败，可点页头“刷新”重试；其余数据独立显示。</StatePanel>
+        ) : opts.available ? (
           opts.children
         ) : (
           <EmptyState title={opts.emptyTitle} detail={opts.emptyDetail} />
@@ -378,21 +384,13 @@ export function MarketPage() {
           </div>
           <p className="aq-page-sub">指数 · 涨跌家数 · 短线情绪 · 成交额榜 · 行业榜 · 隔夜外围</p>
         </div>
-        <button type="button" className="aq-btn" onClick={refresh} disabled={loading} title="刷新市场数据">
+        <button type="button" className="aq-btn" onClick={refresh} title={loading ? "取消未完成的读取并重新刷新" : "刷新市场数据"}>
           <RefreshCw className={cn(loading && "aq-spin")} aria-hidden="true" />
-          刷新
+          {loading ? "重新读取" : "刷新"}
         </button>
       </header>
 
-      {failedSections.length > 0 ? (
-        <ToneCallout
-          tone="warn"
-          title="部分数据源本次未取到"
-          detail={`${failedSections.join("、")} 读取失败，其余板块照常显示。可点「刷新」重试。`}
-        />
-      ) : null}
-
-      {/* 「接口成功但源不可达」这一档：上面的 failedSections 覆盖不到它，
+      {/* 「接口成功但源不可达」这一档：各板块的 failedSections 覆盖不到它，
           因为后端在这种情况下返回的是 200 + 空载荷。没有这条提示，
           空面板会被读成「今天没数据」——那是一句关于市场的假陈述。 */}
       {sourceNotice ? (
@@ -408,6 +406,7 @@ export function MarketPage() {
       {view && availability ? (
         <>
           {section({
+            source: "indices",
             title: "大盘指数",
             description: `上证 / 深证成指 / 创业板指 / 沪深300${view.indicesUpdated ? ` · 数据时间 ${formatEvidenceTime(view.indicesUpdated)}` : " · 数据时间未标注"}`,
             icon: TrendingUp,
@@ -418,6 +417,7 @@ export function MarketPage() {
           })}
 
           {section({
+            source: "overview",
             title: "市场宽度",
             description: "涨跌家数 · 涨跌停 · 宽度分档",
             icon: BarChart3,
@@ -428,6 +428,7 @@ export function MarketPage() {
           })}
 
           {section({
+            source: "overview",
             title: "板块资金流",
             description: "行业资金净流入 / 净流出前列",
             icon: BarChart3,
@@ -438,6 +439,7 @@ export function MarketPage() {
           })}
 
           {section({
+            source: "emotion",
             title: "短线情绪",
             description: "连板梯队 · 封板率 / 炸板率 / 晋级率 · 连板股清单",
             icon: Flame,
@@ -448,6 +450,7 @@ export function MarketPage() {
           })}
 
           {section({
+            source: "turnover",
             title: "成交额榜",
             description: `全市场成交额 Top20 · 客观榜单，非推荐${view.turnoverUpdated ? ` · 数据时间 ${formatEvidenceTime(view.turnoverUpdated)}` : " · 数据时间未标注"}`,
             icon: Layers,
@@ -458,6 +461,7 @@ export function MarketPage() {
           })}
 
           {section({
+            source: "industry",
             title: "行业涨跌榜",
             description: `全行业涨跌幅排名${view.industryTotal ? ` · 共 ${view.industryTotal} 个行业` : ""}`,
             icon: Activity,
@@ -468,6 +472,7 @@ export function MarketPage() {
           })}
 
           {section({
+            source: "global",
             title: "隔夜外围",
             description: `美股 / 港股指数 —— A 股开盘前的外部环境${view.globalUpdated ? ` · 数据时间 ${formatEvidenceTime(view.globalUpdated)}` : " · 数据时间未标注"}`,
             icon: Globe2,
