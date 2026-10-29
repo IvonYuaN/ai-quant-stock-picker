@@ -382,7 +382,7 @@ export function MarketPage() {
                 （指数/外围/成交额榜），没有的就写「未标注」——不要用这个时间兜底。 */}
             {view?.updated ? <strong>取数 {view.updated}</strong> : null}
           </div>
-          <p className="aq-page-sub">指数 · 涨跌家数 · 短线情绪 · 成交额榜 · 行业榜 · 隔夜外围</p>
+          <p className="aq-page-sub">先看大盘整体，再看行业强弱；情绪与榜单作为补充依据。</p>
         </div>
         <button type="button" className="aq-btn" onClick={refresh} title={loading ? "取消未完成的读取并重新刷新" : "刷新市场数据"}>
           <RefreshCw className={cn(loading && "aq-spin")} aria-hidden="true" />
@@ -405,6 +405,8 @@ export function MarketPage() {
 
       {view && availability ? (
         <>
+          <section className="aq-module-group" aria-label="大盘整体">
+            <SectionHeader number="01 · 大盘整体" title="市场在什么状态" description="指数表现和全市场宽度分别核对，不能相互替代。" />
           {section({
             source: "indices",
             title: "大盘指数",
@@ -415,7 +417,6 @@ export function MarketPage() {
             emptyDetail: "行情源未返回指数数据，可稍后刷新重试。",
             children: <IndexCards view={view} />,
           })}
-
           {section({
             source: "overview",
             title: "市场宽度",
@@ -426,40 +427,9 @@ export function MarketPage() {
             emptyDetail: "市场活跃度数据源本次未返回；成交额榜、行业榜与板块资金流不受影响。",
             children: <BreadthBlock view={view} />,
           })}
-
-          {section({
-            source: "overview",
-            title: "板块资金流",
-            description: "行业资金净流入 / 净流出前列",
-            icon: BarChart3,
-            available: availability.sectors,
-            emptyTitle: "板块资金流未返回",
-            emptyDetail: "行业资金流数据源本次未返回；涨跌家数不受影响。",
-            children: <SectorFlowBlock view={view} />,
-          })}
-
-          {section({
-            source: "emotion",
-            title: "短线情绪",
-            description: "连板梯队 · 封板率 / 炸板率 / 晋级率 · 连板股清单",
-            icon: Flame,
-            available: availability.emotion,
-            emptyTitle: "短线情绪未返回",
-            emptyDetail: "涨停板数据源本次未返回（非交易日或盘前常见）。",
-            children: <EmotionBlock view={view} onPick={setPicked} />,
-          })}
-
-          {section({
-            source: "turnover",
-            title: "成交额榜",
-            description: `全市场成交额 Top20 · 客观榜单，非推荐${view.turnoverUpdated ? ` · 数据时间 ${formatEvidenceTime(view.turnoverUpdated)}` : " · 数据时间未标注"}`,
-            icon: Layers,
-            available: availability.turnover,
-            emptyTitle: "成交额榜未返回",
-            emptyDetail: "行情中心本次未返回榜单数据。",
-            children: <TurnoverBlock view={view} onPick={setPicked} />,
-          })}
-
+          </section>
+          <section className="aq-module-group" aria-label="行业方向">
+            <SectionHeader number="02 · 行业方向" title="哪些方向更强" description="先比较行业涨跌，再核对资金流；强弱榜单不等于个股买点。" />
           {section({
             source: "industry",
             title: "行业涨跌榜",
@@ -470,7 +440,39 @@ export function MarketPage() {
             emptyDetail: "行业板块数据源本次未返回。",
             children: <IndustryBlock view={view} />,
           })}
-
+          {section({
+            source: "overview",
+            title: "板块资金流",
+            description: "行业资金净流入 / 净流出前列",
+            icon: BarChart3,
+            available: availability.sectors,
+            emptyTitle: "板块资金流未返回",
+            emptyDetail: "行业资金流数据源本次未返回；涨跌家数不受影响。",
+            children: <SectorFlowBlock view={view} />,
+          })}
+          </section>
+          <section className="aq-module-group" aria-label="补充观察">
+            <SectionHeader number="03 · 补充观察" title="情绪、成交与外围" description="帮助理解市场背景，不单独形成买卖结论。" />
+          {section({
+            source: "emotion",
+            title: "短线情绪",
+            description: "连板梯队 · 封板率 / 炸板率 / 晋级率 · 连板股清单",
+            icon: Flame,
+            available: availability.emotion,
+            emptyTitle: "短线情绪未返回",
+            emptyDetail: "涨停板数据源本次未返回（非交易日或盘前常见）。",
+            children: <EmotionBlock view={view} onPick={setPicked} />,
+          })}
+          {section({
+            source: "turnover",
+            title: "成交额榜",
+            description: `全市场成交额 Top20 · 客观榜单，非推荐${view.turnoverUpdated ? ` · 数据时间 ${formatEvidenceTime(view.turnoverUpdated)}` : " · 数据时间未标注"}`,
+            icon: Layers,
+            available: availability.turnover,
+            emptyTitle: "成交额榜未返回",
+            emptyDetail: "行情中心本次未返回榜单数据。",
+            children: <TurnoverBlock view={view} onPick={setPicked} />,
+          })}
           {section({
             source: "global",
             title: "隔夜外围",
@@ -481,6 +483,7 @@ export function MarketPage() {
             emptyDetail: "海外指数数据源本次未返回。",
             children: <GlobalBlock view={view} />,
           })}
+          </section>
         </>
       ) : null}
 

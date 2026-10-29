@@ -655,7 +655,7 @@ export function CandidateSection({
     setSearchParams(params, { replace: true });
   };
   return (
-    <section id={section.id} className="aq-candidate-workspace">
+    <section id={section.id} className="aq-section aq-candidate-workspace">
       <SectionHeader
         title="选股与 AI 研究"
         description="先看为什么入选、依据是否齐全，再进入个股讨论和路线比较。"

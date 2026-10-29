@@ -148,11 +148,8 @@ export function InfoStreamPage() {
 
   return (
     <div className="aq-page">
-      <SectionHeader
-        icon={Zap}
-        title="小道信息"
-        description="财联社快讯 · 概念异动榜 —— 快讯逐条带发布时间；概念榜源无日期字段（已在区头注明）"
-      >
+      <header className="aq-page-head">
+        <div><p className="aq-eyebrow"><Zap aria-hidden="true" /> AQSP · 消息与线索</p><h1>消息与线索</h1><p className="aq-page-sub">先读有时间与来源的新闻事实，再看板块传导和异动；线索需要核验。</p></div>
         <button
           type="button"
           className="aq-btn"
@@ -163,7 +160,7 @@ export function InfoStreamPage() {
           <RefreshCw className="aq-inline-icon" aria-hidden="true" />
           强制刷新
         </button>
-      </SectionHeader>
+      </header>
 
       <InfoStreamLoadStatus
         error={error}
@@ -182,6 +179,24 @@ export function InfoStreamPage() {
             <ToneCallout tone="warn" title="缺材料：概念板块源故障" detail={data.sources.concept_board} />
           ) : null}
 
+          <section className="aq-section">
+            <SectionHeader title="财联社快讯" description="按发布时间倒序 · A/B 级为重要度标注" count={news.length} />
+            {clsFailed || news.length === 0 ? (
+              <EmptyState title="暂无快讯" detail={clsFailed ? data.sources.cls_news : "源正常但未返回快讯"} />
+            ) : (
+              <div className="aq-card-grid">
+                {news.map((item) => (
+                  <NewsItem key={item.item_id} item={item} />
+                ))}
+              </div>
+            )}
+          </section>
+        </>
+      ) : null}
+      <section className="aq-module-group" aria-label="板块线索">
+        <SectionHeader number="板块线索" title="消息可能影响哪些方向" description="传导逻辑和概念异动用于寻找线索，不能直接当成参与信号。" />
+        <CatalystSectorSection />
+        {data ? (
           <section className="aq-section">
             <SectionHeader
               title="概念异动榜"
@@ -231,22 +246,8 @@ export function InfoStreamPage() {
               </div>
             )}
           </section>
-
-          <section className="aq-section">
-            <SectionHeader title="财联社快讯" description="按发布时间倒序 · A/B 级为重要度标注" count={news.length} />
-            {clsFailed || news.length === 0 ? (
-              <EmptyState title="暂无快讯" detail={clsFailed ? data.sources.cls_news : "源正常但未返回快讯"} />
-            ) : (
-              <div className="aq-card-grid">
-                {news.map((item) => (
-                  <NewsItem key={item.item_id} item={item} />
-                ))}
-              </div>
-            )}
-          </section>
-        </>
-      ) : null}
-      <CatalystSectorSection />
+        ) : null}
+      </section>
     </div>
   );
 }

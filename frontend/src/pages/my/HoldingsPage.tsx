@@ -1,15 +1,15 @@
 // 持仓与自选的唯一入口：服务端持仓、本地自选和风险事件在同一页关联。
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { AlertTriangle, Plus, RefreshCw, ShieldCheck, Trash2, Wallet } from "lucide-react";
+import { RefreshCw, ShieldCheck, Trash2, Wallet } from "lucide-react";
 import { toast } from "sonner";
 import { api, type AlertEvent, type PortfolioData } from "@/lib/api";
 import { holdingT1Status, normalizePortfolio, shanghaiDate } from "@/lib/portfolio-view";
 import { normalizeAlerts } from "@/lib/alert-view";
-import { ALERTS_CHANGED_EVENT, PORTFOLIO_CHANGED_EVENT, currentHoldingCandidates } from "@/lib/holding-view";
+import { ALERTS_CHANGED_EVENT, PORTFOLIO_CHANGED_EVENT, currentHoldingCandidates, currentPositionAlerts } from "@/lib/holding-view";
 import { isAqspSnapshotStale } from "@/lib/snapshot-freshness";
 import { Badge, LoadingState, SectionHeader, StatePanel, ToneCallout } from "@/components/ui/primitives";
-import { HoldingsWatchlist, openOperation } from "@/components/aqsp/HoldingsWatchlist";
+import { HoldingsWatchlist } from "@/components/aqsp/HoldingsWatchlist";
 import { useAqspSnapshot } from "@/components/aqsp/useAqspSnapshot";
 import { positionPlanHref } from "@/lib/position-workspace";
 import { cn } from "@/lib/utils";
@@ -97,6 +97,8 @@ export function HoldingsPage({ renderRiskSettings }: { renderRiskSettings?: (cod
   }
 
   const totals = data?.totals;
+  const activeHoldingAlerts = currentPositionAlerts(data?.holdings ?? [], alerts);
+  const alertedStocks = new Set(activeHoldingAlerts.map((alert) => alert.symbol)).size;
   const candidateStatus = snapshotState.switching || (snapshotState.loading && !snapshot)
     ? "今日候选读取中。"
     : snapshotState.error ? "今日候选暂不可用，不推断命中状态。"
@@ -110,43 +112,32 @@ export function HoldingsPage({ renderRiskSettings }: { renderRiskSettings?: (cod
         <div>
           <p className="aq-eyebrow"><Wallet aria-hidden="true" /> AQSP · 我的持仓与自选</p>
           <div className="aq-title-row"><h1>我的持仓</h1>{data ? <Badge>{data.holdings.length} 只持仓</Badge> : null}</div>
-          <p className="aq-page-sub">先处理风险，再看持仓与关注标的。{data ? `已记录 ${data.closed.length} 笔卖出。` : ""}</p>
+          <p className="aq-page-sub">先看持仓处境与处理计划，再管理自选和提醒规则。{data ? `已记录 ${data.closed.length} 笔卖出。` : ""}</p>
         </div>
         <div className="aq-row-actions">
-          <button type="button" className="aq-btn aq-btn-primary" onClick={() => openOperation("buy")}><Plus aria-hidden="true" /> 我操作了</button>
           <button type="button" className="aq-btn" onClick={() => void run(() => api.refreshPortfolio(), "已刷新行情与盈亏")} disabled={busy || loading}><RefreshCw className={cn((busy || loading) && "aq-spin")} aria-hidden="true" /> 刷新持仓</button>
         </div>
       </header>
 
-      <p className="aq-privacy-note"><ShieldCheck aria-hidden="true" /><span>持仓由你成交后录入，保存在按访客隔离的服务端台账；自选保留在此浏览器。系统不代下单。</span></p>
-      {totals ? <div className="aq-total-grid">
-        <div className="aq-total-card"><span>持仓市值</span><b className="aq-num">{formatMoney(totals.market_value)}</b></div>
-        <div className="aq-total-card"><span>持仓成本</span><b className="aq-num">{formatMoney(totals.cost)}</b></div>
-        <div className="aq-total-card"><span>浮动盈亏</span><b className={cn("aq-num", changeClass(totals.pnl))}>{formatMoney(totals.pnl)}</b></div>
-        <div className="aq-total-card"><span>浮动收益率</span><b className={cn("aq-num", changeClass(totals.pnl_pct))}>{formatSignedPct(totals.pnl_pct)}</b></div>
-        <div className="aq-total-card"><span>已实现盈亏</span><b className={cn("aq-num", changeClass(data?.realized_pnl))}>{formatMoney(data?.realized_pnl)}</b></div>
-      </div> : null}
-      {data ? <section className="aq-section aq-holdings-next" aria-label="当前需要处理">
-        <SectionHeader title="现在需要处理什么" description="先看事实，再决定是否打开处理计划；风险触发不会自动等于卖出。" icon={AlertTriangle} />
-        <div className="aq-next-grid">
-          <div className={cn("aq-next-item", alerts.length ? "aq-next-warn" : "aq-next-ok")}>
-            <span>风险事实</span><strong>{alerts.length ? `${alerts.length} 条待复核` : "暂无开放提醒"}</strong>
-            <p>{alerts.length ? "先查看触发原因、板块与大盘依据，再比较三种路线。" : "仍按已记录规则持续观察，不需要重复选路。"}</p>
-          </div>
-          <div className="aq-next-item">
-            <span>T+1</span><strong>{data.holdings.filter((row) => holdingT1Status(row.opened_at, shanghaiDate()).kind === "today").length} 只受限</strong>
-            <p>当日买入部分不可卖，页面只显示记录口径，实际可卖数以交易软件为准。</p>
-          </div>
-          <div className="aq-next-item">
-            <span>下一步</span><strong>{data.holdings.length ? "逐只看处理计划" : "先录入已有成交"}</strong>
-            <p>{data.holdings.length ? "处理计划会说明为什么、三种方案代价与失效条件。" : "录入后才能结合成本、数量和当前行情分析。"}</p>
-          </div>
+      {data ? <section className="aq-section aq-holdings-summary" aria-label="持仓概况">
+        <SectionHeader title="持仓概况" count={`${data.holdings.length} 只`} />
+        {totals ? <div className="aq-total-grid">
+          <div className="aq-total-card"><span>持仓市值</span><b className="aq-num">{formatMoney(totals.market_value)}</b></div>
+          <div className="aq-total-card"><span>持仓成本</span><b className="aq-num">{formatMoney(totals.cost)}</b></div>
+          <div className="aq-total-card"><span>浮动盈亏</span><b className={cn("aq-num", changeClass(totals.pnl))}>{formatMoney(totals.pnl)}</b></div>
+          <div className="aq-total-card"><span>浮动收益率</span><b className={cn("aq-num", changeClass(totals.pnl_pct))}>{formatSignedPct(totals.pnl_pct)}</b></div>
+          <div className="aq-total-card"><span>已实现盈亏</span><b className={cn("aq-num", changeClass(data.realized_pnl))}>{formatMoney(data.realized_pnl)}</b></div>
+        </div> : null}
+        <div className="aq-holdings-status" role="status">
+          <strong className={alertError ? "aq-tone-warn" : alertsLoading ? undefined : alertedStocks ? "aq-tone-warn" : "aq-tone-ok"}>{alertError ? "风险状态待确认" : alertsLoading ? "正在核对风险" : alertedStocks ? `${alertedStocks} 只持仓待复核` : "暂无开放提醒"}</strong>
+          <span>T+1 受限 {data.holdings.filter((row) => holdingT1Status(row.opened_at, shanghaiDate()).kind === "today").length} 只</span>
+          <p>{alertError || alertsLoading ? "提醒读取完成后再判断，当前不能据此排除风险。" : alertedStocks ? "先看下方触发事实，再打开处理计划比较路线。" : "已保存的方案继续跟进，按需打开处理计划。"}</p>
         </div>
       </section> : null}
       {error ? <StatePanel tone="warn">持仓读取失败：{error}。{data ? "保留上次读取记录。" : "自选仍可查看；持仓数量暂未知。"}<button type="button" className="aq-btn" disabled={loading} onClick={() => void load()}>重试持仓</button></StatePanel> : null}
       {loading && !data ? <LoadingState label="正在读取持仓…" /> : null}
       {alertError ? <StatePanel tone="warn">风险提醒读取失败：{alertError}，当前分组不能代表最新风险状态。<button type="button" className="aq-btn" disabled={alertsLoading} onClick={() => void loadAlerts()}>重试提醒</button></StatePanel> : alertsLoading ? <p className="aq-note">正在核对风险提醒…</p> : null}
-      <HoldingsWatchlist portfolio={data} alerts={alerts} candidates={snapshotState.error ? [] : currentCandidates} candidateDate={snapshot?.selected_date || ""} candidateStatus={candidateStatus} renderRiskSettings={renderRiskSettings} />
+      <HoldingsWatchlist portfolio={data} alerts={activeHoldingAlerts} candidates={snapshotState.error ? [] : currentCandidates} candidateDate={snapshot?.selected_date || ""} candidateStatus={candidateStatus} renderRiskSettings={renderRiskSettings} />
 
       {data && data.closed.length > 0 ? <section className="aq-section">
         <SectionHeader title="历史成交" description="已实现盈亏按录入成交价计算 · 红盈绿亏" count={`${data.closed.length} 笔`} />
@@ -159,7 +150,13 @@ export function HoldingsPage({ renderRiskSettings }: { renderRiskSettings?: (cod
           </tr>)}
         </tbody></table></div>
       </section> : null}
-      <ToneCallout tone="neutral" title="T+1 与台账口径" detail="当日买入部分当日不可卖；补录时请使用实际成交日。盈亏按录入成本计算，不含未录入的费用。提醒用于复核，实际可卖数量以交易软件为准。" />
+      <details className="aq-workspace-fold">
+        <summary>台账口径与隐私说明</summary>
+        <div className="aq-workspace-fold-body">
+          <p className="aq-privacy-note"><ShieldCheck aria-hidden="true" /><span>持仓由你成交后录入，保存在按访客隔离的服务端台账；自选保留在此浏览器。系统不代下单。</span></p>
+          <ToneCallout tone="neutral" title="T+1 与台账口径" detail="当日买入部分当日不可卖；补录时请使用实际成交日。盈亏按录入成本计算，不含未录入的费用。实际可卖数量以交易软件为准。" />
+        </div>
+      </details>
     </div>
   );
 }
