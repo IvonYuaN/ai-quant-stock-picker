@@ -27,7 +27,7 @@ import position_discussion as transport
 from strategy_review_context import candidate_review_context, historical_numbers, model_review_evidence, source_numbers
 from model_source_time import trusted_source_stamps, without_source_times
 from candidate_technical_evidence import (
-    historical_technical_evidence, mask_indicator_names, mask_technical_facts, model_technical_context,
+    historical_technical_evidence, mask_indicator_names, mask_quote_day_change, mask_technical_facts, model_technical_context,
     model_technical_evidence, reject_unmatched_technical_numbers, technical_evidence,
     technical_evidence_from_dict,
 )
@@ -97,6 +97,7 @@ entry_blocked为true时只能解释暂缓/补证：不得把入场路线标为in
 给新手简短结论、理由、下一步条件和失效条件；不输出隐藏推演过程。
 review_context给出已采用路线、原条件及采用时与现在的差别。原依据只作历史对比，不能当作当前事实或行动价格。
 已采用时解释继续等待、调整或暂缓的依据；普通报价刷新不代表必须重选，不自动修改已采用条件。
+review_context.quote_updated只表示报价事实相对采用时是否变化；false不是报价过期、未获取或不可用。时效只按输入来源时间及有效状态判断。
 输出一个output_schema规定的JSON对象，不加Markdown围栏。'''
 
 
@@ -161,7 +162,8 @@ def parse(text: str, schema: type[BaseModel], value: dict[str, Any], peers: set[
     date_tokens = source_numbers(evidence, value['price_refs']).stamps
     def prose_without_source_dates(text: str) -> str:
         prose = without_source_times(text.replace('T+1', ''), date_tokens)
-        return re.sub(rf"(?<!\d){re.escape(value['symbol'])}(?!\d)", '', prose)
+        prose = re.sub(rf"(?<!\d){re.escape(value['symbol'])}(?!\d)", '', prose)
+        return mask_quote_day_change(prose, value.get('quote', {}).get('change_pct'))
     for action in parsed['actions']:
         for text in texts(action):
             prose = mask_indicator_names(prose_without_source_dates(text))
@@ -337,22 +339,28 @@ async def run_discussion(code: str, expected_version: int, expected_evidence_ver
                 replies = list(await asyncio.gather(*(opinion(role, {key: item for key, item in valid.items() if key != role}) for role in valid)))
                 rounds.append({'stage': 'challenge', 'opinions': replies})
             complete = [row for row in replies if row['status'] == 'ok']
+            synthesis_opinions, synthesis_basis = transport._synthesis_inputs(initial, replies, ROLES)
             summary, issue = None, ''
-            if len(complete) >= 2:
+            if len(synthesis_opinions) >= 2:
                 progress('synthesis')
                 try:
-                    raw = await transport.call_model(endpoint, {**common, 'rounds': rounds,
-                        'task': '比较三路线的证据、代价、缺口和失效条件；给简短新手结论和下一步。门禁阻塞则只解释暂缓与补证。',
+                    raw = await transport.call_model(endpoint, {**common, 'rounds': [{'stage': 'validated_latest', 'opinions': synthesis_opinions}],
+                        'synthesis_opinions': synthesis_opinions, 'synthesis_basis': synthesis_basis,
+                        'task': '比较三路线的证据、代价、缺口和失效条件；给简短新手结论和下一步。门禁阻塞则只解释暂缓与补证。'
+                                '仅汇总synthesis_opinions中每名角色最新有效意见，不把缺席视为同意。synthesis_basis明确缺席角色与尚无有效回应的角色；初轮补位仅供部分汇总，说明缺口，不声称全员会诊完成或达成共识。',
                         'output_schema': schema_for(CandidateSummary, model_value, set())}, limits.synthesis_timeout, limits, system=SYSTEM)
                     summary = parse(raw, CandidateSummary, model_value, set())
                 except (ValueError, KeyError, TypeError, IndexError, RuntimeError, httpx.HTTPError, TimeoutError) as exc:
                     issue = transport._model_failure(exc)['issue']
+            else:
+                issue = '有效意见不足两名不同角色，未生成汇总；请查看已有意见及失败原因'
             result = {'id': uuid4().hex, 'status': 'complete' if summary and len(complete) == len(ROLES) else 'partial' if valid else 'failed',
                       'generated_at': now_shanghai().isoformat(), 'model': endpoint.model, 'mode': '同一模型的候选三角色讨论',
                       'resource_version': version, 'evidence_version': value['evidence_version'], 'research_date': value['research_date'],
                       'quote_as_of': value['evidence']['quote']['as_of'], 'price_refs': value['price_refs'], 'evidence_snapshot': value['evidence'],
                       'review_context': review_context, 'condition_catalog': value['condition_catalog'],
                       'entry_blocked': discussion_entry_blocked, 'rounds': rounds, 'summary': summary, 'summary_issue': issue,
+                      'synthesis_basis': synthesis_basis,
                       'elapsed_seconds': round(time.monotonic() - started, 2),
                       'notice': '同一模型角色可能共享偏差；仅供人工复核，不覆盖评分、硬风险或自动买卖。到价后仍需核验其他条件。'}
             latest = await asyncio.to_thread(resources.workspace, code)

@@ -4,7 +4,7 @@ import { api, isAqspAbortError, type ActionWorksheet, type DiscussionAction, typ
 import { formatEvidenceTime } from "@/lib/format";
 import { worksheetGuard } from "@/lib/position-workspace";
 import { PLAN_CHOICES } from "@/lib/position-plan";
-import { discussionSourceKey, discussionStrategyCurrent, strategyWatchInput, strategyWatchIssue } from "@/lib/strategy-watch";
+import { discussionSourceKey, discussionSynthesisNotice, discussionStrategyCurrent, strategyWatchInput, strategyWatchIssue } from "@/lib/strategy-watch";
 import { ALERTS_CHANGED_EVENT } from "@/lib/operation";
 
 const actionLabels = { observe: "继续观察", sell_review: "卖出复核", buy_review: "回补复核", pause: "暂停操作" };
@@ -62,6 +62,7 @@ export function PositionDiscussionPanel({ eventId, target, choice, worksheet, di
   const selectedUnavailable = !!catalog && (catalog.directory_complete ?? catalog.listed !== null) && !!serverModel && serverModel !== catalog.current_model && !catalog.models.includes(serverModel);
   const snapshotMatches = !!result && result.choice === choice && ["position_id", "cost", "shares", "sellable_shares"].every((key) => result.position_snapshot[key as keyof ActionWorksheet["position_snapshot"]] === worksheet.position_snapshot[key as keyof ActionWorksheet["position_snapshot"]]);
   const evidenceMatches = discussionStrategyCurrent(result, worksheet);
+  const synthesisNotice = result?.summary ? discussionSynthesisNotice(result.synthesis_basis, "position") : "";
   async function discuss() {
     if (inFlight.current || disabled || worksheet.archived || !worksheet.revision || (!custom && (selectedUnavailable || catalogBusy))) return;
     if (custom && Object.values(config).some((value) => !value.trim())) { setError("请填完接口地址、模型名和 API Key。"); return; }
@@ -96,7 +97,7 @@ export function PositionDiscussionPanel({ eventId, target, choice, worksheet, di
   function actions(rows: DiscussionAction[], canAdopt = false) {
     return <ol className="aq-strategy-actions">{rows.map((row, index) => {
       const reference = result?.price_refs[row.price_ref ?? ""];
-      const trackable = canAdopt && !!reference && row.action !== "pause";
+      const trackable = canAdopt && result?.synthesis_basis?.mode !== "partial_initial" && !!reference && row.action !== "pause";
       const issue = canAdopt && result ? strategyWatchIssue(result, worksheet, index, watchChoice, comparator) : "";
       return <li key={index}>
         <div className="aq-strategy-action-title"><b>{actionLabels[row.action]}</b>{reference ? <strong>{reference.price.toFixed(2)} 元</strong> : null}</div>
@@ -137,6 +138,7 @@ export function PositionDiscussionPanel({ eventId, target, choice, worksheet, di
     {result && snapshotMatches && !evidenceMatches ? <p role="status">风险、环境或个人条件已变化，或分析已旧；保留原分析供核对，重新分析后再采用。</p> : null}
     {result && snapshotMatches ? <section className="aq-discussion-result" aria-label="AI 策略结果"><h4>{evidenceMatches ? "当前策略与下一步条件" : "生成时的策略分析"}</h4>
       <p className="aq-note">{result.mode} · {result.model} · {formatEvidenceTime(result.generated_at)} · {result.status === "complete" ? "讨论完成" : result.status === "partial" ? "部分完成" : "未完成"}</p>
+      {synthesisNotice ? <p role="status" className="aq-note">{synthesisNotice}</p> : null}
       <p className="aq-note">分析时 {result.evidence_snapshot?.quote.price ?? "未知"} 元 · 当前 {worksheet.basis.price ?? "待更新"} 元；环境或风险变化需重核。</p>
       {result.evidence_snapshot ? <details><summary>分析当时使用的证据</summary><p>当时价格 {result.evidence_snapshot.quote.price ?? "未知"} 元 · {result.evidence_snapshot.quote.source || "来源待核验"} · {formatEvidenceTime(result.evidence_snapshot.quote.as_of)}</p>{(["market", "sector"] as const).map((key) => { const row = result.evidence_snapshot![key]; return <p key={key}>{key === "market" ? "大盘" : "板块"}：{row.summary || "依据不足"} · {row.source || "来源待核验"} · {formatEvidenceTime(row.as_of)}</p>; })}</details> : null}
       {disabled ? <p role="status">输入或行情依据已变化；以下为已保存的历史讨论。</p> : null}
