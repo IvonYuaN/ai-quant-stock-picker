@@ -2,6 +2,7 @@ import { api, type AlertData, type CandidateWorkspace, type FollowupObservation,
 import { normalizeAlerts, ALERT_LEVEL_NAMES } from "./alert-view";
 import { normalizePortfolio } from "./portfolio-view";
 import { positionPlanHref } from "./position-workspace";
+import { candidateChecksView } from "./candidate-conditions";
 
 export interface TodayStrategySources {
   portfolio: PortfolioData | null;
@@ -80,13 +81,11 @@ export function buildTodayStrategy(sources: TodayStrategySources): TodayStrategy
     if (!/^\d{6}$/.test(item.symbol) || ownedCodes.has(item.symbol) || item.ownership?.status === "owned" || item.watch?.status !== "active") continue;
     const observation = item.observation;
     const unknown = item.ownership?.status !== "unowned";
-    const price = item.watch.price;
-    const target = typeof price === "number" && Number.isFinite(price) && item.watch.comparator
-      ? `报价${item.watch.comparator === "at_or_above" ? "达到或高于" : "达到或低于"} ${price.toFixed(2)} 元后，${item.watch.condition}` : item.watch.condition;
+    const checks = unknown ? null : candidateChecksView(item);
     const row: StrategyAttention = { key: `candidate:${item.symbol}`, symbol: item.symbol, name: item.name && item.name !== item.symbol ? item.name : "股票名称待补", kind: "candidate",
       title: unknown ? "持仓身份待核清" : observation?.state === "price_watch" ? "上次检查已到价，待核验" : observation?.state === "needs_review" || observation?.state === "evidence_unavailable" ? "候选依据需要重核" : item.watch.choice === "defer" ? "保持暂缓，等待新依据" : "继续等待候选条件",
-      reason: unknown ? "暂不能确认仍是未持仓候选，先核对身份。" : observation?.state === "price_watch" ? "后台报价曾达到已保存观察价；止跌、承接等其他前提仍需人工核验。" : observation?.detail || "观察方案已保存，尚未读到后台检查记录。",
-      next: unknown ? "核对身份后再决定是否沿用入场条件。" : observation && ["needs_review", "evidence_unavailable"].includes(observation.state) ? "对比采用时与现在的依据，重新讨论后再确认条件。" : `${target}；失效条件：${item.watch.invalidation}`,
+      reason: unknown ? "暂不能确认仍是未持仓候选，先核对身份。" : checks?.mode === "registered" && observation && !["needs_review", "evidence_unavailable"].includes(observation.state) ? "后台分别记录报价、已登记前提与人工核验项。" : observation?.state === "price_watch" ? "后台报价曾达到已保存观察价；止跌、承接等其他前提仍需人工核验。" : observation?.detail || "观察方案已保存，尚未读到后台检查记录。",
+      next: unknown ? "核对身份后再决定是否沿用入场条件。" : checks?.nextStep || "更新观察记录后，核对原前提与当前依据。",
       href: `/stock/${item.symbol}#candidate-observation`, observedAt: observation?.observed_at ?? null, quoteAsOf: observation?.quote_as_of ?? null,
       priority: unknown ? 2 : statePriority[observation?.state ?? ""] ?? (item.watch.choice === "defer" ? 6 : 4) };
     const previous = candidateRows.get(item.symbol);

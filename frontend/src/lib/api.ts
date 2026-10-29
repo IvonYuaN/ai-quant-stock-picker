@@ -481,8 +481,32 @@ export interface PositionDiscussion {
 }
 export type CandidateChoice = "pullback" | "confirmation" | "defer";
 export interface CandidatePriceReference { label: string; price: number; as_of: string; source: string }
-export interface CandidateCondition { choice: CandidateChoice; price_ref: string | null; condition: string; invalidation: string }
+export type CandidateCheckStatus = "met" | "unmet" | "unknown" | "manual_required";
+export interface CandidateConditionDefinition {
+  id: string; label: string; kind: "market_status" | "sector_status"; evidence_key: "market" | "sector";
+  status: "met" | "unmet" | "unknown"; value: string | null; detail: string; source: string; as_of: string | null;
+}
+export interface CandidateConditionCatalog { schema_version: 1; items: CandidateConditionDefinition[] }
+export interface CandidateConditionContract {
+  schema_version: 1; digest: string; prerequisite_ids: string[]; invalidation_ids: string[];
+  definitions: Array<{ id: string; label: string; kind: "market_status" | "sector_status"; evidence_key: "market" | "sector"; accepted_statuses: string[] }>;
+  price_predicate: { price_ref: string; comparator: WatchComparator; price: number; source: string; as_of: string } | null;
+  manual_checks: Array<{ id: string; label: string; detail: string }>;
+}
+export interface CandidateConditionCheck {
+  id: string; label: string; role: "prerequisite" | "invalidation" | "price" | "manual";
+  status: CandidateCheckStatus; detail: string; value: string | number | null; source: string; as_of: string | null;
+}
+export interface CandidateConditionChecks {
+  schema_version: 1; mode: "registered" | "legacy"; summary: "waiting" | "unknown" | "manual_required" | "review";
+  items: CandidateConditionCheck[]; digest: string;
+}
+export interface CandidateCondition {
+  choice: CandidateChoice; price_ref: string | null; condition: string; invalidation: string;
+  prerequisite_ids?: string[]; invalidation_ids?: string[];
+}
 export interface CandidateDiscussion {
+  condition_catalog?: CandidateConditionCatalog;
   review_context?: StrategyReviewContext;
   id: string; status: "complete" | "partial" | "failed"; generated_at: string; model: string; mode: string;
   resource_version: number; evidence_version: string; research_date: string | null; quote_as_of: string | null;
@@ -495,6 +519,7 @@ export interface CandidateDiscussion {
   summary_issue: string; elapsed_seconds: number; notice: string;
 }
 export interface CandidateWorkspace {
+  condition_catalog?: CandidateConditionCatalog;
   symbol: string; name: string; version: number; evidence_version: string; research_date: string | null;
   ownership: { status: "unowned" | "owned" | "unavailable"; position_id: string | null };
   available: boolean; entry_blocked: boolean; new_entry_blocked?: boolean; new_entry_block_reason?: string;
@@ -505,9 +530,9 @@ export interface CandidateWorkspace {
   source_refresh?: { state: "updated" | "cached" | "partial" | "busy" | "unavailable"; issue: string };
   analysis: { status: "idle" | "running" | "complete" | "partial" | "failed" | "cancelled"; stage: string; run_id: string | null };
   watch: null | { choice: CandidateChoice; condition: string; invalidation: string; price: number | null; price_ref: string | null;
-    source_ref: CandidatePriceReference | null; comparator: WatchComparator | null; adopted_at: string; discussion_id: string; status: "active" | "stopped" };
+    source_ref: CandidatePriceReference | null; comparator: WatchComparator | null; adopted_at: string; discussion_id: string; status: "active" | "stopped"; condition_contract?: CandidateConditionContract | null };
   observation: null | { state: "waiting" | "price_watch" | "needs_review" | "evidence_unavailable" | "deferred" | "stopped";
-    title: string; detail: string; observed_at: string; quote_as_of: string | null; reason: string };
+    title: string; detail: string; observed_at: string; quote_as_of: string | null; reason: string; condition_checks?: CandidateConditionChecks };
 }
 export interface CandidateDiscussionInput { expected_version: number; expected_evidence_version: string; llm?: PositionModelConfig; server_model?: string }
 export interface CandidateAdoptionInput {

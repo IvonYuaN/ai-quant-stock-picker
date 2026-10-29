@@ -8,6 +8,12 @@ const portfolio = normalizePortfolio({ holdings: [{ position_id: "root-a", code:
 const followup: FollowupObservation = { position_id: "root-a", symbol: "600000", name: "合成持仓", state: "price_watch", title: "原价位已到，核对其他前提", detail: "只证明原报价条件，不证明可以卖出", observed_at: stamp, quote_as_of: stamp, revision: "r1", plan_key: "p1", position_snapshot: { position_id: "root-a", cost: 12, shares: 1000, sellable_shares: 1000 } };
 const alerts = normalizeAlerts({ events: [{ id: "a", symbol: "600000", position_id: "root-a", level: "L1", status: "OPEN", updated_at: stamp, basis_json: { rule: "成本风险线", actual: "检查时已跌破" } }, { id: "b", symbol: "600000", position_id: "root-a", level: "L4", status: "OPEN", updated_at: stamp }] });
 const candidate: CandidateWorkspace = { symbol: "600002", name: "合成候选", version: 2, evidence_version: "ev", research_date: "2026-10-27", ownership: { status: "unowned", position_id: null }, available: true, entry_blocked: false, issues: [], quote: { price: 10 }, quote_issue: "", evidence: {}, price_refs: {}, discussion: null, analysis: { status: "idle", stage: "", run_id: null }, watch: { choice: "pullback", condition: "到价后核对承接", invalidation: "行业转弱重新分析", price: 9.5, price_ref: "low", source_ref: null, comparator: "at_or_below", adopted_at: stamp, discussion_id: "d1", status: "active" }, observation: { state: "price_watch", title: "已到原价位", detail: "上次检查报价达到条件", observed_at: stamp, quote_as_of: stamp, reason: "price" } };
+const registeredCandidate: CandidateWorkspace = { ...candidate, watch: { ...candidate.watch!, condition_contract: { schema_version: 1, digest: "contract", prerequisite_ids: ["sector:not_falling:v1"], invalidation_ids: [], definitions: [], price_predicate: null, manual_checks: [] } }, observation: { ...candidate.observation!, condition_checks: {
+  schema_version: 1, mode: "registered", summary: "waiting", digest: "checks", items: [
+    { id: "price", label: "报价到达观察价", role: "price", status: "met", detail: "仅报价到达", value: 9.5, source: "合成报价源", as_of: stamp },
+    { id: "sector:not_falling:v1", label: "板块未走弱", role: "prerequisite", status: "unmet", detail: "板块当前走弱", value: "falling", source: "合成板块源", as_of: stamp },
+  ],
+} } };
 const sources: TodayStrategySources = { portfolio, alerts, followups: [followup], candidates: [candidate], issues: [] };
 const view = buildTodayStrategy(sources);
 const make = (patch: Partial<TodayStrategySources>) => buildTodayStrategy({ ...sources, ...patch });
@@ -17,8 +23,15 @@ export const todayStrategyContracts = {
   neverTurnsRiskIntoSellInstruction: !JSON.stringify(view.items).includes("立即卖出") && view.items[0].title === "风险记录待复核",
   usesOwnedStockNameAndExactPlanIdentity: view.items[0].name === "合成持仓" && view.items[0].href.includes("root-a/plan"),
   oldRecordKeepsOwnTimestamp: view.items[0].observedAt === stamp && view.items[1].observedAt === stamp,
-  candidateNextHasPriceAndInvalidation: view.items[1].next.includes("9.50") && view.items[1].next.includes("行业转弱"),
+  legacyCandidateDoesNotClaimRegisteredConditions: view.items[1].next.includes("旧版文字条件未逐项登记") && !view.items[1].next.includes(candidate.watch!.invalidation),
   reachedPriceExplainsFactWithoutRepeatingCondition: !view.items[1].reason.includes(candidate.watch!.condition) && view.items[1].reason.includes("其他前提仍需人工核验"),
+  homeUsesConcreteRegisteredNextStep: make({ candidates: [registeredCandidate] }).items.find((row) => row.kind === "candidate")?.next === "继续等待：板块未走弱尚未满足。",
+  homeDoesNotRepeatOriginalConditionForRegisteredWatch: (() => { const row = make({ candidates: [registeredCandidate] }).items.find((row) => row.kind === "candidate")!; return !row.next.includes(registeredCandidate.watch!.condition) && !row.reason.includes(registeredCandidate.watch!.invalidation); })(),
+  homeChecksNeverOverrideUnknownOwnership: make({ candidates: [{ ...registeredCandidate, ownership: { status: "unavailable", position_id: null } }] }).items.find((row) => row.kind === "candidate")?.next === "核对身份后再决定是否沿用入场条件。",
+  homeNewConditionsDoNotReviveTransferredHolding: make({ candidates: [{ ...registeredCandidate, ownership: { status: "owned", position_id: "new-position" } }] }).items.every((row) => row.kind !== "candidate"),
+  homeReviewStateStillPrecedesWaitingCheckSummary: make({ candidates: [{ ...registeredCandidate, observation: { ...registeredCandidate.observation!, state: "needs_review", detail: "大盘依据已变化" } }] }).items.find((row) => row.kind === "candidate")?.next.includes("原依据发生变化") === true,
+  homeUnavailableEvidenceCannotBeOverriddenByMetChecks: make({ candidates: [{ ...registeredCandidate, observation: { ...registeredCandidate.observation!, state: "evidence_unavailable", detail: "当前来源不可用" } }] }).items.find((row) => row.kind === "candidate")?.next.includes("当前依据不可用") === true,
+  homeRetainsImportantReviewReason: make({ candidates: [{ ...registeredCandidate, observation: { ...registeredCandidate.observation!, state: "needs_review", detail: "大盘依据已变化" } }] }).items.find((row) => row.kind === "candidate")?.reason === "大盘依据已变化",
   priceReadDoesNotInventNewTrigger: make({ candidates: [{ ...candidate, quote: { price: 1 }, observation: null }] }).items.find((row) => row.kind === "candidate")?.title === "继续等待候选条件",
   oldRiskRootDoesNotAttachToReopenedStock: make({ alerts: normalizeAlerts({ events: [{ ...alerts.events[0], position_id: "old-root" }] }), followups: [] }).items.find((row) => row.symbol === "600000")?.priority === 5,
   missingRootNeverGuessedFromCode: make({ alerts: normalizeAlerts({ events: [{ ...alerts.events[0], position_id: null }] }), followups: [] }).issues.some((line) => line.includes("缺少仓位身份")),

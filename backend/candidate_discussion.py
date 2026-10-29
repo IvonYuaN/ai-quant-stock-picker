@@ -22,6 +22,7 @@ import httpx
 from aqsp.core.time import now_shanghai
 from aqsp.utils.jsonl_io import advisory_lock
 import candidate_observation as resources
+import strategy_conditions as conditions
 import position_discussion as transport
 from strategy_review_context import candidate_review_context, historical_numbers, model_review_evidence, source_numbers
 from model_source_time import trusted_source_stamps, without_source_times
@@ -40,6 +41,8 @@ class CandidateAction(BaseModel):
     price_ref: str | None = None
     condition: str = Field(min_length=1, max_length=350)
     invalidation: str = Field(min_length=1, max_length=350)
+    prerequisite_ids: list[str] = Field(default_factory=list, max_length=len(conditions.DEFINITIONS))
+    invalidation_ids: list[str] = Field(default_factory=list, max_length=len(conditions.DEFINITIONS))
 
 
 class CandidateOpinion(BaseModel):
@@ -82,11 +85,13 @@ SYSTEM = '''你为尚未持有的A股候选提供人工研究复核，不下单�
 报价达到参考价不证明止跌、突破有效或成交。参考价只通过price_ref引用输入price_refs ID；
 观察价必须通过price_ref引用。说明或条件可复述输入有来源的报价事实，不能另造价位、数量或收益预测。
 defer动作的price_ref必须为null，不建立到价条件。
+defer当前仅保存暂缓原因供人工复核，prerequisite_ids和invalidation_ids均须为空；不得承诺自动核验解除暂缓。
 说明与讨论可以复述输入有来源的现价、涨跌幅和评分事实，不可把事实变成预测。
 不杜撰支撑、目标价、持仓和成本。
 只复述已给出的数字事实及其单位和来源日期，不自行计算新的百分比或价差，不预测涨跌幅。
 research.technical_evidence是经核验的冻结研究指标。只引用status=available里的facts，并在同句明确“冻结研究”；指标为原源时点的研究依据，不是实时重算。量比用倍、动能/偏离用%、RSI12/MACD柱/KDJ-J按原名称与数值，不能换周期、换单位或计算阈值；source_defined代表周期未记录，不自行补造。解释它们对三条路线的支持、反证和不足，不据单个指标保证买卖结果。
 技术数字只写在解释中，不写进actions.condition/invalidation；买卖条件需当前证据再次核验，不把冻结量比、动能或RSI数值设成触发门槛。旧采用指标只在明确“采用时/原研究”的历史比较句中引用。
+condition_catalog只提供可机检条件目录及当前有源状态。你可自由选择与本路线相关的prerequisite_ids前提、invalidation_ids失效条件，也可留空；只引用目录ID，不填写公式，不强制选择市场或行业条件。方向匹配不证明止跌、放量或突破有效，所有价格和量价确认仍需人工核验；未登记的文字条件不得声称会自动监控。
 没有输入依据时保留缺口；不要新设价格容差、等待分钟数、放量倍数或仓位比例。
 entry_blocked为true时只能解释暂缓/补证：不得把入场路线标为investigate，不给入场动作。仅保留旧候选、未进入本轮新研究时同样处理；原有已采用观察仍按独立的当前依据检查，不因覆盖提示本身失效。
 给新手简短结论、理由、下一步条件和失效条件；不输出隐藏推演过程。
@@ -117,16 +122,22 @@ def parse(text: str, schema: type[BaseModel], value: dict[str, Any], peers: set[
         if value['entry_blocked'] and (parsed['focus_choice'] not in {None, 'defer'} or any(row['choice'] != 'defer' and row['judgment'] == 'investigate' for row in parsed['routes'])):
             raise ValueError('模型候选路线越过当前研究门禁')
     for action in parsed['actions']:
+        conditions.validate_selection(action['prerequisite_ids'], action['invalidation_ids'])
+        offered = {item['id'] for item in value.get('condition_catalog', {}).get('items', [])}
+        if any(identifier not in offered for identifier in action['prerequisite_ids'] + action['invalidation_ids']):
+            raise ValueError('候选模型引用了未提供的条件目录')
         if action['price_ref'] is not None and action['price_ref'] not in value['price_refs']:
             raise ValueError('候选观察价没有来源')
         if action['choice'] == 'defer' and action['price_ref'] is not None:
             raise ValueError('暂缓路线不应生成到价条件')
+        if action['choice'] == 'defer' and (action['prerequisite_ids'] or action['invalidation_ids']):
+            raise ValueError('暂缓路线当前不采用动作级机检条件，请保留人工复核说明')
         if value['entry_blocked'] and action['choice'] != 'defer':
             raise ValueError('模型动作越过当前研究门禁')
     # Numeric trading claims outside refs cannot become a source of precision.
     def texts(item: Any, key: str = '') -> list[str]:
         if isinstance(item, dict):
-            return [text for field, child in item.items() if field not in {'price_ref', 'evidence_ids', 'reply_to'} for text in texts(child, field)]
+            return [text for field, child in item.items() if field not in {'price_ref', 'evidence_ids', 'reply_to', 'prerequisite_ids', 'invalidation_ids'} for text in texts(child, field)]
         if isinstance(item, list):
             return [text for child in item for text in texts(child, key)]
         return [item] if isinstance(item, str) else []
@@ -217,6 +228,10 @@ def schema_for(schema: type[BaseModel], value: dict[str, Any], peers: set[str]) 
         props = container.get('properties', {})
         if 'evidence_ids' in props:
             props['evidence_ids']['items'] = {'type': 'string', 'enum': sorted(value['evidence'])}
+        for field in ('prerequisite_ids', 'invalidation_ids'):
+            if field in props:
+                props[field]['items'] = {'type': 'string', 'enum': [item['id'] for item in value.get('condition_catalog', {}).get('items', [])]}
+                props[field]['description'] = '可选的精确条件目录ID，可留空；defer必须空列表。不得推断文字条件、编造公式或阈值。'
         if 'condition' in props:
             props['condition']['description'] = '下一步人工核验条件；复述数字必须来自输入证据，不另造价位/数量/收益。'
         if 'price_ref' in props:
@@ -299,7 +314,7 @@ async def run_discussion(code: str, expected_version: int, expected_evidence_ver
             if 'adopted_plan' in public_evidence:
                 public_evidence['adopted_plan'] = public_context['original']
             common = {'symbol': code, 'name': value['name'], 'evidence': public_evidence, 'price_refs': value['price_refs'], 'review_context': public_context,
-                      'entry_blocked': discussion_entry_blocked, 'no_orders': True, 'no_position': True}
+                      'entry_blocked': discussion_entry_blocked, 'condition_catalog': value['condition_catalog'], 'no_orders': True, 'no_position': True}
             def progress(stage: str) -> None:
                 _progress(code, run_id, stage)
                 if on_progress:
@@ -336,7 +351,7 @@ async def run_discussion(code: str, expected_version: int, expected_evidence_ver
                       'generated_at': now_shanghai().isoformat(), 'model': endpoint.model, 'mode': '同一模型的候选三角色讨论',
                       'resource_version': version, 'evidence_version': value['evidence_version'], 'research_date': value['research_date'],
                       'quote_as_of': value['evidence']['quote']['as_of'], 'price_refs': value['price_refs'], 'evidence_snapshot': value['evidence'],
-                      'review_context': review_context,
+                      'review_context': review_context, 'condition_catalog': value['condition_catalog'],
                       'entry_blocked': discussion_entry_blocked, 'rounds': rounds, 'summary': summary, 'summary_issue': issue,
                       'elapsed_seconds': round(time.monotonic() - started, 2),
                       'notice': '同一模型角色可能共享偏差；仅供人工复核，不覆盖评分、硬风险或自动买卖。到价后仍需核验其他条件。'}
