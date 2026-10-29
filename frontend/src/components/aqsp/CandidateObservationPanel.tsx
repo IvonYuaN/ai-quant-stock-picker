@@ -1,4 +1,6 @@
 import { StrategyReviewContextPanel } from "./StrategyReviewContextPanel";
+import { CandidateConditionChecks, CandidateActionChecks } from "./CandidateConditionChecks";
+import { candidateChecksView } from "@/lib/candidate-conditions";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { api, isAqspAbortError, type CandidateChoice, type CandidateDiscussion, type CandidateWorkspace, type PositionModelCatalog, type WatchComparator } from "@/lib/api";
@@ -150,6 +152,8 @@ function CandidateObservationWorkspace({ symbol, researchDate, historical }: { s
   }
   const planHref = data?.ownership.status === "owned" ? positionPlanHref(data.ownership.position_id, `/stock/${symbol}`) : null;
   const observation = data ? candidateObservationView(data) : null;
+  const checks = data ? candidateChecksView(data) : null;
+  const showObservationDetail = checks?.mode !== "registered" || !checks.items.length || ["needs_review", "evidence_unavailable"].includes(data?.observation?.state ?? "");
   const adoptedResult = !!result && data?.watch?.discussion_id === result.id;
   const evidence = data && !workspaceIssue ? <><div className="aq-candidate-current-evidence" aria-label="当前候选三维依据">{candidateEvidenceRows(data).map((row) => <div key={row.key}><b>{row.label}</b><p>{row.summary}</p><small>{row.source} · {formatEvidenceTime(row.asOf) || "时点待核对"}</small></div>)}</div><TechnicalEvidence evidence={data.evidence} /></> : null;
   function choose(choice: CandidateChoice, index: number | null) { setSelection({ choice, index }); setComparator(""); setConfirmedSource(""); setActionError(""); }
@@ -158,6 +162,7 @@ function CandidateObservationWorkspace({ symbol, researchDate, historical }: { s
     const routeReady = result?.summary?.routes.some((route) => route.choice === row.choice && route.judgment === "investigate");
     return <div key={index} className="aq-candidate-condition"><div className="aq-candidate-condition-price">{reference ? <strong>{reference.price.toFixed(2)} 元</strong> : <span>{row.choice === "defer" ? "不建立到价条件" : "价位依据待补"}</span>}</div>
       <p><b>先满足什么</b>{row.condition}</p><p><b>何时取消或重核</b>{row.invalidation}</p>
+      {data && result ? <CandidateActionChecks action={row} result={result} workspace={data} /> : null}
       {reference ? <small>{reference.label} · {reference.source} · {formatEvidenceTime(reference.as_of)}</small> : null}
       {row.choice !== "defer" ? <button type="button" className="aq-btn" disabled={locked || analyzing || !!workspaceIssue || !!currentIssue || data?.new_entry_blocked || !reference || !routeReady} onClick={() => choose(row.choice, index)}>采用这项条件</button> : null}
       {row.choice !== "defer" && !routeReady ? <p className="aq-note">这条路线当前不宜或依据待补，补齐依据后重新分析再采用。</p> : null}
@@ -170,12 +175,13 @@ function CandidateObservationWorkspace({ symbol, researchDate, historical }: { s
     {error ? <p role="alert">{error}。{data ? "保留上次记录，先更新核对后再采用。" : "可以重试读取，研究摘要仍可查看。"}</p> : null}
     {data?.ownership.status === "owned" ? <div className="aq-candidate-owned"><h3>这只股票已有持仓</h3><p>从当前仓位出发分析持有、减仓或做 T。</p>{planHref ? <Link className="aq-btn aq-btn-primary" to={planHref}>查看我的持仓策略</Link> : <Link className="aq-btn" to="/my/holdings">返回持仓核对身份</Link>}</div> : data ? <>
       {workspaceIssue ? <p role="status" className="aq-refresh-warning">{workspaceIssue}{historical ? <Link className="aq-btn" to={`/stock/${symbol}#candidate-observation`}>切回当前研究</Link> : null}</p> : null}
-      {data.watch && observation ? <article className={`aq-candidate-watch${observation.tone === "warn" ? " aq-candidate-watch-warn" : ""}`} aria-label="当前候选观察"><div className="aq-candidate-watch-head"><h3>{observation.title}</h3><span>{CANDIDATE_CHOICES[data.watch.choice].title}</span></div><p>{["waiting", "price_watch"].includes(data.observation?.state ?? "") ? "报价条件由后台核对，止跌或确认等其余前提仍需人工判断。" : observation.detail}</p>
+      {data.watch && observation ? <article className={`aq-candidate-watch${observation.tone === "warn" ? " aq-candidate-watch-warn" : ""}`} aria-label="当前候选观察"><div className="aq-candidate-watch-head"><h3>{observation.title}</h3><span>{CANDIDATE_CHOICES[data.watch.choice].title}</span></div>{showObservationDetail ? <p>{observation.detail}</p> : null}
         {data.watch.price != null && data.watch.comparator ? <strong className="aq-candidate-watch-price">{WATCH_COMPARATORS[data.watch.comparator]} {data.watch.price.toFixed(2)} 元时复核</strong> : null}
-        <p><b>核对前提：</b>{data.watch.condition}</p><p><b>取消依据：</b>{data.watch.invalidation}</p>
+        <CandidateConditionChecks workspace={data} />
+        <details><summary>查看采用时的完整前提与取消依据</summary><p><b>核对前提：</b>{data.watch.condition}</p><p><b>取消依据：</b>{data.watch.invalidation}</p></details>
         {data.watch.source_ref ? <small>{data.watch.source_ref.label} · {data.watch.source_ref.source} · {formatEvidenceTime(data.watch.source_ref.as_of)}</small> : null}
         {observation.checkedAt ? <small>本次依据时点 {formatEvidenceTime(observation.checkedAt)} · 报价 {formatEvidenceTime(data.observation?.quote_as_of)}</small> : null}
-        {data.watch.status === "active" ? <><p className="aq-note">观察已保存到服务端，离开页面仍继续核对；到价只提示检查前提，不代表可以买入。</p><button type="button" className="aq-btn" disabled={locked || analyzing} onClick={() => void stopWatch()}>停止候选观察</button></> : null}
+        {data.watch.status === "active" ? <><p className="aq-note">离开页面后仍继续检查已登记项目，变化时提醒复核。</p><button type="button" className="aq-btn" disabled={locked || analyzing} onClick={() => void stopWatch()}>停止候选观察</button></> : null}
       </article> : null}
       {data.watch ? <details><summary>查看当前大盘、板块和个股依据</summary>{evidence}</details> : evidence}
       {!data.watch ? <p className="aq-note">比较等待回落、等待确认和暂缓三条路。无需填写股数、费用或成交。</p> : null}

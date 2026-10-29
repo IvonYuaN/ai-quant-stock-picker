@@ -5,7 +5,7 @@ import { browserAlertRefreshSource, subscribeAlertRefresh } from "@/lib/alert-re
 import { CANDIDATE_CHOICES, CANDIDATE_OBSERVATIONS_CHANGED_EVENT, candidateObservationView, candidateResearchHref, currentCandidateObservations } from "@/lib/candidate-observation";
 import { formatEvidenceTime } from "@/lib/format";
 import { PORTFOLIO_CHANGED_EVENT } from "@/lib/operation";
-import { WATCH_COMPARATORS } from "@/lib/strategy-watch";
+import { candidateChecksView } from "@/lib/candidate-conditions";
 
 /** Current server observations stay independent of the selected research archive. */
 export function CandidateObservationList() {
@@ -30,11 +30,10 @@ export function CandidateObservationList() {
   }, [load]);
   const current = currentCandidateObservations(items);
   function row(item: CandidateWorkspace) {
-    const view = candidateObservationView(item), watch = item.watch!;
+    const view = candidateObservationView(item), watch = item.watch!, checks = candidateChecksView(item);
     return <article key={item.symbol} className={`aq-candidate-observation-row${view.tone === "warn" ? " aq-candidate-watch-warn" : ""}`}>
       <div className="aq-candidate-observation-row-head"><Link to={candidateResearchHref(item.symbol)}><strong>{item.name || item.symbol}</strong><span className="aq-code">{item.symbol}</span></Link><span>{CANDIDATE_CHOICES[watch.choice].title}</span></div>
-      <h3>{view.title}</h3><p>{view.detail}</p>
-      {watch.price != null && watch.comparator ? <p><b>{WATCH_COMPARATORS[watch.comparator]} {watch.price.toFixed(2)} 元</b> · 到价后仍需核对前提</p> : null}
+      <h3>{view.title}</h3><p>{checks?.nextStep || view.detail}</p>
       <small>{view.checkedAt ? `上次后台检查 ${formatEvidenceTime(view.checkedAt)}` : "尚待后台检查"} · 研究日期 {item.research_date || "待核对"}</small>
       <Link className="aq-btn" to={candidateResearchHref(item.symbol)}>核对条件与变化</Link>
     </article>;

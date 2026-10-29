@@ -4027,3 +4027,15 @@
 }
 .aq-today-strategy .aq-btn { min-height: 44px; }
 .aq-strategy-review-context summary:focus-visible, .aq-strategy-records > summary:focus-visible { outline: 2px solid hsl(var(--primary)); outline-offset: 3px; }
+
+.aq-candidate-registered { margin: 12px 0; padding-left: 10px; border-left: 2px solid hsl(var(--border)); }
+.aq-candidate-checks { margin: 16px 0; }
+.aq-candidate-checks h4 { margin: 0; font-size: 14px; }
+.aq-candidate-checks > p { margin: 8px 0 12px; }
+.aq-candidate-checks ul { list-style: none; padding: 0; margin: 0; }
+.aq-candidate-checks li { padding: 10px 0; border-top: 1px solid hsl(var(--border)); overflow-wrap: anywhere; }
+.aq-candidate-check-head { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 6px 12px; }
+.aq-candidate-check-head small { margin-left: 8px; color: hsl(var(--muted-foreground)); }
+.aq-candidate-check-head strong { font-size: 12px; }
+.aq-candidate-checks details { margin-top: 6px; color: hsl(var(--muted-foreground)); font-size: 12px; }
+.aq-candidate-checks summary { cursor: pointer; min-height: 28px; display: list-item; padding: 4px 0; }

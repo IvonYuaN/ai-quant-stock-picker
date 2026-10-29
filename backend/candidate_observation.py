@@ -29,6 +29,7 @@ from aqsp.web.research_status import FAILED_RESEARCH_RUNS
 from aqsp.utils.jsonl_io import advisory_lock, atomic_write_text
 from position_route_review import evidence_digest
 import position_strategy_evidence as sources
+import strategy_conditions as conditions
 from strategy_direction import direction_identity
 from candidate_technical_evidence import technical_evidence
 from strategy_review_context import candidate_research_identity, comparable_candidate_basis
@@ -127,6 +128,8 @@ def load_store() -> dict[str, Any]:
                     assert _positive(watch.get('price')) is not None
                     assert watch.get('comparator') in {'at_or_above', 'at_or_below'}
                     assert isinstance(watch.get('source_ref'), dict)
+                if 'condition_contract' in watch:
+                    _watch_contract(watch)
         return value
     except (AssertionError, KeyError, ValueError, TypeError) as exc:
         raise DataError('候选观察结构损坏，未覆盖原记录') from exc
@@ -210,6 +213,58 @@ def _positive(value: object) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     return float(value) if math.isfinite(value) and value > 0 else None
+
+
+def _condition_facts(value: dict[str, Any], *, current: datetime) -> dict[str, conditions.ConditionFact]:
+    """Adapt already guarded evidence, rechecking source clocks without I/O."""
+    from strategy_market_source import BREADTH_SOURCE
+
+    evidence = value.get('evidence') or {}
+    result = {}
+    for key in ('market', 'sector', 'quote'):
+        fact = evidence.get(key) or {}
+        source, stamp = fact.get('source'), fact.get('as_of')
+        valid = bool(isinstance(source, str) and source and not dc.position_quote_issue({'as_of': stamp}, checked_at=current))
+        observed = fact.get('price') if key == 'quote' else fact.get('status')
+        if key == 'market':
+            valid = valid and source == BREADTH_SOURCE and observed in {'weak', 'neutral', 'strong'}
+        elif key == 'sector':
+            valid = valid and bool(fact.get('industry')) and observed in {'falling', 'flat', 'rising'}
+        else:
+            valid = valid and _positive(observed) is not None
+        result[key] = conditions.ConditionFact(observed, source if isinstance(source, str) else '',
+                                                stamp if isinstance(stamp, str) else None, valid)
+    return result
+
+
+def _watch_price_predicate(watch: dict[str, Any], *, strict: bool = True) -> dict[str, Any] | None:
+    if watch.get('choice') == 'defer':
+        return None
+    ref = watch.get('source_ref') or {}
+    if strict and _positive(ref.get('price')) != _positive(watch.get('price')):
+        raise ValueError('冻结观察价与原引用不一致')
+    if not strict and any(not isinstance(item, str) or not item for item in (watch.get('price_ref'), ref.get('source'), ref.get('as_of'))):
+        return None
+    return {'price_ref': watch.get('price_ref'), 'comparator': watch.get('comparator'),
+            'price': watch.get('price'), 'source': ref.get('source'), 'as_of': ref.get('as_of')}
+
+
+def _watch_contract(watch: dict[str, Any]) -> dict[str, Any]:
+    frozen = conditions.validate_contract(watch.get('condition_contract'))
+    expected = conditions.freeze_contract(frozen['prerequisite_ids'], frozen['invalidation_ids'],
+        price_predicate=_watch_price_predicate(watch), condition=watch['condition'], invalidation=watch['invalidation'],
+        origin={'discussion_id': watch['discussion_id'], 'action_index': watch.get('action_index'), 'choice': watch['choice']})
+    if frozen != expected:
+        raise ValueError('冻结条件合同与已采用观察不一致')
+    return frozen
+
+
+def condition_checks(value: dict[str, Any], watch: dict[str, Any], *, current: datetime) -> dict[str, Any]:
+    """Always expose per-condition results, including when the old basis changed."""
+    frozen = _watch_contract(watch) if 'condition_contract' in watch else None
+    return conditions.evaluate_contract(frozen, _condition_facts(value, current=current),
+        legacy_price=_watch_price_predicate(watch, strict=False) if frozen is None else None,
+        legacy_condition=watch.get('condition', ''), legacy_invalidation=watch.get('invalidation', ''))
 
 
 def evidence_basis(report: dict[str, Any], evidence: dict[str, Any],
@@ -307,7 +362,7 @@ def current_evidence(code: str, quote: dict[str, Any], *, current: datetime) -> 
         coverage_note if coverage_note else
         '当前研究门禁阻塞，先补齐研究验证或暂缓' if entry_blocked else ''
     )
-    return {'symbol': code, 'name': report.get('candidate', {}).get('display_name') or quote.get('name') or code,
+    value = {'symbol': code, 'name': report.get('candidate', {}).get('display_name') or quote.get('name') or code,
             'research_date': report.get('date'), 'evidence_version': evidence_digest(basis), 'evidence_basis': basis, 'ownership': own,
             'available': not issues, 'entry_blocked': entry_blocked,
             'new_entry_blocked': entry_blocked or bool(coverage_note) or bool(candidate_invalidation),
@@ -315,6 +370,8 @@ def current_evidence(code: str, quote: dict[str, Any], *, current: datetime) -> 
             'candidate_invalidation': candidate_invalidation,
             'issues': issues, 'quote': quote, 'quote_issue': quote_issue,
             'evidence': evidence, 'price_refs': prices}
+    value['condition_catalog'] = conditions.condition_catalog(_condition_facts(value, current=current))
+    return value
 
 
 def _empty(code: str) -> dict[str, Any]:
@@ -465,6 +522,22 @@ def adopt(code: str, body: dict[str, Any]) -> dict[str, Any]:
                         'evidence_identity': {'symbol': code},
                         'ownership': deepcopy(value['ownership']),
                         'evidence_version': value['evidence_version'], 'evidence_basis': deepcopy(value['evidence_basis']), 'status': 'active'}
+        # New results explicitly expose a catalog. Legacy discussion actions
+        # remain legacy; never infer predicates from their original text.
+        if 'condition_catalog' in result:
+            prerequisite_ids = action.get('prerequisite_ids', []) if action else []
+            invalidation_ids = action.get('invalidation_ids', []) if action else []
+            conditions.validate_selection(prerequisite_ids, invalidation_ids)
+            offered = {item['id'] for item in result['condition_catalog'].get('items', [])}
+            if any(identifier not in offered for identifier in prerequisite_ids + invalidation_ids):
+                raise ValueError('采用条件未出现在原讨论目录')
+            row['watch']['action_index'] = index
+            row['watch']['condition_contract'] = conditions.freeze_contract(prerequisite_ids, invalidation_ids,
+                price_predicate=_watch_price_predicate(row['watch']), condition=row['watch']['condition'],
+                invalidation=row['watch']['invalidation'],
+                origin={'discussion_id': result['id'], 'action_index': index, 'choice': choice})
+        elif action and (action.get('prerequisite_ids') or action.get('invalidation_ids')):
+            raise ValueError('旧讨论没有条件目录，不能补造机检前提')
         row['observation'] = observation(value, row, current=current)
         remember(row, value)
         save_store(data)
@@ -492,7 +565,7 @@ def stop(code: str, body: dict[str, Any]) -> dict[str, Any]:
 
 
 def observation(value: dict[str, Any], row: dict[str, Any], *, current: datetime) -> dict[str, Any]:
-    """Compare only the adopted quote predicate; text conditions stay unverified."""
+    """Check frozen predicates; price and direction matches still require review."""
     watch = row.get('watch') or {}
     state, title, detail, reason = 'waiting', '等待已采用的候选条件', '未到保存的观察价，其他条件仍需人工核对', 'waiting'
     if watch.get('status') != 'active':
@@ -524,5 +597,19 @@ def observation(value: dict[str, Any], row: dict[str, Any], *, current: datetime
             detail = f"当前 {price:.2f} 元；等待报价{direction} {target:.2f} 元后核验：{watch['condition']}。失效条件：{watch['invalidation']}。到价只代表价格条件，其他前提尚未自动确认。"
             if reached:
                 state, title, reason = 'price_watch', '已到候选观察价，核验入场前提', 'price'
+    checks = condition_checks(value, watch, current=current)
+    if state not in {'stopped', 'deferred'}:
+        invalid = [item['label'] for item in checks['items'] if item['role'] == 'invalidation' and item['status'] == 'met']
+        if invalid and state not in {'needs_review', 'evidence_unavailable'}:
+            state, title, reason = 'needs_review', '已登记的失效条件出现，重新核对', 'condition_invalidated'
+            detail = '；'.join(invalid) + '；暂停作为当前参与依据，原方案未被自动修改'
+        if state == 'price_watch':
+            if checks['summary'] == 'unknown':
+                title = '报价已到观察价，部分登记条件缺少当前依据'
+            elif checks['summary'] == 'waiting':
+                title = '报价已到观察价，其余登记前提仍在等待'
+            else:
+                title = '报价条件已到，人工核对其余参与前提'
     return {'state': state, 'title': title, 'detail': detail, 'reason': reason,
-            'observed_at': current.isoformat(), 'quote_as_of': value['evidence']['quote']['as_of']}
+            'observed_at': current.isoformat(), 'quote_as_of': value['evidence']['quote']['as_of'],
+            'condition_checks': checks}
