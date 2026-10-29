@@ -672,6 +672,17 @@ export function CandidateSection({
       </div>
       {!ownershipKnown ? <p className="aq-note" role="status">持仓身份待确认，已暂停持仓筛选与计数；不影响查看候选研究。可用上方“更新跟进状态”重试。</p> : null}
       {view.frozenAt ? <p className="aq-hint">评分、策略依据与参数身份沿用当日首次冻结；现价、新鲜度与消息按最新证据更新。</p> : null}
+      {compareSymbols.length >= 2 ? (
+        <ComparePanel
+          key={`${view.date}:${view.generatedAt}:${compareSymbols.join("|")}`}
+          rows={view.candidates}
+          symbols={compareSymbols}
+          date={view.date}
+          historical={view.isHistorical}
+          generatedAt={view.generatedAt}
+          onRemove={(symbol) => setCompareSymbols(toggleCompareSymbol(compareSymbols, symbol))}
+        />
+      ) : null}
       {added.length > 0 ? (
         <section className="aq-candidate-increment" aria-label="盘中新增候选">
           <div className="aq-candidate-increment-head">
@@ -768,20 +779,6 @@ export function CandidateSection({
                     onPick={onPick}
                   /> : null}
               </div>
-              {compareSymbols.length >= 2 ? (
-                <ComparePanel
-                  key={`${view.date}:${view.generatedAt}:${compareSymbols.join("|")}`}
-                  rows={view.candidates}
-                  symbols={compareSymbols}
-                  date={view.date}
-                  historical={view.isHistorical}
-                  generatedAt={view.generatedAt}
-                  onRemove={(symbol) =>
-                    setCompareSymbols(toggleCompareSymbol(compareSymbols, symbol))
-                  }
-                />
-              ) : null}
-
               <details className="aq-workspace-fold">
                 <summary>逐票完整证据链 <span>消息 / 讨论 / 历史实验 / 当前复核</span></summary>
                 <div className="aq-workspace-fold-body"><ResearchChainLane view={view} /><CandidateChainTable rows={visible} variantDate={view.variantLatestDate ?? ""} ownership={ownership} lifecycles={lifecycleDate === view.date ? lifecycles : {}} historyWindow={historyWindow} onPick={onPick} /></div>

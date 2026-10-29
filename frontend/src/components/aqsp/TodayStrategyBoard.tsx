@@ -36,7 +36,7 @@ export function TodayStrategyBoard({ onPortfolio }: { onPortfolio?: (portfolio: 
       {view.items.length ? <div className="aq-strategy-attention-list">{view.items.map((item, index) => <StrategyAttentionItem item={item} index={index} key={item.key} />)}</div> : <p>{view.noHoldings ? "还没有持仓需要跟进。先从候选中选一只，让 AI 比较参与条件，再保存观察。" : "本次没有读到需优先展示的跟进事项；不代表没有风险。"}</p>}
       {view.total > 3 ? <p className="aq-note">优先展示 3 项，其余 {view.total - 3} 项可在下方完整记录中查看。</p> : null}
       {view.noHoldings ? <a className="aq-btn" href="#candidates">看候选，分析参与条件</a> : null}
-      <p className="aq-note">新方案从上方候选研究进入；持仓策略可从“我的持仓”打开。这里不启动新的风险检查或 AI 分析。</p>
+      <p className="aq-note">新方案从候选研究进入；持仓策略可从“我的持仓”打开。这里不启动新的风险检查或 AI 分析。</p>
     </>}
   </section>;
 }
