@@ -1,10 +1,10 @@
 // 持仓与自选的唯一入口：服务端持仓、本地自选和风险事件在同一页关联。
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { Plus, RefreshCw, ShieldCheck, Trash2, Wallet } from "lucide-react";
+import { AlertTriangle, Plus, RefreshCw, ShieldCheck, Trash2, Wallet } from "lucide-react";
 import { toast } from "sonner";
 import { api, type AlertEvent, type PortfolioData } from "@/lib/api";
-import { normalizePortfolio } from "@/lib/portfolio-view";
+import { holdingT1Status, normalizePortfolio, shanghaiDate } from "@/lib/portfolio-view";
 import { normalizeAlerts } from "@/lib/alert-view";
 import { ALERTS_CHANGED_EVENT, PORTFOLIO_CHANGED_EVENT, currentHoldingCandidates } from "@/lib/holding-view";
 import { isAqspSnapshotStale } from "@/lib/snapshot-freshness";
@@ -126,6 +126,23 @@ export function HoldingsPage({ renderRiskSettings }: { renderRiskSettings?: (cod
         <div className="aq-total-card"><span>浮动收益率</span><b className={cn("aq-num", changeClass(totals.pnl_pct))}>{formatSignedPct(totals.pnl_pct)}</b></div>
         <div className="aq-total-card"><span>已实现盈亏</span><b className={cn("aq-num", changeClass(data?.realized_pnl))}>{formatMoney(data?.realized_pnl)}</b></div>
       </div> : null}
+      {data ? <section className="aq-section aq-holdings-next" aria-label="当前需要处理">
+        <SectionHeader title="现在需要处理什么" description="先看事实，再决定是否打开处理计划；风险触发不会自动等于卖出。" icon={AlertTriangle} />
+        <div className="aq-next-grid">
+          <div className={cn("aq-next-item", alerts.length ? "aq-next-warn" : "aq-next-ok")}>
+            <span>风险事实</span><strong>{alerts.length ? `${alerts.length} 条待复核` : "暂无开放提醒"}</strong>
+            <p>{alerts.length ? "先查看触发原因、板块与大盘依据，再比较三种路线。" : "仍按已记录规则持续观察，不需要重复选路。"}</p>
+          </div>
+          <div className="aq-next-item">
+            <span>T+1</span><strong>{data.holdings.filter((row) => holdingT1Status(row.opened_at, shanghaiDate()).kind === "today").length} 只受限</strong>
+            <p>当日买入部分不可卖，页面只显示记录口径，实际可卖数以交易软件为准。</p>
+          </div>
+          <div className="aq-next-item">
+            <span>下一步</span><strong>{data.holdings.length ? "逐只看处理计划" : "先录入已有成交"}</strong>
+            <p>{data.holdings.length ? "处理计划会说明为什么、三种方案代价与失效条件。" : "录入后才能结合成本、数量和当前行情分析。"}</p>
+          </div>
+        </div>
+      </section> : null}
       {error ? <StatePanel tone="warn">持仓读取失败：{error}。{data ? "保留上次读取记录。" : "自选仍可查看；持仓数量暂未知。"}<button type="button" className="aq-btn" disabled={loading} onClick={() => void load()}>重试持仓</button></StatePanel> : null}
       {loading && !data ? <LoadingState label="正在读取持仓…" /> : null}
       {alertError ? <StatePanel tone="warn">风险提醒读取失败：{alertError}，当前分组不能代表最新风险状态。<button type="button" className="aq-btn" disabled={alertsLoading} onClick={() => void loadAlerts()}>重试提醒</button></StatePanel> : alertsLoading ? <p className="aq-note">正在核对风险提醒…</p> : null}

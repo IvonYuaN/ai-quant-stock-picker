@@ -183,7 +183,6 @@ export function HoldingsWatchlist({ portfolio, alerts, candidates, candidateDate
                     {row.sectors[0] ? <button className="aq-tag aq-tag-neutral" style={{ justifySelf: "start" }} type="button" onClick={() => setSector(row.sectors[0])}>{row.sectors[0]}</button> : null}
                     <p className="aq-note">{holding ? "行情更新" : "行情读取"}：{updated || "尚未取得"}</p>
                     {holding?.opened_at ? <p className="aq-note">首次开仓：{holding.opened_at}</p> : null}
-                    {holding && renderRiskSettings ? <div aria-label={`${row.code} 提醒规则`}>{renderRiskSettings(row.code)}</div> : null}
                   </div>
                   <div className="aq-watch-actions">
                     {holding && planHref ? <Link className="aq-btn aq-btn-primary" to={planHref}>看处理计划 <ArrowRight aria-hidden="true" /></Link> : holding ? <span className="aq-note">持仓身份待核对，请刷新持仓</span> : null}
@@ -197,6 +196,22 @@ export function HoldingsWatchlist({ portfolio, alerts, candidates, candidateDate
           </ul>
         </section>
       ))}
+      {renderRiskSettings && portfolio?.holdings.length ? <section className="aq-section aq-risk-rules-section" aria-label="风险规则">
+        <SectionHeader
+          title="风险规则"
+          description="规则只负责提醒和复核，不直接替代持有、减仓或做 T 分析。按股票展开后才读取详细设置。"
+          count={`${portfolio.holdings.filter((row) => row.risk_rules?.some((rule) => rule.enabled)).length} 只已启用`}
+        />
+        <div className="aq-risk-stock-list">
+          {portfolio.holdings.map((holding) => {
+            const enabled = holding.risk_rules?.filter((rule) => rule.enabled).length ?? 0;
+            return <details className="aq-risk-stock" key={holding.code}>
+              <summary><span><strong>{holding.name || holding.code}</strong><span className="aq-code">{holding.code}</span></span><span className="aq-note">{enabled ? `${enabled} 条启用` : "未启用规则"}</span></summary>
+              <div className="aq-risk-stock-body">{renderRiskSettings(holding.code)}</div>
+            </details>;
+          })}
+        </div>
+      </section> : null}
     </div>
   );
 }
