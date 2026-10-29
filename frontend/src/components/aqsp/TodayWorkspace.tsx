@@ -1,7 +1,7 @@
 // 「今日研究」页的编排层。
 //
 // 先看市场/行业，再进入候选理由、AI路线及持续跟进。
-// 已有风险与方案变化保持在候选前可见；研究过程与记账不占主入口。
+// 已有方案的变化接在研究判断后；研究过程与记账不占主入口。
 // 所有派生都在 daily-view 里完成，本文件不做业务判断。
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
@@ -331,8 +331,6 @@ export function TodayWorkspace() {
         <Link to={`/today${location.search}#strategy-followups`}><span>04</span><b>买卖条件与跟进</b></Link>
       </nav>
 
-      <TodayStrategyBoard onPortfolio={setPersonalPortfolio} />
-
       {data ? <DatePicker snapshot={data} /> : null}
 
       {error && data && !switching ? (
@@ -374,6 +372,13 @@ export function TodayWorkspace() {
               <div className="aq-active-section" aria-live="polite"><ActiveSection view={view} active={activeDetailId} /></div>
             </div>
           </details>
+        </>
+      )}
+
+      <TodayStrategyBoard onPortfolio={setPersonalPortfolio} />
+
+      {view && data ? (
+        <>
           <details className="aq-workspace-fold">
             <summary>研究过程与验证依据</summary>
             <div className="aq-workspace-fold-body"><PersistentBlock view={view} /><DecisionPanel snapshot={data} /></div>
@@ -383,8 +388,7 @@ export function TodayWorkspace() {
             <div className="aq-workspace-fold-body"><ClosingReviewPanel /></div>
           </details>
         </>
-      )}
-
+      ) : null}
       <StrategyRecordDetails />
 
       <StockDetailDrawer symbol={picked} onClose={closeDrawer} intro={intro} />
