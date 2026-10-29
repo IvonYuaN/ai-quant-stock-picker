@@ -463,7 +463,12 @@ export interface StrategyReviewContext {
   changes: Array<{ category: string; label: string; before: unknown; after: unknown }>;
   missing_evidence: string[]; material_changed: boolean; quote_updated: boolean; notice: string;
 }
+export interface DiscussionSynthesisBasis {
+  mode: "challenge" | "partial_initial";
+  participating_roles: string[]; missing_roles: string[]; unreviewed_roles: string[];
+}
 export interface PositionDiscussion {
+  synthesis_basis?: DiscussionSynthesisBasis;
   review_context?: StrategyReviewContext;
   review_revision?: string;
   summary_issue?: string;
@@ -506,6 +511,7 @@ export interface CandidateCondition {
   prerequisite_ids?: string[]; invalidation_ids?: string[];
 }
 export interface CandidateDiscussion {
+  synthesis_basis?: DiscussionSynthesisBasis;
   condition_catalog?: CandidateConditionCatalog;
   review_context?: StrategyReviewContext;
   id: string; status: "complete" | "partial" | "failed"; generated_at: string; model: string; mode: string;

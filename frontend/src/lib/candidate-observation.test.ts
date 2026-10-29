@@ -29,6 +29,8 @@ const throws = (fn: () => unknown) => { try { fn(); return false; } catch { retu
 const input = candidateAdoptionInput(discussion, workspace, "pullback", 0, "at_or_below", "operation-1");
 const deferred = candidateAdoptionInput(discussion, blocked, "defer", 0, "at_or_above", "operation-2");
 export const candidateObservationContracts = {
+  initialFallbackRemainsReadOnly: !!candidateDiscussionIssue({ ...discussion, status: "partial", synthesis_basis: { mode: "partial_initial", participating_roles: ["trend", "risk"], missing_roles: ["entry"], unreviewed_roles: ["risk"] } }, workspace),
+  challengePartialRemainsReadOnly: !!candidateDiscussionIssue({ ...discussion, status: "partial", synthesis_basis: { mode: "challenge", participating_roles: ["trend", "risk"], missing_roles: ["entry"], unreviewed_roles: [] } }, workspace),
   unknownEnvironmentIsNotInvented: candidateEvidenceRows(workspace).every((row) => row.summary === "尚缺可核验依据" && row.source === "来源待补"),
   environmentSourceRemainsVerifiable: candidateEvidenceRows({ ...workspace, evidence: { market: { summary: "合成大盘方向", source: "合成指数源", as_of: stamp } } })[0].asOf === stamp,
   threeRoutesReflectCandidateChoices: Object.keys(CANDIDATE_CHOICES).join(",") === "pullback,confirmation,defer",

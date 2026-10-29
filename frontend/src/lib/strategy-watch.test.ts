@@ -1,7 +1,10 @@
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server.edge";
+import { PositionDiscussionPanel } from "../components/aqsp/PositionDiscussionPanel";
 import type { ActionWorksheet, FollowupObservation, PositionDiscussion } from "./api";
 import { calculationDraftRequiresReview } from "../components/aqsp/PositionActionPlan";
 import { draftNeedsReview } from "./position-workspace";
-import { discussionSourceKey, discussionStrategyCurrent, strategyWatchInput, strategyWatchIssue, strategyWatchState, strategyDirectionKey } from "./strategy-watch";
+import { discussionSourceKey, discussionSynthesisNotice, discussionStrategyCurrent, strategyWatchInput, strategyWatchIssue, strategyWatchState, strategyDirectionKey } from "./strategy-watch";
 
 const stamp = "2026-10-27T10:00:00+08:00";
 const now = Date.parse(stamp);
@@ -15,7 +18,25 @@ const pausedObservation: FollowupObservation = { position_id: "p1", symbol: "600
 const unknownEvidence = { ...evidence, sector: { ...evidence.sector, status: "unknown" } };
 const pending: ActionWorksheet = { ...tracked, review_plan: { choice: "t_watch", watch: { ...watch, evidence_snapshot: unknownEvidence } }, basis: { ...worksheet.basis, price: 11 }, route_review: { ...worksheet.route_review!, evidence: unknownEvidence }, followup: { mode: "changes", current_plan_key: "intent-1", last_check: pausedObservation, requires_refresh: false, issue: "" } };
 const throws = (fn: () => unknown) => { try { fn(); return false; } catch { return true; } };
+const partialBasisFixture = { mode: "partial_initial" as const, participating_roles: ["trend", "risk"], missing_roles: ["t_review"], unreviewed_roles: ["risk"] };
+const partialHtmlFixture = renderToStaticMarkup(createElement(PositionDiscussionPanel, { choice: null, worksheet: { ...worksheet, comparison: { ...discussion, status: "partial", synthesis_basis: partialBasisFixture } }, disabled: false }));
+const challengeHtmlFixture = renderToStaticMarkup(createElement(PositionDiscussionPanel, { choice: null, worksheet: { ...worksheet, comparison: { ...discussion, status: "partial", synthesis_basis: { ...partialBasisFixture, mode: "challenge" } } }, disabled: false }));
+const failedHtmlFixture = renderToStaticMarkup(createElement(PositionDiscussionPanel, { choice: null, worksheet: { ...worksheet, comparison: { ...discussion, status: "failed", summary: null, summary_issue: "有效意见不足两个不同角色", synthesis_basis: partialBasisFixture } }, disabled: false }));
 export const strategyWatchContract = {
+  failedDiscussionDoesNotInventPartialSummary: !failedHtmlFixture.includes("部分汇总仅供阅读") && failedHtmlFixture.includes("有效意见不足两个不同角色"),
+  initialFallbackShowsConclusionAndConditions: partialHtmlFixture.includes("核对转弱证据") && partialHtmlFixture.includes("部分汇总仅供阅读"),
+  initialFallbackHidesAdoptionEntry: !partialHtmlFixture.includes("采用这项条件并跟踪") && !partialHtmlFixture.includes("确认采用并跟踪"),
+  challengePartialKeepsAdoptionEntry: challengeHtmlFixture.includes("采用这项条件并跟踪"),
+  initialFallbackCannotAdopt: strategyWatchIssue({ ...discussion, status: "partial", synthesis_basis: partialBasisFixture }, worksheet, 0, "reduce", "at_or_above", now).includes("仅供阅读"),
+  initialFallbackInputCannotEscapeGuard: throws(() => strategyWatchInput({ ...discussion, status: "partial", synthesis_basis: partialBasisFixture }, worksheet, 0, "reduce", "at_or_above", now)),
+  existingChallengePartialCanAdopt: strategyWatchIssue({ ...discussion, status: "partial", synthesis_basis: { ...partialBasisFixture, mode: "challenge" } }, worksheet, 0, "reduce", "at_or_above", now) === "",
+  legacyPartialCanAdopt: strategyWatchIssue({ ...discussion, status: "partial" }, worksheet, 0, "reduce", "at_or_above", now) === "",
+  changedReviewBasisNeedsConfirmation: discussionSourceKey(discussion) !== discussionSourceKey({ ...discussion, synthesis_basis: partialBasisFixture }),
+  missingAndUnreviewedRolesAreDistinct: discussionSynthesisNotice(partialBasisFixture, "position").includes("缺席：做 T 评估；未完成回应：风险复核"),
+  candidateRolesHaveReadableNames: discussionSynthesisNotice({ ...partialBasisFixture, missing_roles: ["entry"], unreviewed_roles: ["risk"] }, "candidate").includes("缺席：回落与代价；未完成回应：风险与暂缓"),
+  completedReviewDoesNotAddWarning: discussionSynthesisNotice({ mode: "challenge", participating_roles: ["trend", "risk", "t_review"], missing_roles: [], unreviewed_roles: [] }, "position") === "",
+  legacyReviewDoesNotAddWarning: discussionSynthesisNotice(undefined, "position") === "",
+
   sameStateIndustryChangeRejectsAdoption: !discussionStrategyCurrent(discussion, { ...worksheet, route_review: { ...worksheet.route_review!, evidence: { ...evidence, sector: { ...evidence.sector, industry: "银行" } } } }, now),
   sameStateSourceChangeRequiresReview: strategyWatchState({ ...tracked, route_review: { ...worksheet.route_review!, evidence: { ...evidence, market: { ...evidence.market, source: "新来源" } } } }, now)?.title === "原策略依据发生变化，重新分析",
   legacyDirectionNeedsExplicitReview: strategyWatchState({ ...tracked, review_plan: { choice: "reduce", watch: { ...watch, direction_schema: undefined } } }, now)?.title === "原方向依据需要重新核对",

@@ -45,6 +45,8 @@ def _validate_result(worksheet: dict[str, Any], result: dict[str, Any] | None,
                      value: StrategyWatchInput, current: datetime) -> tuple[dict[str, Any], dict[str, Any]]:
     if not result or not result.get('summary') or result.get('status') not in {'complete', 'partial'}:
         raise ValueError('尚无有效汇总观察条件，请先完成AI分析')
+    if (result.get('synthesis_basis') or {}).get('mode') == 'partial_initial':
+        raise ValueError('这份部分汇总的交叉回应尚未完成，仅供阅读；请完成复核后再采用新观察')
     if (result.get('generated_at') != value.generated_at
             or result.get('analysis_basis_id') != value.expected_analysis_basis_id
             or result.get('review_revision') != value.expected_revision

@@ -1,4 +1,4 @@
-import type { ActionWorksheet, DecisionEvidence, PositionDiscussion, ReviewChoice, StrategyWatchInput, WatchComparator } from "./api";
+import type { ActionWorksheet, DecisionEvidence, DiscussionSynthesisBasis, PositionDiscussion, ReviewChoice, StrategyWatchInput, WatchComparator } from "./api";
 import { worksheetExpired } from "./position-plan";
 
 export const WATCH_COMPARATORS: Record<WatchComparator, string> = { at_or_above: "达到或高于", at_or_below: "达到或低于" };
@@ -14,7 +14,22 @@ export function strategyDirectionKey(evidence?: Partial<Record<"market" | "secto
 
 /** A confirmation belongs to the exact model result the user reviewed. */
 export function discussionSourceKey(result: PositionDiscussion | null): string {
-  return result ? JSON.stringify([result.generated_at, result.analysis_basis_id, result.review_revision, result.choice, result.summary]) : "";
+  return result ? JSON.stringify([result.generated_at, result.analysis_basis_id, result.review_revision, result.choice, result.summary, result.synthesis_basis]) : "";
+}
+
+/** Explain who contributed without presenting incomplete review as consensus. */
+export function discussionSynthesisNotice(basis: DiscussionSynthesisBasis | undefined, kind: "candidate" | "position"): string {
+  if (!basis) return "";
+  const labels: Record<string, string> = kind === "candidate"
+    ? { trend: "趋势与确认", entry: "回落与代价", risk: "风险与暂缓" }
+    : { trend: "趋势分析", t_review: "做 T 评估", risk: "风险复核" };
+  const names = (roles: string[]) => [...new Set(roles)].map((role) => labels[role] ?? role).join("、");
+  const parts: string[] = [];
+  if (basis.mode === "partial_initial") parts.push("部分汇总仅供阅读，不能采用新观察");
+  else if (kind === "candidate" && (basis.missing_roles.length || basis.unreviewed_roles.length)) parts.push("部分汇总仅供阅读，不能采用新观察");
+  if (basis.missing_roles.length) parts.push(`缺席：${names(basis.missing_roles)}`);
+  if (basis.unreviewed_roles.length) parts.push(`未完成回应：${names(basis.unreviewed_roles)}`);
+  return parts.length ? `${parts.join("；")}。` : "";
 }
 
 function constraintsKey(value: ActionWorksheet["constraints"]): string {
@@ -38,6 +53,7 @@ export function discussionStrategyCurrent(result: PositionDiscussion | null, wor
 export function strategyWatchIssue(result: PositionDiscussion | null, worksheet: ActionWorksheet, index: number, choice: ReviewChoice | "", comparator: WatchComparator | "", now = Date.now()): string {
   if (worksheet.archived || !worksheet.position_id || !worksheet.revision || !worksheet.analysis_basis_id) return "请先更新当前持仓与策略依据";
   if (!result?.summary || result.status === "failed") return "尚未形成可采用的汇总条件";
+  if (result.synthesis_basis?.mode === "partial_initial") return "部分汇总仅供阅读，不能采用新观察";
   if (!discussionStrategyCurrent(result, worksheet, now)) return "仓位、风险或环境判断已变化，或分析已旧，请重新分析";
   const action = result.summary.actions[index];
   const reference = action && result.price_refs[action.price_ref ?? ""];

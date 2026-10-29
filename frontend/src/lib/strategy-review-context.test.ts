@@ -12,6 +12,7 @@ const noAdoption = renderToStaticMarkup(createElement(StrategyReviewContextPanel
 const mismatch = renderToStaticMarkup(createElement(StrategyReviewContextPanel, { context: { ...context, status: "identity_mismatch" } }));
 const missing = renderToStaticMarkup(createElement(StrategyReviewContextPanel, { context: { ...context, original: { ...context.original!, snapshot_complete: false }, missing_evidence: ["原大盘证据缺失"] } }));
 export const strategyReviewContextContracts = {
+  unchangedQuoteDoesNotMeanExpired: !strategyReviewView({ ...context, material_changed: false, quote_updated: false })?.state.includes("过期"),
   marketDirectionChangesAreReadable: reviewEvidenceText({ market: { breadth: "偏弱", indices: [{ name: "上证指数", direction: "down", source: "指数源" }] } }).includes("市场宽度：偏弱；指数背景：名称：上证指数；涨跌方向：下跌；来源：指数源"),
   compatibilityWithoutNewField: noContext === "" && noAdoption === "",
   defaultDisclosureCollapsed: html.includes('<details class="aq-strategy-review-context">') && !html.includes(' open=""'),

@@ -137,6 +137,7 @@ SYSTEM = """你为用户已有持仓提供人工复核意见，不下单、不�
 新行动条件中的数字只可复述当前有源事实，不能把原方案价格续用为新条件；price_ref始终只引用本次有效ID。
 遵守guards；暂停做T时不能建议回补，当日买入股份受T+1限制。
 review_context提供已采用方案的原路线、条件、失效条件与采用时和现在的差别，历史依据只用于对比。
+quote_updated只表示报价相对采用时是否发生变化；false不表示报价过期，新鲜度以源时点和guards为准。
 解释维持原路、调整或暂缓的依据；普通行情刷新不要求重选，旧价不能用于新的行动条件，不自动修改已采用方案。
 输出一个符合output_schema的JSON对象，不加Markdown围栏。"""
 
@@ -294,6 +295,21 @@ def _model_failure(exc: Exception) -> dict[str, str]:
     return {"failure_kind": "invalid_output", "issue": "模型输出未通过结构、引用或约束校验，未作为有效意见使用"}
 
 
+def _synthesis_inputs(initial: list[dict[str, Any]], replies: list[dict[str, Any]],
+                      roles: dict[str, tuple[str, str]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Use each role's latest validated opinion; never revive rejected content."""
+    selected = {row['role']: {**row, 'stage': 'independent'} for row in initial
+                if row.get('status') == 'ok' and row.get('role') in roles}
+    reviewed = {row['role']: {**row, 'stage': 'challenge'} for row in replies
+                if row.get('status') == 'ok' and row.get('role') in selected}
+    selected.update(reviewed)
+    return ([selected[role] for role in roles if role in selected],
+            {'mode': 'challenge' if len(reviewed) >= 2 else 'partial_initial',
+             'participating_roles': [role for role in roles if role in selected],
+             'missing_roles': [role for role in roles if role not in selected],
+             'unreviewed_roles': [role for role in roles if role in selected and role not in reviewed]})
+
+
 async def run_discussion(event_id: str, choice: str | None, expected_position: dict[str, Any], config: dict[str, str] | None = None,
                          server_model: str | None = None, on_progress: Callable[[str], None] | None = None, *, position_id: str | None = None, expected_revision: str | None = None) -> dict[str, Any]:
     """Discuss one server-built snapshot, commit only to an unchanged open position."""
@@ -376,10 +392,11 @@ async def run_discussion(event_id: str, choice: str | None, expected_position: d
             replies = list(await asyncio.gather(*(opinion(role, {key: value for key, value in valid.items() if key != role}) for role in valid)))
             rounds.append({"stage": "challenge", "opinions": replies})
         completed = [row for row in replies if row["status"] == "ok"]
+        synthesis_opinions, synthesis_basis = _synthesis_inputs(initial, replies, ROLES)
         summary = None
         summary_failure: dict[str, str] = {}
         summary_seconds = None
-        if len(completed) >= 2:
+        if len(synthesis_opinions) >= 2:
             summary_started = time.monotonic()
             if on_progress:
                 on_progress("synthesis")
@@ -389,13 +406,18 @@ async def run_discussion(event_id: str, choice: str | None, expected_position: d
                         "无依据时focus_choice=null。不要预设解套或买卖结论，不要求先填交易数量或费用，不自动选择。"
                         if comparison else "依据两轮意见给出所选方案的条件计划，保留分歧、缺口和不应操作情形，不以多数票定买卖")
                 task += "面向新手，每个文字字段只写一句必要结论或理由；避免重复，各列表只保留关键信息，不为填满列表补内容。"
+                task += "仅汇总synthesis_opinions的最新有效意见，缺席不等于同意；partial_initial仅供阅读。"
                 raw = await call_model(endpoint, {**common, "task": task,
-                    "rounds": rounds, "allowed_evidence_ids": sorted(evidence),
+                    "rounds": rounds if len(completed) == len(ROLES) else [{"stage": "validated_latest", "opinions": synthesis_opinions}],
+                    "synthesis_opinions": synthesis_opinions, "synthesis_basis": synthesis_basis,
+                    "allowed_evidence_ids": sorted(evidence),
                     "output_schema": output_schema(schema, evidence, prices, set(), limits)}, limits.synthesis_timeout, limits)
                 summary = _parse(raw, schema, evidence, prices, set(), guards)
             except (ValueError, KeyError, TypeError, IndexError, AttributeError, RuntimeError, httpx.HTTPError, TimeoutError) as exc:
                 summary_failure = _model_failure(exc)
             summary_seconds = round(time.monotonic() - summary_started, 2)
+        else:
+            summary_failure = {"failure_kind": "insufficient_roles", "issue": "有效意见不足两个不同角色，未生成汇总；已保留有效意见及失败原因。"}
         result = {"status": "complete" if summary and len(completed) == len(ROLES) else "partial" if completed or valid else "failed",
                   "generated_at": now_shanghai().isoformat(), "model": endpoint.model,
                   "mode": "同一模型的三角色讨论", "choice": choice, "position_snapshot": expected_position,
@@ -404,7 +426,7 @@ async def run_discussion(event_id: str, choice: str | None, expected_position: d
                   "review_context": review_context,
                   "analysis_basis_id": worksheet["analysis_basis_id"], "risk_revision": worksheet["risk_revision"],
                   "review_revision": worksheet["revision"], "position_id": worksheet["position_id"],
-                  "rounds": rounds, "summary": summary, "model_text_unverified": True,
+                  "rounds": rounds, "summary": summary, "synthesis_basis": synthesis_basis, "model_text_unverified": True,
                   "summary_issue": summary_failure.get("issue", ""), "summary_failure_kind": summary_failure.get("failure_kind", ""),
                   "elapsed_seconds": round(time.monotonic() - started, 2), "summary_seconds": summary_seconds,
                   "io_budget": {"role_timeout_seconds": limits.role_timeout, "synthesis_timeout_seconds": limits.synthesis_timeout},

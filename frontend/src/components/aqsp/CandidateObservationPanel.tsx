@@ -10,7 +10,7 @@ import { readLocalPreference, writeLocalPreference } from "@/lib/browser-session
 import { formatEvidenceTime } from "@/lib/format";
 import { PORTFOLIO_CHANGED_EVENT } from "@/lib/operation";
 import { positionPlanHref } from "@/lib/position-workspace";
-import { WATCH_COMPARATORS } from "@/lib/strategy-watch";
+import { discussionSynthesisNotice, WATCH_COMPARATORS } from "@/lib/strategy-watch";
 
 const stages: Record<string, string> = { preparing: "正在核对当前候选与行情…", independent: "三个角色正在分别评估入场条件…", challenge: "正在相互核对机会、风险与缺证…", synthesis: "正在整理三条路和下一步条件…" };
 const judgments = { investigate: "可以进一步核对", not_now: "当前不宜", insufficient: "依据待补" };
@@ -94,6 +94,7 @@ function CandidateObservationWorkspace({ symbol, researchDate, historical }: { s
   const locked = busy || loading || !!error;
   const canRefreshSources = data?.ownership.status === "unowned" && !historical && !error;
   const currentIssue = data ? candidateDiscussionIssue(result, data) : "";
+  const synthesisNotice = result?.summary ? discussionSynthesisNotice(result.synthesis_basis, "candidate") : "";
   const selectedAction = selection?.index != null ? result?.summary?.actions[selection.index] : null;
   const selectedReference = selectedAction?.price_ref ? result?.price_refs[selectedAction.price_ref] : null;
   const adoptionIssue = selection && data ? candidateAdoptionIssue(result, data, selection.choice, selection.index, comparator) : "";
@@ -195,7 +196,8 @@ function CandidateObservationWorkspace({ symbol, researchDate, historical }: { s
       {analyzing ? <div role="status"><p>{stages[discussing ? stage : data.analysis.stage] || "后台正在分析；刷新可恢复当前进度。"}</p>{discussing ? <button type="button" className="aq-btn" onClick={() => controller.current?.abort()}>停止等待本次分析</button> : null}</div> : null}
       {actionError ? <p role="alert">{actionError}</p> : null}
       {result ? <section className="aq-candidate-discussion" aria-label="AI 入场条件比较"><details key={`${result.id}:${adoptedResult}`} open={!adoptedResult}><summary>{adoptedResult ? "查看采用时的 AI 比较" : "查看 AI 入场条件比较"}</summary><p className="aq-note">{result.mode} · {result.model} · {formatEvidenceTime(result.generated_at)} · 研究日期 {result.research_date || "待核对"}</p>
-        {currentIssue ? <p role="status">{data.watch?.discussion_id === result.id && data.watch.status === "active" && result.evidence_version === data.evidence_version ? "这份分析已用于当前观察；改变条件前请重新分析。" : `${currentIssue} 以下保留原分析供核对。`}</p> : null}
+        {synthesisNotice ? <p role="status" className="aq-note">{synthesisNotice}</p> : null}
+        {currentIssue && !(result.status === "partial" && synthesisNotice && !candidateWorkspaceIssue(data)) ? <p role="status">{data.watch?.discussion_id === result.id && data.watch.status === "active" && result.evidence_version === data.evidence_version ? "这份分析已用于当前观察；改变条件前请重新分析。" : `${currentIssue} 以下保留原分析供核对。`}</p> : null}
         {result.summary ? <><StrategyReviewContextPanel context={result.review_context} /><h3>为什么等，等到什么再考虑</h3><p className="aq-candidate-conclusion">{result.summary.conclusion}</p>{result.summary.focus_reason ? <p>{result.summary.focus_choice ? `可先核对${CANDIDATE_CHOICES[result.summary.focus_choice].title}：` : "暂不选定路线："}{result.summary.focus_reason}</p> : null}
           <div className="aq-candidate-route-grid">{result.summary.routes.map((route) => <article key={route.choice} className="aq-candidate-route"><div className="aq-candidate-route-title"><h4>{CANDIDATE_CHOICES[route.choice].title}</h4><small>{judgments[route.judgment]}</small></div><p>{route.reason}</p>{route.needs.length ? <p className="aq-note">还需：{route.needs.join("、")}</p> : null}
             {result.summary!.actions.map((row, index) => row.choice === route.choice ? condition(row, index) : null)}

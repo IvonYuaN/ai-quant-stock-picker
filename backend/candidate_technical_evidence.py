@@ -4,6 +4,7 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import asdict, dataclass
 from datetime import date, datetime
+import math
 import re
 from typing import Any
 
@@ -182,6 +183,26 @@ def mask_indicator_names(text: str) -> str:
     text = re.sub(r'MA\s*20(?![\d.%％元块角股手倍xX×点])', '均线', text, flags=re.IGNORECASE)
     text = re.sub(r'(?:ret5_pct|ret20_pct|volume_ratio|rsi12|macd_hist|kdj_j|bias20_pct)', '指标', text, flags=re.IGNORECASE)
     return re.sub(r'(?:5|20)\s*(?:个交易日|交易日|日)(?=动能|涨跌幅|均线偏离|乖离率)', '', text)
+
+
+def mask_quote_day_change(text: str, change_pct: object) -> str:
+    """Consume an exact current daily quote fact, never a frozen period metric."""
+    if type(change_pct) not in (int, float) or not math.isfinite(change_pct):
+        return text
+    pattern = rf'(?:当日|本交易日)涨跌幅\s*(?:为|是|:|：|=)?\s*({_NUMBER})\s*[%％](?![\d.%％元块角股手倍xX×点])'
+
+    def consume(match: re.Match[str]) -> str:
+        start = max(text.rfind(sep, 0, match.start()) for sep in ('。', '；', ';', '\n')) + 1
+        ends = [pos for sep in ('。', '；', ';', '\n') if (pos := text.find(sep, match.end())) >= 0]
+        clause = text[start:min(ends) if ends else len(text)]
+        # An unqualified daily claim is not necessarily about this stock.
+        # Keep mixed-subject and historical clauses for the stricter guard.
+        if (re.search(r'(?:板块|行业|指数|大盘|市场|采用时|原研究|原冻结|历史|冻结)', clause)
+                or float(match[1]) != change_pct):
+            return match[0]
+        return '已核验的当日报价变动'
+
+    return re.sub(pattern, consume, text)
 
 
 def reject_unmatched_technical_numbers(text: str) -> None:
