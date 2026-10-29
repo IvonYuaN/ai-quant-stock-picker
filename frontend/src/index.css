@@ -2909,6 +2909,14 @@
   .aq-total-card b {
     font-size: 1.104rem;
   }
+  .aq-holdings-next { gap: 0.9rem; }
+  .aq-next-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.75rem; }
+  .aq-next-item { display: grid; gap: 0.35rem; min-width: 0; padding: 0.9rem; border: 1px solid hsl(var(--border) / 0.85); border-radius: 0.65rem; background: hsl(var(--muted) / 0.22); }
+  .aq-next-item > span { color: hsl(var(--muted-foreground)); font-size: 0.75rem; }
+  .aq-next-item > strong { font-size: 1rem; }
+  .aq-next-item > p { margin: 0; color: hsl(var(--muted-foreground)); font-size: 0.78rem; line-height: 1.55; }
+  .aq-next-warn { border-color: hsl(var(--warning) / 0.5); background: hsl(var(--warning) / 0.06); }
+  .aq-next-ok { border-color: hsl(var(--success) / 0.35); }
   .aq-closing-form {
     display: grid;
     gap: 0.45rem;
@@ -3682,6 +3690,21 @@
   .aq-watch-research { display: grid; gap: 0.3rem; font-size: 0.78rem; }
   .aq-watch-research > span { color: hsl(var(--muted-foreground)); }
   .aq-watch-actions, .aq-research-actions { display: flex; flex-wrap: wrap; gap: 0.45rem; align-items: center; }
+  .aq-risk-rules-section { margin-top: 0.25rem; }
+  .aq-risk-stock-list { display: grid; gap: 0.45rem; }
+  .aq-risk-stock { border-top: 1px solid hsl(var(--border) / 0.75); }
+  .aq-risk-stock > summary { display: flex; align-items: center; justify-content: space-between; gap: 1rem; min-height: 3rem; cursor: pointer; list-style-position: inside; }
+  .aq-risk-stock > summary > span:first-child { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 0.55rem; }
+  .aq-risk-stock > summary::-webkit-details-marker { color: hsl(var(--primary)); }
+  .aq-risk-stock-body { padding: 0.1rem 0 0.8rem 1.2rem; }
+  .aq-plan-stepper { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.15rem 0; }
+  .aq-plan-stepper > span { display: inline-flex; align-items: center; gap: 0.35rem; min-height: 2.2rem; padding: 0.35rem 0.7rem; border: 1px solid hsl(var(--border) / 0.75); border-radius: 999px; color: hsl(var(--muted-foreground)); font-size: 0.78rem; }
+  .aq-plan-stepper b { display: inline-flex; width: 1.25rem; height: 1.25rem; align-items: center; justify-content: center; border-radius: 50%; background: hsl(var(--muted)); color: hsl(var(--foreground)); font-size: 0.7rem; }
+  .aq-plan-stepper .aq-plan-step-active { border-color: hsl(var(--primary) / 0.5); color: hsl(var(--foreground)); background: hsl(var(--primary) / 0.07); }
+  .aq-plan-stepper .aq-plan-step-active b { background: hsl(var(--primary)); color: hsl(var(--primary-foreground)); }
+  .aq-plan-module { gap: 0.9rem; }
+  .aq-plan-module + .aq-plan-module { margin-top: 0.15rem; }
+  .aq-plan-module > .aq-section-head { margin-bottom: 0.1rem; }
   .aq-research-head { padding-bottom: 0.75rem; border-bottom: 1px solid hsl(var(--border)); }
   .aq-research-back { display: inline-flex; align-items: center; gap: 0.35rem; margin-bottom: 1rem; color: hsl(var(--muted-foreground)); font-size: 0.8rem; }
   .aq-research-back:hover { color: hsl(var(--primary)); }
@@ -3756,10 +3779,13 @@
     .aq-candidate-filters summary { flex-wrap: wrap; }
     .aq-workspace-fold > summary span { display: block; margin: 0.3rem 0 0 1rem; }
     .aq-watch-row { grid-template-columns: minmax(0, 1fr); gap: 0.85rem; }
+    .aq-next-grid { grid-template-columns: minmax(0, 1fr); }
     .aq-watch-entry .aq-row-actions { flex-wrap: wrap; }
     .aq-watch-entry input { width: 100%; max-width: none; flex-basis: 100%; }
     .aq-watch-actions { justify-content: flex-start; }
     .aq-watch-summary { gap: 0.6rem; }
+    .aq-risk-stock > summary { align-items: flex-start; padding: 0.6rem 0; }
+    .aq-risk-stock-body { padding-left: 0; }
     .aq-research-columns { grid-template-columns: minmax(0, 1fr); gap: 1rem; }
     .aq-research-evidence + .aq-research-evidence { padding-left: 0; padding-top: 1rem; border-left: 0; border-top: 1px solid hsl(var(--border)); }
     .aq-research-actions { margin-top: 0.3rem; }

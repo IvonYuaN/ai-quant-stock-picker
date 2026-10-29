@@ -39,7 +39,8 @@ function RuleForm({ rule, onSave }: { rule: PositionAlertRule; onSave: (value: P
 }
 
 export function RiskRuleEditor({ code }: { code: string }) {
-  const [open, setOpen] = useState(true);
+  // 规则属于复核层，不能在持仓列表首屏展开；只有用户明确查看时才取数。
+  const [open, setOpen] = useState(false);
   const [rules, setRules] = useState<PositionAlertRule[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
