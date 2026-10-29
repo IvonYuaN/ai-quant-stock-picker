@@ -66,6 +66,8 @@ def test_candidate_technical_accepts_exact_typed_facts_when_frozen_scope_is_expl
     '量比1.42倍', '当前冻结研究量比1.42倍', '最新量比1.42倍',
     '冻结研究5日动能高于3.5%', '冻结研究放量1.42倍', '现价1.42元',
     '冻结研究量比1.42倍已经是当前量比。',
+    '冻结研究volume_ratio 9.8元，仅供研究。',
+    '冻结研究ret5_pct 9.8元，仅供研究。',
 ])
 def test_candidate_technical_rejects_wrong_unit_period_value_or_current_claim_when_sources_exist(value, text):
     row = opinion()
@@ -75,7 +77,9 @@ def test_candidate_technical_rejects_wrong_unit_period_value_or_current_claim_wh
 
 @pytest.mark.parametrize('text', ['冻结研究量比1.42倍后复核', '量比高于1.42倍再看',
                                   '冻结研究RSI12为55.8则进入观察', '突破3.5元后复核',
-                                  '量比，9.8倍以上时复核', '量比超过两倍后复核', '放量二倍后复核'])
+                                  '量比，9.8倍以上时复核', '量比超过两倍后复核', '放量二倍后复核',
+                                  '冻结研究指标，9.8倍时复核', '冻结研究RSI，9.8点时复核',
+                                  '冻结研究volume_ratio 9.8后复核', '冻结研究ret5_pct 9.8元后复核'])
 def test_candidate_technical_rejects_old_metric_thresholds_when_used_in_new_actions(value, text):
     row = opinion()
     row['actions'][0]['condition'] = text
@@ -128,6 +132,8 @@ def test_candidate_technical_revalidates_sanitized_model_contract_after_raw_basi
     row['summary'] = '冻结研究量比1.42倍，支持研究但不代表当前放量。'
     value['evidence']['research'] = report
     assert discussion.parse(json.dumps(row), discussion.CandidateOpinion, value, set())
+    raw['scope'] = 'current'
+    assert technical_evidence_from_dict(raw, current=NOW).status == 'unavailable'
 
 
 def test_candidate_technical_keeps_historical_facts_out_of_current_namespace_when_adopted(value):
@@ -146,6 +152,19 @@ def test_candidate_technical_keeps_historical_facts_out_of_current_namespace_whe
         discussion.parse(json.dumps(row), discussion.CandidateOpinion, value, set())
 
 
+def test_candidate_technical_reads_sanitized_original_evidence_when_raw_basis_is_absent(value):
+    from candidate_technical_evidence import historical_technical_evidence
+    report = research()
+    saved = technical_evidence(report, current=NOW)
+    report['technical_evidence'] = saved.to_dict()
+    del report['candidate']['technical_basis']
+    context = {'status': 'adopted', 'original': {
+        'saved_at': NOW.isoformat(), 'evidence_snapshot': {'research': report}}}
+    assert historical_technical_evidence(context).facts == saved.facts
+    context['original']['evidence_snapshot']['research']['technical_evidence']['scope'] = 'current'
+    assert historical_technical_evidence(context).status == 'unavailable'
+
+
 def test_candidate_technical_strips_unverified_values_from_all_change_copies_when_model_payload_is_built():
     candidate = research()['candidate']
     context = {'changes': [{'category': 'candidate', 'before': candidate, 'after': deepcopy(candidate)}],
@@ -162,3 +181,15 @@ def test_candidate_technical_accepts_original_bar_day_without_inventing_midnight
     report['candidate']['technical_basis'].update(as_of='2026-10-27', precision='day', timestamp_source='bar_date')
     result = technical_evidence(report, current=NOW)
     assert result.status == 'available' and result.as_of == '2026-10-27' and result.precision == 'day'
+
+
+def test_candidate_technical_accepts_bridge_dataclass_shape_before_http_serialization():
+    from dataclasses import asdict
+    from aqsp.web.home_snapshot import technical_basis_from_dict
+    from strategy_review_context import candidate_research_identity
+    report = research()
+    report['candidate']['technical_basis'] = asdict(technical_basis_from_dict(basis()))
+    report['candidate']['technical_metrics'] = ({'key': 'close', 'value': '10.20'}, {'key': 'volume_ratio', 'value': '1.42x'})
+    assert technical_evidence(report, current=NOW).status == 'available'
+    candidate = candidate_research_identity(report['candidate'])
+    assert candidate['technical_metrics'] == [{'key': 'volume_ratio', 'value': '1.42x'}]
