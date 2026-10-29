@@ -58,6 +58,16 @@ def discussion_limits(environ: Mapping[str, str] | None = None) -> DiscussionLim
     return replace(limits, **overrides)
 
 
+def model_review_context(context: dict[str, Any]) -> dict[str, Any]:
+    """Omit duplicate current facts from a model-only adoption projection.
+
+    Current evidence and price_refs already live at the request's top level.
+    Saved snapshots remain complete and historical comparisons stay intact.
+    """
+    return {**context, "current": {key: value for key, value in context.get("current", {}).items()
+                                 if key not in {"evidence_snapshot", "price_refs"}}}
+
+
 @dataclass(frozen=True)
 class ModelEndpoint:
     url: str
@@ -138,11 +148,13 @@ SYSTEM = """你为用户已有持仓提供人工复核意见，不下单、不�
 价格只能通过price_ref引用price_refs中的ID，不自行生成价位、仓位比例或收益预测。
 已见高低点是观察参考，不是已验证支撑阻力。说明可复述输入有来源的当前或历史数字事实，标明时点，不自行计算新价位或交易数量。
 新行动条件中的数字只可复述当前有源事实，不能把原方案价格续用为新条件；price_ref始终只引用本次有效ID。
+股数、仓位、费用或技术数字只在解释字段复述，不写入actions.condition/invalidation；动作文字用“所引用观察价”等自然语言，不嵌入price_0等ID，ID只填写在对应结构字段。
 遵守guards；暂停做T时不能建议回补，当日买入股份受T+1限制。
 review_context提供已采用方案的原路线、条件、失效条件与采用时和现在的差别，历史依据只用于对比。
 quote_updated只表示报价相对采用时是否发生变化；false不表示报价过期，新鲜度以源时点和guards为准。
 解释维持原路、调整或暂缓的依据；普通行情刷新不要求重选，旧价不能用于新的行动条件，不自动修改已采用方案。
 condition_catalog列出可机检的现有方向条件；可自由选择相关prerequisite_ids前提和invalidation_ids失效ID，也可留空，不要求固定分析步骤。只引用目录ID，未登记的文字前提仍需人工复核；方向匹配不证明止跌、放量或突破有效，不解除guards或做T卖后买限制。
+同一条件ID不能同时放入前提和失效列表；每个列表内部不能同时选择同维度的相反方向，ID不重复。
 输出一个符合output_schema的JSON对象，不加Markdown围栏。"""
 
 
@@ -276,6 +288,10 @@ def output_schema(schema: type[BaseModel], evidence: dict[str, Any], prices: dic
         for field in ('prerequisite_ids', 'invalidation_ids'):
             if field in properties:
                 properties[field]['items'] = {'type': 'string', 'enum': [item['id'] for item in (condition_catalog or {}).get('items', [])]}
+                properties[field]['description'] = '可自由选择或留空；不得重复、不得与另一列表重叠，单列表内不能选择同维度相反方向。'
+        for field in ("condition", "invalidation"):
+            if field in properties:
+                properties[field]["description"] = "人工核验说明；不嵌入引用ID，不填写股数、仓位、费用或技术数字。价位只通过price_ref引用。"
         if "reply_to" in properties:
             properties["reply_to"]["items"] = {"type": "string", "enum": sorted(peers)}
             if not peers:
@@ -283,7 +299,7 @@ def output_schema(schema: type[BaseModel], evidence: dict[str, Any], prices: dic
             else:
                 properties["reply_to"]["minItems"] = 1
                 properties["challenge"]["minLength"] = 1
-        if schema is not RoleOpinion:
+        if schema in {RoleOpinion, DiscussionSummary, ComparisonSummary}:
             for value in properties.values():
                 if value.get("type") == "string":
                     value["maxLength"] = min(value.get("maxLength", limits.summary_text_chars), limits.summary_text_chars)
@@ -373,7 +389,7 @@ async def run_discussion(event_id: str, choice: str | None, expected_position: d
                   "review_mode": ("对已采用方案作变化复核，比较维持、调整或暂缓，不自动选择" if review_context['status'] == 'adopted'
                                   else "比较三条路，用户尚未通过本请求作出选择" if comparison else "核对已选方案"),
                   "evidence": evidence, "price_refs": prices, "guards": guards,
-                  "review_context": review_context, "condition_catalog": catalog,
+                  "review_context": model_review_context(review_context), "condition_catalog": catalog,
                   "saved_parameters": None if comparison or worksheet['scenario_issue'] else plan.get("parameters"),
                   "scenario": None if comparison or worksheet['scenario_issue'] else worksheet["scenario"],
                   "scenario_issue": worksheet['scenario_issue'],
@@ -419,10 +435,10 @@ async def run_discussion(event_id: str, choice: str | None, expected_position: d
                         "无依据时focus_choice=null。不要预设解套或买卖结论，不要求先填交易数量或费用，不自动选择。"
                         if comparison else "依据两轮意见给出所选方案的条件计划，保留分歧、缺口和不应操作情形，不以多数票定买卖")
                 task += "面向新手，每个文字字段只写一句必要结论或理由；避免重复，各列表只保留关键信息，不为填满列表补内容。"
-                task += "仅汇总synthesis_opinions的最新有效意见，缺席不等于同意；partial_initial仅供阅读。"
+                task += "仅汇总rounds中每名角色最新有效意见，缺席不等于同意；partial_initial仅供阅读。"
                 raw = await call_model(endpoint, {**common, "task": task,
-                    "rounds": rounds if len(completed) == len(ROLES) else [{"stage": "validated_latest", "opinions": synthesis_opinions}],
-                    "synthesis_opinions": synthesis_opinions, "synthesis_basis": synthesis_basis,
+                    "rounds": [{"stage": "validated_latest", "opinions": synthesis_opinions}],
+                    "synthesis_basis": synthesis_basis,
                     "allowed_evidence_ids": sorted(evidence),
                     "output_schema": output_schema(schema, evidence, prices, set(), limits, condition_catalog=catalog)}, limits.synthesis_timeout, limits)
                 summary = _parse(raw, schema, evidence, prices, set(), guards)

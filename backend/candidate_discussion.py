@@ -98,6 +98,8 @@ entry_blocked为true时只能解释暂缓/补证：不得把入场路线标为in
 review_context给出已采用路线、原条件及采用时与现在的差别。原依据只作历史对比，不能当作当前事实或行动价格。
 已采用时解释继续等待、调整或暂缓的依据；普通报价刷新不代表必须重选，不自动修改已采用条件。
 review_context.quote_updated只表示报价事实相对采用时是否变化；false不是报价过期、未获取或不可用。时效只按输入来源时间及有效状态判断。
+动作文字用“所引用观察价”等自然语言，不嵌入price_ref或条件目录ID；ID只填写在对应结构字段。
+同一条件ID不能同时放入前提和失效列表；每个列表内部不能同时选择同维度的相反方向，ID不重复。
 输出一个output_schema规定的JSON对象，不加Markdown围栏。'''
 
 
@@ -233,14 +235,14 @@ def schema_for(schema: type[BaseModel], value: dict[str, Any], peers: set[str]) 
         for field in ('prerequisite_ids', 'invalidation_ids'):
             if field in props:
                 props[field]['items'] = {'type': 'string', 'enum': [item['id'] for item in value.get('condition_catalog', {}).get('items', [])]}
-                props[field]['description'] = '可选的精确条件目录ID，可留空；defer必须空列表。不得推断文字条件、编造公式或阈值。'
+                props[field]['description'] = '可选精确目录ID，可留空；defer必须空列表。不得重复、与另一列表重叠或在单列表选同维度相反方向；不得编造公式或阈值。'
         if 'condition' in props:
-            props['condition']['description'] = '下一步人工核验条件；复述数字必须来自输入证据，不另造价位/数量/收益。'
+            props['condition']['description'] = '下一步人工核验条件；不嵌入引用ID；复述数字必须来自输入证据，不另造价位/数量/收益。'
         if 'price_ref' in props:
             props['price_ref'] = {'anyOf': [{'type': 'string', 'enum': sorted(value['price_refs'])}, {'type': 'null'}]} if value['price_refs'] else {'type': 'null'}
         if 'price_ref' in props:
             props['price_ref']['description'] = 'defer必须null；其余选择仅引用输入price_refs中的ID，不能填写数值。'
-        if schema is CandidateSummary:
+        if schema in {CandidateOpinion, CandidateSummary}:
             limits = transport.discussion_limits()
             for prop in props.values():
                 if prop.get('type') == 'string':
@@ -315,7 +317,7 @@ async def run_discussion(code: str, expected_version: int, expected_evidence_ver
             public_evidence = model_technical_evidence(model_value['evidence'])
             if 'adopted_plan' in public_evidence:
                 public_evidence['adopted_plan'] = public_context['original']
-            common = {'symbol': code, 'name': value['name'], 'evidence': public_evidence, 'price_refs': value['price_refs'], 'review_context': public_context,
+            common = {'symbol': code, 'name': value['name'], 'evidence': public_evidence, 'price_refs': value['price_refs'], 'review_context': transport.model_review_context(public_context),
                       'entry_blocked': discussion_entry_blocked, 'condition_catalog': value['condition_catalog'], 'no_orders': True, 'no_position': True}
             def progress(stage: str) -> None:
                 _progress(code, run_id, stage)
@@ -324,7 +326,8 @@ async def run_discussion(code: str, expected_version: int, expected_evidence_ver
             async def opinion(role: str, peers: dict[str, Any] | None) -> dict[str, Any]:
                 try:
                     raw = await transport.call_model(endpoint, {**common, 'role': ROLES[role][1],
-                        'task': '独立评估' if peers is None else '回应同行的证据与反例，保留分歧；reply_to至少一个同行，challenge写实际回应',
+                        'task': ('独立评估；每个文字字段写一句必要结论，列表只保留关键信息，reply_to为空数组，challenge为空字符串' if peers is None else
+                                 '回应同行的证据与反例，保留分歧；每个文字字段写一句必要结论，列表只保留关键信息；reply_to至少一个同行，challenge写实际回应'),
                         'peer_opinions': peers or {}, 'output_schema': schema_for(CandidateOpinion, model_value, set(peers or {}))}, limits.role_timeout, limits, system=SYSTEM)
                     return {'role': role, 'label': ROLES[role][0], 'status': 'ok', 'opinion': parse(raw, CandidateOpinion, model_value, set(peers or {}))}
                 except (ValueError, KeyError, TypeError, IndexError, RuntimeError, httpx.HTTPError, TimeoutError) as exc:
@@ -345,9 +348,9 @@ async def run_discussion(code: str, expected_version: int, expected_evidence_ver
                 progress('synthesis')
                 try:
                     raw = await transport.call_model(endpoint, {**common, 'rounds': [{'stage': 'validated_latest', 'opinions': synthesis_opinions}],
-                        'synthesis_opinions': synthesis_opinions, 'synthesis_basis': synthesis_basis,
+                        'synthesis_basis': synthesis_basis,
                         'task': '比较三路线的证据、代价、缺口和失效条件；给简短新手结论和下一步。门禁阻塞则只解释暂缓与补证。'
-                                '仅汇总synthesis_opinions中每名角色最新有效意见，不把缺席视为同意。synthesis_basis明确缺席角色与尚无有效回应的角色；初轮补位仅供部分汇总，说明缺口，不声称全员会诊完成或达成共识。',
+                                '仅汇总rounds中每名角色最新有效意见，不把缺席视为同意。synthesis_basis明确缺席角色与尚无有效回应的角色；初轮补位仅供部分汇总，说明缺口，不声称全员会诊完成或达成共识。每个文字字段写一句必要结论，列表只保留关键信息。',
                         'output_schema': schema_for(CandidateSummary, model_value, set())}, limits.synthesis_timeout, limits, system=SYSTEM)
                     summary = parse(raw, CandidateSummary, model_value, set())
                 except (ValueError, KeyError, TypeError, IndexError, RuntimeError, httpx.HTTPError, TimeoutError) as exc:

@@ -52,6 +52,10 @@ def test_position_discussion_forms_peer_replies_when_models_return_valid_evidenc
     assert len(calls) == 7
     assert all(not row["peer_opinions"] for row in calls[:3])
     assert all(len(row["peer_opinions"]) == 2 for row in calls[3:6])
+    assert 'synthesis_opinions' not in calls[-1]
+    assert [row['stage'] for row in calls[-1]['rounds'][0]['opinions']] == ['challenge'] * 3
+    assert 'evidence_snapshot' not in calls[0]['review_context']['current']
+    assert 'price_refs' not in calls[0]['review_context']['current']
     assert result["summary"]["disagreements"] == SUMMARY["disagreements"]
     assert "private-key" not in response.text
     saved = client.get(f"/api/alerts/{event_id}/action-plan").json()["data"]["review_plan"]["discussion"]
@@ -268,6 +272,47 @@ def test_position_discussion_defaults_to_current_model_when_no_explicit_override
     assert discussion.resolve_endpoint(None).model == "deliberately-pinned-model"
 
 
+def test_position_discussion_projection_preserves_adoption_when_current_facts_are_deduplicated() -> None:
+    from copy import deepcopy
+    context = {"status": "adopted", "original": {"condition": "原条件", "evidence_snapshot": {"quote": {"price": 9}}},
+               "current": {"choice": "hold", "position_snapshot": {"position_id": "one"},
+                           "evidence_snapshot": {"quote": {"price": 10}}, "price_refs": {"price_0": {"price": 10}}},
+               "changes": [{"category": "sector", "before": "rising", "after": "falling"}],
+               "missing_evidence": ["量能待核验"], "quote_updated": True, "material_changed": True}
+    before = deepcopy(context)
+    projection = discussion.model_review_context(context)
+    assert projection == {**before, "current": {"choice": "hold", "position_snapshot": {"position_id": "one"}}}
+    assert context == before
+
+
+def test_position_discussion_short_opinions_keep_reference_and_guard_contracts() -> None:
+    limits = discussion.DiscussionLimits()
+    schema = discussion.output_schema(discussion.RoleOpinion, {"quote": {}}, {"price_0": {}}, {"trend"}, limits,
+                                      {"items": [{"id": "sector:falling:v1"}]})
+    assert schema["properties"]["summary"]["maxLength"] == limits.summary_text_chars
+    assert schema["properties"]["uncertainties"]["maxItems"] == limits.summary_list_items
+    assert schema["properties"]["reply_to"]["items"]["enum"] == ["trend"]
+    action = schema["$defs"]["Observation"]["properties"]
+    assert action["price_ref"]["anyOf"][0]["enum"] == ["price_0"]
+    assert action["prerequisite_ids"]["items"]["enum"] == ["sector:falling:v1"]
+    assert "不嵌入引用ID" in action["condition"]["description"]
+    assert "不得与另一列表重叠" in action["invalidation_ids"]["description"]
+
+
+@pytest.mark.parametrize("action", [
+    {"action": "observe", "price_ref": None, "condition": "可卖2000股，先核对路线", "invalidation": "依据变化则复核"},
+    {"action": "observe", "price_ref": "price_0", "condition": "先观察", "invalidation": "跌破本交易日已见低点price_0时失效"},
+    {"action": "observe", "price_ref": None, "condition": "市场宽度偏弱先观察", "invalidation": "宽度改变时复核",
+     "prerequisite_ids": ["market:weak:v1"], "invalidation_ids": ["market:weak:v1"]},
+])
+def test_position_discussion_rejects_real_failure_shapes_when_action_fields_break_contract(action: dict) -> None:
+    evidence = {"holding": {"shares": 2000}, "quote": {"price": 10, "as_of": "2026-10-27T10:00:00+08:00", "source": "synthetic"}}
+    prices = {"price_0": {"price": 9, "as_of": "2026-10-27T10:00:00+08:00", "source": "synthetic"}}
+    with pytest.raises(ValueError):
+        discussion._parse(json.dumps({**OPINION, "actions": [action]}), discussion.RoleOpinion, evidence, prices, set(),
+                          {"sellable_shares": 2000, "pause_t": False, "condition_ids": ["market:weak:v1"]})
+
+
 def test_position_comparison_does_not_write_old_result_when_risk_evidence_changes(discussion_client, monkeypatch) -> None:
     client, event_id, worksheet, calls = discussion_client
     original = discussion.call_model
@@ -431,7 +476,8 @@ def test_position_discussion_requests_short_summary_without_losing_routes_or_dis
     assert schema["$defs"]["RouteOpinion"]["properties"]["reason"]["maxLength"] == 180
     assert schema["properties"]["agreements"]["maxItems"] == 3
     assert schema["properties"]["routes"]["minItems"] == schema["properties"]["routes"]["maxItems"] == 3
-    assert len(calls[-1]["rounds"]) == 2
+    assert len(calls[-1]["rounds"]) == 1
+    assert len(response.json()["data"]["rounds"]) == 2
     assert all(len(row["opinions"]) == 3 for row in calls[-1]["rounds"])
     assert calls[-1]["guards"]["no_orders"]
 

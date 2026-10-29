@@ -38,7 +38,7 @@ def test_position_partial_summary_uses_distinct_latest_valid_roles_when_reply_fa
     assert result['status'] == 'partial' and result['summary']
     assert result['synthesis_basis'] == {'mode': 'partial_initial', 'participating_roles': ['trend', 't_review'],
                                         'missing_roles': ['risk'], 'unreviewed_roles': ['trend']}
-    selected = payloads[0]['synthesis_opinions']
+    selected = payloads[0]['rounds'][0]['opinions']
     assert [(row['role'], row['stage']) for row in selected] == [('trend', 'independent'), ('t_review', 'challenge')]
     assert all(row['status'] == 'ok' for row in payloads[0]['rounds'][0]['opinions'])
     assert 'rejected-private-content' not in json.dumps(payloads)
