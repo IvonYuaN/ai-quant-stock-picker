@@ -1,4 +1,5 @@
 import { PositionActionChecks } from "./PositionConditionChecks";
+import { DiscussionFailures } from "./DiscussionFailures";
 import { StrategyReviewContextPanel } from "./StrategyReviewContextPanel";
 import { useEffect, useRef, useState } from "react";
 import { api, isAqspAbortError, type ActionWorksheet, type DiscussionAction, type PositionDiscussion, type PositionModelCatalog, type PositionModelConfig, type PlanTarget, type ReviewChoice, type WatchComparator } from "@/lib/api";
@@ -75,7 +76,7 @@ export function PositionDiscussionPanel({ eventId, target, choice, worksheet, di
       const next = await api.positionDiscussionStream(planTarget.id, choice, guard.expected_position,
         (nextStage) => { if (active.current) setStage(nextStage); }, controller.current.signal, custom ? config : undefined,
         !custom && serverModel && serverModel !== catalog?.current_model ? serverModel : undefined, guard.expected_revision, planTarget.kind);
-      if (active.current) { setResult(next); onComplete?.(); if (next.status === "failed") setError("模型未完成有效讨论，保留条件计划，可重试。"); }
+      if (active.current) { setResult(next); onComplete?.(); }
     } catch (reason) { if (active.current) setError(isAqspAbortError(reason) ? "已停止等待本次分析，请刷新核对是否已有保存结果。" : reason instanceof Error ? reason.message : "讨论失败，可以重试。"); }
     finally { controller.current = null; inFlight.current = false; if (active.current) setBusy(false); }
   }
@@ -149,7 +150,8 @@ export function PositionDiscussionPanel({ eventId, target, choice, worksheet, di
         {result.summary.disagreements.length ? <p>仍有分歧：{result.summary.disagreements.join("；")}</p> : null}
         {result.summary.missing_evidence.length ? <p>还缺什么：{result.summary.missing_evidence.join("；")}</p> : null}
         {result.summary.agreements.length ? <details><summary>共同认可的依据</summary><ul>{result.summary.agreements.map((line, i) => <li key={i}>{line}</li>)}</ul></details> : null}
-      </> : <p role="status">尚无通过校验的汇总结论，{result.summary_issue || "有效交叉回应不足"}；可展开查看已完成角色。</p>}
+      </> : <p role="status">尚无通过校验的汇总结论。{!result.summary_failure_kind && result.summary_issue ? `${result.summary_issue}；` : ""}可展开查看已完成角色。</p>}
+      <DiscussionFailures result={result} />
       <details><summary>查看各角色观点与相互回应（模型原文，待核对）</summary>{result.rounds.map((round, index) => <div key={index}><h5>{round.stage === "independent" ? "独立分析" : "交叉回应"}</h5>{round.opinions.map((row) => <article key={row.role}><b>{row.label}</b>{row.opinion ? <><p>{row.opinion.summary}</p>{row.opinion.challenge ? <p>回应 {row.opinion.reply_to.map((role) => ({ trend: "趋势分析", t_review: "做 T 评估", risk: "风险复核" })[role] ?? role).join("、")}：{row.opinion.challenge}</p> : null}<p className="aq-note">依据：{row.opinion.evidence_ids.join("、")}</p>{row.opinion.uncertainties.length ? <p>不确定：{row.opinion.uncertainties.join("；")}</p> : null}{actions(row.opinion.actions)}</> : <p>{row.issue}</p>}</article>)}</div>)}</details>
       <details><summary>模型与边界说明</summary><p className="aq-note">{result.notice}</p></details>
     </section> : null}

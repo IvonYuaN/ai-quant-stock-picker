@@ -24,8 +24,9 @@ from aqsp.utils.jsonl_io import advisory_lock
 import candidate_observation as resources
 import strategy_conditions as conditions
 import position_discussion as transport
-from strategy_review_context import candidate_review_context, historical_numbers, model_review_evidence, source_numbers
+from strategy_review_context import candidate_review_context, contains_action_reference, historical_numbers, model_review_evidence, source_numbers
 from model_source_time import trusted_source_stamps, without_source_times
+from model_contract import ModelContractError
 from candidate_technical_evidence import (
     historical_technical_evidence, mask_indicator_names, mask_quote_day_change, mask_technical_facts, model_technical_context,
     model_technical_evidence, reject_unmatched_technical_numbers, technical_evidence,
@@ -112,31 +113,36 @@ def parse(text: str, schema: type[BaseModel], value: dict[str, Any], peers: set[
     parsed = schema.model_validate_json(raw).model_dump()
     evidence = value['evidence']
     if any(key not in evidence for key in parsed.get('evidence_ids', [])):
-        raise ValueError('候选模型引用不存在的证据')
+        raise ModelContractError('evidence_reference')
     if schema is CandidateOpinion and peers and (not parsed['challenge'].strip() or not parsed['reply_to'] or any(role not in peers for role in parsed['reply_to'])):
-        raise ValueError('候选讨论缺少有效同行回应')
+        raise ModelContractError('peer_reference')
     if schema is CandidateOpinion and not peers and parsed['reply_to']:
-        raise ValueError('独立意见不能虚构同行')
+        raise ModelContractError('peer_reference')
     if schema is CandidateSummary:
         if {row['choice'] for row in parsed['routes']} != {'pullback', 'confirmation', 'defer'}:
-            raise ValueError('没有完整比较候选三条路线')
+            raise ModelContractError('route_contract')
         if any(key not in evidence for row in parsed['routes'] for key in row['evidence_ids']):
-            raise ValueError('候选路线引用不存在的证据')
+            raise ModelContractError('evidence_reference')
         if value['entry_blocked'] and (parsed['focus_choice'] not in {None, 'defer'} or any(row['choice'] != 'defer' and row['judgment'] == 'investigate' for row in parsed['routes'])):
-            raise ValueError('模型候选路线越过当前研究门禁')
+            raise ModelContractError('hard_constraint')
     for action in parsed['actions']:
-        conditions.validate_selection(action['prerequisite_ids'], action['invalidation_ids'])
+        if any(contains_action_reference(action[key], value['price_refs']) for key in ('condition', 'invalidation')):
+            raise ModelContractError('embedded_reference')
+        try:
+            conditions.validate_selection(action['prerequisite_ids'], action['invalidation_ids'])
+        except ValueError:
+            raise ModelContractError('condition_reference') from None
         offered = {item['id'] for item in value.get('condition_catalog', {}).get('items', [])}
         if any(identifier not in offered for identifier in action['prerequisite_ids'] + action['invalidation_ids']):
-            raise ValueError('候选模型引用了未提供的条件目录')
+            raise ModelContractError('condition_reference')
         if action['price_ref'] is not None and action['price_ref'] not in value['price_refs']:
-            raise ValueError('候选观察价没有来源')
+            raise ModelContractError('price_reference')
         if action['choice'] == 'defer' and action['price_ref'] is not None:
-            raise ValueError('暂缓路线不应生成到价条件')
+            raise ModelContractError('hard_constraint')
         if action['choice'] == 'defer' and (action['prerequisite_ids'] or action['invalidation_ids']):
-            raise ValueError('暂缓路线当前不采用动作级机检条件，请保留人工复核说明')
+            raise ModelContractError('condition_reference')
         if value['entry_blocked'] and action['choice'] != 'defer':
-            raise ValueError('模型动作越过当前研究门禁')
+            raise ModelContractError('hard_constraint')
     # Numeric trading claims outside refs cannot become a source of precision.
     def texts(item: Any, key: str = '') -> list[str]:
         if isinstance(item, dict):
@@ -228,8 +234,25 @@ def parse(text: str, schema: type[BaseModel], value: dict[str, Any], peers: set[
 def schema_for(schema: type[BaseModel], value: dict[str, Any], peers: set[str]) -> dict[str, Any]:
     """Expose exact source IDs and reply identities before each model call."""
     result = schema.model_json_schema()
+    action_schema = result if schema is CandidateAction else result.get('$defs', {}).get('CandidateAction')
+    if action_schema is not None and value['entry_blocked']:
+        action_schema['properties']['choice']['enum'] = ['defer']
     for container in (result, *result.get('$defs', {}).values()):
         props = container.get('properties', {})
+        if container is action_schema:
+            container.setdefault('allOf', []).append({
+                'if': {'properties': {'choice': {'const': 'defer'}}},
+                'then': {'properties': {'price_ref': {'type': 'null'},
+                                        'prerequisite_ids': {'maxItems': 0}, 'invalidation_ids': {'maxItems': 0}}},
+            })
+        if value['entry_blocked']:
+            if 'focus_choice' in props:
+                props['focus_choice'] = {'anyOf': [{'const': 'defer'}, {'type': 'null'}]}
+            if 'judgment' in props:
+                container.setdefault('allOf', []).append({
+                    'if': {'properties': {'choice': {'enum': ['pullback', 'confirmation']}}},
+                    'then': {'properties': {'judgment': {'enum': ['not_now', 'insufficient']}}},
+                })
         if 'evidence_ids' in props:
             props['evidence_ids']['items'] = {'type': 'string', 'enum': sorted(value['evidence'])}
         for field in ('prerequisite_ids', 'invalidation_ids'):
@@ -343,7 +366,7 @@ async def run_discussion(code: str, expected_version: int, expected_evidence_ver
                 rounds.append({'stage': 'challenge', 'opinions': replies})
             complete = [row for row in replies if row['status'] == 'ok']
             synthesis_opinions, synthesis_basis = transport._synthesis_inputs(initial, replies, ROLES)
-            summary, issue = None, ''
+            summary, summary_failure = None, {}
             if len(synthesis_opinions) >= 2:
                 progress('synthesis')
                 try:
@@ -354,15 +377,19 @@ async def run_discussion(code: str, expected_version: int, expected_evidence_ver
                         'output_schema': schema_for(CandidateSummary, model_value, set())}, limits.synthesis_timeout, limits, system=SYSTEM)
                     summary = parse(raw, CandidateSummary, model_value, set())
                 except (ValueError, KeyError, TypeError, IndexError, RuntimeError, httpx.HTTPError, TimeoutError) as exc:
-                    issue = transport._model_failure(exc)['issue']
+                    summary_failure = transport._model_failure(exc)
             else:
-                issue = '有效意见不足两名不同角色，未生成汇总；请查看已有意见及失败原因'
+                summary_failure = {'failure_kind': 'insufficient_roles',
+                                   'issue': '有效意见不足两名不同角色，未生成汇总；请查看已有意见及失败原因'}
             result = {'id': uuid4().hex, 'status': 'complete' if summary and len(complete) == len(ROLES) else 'partial' if valid else 'failed',
                       'generated_at': now_shanghai().isoformat(), 'model': endpoint.model, 'mode': '同一模型的候选三角色讨论',
                       'resource_version': version, 'evidence_version': value['evidence_version'], 'research_date': value['research_date'],
                       'quote_as_of': value['evidence']['quote']['as_of'], 'price_refs': value['price_refs'], 'evidence_snapshot': value['evidence'],
                       'review_context': review_context, 'condition_catalog': value['condition_catalog'],
-                      'entry_blocked': discussion_entry_blocked, 'rounds': rounds, 'summary': summary, 'summary_issue': issue,
+                      'entry_blocked': discussion_entry_blocked, 'rounds': rounds, 'summary': summary,
+                      'summary_issue': summary_failure.get('issue', ''),
+                      'summary_failure_kind': summary_failure.get('failure_kind', ''),
+                      'summary_contract_issue_code': summary_failure.get('contract_issue_code', ''),
                       'synthesis_basis': synthesis_basis,
                       'elapsed_seconds': round(time.monotonic() - started, 2),
                       'notice': '同一模型角色可能共享偏差；仅供人工复核，不覆盖评分、硬风险或自动买卖。到价后仍需核验其他条件。'}

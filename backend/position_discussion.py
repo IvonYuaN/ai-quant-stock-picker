@@ -20,6 +20,7 @@ import chat
 from aqsp.core.time import now_shanghai
 from position_plan_service import read_action_plan, read_position_plan, save_position_discussion
 import strategy_conditions as conditions
+from model_contract import ModelContractError
 
 
 @dataclass(frozen=True)
@@ -237,40 +238,45 @@ def _parse(text: str, schema: type[BaseModel], evidence: dict[str, Any], prices:
     from strategy_review_context import validate_position_action_numbers
     validate_position_action_numbers(parsed, evidence, prices)
     if any(key not in evidence for key in parsed.get("evidence_ids", [])):
-        raise ValueError("模型引用不存在的证据")
+        raise ModelContractError('evidence_reference')
     if schema is ComparisonSummary:
         if {row["choice"] for row in parsed["routes"]} != {"hold", "reduce", "t_watch"}:
-            raise ValueError("模型未完整比较三条路")
+            raise ModelContractError('route_contract')
         if any(key not in evidence for row in parsed["routes"] for key in row["evidence_ids"]):
-            raise ValueError("路线引用不存在的证据")
+            raise ModelContractError('evidence_reference')
         if guards["pause_t"] and (parsed["focus_choice"] == "t_watch" or any(
             row["choice"] == "t_watch" and row["judgment"] == "investigate" for row in parsed["routes"]
         )):
-            raise ValueError("模型路线比较与暂停做 T 条件冲突")
+            raise ModelContractError('hard_constraint')
         if (not guards["sellable_shares"] or guards.get("quote_issue")) and parsed["focus_choice"] == "reduce":
-            raise ValueError("模型路线比较与可卖或行情条件冲突")
+            raise ModelContractError('hard_constraint')
     for action in parsed["actions"]:
-        conditions.validate_selection(action['prerequisite_ids'], action['invalidation_ids'])
+        try:
+            conditions.validate_selection(action['prerequisite_ids'], action['invalidation_ids'])
+        except ValueError as exc:
+            raise ModelContractError('condition_reference') from exc
         offered = set(guards.get('condition_ids', []))
         if any(identifier not in offered for identifier in action['prerequisite_ids'] + action['invalidation_ids']):
-            raise ValueError('模型引用未提供的可监控条件')
+            raise ModelContractError('condition_reference')
         if action["price_ref"] is not None and action["price_ref"] not in prices:
-            raise ValueError("模型引用不存在的观察价")
+            raise ModelContractError('price_reference')
         if action["action"] in {"sell_review", "buy_review"} and action["price_ref"] is None:
-            raise ValueError("操作观察缺少来源价位")
+            raise ModelContractError('price_reference')
         if guards["pause_t"] and action["action"] == "buy_review":
-            raise ValueError("模型建议与风险暂停条件冲突")
+            raise ModelContractError('hard_constraint')
         if (not guards["sellable_shares"] or guards.get("quote_issue")) and action["action"] == "sell_review":
-            raise ValueError("模型建议与可卖底仓冲突")
-    if schema is RoleOpinion and peers and (not parsed["challenge"].strip() or not parsed["reply_to"] or any(role not in peers for role in parsed["reply_to"])):
-        raise ValueError("未形成有效的同行回应")
+            raise ModelContractError('hard_constraint')
+    if schema is RoleOpinion and ((not peers and parsed['reply_to']) or peers and (
+            not parsed["challenge"].strip() or not parsed["reply_to"] or any(role not in peers for role in parsed["reply_to"]))):
+        raise ModelContractError('peer_reference')
     if any(len(item) > 600 for key in ("uncertainties", "agreements", "disagreements", "missing_evidence") for item in parsed.get(key, [])):
         raise ValueError("模型输出超长")
     return parsed
 
 
 def output_schema(schema: type[BaseModel], evidence: dict[str, Any], prices: dict[str, Any], peers: set[str],
-                  limits: DiscussionLimits | None = None, condition_catalog: dict[str, Any] | None = None) -> dict[str, Any]:
+                  limits: DiscussionLimits | None = None, condition_catalog: dict[str, Any] | None = None,
+                  guards: dict[str, Any] | None = None) -> dict[str, Any]:
     """Describe exact reference IDs before generation, then validate independently.
 
     A schema shown in a prompt is not guaranteed enforcement by the provider.
@@ -281,11 +287,36 @@ def output_schema(schema: type[BaseModel], evidence: dict[str, Any], prices: dic
     containers = [result, *result.get("$defs", {}).values()]
     for container in containers:
         properties = container.get("properties", {})
+        if schema is ComparisonSummary and guards is not None:
+            if 'focus_choice' in properties:
+                choices = ['hold']
+                if guards.get('sellable_shares') and not guards.get('quote_issue'):
+                    choices.append('reduce')
+                if not guards.get('pause_t'):
+                    choices.append('t_watch')
+                properties['focus_choice'] = {'anyOf': [{'type': 'string', 'enum': choices}, {'type': 'null'}]}
+            if 'judgment' in properties and guards.get('pause_t'):
+                container.setdefault('allOf', []).append({
+                    'if': {'properties': {'choice': {'const': 't_watch'}}},
+                    'then': {'properties': {'judgment': {'enum': ['not_now', 'insufficient']}}},
+                })
+        if 'action' in properties:
+            allowed_actions = {'observe', 'pause'}
+            if prices:
+                if guards is None or guards.get('sellable_shares') and not guards.get('quote_issue'):
+                    allowed_actions.add('sell_review')
+                if guards is None or not guards.get('pause_t'):
+                    allowed_actions.add('buy_review')
+            properties['action']['enum'] = [action for action in properties['action']['enum'] if action in allowed_actions]
         if "evidence_ids" in properties:
             properties["evidence_ids"]["items"] = {"type": "string", "enum": sorted(evidence)}
         if "price_ref" in properties:
             properties["price_ref"] = {"anyOf": [{"type": "string", "enum": sorted(prices)}, {"type": "null"}]} if prices else {"type": "null"}
             properties["price_ref"]["description"] = "sell_review或buy_review必须引用price_refs中的ID；observe/pause允许null"
+            container.setdefault('allOf', []).append({
+                'if': {'properties': {'action': {'enum': ['sell_review', 'buy_review']}}, 'required': ['action']},
+                'then': {'properties': {'price_ref': {'type': 'string', 'enum': sorted(prices)}}, 'required': ['price_ref']},
+            })
         for field in ('prerequisite_ids', 'invalidation_ids'):
             if field in properties:
                 properties[field]['items'] = {'type': 'string', 'enum': [item['id'] for item in (condition_catalog or {}).get('items', [])]}
@@ -311,6 +342,8 @@ def output_schema(schema: type[BaseModel], evidence: dict[str, Any], prices: dic
 
 
 def _model_failure(exc: Exception) -> dict[str, str]:
+    if isinstance(exc, ModelContractError):
+        return {'failure_kind': 'invalid_output', 'contract_issue_code': exc.code, 'issue': str(exc)}
     if isinstance(exc, ModelOutputError):
         issue = "模型输出达到长度上限，未使用不完整结果" if exc.kind == "truncated_output" else "模型返回空内容，未形成有效意见"
         return {"failure_kind": exc.kind, "issue": issue}
@@ -403,7 +436,7 @@ async def run_discussion(event_id: str, choice: str | None, expected_position: d
                     "task": ("独立评估；每个文字字段用一句话，reply_to为空数组，challenge为空字符串" if peers is None else
                              "回应同行：指出同意、反对或缺证，不必改变原判断；每个文字字段用一句话。reply_to至少填一个peer_opinions的键，challenge必须写实际回应，不能留空"),
                     "allowed_evidence_ids": sorted(evidence),
-                    "peer_opinions": peers or {}, "output_schema": output_schema(RoleOpinion, evidence, prices, set(peers or {}), condition_catalog=catalog)}, limits.role_timeout, limits)
+                    "peer_opinions": peers or {}, "output_schema": output_schema(RoleOpinion, evidence, prices, set(peers or {}), condition_catalog=catalog, guards=guards)}, limits.role_timeout, limits)
                 result = _parse(raw, RoleOpinion, evidence, prices, set(peers or {}), guards)
                 return {"role": role, "label": ROLES[role][0], "status": "ok", "opinion": result,
                         "elapsed_seconds": round(time.monotonic() - call_started, 2)}
@@ -441,7 +474,7 @@ async def run_discussion(event_id: str, choice: str | None, expected_position: d
                     "rounds": [{"stage": "validated_latest", "opinions": synthesis_opinions}],
                     "synthesis_basis": synthesis_basis,
                     "allowed_evidence_ids": sorted(evidence),
-                    "output_schema": output_schema(schema, evidence, prices, set(), limits, condition_catalog=catalog)}, limits.synthesis_timeout, limits)
+                    "output_schema": output_schema(schema, evidence, prices, set(), limits, condition_catalog=catalog, guards=guards)}, limits.synthesis_timeout, limits)
                 summary = _parse(raw, schema, evidence, prices, set(), guards)
             except (ValueError, KeyError, TypeError, IndexError, AttributeError, RuntimeError, httpx.HTTPError, TimeoutError) as exc:
                 summary_failure = _model_failure(exc)
@@ -458,6 +491,7 @@ async def run_discussion(event_id: str, choice: str | None, expected_position: d
                   "review_revision": worksheet["revision"], "position_id": worksheet["position_id"],
                   "rounds": rounds, "summary": summary, "synthesis_basis": synthesis_basis, "model_text_unverified": True,
                   "summary_issue": summary_failure.get("issue", ""), "summary_failure_kind": summary_failure.get("failure_kind", ""),
+                  "summary_contract_issue_code": summary_failure.get("contract_issue_code", ""),
                   "elapsed_seconds": round(time.monotonic() - started, 2), "summary_seconds": summary_seconds,
                   "io_budget": {"role_timeout_seconds": limits.role_timeout, "synthesis_timeout_seconds": limits.synthesis_timeout},
                   "notice": "模型意见仅供人工复核；角色可能共享模型偏差，不是独立模型共识。仅检查格式、引用及结构化动作；模型自由文字未经交易语义验证，不是操作指令，不覆盖风险规则或自动成交。"}

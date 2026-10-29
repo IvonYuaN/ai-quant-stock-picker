@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 from fastapi.testclient import TestClient
 import httpx
 import pytest
+from model_contract import ModelContractError
 
 import app
 import aqsp_bridge
@@ -220,9 +221,9 @@ def test_candidate_model_rejects_unsupported_refs_or_gate_override_when_output_f
     value = resources.workspace('600000')
     row = summary()
     row['actions'][0]['price_ref'] = 'unsupported'
-    with pytest.raises(ValueError, match='没有来源'):
+    with pytest.raises(ModelContractError, match='来源价位'):
         discussion.parse(json.dumps(row), discussion.CandidateSummary, value, set())
-    with pytest.raises(ValueError, match='门禁'):
+    with pytest.raises(ModelContractError, match='当前可卖股份'):
         discussion.parse(json.dumps(summary()), discussion.CandidateSummary, value | {'entry_blocked': True}, set())
 
 

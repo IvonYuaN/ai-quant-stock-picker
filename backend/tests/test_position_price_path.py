@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from model_contract import ModelContractError
 from datetime import timedelta
 
 import pandas as pd
@@ -142,7 +143,7 @@ def test_completed_price_path_cannot_supply_new_action_threshold_when_price_has_
     monkeypatch.setattr('aqsp.core.time.now_shanghai', lambda: NOW)
     row = deepcopy(OPINION)
     row['actions'][0]['condition'] = '5根完成日线末日量比 1.09倍后买回'
-    with pytest.raises(ValueError, match='买卖门槛'):
+    with pytest.raises(ModelContractError, match='历史统计或价位身份'):
         validate_position_action_numbers(row, path_evidence(), {'same': {'price': 1.09, 'source': 'synthetic', 'as_of': NOW.isoformat()}})
 
 
@@ -203,7 +204,7 @@ def test_completed_price_path_consumes_only_verified_action_window_identity(monk
 ])
 def test_completed_price_path_rejects_action_when_period_or_price_kind_conflicts(monkeypatch, text: str) -> None:
     monkeypatch.setattr('aqsp.core.time.now_shanghai', lambda: NOW)
-    with pytest.raises(ValueError, match='(观察价不一致|不能冒充)'):
+    with pytest.raises(ModelContractError, match='历史统计或价位身份'):
         validate_position_action_numbers(action_opinion(text), path_evidence(), {'selected': window_reference()})
 
 
@@ -214,14 +215,14 @@ def test_completed_price_path_rejects_action_when_period_or_price_kind_conflicts
 def test_completed_price_path_rejects_live_model_reference_conflict_with_specific_label_error(monkeypatch, text: str) -> None:
     monkeypatch.setattr('aqsp.core.time.now_shanghai', lambda: NOW)
     reference = {**window_reference(), 'label': '最近完成日高点'}
-    with pytest.raises(ValueError, match='日别、窗口或高低点'):
+    with pytest.raises(ModelContractError, match='历史统计或价位身份'):
         validate_position_action_numbers(action_opinion(text), path_evidence(), {'selected': reference})
 
 
 @pytest.mark.parametrize('patch', [{'source': 'other'}, {'as_of': NOW.date().isoformat()}, {'price': 20}])
 def test_completed_price_path_rejects_action_window_when_reference_metadata_differs(monkeypatch, patch: dict) -> None:
     monkeypatch.setattr('aqsp.core.time.now_shanghai', lambda: NOW)
-    with pytest.raises(ValueError, match='本次已核验量价窗口不一致'):
+    with pytest.raises(ModelContractError, match='历史统计或价位身份'):
         validate_position_action_numbers(action_opinion('观察近20日窗口高点'), path_evidence(),
                                          {'selected': {**window_reference(), **patch}})
 
@@ -229,7 +230,7 @@ def test_completed_price_path_rejects_action_window_when_reference_metadata_diff
 @pytest.mark.parametrize('missing', [False, True])
 def test_completed_price_path_rejects_action_window_when_completed_evidence_missing_or_stale(monkeypatch, missing: bool) -> None:
     monkeypatch.setattr('aqsp.core.time.now_shanghai', lambda: NOW + timedelta(days=1))
-    with pytest.raises(ValueError, match='本次已核验量价窗口不一致'):
+    with pytest.raises(ModelContractError, match='历史统计或价位身份'):
         validate_position_action_numbers(action_opinion('观察近20日窗口高点'), {} if missing else path_evidence(),
                                          {'selected': window_reference()})
 
