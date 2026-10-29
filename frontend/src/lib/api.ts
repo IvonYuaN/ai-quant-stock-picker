@@ -430,9 +430,10 @@ export interface PlanParameters {
 }
 export interface PositionModelConfig { baseURL: string; apiKey: string; model: string }
 export interface PositionModelCatalog { catalog_id: string; current_model: string; models: string[]; checked_at: string; listed: boolean | null; directory_complete?: boolean; issue: string; notice: string }
-export interface DiscussionAction { action: "observe" | "sell_review" | "buy_review" | "pause"; price_ref: string | null; condition: string; invalidation: string }
+export interface DiscussionAction { action: "observe" | "sell_review" | "buy_review" | "pause"; price_ref: string | null; condition: string; invalidation: string; prerequisite_ids?: string[]; invalidation_ids?: string[] }
 export type WatchComparator = "at_or_above" | "at_or_below";
 export interface StrategyWatch {
+  condition_contract?: PositionConditionContract | null;
   direction_schema?: string;
   action: DiscussionAction["action"]; price: number; comparator: WatchComparator;
   condition: string; invalidation: string;
@@ -468,6 +469,7 @@ export interface DiscussionSynthesisBasis {
   participating_roles: string[]; missing_roles: string[]; unreviewed_roles: string[];
 }
 export interface PositionDiscussion {
+  condition_catalog?: CandidateConditionCatalog;
   synthesis_basis?: DiscussionSynthesisBasis;
   review_context?: StrategyReviewContext;
   review_revision?: string;
@@ -497,6 +499,11 @@ export interface CandidateConditionContract {
   definitions: Array<{ id: string; label: string; kind: "market_status" | "sector_status"; evidence_key: "market" | "sector"; accepted_statuses: string[] }>;
   price_predicate: { price_ref: string; comparator: WatchComparator; price: number; source: string; as_of: string } | null;
   manual_checks: Array<{ id: string; label: string; detail: string }>;
+}
+export interface PositionConditionContract extends Omit<CandidateConditionContract, "schema_version"> {
+  schema_version: 2;
+  origin: { kind: "position"; position_id: string; analysis_basis_id: string; source_discussion: "comparison" | "plan";
+    generated_at: string; action_index: number; choice: ReviewChoice; action: "observe" | "sell_review" | "buy_review"; price_ref: string | null };
 }
 export interface CandidateConditionCheck {
   id: string; label: string; role: "prerequisite" | "invalidation" | "price" | "manual";
@@ -555,6 +562,7 @@ export interface PositionConstraints {
 export interface PlanTarget { kind: "position" | "alert"; id: string }
 export type FollowupMode = "off" | "changes" | "daily";
 export interface FollowupObservation {
+  condition_checks?: CandidateConditionChecks | null;
   requires_refresh?: boolean; issue?: string;
   reason?: string; joint_pause_pending?: boolean;
   position_id: string; symbol: string; name: string;
@@ -563,6 +571,8 @@ export interface FollowupObservation {
   revision: string; plan_key: string; position_snapshot: ActionWorksheet["position_snapshot"];
 }
 export interface ActionWorksheet {
+  strategy_condition_checks?: CandidateConditionChecks | null;
+  strategy_condition_issue?: string;
   symbol: string;
   current_risk?: Array<{ status: string; level: string }>;
   trade_revision?: string;

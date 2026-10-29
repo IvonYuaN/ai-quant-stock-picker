@@ -58,7 +58,8 @@ def list_followups() -> dict[str, Any]:
     return {'items': sorted(items, key=lambda row: row['observed_at'], reverse=True)}
 
 
-def _validate_candidate(candidate: dict[str, Any]) -> bool:
+def _validate_candidate(candidate: dict[str, Any], *, source_portfolio: dict[str, Any] | None = None,
+                        source_contexts: dict[str, dict[str, Any]] | None = None) -> bool:
     with ae._LOCK, pf._LOCK:
         data, events = pf._load(), ae._load()
     position_id = candidate['position_id']
@@ -85,6 +86,50 @@ def _validate_candidate(candidate: dict[str, Any]) -> bool:
     if candidate['state'] in {'price_watch', 'below_watch', 'paused'}:
         from decision_context import position_quote_issue
         if position_quote_issue({'as_of': candidate.get('quote_as_of')}, checked_at=current):
+            return False
+    frozen_checks = candidate.get('condition_checks')
+    watch = (root.get('review_plan') or {}).get('watch') or {}
+    if frozen_checks is not None or 'condition_contract' in watch:
+        from position_followup import watch_contract
+        import strategy_conditions as conditions
+        try:
+            contract = watch_contract(watch, position_id)
+            if not isinstance(frozen_checks, dict) or observation.get('condition_checks') != frozen_checks:
+                return False
+            if frozen_checks.get('digest') != conditions.semantic_state(frozen_checks.get('items', []),
+                    contract_digest=contract['digest'] if contract else None, mode=frozen_checks.get('mode', 'legacy')):
+                return False
+            # Reuse this round's quote batch; only public caches/history are
+            # read again. Outbound checks never fetch another quote per position.
+            if source_portfolio is None:
+                return False
+            source_holding = next((row for row in source_portfolio.get('holdings', [])
+                                   if row.get('position_id') == position_id), None)
+            if source_holding is None:
+                return False
+            from position_strategy_evidence import load_strategy_context
+            context = (source_contexts or {}).get(source_holding['code'])
+            if context is None:
+                context = load_strategy_context(source_holding, [row['code'] for row in source_portfolio['holdings']],
+                    Path(pf._tenant_dir()) / 'live-risk-history.db', checked_at=current)
+            worksheet = build_position_worksheet(position_id, source_portfolio, data, events, current=current, context=context)
+            if (worksheet is None or worksheet.get('strategy_condition_issue')
+                    or worksheet['revision'] != candidate['revision'] or worksheet['position_snapshot'] != candidate['position_snapshot']):
+                return False
+            latest = observe_plan(worksheet, root, current=current).to_dict()
+            current_checks = latest.get('condition_checks')
+            if (latest['state'] != candidate['state'] or latest['reason'] != candidate.get('reason')
+                    or not current_checks or current_checks['digest'] != frozen_checks['digest']):
+                return False
+            sources = {(item['id'], item['role']): item.get('source') for item in current_checks['items']}
+            from decision_context import position_quote_issue
+            for item in frozen_checks['items']:
+                if item.get('source') != sources.get((item['id'], item['role'])):
+                    return False
+                if item['role'] != 'manual' and item['status'] in {'met', 'unmet'}:
+                    if not item.get('source') or position_quote_issue({'as_of': item.get('as_of')}, checked_at=current):
+                        return False
+        except (ValueError, KeyError, TypeError, DataError):
             return False
     return observation.get('state') == candidate['state'] and notification_key(root, observation, current=current) == candidate['key']
 
@@ -153,6 +198,6 @@ def check_plan_followups(portfolio: dict[str, Any], contexts: dict[str, dict[str
     suppressed = False
     if notify and candidates:
         from position_followup_delivery import deliver_followup_notifications
-        delivery = deliver_followup_notifications(candidates, validate=_validate_candidate)
+        delivery = deliver_followup_notifications(candidates, validate=lambda candidate: _validate_candidate(candidate, source_portfolio=portfolio, source_contexts=contexts))
         messages, suppressed = delivery.notify, delivery.suppressed
     return {'observations': observations, 'skipped': skipped, 'notify': list(messages), 'notify_suppressed': suppressed}

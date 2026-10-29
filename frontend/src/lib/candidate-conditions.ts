@@ -29,7 +29,7 @@ export interface CandidateChecksView {
 }
 
 const roleLabels = { prerequisite: "前提", invalidation: "失效条件", price: "报价", manual: "人工核验" };
-function checkStatus(row: CandidateConditionCheck): { statusLabel: string; tone: "neutral" | "warn" } {
+export function conditionCheckStatus(row: CandidateConditionCheck): { statusLabel: string; tone: "neutral" | "warn" } {
   if (row.status === "met") return row.role === "invalidation" ? { statusLabel: "已触发 · 需复核", tone: "warn" } : { statusLabel: "已满足", tone: "neutral" };
   if (row.status === "unmet") return { statusLabel: row.role === "invalidation" ? "未触发" : "未满足", tone: "neutral" };
   if (row.status === "manual_required") return { statusLabel: "需人工核验", tone: "warn" };
@@ -43,18 +43,18 @@ export function candidateChecksView(workspace: CandidateWorkspace): CandidateChe
   if (workspace.watch.status === "stopped") return {
     mode: checks?.schema_version === 1 ? checks.mode : "pending", title: "停止前检查记录",
     nextStep: "此观察已停止，以下保留最后检查记录，不再后台监控。",
-    items: checks?.schema_version === 1 ? checks.items.map((row) => ({ ...row, ...checkStatus(row), roleLabel: roleLabels[row.role] || "条件" })) : [],
+    items: checks?.schema_version === 1 ? checks.items.map((row) => ({ ...row, ...conditionCheckStatus(row), roleLabel: roleLabels[row.role] || "条件" })) : [],
   };
   if (workspace.watch.choice === "defer" && !["needs_review", "evidence_unavailable"].includes(workspace.observation?.state ?? "")) {
     const registered = checks?.schema_version === 1 && checks.mode === "registered";
-    return { mode: registered ? "registered" : "legacy", title: registered ? "暂缓依据跟进" : "旧版暂缓原因", nextStep: "保持暂缓，依据变化后复核原前提与失效说明。", items: checks?.schema_version === 1 ? checks.items.map((row) => ({ ...row, ...checkStatus(row), roleLabel: roleLabels[row.role] || "条件" })) : [] };
+    return { mode: registered ? "registered" : "legacy", title: registered ? "暂缓依据跟进" : "旧版暂缓原因", nextStep: "保持暂缓，依据变化后复核原前提与失效说明。", items: checks?.schema_version === 1 ? checks.items.map((row) => ({ ...row, ...conditionCheckStatus(row), roleLabel: roleLabels[row.role] || "条件" })) : [] };
   }
   if (!checks || checks.schema_version !== 1) {
     const registered = workspace.watch.condition_contract?.schema_version === 1;
     return { mode: registered ? "pending" : "legacy", title: registered ? "逐项条件待检查" : "旧版文字条件", items: [],
       nextStep: registered ? "等待后台逐项核对；报价到价不代表其余条件成立。" : "旧版文字条件未逐项登记；仅有报价检查，其余前提需人工核验。" };
   }
-  const items = checks.items.map((row) => ({ ...row, ...checkStatus(row), roleLabel: roleLabels[row.role] || "条件" }));
+  const items = checks.items.map((row) => ({ ...row, ...conditionCheckStatus(row), roleLabel: roleLabels[row.role] || "条件" }));
   if (checks.mode === "legacy") return { mode: "legacy", title: "旧版文字条件", items, nextStep: "旧版文字条件未逐项登记；到价后仍需人工核验原前提。" };
   if (!items.length) return { mode: "pending", title: "逐项条件待检查", items, nextStep: "本次尚无逐项检查结果，不能仅凭到价认定前提成立。" };
   const invalidated = items.find((row) => row.role === "invalidation" && row.status === "met");

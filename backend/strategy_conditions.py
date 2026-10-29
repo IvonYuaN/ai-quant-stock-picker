@@ -144,10 +144,37 @@ def freeze_contract(prerequisite_ids: list[str], invalidation_ids: list[str], *,
     return {**contract, 'digest': digest(contract)}
 
 
+def _position_origin(value: Any) -> dict[str, Any]:
+    keys = {'kind', 'position_id', 'analysis_basis_id', 'source_discussion', 'generated_at',
+            'action_index', 'choice', 'action', 'price_ref'}
+    if (not isinstance(value, dict) or set(value) != keys or value['kind'] != 'position'
+            or value['source_discussion'] not in {'comparison', 'plan'}
+            or value['choice'] not in {'hold', 'reduce', 't_watch'}
+            or value['action'] not in {'observe', 'sell_review', 'buy_review'}
+            or type(value['action_index']) is not int or value['action_index'] < 0
+            or any(not isinstance(value[key], str) or not value[key].strip()
+                   for key in ('position_id', 'analysis_basis_id', 'generated_at', 'price_ref'))):
+        raise ValueError('持仓冻结条件缺少有效动作身份')
+    return deepcopy(value)
+
+
+def freeze_position_contract(prerequisite_ids: list[str], invalidation_ids: list[str], *,
+                             price_predicate: dict[str, Any], condition: str, invalidation: str,
+                             origin: dict[str, Any]) -> dict[str, Any]:
+    """Position v2 has a distinct origin; existing candidate v1 stays byte-stable."""
+    body = freeze_contract(prerequisite_ids, invalidation_ids, price_predicate=price_predicate,
+                           condition=condition, invalidation=invalidation)
+    body.pop('digest')
+    body.update(schema_version=2, origin=_position_origin(origin))
+    body['manual_checks'] = [{'id': 'manual:price_volume:v1', 'label': '人工核对买卖前提与原路线限制',
+                             'detail': f'原观察条件：{condition}；原失效说明：{invalidation}。到价或方向匹配不能证明转弱、止跌、放量、突破有效或已经成交；做T须保留卖后买与实际持仓限制。'}]
+    return {**body, 'digest': digest(body)}
+
+
 def validate_contract(value: Any) -> dict[str, Any]:
     """Reject changed operands/definitions; old records without a contract are separate."""
     keys = {'schema_version', 'digest', 'prerequisite_ids', 'invalidation_ids', 'definitions', 'price_predicate', 'manual_checks', 'origin'}
-    if not isinstance(value, dict) or set(value) != keys or type(value['schema_version']) is not int or value['schema_version'] != 1:
+    if not isinstance(value, dict) or set(value) != keys or type(value['schema_version']) is not int or value['schema_version'] not in {1, 2}:
         raise ValueError('观察条件合同版本或结构无效')
     validate_selection(value['prerequisite_ids'], value['invalidation_ids'])
     if any(value[key] != sorted(value[key]) for key in ('prerequisite_ids', 'invalidation_ids')):
@@ -156,7 +183,12 @@ def validate_contract(value: Any) -> dict[str, Any]:
     if value['definitions'] != definitions:
         raise ValueError('冻结条件定义已被更改')
     _price_predicate(value['price_predicate'])
-    _origin(value['origin'])
+    if value['schema_version'] == 1:
+        _origin(value['origin'])
+    else:
+        _position_origin(value['origin'])
+        if value['price_predicate'] is None:
+            raise ValueError('持仓冻结条件缺少报价比较')
     manual = value['manual_checks']
     if (not isinstance(manual, list) or len(manual) != 1 or not isinstance(manual[0], dict)
             or set(manual[0]) != {'id', 'label', 'detail'}

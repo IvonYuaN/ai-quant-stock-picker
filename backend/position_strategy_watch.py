@@ -17,6 +17,7 @@ from aqsp.core.time import now_shanghai
 from aqsp.utils.jsonl_io import advisory_lock
 from decision_context import position_quote_issue
 from position_followup import FollowupDefaults
+import strategy_conditions as conditions
 from position_plan_service import PlanConflictError, _checked_root, _store_root, read_position_plan
 from strategy_direction import direction_identity
 
@@ -74,6 +75,11 @@ def _validate_result(worksheet: dict[str, Any], result: dict[str, Any] | None,
     if type(value.action_index) is not int or not 0 <= value.action_index < len(actions):
         raise ValueError('请选择这份分析中的有效观察条件')
     action = actions[value.action_index]
+    prerequisites, invalidations = action.get('prerequisite_ids', []), action.get('invalidation_ids', [])
+    conditions.validate_selection(prerequisites, invalidations)
+    offered = {item['id'] for item in (result.get('condition_catalog') or {}).get('items', [])}
+    if any(identifier not in offered for identifier in prerequisites + invalidations):
+        raise ValueError('这份分析引用未提供的观察条件，尚未采用')
     reference = result.get('price_refs', {}).get(action.get('price_ref'))
     if action.get('action') not in {'observe', 'sell_review', 'buy_review'} or not isinstance(reference, dict):
         raise ValueError('这条意见没有可跟踪的来源价位，请先补齐依据')
@@ -125,6 +131,17 @@ def adopt_strategy_watch(position_id: str, value: StrategyWatchInput) -> dict[st
              'evidence_identity': {'symbol': worksheet['symbol'], 'position_id': position_id},
              'position_snapshot': deepcopy(value.expected_position), 'trade_revision': worksheet['trade_revision'],
              'constraints': deepcopy(worksheet['constraints'])}
+    if 'condition_catalog' in result:
+        watch['source_price_ref'] = action['price_ref']
+        watch['condition_contract'] = conditions.freeze_position_contract(
+            action.get('prerequisite_ids', []), action.get('invalidation_ids', []),
+            price_predicate={'price_ref': action['price_ref'], 'comparator': value.comparator,
+                             'price': reference['price'], 'source': reference['source'], 'as_of': reference['as_of']},
+            condition=action['condition'], invalidation=action['invalidation'],
+            origin={'kind': 'position', 'position_id': position_id, 'analysis_basis_id': value.expected_analysis_basis_id,
+                    'source_discussion': value.source_discussion, 'generated_at': value.generated_at,
+                    'action_index': value.action_index, 'choice': value.choice, 'action': action['action'],
+                    'price_ref': action['price_ref']})
     with ae._LOCK, advisory_lock(ae._file()), pf._LOCK, advisory_lock(pf._pf_file()):
         data, events = pf._load(), ae._load()
         root, _ = _checked_root(position_id, value.expected_position, value.expected_revision, data, events)

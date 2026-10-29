@@ -216,8 +216,8 @@ def build_position_worksheet(position_id: str, portfolio: dict[str, Any], data: 
     comparison = root.get('comparison')
     if comparison and not archived and (comparison.get('position_snapshot') != snapshot or comparison.get('review_revision') != revision):
         comparison = None
-    from position_followup import followup_view
-    return {'followup': followup_view(root, revision, snapshot, current=current), 'position_id': position_id, 'name': holding.get('name') or holding['code'], 'symbol': holding['code'],
+    from position_followup import followup_view, strategy_condition_checks
+    worksheet = {'followup': followup_view(root, revision, snapshot, current=current), 'position_id': position_id, 'name': holding.get('name') or holding['code'], 'symbol': holding['code'],
             'revision': revision, 'archived': archived, 'constraints': constraints, **details,
             'migration_issue': root.get('migration_issue', ''), 'basis': basis, 'position_snapshot': snapshot, 'review_plan': plan,
             'route_review': review, 'comparison': comparison, 'analysis_basis_id': basis_id, 'risk_revision': risk_revision,
@@ -226,6 +226,13 @@ def build_position_worksheet(position_id: str, portfolio: dict[str, Any], data: 
             'scenario': scenario, 'scenario_issue': scenario_issue, 'trade_revision': trade_revision,
             'recorded_sale': {key: receipt[key] for key in ('date', 'price', 'shares')} if receipt else None,
             'sale_requires_review': sale_requires_review, 'simulation_only': True}
+    worksheet['strategy_condition_issue'] = ''
+    try:
+        worksheet['strategy_condition_checks'] = strategy_condition_checks(worksheet, current=current)
+    except (ValueError, KeyError, TypeError) as exc:
+        worksheet['strategy_condition_checks'] = None
+        worksheet['strategy_condition_issue'] = str(exc)
+    return worksheet
 
 
 def _checked_root(position_id: str, expected_position: dict[str, Any] | None, expected_revision: str | None,

@@ -2,6 +2,7 @@ import { api, type AlertData, type CandidateWorkspace, type FollowupObservation,
 import { normalizeAlerts, ALERT_LEVEL_NAMES } from "./alert-view";
 import { normalizePortfolio } from "./portfolio-view";
 import { positionPlanHref } from "./position-workspace";
+import { positionObservationNextStep } from "./position-conditions";
 import { candidateChecksView } from "./candidate-conditions";
 
 export interface TodayStrategySources {
@@ -46,7 +47,7 @@ const statePriority: Record<string, number> = { paused: 1, needs_review: 1, evid
 const timestamp = (value: string | null | undefined) => value && Number.isFinite(Date.parse(value)) ? Date.parse(value) : 0;
 
 /** Priorities describe existing risk/observation states, never stock scores or AI votes. */
-export function buildTodayStrategy(sources: TodayStrategySources): TodayStrategyView {
+export function buildTodayStrategy(sources: TodayStrategySources, now = Date.now()): TodayStrategyView {
   const issues = [...sources.issues];
   const holdings = sources.portfolio?.holdings.filter((row) => row.shares > 0) ?? [];
   const ownedCodes = new Set(holdings.map((row) => row.code));
@@ -69,7 +70,7 @@ export function buildTodayStrategy(sources: TodayStrategySources): TodayStrategy
     const title = hardRisk ? "风险记录待复核" : followupFirst ? followup.state === "waiting" ? "继续等待持仓条件" : "原方案需要核对" : event ? "风险记录待复核" : "核对这笔持仓的下一步";
     const reason = followupFirst && !hardRisk ? followup.detail : event ? [event.basis_json.rule || ALERT_LEVEL_NAMES[event.level] || "风险条件", event.basis_json.actual].filter(Boolean).join("；") : "当前没有读到需要关注的后台记录；这不代表没有风险。";
     rows.push({ key: `position:${id}`, symbol: holding.code, name: holding.name && holding.name !== holding.code ? holding.name : "股票名称待补", kind: "position",
-      title, reason, next: needsRefresh ? followup?.issue || "用当前大盘、板块和仓位重新核对原条件，再决定继续等待或调整路线。" : followup ? followup.title + "；进入策略页核对原条件与当前依据。" : "比较持有、减仓和做 T 的适用条件，保留能持续跟踪的方案。",
+      title, reason, next: hardRisk ? "先复核当前风险及原方案的退出依据，再决定是否调整路线。" : needsRefresh ? followup?.issue || "用当前大盘、板块和仓位重新核对原条件，再决定继续等待或调整路线。" : followup ? positionObservationNextStep(followup, now) || followup.title + "；进入策略页核对原条件与当前依据。" : "比较持有、减仓和做 T 的适用条件，保留能持续跟踪的方案。",
       href: positionPlanHref(id, "/today")!, observedAt: followupFirst && !hardRisk ? followup.observed_at : event?.updated_at ?? null,
       quoteAsOf: followupFirst && !hardRisk ? followup.quote_as_of : null,
       priority: hardRisk ? 0 : followup ? statePriority[followup.state] ?? 4 : event ? 2 : 5 });
