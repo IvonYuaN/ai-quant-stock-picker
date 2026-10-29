@@ -73,6 +73,12 @@ def current_position_evidence(context: Mapping[str, Any], quote: Mapping[str, An
     evidence["stock"] = asdict(_stock_context(quote, None, current))
     if evidence['stock']['status'] != 'unknown':
         evidence['stock']['change_pct'] = _number(quote.get('change_pct'))
+    from position_price_path import completed_price_path_from_dict, price_path_explanations
+    original_stock = context.get('stock') or {}
+    path = completed_price_path_from_dict(original_stock.get('price_path') if isinstance(original_stock, Mapping) else None,
+                                          current=current)
+    evidence['stock']['price_path'] = path.to_dict()
+    evidence['stock']['evidence'] = (*evidence['stock']['evidence'], *price_path_explanations(path))
     return evidence
 
 
@@ -85,6 +91,7 @@ def build_route_review(
     evidence = current_position_evidence(context, quote, current=current)
     missing = [f"{label}当前证据" for key, label in (("market", "大盘"), ("sector", "板块"), ("stock", "个股"))
                if evidence[key]["status"] == "unknown"]
+    missing.extend(evidence['stock']['price_path']['issues'])
     price, cost = basis.get("price"), holding.get("cost")
     pnl = (price / cost - 1) * 100 if price and cost and cost > 0 else None
     recovery = (cost / price - 1) * 100 if price and cost and cost > price else None

@@ -247,6 +247,10 @@ def validate_position_action_numbers(parsed: dict[str, Any], evidence: dict[str,
     """Reject old/invented numeric action conditions even if supplied in history."""
     facts = source_numbers(evidence, prices)
     history = historical_numbers({'original': evidence.get('adopted_plan')})
+    from aqsp.core.time import now_shanghai
+    from position_price_path import completed_price_path_from_dict, validate_price_path_claims
+    path = completed_price_path_from_dict((evidence.get('stock') or {}).get('price_path'), current=now_shanghai())
+    path_stamps = trusted_source_stamps([path.as_of, *(row.start_date for row in path.windows)])
     def validate_explanation_times(value: Any) -> None:
         if isinstance(value, dict):
             for key, child in value.items():
@@ -256,12 +260,14 @@ def validate_position_action_numbers(parsed: dict[str, Any], evidence: dict[str,
             for child in value:
                 validate_explanation_times(child)
         elif isinstance(value, str):
-            without_source_times(value.replace('T+1', ''), facts.stamps | history.stamps)
+            validate_price_path_claims(value, path)
+            without_source_times(value.replace('T+1', ''), facts.stamps | history.stamps | path_stamps)
     validate_explanation_times(parsed)
     allowed = facts.prices
     stamps = facts.stamps
     for action in parsed.get('actions', []):
         for key in ('condition', 'invalidation'):
+            validate_price_path_claims(action[key], path, action=True)
             prose = without_source_times(action[key].replace('T+1', ''), stamps)
             # Inspect currency before removing source dates: otherwise a model
             # can turn an allowed date into a fabricated price by adding 元.
