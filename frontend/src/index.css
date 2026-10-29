@@ -4057,3 +4057,4 @@
 .aq-candidate-check-head strong { font-size: 12px; }
 .aq-candidate-checks details { margin-top: 6px; color: hsl(var(--muted-foreground)); font-size: 12px; }
 .aq-candidate-checks summary { cursor: pointer; min-height: 28px; display: list-item; padding: 4px 0; }
+.aq-completed-price-path { overflow-wrap: anywhere; }

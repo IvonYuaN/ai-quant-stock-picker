@@ -607,6 +607,19 @@ export interface DecisionEvidence {
   status: string; summary: string; as_of: string | null; source: string; evidence?: unknown;
   industry?: string | null; breadth?: string | null;
   indices?: Array<{ name: string; source?: string; change_pct: number; as_of?: string }>;
+  price_path?: PositionPricePath;
+}
+export interface PositionPricePath {
+  status: "available" | "unavailable";
+  schema: "completed-price-path-v1";
+  scope: "completed_daily_history";
+  price_mode: "raw";
+  source: string;
+  as_of: string;
+  windows: Array<{ window: 5 | 20; start_date: string; end_date: string;
+    return_pct: number; max_drawdown_pct: number; volume_ratio: number; high: number; low: number }>;
+  issues: string[];
+  notice: string;
 }
 export interface PositionDecisionContext {
   name: string; opened_at: string | null; holding_trade_days: number | null;
@@ -784,11 +797,11 @@ export const api = {
     ),
   infoStream: (force = false): Promise<InfoStreamData> =>
     get<InfoStreamData>(force ? "/aqsp/info-stream?force=true" : "/aqsp/info-stream"),
-  indices: () => get<IndexQuote[]>("/indices"),
-  marketOverview: () => get<MarketOverview>("/market/overview"),
-  emotion: () => get<ShortTermEmotion>("/market/emotion"),
-  turnoverTop: () => get<TurnoverTop>("/market/turnover-top"),
-  globalIndices: () => get<GlobalIndex[]>("/global/indices"),
+  indices: (options?: AqspRequestOptions) => get<IndexQuote[]>("/indices", options),
+  marketOverview: (options?: AqspRequestOptions) => get<MarketOverview>("/market/overview", options),
+  emotion: (options?: AqspRequestOptions) => get<ShortTermEmotion>("/market/emotion", options),
+  turnoverTop: (options?: AqspRequestOptions) => get<TurnoverTop>("/market/turnover-top", options),
+  globalIndices: (options?: AqspRequestOptions) => get<GlobalIndex[]>("/global/indices", options),
   /** 数据源健康台账（进程内、重启清空）。只做观测，不影响 `ok`。 */
   health: () => get<HealthPayload>("/health"),
   events: (code: string) => get<EventCalendarData>(`/events?code=${code}`),
@@ -871,7 +884,7 @@ export const api = {
   runLiveRiskCheck: (holding_days?: Record<string, number>, notify = true) =>
     request<LiveRiskCheckResult>("/live-risk/check", "POST", { holding_days, notify }),
   quote: (codes: string) => get<Record<string, Quote>>(`/quote?codes=${codes}`),
-  industry: (top = 20) => get<IndustryData>(`/industry?top=${top}`),
+  industry: (top = 20, options?: AqspRequestOptions) => get<IndustryData>(`/industry?top=${top}`, options),
   myReports: () => get<MyReport[]>("/myreports"),
   uploadReport: (name: string, contentB64: string) =>
     request<MyReport>("/myreports", "POST", { name, content_b64: contentB64 }),
