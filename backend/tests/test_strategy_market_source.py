@@ -25,7 +25,7 @@ def source_clock(monkeypatch):
 
 def fact(**patch) -> dict:
     return {'up': 800, 'down': 3000, 'flat': 0, 'total': 3800, 'as_of': NOW.isoformat(),
-            'latest_source_at': NOW.isoformat(), 'source': '东方财富全A逐只行情宽度', 'breadth': '偏弱', **patch}
+            'latest_source_at': NOW.isoformat(), 'source': '东方财富全A逐只行情宽度', 'coverage_complete': True, 'breadth': '偏弱', **patch}
 
 
 def row(code: str, change: object, **patch) -> dict:
@@ -84,7 +84,7 @@ def test_strategy_breadth_enforces_total_response_budget_when_each_page_is_small
     {'as_of': (NOW - timedelta(days=1)).isoformat()},
     {'latest_source_at': (NOW + timedelta(minutes=1)).isoformat()},
     {'as_of': '2026-10-23'}, {'source': ''}, {'up': True}, {'up': 0, 'down': 0},
-    {'total': 1}, {'breadth': '普涨'},
+    {'total': 1}, {'breadth': '普涨'}, {'latest_source_at': (NOW - timedelta(seconds=1)).isoformat()}, {'coverage_complete': False}, {'coverage_complete': None},
 ])
 def test_strategy_breadth_rejects_invalid_or_stale_fact_when_read_after_fetch(patch) -> None:
     assert not valid_strategy_breadth(fact(**patch), current=NOW)

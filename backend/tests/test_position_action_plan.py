@@ -1,6 +1,8 @@
 """Scenario arithmetic and current-position binding; all prices are synthetic."""
 from __future__ import annotations
 
+from breadth_fixtures import complete_breadth
+
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
@@ -177,7 +179,7 @@ def test_action_plan_joint_weakness_expires_when_quote_or_sector_recovers(plan_c
     client, event = plan_client
     monkeypatch.setattr(market, '_MARKET_CACHE_DIR', str(tmp_path / 'market'))
     monkeypatch.setattr(market.time, 'time', lambda: NOW.timestamp())
-    market._write_cache('overview', {'sentiment': {'date': '20261023', 'up': 800, 'down': 3000, 'breadth': '偏弱'}})
+    market._write_cache('overview', {'sentiment': complete_breadth(NOW)})
     market._write_cache(_sector_key(['002129']), {'002129': {
         'industry': '银行', 'name': '银行', 'membership_as_of': NOW.isoformat(),
         'as_of': NOW.isoformat(), 'change_pct': -2, 'source': '合成板块源'}})

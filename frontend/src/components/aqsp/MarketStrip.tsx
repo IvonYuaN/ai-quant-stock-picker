@@ -61,10 +61,10 @@ export function MarketStrip() {
               下跌 <b className="aq-tone-down">{summary.breadth.down}</b>
             </span>
             <span className="aq-breadth-item">
-              涨停 <b className="aq-tone-up">{summary.breadth.ztReal || summary.breadth.zt}</b>
+              涨停 <b className="aq-tone-up">{(summary.breadth.ztReal || summary.breadth.zt) ?? "—"}</b>
             </span>
             <span className="aq-breadth-item">
-              跌停 <b className="aq-tone-down">{summary.breadth.dtReal || summary.breadth.dt}</b>
+              跌停 <b className="aq-tone-down">{(summary.breadth.dtReal || summary.breadth.dt) ?? "—"}</b>
             </span>
             {summary.breadth.active ? (
               <span className="aq-breadth-item">
@@ -78,7 +78,7 @@ export function MarketStrip() {
             ) : null}
           </div>
         ) : null}
-        {summary.breadth ? <small className="aq-market-source-times">市场宽度统计日 {summary.breadth.date || "未标注"}</small> : null}
+        {summary.breadth ? <small className="aq-market-source-times">市场宽度源行情 {formatEvidenceTime(summary.breadth.asOf)} · {summary.breadth.source} · 已覆盖 {summary.breadth.total} 只</small> : null}
 
         {hasIndustryRows ? <div className="aq-industry-directions" aria-label="行业涨跌前列">
           <div><b>涨幅榜前列</b>{leadingIndustries.map((item) => <span key={item.code}>{item.name}<strong className={changeClass(item.changePct)}>{formatSignedPct(item.changePct)}</strong></span>)}</div>

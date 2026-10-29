@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 import app as app_module
 import astock
+from breadth_fixtures import complete_breadth
 import chat
 import cli_runtime
 import market
@@ -313,6 +314,10 @@ def test_market_degrades_without_akshare(monkeypatch):
       绝不拿 0 冒充「全市场平盘」）。
     """
 
+    from test_position_action_plan import NOW
+    monkeypatch.setattr(astock, "_now_shanghai", lambda: NOW)
+    monkeypatch.setattr(market, "now_shanghai", lambda: NOW)
+
     def boom():
         raise astock.DependencyMissing("akshare 未安装")
 
@@ -323,7 +328,7 @@ def test_market_degrades_without_akshare(monkeypatch):
     monkeypatch.setattr(
         market,
         "_breadth_counts",
-        lambda: {"up": 100, "down": 50, "flat": 30, "total": 180},
+        lambda: complete_breadth(astock._now_shanghai(), up=100, down=50, flat=30),
     )
     monkeypatch.setattr(
         market,
@@ -332,11 +337,13 @@ def test_market_degrades_without_akshare(monkeypatch):
     )
     got = market._sentiment()
     assert got["up"] == 100
-    assert got["zt"] == 12
+    # The pool is from a different session; it must not be attached to today's
+    # independently valid breadth. Its separate date survives below.
+    assert got["zt"] is None and got["limit_pool_date"] == "2026-10-19"
 
-    # sentiment 自己的源失败 ⇒ {}（源故障 ≠ 全市场平盘）
+    # 宽度源失败只保留独立涨停池事实；不发布伪造的涨跌家数。
     monkeypatch.setattr(market, "_breadth_counts", lambda: None)
-    assert market._sentiment() == {}
+    assert market._sentiment() == {"zt": 12, "dt": 3, "zt_real": 0, "dt_real": 0, "limit_pool_date": "2026-10-19"}
 
 
 # ── 流式工具调用：非标网关不带 index 时按 id 归位、不串参数 ──────────

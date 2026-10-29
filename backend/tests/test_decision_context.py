@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from breadth_fixtures import complete_breadth
+
 import json
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
@@ -31,7 +33,7 @@ def _holding(**changes):
 
 def _overview(**changes):
     return {
-        "sentiment": {"date": "20261023", "up": 800, "down": 3000, "breadth": "偏弱"},
+        "sentiment": complete_breadth(NOW),
         "sectors": [
             {
                 "name": "电力",
@@ -290,9 +292,10 @@ def test_decision_context_reads_existing_cache_without_fetching_when_fresh(
     payload = {"ts": NOW.timestamp(), "val": _overview()}
     cache.write_text(json.dumps(payload))
     before = cache.read_bytes()
-    assert (
-        context.load_cached_market_overview(tmp_path, checked_at=NOW) == payload["val"]
-    )
+    got = context.load_cached_market_overview(tmp_path, checked_at=NOW)
+    assert got["sectors"] == payload["val"]["sectors"]
+    assert all(got["sentiment"][key] == value for key, value in payload["val"]["sentiment"].items())
+    assert context._market_context(got, NOW).status == "weak"
     assert cache.read_bytes() == before
     payload["ts"] = NOW.timestamp() - market._TTL - 1
     cache.write_text(json.dumps(payload))

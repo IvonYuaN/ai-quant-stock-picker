@@ -12,6 +12,7 @@ from __future__ import annotations
 import pytest
 
 import market
+from breadth_fixtures import complete_breadth
 
 
 def _zt(code: str, boards: int, pct: float, industry: str) -> dict:
@@ -156,7 +157,7 @@ def test_emotion_attaches_model_field(monkeypatch):
         _pools(zt=_HOT_ZT, zb=[{"c": "X"}, {"c": "Y"}], yzt=_HOT_YZT),
     )
     monkeypatch.setattr(
-        market, "_breadth_counts", lambda: {"up": 4000, "down": 900, "flat": 0, "total": 4900}
+        market, "_breadth_counts", lambda: complete_breadth(market.astock._now_shanghai(), up=4000, down=900)
     )
 
     payload = market._emotion()
@@ -196,3 +197,49 @@ def test_emotion_keeps_core_fields_when_model_fails(monkeypatch):
 def test_emotion_returns_empty_without_any_pool(monkeypatch):
     monkeypatch.setattr(market.astock, "em_zt_topic_pool", _pools(zt=[]))
     assert market._emotion() == {}
+
+
+@pytest.mark.parametrize("breadth", [
+    {"up": 100, "down": 0, "flat": 0, "total": 100},
+    {"up": 100, "down": 0, "flat": 0, "total": 100, "coverage_complete": True},
+])
+def test_emotion_excludes_unverified_breadth_from_dimension_and_aggregate(monkeypatch, breadth):
+    monkeypatch.setattr(market, "_breadth_counts", lambda: breadth)
+    assessment = _assess_hot()
+    assert assessment["dimensions"]["breadth"]["score"] is None
+    assert assessment["breadth_evidence"] is None
+    assert assessment["breadth_contract_version"] == 1
+
+
+def test_emotion_does_not_mix_current_width_with_another_pool_day(monkeypatch):
+    from test_position_action_plan import NOW
+    monkeypatch.setattr(market, "now_shanghai", lambda: NOW)
+    monkeypatch.setattr(market, "_breadth_counts", lambda: complete_breadth(NOW))
+    assessment = _assess_hot(resolved="20261016")
+    assert assessment["dimensions"]["breadth"]["score"] is None
+    assert assessment["breadth_evidence"] is None
+
+
+@pytest.mark.parametrize("mode", ["legacy", "current", "no_breadth", "stale", "other_pool_day"])
+def test_emotion_cache_drops_unproven_aggregate_without_refetching_pool(monkeypatch, tmp_path, mode):
+    from test_position_action_plan import NOW
+    monkeypatch.setattr(market, "_MARKET_CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(market.time, "time", lambda: NOW.timestamp())
+    monkeypatch.setattr(market, "now_shanghai", lambda: NOW)
+    monkeypatch.setattr(market, "_breadth_counts", lambda: complete_breadth(NOW))
+    model = _assess_hot(resolved="20261023")
+    if mode == "legacy":
+        model.pop("breadth_contract_version")
+        model.pop("breadth_evidence")
+    elif mode == "no_breadth":
+        model["breadth_evidence"] = None
+        model["dimensions"]["breadth"]["score"] = None
+    elif mode == "stale":
+        model["breadth_evidence"]["as_of"] = "2026-10-22T10:00:00+08:00"
+    elif mode == "other_pool_day":
+        model["trade_date"] = "2026-10-22"
+    market._write_cache("emotion", {"date": "2026-10-23", "zt_count": 12, "dt_count": 3, "emotion_model": model})
+    monkeypatch.setattr(market, "_emotion", lambda: pytest.fail("fresh cached read must not refetch"))
+    result = market.get_short_term_emotion()
+    assert result["zt_count"] == 12 and result["dt_count"] == 3
+    assert ("emotion_model" in result) is (mode in ("current", "no_breadth"))

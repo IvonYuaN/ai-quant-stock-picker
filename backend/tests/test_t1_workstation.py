@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from breadth_fixtures import complete_breadth
+
 from datetime import date, datetime
 import json
 from types import SimpleNamespace
@@ -164,7 +166,7 @@ def test_t1_check_preserves_typed_direction_facts_when_manual_or_background(work
     import position_strategy_evidence as evidence
 
     stamp = '2026-10-23T10:00:00+08:00'
-    overview = {'sentiment': {'date': '20261023', 'up': 800, 'down': 3000, 'breadth': '偏弱'}}
+    overview = {'sentiment': complete_breadth(stamp)}
     sector = {'industry': '银行', 'name': '银行', 'membership_as_of': stamp,
               'as_of': stamp, 'change_pct': -2, 'source': '合成板块源'}
     indices = {'status': 'unknown', 'source': '合成指数源', 'as_of': stamp, 'summary': '合成指数',

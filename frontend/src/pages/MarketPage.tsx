@@ -65,11 +65,11 @@ function BreadthBlock({ view }: { view: MarketView }) {
         </div>
         <div>
           <span>涨停</span>
-          <b className="aq-tone-up aq-num">{b.ztReal || b.zt || "—"}</b>
+          <b className="aq-tone-up aq-num">{(b.ztReal || b.zt) ?? "—"}</b>
         </div>
         <div>
           <span>跌停</span>
-          <b className="aq-tone-down aq-num">{b.dtReal || b.dt || "—"}</b>
+          <b className="aq-tone-down aq-num">{(b.dtReal || b.dt) ?? "—"}</b>
         </div>
         <div>
           <span>宽度</span>
@@ -81,7 +81,7 @@ function BreadthBlock({ view }: { view: MarketView }) {
         </div>
       </div>
       {b.active ? <p className="aq-note">活跃度：{b.active}</p> : null}
-      {b.date ? <p className="aq-note">统计日 {b.date}</p> : null}
+      <p className="aq-note">源行情 {formatEvidenceTime(b.asOf)} · {b.source} · 已覆盖 {b.total} 只</p>
     </div>
   );
 }

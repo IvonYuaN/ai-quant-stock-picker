@@ -38,7 +38,7 @@ def fake_refresh(monkeypatch, rows: dict) -> list:
         completed['strategy_indices'] = {'000001': {'as_of': NOW.isoformat(), 'change_pct': -2}}
         completed['strategy_breadth'] = {'up': 800, 'down': 3000, 'flat': 0, 'total': 3800,
             'as_of': NOW.isoformat(), 'latest_source_at': NOW.isoformat(),
-            'source': '东方财富全A逐只行情宽度', 'breadth': '偏弱'}
+            'source': '东方财富全A逐只行情宽度', 'coverage_complete': True, 'breadth': '偏弱'}
         return []
 
     monkeypatch.setattr(source, '_fetch_sources', fetch)

@@ -22,12 +22,17 @@ const overviewFixture = {
     up: 3200,
     down: 1500,
     flat: 210,
+    coverage_complete: true,
+    total: 4910,
+    source: "东方财富全A逐只行情宽度",
+    as_of: "2026-09-11T15:00:00+08:00",
+    latest_source_at: "2026-09-11T15:00:03+08:00",
     zt: 88,
     zt_real: 72,
     dt: 6,
     dt_real: 4,
     active: "偏高",
-    breadth: "普涨",
+    breadth: "偏强",
     speculation: "活跃",
     date: "2026-09-11",
   },
@@ -119,6 +124,11 @@ const fullInput: MarketInput = {
 
 const full = buildMarketView(fullInput);
 
+function breadthWith(patch: Record<string, unknown>) {
+  return buildMarketView({ overview: { ...overviewFixture,
+    sentiment: { ...overviewFixture.sentiment, ...patch } as MarketOverview["sentiment"] } }).breadth;
+}
+
 export const marketViewContract = {
   /* ---- 指数与外围 ---- */
   indicesAreMapped: full.indices.length === 2 && full.indices[0].name === "上证指数",
@@ -134,6 +144,22 @@ export const marketViewContract = {
     overview: { ...overviewFixture, sentiment: { ...overviewFixture.sentiment, down: 0 } },
   }).breadth?.upDownRatio === null,
   breadthIsNullWithoutSentiment: buildMarketView({ overview: null }).breadth === null,
+  legacyTop100CannotBecomeMarketDirection: (() => {
+    const overview = { ...overviewFixture, sentiment: { ...emptySentiment,
+      up: 100, down: 0, breadth: "冰点", date: "2026-10-29" } };
+    const view = buildMarketView({ overview, indices: indicesFixture });
+    const strip = marketStripSummary(view);
+    return view.breadth === null && strip?.tone === "neutral" && strip.headline.includes("市场宽度未取得");
+  })(),
+  incompleteOrUnverifiableBreadthIsUnavailable: [
+    { coverage_complete: false }, { coverage_complete: undefined }, { source: undefined },
+    { source: "涨停池" }, { total: undefined }, { total: 100 }, { total: -1 },
+    { up: true }, { up: "3200" }, { down: -1 }, { flat: 0.5 }, { up: NaN }, { total: Infinity },
+    { as_of: undefined }, { as_of: "2026-09-11" }, { as_of: "2026-09-11T15:00:00" },
+    { latest_source_at: "2026-09-11T14:59:00+08:00" },
+  ].every((patch) => breadthWith(patch) === null),
+  breadthKeepsIndependentSourceTimeAndCoverage: full.breadth?.asOf === overviewFixture.sentiment.as_of &&
+    full.breadth.total === 4910 && full.breadth.source === overviewFixture.sentiment.source,
 
   /* ---- 板块资金：头尾各取前列 ---- */
   sectorsTopTakesHead: full.sectorsTop.length === 3 && full.sectorsTop[0].name === "电池",

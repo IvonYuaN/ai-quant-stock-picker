@@ -382,14 +382,14 @@ def test_sentiment_success_records_eastmoney_host(monkeypatch):
 
     替身复刻 em_get 的契约：**成功分支先记账（`_note_response`）再返回响应**
     （em_get 第 831 行就是这么做的）。直接裸返回会绕过记账 ⇒ 测的是假世界。
-    后续页返回空 diff 让 `market_breadth_counts` 的分页在首页后停止，计数即 1/1/1。
+    源总量与完整逐只身份、时点吻合后停止，计数即 1/1/1。
     """
     _pages = {"n": 0}
 
     def _ok(url, params=None, headers=None, timeout=15):
         _pages["n"] += 1
         payload = (
-            {"data": {"diff": [{"f3": 1.5}, {"f3": -0.5}, {"f3": 0}]}}
+            {"data": {"total": 3, "diff": [{"f12": f"{i:06d}", "f13": 0, "f3": change, "f124": int(astock._now_shanghai().timestamp())} for i, change in enumerate((1.5, -0.5, 0))]}}
             if _pages["n"] == 1
             else {"data": {"diff": []}}
         )
