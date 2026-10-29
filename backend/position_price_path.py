@@ -237,3 +237,57 @@ def validate_price_path_claims(text: str, value: CompletedPricePath, *, action: 
             if (row is None or (match['unit'] or '').lower() not in units or float(match['value']) not in
                     {getattr(row, field), round(getattr(row, field), decimals)}):
                 raise ValueError('完成日量价统计的周期、数值或单位与有源窗口不符')
+
+
+def mask_action_reference_identity(text: str, value: CompletedPricePath,
+                                   reference: Mapping[str, Any] | None) -> str:
+    """Consume a sourced window's period identity, never a trading number.
+
+    One action has one price_ref. Qualified day/window/high/low phrases must
+    describe that reference; unknown prose can instead say 所引用观察价. This
+    intentionally rejects mixed references rather than inferring which level a
+    free-text clause means. Only exact numeric window identity is masked.
+    """
+    window = (r'(?<![\d.])(?:(?:最近完成日截至)|(?:近|最近|过去))?'
+              r'(?P<window>\d+)\s*(?:根(?:已)?完成日线|根日线|(?:个)?交易日|日线|日)'
+              r'(?:的)?(?:窗口)?(?:的)?(?P<kind>高点|低点)')
+    current = r'(?:本交易日|本日|当日|今日|今天|盘中)(?:的)?(?:已见)?(?P<kind>高点|低点)'
+    completed = r'(?:最近|最新)(?:一个|一)?(?:已完成|完成)(?:交易日|日)(?:的)?(?P<kind>高点|低点)'
+    previous = r'(?:行情源)?前收盘价'
+    label = reference.get('label', '') if isinstance(reference, Mapping) else ''
+    selected: tuple[str, int | None, str] | None = None
+    row = re.fullmatch(window, label) if isinstance(label, str) else None
+    if row:
+        identity = int(row['window'])
+        source_window = next((item for item in value.windows if item.window == identity), None)
+        price = reference.get('price')
+        if (value.status != 'available' or source_window is None or reference.get('source') != value.source
+                or reference.get('as_of') != value.as_of or type(price) not in (int, float)
+                or price != (source_window.high if row['kind'] == '高点' else source_window.low)):
+            raise ValueError('动作窗口参考价与本次已核验量价窗口不一致')
+        selected = ('window', identity, row['kind'])
+    else:
+        for category, pattern in (('current', current), ('completed', completed), ('previous', previous)):
+            row = re.fullmatch(pattern, label) if isinstance(label, str) else None
+            if row:
+                selected = (category, None, row['kind'] if category != 'previous' else '')
+                break
+    result = text
+    for category, pattern in (('window', window), ('current', current), ('completed', completed), ('previous', previous)):
+        def checked(match: re.Match[str]) -> str:
+            identity = int(match['window']) if category == 'window' else None
+            kind = match['kind'] if category != 'previous' else ''
+            if selected != (category, identity, kind):
+                raise ValueError('动作文字的日别、窗口或高低点与所引用观察价不一致')
+            if category == 'window':
+                prefix = result[max(0, match.start() - 4):match.start()]
+                if re.search(r'(?:当前|实时|盘中)$', prefix):
+                    raise ValueError('完成日窗口参考价不能冒充当前日内价位')
+            return '所引用观察价'
+        result = re.sub(pattern, checked, result)
+    # A second bare high/low in a mixed phrase (高点与低点) must not escape the
+    # qualified-reference check. Qualitative text with no selected reference
+    # retains the pre-existing behavior and cannot consume a period number.
+    if selected is not None and any(kind != selected[2] for kind in re.findall(r'高点|低点', result)):
+        raise ValueError('动作文字的高低点与所引用观察价不一致')
+    return result

@@ -169,3 +169,98 @@ def test_completed_price_path_accepts_natural_period_aliases_when_values_and_uni
     row = deepcopy(OPINION)
     row['summary'], row['actions'] = text, []
     validate_position_action_numbers(row, path_evidence(), {})
+
+
+def window_reference(window: int = 20, kind: str = '高点') -> dict:
+    path = build_completed_price_path(frame(), current=NOW)
+    item = next(row for row in path.windows if row.window == window)
+    return {'label': f'最近完成日截至{window}根日线窗口{kind}',
+            'price': item.high if kind == '高点' else item.low, 'source': path.source, 'as_of': path.as_of}
+
+
+def action_opinion(text: str) -> dict:
+    row = deepcopy(OPINION)
+    row['actions'] = [{'action': 'observe', 'price_ref': 'selected', 'condition': text,
+                       'invalidation': '观察条件不再成立时取消'}]
+    return row
+
+
+@pytest.mark.parametrize('window,text', [
+    (20, '跟踪最近完成日截至20根日线窗口高点，确认能否站稳'),
+    (20, '观察近20日窗口高点12.9元是否站稳'),
+    (5, '观察5个交易日窗口高点是否站稳'),
+    (5, '跟踪所引用观察价，确认能否站稳'),
+])
+def test_completed_price_path_consumes_only_verified_action_window_identity(monkeypatch, window: int, text: str) -> None:
+    monkeypatch.setattr('aqsp.core.time.now_shanghai', lambda: NOW)
+    validate_position_action_numbers(action_opinion(text), path_evidence(), {'selected': window_reference(window)})
+
+
+@pytest.mark.parametrize('text', [
+    '观察近5日窗口高点是否站稳', '观察近20日窗口低点是否止跌',
+    '观察本交易日已见高点是否站稳', '观察最近完成日高点是否站稳',
+    '观察近20日窗口高点与低点', '观察当前20日窗口高点',
+])
+def test_completed_price_path_rejects_action_when_period_or_price_kind_conflicts(monkeypatch, text: str) -> None:
+    monkeypatch.setattr('aqsp.core.time.now_shanghai', lambda: NOW)
+    with pytest.raises(ValueError, match='(观察价不一致|不能冒充)'):
+        validate_position_action_numbers(action_opinion(text), path_evidence(), {'selected': window_reference()})
+
+
+@pytest.mark.parametrize('text', [
+    '跟踪本交易日已见高点作为观察参考，结合近20日窗口高点与低点判断趋势延续或走弱',
+    '价格跌破近20日窗口低点或当日低点，且大盘与板块同向走弱',
+])
+def test_completed_price_path_rejects_live_model_reference_conflict_with_specific_label_error(monkeypatch, text: str) -> None:
+    monkeypatch.setattr('aqsp.core.time.now_shanghai', lambda: NOW)
+    reference = {**window_reference(), 'label': '最近完成日高点'}
+    with pytest.raises(ValueError, match='日别、窗口或高低点'):
+        validate_position_action_numbers(action_opinion(text), path_evidence(), {'selected': reference})
+
+
+@pytest.mark.parametrize('patch', [{'source': 'other'}, {'as_of': NOW.date().isoformat()}, {'price': 20}])
+def test_completed_price_path_rejects_action_window_when_reference_metadata_differs(monkeypatch, patch: dict) -> None:
+    monkeypatch.setattr('aqsp.core.time.now_shanghai', lambda: NOW)
+    with pytest.raises(ValueError, match='本次已核验量价窗口不一致'):
+        validate_position_action_numbers(action_opinion('观察近20日窗口高点'), path_evidence(),
+                                         {'selected': {**window_reference(), **patch}})
+
+
+@pytest.mark.parametrize('missing', [False, True])
+def test_completed_price_path_rejects_action_window_when_completed_evidence_missing_or_stale(monkeypatch, missing: bool) -> None:
+    monkeypatch.setattr('aqsp.core.time.now_shanghai', lambda: NOW + timedelta(days=1))
+    with pytest.raises(ValueError, match='本次已核验量价窗口不一致'):
+        validate_position_action_numbers(action_opinion('观察近20日窗口高点'), {} if missing else path_evidence(),
+                                         {'selected': window_reference()})
+
+
+@pytest.mark.parametrize('text', [
+    '观察近20日窗口高点，达到20元时操作', '观察近20日窗口高点，买入20股',
+    '观察近20日窗口高点，量比20倍后操作', '观察20日涨跌幅20%后操作',
+    '观察近20日窗口高点，涨到13元时操作', '观察1.20日窗口高点',
+])
+def test_completed_price_path_does_not_allow_new_action_number_from_window_identity(monkeypatch, text: str) -> None:
+    monkeypatch.setattr('aqsp.core.time.now_shanghai', lambda: NOW)
+    with pytest.raises(ValueError):
+        validate_position_action_numbers(action_opinion(text), path_evidence(), {'selected': window_reference()})
+
+
+def test_completed_price_path_preserves_unqualified_low_observation_when_reference_matches(monkeypatch) -> None:
+    monkeypatch.setattr('aqsp.core.time.now_shanghai', lambda: NOW)
+    row = deepcopy(OPINION)
+    validate_position_action_numbers(row, path_evidence(), {'price_0': window_reference(5, '低点')})
+
+
+@pytest.mark.parametrize('text', ['观察近20日窗口高点9元是否站稳', '观察近20日窗口高点9是否站稳',
+                                  '观察9元的近20日窗口高点是否站稳'])
+def test_completed_price_path_rejects_other_sourced_price_when_prose_names_selected_window(monkeypatch, text: str) -> None:
+    monkeypatch.setattr('aqsp.core.time.now_shanghai', lambda: NOW)
+    with pytest.raises(ValueError):
+        validate_position_action_numbers(action_opinion(text), path_evidence(),
+                                         {'selected': window_reference(), 'low': window_reference(20, '低点')})
+
+
+def test_completed_price_path_preserves_global_sourced_prices_when_action_has_no_typed_identity(monkeypatch) -> None:
+    monkeypatch.setattr('aqsp.core.time.now_shanghai', lambda: NOW)
+    validate_position_action_numbers(action_opinion('观察9元是否止跌'), path_evidence(),
+                                     {'selected': window_reference(), 'low': window_reference(20, '低点')})

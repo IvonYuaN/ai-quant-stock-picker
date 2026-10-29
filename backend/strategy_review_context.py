@@ -248,7 +248,7 @@ def validate_position_action_numbers(parsed: dict[str, Any], evidence: dict[str,
     facts = source_numbers(evidence, prices)
     history = historical_numbers({'original': evidence.get('adopted_plan')})
     from aqsp.core.time import now_shanghai
-    from position_price_path import completed_price_path_from_dict, validate_price_path_claims
+    from position_price_path import completed_price_path_from_dict, mask_action_reference_identity, validate_price_path_claims
     path = completed_price_path_from_dict((evidence.get('stock') or {}).get('price_path'), current=now_shanghai())
     path_stamps = trusted_source_stamps([path.as_of, *(row.start_date for row in path.windows)])
     def validate_explanation_times(value: Any) -> None:
@@ -268,11 +268,18 @@ def validate_position_action_numbers(parsed: dict[str, Any], evidence: dict[str,
     for action in parsed.get('actions', []):
         for key in ('condition', 'invalidation'):
             validate_price_path_claims(action[key], path, action=True)
-            prose = without_source_times(action[key].replace('T+1', ''), stamps)
+            reference = prices.get(action.get('price_ref'))
+            prose = mask_action_reference_identity(action[key], path, reference)
+            # Once prose names this price_ref's typed identity, an explicit
+            # price must describe that same reference, not another allowed
+            # high/low that happens to share the global price namespace.
+            field_prices = (frozenset(price for price in allowed if price == reference.get('price')) if prose != action[key]
+                            and isinstance(reference, dict) else allowed)
+            prose = without_source_times(prose.replace('T+1', ''), stamps)
             # Inspect currency before removing source dates: otherwise a model
             # can turn an allowed date into a fabricated price by adding 元.
             currency = re.findall(r'([-+]?\d+(?:\.\d+)?)\s*(?:元|块|角)', prose)
-            if any(float(number) not in allowed for number in currency):
+            if any(float(number) not in field_prices for number in currency):
                 raise ValueError('模型动作的价格单位与当前有源价位不符')
             for suffix, values in ((r'[%％]', facts.percentages), (r'分', facts.scores), (r'家', facts.counts)):
                 prose = re.sub(rf'([-+]?\d+(?:\.\d+)?)\s*{suffix}',
@@ -283,5 +290,5 @@ def validate_position_action_numbers(parsed: dict[str, Any], evidence: dict[str,
             chinese_price = (rf'[{chinese_numbers}]+点[{chinese_numbers}]+|[{chinese_numbers}]+\s*(?:元|块|角|股|%|％)|'
                              rf'(?:跌破|回落到|价位|价格|到达|高于|低于|止损(?:在)?|目标价|突破|支撑|阻力)\s*[{chinese_numbers}]+')
             if re.search(chinese_price, prose) or re.search(r'\d+(?:\.\d+)?\s*(?:股|手|[%％]|分|家|点|倍)', prose) or any(
-                    float(number) not in allowed for number in re.findall(r'[-+]?\d+(?:\.\d+)?', prose)):
+                    float(number) not in field_prices for number in re.findall(r'[-+]?\d+(?:\.\d+)?', prose)):
                 raise ValueError('模型动作的数字条件只能引用当前有源价位，历史价不能作为新行动条件')
