@@ -244,7 +244,7 @@ def test_action_plan_returns_recorded_sale_when_receipt_matches_same_position(pl
     assert client.post(f"/api/alerts/{event}/plan", json={"choice": "t_watch", "parameters": PARAMS, "expected_position": before["position_snapshot"], "expected_revision": before["revision"]}).status_code == 200
     ae.close_from_operation("002129", "2026-10-23", 9.5, 200, 12, "journey-sale")
     result = client.get(f"/api/alerts/{event}/action-plan").json()["data"]
-    assert result["recorded_sale"] == {"date": "2026-10-23", "price": 9.5, "shares": 200}
+    assert result["recorded_sale"] == {"id": "journey-sale", "date": "2026-10-23", "price": 9.5, "shares": 200}
     assert result["basis"]["shares"] == 800
     assert result["scenario"] is None and result["scenario_issue"]
     assert ae.list_events()[0]["status"] == "OPEN"
@@ -286,7 +286,7 @@ def test_action_plan_acknowledges_sale_only_when_current_scenario_saved(plan_cli
     assert pf._load()["holdings"][0]["shares"] == 800
 
 
-def test_action_plan_can_resume_holding_after_recorded_sale_without_scenario(plan_client) -> None:
+def test_action_plan_requires_sale_review_when_holding_saved_again_without_scenario(plan_client) -> None:
     client, event = plan_client
     ae.close_from_operation("002129", "2026-10-23", 9.5, 200, 12, "journey-sale")
     assert client.post(f"/api/alerts/{event}/plan", json=plan_body(client, event, "hold")).status_code == 200
@@ -294,6 +294,11 @@ def test_action_plan_can_resume_holding_after_recorded_sale_without_scenario(pla
     assert result["recorded_sale"]
     assert result["sale_requires_review"] is True
     assert client.post(f"/api/alerts/{event}/plan", json={"choice": "hold", "expected_position": result["position_snapshot"], "expected_revision": result["revision"]}).status_code == 200
+    result = client.get(f"/api/alerts/{event}/action-plan").json()["data"]
+    assert result["sale_requires_review"] is True
+    assert client.post(f"/api/positions/{result['position_id']}/sale-review", json={
+        "expected_position": result["position_snapshot"], "expected_revision": result["revision"],
+        "expected_sale_id": result["recorded_sale"]["id"]}).status_code == 200
     result = client.get(f"/api/alerts/{event}/action-plan").json()["data"]
     assert result["sale_requires_review"] is False
     assert result["review_plan"]["choice"] == "hold"

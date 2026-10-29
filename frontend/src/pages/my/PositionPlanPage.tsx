@@ -1,3 +1,4 @@
+import { PositionSaleReview } from "@/components/aqsp/PositionSaleReview";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { ArrowLeft, RefreshCw } from "lucide-react";
@@ -109,6 +110,7 @@ function PositionPlanWorkspace({ positionId }: { positionId: string }) {
         <section className="aq-section aq-plan-module" aria-label="处理路线">
           <SectionHeader title="2. 比较处理路线" description="持有观察、减仓退出、做 T 各自有代价；亏损深不自动等于卖出或做 T。" />
           <PositionConstraintsForm worksheet={worksheet} disabled={unavailable} onSaved={accept} />
+          {!choice ? <PositionSaleReview worksheet={worksheet} disabled={unavailable} onWorksheet={accept} /> : null}
         {choice ? <section className="aq-plan-current" aria-label="当前处理计划"><div className="aq-position-plan-heading"><h2>已选{PLAN_CHOICES[choice].title}</h2><span>选择不等于成交</span></div><PositionActionPlan key={choice} target={target} choice={choice} worksheet={worksheet} onWorksheet={accept} disabled={unavailable} /><details className="aq-change-route" open={compareOpen} onToggle={(event) => setCompareOpen(event.currentTarget.open)}><summary>重新比较或更换处理方式</summary>{compareOpen ? <PositionRouteComparison worksheet={worksheet} target={target} busy={unavailable} error={error} onChoose={(next, basis) => void choose(next, basis)} showModel={false} /> : null}</details></section> : <section aria-label="了解情况与比较方案"><PositionRouteComparison worksheet={worksheet} target={target} busy={unavailable} error={error} onChoose={(next, basis) => void choose(next, basis)} onModelComplete={() => void load()} onWorksheet={accept} /></section>}
         </section>
         <section className="aq-section aq-plan-module" aria-label="持续跟进">

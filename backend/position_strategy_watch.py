@@ -116,6 +116,8 @@ def adopt_strategy_watch(position_id: str, value: StrategyWatchInput) -> dict[st
         raise PlanConflictError('原持仓已退出或不存在，请刷新')
     if worksheet['revision'] != value.expected_revision or worksheet['position_snapshot'] != value.expected_position:
         raise PlanConflictError('持仓或计划已变化，请刷新后重新采用')
+    if worksheet.get('sale_requires_review'):
+        raise ValueError('请先核对最新卖出与剩余持仓，再重新分析并采用新条件')
     result = _discussion(worksheet, value.source_discussion)
     current = now_shanghai()
     action, reference = _validate_result(worksheet, result, value, current)
@@ -150,6 +152,8 @@ def adopt_strategy_watch(position_id: str, value: StrategyWatchInput) -> dict[st
             raise PlanConflictError('讨论结果已更新，请核对当前分析后重新采用')
         previous = root['review_plan']
         plan = deepcopy(previous) if previous.get('choice') == value.choice else {'choice': value.choice}
+        if 'acknowledged_sale_id' in previous:
+            plan['acknowledged_sale_id'] = previous['acknowledged_sale_id']
         plan.update(watch=watch, position_snapshot=deepcopy(value.expected_position),
                     constraints_version=root.get('constraints_version', 0), updated_at=current.isoformat())
         plan.pop('watch_stopped', None)

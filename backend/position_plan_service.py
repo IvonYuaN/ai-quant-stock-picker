@@ -205,7 +205,8 @@ def build_position_worksheet(position_id: str, portfolio: dict[str, Any], data: 
             except ValueError as exc:
                 scenario, scenario_issue = None, str(exc)
     discussion = plan.get('discussion')
-    if discussion and not archived and (discussion.get('position_snapshot') != snapshot or sale_requires_review or trades_changed):
+    if discussion and not archived and (discussion.get('position_snapshot') != snapshot
+                                       or discussion.get('review_revision') != revision):
         plan['discussion'] = None
     facts = current_rule_facts(holding.get('risk_rules', []), basis, current=current)
     review = build_route_review(holding, quote, basis, old_context, opened, current=current, risk_facts=facts).to_dict()
@@ -224,7 +225,7 @@ def build_position_worksheet(position_id: str, portfolio: dict[str, Any], data: 
             'current_risk': facts, 'risk_trigger': {'checked_at': context_event.get('updated_at'), 'basis': context_event.get('basis_json', {}), 'current_facts': facts,
                              'rules': holding.get('risk_rules', []), 'open_alert_count': len(opened)},
             'scenario': scenario, 'scenario_issue': scenario_issue, 'trade_revision': trade_revision,
-            'recorded_sale': {key: receipt[key] for key in ('date', 'price', 'shares')} if receipt else None,
+            'recorded_sale': {'id': _receipt_id(receipt), **{key: receipt[key] for key in ('date', 'price', 'shares')}} if receipt else None,
             'sale_requires_review': sale_requires_review, 'simulation_only': True}
     worksheet['strategy_condition_issue'] = ''
     try:
@@ -285,14 +286,16 @@ def save_position_plan(position_id: str, choice: str, parameters: dict[str, Any]
         root, _ = _checked_root(position_id, expected_position, expected_revision, data, events)
         previous = root['review_plan']
         plan = deepcopy(previous) if previous.get('choice') == choice else {'choice': choice}
+        if 'acknowledged_sale_id' in previous:
+            plan['acknowledged_sale_id'] = previous['acknowledged_sale_id']
         plan['updated_at'] = now_shanghai().isoformat()
         if parameters is not None or not plan.get('parameters'):
             plan.update({'position_snapshot': worksheet['position_snapshot'],
                          'constraints_version': root.get('constraints_version', 0),
                          'trade_revision': journal.position_revision(data, worksheet['symbol'])})
-        # Intent changes do not silently acknowledge a new sale. Explicit hold
-        # confirmation, or a refreshed fee calculation, acknowledges this receipt.
-        if parameters is not None or choice == 'hold' and previous.get('choice') == 'hold':
+        # Saving a route never substitutes for reviewing the latest sale.
+        # A refreshed fee calculation retains its explicit review behavior.
+        if parameters is not None:
             plan['acknowledged_sale_id'] = _receipt_id(_receipt(data, position_id))
         if parameters is not None:
             plan['parameters'] = deepcopy(parameters)
@@ -301,6 +304,41 @@ def save_position_plan(position_id: str, choice: str, parameters: dict[str, Any]
         root.pop('migration_issue', None)
         _store_root(data, position_id, root)
         return plan
+
+
+def confirm_position_sale_review(position_id: str, expected_position: dict[str, Any],
+                                 expected_revision: str, expected_sale_id: str) -> dict[str, Any]:
+    """Confirm a human's latest-sale/remaining-position review without a calculator.
+
+    The old watch stops and remains in the audit. Calculation snapshots, trades
+    and risk rules stay untouched; new observations require current analysis and
+    explicit adoption after this confirmation.
+    """
+    if not isinstance(expected_sale_id, str) or not expected_sale_id.strip():
+        raise ValueError('请明确核对当前最新卖出凭据')
+    if not Path(pf._pf_file()).is_file():
+        raise PlanConflictError('原持仓不存在或身份已变化，请返回持仓刷新')
+    with ae._LOCK, advisory_lock(ae._file()), pf._LOCK, advisory_lock(pf._pf_file()):
+        data, events = pf._load(), ae._load()
+        root, _ = _checked_root(position_id, expected_position, expected_revision, data, events)
+        receipt = _receipt(data, position_id)
+        if receipt is None or _receipt_id(receipt) != expected_sale_id:
+            raise PlanConflictError('最新卖出凭据已变化，请核对当前余仓后重新确认')
+        if root['review_plan'].get('acknowledged_sale_id') == expected_sale_id:
+            raise PlanConflictError('这笔卖出已核对，请刷新当前计划；未重复确认')
+        root['review_plan']['acknowledged_sale_id'] = expected_sale_id
+        previous_watch = root['review_plan'].pop('watch', None)
+        if previous_watch is not None:
+            root['review_plan']['watch_stopped'] = True
+            root.setdefault('watch_audit', []).append({'action': 'stop', 'reason': 'sale_review',
+                'previous': deepcopy(previous_watch), 'saved_at': now_shanghai().isoformat()})
+        root['review_plan'].pop('discussion', None)
+        root.pop('comparison', None)
+        _store_root(data, position_id, root)
+    updated = read_position_plan(position_id)
+    if updated is None:
+        raise PlanConflictError('余仓核对已保存，但持仓随后变化，请刷新当前状态')
+    return updated
 
 
 def save_position_constraints(position_id: str, raw: dict[str, Any], expected_position: dict[str, Any] | None,

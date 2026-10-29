@@ -1,3 +1,4 @@
+import { PositionSaleReview } from "./PositionSaleReview";
 import { PositionConditionChecks } from "./PositionConditionChecks";
 import { useEffect, useRef, useState } from "react";
 import { api, type ActionWorksheet, type PlanParameters, type PlanTarget, type ReviewChoice } from "@/lib/api";
@@ -127,16 +128,6 @@ export function PositionActionPlan({ eventId, target, choice, worksheet, onWorks
     } catch (reason) { if (generation.current === version) setError(`${reason instanceof Error ? reason.message : "停止结果尚未确认"}。请更新核对，未自动重复提交`); }
     finally { inFlight.current = false; if (generation.current === version) setBusy(false); }
   }
-  async function confirmObservation() {
-    if (!data || disabled || data.archived || inFlight.current) return;
-    inFlight.current = true; setBusy(true); setError("");
-    const version = ++generation.current;
-    try {
-      const next = await savePlanChoice(planTarget, data, "hold");
-      if (generation.current === version) { setData(next); setDraftRevision(next.revision); dirty.current = false; report.current?.(next); setTick(Date.now()); window.dispatchEvent(new Event(ALERTS_CHANGED_EVENT)); }
-    } catch (reason) { if (generation.current === version) setError(reason instanceof Error ? reason.message : "确认失败，请重试"); }
-    finally { inFlight.current = false; if (generation.current === version) setBusy(false); }
-  }
   const expired = !!data && worksheetExpired(data.basis, tick);
   const steps = data ? planSteps(choice, data.basis, { sell_price: Number(draft.sell_price), buy_price: Number(draft.buy_price), quantity: Number(draft.quantity) }) : [];
   const initialSimple = data ? beginnerPlan(choice, data.basis, { sell_price: Number(draft.sell_price), buy_price: Number(draft.buy_price) }) : null;
@@ -145,7 +136,6 @@ export function PositionActionPlan({ eventId, target, choice, worksheet, onWorks
   const simple = personalPaused && initialSimple ? { next: personalReason, stop: "先更新个人条件或选择其他处理方式，不继续沿用原做 T 试算。", paused: true } : initialSimple;
   const needsReview = !!data && draftNeedsReview(draftRevision, data);
   const calculationNeedsReview = !!data && choice !== "hold" && calculationDraftRequiresReview(hasCalculationDraft.current, draftRevision, data);
-  const holdingNeedsReview = choice === "hold" && !!data?.sale_requires_review;
   const baseJourney = data ? planJourney(choice, data, { sell_price: Number(draft.sell_price), buy_price: Number(draft.buy_price) }, tick) : null;
   const journey = personalPaused && baseJourney && !baseJourney.saleReview ? { label: "个人条件下先暂停做 T", detail: personalReason, attention: true, saleReview: false } : baseJourney;
   const blocked = !data || !!data.archived || needsReview || data.review_plan.choice !== choice || !!simple?.paused || expired;
@@ -160,7 +150,8 @@ export function PositionActionPlan({ eventId, target, choice, worksheet, onWorks
   if (data?.archived) return <section className="aq-action-plan" aria-label="历史处理计划"><h3>这笔持仓已清仓</h3><p>原方案与成交仅作为历史记录，不再产生当前操作步骤。</p>{data.recorded_sale ? <p>{data.recorded_sale.date} 已记录卖出 {data.recorded_sale.shares} 股，成交价 {data.recorded_sale.price.toFixed(2)} 元。</p> : null}</section>;
   return <section className="aq-action-plan" aria-label={titles[choice]}>
     {error ? <p role="alert">{error}。输入已保留；如已提交但未收到结果，请先更新核对。</p> : null}
-    {calculationNeedsReview || holdingNeedsReview ? <div className="aq-refresh-warning" role="status"><strong>{holdingNeedsReview ? "卖出后请核对剩余持仓" : "旧费用试算需要重新核对"}</strong><span>{holdingNeedsReview ? "请按当前剩余股份和风险重新确认持有安排。" : "填写内容已保留；核对当前持仓和个人条件后再保存试算。AI 策略是否有效，以各自的分析依据和跟踪状态为准。"}</span><button className="aq-btn" type="button" disabled={busy || !data?.revision} onClick={() => { if (holdingNeedsReview) void confirmObservation(); else { setDraftRevision(data?.revision); dirty.current = true; setSaved(false); } }}>{holdingNeedsReview ? "核对最新余仓并继续观察" : "已核对最新情况，保留草稿继续"}</button></div> : null}
+    {data ? <PositionSaleReview worksheet={data} disabled={busy} onWorksheet={(next) => { receive(next); report.current?.(next); }} /> : null}
+    {calculationNeedsReview ? <div className="aq-refresh-warning" role="status"><strong>旧费用试算需要重新核对</strong><span>填写内容已保留；核对当前持仓和个人条件后再保存试算。AI 策略是否有效，以各自的分析依据和跟踪状态为准。</span><button className="aq-btn" type="button" disabled={busy || !data?.revision} onClick={() => { setDraftRevision(data?.revision); dirty.current = true; setSaved(false); }}>已核对最新情况，保留草稿继续</button></div> : null}
     {data && simple ? <>
       {personalPaused ? <p className="aq-refresh-warning" role="status">个人条件下先暂停做 T：{personalReason}</p> : null}
       {watch && watchState ? <section className="aq-strategy-watch" aria-label="正在跟踪的策略条件">
@@ -178,7 +169,7 @@ export function PositionActionPlan({ eventId, target, choice, worksheet, onWorks
         <span className="aq-beginner-label">{journey?.saleReview ? "成交后的下一步" : "现在走到哪一步"}</span>
         <h4>{journey?.label}</h4>
         <p className="aq-journey-fact">{journey?.detail}</p>
-        {journey?.saleReview ? <><p className="aq-next-then">{choice === "t_watch" ? "先核对剩余持仓和这笔卖出的用途，再重新试算；只有实际买回后，才回录买入，不能把试算当成已完成。" : "先检查剩余仓位的风险；如需继续减仓，按当前余仓重新试算。"}</p>{choice === "hold" ? <button className="aq-btn" type="button" disabled={busy} onClick={() => void confirmObservation()}>已核对余仓，继续观察</button> : choice === "t_watch" ? <button className="aq-btn" type="button" onClick={() => requestOperation({ direction: "buy", code: data.symbol, positionId: data.position_id })}>我已实际买回 · 录入成交</button> : null}{data.basis.quote_issue || expired ? <p role="status">{data.basis.quote_issue || "行情已旧，先更新后再试算。"}</p> : null}</> : <>
+        {journey?.saleReview ? <><p className="aq-next-then">{choice === "t_watch" ? "先核对上方余仓，再重新分析并采用观察条件；实际买回后才回录买入，费用试算可选。" : "先核对上方余仓及风险；如需继续减仓，按当前余仓重新分析。"}</p>{choice === "t_watch" ? <button className="aq-btn" type="button" onClick={() => requestOperation({ direction: "buy", code: data.symbol, positionId: data.position_id })}>我已实际买回 · 录入成交</button> : null}{data.basis.quote_issue || expired ? <p role="status">{data.basis.quote_issue || "行情已旧，先更新后再试算。"}</p> : null}</> : <>
           {!expired && !simple.paused && !journey?.attention ? <><p className="aq-next-then"><b>接下来：</b>{simple.next}</p>{simple.then ? <p className="aq-next-then">{simple.then}</p> : null}</> : null}
           <p className="aq-next-cancel"><b>{choice === "t_watch" ? "什么时候不做了" : "什么时候重新考虑"}</b>{expired ? "旧价位只作参考，更新后再继续。" : simple.stop}</p>
         </>}
