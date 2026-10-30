@@ -10,6 +10,7 @@ import {
   ErrorState,
   LoadingState,
   SectionHeader,
+  StatePanel,
   Tag,
   ToneCallout,
 } from "@/components/ui/primitives";
@@ -18,6 +19,7 @@ import { changeClass, formatEvidenceTime, formatSignedPct, formatYi } from "@/li
 import { cn } from "@/lib/utils";
 import type { InfoStreamData, InfoStreamNewsItem } from "@/types/aqsp";
 import { CatalystSectorSection } from "@/components/aqsp/CatalystSectorSection";
+import { PageOutline } from "@/components/ui/PageOutline";
 
 function extractMessage(reason: unknown): string {
   return reason instanceof Error ? reason.message : "读取失败";
@@ -162,12 +164,11 @@ export function InfoStreamPage() {
         </button>
       </header>
 
-      <InfoStreamLoadStatus
-        error={error}
-        loading={loading}
-        hasData={Boolean(data)}
-        onRefresh={() => load(true)}
-      />
+      <PageOutline items={[
+        { id: "stream-news", label: "新闻事实" },
+        { id: "stream-catalysts", label: "板块传导" },
+        { id: "stream-concepts", label: "概念异动" },
+      ]} />
 
       {data ? (
         <>
@@ -178,9 +179,19 @@ export function InfoStreamPage() {
           {conceptFailed ? (
             <ToneCallout tone="warn" title="缺材料：概念板块源故障" detail={data.sources.concept_board} />
           ) : null}
+        </>
+      ) : null}
 
-          <section className="aq-section">
-            <SectionHeader title="财联社快讯" description="按发布时间倒序 · A/B 级为重要度标注" count={news.length} />
+      <section id="stream-news" className="aq-section aq-module-group" aria-label="新闻事实">
+        <SectionHeader number="01 · 新闻事实" title="发生了什么" description="财联社快讯 · 按发布时间倒序 · A/B 级为重要度标注" count={news.length} />
+        <InfoStreamLoadStatus
+          error={error}
+          loading={loading}
+          hasData={Boolean(data)}
+          onRefresh={() => load(true)}
+        />
+        {data ? (
+          <>
             {clsFailed || news.length === 0 ? (
               <EmptyState title="暂无快讯" detail={clsFailed ? data.sources.cls_news : "源正常但未返回快讯"} />
             ) : (
@@ -190,27 +201,31 @@ export function InfoStreamPage() {
                 ))}
               </div>
             )}
-          </section>
-        </>
-      ) : null}
-      <section className="aq-module-group" aria-label="板块线索">
-        <SectionHeader number="板块线索" title="消息可能影响哪些方向" description="传导逻辑和概念异动用于寻找线索，不能直接当成参与信号。" />
+          </>
+        ) : null}
+      </section>
+      <section id="stream-catalysts" className="aq-module-group" aria-label="板块传导线索">
+        <SectionHeader number="02 · 板块传导" title="消息可能影响哪些方向" description="报告中的传导逻辑用于寻找研究线索；核对原文后再判断。" />
         <CatalystSectorSection />
+      </section>
+      <section id="stream-concepts" className="aq-section aq-module-group" aria-label="概念异动线索">
+        <SectionHeader
+          number="03 · 概念异动"
+          title="哪些概念出现异动"
+          // 源没有日期字段，不能把取数时间冒充行情时间。
+          description="涨跌家数与资金流仅作线索 · 数据时间未提供（源无日期字段）"
+          count={data?.concepts.length}
+        />
         {data ? (
-          <section className="aq-section">
-            <SectionHeader
-              title="概念异动榜"
-              // 证据链（#317 W3）：东财 bkzj 载荷里没有任何日期字段（已核，
-              // 顶层 lt 是服务端响应时刻，不是数据日期）。这里显式说明「源未提供」，
-              // 而不是让读者以为榜是实时的、也不是编一个日期出来。
-              description="当日涨幅榜 · 涨跌家数 · 主力净流入 · 数据时间未提供（源无日期字段）"
-              count={data.concepts.length}
-            />
+          <>
             {conceptFailed || data.concepts.length === 0 ? (
               <EmptyState title="暂无概念异动数据" detail={conceptFailed ? data.sources.concept_board : "源正常但未返回板块"} />
             ) : (
-              <div className="aq-table-wrap">
-                <table className="aq-table">
+              <details className="aq-workspace-fold">
+                <summary>展开概念异动榜<span>已取得 {data.concepts.length} 个概念 · 源时间未提供</span></summary>
+                <div className="aq-workspace-fold-body">
+                  <div className="aq-table-wrap">
+                    <table className="aq-table">
                   <thead>
                     <tr>
                       <th>板块</th>
@@ -242,11 +257,14 @@ export function InfoStreamPage() {
                       </tr>
                     ))}
                   </tbody>
-                </table>
-              </div>
+                    </table>
+                  </div>
+                </div>
+              </details>
             )}
-          </section>
-        ) : null}
+          </>
+        ) : loading ? <LoadingState label="正在读取概念异动依据…" />
+          : <StatePanel tone="warn">概念异动依据尚未取得；新闻与催化报告的读取状态分别核对。</StatePanel>}
       </section>
     </div>
   );

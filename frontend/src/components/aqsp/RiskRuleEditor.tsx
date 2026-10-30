@@ -38,7 +38,7 @@ function RuleForm({ rule, onSave }: { rule: PositionAlertRule; onSave: (value: P
   </form>;
 }
 
-export function RiskRuleEditor({ code }: { code: string }) {
+export function RiskRuleEditor({ code, expanded }: { code: string; expanded?: boolean }) {
   // 规则属于复核层，不能在持仓列表首屏展开；只有用户明确查看时才取数。
   const [open, setOpen] = useState(false);
   const [rules, setRules] = useState<PositionAlertRule[]>([]);
@@ -46,6 +46,7 @@ export function RiskRuleEditor({ code }: { code: string }) {
   const [error, setError] = useState("");
   const [saved, setSaved] = useState("");
   const version = useRef(0);
+  const visible = expanded ?? open;
   const load = useCallback(async () => {
     const current = ++version.current; setLoading(true); setError("");
     try { const data = await api.riskRules(); if (current === version.current) setRules(data.rules.filter((rule) => rule.symbol === code)); }
@@ -53,13 +54,17 @@ export function RiskRuleEditor({ code }: { code: string }) {
     finally { if (current === version.current) setLoading(false); }
   }, [code]);
   useEffect(() => {
-    if (!open) return;
+    if (!visible) return;
     void load(); window.addEventListener(PORTFOLIO_CHANGED_EVENT, load);
     return () => { version.current++; window.removeEventListener(PORTFOLIO_CHANGED_EVENT, load); };
-  }, [open, load]);
-  return <details className="aq-rule-editor" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
-    <summary><ShieldCheck aria-hidden="true" />风险规则与频率 <span>L3 炸板未上线</span></summary>
+  }, [visible, load]);
+  const body = <>
+    <p className="aq-note">提醒只用于复核；L3 炸板提醒尚未上线。</p>
     {loading ? <p role="status">读取规则中…</p> : error ? <p className="aq-operation-error" role="alert">{error}<button type="button" className="aq-btn" onClick={() => void load()}><RefreshCw aria-hidden="true" />重试</button></p> : rules.length ? rules.map((rule) => <RuleForm key={`${rule.id}:${rule.updated_at}:${rule.freq_mode}:${rule.ignore_streak}`} rule={rule} onSave={(updated) => { setRules((prior) => prior.map((item) => item.id === updated.id ? updated : item)); setSaved(`${updated.level} 规则已保存`); }} />) : <p>暂无已关联规则，请刷新后重试。</p>}
     {saved ? <p role="status">{saved}</p> : null}
+  </>;
+  if (expanded !== undefined) return <div className="aq-rule-editor aq-rule-editor-embedded">{body}</div>;
+  return <details className="aq-rule-editor" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
+    <summary><ShieldCheck aria-hidden="true" />风险规则与频率</summary>{body}
   </details>;
 }

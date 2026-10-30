@@ -1,3 +1,4 @@
+import { PageOutline } from "@/components/ui/PageOutline";
 import { PositionSaleReview } from "@/components/aqsp/PositionSaleReview";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
@@ -98,8 +99,8 @@ function PositionPlanWorkspace({ positionId }: { positionId: string }) {
     {error ? <StatePanel tone="warn">{error}。{worksheet ? "保留上次内容，暂停操作；更新后再核对。" : "请重试，或返回持仓列表核对身份。"}<button className="aq-btn" type="button" disabled={loading} onClick={() => void load()}>重新读取计划</button></StatePanel> : null}
     {actionError ? <p role="alert" className="aq-refresh-warning">{actionError}</p> : null}
     {worksheet ? <>
-      {!readonly ? <div className="aq-plan-stepper" aria-label="处理计划阅读顺序"><span className="aq-plan-step-active"><b>1</b>现在怎样</span><span><b>2</b>比较路线</span><span><b>3</b>持续跟进</span></div> : null}
-      <section className="aq-section aq-plan-module" aria-label="当前处境与证据">
+      <PageOutline items={[{ id: "position-situation", label: readonly ? "历史处境" : "现在怎样" }, ...(!readonly ? [{ id: "position-routes", label: "比较路线与 AI" }, { id: "position-followup", label: "持续跟进" }] : []), { id: "position-records", label: "成交记录" }]} />
+      <section id="position-situation" className="aq-section aq-plan-module" aria-label="当前处境与证据">
         <SectionHeader title={readonly ? "这笔持仓的历史处境" : "1. 现在怎样"} description={readonly ? "只读保留当时的事实与选择。" : "先确认成本、数量、可卖份额和大盘 / 板块 / 个股依据，再看路线。"} />
         <dl className="aq-position-workspace-facts">{!readonly ? <div><dt>行情价格</dt><dd>{worksheet.basis.price?.toFixed(2) ?? "待更新"} 元</dd></div> : null}<div><dt>{readonly ? "历史记录成本" : "当前记录成本"}</dt><dd>{worksheet.basis.cost?.toFixed(4) ?? "待核对"} 元</dd></div><div><dt>当前股份</dt><dd>{worksheet.basis.shares ?? "待核对"} 股</dd></div><div><dt>{readonly ? "持仓状态" : "当前可卖"}</dt><dd>{readonly ? "已清仓" : `${worksheet.basis.sellable_shares ?? "待核对"} 股`}</dd></div></dl>
         {!readonly ? <p className="aq-note">当前页行情时点 {formatEvidenceTime(worksheet.basis.quote_as_of) || "待更新"}；后台检查记录单独显示，不把刷新时间当成成交或信号。</p> : null}
@@ -107,19 +108,19 @@ function PositionPlanWorkspace({ positionId }: { positionId: string }) {
         {!readonly ? <PositionPricePathEvidence path={worksheet.route_review?.evidence.stock.price_path} /> : null}
       </section>
       {readonly ? <section className="aq-plan-history" aria-label="已清仓的历史计划"><h2>这笔持仓已清仓，只读保留</h2><p>重新买入会产生另一笔持仓，不能继承这份旧计划。</p>{choice ? <p>当时选择：{PLAN_CHOICES[choice].title}</p> : <p>当时没有记录处理方式。</p>}{worksheet.recorded_sale ? <p>{worksheet.recorded_sale.date} 已记录卖出 {worksheet.recorded_sale.shares} 股，成交价 {worksheet.recorded_sale.price.toFixed(2)} 元。</p> : null}{worksheet.constraints ? <details><summary>查看当时个人条件</summary><p>盯盘：{({ available: "能持续看盘", occasional: "只能偶尔看一眼", unavailable: "没有时间盯盘", unknown: "未确定" })[worksheet.constraints.attention]}；新增资金：{worksheet.constraints.extra_cash == null ? "未知" : `${worksheet.constraints.extra_cash} 元`}；新增亏损上限：{worksheet.constraints.loss_limit == null ? "未知" : `${worksheet.constraints.loss_limit} 元`}。</p></details> : null}{worksheet.review_plan.parameters ? <details><summary>查看当时试算参数</summary><p>数量 {worksheet.review_plan.parameters.quantity} 股；卖价 {worksheet.review_plan.parameters.sell_price} 元{worksheet.review_plan.parameters.buy_price == null ? "" : `；回补价 ${worksheet.review_plan.parameters.buy_price} 元`}。这些是假设，不代表实际成交。</p></details> : null}{(worksheet.comparison || worksheet.review_plan.discussion) ? <details><summary>查看当时 AI 分析</summary>{[worksheet.comparison, worksheet.review_plan.discussion].filter(Boolean).map((row, index) => <div key={index}><p>{formatEvidenceTime(row!.generated_at)} · {row!.model}</p><p>{row!.summary?.conclusion || "当时未形成有效汇总"}</p></div>)}</details> : null}</section> : <>
-        <section className="aq-section aq-plan-module" aria-label="处理路线">
+        <section id="position-routes" className="aq-section aq-plan-module" aria-label="处理路线">
           <SectionHeader title="2. 比较处理路线" description="持有观察、减仓退出、做 T 各自有代价；亏损深不自动等于卖出或做 T。" />
           <PositionConstraintsForm worksheet={worksheet} disabled={unavailable} onSaved={accept} />
           {!choice ? <PositionSaleReview worksheet={worksheet} disabled={unavailable} onWorksheet={accept} /> : null}
         {choice ? <section className="aq-plan-current" aria-label="当前处理计划"><div className="aq-position-plan-heading"><h2>已选{PLAN_CHOICES[choice].title}</h2><span>选择不等于成交</span></div><PositionActionPlan key={choice} target={target} choice={choice} worksheet={worksheet} onWorksheet={accept} disabled={unavailable} /><details className="aq-change-route" open={compareOpen} onToggle={(event) => setCompareOpen(event.currentTarget.open)}><summary>重新比较或更换处理方式</summary>{compareOpen ? <PositionRouteComparison worksheet={worksheet} target={target} busy={unavailable} error={error} onChoose={(next, basis) => void choose(next, basis)} showModel={false} /> : null}</details></section> : <section aria-label="了解情况与比较方案"><PositionRouteComparison worksheet={worksheet} target={target} busy={unavailable} error={error} onChoose={(next, basis) => void choose(next, basis)} onModelComplete={() => void load()} onWorksheet={accept} /></section>}
         </section>
-        <section className="aq-section aq-plan-module" aria-label="持续跟进">
+        <section id="position-followup" className="aq-section aq-plan-module" aria-label="持续跟进">
           <SectionHeader title="3. 持续跟进" description="只在市场、板块、个股或已采用条件发生有意义变化时提醒。正常刷新不会重复要求选路。" />
           <PositionFollowupPanel key={positionId} worksheet={worksheet} disabled={unavailable} onSaved={acceptFollowup} />
         </section>
         <footer className="aq-position-workspace-actions"><Link className="aq-btn" to={`/stock/${worksheet.symbol}`}>核对选股与消息依据</Link><Link className="aq-btn" to="/today">查看今日候选与变化</Link></footer>
       </>}
-      <details className="aq-plan-help aq-strategy-records"><summary>已经操作过？核对成交记录</summary>{!readonly ? <button type="button" className="aq-btn" disabled={unavailable} onClick={() => requestOperation({ direction: "sell", code: worksheet.symbol, positionId: worksheet.position_id })}>我已实际卖出 · 补记成交</button> : null}<TradeJournalPanel key={worksheet.symbol} code={worksheet.symbol} positionId={worksheet.position_id ?? ""} archived={readonly} /></details>
+      <details id="position-records" className="aq-plan-help aq-strategy-records"><summary>已经操作过？核对成交记录</summary>{!readonly ? <button type="button" className="aq-btn" disabled={unavailable} onClick={() => requestOperation({ direction: "sell", code: worksheet.symbol, positionId: worksheet.position_id })}>我已实际卖出 · 补记成交</button> : null}<TradeJournalPanel key={worksheet.symbol} code={worksheet.symbol} positionId={worksheet.position_id ?? ""} archived={readonly} /></details>
     </> : null}
   </div>;
 }

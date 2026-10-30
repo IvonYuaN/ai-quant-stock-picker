@@ -7,6 +7,7 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { CalendarDays, Compass, RefreshCw, Sparkles } from "lucide-react";
 import { Badge, HeroState, LoadingState, ToneCallout } from "@/components/ui/primitives";
+import { PageOutline } from "@/components/ui/PageOutline";
 import { cn } from "@/lib/utils";
 import {
   buildDailyView,
@@ -15,7 +16,6 @@ import {
   type SectionView,
 } from "@/lib/daily-view";
 import { formatResearchDate } from "@/lib/research-view";
-import { stockResearchHref } from "@/lib/research-route";
 import { scheduleHashTargetScroll } from "@/lib/hash-navigation";
 import { formatAqspTime, isAqspSnapshotStale, useWorkspaceSnapshot } from "./useAqspSnapshot";
 import { MarketStrip } from "./MarketStrip";
@@ -291,10 +291,6 @@ export function TodayWorkspace() {
     detailSections.some((section) => section.id === active) ? active : detailSections[0]?.id ?? "";
 
   const targetDate = selectedDate || data?.selected_date || "";
-  const firstCandidate = view?.candidates.find((row) => row.symbol);
-  const discussionHref = firstCandidate && view
-    ? stockResearchHref(firstCandidate.symbol, view.date)
-    : `/today${location.search}#discussion`;
 
   // 抽屉只展示 AQSP 自己的判断；落在当天候选里时才有评分与证据链
   const pickedRow = picked ? view?.candidates.find((row) => row.symbol === picked) : undefined;
@@ -321,12 +317,7 @@ export function TodayWorkspace() {
         actions={view ? <ReviewExportButton view={view} /> : null}
       />
 
-      <nav className="aq-decision-path" aria-label="今日研究路径">
-        <Link to={`/today${location.search}#market-context`}><span>01</span><b>大盘与行业</b></Link>
-        <Link to={`/today${location.search}#candidates`}><span>02</span><b>选股理由</b></Link>
-        <Link to={discussionHref}><span>03</span><b>{view?.isHistorical ? "回看个股分析" : "AI讨论与路线"}</b></Link>
-        <Link to={`/today${location.search}#strategy-followups`}><span>04</span><b>买卖条件与跟进</b></Link>
-      </nav>
+      <PageOutline items={[{ id: "market-context", label: "大盘与行业" }, ...(candidateSection ? [{ id: "candidates", label: "候选与 AI 研究" }] : []), { id: "strategy-followups", label: "买卖条件与跟进" }, ...(view && data ? [{ id: "research-evidence", label: "补充研究证据" }] : [])]} />
 
       {data ? <DatePicker snapshot={data} /> : null}
 
@@ -373,7 +364,7 @@ export function TodayWorkspace() {
 
       {view && data ? (
         <section className="aq-secondary-modules" aria-label="研究证据与历史记录">
-          <details id="discussion" className="aq-workspace-fold" open={active !== "candidates" || undefined} key={active}>
+          <details id="research-evidence" className="aq-workspace-fold" open={active !== "candidates" || undefined} key={active}>
             <summary>消息证据与多空讨论 <span>{view.messages.length} 条消息 · {view.debates.length} 只复核</span></summary>
             <div className="aq-workspace-fold-body">
               <SectionTabs active={activeDetailId} sections={detailSections} />

@@ -1,3 +1,4 @@
+import { MemoryRouter } from "react-router-dom";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server.edge";
 import { CatalystSectorView } from "@/components/aqsp/CatalystSectorSection";
@@ -50,7 +51,7 @@ export const catalystSectorViewContract = {
   invalidLinkRendersSourceWithoutAnchor: !render({ ...report, events: [{ ...event, url: "javascript:alert(1)" }] }).includes("javascript:") && render({ ...report, events: [{ ...event, url: "javascript:alert(1)" }] }).includes("来源：原文来源"),
   unclassifiedEventRemainsVisible: render({ ...report, events: [{ ...event, affected_sectors: [] }] }).includes("未分类</h3>"),
   missingEventTimeIsExplicit: render({ ...report, events: [{ ...event, published_at: "" }] }).includes("事件发布时间：未记录"),
-  streamMountsCatalystIndependentlyOfNewsAvailability: renderToStaticMarkup(createElement(InfoStreamPage)).includes("板块催化与传导"),
+  streamMountsCatalystIndependentlyOfNewsAvailability: renderToStaticMarkup(createElement(MemoryRouter, null, createElement(InfoStreamPage))).includes("板块催化与传导"),
   streamFailureKeepsPriorDataWithOneRetryableWarning: (() => {
     const html = renderToStaticMarkup(createElement(InfoStreamLoadStatus, {
       error: "连接超时", loading: false, hasData: true, onRefresh: () => {},
