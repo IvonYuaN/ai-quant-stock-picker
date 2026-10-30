@@ -18,7 +18,7 @@ interface Props {
   candidates: readonly AqspCandidate[];
   candidateDate: string;
   candidateStatus: string;
-  renderRiskSettings?: (code: string) => ReactNode;
+  renderRiskSettings?: (code: string, expanded?: boolean) => ReactNode;
 }
 
 export function openOperation(direction: "buy" | "sell", code = ""): void {
@@ -34,6 +34,7 @@ export function HoldingsWatchlist({ portfolio, alerts, candidates, candidateDate
   const location = useLocation();
   const [codes, setCodes] = useState(loadWatch);
   const [raw, setRaw] = useState("");
+  const [openRules, setOpenRules] = useState<ReadonlyMap<string, boolean>>(() => new Map());
   const [sector, setSector] = useState("");
   const [quotes, setQuotes] = useState<Record<string, Quote>>({});
   const [sectors, setSectors] = useState<Record<string, readonly string[]>>({});
@@ -130,7 +131,7 @@ export function HoldingsWatchlist({ portfolio, alerts, candidates, candidateDate
   }
 
   const renderGroup = (group: (typeof groups)[number]) => (
-    <section className={group.kind === "triggered" || group.kind === "holding" ? "aq-section" : "aq-watch-group"} key={group.kind} data-holding-group={group.kind}>
+    <section id={`holdings-${group.kind}`} className={group.kind === "triggered" || group.kind === "holding" ? "aq-section" : "aq-watch-group"} key={group.kind} data-holding-group={group.kind}>
       <SectionHeader title={group.label} count={`${group.rows.length} 只`} description={group.kind === "triggered" ? "按已记录提醒优先展示；当日新仓仍受 T+1 限制。" : undefined} />
       <ul className="aq-watch-list" aria-label={group.label}>
         {group.rows.map((row) => {
@@ -191,7 +192,10 @@ export function HoldingsWatchlist({ portfolio, alerts, candidates, candidateDate
       {sectorError ? <StatePanel tone="warn">部分板块读取失败，未取得资料的标的显示“板块待补”。<button className="aq-btn" type="button" onClick={() => setReload((value) => value + 1)}>重试板块</button></StatePanel> : null}
       {sector ? <div className="aq-row-actions"><Badge tone="neutral">板块：{sector}</Badge><button type="button" className="aq-btn" onClick={() => setSector("")}>显示全部</button></div> : null}
       {sector && groups.every((group) => !group.rows.length) ? <EmptyState title="该板块没有匹配记录" detail="可以清除板块筛选查看全部持仓和自选。" /> : null}
-      {groups.filter((group) => group.rows.length && (group.kind === "triggered" || group.kind === "holding")).map(renderGroup)}
+      {portfolio?.holdings.length ? <div id="holding-positions" className="aq-secondary-modules">
+        {groups.filter((group) => group.rows.length && (group.kind === "triggered" || group.kind === "holding")).map(renderGroup)}
+        {!groups.some((group) => group.rows.length && (group.kind === "triggered" || group.kind === "holding")) ? <EmptyState title="当前板块没有匹配持仓" detail="清除板块筛选可查看全部持仓与处理计划。" /> : null}
+      </div> : null}
       {portfolio && !portfolio.holdings.length ? <section className="aq-section"><SectionHeader title="持仓事实" /><EmptyState title="尚未录入已有持仓" detail="可以先研究候选、加入自选；已有真实成交可点“我操作了”补录。" /></section> : null}
       <section id={WATCHLIST_ANCHOR_ID} className="aq-section" aria-label="我的自选">
         <SectionHeader title="我的自选" description="关注标的与当前持仓分开查看；加入自选不会生成持仓。" count={`${codes.length} 只`} />
@@ -207,7 +211,7 @@ export function HoldingsWatchlist({ portfolio, alerts, candidates, candidateDate
         {groups.filter((group) => group.rows.length && group.kind !== "triggered" && group.kind !== "holding").map(renderGroup)}
         {!groups.some((group) => group.rows.length && group.kind !== "triggered" && group.kind !== "holding") ? <p className="aq-note">暂无独立自选标的；已关注的持仓在上方显示。</p> : null}
       </section>
-      {renderRiskSettings && portfolio?.holdings.length ? <section className="aq-section aq-risk-rules-section" aria-label="风险规则">
+      {renderRiskSettings && portfolio?.holdings.length ? <section id="holding-rules" className="aq-section aq-risk-rules-section" aria-label="风险规则">
         <SectionHeader
           title="风险规则"
           description="规则只负责提醒和复核，不直接替代持有、减仓或做 T 分析。按股票展开后才读取详细设置。"
@@ -216,9 +220,12 @@ export function HoldingsWatchlist({ portfolio, alerts, candidates, candidateDate
         <div className="aq-risk-stock-list">
           {portfolio.holdings.map((holding) => {
             const enabled = holding.risk_rules?.filter((rule) => rule.enabled).length ?? 0;
-            return <details className="aq-risk-stock" key={holding.code}>
+            return <details className="aq-risk-stock" key={holding.code} onToggle={(event) => {
+              const open = event.currentTarget.open;
+              setOpenRules((prior) => { const next = new Map(prior); next.set(holding.code, open); return next; });
+            }}>
               <summary><span><strong>{holding.name || holding.code}</strong><span className="aq-code">{holding.code}</span></span><span className="aq-note">{enabled ? `${enabled} 条启用` : "未启用规则"}</span></summary>
-              <div className="aq-risk-stock-body">{renderRiskSettings(holding.code)}</div>
+              <div className="aq-risk-stock-body">{openRules.has(holding.code) ? renderRiskSettings(holding.code, openRules.get(holding.code)) : null}</div>
             </details>;
           })}
         </div>

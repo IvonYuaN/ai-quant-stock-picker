@@ -35,7 +35,7 @@ export const router = createBrowserRouter([
       { path: "/today", element: <TodayPage /> },
       { path: "/stream", element: <InfoStreamPage /> },
       { path: "/market", element: <MarketPage /> },
-      { path: "/my/holdings", element: <HoldingsPage renderRiskSettings={(code) => <RiskRuleEditor code={code} />} /> },
+      { path: "/my/holdings", element: <HoldingsPage renderRiskSettings={(code, expanded) => <RiskRuleEditor code={code} expanded={expanded} />} /> },
       { path: "/my/holdings/:positionId/plan", element: <PositionPlanPage /> },
       { path: "/my/notes", element: <NotesPage /> },
       { path: "/my/reports", element: <ReportsPage /> },

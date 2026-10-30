@@ -2,6 +2,7 @@
 //
 // 研究日期来自共享快照；评分、消息和讨论严格同日，当前行情与事件独立展示。
 // 页面不重算评分，加入自选只写当前浏览器。
+import { PageOutline } from "@/components/ui/PageOutline";
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { ArrowLeft, CalendarClock, Check, ExternalLink, RefreshCw, Star } from "lucide-react";
@@ -176,7 +177,8 @@ export function StockResearchPage() {
         </div>
       </header>
 
-      <section className="aq-section aq-research-summary" aria-label="同日研究摘要">
+      <PageOutline items={[{ id: "stock-research", label: "为什么关注" }, { id: "stock-strategy", label: "AI、条件与跟进" }, ...(view && row ? [{ id: "stock-discussion", label: "同日消息与复核" }] : []), { id: "stock-quote", label: "实时行情" }, { id: "stock-events", label: "新闻与事件" }]} />
+      <section id="stock-research" className="aq-section aq-research-summary" aria-label="同日研究摘要">
         <SectionHeader title="所选日研究" description="候选资格、评分与研究依据属于所选日期；当前行情在下方独立显示。" />
         {workspace.loading && !view ? <LoadingState label="正在读取所选日期的研究依据…" /> : null}
         {workspace.error ? <StatePanel tone="warn" action={<button type="button" className="aq-btn" onClick={workspace.refresh}>重试研究</button>}>{workspace.error}，暂不展示未核实的评分与依据。</StatePanel> : null}
@@ -192,21 +194,23 @@ export function StockResearchPage() {
                   <div className="aq-research-evidence"><p className="aq-label">为什么入选</p>{row.reasons.length ? <ul className="aq-reason-list">{row.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul> : <p className="aq-detail-muted">选股依据尚未记录。</p>}<p className="aq-detail-muted">命中策略：{row.strategies || "未记录"}</p></div>
                   <div className="aq-research-evidence"><p className="aq-label">下一观察与风险</p><p>{row.nextStep || "等待新增证据后复核。"}</p>{debate?.primary_risk_gate ? <StatePanel tone="warn">{debate.primary_risk_gate}</StatePanel> : <p className="aq-detail-muted">个股级风险结论尚未记录，不代表无风险。</p>}{debate?.next_trigger ? <p className="aq-detail-muted">下一验证：{debate.next_trigger}</p> : null}</div>
                 </div>
+                <details className="aq-evidence-fold" key={`${view.date}:${code}`}><summary>技术指标、评分与来源</summary><div>
                 {row.metrics.length ? <dl className="aq-research-kv">{row.metrics.map((metric) => <div key={metric.key}><dt>{metric.label}</dt><dd>{metric.value}</dd></div>)}</dl> : null}
                 {row.technicalProvenance ? <details className="aq-detail-muted"><summary>{row.technicalProvenance.summary}</summary><p>{row.technicalProvenance.detail}</p></details> : null}
                 {row.breakdown.length ? <details className="aq-drawer"><summary className="aq-drawer-summary">评分拆解与数据来源</summary><div className="aq-drawer-body"><ul className="aq-reason-list">{row.breakdown.map((item) => <li key={item}>{item}</li>)}</ul><p className="aq-detail-muted">快照行情：{row.provenance || "来源未记录"}</p></div></details> : row.provenance ? <p className="aq-detail-muted">快照行情：{row.provenance}</p> : null}
+                </div></details>
               </>
             )}
           </>
         ) : null}
       </section>
 
-      <section className="aq-section" aria-label="参与条件与跟进">
+      <section id="stock-strategy" className="aq-section" aria-label="参与条件与跟进">
         <SectionHeader title="参与条件与跟进" description="结合当前证据比较路线，保存条件后持续核验。" />
         <CandidateObservationPanel symbol={code} researchDate={researchDate} historical={view?.isHistorical ?? false} />
       </section>
 
-      {view && row ? <section className="aq-section">
+      {view && row ? <section id="stock-discussion" className="aq-section">
         <SectionHeader title="同日消息与多空复核" description={`${view.date} 的个股证据，与下方实时行情分别呈现。`} count={`${datedMessages.length} 条消息`} />
         <div className="aq-research-columns">
           <div className="aq-research-evidence"><p className="aq-label">可引用消息</p>{datedMessages.length ? datedMessages.map((message, index) => <article className="aq-event-row" key={`${message.title}-${index}`}><a className="aq-radar-title" href={messageSourceUrl(message)} target="_blank" rel="noreferrer">{message.title}<ExternalLink aria-hidden="true" /></a><p className="aq-detail-muted">{message.source} · {message.published_at}</p>{message.summary ? <p>{message.summary}</p> : null}{message.validation_signals?.length ? <p className="aq-detail-muted">确认条件：{message.validation_signals.join("；")}</p> : null}{message.invalidation_signals?.length ? <p className="aq-detail-muted">失效条件：{message.invalidation_signals.join("；")}</p> : null}</article>) : <EmptyState title="暂无同日可引用消息" detail="缺少关联股票代码及原文链接的消息，不作为个股依据。" />}</div>
@@ -214,7 +218,7 @@ export function StockResearchPage() {
         </div>
       </section> : null}
 
-      <section className="aq-section aq-research-quote">
+      <section id="stock-quote" className="aq-section aq-research-quote">
         <SectionHeader title="实时行情" description="当前接口返回的行情快照，不作为历史日期的价格证据。" />
         {loading ? <LoadingState label="正在读取行情与催化…" /> : null}
         {quoteError ? <StatePanel tone="warn" action={<button type="button" className="aq-btn" onClick={() => setReload((value) => value + 1)}>重试行情与事件</button>}>{quoteError}，行情降级；下方催化仍可看。</StatePanel> : null}
@@ -239,7 +243,7 @@ export function StockResearchPage() {
         ) : null}
       </section>
 
-      <section className="aq-section">
+      <section id="stock-events" className="aq-section">
         <SectionHeader
           number="02"
           title="相关新闻催化"

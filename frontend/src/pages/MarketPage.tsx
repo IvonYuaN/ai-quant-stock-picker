@@ -15,6 +15,7 @@ import {
   clickableRowProps,
 } from "@/components/ui/primitives";
 import { EChart } from "@/components/ui/EChart";
+import { PageOutline } from "@/components/ui/PageOutline";
 import { cn } from "@/lib/utils";
 import { changeClass, formatEvidenceTime, formatRate, formatSignedPct, formatYi } from "@/lib/format";
 import { industryOption, ladderOption, sectorFlowOption } from "@/lib/chart-options";
@@ -343,6 +344,7 @@ export function MarketPage() {
   const availability = view ? sectionAvailability(view) : null;
 
   const section = (opts: {
+    id: string;
     source: MarketSection;
     title: string;
     description: string;
@@ -351,16 +353,22 @@ export function MarketPage() {
     emptyTitle: string;
     emptyDetail: string;
     children: React.ReactNode;
+    auxiliary?: boolean;
   }) => {
     return (
-      <section className="aq-section">
+      <section id={opts.id} className="aq-section">
         <SectionHeader title={opts.title} description={opts.description} icon={opts.icon} />
         {pendingSections.includes(opts.source) ? (
           <LoadingState label={`正在读取${MARKET_SECTION_LABELS[opts.source]}…`} />
         ) : failedSections.includes(MARKET_SECTION_LABELS[opts.source]) ? (
           <StatePanel tone="warn">此项读取失败，可点页头“刷新”重试；其余数据独立显示。</StatePanel>
         ) : opts.available ? (
-          opts.children
+          opts.auxiliary ? (
+            <details className="aq-workspace-fold">
+              <summary>展开{opts.title}<span>已取得数据 · 补充观察</span></summary>
+              <div className="aq-workspace-fold-body">{opts.children}</div>
+            </details>
+          ) : opts.children
         ) : (
           <EmptyState title={opts.emptyTitle} detail={opts.emptyDetail} />
         )}
@@ -390,6 +398,12 @@ export function MarketPage() {
         </button>
       </header>
 
+      {view && availability ? <PageOutline items={[
+        { id: "market-overall", label: "大盘整体" },
+        { id: "market-industries", label: "行业方向" },
+        { id: "market-supporting", label: "情绪、成交与外围" },
+      ]} /> : null}
+
       {/* 「接口成功但源不可达」这一档：各板块的 failedSections 覆盖不到它，
           因为后端在这种情况下返回的是 200 + 空载荷。没有这条提示，
           空面板会被读成「今天没数据」——那是一句关于市场的假陈述。 */}
@@ -405,9 +419,10 @@ export function MarketPage() {
 
       {view && availability ? (
         <>
-          <section className="aq-module-group" aria-label="大盘整体">
+          <section id="market-overall" className="aq-module-group" aria-label="大盘整体">
             <SectionHeader number="01 · 大盘整体" title="市场在什么状态" description="指数表现和全市场宽度分别核对，不能相互替代。" />
           {section({
+            id: "market-indices",
             source: "indices",
             title: "大盘指数",
             description: `上证 / 深证成指 / 创业板指 / 沪深300${view.indicesUpdated ? ` · 数据时间 ${formatEvidenceTime(view.indicesUpdated)}` : " · 数据时间未标注"}`,
@@ -418,6 +433,7 @@ export function MarketPage() {
             children: <IndexCards view={view} />,
           })}
           {section({
+            id: "market-breadth",
             source: "overview",
             title: "市场宽度",
             description: "涨跌家数 · 涨跌停 · 宽度分档",
@@ -428,9 +444,10 @@ export function MarketPage() {
             children: <BreadthBlock view={view} />,
           })}
           </section>
-          <section className="aq-module-group" aria-label="行业方向">
+          <section id="market-industries" className="aq-module-group" aria-label="行业方向">
             <SectionHeader number="02 · 行业方向" title="哪些方向更强" description="先比较行业涨跌，再核对资金流；强弱榜单不等于个股买点。" />
           {section({
+            id: "market-industry-ranking",
             source: "industry",
             title: "行业涨跌榜",
             description: `全行业涨跌幅排名${view.industryTotal ? ` · 共 ${view.industryTotal} 个行业` : ""}`,
@@ -441,6 +458,7 @@ export function MarketPage() {
             children: <IndustryBlock view={view} />,
           })}
           {section({
+            id: "market-sector-flow",
             source: "overview",
             title: "板块资金流",
             description: "行业资金净流入 / 净流出前列",
@@ -451,12 +469,14 @@ export function MarketPage() {
             children: <SectorFlowBlock view={view} />,
           })}
           </section>
-          <section className="aq-module-group" aria-label="补充观察">
-            <SectionHeader number="03 · 补充观察" title="情绪、成交与外围" description="帮助理解市场背景，不单独形成买卖结论。" />
+          <section id="market-supporting" className="aq-module-group" aria-label="补充观察">
+            <SectionHeader number="03 · 补充观察" title="情绪、成交与外围" description="需要时展开数据；读取状态保持可见，不单独形成买卖结论。" />
           {section({
+            id: "market-emotion",
             source: "emotion",
+            auxiliary: true,
             title: "短线情绪",
-            description: "连板梯队 · 封板率 / 炸板率 / 晋级率 · 连板股清单",
+            description: `连板梯队 · 封板率 / 炸板率 / 晋级率 · 连板股清单${view.emotion?.date ? ` · 数据交易日 ${view.emotion.date}（回溯最近有数据的交易日）` : " · 数据交易日未标注"}`,
             icon: Flame,
             available: availability.emotion,
             emptyTitle: "短线情绪未返回",
@@ -464,7 +484,9 @@ export function MarketPage() {
             children: <EmotionBlock view={view} onPick={setPicked} />,
           })}
           {section({
+            id: "market-turnover",
             source: "turnover",
+            auxiliary: true,
             title: "成交额榜",
             description: `全市场成交额 Top20 · 客观榜单，非推荐${view.turnoverUpdated ? ` · 数据时间 ${formatEvidenceTime(view.turnoverUpdated)}` : " · 数据时间未标注"}`,
             icon: Layers,
@@ -474,7 +496,9 @@ export function MarketPage() {
             children: <TurnoverBlock view={view} onPick={setPicked} />,
           })}
           {section({
+            id: "market-global",
             source: "global",
+            auxiliary: true,
             title: "隔夜外围",
             description: `美股 / 港股指数 —— A 股开盘前的外部环境${view.globalUpdated ? ` · 数据时间 ${formatEvidenceTime(view.globalUpdated)}` : " · 数据时间未标注"}`,
             icon: Globe2,

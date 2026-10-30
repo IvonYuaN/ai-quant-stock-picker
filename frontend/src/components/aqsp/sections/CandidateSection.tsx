@@ -98,9 +98,11 @@ function ComparePanel({
                 <div className="aq-candidate-decision-card-head"><div><h4>{card.name}</h4><span className="aq-code">{card.symbol}</span></div><button type="button" className="aq-btn aq-btn-icon" onClick={() => onRemove(card.symbol)} aria-label={`移除 ${card.name}`}>×</button></div>
                 <p><b>支持</b><span>{card.support}</span></p>
                 <p><b>反证 / 缺口</b><span>{card.counter}</span></p>
-                <p><b>板块</b><span>{card.sector}</span></p>
-                <p><b>该票 AI 分歧</b><span>{card.debate}</span></p>
                 <p><b>接下来等</b><span>{card.next}</span></p>
+                <details className="aq-evidence-fold"><summary>板块依据与 AI 分歧</summary><div>
+                  <p><b>板块</b><span>{card.sector}</span></p>
+                  <p><b>该票 AI 分歧</b><span>{card.debate}</span></p>
+                </div></details>
                 <Link to={`${stockResearchHref(card.symbol, date)}#candidate-observation`} className="aq-btn">看 AI 讨论、观察条件与跟进 <ArrowRight aria-hidden="true" /></Link>
               </article>
             ))}
@@ -280,24 +282,6 @@ function CandidateDetailCard({
         </p>
       ) : null}
 
-      {row.metrics.length > 0 ? (
-        <><div className="aq-metric-grid">
-          {row.metrics.map((metric) => (
-            <div key={metric.key}>
-              <span>{metric.label}</span>
-              <b>{metric.value}</b>
-            </div>
-          ))}
-        </div>{row.technicalProvenance ? <details className="aq-provenance"><summary>{row.technicalProvenance.summary}</summary><p>{row.technicalProvenance.detail}</p></details> : null}</>
-      ) : null}
-
-      {row.breakdown.length > 0 ? (
-        <p className="aq-breakdown">
-          <b>评分依据</b>
-          {row.breakdown.slice(0, 4).join(" · ")}
-        </p>
-      ) : null}
-
       {row.reasons.length > 0 ? (
         <ul className="aq-reason-list">
           {row.reasons.slice(0, 3).map((reason) => (
@@ -316,8 +300,28 @@ function CandidateDetailCard({
         </p>
       ) : null}
 
-      {row.provenance ? <p className="aq-provenance">快照行情：{row.provenance}</p> : null}
       {row.coverageNote ? <p className="aq-note" role="status">{row.coverageNote}</p> : null}
+      <details className="aq-evidence-fold"><summary>技术指标、评分与来源</summary><div>
+      {row.metrics.length > 0 ? (
+        <><div className="aq-metric-grid">
+          {row.metrics.map((metric) => (
+            <div key={metric.key}>
+              <span>{metric.label}</span>
+              <b>{metric.value}</b>
+            </div>
+          ))}
+        </div>{row.technicalProvenance ? <details className="aq-provenance"><summary>{row.technicalProvenance.summary}</summary><p>{row.technicalProvenance.detail}</p></details> : null}</>
+      ) : null}
+
+      {row.breakdown.length > 0 ? (
+        <p className="aq-breakdown">
+          <b>评分依据</b>
+          {row.breakdown.slice(0, 4).join(" · ")}
+        </p>
+      ) : null}
+
+        {row.provenance ? <p className="aq-provenance">快照行情：{row.provenance}</p> : null}
+      </div></details>
     </Card>
   );
 }
@@ -766,7 +770,7 @@ export function CandidateSection({
                   })}
                 </div>
                 {selected ? <CandidateDetailCard
-                    key={selected.symbol}
+                    key={`${view.date}:${selected.symbol}`}
                     row={selected}
                     date={view.date}
                     ownership={ownership}

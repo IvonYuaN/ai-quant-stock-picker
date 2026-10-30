@@ -5,7 +5,7 @@ import { ALERTS_CHANGED_EVENT, PORTFOLIO_CHANGED_EVENT } from "@/lib/operation";
 
 const labels = { L1: "成本硬止损", L2: "均线跌破", L4: "MACD 死叉", L5: "高水位移动止损" };
 
-function RuleForm({ rule, onSave }: { rule: PositionAlertRule; onSave: (value: PositionAlertRule) => void }) {
+function RuleForm({ rule, onSave, disabled = false }: { rule: PositionAlertRule; onSave: (value: PositionAlertRule) => void; disabled?: boolean }) {
   const [enabled, setEnabled] = useState(rule.enabled);
   const [value, setValue] = useState(String(rule.level === "L1" || rule.level === "L5" ? rule.param_value * 100 : rule.param_value));
   const [frequency, setFrequency] = useState<AlertFrequency>(rule.freq_mode);
@@ -15,7 +15,7 @@ function RuleForm({ rule, onSave }: { rule: PositionAlertRule; onSave: (value: P
   const percentage = rule.level === "L1" || rule.level === "L5";
   const save = async (event: FormEvent) => {
     event.preventDefault();
-    if (inFlight.current) return;
+    if (inFlight.current || disabled) return;
     inFlight.current = true; setBusy(true); setError("");
     try {
       const updated = await api.updateRiskRule(rule.id, {
@@ -27,18 +27,18 @@ function RuleForm({ rule, onSave }: { rule: PositionAlertRule; onSave: (value: P
     finally { inFlight.current = false; setBusy(false); }
   };
   return <form className="aq-rule-form" onSubmit={(event) => void save(event)}>
-    <div className="aq-rule-title"><label><input type="checkbox" checked={enabled} disabled={busy} onChange={(event) => setEnabled(event.target.checked)} />{rule.level} {labels[rule.level]}</label><small>{rule.origin === "AUTO_DEFAULT" ? "自动规则" : "自定义"}</small></div>
+    <div className="aq-rule-title"><label><input type="checkbox" checked={enabled} disabled={busy || disabled} onChange={(event) => setEnabled(event.target.checked)} />{rule.level} {labels[rule.level]}</label><small>{rule.origin === "AUTO_DEFAULT" ? "自动规则" : "自定义"}</small></div>
     <div className="aq-rule-fields">
-      {rule.level === "L2" ? <label>均线周期<select className="aq-input" value={value} disabled={busy} onChange={(event) => setValue(event.target.value)}>{[5, 10, 20].map((days) => <option key={days} value={days}>MA{days}</option>)}</select></label> : percentage ? <label>{rule.level === "L1" ? "成本回撤（%）" : "高水位回撤（%）"}<input type="number" className="aq-input" min="0.01" max="99.99" step="any" value={value} disabled={busy} onChange={(event) => setValue(event.target.value)} required /></label> : <span className="aq-operation-note">固定 MACD（12,26,9）</span>}
-      <label>提醒频率<select className="aq-input" value={frequency} disabled={busy} onChange={(event) => setFrequency(event.target.value as AlertFrequency)}><option value="once">本次触发仅一次</option><option value="daily">每日一次</option><option value="always">每次检查</option></select></label>
-      <button type="submit" className="aq-btn" disabled={busy}><Check aria-hidden="true" />{busy ? "保存中…" : "保存规则"}</button>
+      {rule.level === "L2" ? <label>均线周期<select className="aq-input" value={value} disabled={busy || disabled} onChange={(event) => setValue(event.target.value)}>{[5, 10, 20].map((days) => <option key={days} value={days}>MA{days}</option>)}</select></label> : percentage ? <label>{rule.level === "L1" ? "成本回撤（%）" : "高水位回撤（%）"}<input type="number" className="aq-input" min="0.01" max="99.99" step="any" value={value} disabled={busy || disabled} onChange={(event) => setValue(event.target.value)} required /></label> : <span className="aq-operation-note">固定 MACD（12,26,9）</span>}
+      <label>提醒频率<select className="aq-input" value={frequency} disabled={busy || disabled} onChange={(event) => setFrequency(event.target.value as AlertFrequency)}><option value="once">本次触发仅一次</option><option value="daily">每日一次</option><option value="always">每次检查</option></select></label>
+      <button type="submit" className="aq-btn" disabled={busy || disabled}><Check aria-hidden="true" />{busy ? "保存中…" : "保存规则"}</button>
     </div>
     <p className="aq-operation-note">{rule.trigger_price != null ? `当前触发位 ${rule.trigger_price.toFixed(4)} 元 · ` : ""}{rule.effective_from ? `生效日期 ${rule.effective_from} · ` : ""}{rule.frequency_note || "频率作用于持续触发与通知；关闭后不生成该层提醒。"}</p>
     {error ? <p className="aq-operation-error" role="alert">{error}</p> : null}
   </form>;
 }
 
-export function RiskRuleEditor({ code }: { code: string }) {
+export function RiskRuleEditor({ code, expanded }: { code: string; expanded?: boolean }) {
   // 规则属于复核层，不能在持仓列表首屏展开；只有用户明确查看时才取数。
   const [open, setOpen] = useState(false);
   const [rules, setRules] = useState<PositionAlertRule[]>([]);
@@ -46,6 +46,7 @@ export function RiskRuleEditor({ code }: { code: string }) {
   const [error, setError] = useState("");
   const [saved, setSaved] = useState("");
   const version = useRef(0);
+  const visible = expanded ?? open;
   const load = useCallback(async () => {
     const current = ++version.current; setLoading(true); setError("");
     try { const data = await api.riskRules(); if (current === version.current) setRules(data.rules.filter((rule) => rule.symbol === code)); }
@@ -53,13 +54,20 @@ export function RiskRuleEditor({ code }: { code: string }) {
     finally { if (current === version.current) setLoading(false); }
   }, [code]);
   useEffect(() => {
-    if (!open) return;
+    if (!visible) return;
     void load(); window.addEventListener(PORTFOLIO_CHANGED_EVENT, load);
     return () => { version.current++; window.removeEventListener(PORTFOLIO_CHANGED_EVENT, load); };
-  }, [open, load]);
-  return <details className="aq-rule-editor" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
-    <summary><ShieldCheck aria-hidden="true" />风险规则与频率 <span>L3 炸板未上线</span></summary>
-    {loading ? <p role="status">读取规则中…</p> : error ? <p className="aq-operation-error" role="alert">{error}<button type="button" className="aq-btn" onClick={() => void load()}><RefreshCw aria-hidden="true" />重试</button></p> : rules.length ? rules.map((rule) => <RuleForm key={`${rule.id}:${rule.updated_at}:${rule.freq_mode}:${rule.ignore_streak}`} rule={rule} onSave={(updated) => { setRules((prior) => prior.map((item) => item.id === updated.id ? updated : item)); setSaved(`${updated.level} 规则已保存`); }} />) : <p>暂无已关联规则，请刷新后重试。</p>}
+  }, [visible, load]);
+  const body = <>
+    <p className="aq-note">提醒只用于复核；L3 炸板提醒尚未上线。</p>
+    {loading ? <p role="status">读取规则中…</p> : null}
+    {error ? <p className="aq-operation-error" role="alert">{error}<button type="button" className="aq-btn" onClick={() => void load()}><RefreshCw aria-hidden="true" />重试</button></p> : null}
+    {rules.map((rule) => <RuleForm key={`${rule.id}:${rule.updated_at}:${rule.freq_mode}:${rule.ignore_streak}`} rule={rule} disabled={loading || !!error || !visible} onSave={(updated) => { setRules((prior) => prior.map((item) => item.id === updated.id ? updated : item)); setSaved(`${updated.level} 规则已保存`); }} />)}
+    {!loading && !error && !rules.length ? <p>暂无已关联规则，请刷新后重试。</p> : null}
     {saved ? <p role="status">{saved}</p> : null}
+  </>;
+  if (expanded !== undefined) return <div className="aq-rule-editor aq-rule-editor-embedded">{body}</div>;
+  return <details className="aq-rule-editor" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
+    <summary><ShieldCheck aria-hidden="true" />风险规则与频率</summary>{body}
   </details>;
 }

@@ -9,6 +9,7 @@ import { normalizeAlerts } from "@/lib/alert-view";
 import { ALERTS_CHANGED_EVENT, PORTFOLIO_CHANGED_EVENT, currentHoldingCandidates, currentPositionAlerts } from "@/lib/holding-view";
 import { isAqspSnapshotStale } from "@/lib/snapshot-freshness";
 import { Badge, LoadingState, SectionHeader, StatePanel, ToneCallout } from "@/components/ui/primitives";
+import { PageOutline } from "@/components/ui/PageOutline";
 import { HoldingsWatchlist } from "@/components/aqsp/HoldingsWatchlist";
 import { useAqspSnapshot } from "@/components/aqsp/useAqspSnapshot";
 import { positionPlanHref } from "@/lib/position-workspace";
@@ -16,7 +17,7 @@ import { cn } from "@/lib/utils";
 import { changeClass, formatMoney, formatSignedPct } from "@/lib/format";
 import { scrollToHashTarget } from "@/lib/hash-navigation";
 
-export function HoldingsPage({ renderRiskSettings }: { renderRiskSettings?: (code: string) => ReactNode }) {
+export function HoldingsPage({ renderRiskSettings }: { renderRiskSettings?: (code: string, expanded?: boolean) => ReactNode }) {
   const [data, setData] = useState<PortfolioData | null>(null);
   const [alerts, setAlerts] = useState<AlertEvent[]>([]);
   const [error, setError] = useState("");
@@ -119,7 +120,14 @@ export function HoldingsPage({ renderRiskSettings }: { renderRiskSettings?: (cod
         </div>
       </header>
 
-      {data ? <section className="aq-section aq-holdings-summary" aria-label="持仓概况">
+      <PageOutline items={[
+        ...(data ? [{ id: "holding-overview", label: "持仓概况" }] : []),
+        ...(data?.holdings.length ? [{ id: "holding-positions", label: "持仓与处理计划" }] : []),
+        { id: "watchlist", label: "我的自选" },
+        ...(renderRiskSettings && data?.holdings.length ? [{ id: "holding-rules", label: "提醒设置" }] : []),
+        ...(data?.closed.length ? [{ id: "holding-history", label: "历史成交" }] : []),
+      ]} />
+      {data ? <section id="holding-overview" className="aq-section aq-holdings-summary" aria-label="持仓概况">
         <SectionHeader title="持仓概况" count={`${data.holdings.length} 只`} />
         {totals ? <div className="aq-total-grid">
           <div className="aq-total-card"><span>持仓市值</span><b className="aq-num">{formatMoney(totals.market_value)}</b></div>
@@ -139,7 +147,7 @@ export function HoldingsPage({ renderRiskSettings }: { renderRiskSettings?: (cod
       {alertError ? <StatePanel tone="warn">风险提醒读取失败：{alertError}，当前分组不能代表最新风险状态。<button type="button" className="aq-btn" disabled={alertsLoading} onClick={() => void loadAlerts()}>重试提醒</button></StatePanel> : alertsLoading ? <p className="aq-note">正在核对风险提醒…</p> : null}
       <HoldingsWatchlist portfolio={data} alerts={activeHoldingAlerts} candidates={snapshotState.error ? [] : currentCandidates} candidateDate={snapshot?.selected_date || ""} candidateStatus={candidateStatus} renderRiskSettings={renderRiskSettings} />
 
-      {data && data.closed.length > 0 ? <section className="aq-section">
+      {data && data.closed.length > 0 ? <section id="holding-history" className="aq-section">
         <SectionHeader title="历史成交" description="已实现盈亏按录入成交价计算 · 红盈绿亏" count={`${data.closed.length} 笔`} />
         <div className="aq-table-wrap"><table className="aq-table"><thead><tr><th>卖出日</th><th>代码 / 名称</th><th className="aq-num">成交价</th><th className="aq-num">成本价</th><th className="aq-num">股数</th><th className="aq-num">已实现盈亏</th><th className="aq-num">收益率</th><th /></tr></thead><tbody>
           {data.closed.map((row, index) => <tr key={`${row.code}-${row.date}-${index}`}>
