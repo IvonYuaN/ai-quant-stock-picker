@@ -278,12 +278,52 @@ def check_positions(
     except (OSError, ValueError, DataError):
         logger.exception("position_plan_followup_failed")
         checks["skipped"].append({"symbol": "", "level": "PLAN", "reason": "计划跟进未完成；已保存风险检查不受影响，请核对后台记录"})
+    candidate_observations: dict = {
+        "checked": [],
+        "skipped": [],
+        "notify": [],
+        "notify_suppressed": False,
+    }
+    try:
+        import candidate_observations as candidate_watch
+
+        active = [item for item in candidate_watch.list_observations() if item.get("state") == "active"]
+        watch_codes = sorted({item["symbol"] for item in active} - set(prices))
+        watch_quotes = {
+            str(row.get("code")): dict(row.get("quote") or {})
+            for row in pf_data.get("holdings", []) if row.get("code") in prices
+        }
+        for code in prices:
+            holding = next((row for row in pf_data.get("holdings", []) if row.get("code") == code), None)
+            if holding and "price" not in watch_quotes.get(code, {}):
+                watch_quotes.setdefault(code, {})["price"] = prices[code]
+        if watch_codes:
+            import astock
+
+            watch_quotes.update(astock.tencent_quote(watch_codes))
+        candidate_observations = candidate_watch.check_observations(
+            watch_quotes,
+            checked_at=checked_at,
+            held_symbols=set(prices),
+        )
+        if notify and candidate_observations.get("checked"):
+            from candidate_observation_delivery import deliver_triggered
+
+            messages, notify_suppressed = deliver_triggered(
+                active, candidate_observations["checked"]
+            )
+            candidate_observations["notify"] = messages
+            candidate_observations["notify_suppressed"] = notify_suppressed
+    except Exception:  # noqa: BLE001 -- candidate monitoring must not suppress position risk checks
+        logger.exception("candidate_observation_check_failed")
+        candidate_observations["skipped"].append({"symbol": "", "reason": "候选观察未完成；持仓风险检查不受影响"})
     return {
         "reminders": serialized,
         "new_events": new_events,
         "notify": notify_results,
         "notify_suppressed": suppressed,
         "checks": checks,
+        "candidate_observations": candidate_observations,
         "last_checked_at": last_checked_at,
     }
 
@@ -301,6 +341,12 @@ def check_existing_tenants(*, notify: bool = False) -> dict:
     users = root / "users"
     if users.is_dir() and not users.is_symlink():
         candidates += sorted(users.glob("*/portfolio.json"))
+    # Candidates can be monitored even when the tenant has no positions yet.
+    watch_files = [root / "candidate_observations.json"]
+    if users.is_dir() and not users.is_symlink():
+        watch_files += sorted(users.glob("*/candidate_observations.json"))
+    candidates += watch_files
+    seen: set[str] = set()
     summary: dict = {
         "tenants_checked": 0,
         "open_events": 0,
@@ -311,17 +357,31 @@ def check_existing_tenants(*, notify: bool = False) -> dict:
         if path.is_symlink() or path.parent.is_symlink() or not path.is_file():
             continue
         tid = "local" if path.parent == root else path.parent.name
+        if tid in seen:
+            continue
         if tid != "local" and not re.fullmatch(r"[uk]_[0-9a-f]{20}", tid):
             continue
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
-            if not isinstance(payload, dict) or not (payload.get("holdings") or payload.get("position_reviews")):
+            if not isinstance(payload, dict):
+                continue
+            if path.name == "candidate_observations.json":
+                if not any(isinstance(item, dict) and item.get("state") == "active" for item in payload.get("items", [])):
+                    continue
+            elif not (payload.get("holdings") or payload.get("position_reviews")):
                 continue
             token = tenant.current_tenant.set(tid)
             try:
+                seen.add(tid)
+                if path.name == "candidate_observations.json":
+                    # The paired portfolio file may not exist for a new candidate-only tenant.
+                    payload = {"holdings": [], "position_reviews": {}}
                 result = check_positions(notify=notify)
                 summary["tenants_checked"] += 1
                 summary["skipped_checks"] += len(result["checks"]["skipped"])
+                summary["skipped_checks"] += len(
+                    (result.get("candidate_observations") or {}).get("skipped", [])
+                )
                 import alert_events
 
                 summary["open_events"] += len(alert_events.list_events(status="OPEN"))

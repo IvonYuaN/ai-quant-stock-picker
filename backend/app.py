@@ -2241,6 +2241,95 @@ def aqsp_candidate_lifecycle(date: str | None = Query(default=None, description=
     return {"data": _aqsp_bridge_call(aqsp_bridge.candidate_lifecycle_payload, date)}
 
 
+class CandidateObservationIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    symbol: str = Field(pattern=r"^\d{6}$")
+    name: str = Field(default="", max_length=80)
+    price: float = Field(gt=0, allow_inf_nan=False)
+    comparator: str
+    condition: str = Field(min_length=1, max_length=500)
+    invalidation: str = Field(min_length=1, max_length=500)
+    source_analysis_id: str = Field(min_length=1, max_length=128)
+    source_generated_at: str = Field(min_length=1, max_length=64)
+    source_snapshot_id: str = Field(min_length=1, max_length=128)
+    source_as_of: str = Field(min_length=1, max_length=64)
+    expected_version: int | None = Field(default=None, ge=0, strict=True)
+
+
+class CandidateObservationStopIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    expected_version: int = Field(ge=1, strict=True)
+
+
+class CandidateDiscussionIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    symbol: str = Field(pattern=r"^\d{6}$")
+    date: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    llm: LLMConfig | None = None
+    server_model: str | None = Field(default=None, min_length=1, max_length=200)
+
+
+@app.post("/api/candidate-observations/analyze", tags=["候选观察"], summary="分析未持仓候选的条件观察方案")
+async def candidate_observation_analyze(body: CandidateDiscussionIn) -> dict:
+    """Run one bounded, evidence-citing candidate analysis; never changes score or portfolio."""
+    from candidate_discussion import CandidateDiscussionError, run_candidate_discussion
+
+    try:
+        result = await run_candidate_discussion(
+            body.symbol,
+            body.date,
+            body.llm.model_dump() if body.llm else None,
+            body.server_model,
+        )
+    except CandidateDiscussionError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {"data": result}
+
+
+@app.get("/api/candidate-observations", tags=["候选观察"], summary="读取人工采用的候选观察条件")
+def aqsp_candidate_observations() -> dict:
+    """Read tenant observations; this endpoint never fetches market data."""
+    import candidate_observations
+
+    try:
+        return {"data": {"items": candidate_observations.list_observations()}}
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@app.post("/api/candidate-observations", tags=["候选观察"], summary="人工采用候选观察条件")
+def aqsp_candidate_observation_adopt(body: CandidateObservationIn) -> dict:
+    """Persist a human-confirmed sourced condition; never changes score or places orders."""
+    import candidate_observations
+
+    try:
+        values = body.model_dump()
+        expected_version = values.pop("expected_version")
+        item = candidate_observations.adopt_observation(values, expected_version=expected_version)
+        return {"data": item}
+    except candidate_observations.CandidateObservationConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/api/candidate-observations/{observation_id}/stop", tags=["候选观察"], summary="停止候选观察")
+def aqsp_candidate_observation_stop(observation_id: str, body: CandidateObservationStopIn) -> dict:
+    """Stop a candidate observation with revision checking and audit history."""
+    import candidate_observations
+
+    try:
+        item = candidate_observations.stop_observation(observation_id, body.expected_version)
+    except candidate_observations.CandidateObservationConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if item is None:
+        raise HTTPException(404, "候选观察不存在")
+    return {"data": item}
+
+
 @app.get(
     "/api/aqsp/info-stream",
     tags=["AQSP 研究"],

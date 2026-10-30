@@ -2,7 +2,7 @@
 //
 // 数据全部来自 daily-view 的展示模型，本文件不做任何判断逻辑，
 // 因此"候选名怎么显示""什么算可复核"在页签和卡片里必然一致。
-import { ArrowRight, BookOpen, Check, ExternalLink, SlidersHorizontal, Star } from "lucide-react";
+import { ArrowRight, BookOpen, Check, ExternalLink, Brain, CircleStop, SlidersHorizontal, Star } from "lucide-react";
 import {
   Badge,
   Card,
@@ -17,7 +17,7 @@ import { toast } from "sonner";
 import { loadWatch, saveWatch } from "@/lib/watchlist";
 import { stockResearchHref } from "@/lib/research-route";
 import { cn } from "@/lib/utils";
-import { api, type ReviewRecord } from "@/lib/api";
+import { api, ApiError, type CandidateAnalysis, type CandidateObservation, type ReviewRecord } from "@/lib/api";
 import { evidenceLabel, statusLabel } from "@/lib/display-labels";
 import { useOwnership } from "../useOwnership";
 import type { CandidateRow, DailyView, SectionView } from "@/lib/daily-view";
@@ -122,6 +122,161 @@ function LifecycleTag({
   );
 }
 
+function candidateError(reason: unknown): string {
+  if (reason instanceof ApiError && reason.status === 409) return "候选依据已变化，请重新读取后再采用";
+  if (reason instanceof ApiError && reason.status === 503) return "当前研究依据暂不可用，请稍后重试";
+  return reason instanceof Error ? reason.message : "请求未完成，请稍后重试";
+}
+
+function CandidateObservationPanel({ row, date, held }: { row: CandidateRow; date: string; held: boolean }) {
+  const [observation, setObservation] = useState<CandidateObservation | null>(null);
+  const [analysis, setAnalysis] = useState<CandidateAnalysis | null>(null);
+  const [analysisBusy, setAnalysisBusy] = useState(false);
+  const [adopting, setAdopting] = useState(false);
+  const [stopping, setStopping] = useState(false);
+  const [error, setError] = useState("");
+  const [selectedAction, setSelectedAction] = useState<number | null>(null);
+  const [comparator, setComparator] = useState<"at_or_above" | "at_or_below" | "">("");
+  const [confirmed, setConfirmed] = useState(false);
+
+  async function loadObservation() {
+    try {
+      const payload = await api.candidateObservations();
+      const item = payload.items.find((candidate) => candidate.symbol === row.symbol) ?? null;
+      setObservation(item);
+    } catch (reason) {
+      setError(candidateError(reason));
+    }
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+    setObservation(null);
+    setAnalysis(null);
+    setError("");
+    setSelectedAction(null);
+    setComparator("");
+    setConfirmed(false);
+    api.candidateObservations().then((payload) => {
+      if (!cancelled) setObservation(payload.items.find((candidate) => candidate.symbol === row.symbol) ?? null);
+    }).catch((reason) => {
+      if (!cancelled) setError(candidateError(reason));
+    });
+    return () => { cancelled = true; };
+  }, [row.symbol, date]);
+
+  async function analyze() {
+    if (analysisBusy || adopting || stopping) return;
+    setAnalysisBusy(true);
+    setError("");
+    setSelectedAction(null);
+    setComparator("");
+    setConfirmed(false);
+    try {
+      const next = await api.candidateAnalysis({ symbol: row.symbol, date });
+      setAnalysis(next);
+    } catch (reason) {
+      setError(candidateError(reason));
+    } finally {
+      setAnalysisBusy(false);
+    }
+  }
+
+  async function adopt() {
+    if (!analysis || selectedAction === null || !comparator || !confirmed || adopting) return;
+    const action = analysis.actions[selectedAction];
+    const reference = action?.price_ref ? analysis.price_refs[action.price_ref] : undefined;
+    if (!reference || action.action === "pause" || analysis.status !== "complete") return;
+    setAdopting(true);
+    setError("");
+    try {
+      const next = await api.adoptCandidateObservation({
+        symbol: row.symbol,
+        name: row.name,
+        price: reference.price,
+        comparator,
+        condition: action.condition,
+        invalidation: action.invalidation,
+        source_analysis_id: analysis.analysis_id,
+        source_generated_at: analysis.generated_at,
+        source_snapshot_id: analysis.source_snapshot_id,
+        source_as_of: analysis.source_as_of,
+        expected_version: observation?.state === "active" ? observation.revision : null,
+      });
+      setObservation(next);
+      setSelectedAction(null);
+      setComparator("");
+      setConfirmed(false);
+    } catch (reason) {
+      setError(candidateError(reason));
+      await loadObservation();
+    } finally {
+      setAdopting(false);
+    }
+  }
+
+  async function stop() {
+    if (!observation || observation.state !== "active" || stopping) return;
+    setStopping(true);
+    setError("");
+    try {
+      setObservation(await api.stopCandidateObservation(observation.id, observation.revision));
+    } catch (reason) {
+      setError(candidateError(reason));
+      await loadObservation();
+    } finally {
+      setStopping(false);
+    }
+  }
+
+  const chosen = selectedAction === null ? null : analysis?.actions[selectedAction];
+  const chosenReference = chosen?.price_ref ? analysis?.price_refs[chosen.price_ref] : undefined;
+  return (
+    <section className="aq-candidate-observation" aria-label="候选观察条件">
+      <div className="aq-card-head">
+        <div>
+          <p className="aq-label"><Brain aria-hidden="true" /> AI 入场条件</p>
+          <p className="aq-note">{held ? "该标的已在持仓中；已有候选观察可在此停止，新分析请到持仓策略区。" : "只依据当前候选证据生成观察条件，采用后可离页复核。"}</p>
+        </div>
+        {!held ? <button type="button" className="aq-btn" onClick={() => void analyze()} disabled={analysisBusy || adopting || stopping || !row.ready}>
+          <Brain aria-hidden="true" />{analysisBusy ? "分析中…" : analysis ? "重新分析" : "开始分析"}
+        </button> : null}
+      </div>
+      {observation ? <div className="aq-strategy-watch" data-observation-state={observation.state}>
+        <div className="aq-tag-row"><Tag tone={observation.state === "active" ? "ok" : "neutral"}>{observation.state === "active" ? "观察中" : "已停止"}</Tag><Tag>{observation.comparator === "at_or_above" ? "达到或高于" : "达到或低于"} {observation.price.toFixed(2)} 元</Tag></div>
+        <p><b>等什么：</b>{observation.condition}</p>
+        <p><b>何时取消：</b>{observation.invalidation}</p>
+        {observation.last_check ? <p className="aq-note">最近检查 {observation.last_check.price.toFixed(2)} 元 · {observation.last_check.triggered ? "已达到复核价位" : "尚未达到复核价位"} · {new Date(observation.last_check.checked_at).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })}</p> : <p className="aq-note">等待后台监控轮次检查</p>}
+        {observation.state === "active" ? <button type="button" className="aq-btn" onClick={() => void stop()} disabled={stopping || adopting}><CircleStop aria-hidden="true" />{stopping ? "停止中…" : "停止观察"}</button> : null}
+      </div> : null}
+      {error ? <p className="aq-tone-warn" role="alert">{error}</p> : null}
+      {analysis ? <div className="aq-strategy-model">
+        <p className="aq-note">{analysis.model} · 生成于 {new Date(analysis.generated_at).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })} · {analysis.status === "complete" ? "分析完成" : "未完成"}</p>
+        <p className="aq-comparison-conclusion">{analysis.conclusion || "当前没有可采用的结论"}</p>
+        {analysis.actions.length > 0 ? <ol className="aq-strategy-actions">
+          {analysis.actions.map((action, index) => {
+            const reference = action.price_ref ? analysis.price_refs[action.price_ref] : undefined;
+            const trackable = !!reference && action.action !== "pause" && analysis.status === "complete";
+            return <li key={`${index}-${action.condition}`}>
+              <div className="aq-strategy-action-title"><b>{action.action === "buy_review" ? "入场复核" : action.action === "observe" ? "继续观察" : "暂停"}</b>{reference ? <strong>{reference.price.toFixed(2)} 元</strong> : null}</div>
+              <p><span>等什么</span>{action.condition}</p><p><span>何时取消</span>{action.invalidation}</p>
+              {reference ? <small>{reference.label} · {reference.source} · {new Date(reference.as_of).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })}</small> : null}
+              {trackable ? selectedAction !== index ? <button type="button" className="aq-btn" onClick={() => { setSelectedAction(index); setComparator(""); setConfirmed(false); }}>采用这项条件并跟踪</button> : <form className="aq-strategy-adopt" onSubmit={(event) => { event.preventDefault(); void adopt(); }}>
+                <label>报价变化<select className="aq-input" value={comparator} onChange={(event) => setComparator(event.target.value as "at_or_above" | "at_or_below")} required><option value="">请选择</option><option value="at_or_above">达到或高于 {reference.price.toFixed(2)} 元</option><option value="at_or_below">达到或低于 {reference.price.toFixed(2)} 元</option></select></label>
+                <label className="aq-action-plan-confirm"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} />我已核对条件、失效条件和观察方向</label>
+                <div className="aq-row-actions"><button type="submit" className="aq-btn aq-btn-primary" disabled={adopting || !confirmed || !comparator}>{adopting ? "保存中…" : "确认采用并跟踪"}</button><button type="button" className="aq-btn" onClick={() => { setSelectedAction(null); setConfirmed(false); }}>暂不采用</button></div>
+              </form> : null}
+            </li>;
+          })}
+        </ol> : null}
+        {analysis.missing_evidence.length > 0 ? <p className="aq-note">还缺：{analysis.missing_evidence.join("；")}</p> : null}
+        <details><summary>分析依据</summary><div className="aq-note-list">{Object.entries(analysis.evidence).map(([key, value]) => <p key={key}><b>{key}</b>：{typeof value === "string" ? value : JSON.stringify(value)}</p>)}</div><p className="aq-note">{analysis.notice}</p></details>
+      </div> : null}
+      {chosen && !chosenReference ? <p className="aq-note">这条意见没有可核验价位，暂不能建立到价观察。</p> : null}
+    </section>
+  );
+}
+
 function CandidateDetailCard({
   row,
   ownership,
@@ -205,6 +360,8 @@ function CandidateDetailCard({
           {inCompare ? "已加入对比" : "加入对比"}
         </button>
       </div>
+
+      {row.symbol ? <CandidateObservationPanel row={row} date={date} held={ownership.holdings.has(row.symbol)} /> : null}
 
       {row.context ? <p className="aq-card-summary">{row.context}</p> : null}
 

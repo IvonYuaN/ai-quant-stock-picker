@@ -31,6 +31,63 @@ export class ApiError extends Error {
 
 export type AqspRequestOptions = Pick<RequestInit, "signal">;
 
+export interface CandidateObservation {
+  id: string;
+  symbol: string;
+  name: string;
+  price: number;
+  comparator: "at_or_above" | "at_or_below";
+  condition: string;
+  invalidation: string;
+  source_analysis_id: string;
+  source_generated_at: string;
+  source_snapshot_id: string;
+  source_as_of: string;
+  state: "active" | "stopped";
+  revision: number;
+  created_at: string;
+  updated_at: string;
+  last_check: { price: number; quote_as_of: string | null; checked_at: string; triggered: boolean } | null;
+}
+
+export interface CandidateAnalysisAction {
+  action: "observe" | "buy_review" | "pause";
+  price_ref: string | null;
+  condition: string;
+  invalidation: string;
+}
+
+export interface CandidateAnalysis {
+  analysis_id: string;
+  symbol: string;
+  name: string;
+  selected_date: string;
+  generated_at: string;
+  source_snapshot_id: string;
+  status: "complete" | "failed";
+  model: string;
+  conclusion: string;
+  source_as_of: string;
+  source_price: number;
+  evidence: Record<string, unknown>;
+  price_refs: Record<string, { label: string; price: number; source: string; as_of: string }>;
+  actions: CandidateAnalysisAction[];
+  missing_evidence: string[];
+  notice: string;
+}
+
+export type CandidateObservationInput = Pick<
+  CandidateObservation,
+  "symbol" | "name" | "price" | "comparator" | "condition" | "invalidation" | "source_analysis_id" | "source_generated_at" | "source_snapshot_id" | "source_as_of"
+> & { expected_version?: number | null };
+
+export type CandidateAnalysisInput = {
+  symbol: string;
+  date?: string;
+  server_model?: string;
+  llm?: PositionModelConfig;
+};
+
 export function isAqspAbortError(reason: unknown): boolean {
   return (
     typeof reason === "object" &&
@@ -682,6 +739,17 @@ export const api = {
   aqspLifecycle: (date?: string): Promise<AqspLifecycleIndex> =>
     get<AqspLifecycleIndex>(
       date ? `/aqsp/candidate-lifecycle?date=${encodeURIComponent(date)}` : "/aqsp/candidate-lifecycle",
+    ),
+  candidateObservations: () => get<{ items: CandidateObservation[] }>("/candidate-observations"),
+  candidateAnalysis: (input: CandidateAnalysisInput) =>
+    request<CandidateAnalysis>("/candidate-observations/analyze", "POST", input),
+  adoptCandidateObservation: (input: CandidateObservationInput) =>
+    request<CandidateObservation>("/candidate-observations", "POST", input),
+  stopCandidateObservation: (id: string, expected_version: number) =>
+    request<CandidateObservation>(
+      `/candidate-observations/${encodeURIComponent(id)}/stop`,
+      "POST",
+      { expected_version },
     ),
   infoStream: (force = false): Promise<InfoStreamData> =>
     get<InfoStreamData>(force ? "/aqsp/info-stream?force=true" : "/aqsp/info-stream"),
