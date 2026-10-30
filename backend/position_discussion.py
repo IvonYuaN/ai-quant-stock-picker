@@ -414,15 +414,8 @@ async def run_discussion(event_id: str, choice: str | None, expected_position: d
             if catalog.get("directory_complete", catalog.get("listed") is not None) and server_model not in catalog["models"]:
                 raise ValueError("所选型号未在当前提供商目录中，请刷新型号后重选；未自动替换")
             endpoint = ModelEndpoint(endpoint.url, endpoint.key, server_model, endpoint.anthropic)
-        context = worksheet["route_review"]["evidence"]
-        prices = {f"price_{index}": ref for index, ref in enumerate(basis["references"])}
-        evidence = {"holding": worksheet["position_snapshot"], "quote": {"price": basis["price"], "as_of": basis["quote_as_of"], "source": basis["quote_source"]},
-                    "market": context.get("market", {"status": "unknown"}),
-                    "sector": context.get("sector", {"status": "unknown"}),
-                    "stock": context.get("stock", {"status": "unknown"}),
-                    "risk_trigger": worksheet["risk_trigger"], "personal_constraints": worksheet["constraints"],
-                    "route_constraints": worksheet["route_review"], **prices}
-        from strategy_review_context import model_review_evidence, position_review_context
+        from strategy_review_context import model_review_evidence, position_review_context, position_review_facts
+        evidence, prices = position_review_facts(worksheet)
         review_context = position_review_context(worksheet, evidence, prices)
         evidence = model_review_evidence(evidence, review_context)
         from position_followup import condition_facts
