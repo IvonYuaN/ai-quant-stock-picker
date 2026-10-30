@@ -763,6 +763,14 @@ def _step_closing_review(
     }
 
 
+def _history_row_symbol(row: dict[str, Any]) -> str:
+    """Exclude run receipts from a quote plan without changing ledger rows."""
+    symbol = str(row.get("symbol") or "")
+    if not symbol.strip() or symbol == "__RUN__" or row.get("name") == "run_event":
+        return ""
+    return symbol
+
+
 def _step_validate_predictions(
     config: PipelineConfig, logger: logging.Logger
 ) -> dict[str, Any]:
@@ -774,7 +782,8 @@ def _step_validate_predictions(
         return {"checked": 0, "skipped": True}
 
     from aqsp.ledger import validate_predictions
-    from aqsp.ledger.base import read_ledger
+    from aqsp.ledger.base import is_ledger_row_paper_review_eligible, read_ledger
+    from aqsp.ratings import is_tradable_rating
 
     rows = read_ledger(str(ledger_path))
     if not rows:
@@ -786,25 +795,31 @@ def _step_validate_predictions(
     seen_symbols: set[str] = set()
     seen_benchmarks: set[str] = set()
     for row in rows:
-        sym = str(row.get("symbol", "") or "")
+        # Match the validator's price-consuming branch. Other pending rows
+        # still reach it below so their watch_only transition is preserved.
+        if (row.get("status") != "pending" or not is_tradable_rating(row.get("rating"))
+                or not is_ledger_row_paper_review_eligible(row)):
+            continue
+        sym = _history_row_symbol(row)
+        if not sym:
+            continue
         if sym and sym not in seen_symbols:
             seen_symbols.add(sym)
             symbols_in_ledger.append(sym)
         benchmark = str(row.get("benchmark_symbol", "") or "")
-        if benchmark and benchmark not in seen_benchmarks:
+        if benchmark and benchmark != "__RUN__" and benchmark not in seen_benchmarks:
             seen_benchmarks.add(benchmark)
             benchmark_symbols.append(benchmark)
 
-    if not symbols_in_ledger and not benchmark_symbols:
-        return {"checked": 0}
-
-    frames, attempted_sources = _fetch_history_frames_resilient(
-        config,
-        symbols_in_ledger,
-        days=60,
-        logger=logger,
-        benchmark_symbols=benchmark_symbols,
-    )
+    frames, attempted_sources = ({}, [])
+    if symbols_in_ledger:
+        frames, attempted_sources = _fetch_history_frames_resilient(
+            config,
+            symbols_in_ledger,
+            days=60,
+            logger=logger,
+            benchmark_symbols=benchmark_symbols,
+        )
 
     validation = validate_predictions(str(ledger_path), frames)
 
@@ -852,32 +867,40 @@ def _step_sync_paper_trades(
         logger.info("  Ledger 文件不存在, 跳过虚拟盘同步")
         return {"skipped": True}
 
-    from aqsp.ledger.base import read_ledger
+    from aqsp.ledger.base import is_ledger_row_paper_review_eligible, read_ledger
     from aqsp.paper import read_paper_trades, render_paper_report, sync_paper_trades
+    from aqsp.ratings import is_tradable_rating
 
     signal_rows = read_ledger(str(ledger_path))
-    if not signal_rows:
-        logger.info("  Ledger 为空, 跳过虚拟盘同步")
-        return {"skipped": True}
+    paper_rows = read_paper_trades(paper_ledger_path)
+    existing_signal_ids = {str(row.get("signal_id", "")) for row in paper_rows}
 
     symbols: list[str] = []
     seen: set[str] = set()
-    for row in signal_rows + read_paper_trades(paper_ledger_path):
-        symbol = str(row.get("symbol", "")).strip()
+    eligible_signals = [row for row in signal_rows
+                        if row.get("status") in {"pending", "validated"}
+                        and str(row.get("id", ""))
+                        and str(row.get("id", "")) not in existing_signal_ids
+                        and is_tradable_rating(row.get("rating"))
+                        and is_ledger_row_paper_review_eligible(row)]
+    # Open trades always need an exit update, regardless of old signal gates.
+    # Ineligible pending entries become watch_only without reading a price.
+    active_trades = [row for row in paper_rows if row.get("status") == "open"
+                     or (row.get("status") == "pending_entry" and is_ledger_row_paper_review_eligible(row))]
+    for row in eligible_signals + active_trades:
+        symbol = _history_row_symbol(row)
         if symbol and symbol not in seen:
             seen.add(symbol)
             symbols.append(symbol)
 
-    if not symbols:
-        logger.info("  无可同步标的, 跳过虚拟盘同步")
-        return {"skipped": True}
-
-    frames, attempted_sources = _fetch_history_frames_resilient(
-        config,
-        symbols,
-        days=60,
-        logger=logger,
-    )
+    frames, attempted_sources = ({}, [])
+    if symbols:
+        frames, attempted_sources = _fetch_history_frames_resilient(
+            config,
+            symbols,
+            days=60,
+            logger=logger,
+        )
     summary = sync_paper_trades(
         signal_ledger=ledger_path,
         paper_ledger=paper_ledger_path,

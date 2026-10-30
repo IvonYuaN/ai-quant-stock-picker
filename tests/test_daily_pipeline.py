@@ -2255,6 +2255,7 @@ def test_validate_predictions_fetches_benchmark_from_ledger(
             "symbol": "600519",
             "benchmark_symbol": "000300",
             "status": "pending",
+            "rating": "buy_candidate",
         }
     ]
     seen: dict[str, object] = {}
@@ -2345,7 +2346,7 @@ def test_validate_predictions_uses_resilient_history_when_primary_fails(
     daily_pipeline = _load_daily_pipeline_module()
     ledger_path = tmp_path / "predictions.jsonl"
     ledger_path.write_text('{"symbol":"600519","status":"pending"}\n', encoding="utf-8")
-    rows = [{"symbol": "600519", "status": "pending"}]
+    rows = [{"symbol": "600519", "status": "pending", "rating": "buy_candidate"}]
     seen: dict[str, object] = {}
 
     monkeypatch.setattr("aqsp.ledger.base.read_ledger", lambda _path: rows)
@@ -2428,7 +2429,7 @@ def test_validate_predictions_returns_not_executable_summary(
 
     monkeypatch.setattr(
         "aqsp.ledger.base.read_ledger",
-        lambda _path: [{"symbol": "600519", "status": "pending"}],
+        lambda _path: [{"symbol": "600519", "status": "pending", "rating": "buy_candidate"}],
     )
     monkeypatch.setattr(daily_pipeline, "_build_data_source", lambda _config: object())
     monkeypatch.setattr(
@@ -2566,6 +2567,223 @@ def test_sync_paper_trades_writes_report(monkeypatch, tmp_path: Path) -> None:
     assert (tmp_path / "reports" / "paper.md").read_text(
         encoding="utf-8"
     ) == "opened=1, rows=1"
+
+
+def _write_quote_plan_rows(path: Path, rows: list[dict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+
+
+def test_daily_quote_plan_fetches_only_eligible_pending_symbols_and_benchmarks_when_ledger_has_history(
+    monkeypatch, tmp_path: Path,
+) -> None:
+    daily = _load_daily_pipeline_module()
+    config = _pipeline_config(daily, tmp_path)
+    rows = [
+        {"symbol": "__RUN__", "name": "run_event", "status": "run_completed_no_picks"},
+        {"symbol": "600001", "status": "validated", "benchmark_symbol": "000300"},
+        {"symbol": "600002", "status": "pending", "rating": "buy_candidate", "benchmark_symbol": "000905"},
+        {"symbol": "600002", "status": "pending", "rating": "strong_buy_candidate", "benchmark_symbol": "000852"},
+        {"symbol": "600002", "status": "pending", "rating": "buy_candidate", "benchmark_symbol": "__RUN__"},
+        {"symbol": "600003", "status": "not_executable", "benchmark_symbol": "000300"},
+        {"symbol": "600004", "status": "pending", "rating": "watch", "benchmark_symbol": "000300"},
+        {"symbol": "600005", "status": "pending", "rating": "buy_candidate", "quality_gate_action": "blocked"},
+        {"symbol": "__RUN__", "name": "run_event", "status": "pending", "rating": "buy_candidate"},
+        {"symbol": "600006", "name": "run_event", "status": "pending", "rating": "buy_candidate"},
+    ]
+    _write_quote_plan_rows(tmp_path / config.ledger_path, rows)
+    requests = []
+    def fetch(_config, symbols, **kwargs):
+        requests.append((symbols, kwargs["benchmark_symbols"]))
+        return {}, ["synthetic"]
+    monkeypatch.setattr(daily, "_fetch_history_frames_resilient", fetch)
+    daily._step_validate_predictions(config, logging.getLogger("test"))
+    assert requests == [(["600002"], ["000905", "000852"])]
+
+
+def test_daily_quote_plan_preserves_original_symbol_key_when_consumers_use_untrimmed_symbol(
+    monkeypatch, tmp_path: Path,
+) -> None:
+    daily = _load_daily_pipeline_module()
+    config = _pipeline_config(daily, tmp_path)
+    _write_quote_plan_rows(tmp_path / config.ledger_path, [
+        {"id": "signal", "symbol": " 600001 ", "status": "pending", "rating": "buy_candidate"}])
+    requests = []
+
+    def fetch(_config, symbols, **kwargs):
+        requests.append(symbols)
+        return {}, ["synthetic"]
+
+    monkeypatch.setattr(daily, "_fetch_history_frames_resilient", fetch)
+    daily._step_validate_predictions(config, logging.getLogger("test"))
+    daily._step_sync_paper_trades(config, logging.getLogger("test"))
+    assert requests == [[" 600001 "], [" 600001 "]]
+
+
+@pytest.mark.parametrize("rows", [
+    [{"symbol": "__RUN__", "name": "run_event", "status": "run_completed_no_picks"}],
+    [{"symbol": "600001", "status": "validated"}, {"symbol": "600002", "status": "closed"},
+     {"symbol": "600003", "status": "not_executable"}, {"symbol": "600004", "status": "watch_only"}],
+    [{"symbol": "600001", "status": "pending", "rating": "watch"},
+     {"symbol": "600002", "status": "pending", "rating": "buy_candidate", "paper_review_eligible": False}],
+])
+def test_daily_quote_plan_preserves_price_less_validation_when_no_rows_need_quotes(
+    monkeypatch, tmp_path: Path, rows: list[dict],
+) -> None:
+    from aqsp.ledger.base import read_ledger
+    daily = _load_daily_pipeline_module()
+    config = _pipeline_config(daily, tmp_path)
+    path = tmp_path / config.ledger_path
+    _write_quote_plan_rows(path, rows)
+    monkeypatch.setattr(daily, "_fetch_history_frames_resilient", lambda *_args, **_kwargs: pytest.fail("no quote needed"))
+    result = daily._step_validate_predictions(config, logging.getLogger("test"))
+    assert result["frames_loaded"] == 0 and result["sources_attempted"] == []
+    assert result["checked"] == 0
+    expected = [{**row, "status": "watch_only"} if row["status"] == "pending" else row for row in rows]
+    assert read_ledger(path) == expected
+
+
+def test_daily_quote_plan_updates_only_unsynced_signals_and_active_paper_trades_when_history_exists(
+    monkeypatch, tmp_path: Path,
+) -> None:
+    from aqsp.paper import PaperSummary
+    daily = _load_daily_pipeline_module()
+    config = _pipeline_config(daily, tmp_path)
+    signals = [
+        {"id": "event", "symbol": "__RUN__", "name": "run_event", "status": "run_completed_no_picks"},
+        {"id": "done", "symbol": "600001", "status": "validated", "rating": "buy_candidate"},
+        {"id": "new-validated", "symbol": "600002", "status": "validated", "rating": "buy_candidate"},
+        {"id": "new-pending", "symbol": "600003", "status": "pending", "rating": "buy_candidate"},
+        {"id": "duplicate", "symbol": "600003", "status": "validated", "rating": "buy_candidate"},
+        {"id": "ineligible", "symbol": "600004", "status": "pending", "rating": "watch"},
+        {"id": "blocked", "symbol": "600005", "status": "validated", "rating": "buy_candidate", "quality_gate_action": "blocked"},
+        {"id": "terminal", "symbol": "600006", "status": "not_executable", "rating": "buy_candidate"},
+        {"symbol": "600007", "status": "validated", "rating": "buy_candidate"},
+    ]
+    trades = [
+        {"signal_id": "done", "symbol": "600001", "status": "closed"},
+        {"signal_id": "open", "symbol": "600008", "status": "open", "paper_review_eligible": False},
+        {"signal_id": "pending", "symbol": "600009", "status": "pending_entry", "rating": "watch"},
+        {"signal_id": "pending-ineligible", "symbol": "600010", "status": "pending_entry", "paper_review_eligible": False},
+        {"signal_id": "terminal", "symbol": "600011", "status": "not_executable"},
+    ]
+    _write_quote_plan_rows(tmp_path / config.ledger_path, signals)
+    _write_quote_plan_rows(tmp_path / config.paper_ledger, trades)
+    requests = []
+    def fetch(_config, symbols, **kwargs):
+        requests.append(symbols)
+        return {}, ["synthetic"]
+    monkeypatch.setattr(daily, "_fetch_history_frames_resilient", fetch)
+    monkeypatch.setattr("aqsp.paper.sync_paper_trades", lambda **_kwargs: PaperSummary(0, 0, 0))
+    monkeypatch.setattr("aqsp.paper.render_paper_report", lambda **_kwargs: "synthetic planning report")
+    daily._step_sync_paper_trades(config, logging.getLogger("test"))
+    assert requests == [["600002", "600003", "600008", "600009"]]
+
+
+def test_daily_quote_plan_keeps_price_less_paper_conversion_and_report_when_entry_is_ineligible(
+    monkeypatch, tmp_path: Path,
+) -> None:
+    from aqsp.paper import read_paper_trades
+    daily = _load_daily_pipeline_module()
+    config = _pipeline_config(daily, tmp_path)
+    _write_quote_plan_rows(tmp_path / config.ledger_path, [])
+    trade = {"id": "paper", "signal_id": "old", "symbol": "600001", "status": "pending_entry",
+             "paper_review_eligible": False}
+    _write_quote_plan_rows(tmp_path / config.paper_ledger, [trade])
+    monkeypatch.setattr(daily, "_fetch_history_frames_resilient", lambda *_args, **_kwargs: pytest.fail("no quote needed"))
+    result = daily._step_sync_paper_trades(config, logging.getLogger("test"))
+    stored = read_paper_trades(tmp_path / config.paper_ledger)
+    assert result["frames_loaded"] == 0 and result["sources_attempted"] == []
+    assert stored[0]["status"] == "watch_only"
+    assert stored[0]["symbol"] == trade["symbol"] and stored[0]["signal_id"] == trade["signal_id"]
+    assert (tmp_path / config.paper_report_path).is_file()
+
+
+def test_daily_quote_plan_updates_open_paper_trade_when_signal_ledger_is_empty(
+    monkeypatch, tmp_path: Path,
+) -> None:
+    from aqsp.paper import read_paper_trades
+    daily = _load_daily_pipeline_module()
+    config = _pipeline_config(daily, tmp_path)
+    _write_quote_plan_rows(tmp_path / config.ledger_path, [])
+    trade = {"id": "paper", "signal_id": "old", "symbol": "600001", "status": "open",
+             "entry_date": "2026-10-28", "entry_price": 10, "horizon_days": 2,
+             "stop_loss": 8, "take_profit": 12, "fee_bps": 0, "slippage_bps": 0}
+    _write_quote_plan_rows(tmp_path / config.paper_ledger, [trade])
+    frame = pd.DataFrame([{"date": day, "open": 10, "high": 11, "low": 9, "close": 10.5}
+                          for day in ("2026-10-28", "2026-10-29")])
+    requests = []
+    def fetch(_config, symbols, **kwargs):
+        requests.append(symbols)
+        return {"600001": frame}, ["synthetic"]
+    monkeypatch.setattr(daily, "_fetch_history_frames_resilient", fetch)
+    result = daily._step_sync_paper_trades(config, logging.getLogger("test"))
+    assert requests == [["600001"]]
+    assert result["closed"] == 1
+    assert read_paper_trades(tmp_path / config.paper_ledger)[0]["status"] == "closed"
+
+
+@pytest.mark.parametrize("status", ["pending", "validated"])
+def test_daily_quote_plan_opens_unsynced_paper_signal_when_original_consumer_allows_it(
+    monkeypatch, tmp_path: Path, status: str,
+) -> None:
+    from aqsp.paper import read_paper_trades
+    daily = _load_daily_pipeline_module()
+    config = _pipeline_config(daily, tmp_path)
+    signal = {"id": "new-signal", "symbol": "600001", "status": status, "rating": "buy_candidate",
+              "signal_date": "2026-10-28", "signal_close": 10, "horizon_days": 2,
+              "stop_loss": 8, "take_profit": 12, "fee_bps": 0, "slippage_bps": 0}
+    _write_quote_plan_rows(tmp_path / config.ledger_path, [
+        {"symbol": "__RUN__", "status": "run_completed_no_picks", "name": "run_event"}, signal])
+    before = (tmp_path / config.ledger_path).read_bytes()
+    frame = pd.DataFrame([{"date": day, "open": 10, "high": 11, "low": 9, "close": 10.5, "volume": 1000}
+                          for day in ("2026-10-28", "2026-10-29")])
+    requests = []
+    def fetch(_config, symbols, **kwargs):
+        requests.append(symbols)
+        return {"600001": frame}, ["synthetic"]
+    monkeypatch.setattr(daily, "_fetch_history_frames_resilient", fetch)
+    result = daily._step_sync_paper_trades(config, logging.getLogger("test"))
+    assert requests == [["600001"]] and result["opened"] == 1
+    assert read_paper_trades(tmp_path / config.paper_ledger)[0]["status"] == "open"
+    assert (tmp_path / config.ledger_path).read_bytes() == before
+
+
+def test_daily_quote_plan_keeps_pending_entry_price_update_when_old_rating_is_not_tradable(
+    monkeypatch, tmp_path: Path,
+) -> None:
+    from aqsp.paper import read_paper_trades
+    daily = _load_daily_pipeline_module()
+    config = _pipeline_config(daily, tmp_path)
+    _write_quote_plan_rows(tmp_path / config.ledger_path, [])
+    trade = {"id": "paper", "signal_id": "old", "symbol": "600001", "status": "pending_entry",
+             "rating": "watch", "signal_date": "2026-10-28", "signal_close": 10, "horizon_days": 2,
+             "stop_loss": 8, "take_profit": 12, "fee_bps": 0, "slippage_bps": 0}
+    _write_quote_plan_rows(tmp_path / config.paper_ledger, [trade])
+    frame = pd.DataFrame([{"date": day, "open": 10, "high": 11, "low": 9, "close": 10.5, "volume": 1000}
+                          for day in ("2026-10-28", "2026-10-29")])
+    requests = []
+    def fetch(_config, symbols, **kwargs):
+        requests.append(symbols)
+        return {"600001": frame}, ["synthetic"]
+    monkeypatch.setattr(daily, "_fetch_history_frames_resilient", fetch)
+    result = daily._step_sync_paper_trades(config, logging.getLogger("test"))
+    assert requests == [["600001"]] and result["opened"] == 1
+    assert read_paper_trades(tmp_path / config.paper_ledger)[0]["status"] == "open"
+
+
+def test_daily_quote_plan_keeps_original_validation_when_frame_is_invalid(
+    monkeypatch, tmp_path: Path,
+) -> None:
+    from aqsp.core.errors import DataError
+    daily = _load_daily_pipeline_module()
+    config = _pipeline_config(daily, tmp_path)
+    _write_quote_plan_rows(tmp_path / config.ledger_path, [
+        {"symbol": "600001", "status": "pending", "rating": "buy_candidate", "signal_date": "2026-10-28"}])
+    monkeypatch.setattr(daily, "_fetch_history_frames_resilient", lambda *_args, **_kwargs:
+                        ({"600001": pd.DataFrame([{"date": "2026-10-29", "close": 10}])}, ["synthetic"]))
+    with pytest.raises(DataError, match="缺少必需列"):
+        daily._step_validate_predictions(config, logging.getLogger("test"))
 
 
 def test_resolve_symbols_keeps_full_available_universe_when_max_universe_zero(
