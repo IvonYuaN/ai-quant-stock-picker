@@ -1,8 +1,32 @@
-import type { ActionWorksheet, DecisionEvidence, DiscussionSynthesisBasis, PositionDiscussion, ReviewChoice, StrategyWatchInput, WatchComparator } from "./api";
+import type { ActionWorksheet, DecisionEvidence, DiscussionAction, DiscussionSynthesisBasis, PositionDiscussion, ReviewChoice, StrategyWatch, StrategyWatchInput, WatchComparator } from "./api";
 import { positionChecksView } from "./position-conditions";
 import { worksheetExpired } from "./position-plan";
 
 export const WATCH_COMPARATORS: Record<WatchComparator, string> = { at_or_above: "达到或高于", at_or_below: "达到或低于" };
+
+/** A model may register a direction wait, never invent a price from free text. */
+export function directionWatchAction(action: DiscussionAction, result: PositionDiscussion): boolean {
+  if (action.action !== "observe" || action.price_ref !== null || result.condition_catalog?.schema_version !== 1) return false;
+  const prerequisites = action.prerequisite_ids ?? [], invalidations = action.invalidation_ids ?? [];
+  const ids = [...prerequisites, ...invalidations];
+  if (!ids.length || prerequisites.some((id) => invalidations.includes(id))) return false;
+  for (const group of [prerequisites, invalidations]) {
+    if (new Set(group).size !== group.length) return false;
+    if (group.includes("market:not_weak:v1") && group.includes("market:weak:v1")) return false;
+    if (group.includes("sector:not_falling:v1") && group.includes("sector:falling:v1")) return false;
+  }
+  const supported = new Set(["market:not_weak:v1", "market:weak:v1", "sector:not_falling:v1", "sector:falling:v1"]);
+  return ids.every((id) => supported.has(id) && result.condition_catalog!.items.some((row) => row.id === id && ((id.startsWith("market:") && row.kind === "market_status" && row.evidence_key === "market") || (id.startsWith("sector:") && row.kind === "sector_status" && row.evidence_key === "sector"))));
+}
+
+/** Server contract identity remains authoritative; this only selects the null-price UI. */
+export function directionStrategyWatch(watch: StrategyWatch): boolean {
+  const contract = watch.condition_contract;
+  return watch.action === "observe" && watch.price === null && watch.comparator === null && watch.price_ref === null
+    && contract?.schema_version === 3 && contract.price_predicate === null && contract.origin?.price_ref === null && contract.origin.action === "observe" && contract.origin.kind === "position"
+    && Array.isArray(contract.prerequisite_ids) && Array.isArray(contract.invalidation_ids)
+    && [...contract.prerequisite_ids, ...contract.invalidation_ids].length > 0;
+}
 
 /** Same premise fields as backend strategy_direction; quote ticks are excluded. */
 export function strategyDirectionKey(evidence?: Partial<Record<"market" | "sector" | "stock", Partial<DecisionEvidence>>>): string {
@@ -51,23 +75,25 @@ export function discussionStrategyCurrent(result: PositionDiscussion | null, wor
 }
 
 /** Only a validated summary can be explicitly adopted; role drafts remain evidence. */
-export function strategyWatchIssue(result: PositionDiscussion | null, worksheet: ActionWorksheet, index: number, choice: ReviewChoice | "", comparator: WatchComparator | "", now = Date.now()): string {
+export function strategyWatchIssue(result: PositionDiscussion | null, worksheet: ActionWorksheet, index: number, choice: ReviewChoice | "", comparator: WatchComparator | "" | null, now = Date.now()): string {
   if (worksheet.archived || !worksheet.position_id || !worksheet.revision || !worksheet.analysis_basis_id) return "请先更新当前持仓与策略依据";
   if (!result?.summary || result.status === "failed") return "尚未形成可采用的汇总条件";
   if (result.synthesis_basis?.mode === "partial_initial") return "部分汇总仅供阅读，不能采用新观察";
   if (!discussionStrategyCurrent(result, worksheet, now)) return "仓位、风险或环境判断已变化，或分析已旧，请重新分析";
   const action = result.summary.actions[index];
   const reference = action && result.price_refs[action.price_ref ?? ""];
-  if (!action || action.action === "pause" || !reference || !Number.isFinite(reference.price) || reference.price <= 0 || !reference.source || !reference.as_of) return "这项条件没有可跟踪的来源价位";
+  const directionOnly = !!action && directionWatchAction(action, result);
+  if (!action || action.action === "pause" || (!directionOnly && (!reference || !Number.isFinite(reference.price) || reference.price <= 0 || !reference.source || !reference.as_of))) return "这项条件没有可跟踪的来源价位或已登记方向前提";
   if (!choice) return "请选择要采用的处理路线";
-  if (!comparator) return "请确认报价达到或高于、还是达到或低于观察价时提醒";
+  if (!directionOnly && !comparator) return "请确认报价达到或高于、还是达到或低于观察价时提醒";
+  if (directionOnly && comparator !== null) return "方向等待不设置观察价或报价方向";
   if (action.action === "buy_review" && choice !== "t_watch") return "回补复核仅能用于做 T 观察路线";
   if (choice === "t_watch" && (worksheet.basis.joint_weakness || worksheet.basis.personal_pause_t || !worksheet.basis.sellable_shares)) return "当前做 T 条件不满足，可继续分析暂停原因";
   if (worksheet.basis.quote_issue) return "当前行情不可用，先更新策略依据";
   return "";
 }
 
-export function strategyWatchInput(result: PositionDiscussion, worksheet: ActionWorksheet, index: number, choice: ReviewChoice, comparator: WatchComparator, now = Date.now()): StrategyWatchInput {
+export function strategyWatchInput(result: PositionDiscussion, worksheet: ActionWorksheet, index: number, choice: ReviewChoice, comparator: WatchComparator | null, now = Date.now()): StrategyWatchInput {
   const issue = strategyWatchIssue(result, worksheet, index, choice, comparator, now);
   if (issue) throw new Error(issue);
   return { choice, source_discussion: result.choice === null ? "comparison" : "plan", generated_at: result.generated_at, action_index: index, comparator,
@@ -78,6 +104,7 @@ export function strategyWatchState(worksheet: ActionWorksheet, now = Date.now())
   const watch = worksheet.review_plan.watch;
   if (!watch && worksheet.review_plan.watch_stopped) return { title: "这项策略跟踪已停止", detail: "保留处理路线与费用试算；后台不再检查原观察价。需要继续时，重新分析并采用新的条件。" };
   if (!watch) return null;
+  const directionOnly = directionStrategyWatch(watch);
   const expected = watch.position_snapshot;
   if (worksheet.sale_requires_review || !expected || ["position_id", "cost", "shares", "sellable_shares"].some((key) => expected[key as keyof typeof expected] !== worksheet.position_snapshot[key as keyof typeof expected])) return { title: "持仓已变化，先重新核对策略", detail: "以下保留已保存条件；需要按当前仓位重新分析后确认。" };
   if (worksheet.review_plan.choice === "t_watch" && watch.action === "buy_review" && !worksheet.recorded_sale) return { title: "先核对做 T 的卖出事实", detail: "做 T 按先卖后买顺序复核；尚无已记录卖出事实，到价也不代表可以回补。" };
@@ -90,11 +117,12 @@ export function strategyWatchState(worksheet: ActionWorksheet, now = Date.now())
   const pausePending = previous?.joint_pause_pending || previous?.reason === "joint_weakness" || previous?.reason === "joint_evidence_unknown";
   if (worksheet.review_plan.choice === "t_watch" && sameIntent && pausePending && (["market", "sector", "stock"] as const).some((key) => (worksheet.route_review?.evidence[key]?.status ?? "unknown") === "unknown")) return { title: "三维暂停依据尚未核清", detail: "部分大盘、板块或个股证据缺失，不能视为原暂停已解除；先核对来源，不沿用原回补条件。" };
   if (constraintsKey(watch.constraints) !== constraintsKey(worksheet.constraints) || watch.trade_revision !== worksheet.trade_revision) return { title: "原策略对应的持仓或条件已变化", detail: "重新保存试算不会更新原 AI 观察条件；请按最新持仓和个人条件重新分析后采用。" };
-  if (!Number.isFinite(watch.price) || watch.price <= 0 || (watch.comparator !== "at_or_above" && watch.comparator !== "at_or_below")) return { title: "已保存观察条件不可核验", detail: "观察价或比较方向不完整，请重新分析并采用。" };
+  if (!directionOnly && (watch.price == null || !Number.isFinite(watch.price) || watch.price <= 0 || (watch.comparator !== "at_or_above" && watch.comparator !== "at_or_below"))) return { title: "已保存观察条件不可核验", detail: "观察价、比较方向或方向等待合同不完整，请重新分析并采用。" };
   if (watch.direction_schema !== "direction-v1") return { title: "原方向依据需要重新核对", detail: "旧方案未保存完整方向身份，请核对当前证据后重新分析并采用。" };
-  if (strategyDirectionKey(watch.evidence_snapshot) !== strategyDirectionKey(worksheet.route_review?.evidence)) return { title: "原策略依据发生变化，重新分析", detail: "大盘、板块或个股的方向、来源或行业归属与采用时不同，先核对变化再决定是否保留原条件。" };
+  if (strategyDirectionKey(watch.evidence_snapshot) !== strategyDirectionKey(worksheet.route_review?.evidence) && !(directionOnly && worksheet.strategy_direction_progress === true)) return { title: "原策略依据发生变化，重新分析", detail: "大盘、板块或个股的方向、来源或行业归属与采用时不同，先核对变化再决定是否保留原条件。" };
   const conditionView = positionChecksView(worksheet, now);
-  if (conditionView && (watch.condition_contract?.schema_version === 2 || worksheet.strategy_condition_issue)) return { title: "下一步先核对什么", detail: conditionView.nextStep };
+  if (conditionView && (watch.condition_contract?.schema_version === 2 || watch.condition_contract?.schema_version === 3 || worksheet.strategy_condition_issue)) return { title: directionOnly ? "等待方向前提，逐项核对" : "下一步先核对什么", detail: conditionView.nextStep };
+  if (watch.price == null || !watch.comparator) return { title: "已保存观察条件不可核验", detail: "等待当前方向条件检查，不据此判断买卖。" };
   const reached = watch.comparator === "at_or_above" ? worksheet.basis.price >= watch.price : worksheet.basis.price <= watch.price;
   return { title: reached ? "已到观察价，核对下一步条件" : "正在等待策略条件", detail: `当前 ${worksheet.basis.price.toFixed(2)} 元；报价${WATCH_COMPARATORS[watch.comparator]} ${watch.price.toFixed(2)} 元时提示复核。${reached ? "到价尚不能确认下方的转弱、止跌等条件。" : ""}` };
 }

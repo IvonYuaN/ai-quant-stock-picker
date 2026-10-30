@@ -47,6 +47,7 @@ export function strategyReviewView(context: StrategyReviewContext | undefined): 
 }
 
 export function originalReviewPrice(context: StrategyReviewContext): string {
+  if (context.original?.observation_kind === "direction") return "不设观察价，等待已登记方向前提";
   const ref = context.original?.price_ref;
   // Never resolve a historical reference ID through current.price_refs.
   return ref && typeof ref === "object" && Number.isFinite(ref.price) && ref.price > 0

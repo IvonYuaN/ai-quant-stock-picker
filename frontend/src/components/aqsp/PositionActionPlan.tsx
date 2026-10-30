@@ -9,7 +9,7 @@ import { PositionDiscussionPanel } from "./PositionDiscussionPanel";
 import { PositionChangeReview } from "./StrategyReviewContextPanel";
 import { draftNeedsReview, readPlanWorksheet, savePlanChoice, worksheetGuard } from "@/lib/position-workspace";
 import { ALERTS_CHANGED_EVENT, requestOperation } from "@/lib/operation";
-import { strategyWatchState, WATCH_COMPARATORS } from "@/lib/strategy-watch";
+import { directionStrategyWatch, strategyWatchState, WATCH_COMPARATORS } from "@/lib/strategy-watch";
 import { positionChangeView } from "@/lib/position-change-review";
 
 type Draft = Record<"quantity" | "sell_price" | "buy_price" | "commission_rate" | "min_commission" | "stamp_tax_rate" | "slippage_rate", string>;
@@ -144,6 +144,7 @@ export function PositionActionPlan({ eventId, target, choice, worksheet, onWorks
   const discussionBlocked = busy || !data || !!data.archived || data.review_plan.choice !== choice || expired;
   const discussionBlockReason = busy ? "正在更新，请稍等。" : expired ? "先更新当前依据，再让 AI 分析。" : "";
   const watch = data?.review_plan.watch;
+  const directionOnly = !!watch && directionStrategyWatch(watch);
   const watchState = data ? strategyWatchState(data, tick) : null;
   const hasDirectionChangeExplanation = !!data && watchState?.title === "原策略依据发生变化，重新分析" && !!positionChangeView(data)?.changes.length;
   function field(key: keyof Draft, label: string) {
@@ -160,11 +161,11 @@ export function PositionActionPlan({ eventId, target, choice, worksheet, onWorks
       {watch && watchState ? <section className="aq-strategy-watch" aria-label="正在跟踪的策略条件">
         <span className="aq-beginner-label">已采用 · 后台跟踪这项条件</span><h3>{watchState.title}</h3>{!hasDirectionChangeExplanation ? <p>{watchState.detail}</p> : null}
         <PositionChangeReview worksheet={data} />
-        <div className="aq-strategy-watch-price"><b>{WATCH_COMPARATORS[watch.comparator]} {watch.price.toFixed(2)} 元</b><span>{watch.action === "buy_review" ? "考虑回补前复核" : watch.action === "sell_review" ? "考虑卖出前复核" : "观察变化"}</span></div>
-        <p><b>到价后看：</b>{watch.condition}</p><p><b>取消或重核：</b>{watch.invalidation}</p>
-        <small>{watch.price_ref?.label || "原价格引用待核对"} · {watch.price_ref?.source || "来源待核对"} · {formatEvidenceTime(watch.price_ref?.as_of)}</small>
+        {directionOnly ? <div className="aq-strategy-watch-price"><b>等待方向前提</b><span>条件满足后人工复核</span></div> : watch.price != null && watch.comparator ? <div className="aq-strategy-watch-price"><b>{WATCH_COMPARATORS[watch.comparator]} {watch.price.toFixed(2)} 元</b><span>{watch.action === "buy_review" ? "考虑回补前复核" : watch.action === "sell_review" ? "考虑卖出前复核" : "观察变化"}</span></div> : <p role="status">原观察条件不完整，先重新核对。</p>}
+        <p><b>{directionOnly ? "等待验证：" : "到价后看："}</b>{watch.condition}</p><p><b>取消或重核：</b>{watch.invalidation}</p>
+        {!directionOnly ? <small>{watch.price_ref?.label || "原价格引用待核对"} · {watch.price_ref?.source || "来源待核对"} · {formatEvidenceTime(watch.price_ref?.as_of)}</small> : null}
         <PositionConditionChecks worksheet={data} now={tick} />
-        <p className="aq-note">到价仍需核对完整买卖前提；通知设置见后台跟进。</p>
+        <p className="aq-note">{directionOnly ? "方向条件满足仍需核对完整前提，不自动买卖；通知设置见后台跟进。" : "到价仍需核对完整买卖前提；通知设置见后台跟进。"}</p>
         <button type="button" className="aq-btn" disabled={busy} onClick={() => void stopWatch()}>停止这项跟踪</button>
       </section> : data.review_plan.watch_stopped && watchState ? <div className="aq-strategy-empty" role="status"><h3>{watchState.title}</h3><p>{watchState.detail}</p></div> : !data.review_plan.parameters ? <div className="aq-strategy-empty"><h3>路线已选，下一步先明确条件</h3><p>让 AI 结合当前大盘、板块、个股与个人条件，分析什么情况下继续、何时考虑买卖、何时取消。采用后再持续跟踪，不必先填股数和费用。</p></div> : null}
       <div className="aq-strategy-model"><PositionDiscussionPanel key={JSON.stringify([planTarget, choice, data.position_snapshot, data.review_plan.parameters])} target={planTarget} choice={choice} worksheet={data} disabled={discussionBlocked} disabledReason={discussionBlockReason} onWorksheet={(next) => { receive(next); report.current?.(next); }} onComplete={() => void refresh()} /></div>

@@ -13,7 +13,7 @@ export function positionActionChecks(action: DiscussionAction, result: PositionD
   const prerequisites = [...new Set(action.prerequisite_ids ?? [])].map(label);
   const invalidations = [...new Set(action.invalidation_ids ?? [])].map(label);
   return { prerequisites, invalidations, manual: prerequisites.length || invalidations.length
-    ? "其余文字买卖前提仍需人工核验；到价不代表完整条件成立。"
+    ? action.action === "observe" && action.price_ref === null ? "方向条件满足后仍需人工复核；不自动产生买卖任务。" : "其余文字买卖前提仍需人工核验；到价不代表完整条件成立。"
     : "文字条件尚未逐项登记，其余买卖前提仍需人工核验。" };
 }
 
@@ -29,7 +29,7 @@ function backgroundChecks(worksheet: ActionWorksheet, now: number): CandidateCon
 function pendingItems(worksheet: ActionWorksheet): CandidateConditionCheck[] {
   if (worksheet.strategy_condition_issue) return [];
   const contract = worksheet.review_plan.watch?.condition_contract;
-  if (contract?.schema_version !== 2 || contract.origin?.kind !== "position") return [];
+  if ((contract?.schema_version !== 2 && contract?.schema_version !== 3) || contract.origin?.kind !== "position") return [];
   return contract.definitions.flatMap((row) => {
     const roles: Array<"prerequisite" | "invalidation"> = [];
     if (contract.prerequisite_ids.includes(row.id)) roles.push("prerequisite");
@@ -45,7 +45,7 @@ function checkRows(checks: CandidateConditionCheck[], historical = false): Candi
 }
 
 /** One concrete next step from server-evaluated items; a price match is never a trade signal. */
-export function positionConditionNextStep(checks: CandidateConditionChecks, state?: FollowupObservation["state"]): string {
+export function positionConditionNextStep(checks: CandidateConditionChecks, state?: FollowupObservation["state"], directionOnly = false): string {
   if (state === "paused") return "先复核暂停依据，暂不沿用原买卖条件。";
   const rows = checks.items;
   const invalidated = rows.find((row) => row.role === "invalidation" && row.status === "met");
@@ -56,12 +56,12 @@ export function positionConditionNextStep(checks: CandidateConditionChecks, stat
   if (state === "evidence_unavailable") return `先补齐${unknown ? `：${unknown.label}` : "当前来源"}，再核对原条件。`;
   if (state === "needs_review" || checks.summary === "review") return `原方案需要重核${unknown ? `：${unknown.label}缺依据` : unmet ? `：${unmet.label}未满足` : "，先核对变化依据"}。`;
   if (checks.mode === "legacy") return "旧版文字条件未逐项登记；到价后仍需人工核验原买卖前提。";
-  if (!rows.length) return "等待逐项检查，不能仅凭到价判断买卖条件成立。";
+  if (!rows.length) return directionOnly ? "等待方向前提逐项检查，不据此判断买卖条件成立。" : "等待逐项检查，不能仅凭到价判断买卖条件成立。";
   if (unknown) return `先补依据：${unknown.label}，暂不能判断条件是否成立。`;
   if (unmet) return `继续等待：${unmet.label}尚未满足。`;
-  if (manual) return `下一步人工核验：${manual.label}；到价不等于买卖条件成立。`;
+  if (manual) return `下一步人工核验：${manual.label}；${directionOnly ? "方向条件满足仍不等于买卖条件成立" : "到价不等于买卖条件成立"}。`;
   if (checks.summary === "unknown") return "本次仍缺完整依据，不能只根据已满足项目判断可以买卖。";
-  if (checks.summary === "manual_required") return "仍有人工前提待核验，到价不代表完整条件成立。";
+  if (checks.summary === "manual_required") return directionOnly ? "仍有人工前提待核验，方向条件满足不代表完整条件成立。" : "仍有人工前提待核验，到价不代表完整条件成立。";
   return "已列项目可复核，仍需人工确认完整前提；这不是买卖或成交信号。";
 }
 
@@ -70,19 +70,20 @@ export function positionChecksView(worksheet: ActionWorksheet, now = Date.now())
   if (!watch || worksheet.archived || worksheet.review_plan.watch_stopped) return null;
   const issue = worksheet.strategy_condition_issue;
   const checks = issue ? null : worksheet.strategy_condition_checks ?? backgroundChecks(worksheet, now);
-  const registered = watch.condition_contract?.schema_version === 2;
+  const registered = watch.condition_contract?.schema_version === 2 || watch.condition_contract?.schema_version === 3;
   if (!checks || checks.schema_version !== 1) return { title: issue ? "原条件需要重核" : registered ? "逐项条件待检查" : "旧版文字条件", mode: registered ? "pending" : "legacy",
-    nextStep: issue || (registered ? "等待当前逐项检查；报价到价不代表其余前提成立。" : "旧版文字条件未逐项登记；仅有报价检查，其余买卖前提需人工核验。"), items: checkRows(pendingItems(worksheet)) };
+    nextStep: issue || (registered ? watch.condition_contract?.schema_version === 3 ? "等待当前方向前提检查；满足后仍需人工复核，不自动买卖。" : "等待当前逐项检查；报价到价不代表其余前提成立。" : "旧版文字条件未逐项登记；仅有报价检查，其余买卖前提需人工核验。"), items: checkRows(pendingItems(worksheet)) };
   const expired = worksheetExpired(worksheet.basis, now);
   return { title: expired ? "上次逐项检查（待更新）" : checks.summary === "review" ? "哪些条件需要复核" : "条件逐项检查", mode: expired ? "pending" : checks.mode,
-    nextStep: expired ? "检查已旧，先更新当前依据，再逐项核对原条件。" : positionConditionNextStep(checks, worksheet.strategy_condition_checks ? undefined : worksheet.followup?.last_check?.state), items: checkRows(checks.items, expired) };
+    nextStep: expired ? "检查已旧，先更新当前依据，再逐项核对原条件。" : positionConditionNextStep(checks, worksheet.strategy_condition_checks ? undefined : worksheet.followup?.last_check?.state, watch.condition_contract?.schema_version === 3), items: checkRows(checks.items, expired) };
 }
 
 /** Home uses the recorded backend state, retaining pause and evidence-change precedence. */
 export function positionObservationNextStep(row: FollowupObservation, now = Date.now()): string | null {
   if (row.condition_checks?.schema_version !== 1) return null;
-  if (row.state === "paused") return positionConditionNextStep(row.condition_checks, row.state);
+  const directionOnly = row.condition_checks.mode === "registered" && row.condition_checks.items.length > 0 && !row.condition_checks.items.some((item) => item.role === "price");
+  if (row.state === "paused") return positionConditionNextStep(row.condition_checks, row.state, directionOnly);
   const age = now - Date.parse(row.observed_at);
   if (!Number.isFinite(age) || age < 0 || age > FOLLOWUP_OBSERVATION_MAX_AGE_MS) return "先更新后台检查，再核对原买卖条件。";
-  return positionConditionNextStep(row.condition_checks, row.state);
+  return positionConditionNextStep(row.condition_checks, row.state, directionOnly);
 }

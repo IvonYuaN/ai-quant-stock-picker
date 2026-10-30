@@ -217,7 +217,7 @@ def build_position_worksheet(position_id: str, portfolio: dict[str, Any], data: 
     comparison = root.get('comparison')
     if comparison and not archived and (comparison.get('position_snapshot') != snapshot or comparison.get('review_revision') != revision):
         comparison = None
-    from position_followup import followup_view, strategy_condition_checks
+    from position_followup import followup_view, strategy_condition_checks, strategy_direction_progress
     worksheet = {'followup': followup_view(root, revision, snapshot, current=current), 'position_id': position_id, 'name': holding.get('name') or holding['code'], 'symbol': holding['code'],
             'revision': revision, 'archived': archived, 'constraints': constraints, **details,
             'migration_issue': root.get('migration_issue', ''), 'basis': basis, 'position_snapshot': snapshot, 'review_plan': plan,
@@ -228,8 +228,10 @@ def build_position_worksheet(position_id: str, portfolio: dict[str, Any], data: 
             'recorded_sale': {'id': _receipt_id(receipt), **{key: receipt[key] for key in ('date', 'price', 'shares')}} if receipt else None,
             'sale_requires_review': sale_requires_review, 'simulation_only': True}
     worksheet['strategy_condition_issue'] = ''
+    worksheet['strategy_direction_progress'] = False
     try:
         worksheet['strategy_condition_checks'] = strategy_condition_checks(worksheet, current=current)
+        worksheet['strategy_direction_progress'] = strategy_direction_progress(worksheet)
     except (ValueError, KeyError, TypeError) as exc:
         worksheet['strategy_condition_checks'] = None
         worksheet['strategy_condition_issue'] = str(exc)
