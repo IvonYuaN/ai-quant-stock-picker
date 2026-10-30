@@ -11,7 +11,7 @@ import {
   Tag,
   clickableRowProps,
 } from "@/components/ui/primitives";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { loadWatch, saveWatch } from "@/lib/watchlist";
@@ -22,6 +22,7 @@ import { evidenceLabel, statusLabel } from "@/lib/display-labels";
 import { useOwnership } from "../useOwnership";
 import type { CandidateRow, DailyView, SectionView } from "@/lib/daily-view";
 import { symbolNames } from "@/lib/daily-view";
+import { candidateName } from "@/lib/candidate-chain";
 import type { AqspCandidateLifecycle } from "@/types/aqsp";
 import {
   selectCandidates,
@@ -192,6 +193,8 @@ function CandidateDetailCard({
   lifecycle,
   historyWindow,
   onToggleCompare,
+  onCompare,
+  comparisonCount,
   onPick,
   date,
 }: {
@@ -203,6 +206,8 @@ function CandidateDetailCard({
   lifecycle?: AqspCandidateLifecycle;
   historyWindow: number;
   onToggleCompare: (symbol: string) => void;
+  onCompare: () => void;
+  comparisonCount: number;
   onPick?: (symbol: string) => void;
   date: string;
 }) {
@@ -265,6 +270,7 @@ function CandidateDetailCard({
         >
           {inCompare ? "已加入对比" : "加入对比"}
         </button>
+        {comparisonCount >= 2 ? <button type="button" className="aq-btn" onClick={onCompare}>开始比较 {comparisonCount} 只</button> : null}
       </div>
 
       {row.context ? <p className="aq-card-summary">{row.context}</p> : null}
@@ -649,10 +655,16 @@ export function CandidateSection({
   // 并排对比的所选标的放在 URL 上（与所选交易日同一套原则），但用 replace ——
   // 这是视图微调，不该在浏览器历史里堆一串记录。
   const [searchParams, setSearchParams] = useSearchParams();
-  const compareSymbols = searchParams.has("cmp")
-    ? parseCompareSymbols(searchParams.get("cmp"), view.candidates.map((row) => row.symbol))
-    : visible.slice(0, 2).map((row) => row.symbol);
+  const compareSymbols = parseCompareSymbols(searchParams.get("cmp"), view.candidates.map((row) => row.symbol));
+  const [comparing, setComparing] = useState(() => compareSymbols.length >= 2);
+  const researchButton = useRef<HTMLButtonElement>(null);
+  const showComparison = comparing && compareSymbols.length >= 2;
+  const compareNames = compareSymbols.map((symbol) => view.candidates.find((row) => row.symbol === symbol)!);
   const setCompareSymbols = (next: string[]) => {
+    if (comparing && next.length < 2) {
+      setComparing(false);
+      window.requestAnimationFrame(() => researchButton.current?.focus());
+    }
     const params = new URLSearchParams(searchParams);
     if (next.length === 0) params.set("cmp", "none");
     else params.set("cmp", next.join(","));
@@ -668,36 +680,18 @@ export function CandidateSection({
         <Badge tone={view.chain.tone}>{view.chain.label}</Badge>
       </SectionHeader>
 
-      <div className="aq-tag-row">
-        <Tag title={view.parameterSnapshot.detail}>{view.parameterSnapshot.label}</Tag>
-        {view.frozenAt ? <Tag title={view.frozenAt}>当日候选已冻结 · {new Date(view.frozenAt).toLocaleTimeString("zh-CN", { timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit", hour12: false })}</Tag> : <Tag>冻结信息尚未生成</Tag>}
-        <Tag tone={!ownershipKnown ? "warn" : owned.holding + owned.watchlist > 0 ? "primary" : "neutral"}>{ownershipSummaryLabel(view.candidates.map((row) => row.symbol), ownership)}</Tag>
-        <button type="button" disabled={!ownershipKnown} className={cn("aq-btn", ownershipKnown && onlyOwned && "aq-btn-primary")} aria-pressed={ownershipKnown && onlyOwned} onClick={() => { setOnlyOwned(!onlyOwned); setHideOwned(false); }}>只看我的命中</button>
-      </div>
-      {!ownershipKnown ? <p className="aq-note" role="status">持仓身份待确认，已暂停持仓筛选与计数；不影响查看候选研究。可用上方“更新跟进状态”重试。</p> : null}
-      {view.frozenAt ? <p className="aq-hint">评分、策略依据与参数身份沿用当日首次冻结；现价、新鲜度与消息按最新证据更新。</p> : null}
-      {compareSymbols.length >= 2 ? (
-        <ComparePanel
-          key={`${view.date}:${view.generatedAt}:${compareSymbols.join("|")}`}
-          rows={view.candidates}
-          symbols={compareSymbols}
-          date={view.date}
-          historical={view.isHistorical}
-          generatedAt={view.generatedAt}
-          onRemove={(symbol) => setCompareSymbols(toggleCompareSymbol(compareSymbols, symbol))}
-        />
-      ) : null}
+      {!ownershipKnown ? <p className="aq-note" role="status">持仓身份待确认，已暂停持仓筛选与计数；不影响查看候选研究。可在跟进模块“更新跟进状态”重试。</p> : null}
       {added.length > 0 ? (
-        <section className="aq-candidate-increment" aria-label="盘中新增候选">
-          <div className="aq-candidate-increment-head">
-            <strong>盘中新增</strong>
-            <span>不改变已冻结名单与排序</span>
-          </div>
+        <details className="aq-candidate-increment" aria-label="盘中新增候选">
+          <summary className="aq-candidate-increment-head">
+            <strong>盘中新增 {added.length} 只候选</strong>
+            <span>展开查看 · 不改变冻结名单</span>
+          </summary>
           {added.map((change) => (
             <div className="aq-candidate-increment-row" key={change.symbol}>
               <div className="aq-candidate-increment-identity">
                 <Tag tone="primary">新增</Tag>
-                <strong>{change.display_name || "未命名标的"}</strong>
+                <strong>{candidateName(change)}</strong>
                 <span className="aq-code">{change.symbol}</span>
               </div>
               {onPick ? (
@@ -707,7 +701,7 @@ export function CandidateSection({
               ) : null}
             </div>
           ))}
-        </section>
+        </details>
       ) : null}
 
       {view.candidates.length === 0 ? (
@@ -724,8 +718,19 @@ export function CandidateSection({
         />
       ) : (
         <>
+          <div className="aq-candidate-modes" role="group" aria-label="候选研究方式">
+            <div className="aq-candidate-mode-actions">
+              <button type="button" ref={researchButton} className={cn("aq-btn", !showComparison && "aq-btn-primary")} aria-pressed={!showComparison} onClick={() => setComparing(false)}>研究单只</button>
+              <button type="button" className={cn("aq-btn", showComparison && "aq-btn-primary")} aria-pressed={showComparison} disabled={compareSymbols.length < 2} onClick={() => setComparing(true)}>比较已选 {compareSymbols.length} 只</button>
+            </div>
+            {compareNames.length ? <div className="aq-candidate-compare-selection" aria-label="已选比较股票">{compareNames.map((row) => <button key={row.symbol} type="button" className="aq-chip" aria-label={`移出比较 ${row.name}`} onClick={() => setCompareSymbols(toggleCompareSymbol(compareSymbols, row.symbol))}>{row.name}<span aria-hidden="true"> ×</span></button>)}</div> : <p className="aq-note">选一只看入选理由；需要横向比较时，再加入对比。</p>}
+          </div>
           <details className="aq-candidate-filters">
             <summary><SlidersHorizontal aria-hidden="true" />筛选与排序 <span>{visible.length} / {view.candidates.length} 只 · {owned.watchlist} 已自选{selection.hidden ? ` · 已筛除 ${selection.hidden} 只` : ""}</span></summary>
+          <div className="aq-tag-row">
+            <Tag tone={!ownershipKnown ? "warn" : owned.holding + owned.watchlist > 0 ? "primary" : "neutral"}>{ownershipSummaryLabel(view.candidates.map((row) => row.symbol), ownership)}</Tag>
+            <button type="button" disabled={!ownershipKnown} className={cn("aq-btn", ownershipKnown && onlyOwned && "aq-btn-primary")} aria-pressed={ownershipKnown && onlyOwned} onClick={() => { setOnlyOwned(!onlyOwned); setHideOwned(false); }}>只看我的命中</button>
+          </div>
           <CandidateControls
             rows={view.candidates}
             sort={sort}
@@ -743,23 +748,24 @@ export function CandidateSection({
           />
           </details>
 
-          {visible.length === 0 ? (
+          {visible.length === 0 && !showComparison ? (
             <EmptyState
               title="当前筛选条件下没有候选"
               detail={`共 ${selection.total} 只候选被筛掉了 ${selection.hidden} 只 —— 放宽条件即可看到它们。`}
             />
           ) : (
             <>
-              <div className="aq-candidate-split">
+              <div className={cn("aq-candidate-split", showComparison && "aq-candidate-split-comparing")}>
                 <div className="aq-candidate-roster" role="group" aria-label="选择研究候选">
-                  <div className="aq-candidate-roster-head"><span>标的 / 研究状态</span><span>评分</span></div>
+                  <div className="aq-candidate-roster-head"><span>候选名单 / 研究状态</span><span>研究评分</span></div>
+                  {!visible.length ? <p className="aq-note aq-candidate-roster-empty">筛选后没有候选；已选比较保留，放宽筛选可继续选股。</p> : null}
                   {visibleGroups.map((group, groupIndex) => {
                     const rankOffset = visibleGroups.slice(0, groupIndex).reduce((total, item) => total + item.rows.length, 0);
                     return group.rows.length ? (
                       <section className="aq-candidate-roster-group" key={group.kind} data-candidate-group={group.kind} aria-label={`${group.label} ${group.rows.length} 只`}>
                         <div className="aq-candidate-roster-group-head"><strong>{group.label}</strong><span>{group.rows.length} 只</span></div>
                         {group.rows.map((row, index) => (
-                          <button key={row.symbol} type="button" className={cn("aq-candidate-choice", selected?.symbol === row.symbol && "aq-candidate-choice-active")} aria-pressed={selected?.symbol === row.symbol} onClick={() => setSelectedSymbol(row.symbol)}>
+                          <button key={row.symbol} type="button" className={cn("aq-candidate-choice", selected?.symbol === row.symbol && "aq-candidate-choice-active")} aria-pressed={selected?.symbol === row.symbol} onClick={() => { setSelectedSymbol(row.symbol); setComparing(false); }}>
                             <span className="aq-candidate-rank">{String(rankOffset + index + 1).padStart(2, "0")}</span>
                             <span className="aq-candidate-choice-body"><span className="aq-candidate-choice-title"><b>{row.name}</b><span className="aq-code">{row.symbol}</span>{invalidated.has(row.symbol) ? <Tag tone="warn">已失效</Tag> : null}</span><span>{statusLabel(row.status)} · {row.messageCount} 条消息 · {row.debateRounds !== null ? `${row.debateRounds} 轮复核` : "待复核"}</span><OwnerTag ownership={ownership} code={row.symbol} /></span>
                             <strong className="aq-candidate-choice-score">{row.scoreText}</strong>
@@ -769,7 +775,12 @@ export function CandidateSection({
                     ) : null;
                   })}
                 </div>
-                {selected ? <CandidateDetailCard
+                {showComparison ? <ComparePanel
+                    key={`${view.date}:${view.generatedAt}:${compareSymbols.join("|")}`}
+                    rows={view.candidates} symbols={compareSymbols} date={view.date}
+                    historical={view.isHistorical} generatedAt={view.generatedAt}
+                    onRemove={(symbol) => setCompareSymbols(toggleCompareSymbol(compareSymbols, symbol))}
+                  /> : selected ? <CandidateDetailCard
                     key={`${view.date}:${selected.symbol}`}
                     row={selected}
                     date={view.date}
@@ -780,6 +791,7 @@ export function CandidateSection({
                     lifecycle={lifecycleDate === view.date ? lifecycles[selected.symbol] : undefined}
                     historyWindow={historyWindow}
                     onToggleCompare={(symbol) => setCompareSymbols(toggleCompareSymbol(compareSymbols, symbol))}
+                    onCompare={() => setComparing(true)} comparisonCount={compareSymbols.length}
                     onPick={onPick}
                   /> : null}
               </div>
@@ -792,6 +804,10 @@ export function CandidateSection({
         </>
       )}
 
+      <details className="aq-candidate-calculation aq-evidence-fold"><summary>当日研究口径与冻结参数</summary><div>
+        <div className="aq-tag-row"><Tag title={view.parameterSnapshot.detail}>{view.parameterSnapshot.label}</Tag>{view.frozenAt ? <Tag title={view.frozenAt}>当日候选已冻结 · {new Date(view.frozenAt).toLocaleTimeString("zh-CN", { timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit", hour12: false })}</Tag> : <Tag>冻结信息尚未生成</Tag>}</div>
+        <p className="aq-note">{view.frozenAt ? "评分、策略依据与参数身份沿用当日首次冻结；现价、新鲜度与消息按最新证据更新。" : "当前没有可核验的冻结信息。"}</p>
+      </div></details>
     </section>
   );
 }
