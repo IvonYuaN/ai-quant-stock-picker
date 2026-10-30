@@ -25,6 +25,8 @@ export function positionChangeView(worksheet: ActionWorksheet): PositionChangeVi
   const changed = context.material_changed;
   const incomplete = context.missing_evidence.length > 0 || !context.original.snapshot_complete;
   const categories = new Set(context.changes.map((row) => row.category));
+  const expectedProgress = worksheet.review_plan.watch.condition_contract?.schema_version === 3 && worksheet.strategy_direction_progress === true
+    && context.changes.every((row) => row.category === "market" || row.category === "sector");
   const focus = [
     categories.has("market") ? "大盘" : "", categories.has("sector") ? "板块" : "", categories.has("stock") ? "个股" : "",
     categories.has("quote_source") ? "行情来源" : "", categories.has("risk") ? "风险触线事实" : "",
@@ -32,9 +34,9 @@ export function positionChangeView(worksheet: ActionWorksheet): PositionChangeVi
     categories.has("choice") ? "采用路线" : "",
   ].filter(Boolean);
   return {
-    title: changed ? "采用后，判断依据有变化" : incomplete ? "原判断还不能完整核验" : "未发现实质依据变化",
-    detail: changed ? `下面是采用时与现在的差异。${incomplete ? "原证据仍有缺口，未保存部分保持未知。" : "变化不等于直接买卖，原条件需要复核。"}` : incomplete ? "采用时的部分依据未保存或不可用，不能确认原判断仍然成立。" : context.quote_updated ? "报价或时点已更新；这本身不代表原方案失效。" : "采用时与当前未记录实质依据变化；这不代表买卖前提已满足或风险已经解除。",
-    next: changed ? `先核对${focus.join("、") || "变化依据"}，再判断原买卖前提是否仍成立；需要新条件时重新分析并明确采用。` : incomplete ? "先补齐并核对缺失依据，再判断原条件是否适用。" : "等下方已采用条件的检查结果；到价仍需复核完整前提。",
+    title: changed ? expectedProgress ? "已登记的方向条件有变化" : "采用后，判断依据有变化" : incomplete ? "原判断还不能完整核验" : "未发现实质依据变化",
+    detail: changed ? expectedProgress ? "下面是采用时与现在的方向差异，按已登记条件继续逐项核验；不因已登记方向变化自动要求重选方案。" : `下面是采用时与现在的差异。${incomplete ? "原证据仍有缺口，未保存部分保持未知。" : "变化不等于直接买卖，原条件需要复核。"}` : incomplete ? "采用时的部分依据未保存或不可用，不能确认原判断仍然成立。" : context.quote_updated ? "报价或时点已更新；这本身不代表原方案失效。" : "采用时与当前未记录实质依据变化；这不代表买卖前提已满足或风险已经解除。",
+    next: changed ? expectedProgress ? "查看下方方向前提与失效检查；满足后人工复核，不产生买卖任务。" : `先核对${focus.join("、") || "变化依据"}，再判断原买卖前提是否仍成立；需要新条件时重新分析并明确采用。` : incomplete ? "先补齐并核对缺失依据，再判断原条件是否适用。" : "等下方已采用条件的检查结果；条件匹配仍需复核完整前提。",
     changes: changed ? context.changes.slice(0, 3).map((row) => ({ label: row.label, before: positionChangeEvidenceText(row.before), after: positionChangeEvidenceText(row.after) })) : [],
     remaining: changed ? Math.max(0, context.changes.length - 3) : 0,
   };

@@ -1053,7 +1053,7 @@ class StrategyWatchIn(BaseModel):
     source_discussion: str
     generated_at: str
     action_index: int = Field(strict=True, ge=0)
-    comparator: str
+    comparator: str | None
     expected_position: dict[str, Any]
     expected_revision: str
     expected_analysis_basis_id: str

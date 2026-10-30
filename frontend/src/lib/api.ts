@@ -436,9 +436,9 @@ export type WatchComparator = "at_or_above" | "at_or_below";
 export interface StrategyWatch {
   condition_contract?: PositionConditionContract | null;
   direction_schema?: string;
-  action: DiscussionAction["action"]; price: number; comparator: WatchComparator;
+  action: DiscussionAction["action"]; price: number | null; comparator: WatchComparator | null;
   condition: string; invalidation: string;
-  price_ref: { label: string; price: number; source: string; as_of: string };
+  price_ref: { label: string; price: number; source: string; as_of: string } | null;
   source_generated_at: string; saved_at: string;
   position_snapshot?: ActionWorksheet["position_snapshot"];
   constraints?: PositionConstraints;
@@ -447,7 +447,7 @@ export interface StrategyWatch {
 }
 export interface StrategyWatchInput {
   choice: ReviewChoice; source_discussion: "comparison" | "plan";
-  generated_at: string; action_index: number; comparator: WatchComparator;
+  generated_at: string; action_index: number; comparator: WatchComparator | null;
   expected_position: ActionWorksheet["position_snapshot"];
   expected_revision: string; expected_analysis_basis_id: string;
 }
@@ -456,7 +456,7 @@ export interface StrategyReviewContext {
   kind: "candidate" | "position";
   status: "adopted" | "not_adopted" | "identity_mismatch";
   original: null | {
-    choice?: string | null; condition?: string | null; invalidation?: string | null;
+    choice?: string | null; condition?: string | null; invalidation?: string | null; observation_kind?: "direction" | "price";
     comparator?: WatchComparator | null; price_ref?: string | CandidatePriceReference | null;
     saved_at?: string | null; evidence_snapshot?: Record<string, unknown> | null;
     snapshot_complete: boolean;
@@ -504,7 +504,7 @@ export interface CandidateConditionContract {
   manual_checks: Array<{ id: string; label: string; detail: string }>;
 }
 export interface PositionConditionContract extends Omit<CandidateConditionContract, "schema_version"> {
-  schema_version: 2;
+  schema_version: 2 | 3;
   origin: { kind: "position"; position_id: string; analysis_basis_id: string; source_discussion: "comparison" | "plan";
     generated_at: string; action_index: number; choice: ReviewChoice; action: "observe" | "sell_review" | "buy_review"; price_ref: string | null };
 }
@@ -574,6 +574,7 @@ export interface FollowupObservation {
   revision: string; plan_key: string; position_snapshot: ActionWorksheet["position_snapshot"];
 }
 export interface ActionWorksheet {
+  strategy_direction_progress?: boolean;
   strategy_review_context?: StrategyReviewContext | null;
   strategy_condition_checks?: CandidateConditionChecks | null;
   strategy_condition_issue?: string;

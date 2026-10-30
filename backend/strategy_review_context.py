@@ -163,6 +163,7 @@ def position_review_context(worksheet: dict[str, Any], evidence: dict[str, Any],
         return context
     saved = deepcopy(watch.get('evidence_snapshot') or {})
     original = {key: deepcopy(watch.get(key)) for key in ('condition', 'invalidation', 'comparator', 'saved_at', 'price_ref', 'position_snapshot', 'constraints', 'trade_revision')}
+    original['observation_kind'] = 'direction' if (watch.get('condition_contract') or {}).get('schema_version') == 3 else 'price'
     original.update(choice=watch.get('choice'), evidence_snapshot=saved,
                     price_refs=deepcopy(watch.get('price_refs') or {}),
                     snapshot_complete=bool(saved and all(key in saved for key in ('holding', 'quote', 'market', 'sector', 'stock', 'risk_trigger'))))

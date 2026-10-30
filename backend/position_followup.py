@@ -123,6 +123,9 @@ def watch_contract(watch: dict[str, Any], position_id: str) -> dict[str, Any] | 
     if 'condition_contract' not in watch:
         return None
     frozen = conditions.validate_contract(watch['condition_contract'])
+    direction_only = frozen['schema_version'] == 3
+    if direction_only and any(watch.get(key) is not None for key in ('price', 'comparator', 'price_ref', 'source_price_ref')):
+        raise ValueError('定性等待不应包含报价或价位引用')
     reference = watch.get('price_ref') or {}
     if not isinstance(reference, dict):
         raise ValueError('持仓冻结观察价引用结构无效，请重新核对')
@@ -130,7 +133,7 @@ def watch_contract(watch: dict[str, Any], position_id: str) -> dict[str, Any] | 
         raise ValueError('持仓冻结观察价与原引用不一致')
     expected = conditions.freeze_position_contract(frozen['prerequisite_ids'], frozen['invalidation_ids'],
         price_predicate={'price_ref': watch.get('source_price_ref'), 'comparator': watch.get('comparator'),
-                         'price': watch.get('price'), 'source': reference.get('source'), 'as_of': reference.get('as_of')},
+                         'price': watch.get('price'), 'source': reference.get('source'), 'as_of': reference.get('as_of')} if not direction_only else None,
         condition=watch['condition'], invalidation=watch['invalidation'],
         origin={'kind': 'position', 'position_id': position_id, 'analysis_basis_id': watch.get('source_analysis_basis_id'),
                 'source_discussion': watch.get('source_discussion'), 'generated_at': watch.get('source_generated_at'),
@@ -139,6 +142,34 @@ def watch_contract(watch: dict[str, Any], position_id: str) -> dict[str, Any] | 
     if frozen != expected:
         raise ValueError('冻结条件合同与已采用持仓观察不一致')
     return frozen
+
+
+def strategy_direction_progress(worksheet: dict[str, Any]) -> bool:
+    """Allow only registered v3 status progress, retaining every source identity.
+
+    A registered broad-market status includes its breadth classification. Index
+    direction, unregistered dimensions, source/industry and stock identity stay
+    frozen; this function cannot turn missing evidence into a valid condition.
+    """
+    plan = worksheet.get('review_plan') or {}
+    watch = plan.get('watch')
+    if not watch or plan.get('watch_stopped') or worksheet.get('archived'):
+        return False
+    frozen = watch_contract(watch, worksheet['position_id'])
+    if frozen is None or frozen['schema_version'] != 3 or watch.get('direction_schema') != 'direction-v1':
+        return False
+    before = direction_identity(watch.get('evidence_snapshot') or {})
+    after = direction_identity((worksheet.get('route_review') or {}).get('evidence') or {})
+    registered = {row['evidence_key'] for row in frozen['definitions']}
+    for key in registered:
+        if before[key]['status'] == 'unknown' or after[key]['status'] == 'unknown':
+            return False
+        before[key].pop('status')
+        after[key].pop('status')
+        if key == 'market':
+            before[key].pop('breadth', None)
+            after[key].pop('breadth', None)
+    return before == after
 
 
 def strategy_condition_checks(worksheet: dict[str, Any], *, current: datetime) -> dict[str, Any] | None:
@@ -215,6 +246,22 @@ def observe_plan(worksheet: dict[str, Any], root: dict[str, Any], *, current: da
             state, title, detail, reason = 'needs_review', '先核对实际卖出，再观察买回', '做T须先卖后买；尚未读到这笔持仓的实际卖出记录，不能把到价视为回补条件成立。', 't_sale_required'
         elif watch.get('action') == 'sell_review' and not basis.get('sellable_shares'):
             state, title, detail, reason = 'needs_review', '当前没有可卖股份', '请先核对T+1与可卖底仓；条件匹配不解除当日买入不可卖出的限制。', 't_plus_one'
+        elif (watch.get('condition_contract') or {}).get('schema_version') == 3:
+            if checks and checks['summary'] == 'unknown':
+                state, title, detail, reason = 'evidence_unavailable', '等待条件尚缺有效依据', '已登记方向缺少有效来源，继续等待；未知不表示改善或风险解除。', 'strategy_condition_unknown'
+            elif not checks or not strategy_direction_progress(worksheet):
+                state, title, detail, reason = 'needs_review', '等待方案依据发生变化，先核对', '方向以外的来源、行业或未登记依据已变化；不能沿用原条件，需要复核。', 'evidence_changed'
+            else:
+                summary = checks['summary']
+                state = ('needs_review' if summary in {'review', 'manual_required'}
+                         else 'evidence_unavailable' if summary == 'unknown' else 'waiting')
+                reason = {'review': 'strategy_invalidation', 'unknown': 'strategy_condition_unknown',
+                          'waiting': 'strategy_prerequisite', 'manual_required': 'strategy_direction_review'}[summary]
+                title = {'review': '原等待方案的失效条件已出现', 'unknown': '等待条件尚缺有效依据',
+                         'waiting': '正在等待已采用的方向前提', 'manual_required': '方向前提已匹配，等你人工复核'}[summary]
+                pending = [item['label'] for item in checks['items'] if (item['role'] == 'invalidation' and item['status'] == 'met')
+                           or item['status'] == 'unknown' or (item['role'] == 'prerequisite' and item['status'] == 'unmet')]
+                detail = ('；'.join(pending) + '。' if pending else '') + '此项不指定买卖价位；方向匹配仍需人工核验原前提，不表示可以买卖或已经成交。'
         elif target is None or comparator not in {'at_or_above', 'at_or_below'}:
             state, title, detail, reason = 'needs_review', '已保存观察条件不可核验', '观察价或比较方向不完整，请重新分析并采用；未沿用损坏条件。', 'watch_invalid'
         elif watch.get('direction_schema') != 'direction-v1':

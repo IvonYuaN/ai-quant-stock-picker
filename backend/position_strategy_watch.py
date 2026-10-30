@@ -1,7 +1,7 @@
 """Human adoption of sourced model observations, separate from trade accounting.
 
-The model proposes conditions. Only a human-selected quote comparison is machine
-observable; prose such as 'stabilizes' remains a manual check after reaching it.
+The model proposes conditions. Human-adopted prices and registered directions
+are observable; prose such as 'stabilizes' always remains a manual check.
 """
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ class StrategyWatchInput:
     source_discussion: str
     generated_at: str
     action_index: int
-    comparator: str
+    comparator: str | None
     expected_position: dict[str, Any]
     expected_revision: str
     expected_analysis_basis_id: str
@@ -43,7 +43,7 @@ def _discussion(worksheet: dict[str, Any], source: str) -> dict[str, Any] | None
 
 
 def _validate_result(worksheet: dict[str, Any], result: dict[str, Any] | None,
-                     value: StrategyWatchInput, current: datetime) -> tuple[dict[str, Any], dict[str, Any]]:
+                     value: StrategyWatchInput, current: datetime) -> tuple[dict[str, Any], dict[str, Any] | None]:
     if not result or not result.get('summary') or result.get('status') not in {'complete', 'partial'}:
         raise ValueError('尚无有效汇总观察条件，请先完成AI分析')
     if (result.get('synthesis_basis') or {}).get('mode') == 'partial_initial':
@@ -81,10 +81,14 @@ def _validate_result(worksheet: dict[str, Any], result: dict[str, Any] | None,
     if any(identifier not in offered for identifier in prerequisites + invalidations):
         raise ValueError('这份分析引用未提供的观察条件，尚未采用')
     reference = result.get('price_refs', {}).get(action.get('price_ref'))
-    if action.get('action') not in {'observe', 'sell_review', 'buy_review'} or not isinstance(reference, dict):
+    direction_only = action.get('action') == 'observe' and action.get('price_ref', 'missing') is None
+    if direction_only:
+        if not (prerequisites or invalidations) or value.comparator is not None:
+            raise ValueError('定性等待须登记方向条件且不设置报价比较')
+    elif action.get('action') not in {'observe', 'sell_review', 'buy_review'} or not isinstance(reference, dict):
         raise ValueError('这条意见没有可跟踪的来源价位，请先补齐依据')
-    price = reference.get('price')
-    if (isinstance(price, bool) or not isinstance(price, (int, float)) or not math.isfinite(price) or price <= 0
+    price = reference.get('price') if reference else None
+    if not direction_only and (isinstance(price, bool) or not isinstance(price, (int, float)) or not math.isfinite(price) or price <= 0
             or any(not isinstance(reference.get(key), str) or not reference[key].strip() for key in ('label', 'source', 'as_of'))):
         raise ValueError('观察价的来源或时点不完整，尚未采用')
     if action['action'] == 'buy_review' and value.choice != 't_watch':
@@ -109,7 +113,7 @@ def adopt_strategy_watch(position_id: str, value: StrategyWatchInput) -> dict[st
     No shares, costs, risk rules, scores, fees or notification mode are changed.
     Quantity and fee estimates are optional, separate follow-on calculations.
     """
-    if value.choice not in {'hold', 'reduce', 't_watch'} or value.comparator not in {'at_or_above', 'at_or_below'}:
+    if value.choice not in {'hold', 'reduce', 't_watch'} or value.comparator not in {None, 'at_or_above', 'at_or_below'}:
         raise ValueError('请明确选择路线与报价达到或跌至的方向')
     worksheet = read_position_plan(position_id)
     if not worksheet or worksheet['archived']:
@@ -121,7 +125,9 @@ def adopt_strategy_watch(position_id: str, value: StrategyWatchInput) -> dict[st
     result = _discussion(worksheet, value.source_discussion)
     current = now_shanghai()
     action, reference = _validate_result(worksheet, result, value, current)
-    watch = {'direction_schema': 'direction-v1', 'choice': value.choice, 'action': action['action'], 'price': reference['price'], 'comparator': value.comparator,
+    if reference is not None and value.comparator is None:
+        raise ValueError('有价位观察须明确报价比较方向')
+    watch = {'direction_schema': 'direction-v1', 'choice': value.choice, 'action': action['action'], 'price': reference['price'] if reference else None, 'comparator': value.comparator,
              'condition': action['condition'], 'invalidation': action['invalidation'], 'price_ref': deepcopy(reference),
              'source_generated_at': value.generated_at, 'source_discussion': value.source_discussion,
              'source_analysis_basis_id': value.expected_analysis_basis_id, 'source_action_index': value.action_index,
@@ -138,7 +144,7 @@ def adopt_strategy_watch(position_id: str, value: StrategyWatchInput) -> dict[st
         watch['condition_contract'] = conditions.freeze_position_contract(
             action.get('prerequisite_ids', []), action.get('invalidation_ids', []),
             price_predicate={'price_ref': action['price_ref'], 'comparator': value.comparator,
-                             'price': reference['price'], 'source': reference['source'], 'as_of': reference['as_of']},
+                             'price': reference['price'], 'source': reference['source'], 'as_of': reference['as_of']} if reference else None,
             condition=action['condition'], invalidation=action['invalidation'],
             origin={'kind': 'position', 'position_id': position_id, 'analysis_basis_id': value.expected_analysis_basis_id,
                     'source_discussion': value.source_discussion, 'generated_at': value.generated_at,
