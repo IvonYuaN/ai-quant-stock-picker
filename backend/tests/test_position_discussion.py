@@ -506,3 +506,17 @@ def test_position_discussion_describes_required_peer_reply_when_challenge_has_pe
     assert schema["properties"]["reply_to"]["minItems"] == 1
     assert schema["properties"]["challenge"]["minLength"] == 1
     assert schema["properties"]["reply_to"]["items"]["enum"] == ["trend"]
+
+
+def test_position_discussion_persists_safe_backoff_when_summary_is_limited(discussion_client, monkeypatch) -> None:
+    client, event_id, worksheet, calls = discussion_client
+    original = discussion.call_model
+    async def limited_summary(endpoint, payload, timeout, limits):
+        if "rounds" in payload:
+            raise discussion.ModelHTTPError(429, kind="rate_limited", retry_after_seconds=45)
+        return await original(endpoint, payload, timeout, limits)
+    monkeypatch.setattr(discussion, "call_model", limited_summary)
+    result = client.post(f"/api/alerts/{event_id}/discussion", json={"choice": None, "expected_position": worksheet["position_snapshot"], "expected_revision": worksheet["revision"]}).json()["data"]
+    assert result["summary"] is None and result["summary_failure_kind"] == "rate_limited"
+    stored = discussion.read_action_plan(event_id)["comparison"]
+    assert stored["summary_retry_after_seconds"] == result["summary_retry_after_seconds"] == 45

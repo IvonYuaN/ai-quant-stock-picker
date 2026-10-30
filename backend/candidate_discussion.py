@@ -390,6 +390,7 @@ async def run_discussion(code: str, expected_version: int, expected_evidence_ver
                       'summary_issue': summary_failure.get('issue', ''),
                       'summary_failure_kind': summary_failure.get('failure_kind', ''),
                       'summary_contract_issue_code': summary_failure.get('contract_issue_code', ''),
+                      'summary_retry_after_seconds': summary_failure.get('retry_after_seconds'),
                       'synthesis_basis': synthesis_basis,
                       'elapsed_seconds': round(time.monotonic() - started, 2),
                       'notice': '同一模型角色可能共享偏差；仅供人工复核，不覆盖评分、硬风险或自动买卖。到价后仍需核验其他条件。'}
