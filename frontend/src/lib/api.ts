@@ -475,6 +475,7 @@ export interface PositionDiscussion {
   review_context?: StrategyReviewContext;
   review_revision?: string;
   summary_issue?: string;
+  summary_retry_after_seconds?: number | null;
   summary_failure_kind?: string;
   summary_contract_issue_code?: string;
   status: "complete" | "partial" | "failed"; generated_at: string; model: string; mode: string;
@@ -482,7 +483,7 @@ export interface PositionDiscussion {
   analysis_basis_id?: string;
   evidence_snapshot?: { quote: { price: number | null; as_of: string | null; source: string }; market: Partial<DecisionEvidence>; sector: Partial<DecisionEvidence>; stock?: Partial<DecisionEvidence> };
   price_refs: Record<string, { label: string; price: number; as_of: string; source: string }>;
-  rounds: Array<{ stage: string; opinions: Array<{ role: string; label: string; status: string; issue?: string; failure_kind?: string; contract_issue_code?: string;
+  rounds: Array<{ stage: string; opinions: Array<{ role: string; label: string; status: string; issue?: string; failure_kind?: string; retry_after_seconds?: number; contract_issue_code?: string;
     opinion?: { summary: string; evidence_ids: string[]; uncertainties: string[]; actions: DiscussionAction[]; reply_to: string[]; challenge: string } }> }>;
   summary: { conclusion: string; agreements: string[]; disagreements: string[]; missing_evidence: string[]; actions: DiscussionAction[];
     routes?: Array<{ choice: ReviewChoice; judgment: "investigate" | "not_now" | "insufficient"; reason: string; evidence_ids: string[]; needs: string[] }>;
@@ -527,12 +528,13 @@ export interface CandidateDiscussion {
   id: string; status: "complete" | "partial" | "failed"; generated_at: string; model: string; mode: string;
   resource_version: number; evidence_version: string; research_date: string | null; quote_as_of: string | null;
   price_refs: Record<string, CandidatePriceReference>; evidence_snapshot: Record<string, unknown>;
-  rounds: Array<{ stage: string; opinions: Array<{ role: string; label: string; status: string; issue?: string; failure_kind?: string; contract_issue_code?: string;
+  rounds: Array<{ stage: string; opinions: Array<{ role: string; label: string; status: string; issue?: string; failure_kind?: string; retry_after_seconds?: number; contract_issue_code?: string;
     opinion?: { summary: string; evidence_ids: string[]; uncertainties: string[]; actions: CandidateCondition[]; reply_to: string[]; challenge: string } }> }>;
   summary: null | { conclusion: string; agreements: string[]; disagreements: string[]; missing_evidence: string[];
     routes: Array<{ choice: CandidateChoice; judgment: "investigate" | "not_now" | "insufficient"; reason: string; evidence_ids: string[]; needs: string[] }>;
     focus_choice: CandidateChoice | null; focus_reason: string; actions: CandidateCondition[] };
-  summary_issue: string; summary_failure_kind?: string; summary_contract_issue_code?: string; elapsed_seconds: number; notice: string;
+  summary_issue: string; summary_retry_after_seconds?: number | null;
+  summary_failure_kind?: string; summary_contract_issue_code?: string; elapsed_seconds: number; notice: string;
 }
 export interface CandidateWorkspace {
   condition_catalog?: CandidateConditionCatalog;

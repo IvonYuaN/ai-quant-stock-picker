@@ -149,12 +149,14 @@ def test_candidate_model_contract_accepts_natural_action_and_structured_ids_when
 
 @pytest.mark.parametrize(('failure', 'kind', 'code'), [
     ('none', '', ''), ('route', 'invalid_output', 'route_contract'),
-    ('unknown', 'invalid_output', ''), ('timeout', 'timeout', ''),
+    ('unknown', 'invalid_output', ''), ('timeout', 'timeout', ''), ('limited', 'rate_limited', ''),
     ('roles', 'insufficient_roles', ''), ('peers', 'insufficient_roles', ''),
 ])
 def test_candidate_model_contract_persists_safe_summary_failure_metadata(env, monkeypatch, failure, kind, code):
     async def model(endpoint, payload, timeout, limits, *, system):
         if payload['output_schema']['title'] == 'CandidateSummary':
+            if failure == 'limited':
+                raise transport.ModelHTTPError(429, kind='rate_limited', retry_after_seconds=45)
             if failure == 'timeout':
                 raise TimeoutError('private-raw-marker')
             if failure == 'unknown':
@@ -183,5 +185,7 @@ def test_candidate_model_contract_persists_safe_summary_failure_metadata(env, mo
     assert 'private-raw-marker' not in json.dumps(result, ensure_ascii=False)
     stored = resources.load_store()['resources']['600000']['discussion']
     assert stored['summary_failure_kind'] == kind and stored['summary_contract_issue_code'] == code
+    if failure == 'limited':
+        assert result['summary_retry_after_seconds'] == stored['summary_retry_after_seconds'] == 45
     if failure == 'peers':
         assert all(row['contract_issue_code'] == 'peer_reference' for row in result['rounds'][0]['opinions'])

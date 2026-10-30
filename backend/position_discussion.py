@@ -79,11 +79,43 @@ class ModelEndpoint:
 
 
 class ModelHTTPError(RuntimeError):
-    """Safe upstream status only; never include response body or credentials."""
+    """Only fixed error categories and numeric backoff escape the transport."""
 
-    def __init__(self, status_code: int) -> None:
+    def __init__(self, status_code: int, *, kind: str = "upstream_status", retry_after_seconds: int | None = None) -> None:
         self.status_code = status_code
+        self.kind = kind
+        self.retry_after_seconds = retry_after_seconds
         super().__init__(f"模型接口 HTTP {status_code}")
+
+
+def upstream_failure(status: int, body: bytes, retry_after: str | None) -> ModelHTTPError:
+    """Classify explicit provider codes; never guess quota from HTTP 429 alone.
+
+    Arbitrary message/code strings, URLs and headers are never persisted.
+    Numeric Retry-After is advisory only; no automatic retry or sleep.
+    """
+    kinds = {"insufficient_quota": "quota_exhausted", "rate_limit_exceeded": "rate_limited",
+             "overloaded_error": "provider_busy", "model_not_found": "model_unavailable",
+             "invalid_api_key": "access_denied"}
+    kind = "access_denied" if status in {401, 403} else "provider_busy" if status in {502, 503, 529} else "upstream_status"
+    try:
+        data = json.loads(body)
+        error = data.get("error") if isinstance(data, dict) else None
+        if isinstance(error, dict):
+            # Only recognized code/type values are evidence, never free text.
+            for field in ("code", "type"):
+                value = error.get(field)
+                if isinstance(value, str) and value in kinds:
+                    kind = kinds[value]
+                    break
+    except (ValueError, UnicodeError, RecursionError):
+        pass
+    seconds = None
+    if retry_after and retry_after.isascii() and retry_after.isdecimal() and len(retry_after) <= 5:
+        parsed = int(retry_after)
+        if 0 <= parsed <= 86400:
+            seconds = parsed
+    return ModelHTTPError(status, kind=kind, retry_after_seconds=seconds)
 
 
 class ModelOutputError(RuntimeError):
@@ -209,7 +241,16 @@ async def call_model(endpoint: ModelEndpoint, payload: dict[str, Any], timeout: 
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
             async with client.stream("POST", endpoint.url, headers=headers, json=body) as response:
                 if response.status_code != 200:
-                    raise ModelHTTPError(response.status_code)
+                    error_body = bytearray()
+                    try:
+                        async for chunk in response.aiter_bytes():
+                            if len(error_body) + len(chunk) > limits.max_response_bytes:
+                                error_body.clear()
+                                break
+                            error_body.extend(chunk)
+                    except httpx.HTTPError:
+                        error_body.clear()
+                    raise upstream_failure(response.status_code, bytes(error_body), response.headers.get("retry-after"))
                 chunks, size = [], 0
                 async for chunk in response.aiter_bytes():
                     size += len(chunk)
@@ -354,14 +395,24 @@ def output_schema(schema: type[BaseModel], evidence: dict[str, Any], prices: dic
     return result
 
 
-def _model_failure(exc: Exception) -> dict[str, str]:
+def _model_failure(exc: Exception) -> dict[str, Any]:
     if isinstance(exc, ModelContractError):
         return {'failure_kind': 'invalid_output', 'contract_issue_code': exc.code, 'issue': str(exc)}
     if isinstance(exc, ModelOutputError):
         issue = "模型输出达到长度上限，未使用不完整结果" if exc.kind == "truncated_output" else "模型返回空内容，未形成有效意见"
         return {"failure_kind": exc.kind, "issue": issue}
     if isinstance(exc, ModelHTTPError):
-        return {"failure_kind": "upstream_status", "issue": f"模型接口 HTTP {exc.status_code}，未自动重试"}
+        reasons = {"quota_exhausted": "服务商报告额度不足，需核对模型账户额度",
+                   "rate_limited": "服务商报告请求限流，稍后手动重试",
+                   "provider_busy": "模型服务暂时不可用，稍后手动重试",
+                   "access_denied": "模型服务拒绝访问，需核对服务端授权配置",
+                   "model_unavailable": "服务商报告模型不可用，需核对当前模型目录"}
+        kind = exc.kind if exc.kind in reasons else "upstream_status"
+        result: dict[str, Any] = {"failure_kind": kind,
+            "issue": f"模型接口 HTTP {exc.status_code}，" + reasons.get(kind, "服务商未提供可识别原因，请稍后重试或核对服务状态") + "；未自动重试"}
+        if exc.retry_after_seconds is not None:
+            result["retry_after_seconds"] = exc.retry_after_seconds
+        return result
     if isinstance(exc, (TimeoutError, httpx.TimeoutException)):
         return {"failure_kind": "timeout", "issue": "模型响应超时，未自动重试"}
     if isinstance(exc, httpx.HTTPError):
@@ -463,7 +514,7 @@ async def run_discussion(event_id: str, choice: str | None, expected_position: d
         completed = [row for row in replies if row["status"] == "ok"]
         synthesis_opinions, synthesis_basis = _synthesis_inputs(initial, replies, ROLES)
         summary = None
-        summary_failure: dict[str, str] = {}
+        summary_failure: dict[str, Any] = {}
         summary_seconds = None
         if len(synthesis_opinions) >= 2:
             summary_started = time.monotonic()
@@ -498,6 +549,7 @@ async def run_discussion(event_id: str, choice: str | None, expected_position: d
                   "rounds": rounds, "summary": summary, "synthesis_basis": synthesis_basis, "model_text_unverified": True,
                   "summary_issue": summary_failure.get("issue", ""), "summary_failure_kind": summary_failure.get("failure_kind", ""),
                   "summary_contract_issue_code": summary_failure.get("contract_issue_code", ""),
+                  "summary_retry_after_seconds": summary_failure.get("retry_after_seconds"),
                   "elapsed_seconds": round(time.monotonic() - started, 2), "summary_seconds": summary_seconds,
                   "io_budget": {"role_timeout_seconds": limits.role_timeout, "synthesis_timeout_seconds": limits.synthesis_timeout},
                   "notice": "模型意见仅供人工复核；角色可能共享模型偏差，不是独立模型共识。仅检查格式、引用及结构化动作；模型自由文字未经交易语义验证，不是操作指令，不覆盖风险规则或自动成交。"}
