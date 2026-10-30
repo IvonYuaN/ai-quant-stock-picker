@@ -135,6 +135,22 @@ def candidate_review_context(value: dict[str, Any]) -> dict[str, Any]:
     return context
 
 
+def position_review_facts(worksheet: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Project one observed worksheet into shared page/model evidence, without I/O."""
+    basis = worksheet['basis']
+    directions = worksheet['route_review']['evidence']
+    prices = {f'price_{index}': deepcopy(ref) for index, ref in enumerate(basis['references'])}
+    evidence = {
+        'holding': deepcopy(worksheet['position_snapshot']),
+        'quote': {'price': basis['price'], 'as_of': basis['quote_as_of'], 'source': basis['quote_source']},
+        **{key: deepcopy(directions.get(key, {'status': 'unknown'})) for key in ('market', 'sector', 'stock')},
+        'risk_trigger': deepcopy(worksheet['risk_trigger']),
+        'personal_constraints': deepcopy(worksheet['constraints']),
+        'route_constraints': deepcopy(worksheet['route_review']), **prices,
+    }
+    return evidence, prices
+
+
 def position_review_context(worksheet: dict[str, Any], evidence: dict[str, Any], prices: dict[str, Any]) -> dict[str, Any]:
     """Reuse the position watch's original facts without crossing position lives."""
     current = {key: deepcopy(worksheet.get(key)) for key in ('symbol', 'position_snapshot', 'constraints', 'trade_revision')}

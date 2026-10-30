@@ -6,9 +6,11 @@ import { formatEvidenceTime } from "@/lib/format";
 import { beginnerPlan, planJourney, planSteps, worksheetExpired } from "@/lib/position-plan";
 import { browserAlertRefreshSource, subscribeAlertRefresh } from "@/lib/alert-refresh";
 import { PositionDiscussionPanel } from "./PositionDiscussionPanel";
+import { PositionChangeReview } from "./StrategyReviewContextPanel";
 import { draftNeedsReview, readPlanWorksheet, savePlanChoice, worksheetGuard } from "@/lib/position-workspace";
 import { ALERTS_CHANGED_EVENT, requestOperation } from "@/lib/operation";
 import { strategyWatchState, WATCH_COMPARATORS } from "@/lib/strategy-watch";
+import { positionChangeView } from "@/lib/position-change-review";
 
 type Draft = Record<"quantity" | "sell_price" | "buy_price" | "commission_rate" | "min_commission" | "stamp_tax_rate" | "slippage_rate", string>;
 const EMPTY: Draft = { quantity: "", sell_price: "", buy_price: "", commission_rate: "", min_commission: "", stamp_tax_rate: "", slippage_rate: "" };
@@ -143,6 +145,7 @@ export function PositionActionPlan({ eventId, target, choice, worksheet, onWorks
   const discussionBlockReason = busy ? "正在更新，请稍等。" : expired ? "先更新当前依据，再让 AI 分析。" : "";
   const watch = data?.review_plan.watch;
   const watchState = data ? strategyWatchState(data, tick) : null;
+  const hasDirectionChangeExplanation = !!data && watchState?.title === "原策略依据发生变化，重新分析" && !!positionChangeView(data)?.changes.length;
   function field(key: keyof Draft, label: string) {
     return <label>{label}<input aria-label={label} disabled={busy} type="number" min="0" step={key === "quantity" ? "1" : "any"} value={draft[key]} onChange={(e) => { if (key === "sell_price" || key === "buy_price") editedPrices.current[key] = true; hasCalculationDraft.current = true; dirty.current = true; setSaved(false); setDraft({ ...draft, [key]: e.target.value }); }} /></label>;
   }
@@ -155,7 +158,8 @@ export function PositionActionPlan({ eventId, target, choice, worksheet, onWorks
     {data && simple ? <>
       {personalPaused ? <p className="aq-refresh-warning" role="status">个人条件下先暂停做 T：{personalReason}</p> : null}
       {watch && watchState ? <section className="aq-strategy-watch" aria-label="正在跟踪的策略条件">
-        <span className="aq-beginner-label">已采用 · 后台跟踪这项条件</span><h3>{watchState.title}</h3><p>{watchState.detail}</p>
+        <span className="aq-beginner-label">已采用 · 后台跟踪这项条件</span><h3>{watchState.title}</h3>{!hasDirectionChangeExplanation ? <p>{watchState.detail}</p> : null}
+        <PositionChangeReview worksheet={data} />
         <div className="aq-strategy-watch-price"><b>{WATCH_COMPARATORS[watch.comparator]} {watch.price.toFixed(2)} 元</b><span>{watch.action === "buy_review" ? "考虑回补前复核" : watch.action === "sell_review" ? "考虑卖出前复核" : "观察变化"}</span></div>
         <p><b>到价后看：</b>{watch.condition}</p><p><b>取消或重核：</b>{watch.invalidation}</p>
         <small>{watch.price_ref?.label || "原价格引用待核对"} · {watch.price_ref?.source || "来源待核对"} · {formatEvidenceTime(watch.price_ref?.as_of)}</small>

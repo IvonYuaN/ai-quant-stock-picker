@@ -233,6 +233,12 @@ def build_position_worksheet(position_id: str, portfolio: dict[str, Any], data: 
     except (ValueError, KeyError, TypeError) as exc:
         worksheet['strategy_condition_checks'] = None
         worksheet['strategy_condition_issue'] = str(exc)
+    from strategy_review_context import position_review_context, position_review_facts
+
+    worksheet['strategy_review_context'] = None
+    if not archived and plan.get('watch') and not plan.get('watch_stopped'):
+        review_evidence, review_prices = position_review_facts(worksheet)
+        worksheet['strategy_review_context'] = position_review_context(worksheet, review_evidence, review_prices)
     return worksheet
 
 

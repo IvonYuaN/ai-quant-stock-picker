@@ -574,6 +574,7 @@ export interface FollowupObservation {
   revision: string; plan_key: string; position_snapshot: ActionWorksheet["position_snapshot"];
 }
 export interface ActionWorksheet {
+  strategy_review_context?: StrategyReviewContext | null;
   strategy_condition_checks?: CandidateConditionChecks | null;
   strategy_condition_issue?: string;
   symbol: string;
