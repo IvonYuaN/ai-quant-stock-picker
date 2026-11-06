@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sqlite3
 import sys
 import time
@@ -220,6 +221,17 @@ def _persist_target_snapshot(
         )
         names.append((name, ts_code))
     if not rows:
+        return []
+    # A one-symbol snapshot must not create a fake "latest market day" that
+    # every downstream MAX(trade_date) then treats as a complete session.
+    # Require the same cross-section ratio as the read-side coverage gate.
+    from aqsp.data.daily_coverage import min_market_daily_coverage_ratio
+
+    required = max(
+        1,
+        math.ceil(len(eligible_symbols) * min_market_daily_coverage_ratio()),
+    )
+    if len(rows) < required:
         return []
     with sqlite3.connect(db_path) as conn:
         conn.executemany("UPDATE stocks SET name = ? WHERE ts_code = ?", names)
