@@ -971,11 +971,13 @@ class PriceObservationRuleIn(BaseModel):
     symbol: str = Field(min_length=6, max_length=6, pattern=r"^\d{6}$")
     rule_type: Literal["price", "indicator", "signal"] = "price"
     signal_id: str | None = Field(default=None, min_length=1, max_length=40, pattern=r"^[a-z0-9_]{1,40}$")
-    metric: Literal["rsi12"] | None = None
+    metric: str | None = None
     conditions: list[PriceObservationConditionIn] | None = Field(default=None, min_length=1, max_length=5)
     comparator: Literal["at_or_above", "at_or_below"] | None = None
     price: float | None = Field(default=None, gt=0, allow_inf_nan=False)
-    threshold: float | None = Field(default=None, ge=0, le=100, allow_inf_nan=False)
+    # Metric-specific domains (RSI 0-100, signed MACD, etc.) live in the
+    # shared indicator catalogue; this layer only rejects non-finite numbers.
+    threshold: float | None = Field(default=None, allow_inf_nan=False)
     combination: Literal["all", "any"] = "all"
     severity: Literal["info", "warn", "critical"] = "info"
     cooldown_minutes: int = Field(default=0, ge=0, le=1440)
@@ -1039,6 +1041,13 @@ def market_event_rule_update(rule_id: str, body: MarketEventRulePatch) -> dict:
     return {"data": item}
 
 
+@app.get("/api/aqsp/monitor-indicator-catalog", tags=["监控"], summary="读取可观察的受限日线指标目录")
+def monitor_indicator_catalog() -> dict:
+    from aqsp.indicators import monitor_indicator_catalog as catalog
+
+    return {"data": {"items": catalog()}}
+
+
 @app.get("/api/price-observation-rules", tags=["监控"], summary="读取当前租户的通用价格观察规则")
 def price_observation_rules_list() -> dict:
     import price_observation_rules
@@ -1046,7 +1055,7 @@ def price_observation_rules_list() -> dict:
     return {"data": {"items": price_observation_rules.list_rules()}}
 
 
-@app.post("/api/price-observation-rules", tags=["监控"], summary="创建单标的价格或 RSI 指标观察规则")
+@app.post("/api/price-observation-rules", tags=["监控"], summary="创建单标的价格或指标观察规则")
 def price_observation_rule_create(body: PriceObservationRuleIn) -> dict:
     import price_observation_rules
 

@@ -26,17 +26,50 @@ class PortfolioReadError(RuntimeError):
 
 def _indicator_snapshots(
     rules: list[dict], *, checked_at: datetime
-) -> dict[str, IndicatorSnapshot]:
-    """Calculate configured indicators from fresh raw bars and PIT factors."""
-    indicator_rules = [
-        row for row in rules
+) -> dict[tuple[str, str], IndicatorSnapshot]:
+    """Calculate configured indicators from fresh raw bars and PIT factors.
+
+    One symbol can watch several metrics. Each (symbol, metric) pair gets its
+    own snapshot so an invalid value is never borrowed from a sibling rule.
+    Price-based metrics are computed on the same as-of PIT-adjusted basis as
+    the existing RSI observation, never on mixed raw prices.
+    """
+    from aqsp.indicators import MonitorIndicator, enrich_indicators, monitor_indicator_spec
+
+    pairs: set[tuple[str, str]] = {
+        (str(row["symbol"]), str(row.get("metric") or ""))
+        for row in rules
         if row.get("status") == "active" and row.get("rule_type") == "indicator"
-    ]
-    symbols = sorted({str(row["symbol"]) for row in indicator_rules})
-    if not symbols:
+    }
+    if not pairs:
         return {}
 
+    snapshots: dict[tuple[str, str], IndicatorSnapshot] = {}
+    valid: dict[str, list[tuple[str, MonitorIndicator]]] = {}
+    for symbol, metric in sorted(pairs):
+        try:
+            spec = monitor_indicator_spec(metric)
+        except ValueError:
+            snapshots[(symbol, metric)] = IndicatorSnapshot(
+                None, None, "", "不支持的监控指标"
+            )
+            continue
+        valid.setdefault(symbol, []).append((metric, spec))
+    if not valid:
+        return snapshots
+
+    symbols = sorted(valid)
+    max_bars = max(int(spec.min_bars) for rows in valid.values() for _, spec in rows)
     expected_as_of = latest_completed_trading_day(checked_at)
+
+    def fail_all(actual: str | None, source: str, issue: str) -> dict[tuple[str, str], IndicatorSnapshot]:
+        for symbol, rows in valid.items():
+            for metric, _spec in rows:
+                snapshots[(symbol, metric)] = IndicatorSnapshot(
+                    None, actual, source, issue
+                )
+        return snapshots
+
     try:
         source = build_data_source("sqlite_db", cache=None)
         if source.price_mode() != "raw":
@@ -44,24 +77,27 @@ def _indicator_snapshots(
         latest = source.get_latest_daily_date()
         if latest != expected_as_of:
             actual = latest.isoformat() if latest else "缺失"
-            issue = f"日线数据陈旧：最新 {actual}，预期 {expected_as_of.isoformat()}"
-            return {
-                symbol: IndicatorSnapshot(None, actual if latest else None, "sqlite_db", issue)
-                for symbol in symbols
-            }
-        from datetime import timedelta
-        from aqsp.indicators import enrich_indicators
-
-        start = expected_as_of - timedelta(days=90)
+            return fail_all(
+                actual,
+                "sqlite_db",
+                f"日线数据陈旧：最新 {actual}，预期 {expected_as_of.isoformat()}",
+            )
+        # Natural-day window covering the longest warm-up plus holiday padding.
+        # This is a data-fetch bound, not a strategy threshold.
+        lookback_days = max_bars * 2 + 30
+        start = expected_as_of - timedelta(days=lookback_days)
         frames = source.fetch_daily(symbols, start, expected_as_of, adjust="")
         adjustment = AdjustmentService(cache=DataCache())
-        snapshots: dict[str, IndicatorSnapshot] = {}
         for symbol in symbols:
+            rows = valid[symbol]
             frame = frames.get(symbol)
-            if frame is None or frame.empty or len(frame) < 13:
-                snapshots[symbol] = IndicatorSnapshot(
-                    None, expected_as_of.isoformat(), "sqlite_db", "RSI(12) 样本不足"
-                )
+            actual_rows = 0 if frame is None else len(frame)
+            if frame is None or frame.empty:
+                issue = f"该标的无可用日线，实际 {actual_rows} 根"
+                for metric, _spec in rows:
+                    snapshots[(symbol, metric)] = IndicatorSnapshot(
+                        None, expected_as_of.isoformat(), "sqlite_db", issue
+                    )
                 continue
             raw_dates = frame.get("date")
             bar_dates = (
@@ -76,12 +112,14 @@ def _indicator_snapshots(
                     symbol_as_of = latest_value
             if symbol_as_of != expected_as_of:
                 actual = symbol_as_of.isoformat() if symbol_as_of else "缺失"
-                snapshots[symbol] = IndicatorSnapshot(
-                    None,
-                    actual if symbol_as_of else None,
-                    "sqlite_db",
-                    f"该标的日线陈旧：最新 {actual}，预期 {expected_as_of.isoformat()}",
-                )
+                issue = f"该标的日线陈旧：最新 {actual}，预期 {expected_as_of.isoformat()}"
+                for metric, _spec in rows:
+                    snapshots[(symbol, metric)] = IndicatorSnapshot(
+                        None,
+                        actual if symbol_as_of else None,
+                        "sqlite_db",
+                        issue,
+                    )
                 continue
             adjusted = adjustment.apply_qfq(frame)
             adjusted["open"] = adjusted["open_qfq"]
@@ -89,23 +127,33 @@ def _indicator_snapshots(
             adjusted["low"] = adjusted["low_qfq"]
             adjusted["close"] = adjusted["close_qfq"]
             enriched = enrich_indicators(adjusted)
-            value = enriched["rsi12"].iloc[-1]
-            if not isinstance(value, (int, float)) or not math.isfinite(float(value)):
-                issue = "RSI(12) 结果不可用"
-                snapshots[symbol] = IndicatorSnapshot(
-                    None, expected_as_of.isoformat(), "sqlite_db", issue
+            for metric, spec in rows:
+                # Each metric has its own warm-up. A short window blocks only
+                # the indicators that need more bars, not their siblings.
+                if actual_rows < spec.min_bars:
+                    snapshots[(symbol, metric)] = IndicatorSnapshot(
+                        None,
+                        expected_as_of.isoformat(),
+                        "sqlite_db",
+                        f"{spec.label} 样本不足：需要 {spec.min_bars} 根，实际 {actual_rows} 根",
+                    )
+                    continue
+                value = enriched[metric].iloc[-1]
+                if not isinstance(value, (int, float)) or not math.isfinite(float(value)):
+                    snapshots[(symbol, str(metric))] = IndicatorSnapshot(
+                        None,
+                        expected_as_of.isoformat(),
+                        "sqlite_db",
+                        f"{spec.label} 结果不可用",
+                    )
+                    continue
+                snapshots[(symbol, str(metric))] = IndicatorSnapshot(
+                    float(value), expected_as_of.isoformat(), "sqlite_db"
                 )
-                continue
-            snapshots[symbol] = IndicatorSnapshot(
-                float(value), expected_as_of.isoformat(), "sqlite_db"
-            )
         return snapshots
     except Exception as exc:  # noqa: BLE001 -- indicator failures stay visible and fail closed
         logger.warning("indicator_observation_data_unavailable", error=str(exc))
-        return {
-            symbol: IndicatorSnapshot(None, None, "", "指标依据不可用")
-            for symbol in symbols
-        }
+        return fail_all(None, "", "指标依据不可用")
 
 
 def _signal_snapshots(

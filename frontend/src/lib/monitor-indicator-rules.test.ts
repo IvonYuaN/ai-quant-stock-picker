@@ -30,13 +30,29 @@ const priceInput: PriceObservationRuleInput = {
   cooldown_minutes: 0,
   note: "",
 };
+const macdInput: PriceObservationRuleInput = {
+  rule_type: "indicator",
+  symbol: "600000",
+  metric: "macd_hist",
+  comparator: "at_or_below",
+  threshold: -0.35,
+  severity: "info",
+  cooldown_minutes: 0,
+  note: "",
+};
 let indicatorWrite: typeof requests[number] | undefined;
+let macdWrite: typeof requests[number] | undefined;
 let priceWrite: typeof requests[number] | undefined;
+let catalogRead: typeof requests[number] | undefined;
 try {
   await api.createPriceObservationRule(indicatorInput);
   indicatorWrite = requests[requests.length - 1];
+  await api.createPriceObservationRule(macdInput);
+  macdWrite = requests[requests.length - 1];
   await api.createPriceObservationRule(priceInput);
   priceWrite = requests[requests.length - 1];
+  await api.monitorIndicatorCatalog();
+  catalogRead = requests[requests.length - 1];
 } finally {
   globalThis.fetch = originalFetch;
 }
@@ -55,4 +71,11 @@ export const monitorIndicatorRuleTransportContracts = {
     && Array.isArray(priceWrite.body.conditions)
     && priceWrite.body.combination === "all"
     && !("metric" in priceWrite.body),
+  signedMacdThresholdIsNotClampedByClient: macdWrite?.body.rule_type === "indicator"
+    && macdWrite.body.metric === "macd_hist"
+    && macdWrite.body.comparator === "at_or_below"
+    && macdWrite.body.threshold === -0.35,
+  catalogUsesDedicatedReadOnlyEndpoint: catalogRead?.url === "/api/aqsp/monitor-indicator-catalog"
+    && catalogRead.method === "GET"
+    && Object.keys(catalogRead.body).length === 0,
 };

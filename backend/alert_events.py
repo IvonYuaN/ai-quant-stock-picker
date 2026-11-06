@@ -295,8 +295,11 @@ def upsert_price_observation_events(
                 }
                 threshold_at = None
             elif item.get("rule_type") == "indicator":
+                from aqsp.indicators import MONITOR_INDICATOR_BY_KEY
+
                 metric = str(item.get("metric") or "indicator")
-                metric_label = {"rsi12": "RSI(12)"}.get(metric, metric.upper())
+                spec = MONITOR_INDICATOR_BY_KEY.get(metric)
+                metric_label = spec.label if spec is not None else f"未知指标({metric})"
                 comparator = "≥" if item.get("comparator") == "at_or_above" else "≤"
                 threshold = float(item["threshold"])
                 actual = float(item["indicator_value"])
@@ -304,6 +307,8 @@ def upsert_price_observation_events(
                     "rule": f"{item['symbol']} {metric_label} {comparator} {threshold:g}",
                     "actual": f"{metric_label} {actual:.2f}；数据日 {item['quote_as_of']}",
                     "evidence": item.get("source") or "指标来源未标注",
+                    "rule_type": "indicator",
+                    "metric": metric,
                 }
                 threshold_at = threshold
             else:

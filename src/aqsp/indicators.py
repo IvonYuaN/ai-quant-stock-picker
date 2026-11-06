@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+import math
+
 import numpy as np
 import pandas as pd
 
@@ -196,3 +199,79 @@ def atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int) -> pd.Se
         axis=1,
     ).max(axis=1)
     return tr.rolling(period).mean()
+
+
+@dataclass(frozen=True)
+class MonitorIndicator:
+    """A daily feature that a human-authored observation rule may watch.
+
+    Periods and lookbacks come from the locked daily feature family above; this
+    catalogue only describes the observation contract (label, unit, threshold
+    domain). Price-based values are expressed on the as-of PIT-adjusted basis,
+    not the raw exchange price of an older bar.
+    """
+
+    key: str
+    label: str
+    unit: str
+    min_threshold: float | None
+    max_threshold: float | None
+    price_based: bool
+
+    @property
+    def min_bars(self) -> int:
+        """Bars needed before the last value is fully warmed up."""
+        return DAILY_FEATURE_LOOKBACK_BARS[self.key] + 1
+
+    def validate_threshold(self, value: object) -> float:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"{self.label} 阈值必须是数字")
+        number = float(value)
+        if not math.isfinite(number):
+            raise ValueError(f"{self.label} 阈值必须是有限数")
+        if self.min_threshold is not None and number < self.min_threshold:
+            raise ValueError(f"{self.label} 阈值不得低于 {self.min_threshold:g}")
+        if self.max_threshold is not None and number > self.max_threshold:
+            raise ValueError(f"{self.label} 阈值不得高于 {self.max_threshold:g}")
+        return number
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "key": self.key,
+            "label": self.label,
+            "unit": self.unit,
+            "min_threshold": self.min_threshold,
+            "max_threshold": self.max_threshold,
+            "min_bars": self.min_bars,
+            "price_based": self.price_based,
+        }
+
+
+MONITOR_INDICATORS: tuple[MonitorIndicator, ...] = (
+    MonitorIndicator("rsi12", "RSI(12)", "", 0.0, 100.0, False),
+    MonitorIndicator("macd_hist", "MACD 柱", "元", None, None, True),
+    MonitorIndicator("atr14", "ATR(14)", "元", 0.0, None, True),
+    MonitorIndicator("volume_ratio", "量比(5日均量)", "倍", 0.0, None, False),
+    MonitorIndicator("kdj_j", "KDJ J", "", None, None, False),
+)
+MONITOR_INDICATOR_BY_KEY: dict[str, MonitorIndicator] = {
+    item.key: item for item in MONITOR_INDICATORS
+}
+if len(MONITOR_INDICATOR_BY_KEY) != len(MONITOR_INDICATORS) or any(
+    item.key not in DAILY_INDICATOR_FIELDS
+    or item.key not in DAILY_FEATURE_LOOKBACK_BARS
+    for item in MONITOR_INDICATORS
+):
+    raise RuntimeError("监控指标目录与日线特征字段不一致")
+
+
+def monitor_indicator_spec(key: object) -> MonitorIndicator:
+    """Resolve one supported observation metric, failing closed on anything else."""
+    if not isinstance(key, str) or key not in MONITOR_INDICATOR_BY_KEY:
+        raise ValueError("不支持的监控指标，请从指标目录中选择")
+    return MONITOR_INDICATOR_BY_KEY[key]
+
+
+def monitor_indicator_catalog() -> list[dict[str, object]]:
+    """Serializable catalogue consumed by the /monitor rule editor."""
+    return [item.as_dict() for item in MONITOR_INDICATORS]

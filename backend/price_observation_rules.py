@@ -26,7 +26,6 @@ _SEVERITIES = {"info", "warn", "critical"}
 MAX_ACTIVE_RULES = 50
 MAX_RULE_CONDITIONS = 5
 MAX_COOLDOWN_MINUTES = 1440
-_INDICATORS = {"rsi12"}
 _SIGNAL_ID = re.compile(r"^[a-z0-9_]{1,40}$")
 
 
@@ -164,17 +163,16 @@ def create_rule(value: dict[str, Any]) -> dict[str, Any]:
         comparator = None
         threshold = None
     elif rule_type == "indicator":
+        from aqsp.indicators import monitor_indicator_spec
+
         conditions = []
         metric = value.get("metric")
+        spec = monitor_indicator_spec(metric)
         comparator = value.get("comparator")
         threshold = value.get("threshold")
-        if metric not in _INDICATORS:
-            raise ValueError("暂只支持 RSI(12) 个股信号")
         if comparator not in _COMPARATORS:
             raise ValueError("指标比较方向无效")
-        if isinstance(threshold, bool) or not isinstance(threshold, (int, float)) or not math.isfinite(threshold) or not 0 <= threshold <= 100:
-            raise ValueError("RSI(12) 阈值必须在 0 至 100 之间")
-        threshold = float(threshold)
+        threshold = spec.validate_threshold(threshold)
     else:
         conditions = _conditions(value)
         metric = None
@@ -283,7 +281,7 @@ def update_rule(rule_id: str, *, status: str, expected_revision: int) -> dict[st
 def check_rules(
     quotes: dict[str, dict[str, Any]], *, checked_at: datetime | None = None,
     held_positions: dict[str, str] | None = None,
-    indicator_values: dict[str, IndicatorSnapshot] | None = None,
+    indicator_values: dict[tuple[str, str], IndicatorSnapshot] | None = None,
     signal_values: dict[tuple[str, str], SignalSnapshot] | None = None,
 ) -> dict[str, Any]:
     """Evaluate active rules only against quotes accepted by the freshness contract."""
@@ -411,7 +409,9 @@ def check_rules(
                     })
                 continue
             if row.get("rule_type", "price") == "indicator":
-                snapshot = (indicator_values or {}).get(str(row.get("symbol")))
+                snapshot = (indicator_values or {}).get(
+                    (str(row.get("symbol")), str(row.get("metric")))
+                )
                 issue = snapshot.issue if snapshot else "缺少指标计算结果"
                 if not issue and (
                     snapshot is None

@@ -54,6 +54,17 @@ export interface CandidateObservation {
   last_check: { price: number; quote_as_of: string | null; checked_at: string; triggered: boolean } | null;
 }
 
+export type MonitorIndicatorKey = "rsi12" | "macd_hist" | "atr14" | "volume_ratio" | "kdj_j";
+export interface MonitorIndicatorSpec {
+  key: MonitorIndicatorKey;
+  label: string;
+  unit: string;
+  min_threshold: number | null;
+  max_threshold: number | null;
+  min_bars: number;
+  price_based: boolean;
+}
+
 export interface PriceObservationRule {
   id: string;
   symbol: string;
@@ -61,7 +72,7 @@ export interface PriceObservationRule {
   signal_id?: string | null;
   signal_snapshot?: Pick<SignalDefinition, "id" | "name" | "kind" | "enabled" | "conditions" | "revision"> | null;
   signal_snapshot_sha256?: string | null;
-  metric?: "rsi12";
+  metric?: MonitorIndicatorKey;
   threshold?: number;
   comparator: "at_or_above" | "at_or_below";
   price?: number;
@@ -78,7 +89,7 @@ export interface PriceObservationRule {
   last_check: {
     price?: number | null;
     value?: number | null;
-    metric?: "rsi12";
+    metric?: MonitorIndicatorKey;
     as_of?: string | null;
     freshness?: "fresh" | "stale" | "missing" | "unverified";
     quote_as_of?: string | null;
@@ -107,7 +118,7 @@ export interface PriceObservationRuleInput extends ObservationRuleCommonInput {
   signal_id?: string;
   conditions?: Array<{ comparator: "at_or_above" | "at_or_below"; price: number }>;
   combination?: "all" | "any";
-  metric?: "rsi12";
+  metric?: MonitorIndicatorKey;
   comparator?: "at_or_above" | "at_or_below";
   threshold?: number;
 }
@@ -1061,7 +1072,14 @@ export interface AlertEvent {
   sellable_now: boolean;   // T+1 下今日能否执行
   action_hint: string;     // "该卖" | "明日生效" | "观察"
   t1_note: string;
-  basis_json: { rule: string; actual: string; evidence: string; chart?: MacdChartEvidence };
+  basis_json: {
+    rule: string;
+    actual: string;
+    evidence: string;
+    chart?: MacdChartEvidence;
+    rule_type?: "price" | "indicator" | "signal";
+    metric?: string;
+  };
   status: "OPEN" | "HANDLED" | "IGNORED" | "EXPIRED";
   ignore_streak: number;
   frequency_note?: string;
@@ -2001,6 +2019,7 @@ export const api = {
     ),
   candidateObservations: () => get<{ items: CandidateObservation[]; decisions?: CandidateDecision[] }>("/candidate-observations"),
   priceObservationRules: () => get<{ items: PriceObservationRule[] }>("/price-observation-rules"),
+  monitorIndicatorCatalog: () => get<{ items: MonitorIndicatorSpec[] }>("/aqsp/monitor-indicator-catalog"),
   createPriceObservationRule: (input: PriceObservationRuleInput) =>
     request<PriceObservationRule>("/price-observation-rules", "POST", input),
   updatePriceObservationRule: (id: string, status: PriceObservationRule["status"], expected_revision: number) =>

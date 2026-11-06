@@ -47,7 +47,7 @@ def test_indicator_observation_rule_persists_and_emits_rsi_event(rule_store):
     result = rules.check_rules(
         {}, checked_at=NOW,
         indicator_values={
-            "600519": rules.IndicatorSnapshot(83.5, "2026-10-30", "sqlite_db")
+            ("600519", "rsi12"): rules.IndicatorSnapshot(83.5, "2026-10-30", "sqlite_db")
         },
     )
 
@@ -68,7 +68,7 @@ def test_indicator_observation_rule_missing_or_stale_data_preserves_open_event(r
     })
     hit = rules.check_rules(
         {}, checked_at=NOW,
-        indicator_values={"600519": rules.IndicatorSnapshot(90, "2026-10-30", "sqlite_db")},
+        indicator_values={("600519", "rsi12"): rules.IndicatorSnapshot(90, "2026-10-30", "sqlite_db")},
     )
     event = alert_events.upsert_price_observation_events(
         hit["triggered"], checked_rule_ids=hit["checked_rule_ids"],
@@ -77,7 +77,7 @@ def test_indicator_observation_rule_missing_or_stale_data_preserves_open_event(r
     missing = rules.check_rules(
         {}, checked_at=NOW,
         indicator_values={
-            "600519": rules.IndicatorSnapshot(None, "2026-10-30", "sqlite_db", "日线数据陈旧")
+            ("600519", "rsi12"): rules.IndicatorSnapshot(None, "2026-10-30", "sqlite_db", "日线数据陈旧")
         },
     )
     assert missing["checked_rule_ids"] == set()
@@ -91,17 +91,36 @@ def test_indicator_observation_rule_missing_or_stale_data_preserves_open_event(r
     assert rules.list_rules()[0]["id"] == rule["id"]
 
 
-def test_indicator_observation_rule_rejects_unsupported_metric_and_threshold(rule_store):
-    with pytest.raises(ValueError, match="暂只支持 RSI"):
+def test_indicator_observation_rule_rejects_unknown_metric_and_out_of_domain_threshold(rule_store):
+    with pytest.raises(ValueError, match="不支持的监控指标"):
         rules.create_rule({
-            "symbol": "600519", "rule_type": "indicator", "metric": "macd_hist",
+            "symbol": "600519", "rule_type": "indicator", "metric": "future_metric",
             "comparator": "at_or_above", "threshold": 0,
         })
-    with pytest.raises(ValueError, match="0 至 100"):
+    with pytest.raises(ValueError, match="不得高于 100"):
         rules.create_rule({
             "symbol": "600519", "rule_type": "indicator", "metric": "rsi12",
             "comparator": "at_or_above", "threshold": 101,
         })
+    with pytest.raises(ValueError, match="不得低于 0"):
+        rules.create_rule({
+            "symbol": "600519", "rule_type": "indicator", "metric": "atr14",
+            "comparator": "at_or_above", "threshold": -1,
+        })
+    with pytest.raises(ValueError, match="有限数"):
+        rules.create_rule({
+            "symbol": "600519", "rule_type": "indicator", "metric": "macd_hist",
+            "comparator": "at_or_above", "threshold": float("nan"),
+        })
+
+
+def test_indicator_observation_rule_accepts_signed_macd_threshold(rule_store):
+    row = rules.create_rule({
+        "symbol": "600519", "rule_type": "indicator", "metric": "macd_hist",
+        "comparator": "at_or_below", "threshold": -0.35,
+    })
+    assert row["metric"] == "macd_hist"
+    assert row["threshold"] == -0.35
 
 
 def test_indicator_observation_rule_rejects_old_as_of_even_without_source_issue(rule_store):
@@ -112,13 +131,70 @@ def test_indicator_observation_rule_rejects_old_as_of_even_without_source_issue(
     result = rules.check_rules(
         {}, checked_at=NOW,
         indicator_values={
-            "600519": rules.IndicatorSnapshot(95, "2026-10-29", "sqlite_db")
+            ("600519", "rsi12"): rules.IndicatorSnapshot(95, "2026-10-29", "sqlite_db")
         },
     )
 
     assert result["triggered"] == []
     assert result["checked_rule_ids"] == set()
     assert result["skipped"] == [{"symbol": "600519", "reason": "指标数据日期陈旧"}]
+
+
+def test_indicator_rules_for_same_symbol_do_not_share_snapshots(rule_store):
+    rules.create_rule({
+        "symbol": "600519", "rule_type": "indicator", "metric": "rsi12",
+        "comparator": "at_or_above", "threshold": 70,
+    })
+    rules.create_rule({
+        "symbol": "600519", "rule_type": "indicator", "metric": "macd_hist",
+        "comparator": "at_or_above", "threshold": 0,
+    })
+    result = rules.check_rules(
+        {}, checked_at=NOW,
+        indicator_values={
+            ("600519", "rsi12"): rules.IndicatorSnapshot(75, "2026-10-30", "sqlite_db"),
+            ("600519", "macd_hist"): rules.IndicatorSnapshot(
+                None, "2026-10-30", "sqlite_db", "MACD 柱 结果不可用"
+            ),
+        },
+    )
+
+    assert len(result["triggered"]) == 1
+    assert result["triggered"][0]["metric"] == "rsi12"
+    assert result["skipped"] == [{"symbol": "600519", "reason": "MACD 柱 结果不可用"}]
+    assert len(result["checked_rule_ids"]) == 1
+
+
+def test_monitor_indicator_catalog_endpoint_matches_rule_domains(rule_store):
+    client = TestClient(app_module.app)
+    response = client.get("/api/aqsp/monitor-indicator-catalog")
+
+    assert response.status_code == 200
+    items = response.json()["data"]["items"]
+    keys = {item["key"] for item in items}
+    assert {"rsi12", "macd_hist", "atr14", "volume_ratio", "kdj_j"} <= keys
+    rsi = next(item for item in items if item["key"] == "rsi12")
+    assert rsi["min_threshold"] == 0 and rsi["max_threshold"] == 100
+    macd = next(item for item in items if item["key"] == "macd_hist")
+    assert macd["min_threshold"] is None and macd["price_based"] is True
+    assert all(item["min_bars"] > 1 for item in items)
+
+
+def test_frontend_metric_union_matches_backend_catalogue():
+    """Keep the TS union from drifting away from the single catalogue source."""
+    from pathlib import Path
+    import re
+
+    from aqsp.indicators import monitor_indicator_catalog
+
+    api_path = Path(__file__).resolve().parents[2] / "frontend" / "src" / "lib" / "api.ts"
+    match = re.search(
+        r"export type MonitorIndicatorKey = ([^;]+);",
+        api_path.read_text(encoding="utf-8"),
+    )
+    assert match is not None
+    declared = set(re.findall(r'"([a-z0-9_]+)"', match.group(1)))
+    assert declared == {item["key"] for item in monitor_indicator_catalog()}
 
 
 def test_price_observation_rule_hit_is_deduplicated_and_expires_after_recross(rule_store):
@@ -395,8 +471,16 @@ def test_indicator_observation_rule_api_round_trips_rsi_contract(rule_store):
     assert item["last_check"] is None
     assert client.get("/api/price-observation-rules").json()["data"]["items"] == [item]
 
-    unsupported = client.post("/api/price-observation-rules", json={
+    signed = client.post("/api/price-observation-rules", json={
         "symbol": "600519", "rule_type": "indicator", "metric": "macd_hist",
-        "comparator": "at_or_above", "threshold": 0,
+        "comparator": "at_or_below", "threshold": -0.35,
     })
-    assert unsupported.status_code == 422
+    assert signed.status_code == 200
+    assert signed.json()["data"]["metric"] == "macd_hist"
+    assert signed.json()["data"]["threshold"] == -0.35
+
+    unsupported = client.post("/api/price-observation-rules", json={
+        "symbol": "600519", "rule_type": "indicator", "metric": "future_metric",
+        "comparator": "at_or_above", "threshold": 1,
+    })
+    assert unsupported.status_code == 400
