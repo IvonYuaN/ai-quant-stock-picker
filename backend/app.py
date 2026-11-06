@@ -3152,6 +3152,39 @@ def aqsp_strategy_backtest_trades_csv(run_id: str) -> Response:
     )
 
 
+class FactorLifecycleIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    expected_revision: int = Field(ge=1, strict=True)
+    target_status: Literal["draft", "watch", "active", "retired"]
+    evidence: dict[str, Any] | None = None
+
+
+class StrategyBacktestConfigIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    name: str = Field(min_length=1, max_length=120)
+    config: dict[str, Any]
+    config_id: str | None = Field(default=None, min_length=1, max_length=80)
+    expected_revision: int | None = Field(default=None, ge=1, strict=True)
+    source_run_id: str | None = Field(default=None, min_length=1, max_length=80)
+
+
+class StrategyBacktestRerunIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    expected_revision: int | None = Field(default=None, ge=1, strict=True)
+
+
+class StrategyBacktestConfigFromRunIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    run_id: str = Field(min_length=1, max_length=80)
+    name: str = Field(min_length=1, max_length=120)
+    config_id: str | None = Field(default=None, min_length=1, max_length=80)
+    expected_revision: int | None = Field(default=None, ge=1, strict=True)
+
+
 @app.delete("/api/aqsp/strategy-backtests/{run_id}", tags=["AQSP 研究"], summary="删除当前租户终态策略回放")
 def aqsp_strategy_backtest_delete(run_id: str) -> dict:
     import strategy_backtests
@@ -3165,6 +3198,96 @@ def aqsp_strategy_backtest_delete(run_id: str) -> dict:
     if not deleted:
         raise HTTPException(404, "自定义策略回放任务不存在或已移出当前租户")
     return {"data": {"run_id": run_id, "deleted": True}}
+
+
+@app.get("/api/aqsp/strategy-backtest-configs", tags=["AQSP 研究"], summary="读取当前租户已保存的候选回测参数")
+def aqsp_strategy_backtest_configs_list() -> dict:
+    import strategy_backtests
+
+    try:
+        return {"data": {"items": strategy_backtests.list_configs()}}
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.get("/api/aqsp/strategy-backtest-configs/{config_id}", tags=["AQSP 研究"], summary="读取单个已保存回测参数配置")
+def aqsp_strategy_backtest_config_get(config_id: str) -> dict:
+    import strategy_backtests
+
+    record = strategy_backtests.get_config(config_id)
+    if record is None:
+        raise HTTPException(404, "回测参数配置不存在或已移出当前租户")
+    return {"data": record}
+
+
+@app.post("/api/aqsp/strategy-backtest-configs", tags=["AQSP 研究"], summary="保存或修订命名回测参数配置")
+def aqsp_strategy_backtest_config_save(body: StrategyBacktestConfigIn) -> dict:
+    import strategy_backtests
+
+    try:
+        item = strategy_backtests.save_config(
+            name=body.name,
+            config=body.config,
+            config_id=body.config_id,
+            expected_revision=body.expected_revision,
+            source_run_id=body.source_run_id,
+        )
+    except strategy_backtests.StrategyBacktestConfigConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"data": item}
+
+
+@app.post("/api/aqsp/strategy-backtest-configs/save-from-run", tags=["AQSP 研究"], summary="从已完成回测保存冻结配置")
+def aqsp_strategy_backtest_config_from_run(body: StrategyBacktestConfigFromRunIn) -> dict:
+    import strategy_backtests
+
+    try:
+        item = strategy_backtests.save_config_from_run(
+            run_id=body.run_id,
+            name=body.name,
+            config_id=body.config_id,
+            expected_revision=body.expected_revision,
+        )
+    except strategy_backtests.StrategyBacktestConfigConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"data": item}
+
+
+@app.post("/api/aqsp/strategy-backtest-configs/{config_id}/rerun", tags=["AQSP 研究"], summary="重新核验覆盖后从配置创建新回测")
+def aqsp_strategy_backtest_config_rerun(config_id: str, body: StrategyBacktestRerunIn) -> dict:
+    import strategy_backtests
+
+    try:
+        outcome = strategy_backtests.rerun_from_config(
+            config_id=config_id,
+            expected_revision=body.expected_revision,
+        )
+    except strategy_backtests.StrategyBacktestConfigConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"data": outcome}
+
+
+@app.delete("/api/aqsp/strategy-backtest-configs/{config_id}", tags=["AQSP 研究"], summary="删除终态回测参数配置")
+def aqsp_strategy_backtest_config_delete(
+    config_id: str, expected_revision: int = Query(ge=1)
+) -> dict:
+    import strategy_backtests
+
+    try:
+        deleted = strategy_backtests.delete_config(config_id, expected_revision)
+    except strategy_backtests.StrategyBacktestConfigConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not deleted:
+        raise HTTPException(404, "回测参数配置不存在或已移出当前租户")
+    return {"data": {"config_id": config_id, "deleted": True}}
 
 
 @app.get("/api/aqsp/strategy-evidence", tags=["AQSP 研究"], summary="读取不可变策略 OOS 研究证据")
@@ -3979,7 +4102,7 @@ def aqsp_factor_definitions() -> dict:
         "data": {
             "items": items,
             "validation_runs": validation_runs,
-            "lifecycle_write_status": "draft_only",
+            "lifecycle_write_status": "human_gated_lifecycle",
         }
     }
 
@@ -4033,6 +4156,25 @@ def aqsp_factor_definition_trial(factor_id: str, version: int, body: FactorTrial
     return {"data": saved}
 
 
+@app.post("/api/aqsp/factor-definitions/{factor_id}/lifecycle", tags=["AQSP 研究"], summary="人工确认并迁移因子生命周期状态")
+def aqsp_factor_definition_lifecycle(factor_id: str, body: FactorLifecycleIn) -> dict:
+    """Human-gated draft -> watch -> active -> retired; never auto-promotes."""
+    import factor_definitions
+
+    try:
+        item = factor_definitions.transition_status(
+            factor_id=factor_id,
+            expected_revision=body.expected_revision,
+            target_status=body.target_status,
+            evidence=body.evidence,
+        )
+    except factor_definitions.FactorDefinitionConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except factor_definitions.FactorLifecycleError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"data": item}
+
+
 @app.post("/api/aqsp/factor-validations", tags=["AQSP 研究"], summary="对同一样本家族的因子试算运行 Newey-West 与 BH-FDR 诊断")
 def aqsp_factor_validation_create(body: FactorValidationIn) -> dict:
     import factor_definitions
@@ -4048,6 +4190,31 @@ def aqsp_factor_validation_create(body: FactorValidationIn) -> dict:
         raise HTTPException(404, str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(503, str(exc)) from exc
+    # A diagnostic conclusion is drift evidence for human review only. It never
+    # promotes a factor or writes back to scores/weights/thresholds.
+    try:
+        observation = factor_validation.build_validation_observation(saved)
+        for definition in factor_definitions.list_definitions():
+            if definition.get("status") not in ("watch", "active"):
+                continue
+            trials = [
+                trial
+                for version in definition.get("versions", [])
+                for trial in version.get("trials", [])
+            ]
+            if any(str(trial.get("trial_id")) == body.trial_id for trial in trials):
+                factor_definitions.record_validation_observation(
+                    factor_id=str(definition["id"]),
+                    expected_revision=int(definition["revision"]),
+                    observation=observation,
+                )
+                break
+    except ValueError as exc:
+        logger.warning(
+            "factor_validation_observation_skipped",
+            trial_id=body.trial_id,
+            error=str(exc),
+        )
     return {"data": saved}
 
 

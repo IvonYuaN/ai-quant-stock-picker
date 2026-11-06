@@ -180,6 +180,41 @@ def validate_factor_trial_family(
     }
 
 
+def build_validation_observation(report: dict[str, Any]) -> dict[str, Any]:
+    """Turn a saved diagnostic report into a checkable drift observation.
+
+    Pure function: it never changes factor status, scores, weights or
+    thresholds. A diagnostic report is evidence for human review only — it
+    never authorizes promotion (``promotion_authorized`` stays ``False``).
+    """
+    if not isinstance(report, dict):
+        raise ValueError("因子族检验报告格式无效，无法生成检验观察记录")
+    family_id = report.get("family_id")
+    if not _is_sha256(family_id):
+        raise ValueError("因子族检验报告缺少有效 family_id")
+    status = report.get("status")
+    if status not in ("diagnostic_only", "blocked"):
+        raise ValueError("因子族检验报告的结论状态无效")
+    generated_at = report.get("generated_at")
+    if not isinstance(generated_at, str) or not generated_at.strip():
+        raise ValueError("因子族检验报告缺少检验时间戳")
+    blockers = report.get("blockers", [])
+    if not isinstance(blockers, list) or any(not isinstance(item, str) for item in blockers):
+        raise ValueError("因子族检验报告的阻断项格式无效")
+    return {
+        "family_id": family_id,
+        "status": status,
+        "generated_at": generated_at,
+        "blockers": list(blockers),
+        "family_size": int(report.get("family_size", 0) or 0),
+        "common_dates": int(report.get("common_dates", 0) or 0),
+        "review_state": "blocked" if status == "blocked" else "pending_review",
+        "human_review_required": True,
+        "promotion_authorized": False,
+        "oos_verified": False,
+    }
+
+
 def _request_signature(trial: dict[str, Any]) -> tuple[Any, ...] | None:
     fields = (
         "source", "price_mode", "symbol_set_sha256", "signal_start", "signal_end",

@@ -3,9 +3,13 @@ import { Link } from "react-router-dom";
 import { Download, ListFilter, Pencil, Play, Plus, RefreshCw, Save, Trash2, X } from "lucide-react";
 import { Badge, EmptyState, LoadingState, SectionHeader, StatePanel, Tag } from "@/components/ui/primitives";
 import { useWorkspaceSnapshot } from "@/components/aqsp/useAqspSnapshot";
-import { api, type PerformancePayload, type StrategyCatalogPayload, type StrategyDefinition, type StrategyDefinitionOptions, type StrategyOosEvidence, type StrategyScanRun } from "@/lib/api";
+import { api, authHeaders, type PerformancePayload, type StrategyCatalogPayload, type StrategyDefinition, type StrategyDefinitionOptions, type StrategyOosEvidence, type StrategyScanRun } from "@/lib/api";
 import { formatEvidenceTime } from "@/lib/format";
-import { strategyHitRateLabel } from "@/lib/strategy-workbench-view";
+import {
+  strategyHitRateLabel, buildRerunView, configRevisionLabel, configSymbolLabel,
+  configWindowLabel, lastRerunLabel, rerunStatusTone,
+  type RerunOutcome, type SavedBacktestConfig,
+} from "@/lib/strategy-workbench-view";
 
 const STATUS_LABELS: Record<string, string> = {
   implemented: "已实现",
@@ -27,6 +31,109 @@ const emptyStrategyDraft = (): StrategyDraft => ({
   score_expression: "",
   enabled: true,
 });
+
+// 保存候选回测参数 / 一键复测：本地网关（端点由主线在 app.py / api.ts 统一接线）。
+// 独立前缀 /api/aqsp/strategy-backtest-configs，避免与 /strategy-backtests/{run_id} 路由冲突。
+const CONFIGS_API = "/api/aqsp/strategy-backtest-configs";
+
+async function configsRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers: Record<string, string> = { ...authHeaders() };
+  if (init?.body !== undefined) headers["Content-Type"] = "application/json";
+  let response: Response;
+  try {
+    response = await fetch(`${CONFIGS_API}${path}`, { ...init, headers });
+  } catch {
+    throw new Error("连接不到后端，无法读取已保存回测配置");
+  }
+  let payload: unknown = null;
+  try { payload = await response.json(); } catch { /* 非 JSON 响应 */ }
+  if (!response.ok) {
+    const detail = payload && typeof payload === "object" && "detail" in payload
+      && typeof (payload as { detail?: unknown }).detail === "string"
+      ? (payload as { detail: string }).detail
+      : `HTTP ${response.status}`;
+    throw new Error(detail);
+  }
+  const data = payload && typeof payload === "object" && "data" in payload
+    ? (payload as { data: unknown }).data
+    : payload;
+  return data as T;
+}
+
+function listSavedConfigs(): Promise<{ items: SavedBacktestConfig[] }> {
+  return configsRequest<{ items: SavedBacktestConfig[] }>("");
+}
+
+function rerunSavedConfig(configId: string, expectedRevision: number): Promise<RerunOutcome> {
+  return configsRequest<RerunOutcome>(
+    `/${encodeURIComponent(configId)}/rerun`,
+    { method: "POST", body: JSON.stringify({ expected_revision: expectedRevision }) },
+  );
+}
+
+function SavedConfigRerunSection() {
+  const [configs, setConfigs] = useState<SavedBacktestConfig[]>([]);
+  const [outcomes, setOutcomes] = useState<Record<string, RerunOutcome>>({});
+  const [busyId, setBusyId] = useState("");
+  const [sectionError, setSectionError] = useState("");
+  const [sectionLoading, setSectionLoading] = useState(true);
+
+  async function refreshConfigs() {
+    try {
+      const result = await listSavedConfigs();
+      setConfigs(result.items);
+      setSectionError("");
+    } catch (reason) {
+      setSectionError(reason instanceof Error ? reason.message : "已保存回测配置读取失败");
+    } finally {
+      setSectionLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    let current = true;
+    listSavedConfigs()
+      .then((result) => { if (current) setConfigs(result.items); })
+      .catch((reason) => { if (current) setSectionError(reason instanceof Error ? reason.message : "已保存回测配置读取失败"); })
+      .finally(() => { if (current) setSectionLoading(false); });
+    return () => { current = false; };
+  }, []);
+
+  async function runRerun(config: SavedBacktestConfig) {
+    setBusyId(config.config_id);
+    setSectionError("");
+    try {
+      // 只接收本次一键复测的 outcome；绝不拉取或渲染旧 run 的结果/gate。
+      const outcome = await rerunSavedConfig(config.config_id, config.revision);
+      setOutcomes((current) => ({ ...current, [config.config_id]: outcome }));
+      await refreshConfigs();
+    } catch (reason) {
+      setSectionError(reason instanceof Error ? reason.message : "一键复测失败");
+    } finally {
+      setBusyId("");
+    }
+  }
+
+  return <section className="aq-section" aria-label="已保存候选回测配置">
+    <SectionHeader title="已保存候选回测配置" description="命名可复用回放参数。一键复测会重新核对结束日前每个标的的 as-of 覆盖；缺覆盖即明确失败、不产生新任务、不复用旧结果/gate、不自动重跑，配置仍可再次复测。" count={`${configs.length} 份配置`}>
+      <button type="button" className="aq-btn aq-btn-icon" aria-label="刷新已保存配置" title="刷新" onClick={() => void refreshConfigs()}><RefreshCw aria-hidden="true" /></button>
+    </SectionHeader>
+    {sectionError ? <StatePanel tone="warn">{sectionError}</StatePanel> : null}
+    {sectionLoading ? <LoadingState label="读取已保存回测配置…" /> : configs.length ? <div className="grid gap-3 lg:grid-cols-2">
+      {configs.map((config) => {
+        const outcome = outcomes[config.config_id] ?? null;
+        const view = buildRerunView(outcome);
+        return <article className="aq-card min-w-0" key={config.config_id}>
+          <header className="flex flex-wrap items-start justify-between gap-2"><div className="min-w-0"><h3 className="text-sm font-semibold">{config.name}</h3><code className="aq-muted mt-1 block break-all text-xs">{config.config_id} · {configRevisionLabel(config)} · {configSymbolLabel(config)}</code><p className="aq-muted mt-1 text-xs">{configWindowLabel(config)}</p></div><Badge tone="neutral">指纹 {config.params_sha256.slice(0, 12)}</Badge></header>
+          <p className="aq-note mt-2">{lastRerunLabel(config)}</p>
+          <div className="aq-row-actions mt-3"><button type="button" className="aq-btn aq-btn-primary" disabled={busyId === config.config_id} onClick={() => void runRerun(config)}><RefreshCw aria-hidden="true" />{busyId === config.config_id ? "复测中" : "一键复测"}</button></div>
+          {view.kind === "rejected" ? <StatePanel tone="warn">复测前置校验失败（终态，不自动重跑；配置仍可再次复测）<ul className="mt-2 list-disc pl-4 text-xs">{view.hints.map((hint, index) => <li key={`${config.config_id}-hint-${index}`}>{hint}</li>)}</ul></StatePanel> : null}
+          {view.kind === "running" || view.kind === "completed" ? <StatePanel tone={rerunStatusTone(outcome)}>已创建全新回放任务 {view.resultRunId}；结果以该任务自身产物为准，不展示任何旧 run 的结论。</StatePanel> : null}
+        </article>;
+      })}
+    </div> : <EmptyState title="还没有保存的候选回测配置" detail="完成一次回测后把其冻结参数存成命名配置，即可一键复测。" />}
+  </section>;
+}
 
 function CustomStrategyWorkbench() {
   const [definitions, setDefinitions] = useState<StrategyDefinition[]>([]);
@@ -260,6 +367,7 @@ export function StrategyWorkbenchPage() {
   return <div className="aq-page">
     <header className="aq-page-head"><div><p className="aq-eyebrow"><ListFilter aria-hidden="true" />AQSP · 策略研究</p><div className="aq-title-row"><h1>策略</h1>{snapshot.data ? <strong>{snapshot.data.selected_date}</strong> : null}</div><p className="aq-page-sub">查看策略假设、现有信号族和当日冻结快照命中；策略运行与验证状态按真实产物呈现。{snapshot.data ? ` 快照生成 ${snapshot.data.generated_at} · 行情源 ${snapshot.data.source.effective || "未标注"} · 数据截至 ${snapshot.data.source.latest_trade_date || "未标注"}` : ""}</p></div></header>
     <CustomStrategyWorkbench />
+    <SavedConfigRerunSection />
     {snapshot.error ? <StatePanel tone="warn">研究快照读取失败：{snapshot.error}<button type="button" className="aq-btn" onClick={snapshot.refresh}><RefreshCw aria-hidden="true" />重试</button></StatePanel> : null}
     {error ? <StatePanel tone="warn">{error}<button type="button" className="aq-btn" onClick={() => { setLoading(true); setError(""); api.strategyCatalog().then(setCatalog).catch((reason) => setError(reason instanceof Error ? reason.message : "策略目录读取失败")).finally(() => setLoading(false)); }}><RefreshCw aria-hidden="true" />重试</button></StatePanel> : null}
 

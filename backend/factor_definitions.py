@@ -22,6 +22,36 @@ class FactorDefinitionConflict(ValueError):
     """A definition revision changed after the editor read it."""
 
 
+class FactorLifecycleError(ValueError):
+    """An illegal lifecycle transition or insufficient promotion evidence."""
+
+
+FACTOR_STATUSES = ("draft", "watch", "active", "retired")
+_STATUS_LABEL = {
+    "draft": "草稿",
+    "watch": "观察",
+    "active": "启用",
+    "retired": "退役",
+}
+_ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
+    "draft": frozenset({"watch"}),
+    "watch": frozenset({"active", "draft", "retired"}),
+    "active": frozenset({"watch", "retired"}),
+    "retired": frozenset(),
+}
+_PROMOTION_TARGET = "active"
+_VALIDATION_STATUSES = ("diagnostic_only", "blocked")
+_MIN_REVIEW_NOTE_CHARS = 8
+
+
+def _is_sha256(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
 def _file() -> str:
     tenant_id = tenant.current_tenant.get()
     root = pf.CACHE_DIR if tenant_id == "local" else os.path.join(pf.CACHE_DIR, "users", tenant_id)
@@ -47,6 +77,15 @@ def _load(path: str) -> dict[str, Any]:
     if not isinstance(validation_runs, list) or any(not isinstance(item, dict) for item in validation_runs):
         raise ValueError("因子族验证记录格式无效，已停止写入以保护原记录")
     payload["validation_runs"] = validation_runs
+    for item in payload["definitions"]:
+        if item.get("status", "draft") not in FACTOR_STATUSES:
+            raise ValueError("因子定义含未知生命周期状态，已停止写入以保护原记录")
+        history = item.get("lifecycle_history", [])
+        if not isinstance(history, list) or any(not isinstance(row, dict) for row in history):
+            raise ValueError("因子生命周期审计记录格式无效，已停止写入以保护原记录")
+        last_validation = item.get("last_validation")
+        if last_validation is not None and not isinstance(last_validation, dict):
+            raise ValueError("因子检验观察记录格式无效，已停止写入以保护原记录")
     return payload
 
 
@@ -90,7 +129,7 @@ def save_draft(
             raise FactorDefinitionConflict("因子定义不存在或已移出当前租户")
         if existing is not None:
             if existing.get("status") != "draft":
-                raise ValueError("只有草稿因子可以修改；其他生命周期状态尚未开放写入")
+                raise ValueError("只有草稿因子可以修改公式；观察、启用或退役状态请先人工降级回草稿")
             revision = int(existing.get("revision", 0))
             if type(expected_revision) is not int or expected_revision != revision:
                 raise FactorDefinitionConflict("因子草稿已被更新，请重新读取")
@@ -146,6 +185,173 @@ def save_draft(
         factor_record["updated_at"] = now
         _save(path, payload)
         return factor_record
+
+
+def _validate_transition_evidence(
+    evidence: dict[str, Any] | None,
+    target_status: str,
+) -> dict[str, Any]:
+    """Gate every transition behind an explicit, attributable human action."""
+    if not isinstance(evidence, dict):
+        raise FactorLifecycleError("状态迁移必须由人工显式确认并提供可核对的操作记录")
+    if evidence.get("human_confirmed") is not True:
+        raise FactorLifecycleError("状态迁移必须由人工显式确认；禁止依据检验结果自动晋级或变更状态")
+    actor = evidence.get("actor")
+    if not isinstance(actor, str) or not actor.strip():
+        raise FactorLifecycleError("状态迁移缺少操作人，无法留痕")
+    note = evidence.get("manual_review_note", "")
+    if not isinstance(note, str):
+        raise FactorLifecycleError("人工确认记录格式无效")
+    note = note.strip()
+    family_id = evidence.get("validation_family_id")
+    if family_id is not None and not _is_sha256(family_id):
+        raise FactorLifecycleError("检验报告 family_id 无效，无法作为可核对证据")
+    if target_status == _PROMOTION_TARGET and len(note) < _MIN_REVIEW_NOTE_CHARS and family_id is None:
+        raise FactorLifecycleError(
+            f"晋级为启用必须提供可核对证据：有效的检验报告 family_id，"
+            f"或不少于 {_MIN_REVIEW_NOTE_CHARS} 个字的具体人工确认记录"
+        )
+    return {
+        "actor": actor.strip(),
+        "manual_review_note": note,
+        "validation_family_id": family_id,
+        "evidence_kind": (
+            "validation_report" if family_id else "manual_review" if note else "human_action_only"
+        ),
+    }
+
+
+def _require_promotion_evidence(payload: dict[str, Any], evidence: dict[str, Any]) -> None:
+    """watch -> active may only cite a saved, non-blocked diagnostic report."""
+    family_id = evidence["validation_family_id"]
+    if family_id is None:
+        return  # 具体人工确认记录已在 _validate_transition_evidence 校验
+    run = next(
+        (row for row in payload["validation_runs"] if row.get("family_id") == family_id),
+        None,
+    )
+    if run is None:
+        raise FactorLifecycleError("晋级引用的检验报告不存在或已移出当前租户")
+    if run.get("status") != "diagnostic_only" or run.get("blockers"):
+        raise FactorLifecycleError("晋级引用的检验报告被阻断，不能作为启用证据")
+    if run.get("promotion_authorized") is True or run.get("oos_verified") is True:
+        raise FactorLifecycleError("检验报告异常地声明了晋级授权，已拒绝以保证人工闸门")
+
+
+def transition_status(
+    *,
+    factor_id: str,
+    expected_revision: int,
+    target_status: str,
+    evidence: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Atomically move a factor through draft -> watch -> active -> retired.
+
+    Every transition is an explicit human action recorded in ``lifecycle_history``.
+    Promotion to ``active`` requires a checkable evidence reference (a saved
+    non-blocked diagnostic report or a concrete manual review note) plus an
+    explicit human confirmation. No validation result can promote a factor by
+    itself, and this function never writes back to scores, weights or thresholds.
+    """
+    if target_status not in FACTOR_STATUSES:
+        raise FactorLifecycleError(f"目标生命周期状态无效：{target_status}")
+    checked_evidence = _validate_transition_evidence(evidence, target_status)
+
+    path = _file()
+    with _LOCK, advisory_lock(path):
+        payload = _load(path)
+        item = next((row for row in payload["definitions"] if row.get("id") == factor_id), None)
+        if item is None:
+            raise FactorDefinitionConflict("因子定义不存在或已移出当前租户")
+        revision = int(item.get("revision", 0))
+        if type(expected_revision) is not int or expected_revision != revision:
+            raise FactorDefinitionConflict("因子生命周期已被更新，请重新读取")
+        current = item.get("status", "draft")
+        if current not in FACTOR_STATUSES:
+            raise FactorLifecycleError("因子当前生命周期状态异常，已停止迁移")
+        if target_status not in _ALLOWED_TRANSITIONS[current]:
+            raise FactorLifecycleError(
+                f"不允许从「{_STATUS_LABEL[current]}」迁移到「{_STATUS_LABEL[target_status]}」；"
+                "请按草稿→观察→启用→退役的人工闸门顺序操作"
+            )
+        if target_status == _PROMOTION_TARGET:
+            _require_promotion_evidence(payload, checked_evidence)
+
+        now = now_shanghai().isoformat()
+        history = item.setdefault("lifecycle_history", [])
+        history.append(
+            {
+                "from": current,
+                "to": target_status,
+                "actor": checked_evidence["actor"],
+                "note": checked_evidence["manual_review_note"],
+                "evidence_kind": checked_evidence["evidence_kind"],
+                "evidence_validation_family_id": checked_evidence["validation_family_id"],
+                "changed_at": now,
+                "revision": revision + 1,
+            }
+        )
+        item["status"] = target_status
+        item["revision"] = revision + 1
+        item["updated_at"] = now
+        _save(path, payload)
+        return item
+
+
+def record_validation_observation(
+    *,
+    factor_id: str,
+    expected_revision: int,
+    observation: dict[str, Any],
+) -> dict[str, Any]:
+    """Record the latest diagnostic conclusion for a watch/active factor.
+
+    Drift observation only: it never changes lifecycle status, scores, weights
+    or thresholds, and never authorizes promotion.
+    """
+    if not isinstance(observation, dict):
+        raise ValueError("检验观察记录格式无效，已停止写入")
+    family_id = observation.get("family_id")
+    if not _is_sha256(family_id):
+        raise ValueError("检验观察记录缺少有效 family_id")
+    status = observation.get("status")
+    if status not in _VALIDATION_STATUSES:
+        raise ValueError("检验观察记录的结论状态无效")
+    generated_at = observation.get("generated_at")
+    if not isinstance(generated_at, str) or not generated_at.strip():
+        raise ValueError("检验观察记录缺少检验时间戳")
+    blockers = observation.get("blockers", [])
+    if not isinstance(blockers, list) or any(not isinstance(item, str) for item in blockers):
+        raise ValueError("检验观察记录的阻断项格式无效")
+
+    path = _file()
+    with _LOCK, advisory_lock(path):
+        payload = _load(path)
+        item = next((row for row in payload["definitions"] if row.get("id") == factor_id), None)
+        if item is None:
+            raise FactorDefinitionConflict("因子定义不存在或已移出当前租户")
+        revision = int(item.get("revision", 0))
+        if type(expected_revision) is not int or expected_revision != revision:
+            raise FactorDefinitionConflict("因子生命周期已被更新，请重新读取")
+        if item.get("status", "draft") not in ("watch", "active"):
+            raise FactorLifecycleError("只有观察或启用状态的因子可以记录检验结论；草稿与退役状态不适用")
+        now = now_shanghai().isoformat()
+        item["last_validation"] = {
+            "family_id": family_id,
+            "status": status,
+            "generated_at": generated_at,
+            "blockers": list(blockers),
+            "family_size": int(observation.get("family_size", 0) or 0),
+            "common_dates": int(observation.get("common_dates", 0) or 0),
+            "observed_at": now,
+            "human_review_required": True,
+            "promotion_authorized": False,
+            "oos_verified": False,
+        }
+        item["revision"] = revision + 1
+        item["updated_at"] = now
+        _save(path, payload)
+        return item
 
 
 def get_version(factor_id: str, version: int) -> dict[str, Any]:

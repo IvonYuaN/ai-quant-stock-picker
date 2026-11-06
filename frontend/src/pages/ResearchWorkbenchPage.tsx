@@ -6,7 +6,7 @@ import { api, type BacktestRun, type FactorDefinition, type FactorDefinitionsPay
 import { formatEvidenceTime } from "@/lib/format";
 import { useWorkspaceSnapshot } from "@/components/aqsp/useAqspSnapshot";
 import { cn } from "@/lib/utils";
-import { factorTrialSampleLabel, icEvidenceStatusLabel, variantRefreshLabel, variantSuiteLabel } from "@/lib/research-workbench-view";
+import { factorReviewLabel, factorStatusIsEnabled, factorStatusLabel, factorTransitionOptions, factorTrialSampleLabel, icEvidenceStatusLabel, normalizeFactorStatus, planFactorTransition, variantRefreshLabel, variantSuiteLabel, type FactorLifecycleStatus } from "@/lib/research-workbench-view";
 
 type ResearchMode = "factors" | "backtest";
 
@@ -419,6 +419,11 @@ function FactorDraftWorkbench({
   const [functionFamily, setFunctionFamily] = useState<(typeof FACTOR_FUNCTION_FAMILIES)[number]>("时序");
   const [expressionCheck, setExpressionCheck] = useState<{ fields: string[]; max_lookback: number } | null>(null);
   const [checkingExpression, setCheckingExpression] = useState(false);
+  const [transitionActor, setTransitionActor] = useState("");
+  const [transitionNote, setTransitionNote] = useState("");
+  const [transitionConfirmed, setTransitionConfirmed] = useState(false);
+  const [lifecycleError, setLifecycleError] = useState("");
+  const [lifecycleMessage, setLifecycleMessage] = useState("");
   const expressionRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -440,6 +445,21 @@ function FactorDraftWorkbench({
   const visibleFamilyValidation = familyValidation?.target_trial_id === selectedTrial?.trial_id
     ? familyValidation
     : storedFamilyValidation;
+  const lifecycleStatus = normalizeFactorStatus(selected);
+  const review = factorReviewLabel(
+    selected ? (selected as unknown as Record<string, unknown>).last_validation : undefined,
+    Date.now(),
+  );
+  const transitionOptions = factorTransitionOptions(lifecycleStatus);
+  // 只有非阻断的诊断报告可作为可核对证据；被阻断的报告不传给后端闸门。
+  const reportEvidence = visibleFamilyValidation?.status === "diagnostic_only" ? visibleFamilyValidation : null;
+  const transitionEvidence = {
+    human_confirmed: transitionConfirmed,
+    actor: transitionActor,
+    manual_review_note: transitionNote,
+    validation_family_id: reportEvidence?.family_id,
+    validation_status: reportEvidence?.status ?? null,
+  };
 
   function updateExpression(value: string) {
     setExpression(value);
@@ -460,6 +480,10 @@ function FactorDraftWorkbench({
 
   function selectDraft(id: string) {
     setFactorId(id);
+    setTransitionConfirmed(false);
+    setTransitionNote("");
+    setLifecycleError("");
+    setLifecycleMessage("");
     const item = definitions?.items.find((candidate) => candidate.id === id);
     setActiveDefinition(item ?? null);
     setFamilyValidation(null);
@@ -564,6 +588,49 @@ function FactorDraftWorkbench({
     }
   }
 
+  async function requestTransition(to: Exclude<FactorLifecycleStatus, "unknown">) {
+    if (!selected) return;
+    setLifecycleError("");
+    setLifecycleMessage("");
+    const plan = planFactorTransition({ from: lifecycleStatus, to, evidence: transitionEvidence });
+    if (!plan.allowed) {
+      setLifecycleError(plan.blockers.join("；"));
+      return;
+    }
+    try {
+      setBusy(true);
+      // 状态迁移端点由主线统一接线；缺少接线时保持只读并给出可见提示。
+      const candidate = (api as unknown as Record<string, unknown>)["transitionFactorStatus"];
+      if (typeof candidate !== "function") {
+        setLifecycleError("状态迁移端点尚未接线（需主线接入 POST /aqsp/factor-definitions/{id}/lifecycle）；本次未提交，因子状态保持不变。");
+        return;
+      }
+      const callTransition = candidate as (input: Record<string, unknown>) => Promise<unknown>;
+      const sent = await callTransition({
+        factor_id: selected.id,
+        expected_revision: selected.revision,
+        target_status: to,
+        evidence: {
+          human_confirmed: transitionConfirmed,
+          actor: transitionActor.trim(),
+          manual_review_note: transitionNote.trim(),
+          validation_family_id: reportEvidence?.family_id,
+        },
+      });
+      const updated = sent as unknown as FactorDefinition;
+      setActiveDefinition(updated);
+      setRevision(updated.revision);
+      setTransitionConfirmed(false);
+      setTransitionNote("");
+      setLifecycleMessage(`已人工将因子状态更新为「${factorStatusLabel(normalizeFactorStatus(updated))}」`);
+      reload();
+    } catch (reason) {
+      setLifecycleError(reason instanceof Error ? reason.message : "状态迁移失败，因子状态保持不变");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return <section className="aq-section">
     <SectionHeader title="因子公式草稿" description="公式按日截面与个股时序分别计算；保存会创建不可变公式版本，当前仅开放草稿和诊断试算。" count={definitions?.items.length ?? 0} />
     {error ? <StatePanel tone="warn">{error}<button type="button" className="aq-btn" onClick={reload}>重试读取</button></StatePanel> : null}
@@ -619,6 +686,27 @@ function FactorDraftWorkbench({
     </form>
     {message ? <p className="aq-note">{message}</p> : null}
     {errorText ? <StatePanel tone="warn">{errorText}</StatePanel> : null}
+    {selected ? <div className="aq-factor-family-report">
+      <header>
+        <h4>生命周期 · 人工晋级闸门</h4>
+        <Tag tone={factorStatusIsEnabled(lifecycleStatus) ? "ok" : lifecycleStatus === "unknown" ? "warn" : "neutral"}>{factorStatusLabel(lifecycleStatus)}</Tag>
+      </header>
+      <p className="aq-note">
+        最近检验结论：{review.label} · r{selected.revision}
+        {reportEvidence ? ` · 可核对报告 ${reportEvidence.family_id.slice(0, 12)}` : " · 当前无可核对检验报告"}
+      </p>
+      <p className="aq-note">状态仅由人工操作变更；检验报告、IC 与试算结果不自动晋级，也不回灌打分、权重或阈值。{review.stale ? " 检验结论待复核或已过期，不能据此自动晋级。" : ""}</p>
+      {transitionOptions.length ? <div className="aq-variant-review-form">
+        <p className="aq-note"><label><input type="checkbox" checked={transitionConfirmed} onChange={(event) => setTransitionConfirmed(event.target.checked)} disabled={busy} /> 我已人工复核并显式确认本次状态变更</label></p>
+        <label>操作人<input className="aq-input" value={transitionActor} onChange={(event) => setTransitionActor(event.target.value)} placeholder="复核人标识" disabled={busy} /></label>
+        <label>复核理由 / 人工确认记录<textarea className="aq-input" value={transitionNote} maxLength={500} rows={2} onChange={(event) => setTransitionNote(event.target.value)} placeholder="记录当前证据、缺口或下一步验证" disabled={busy} /></label>
+        <div className="aq-row-actions">
+          {transitionOptions.map((option) => <button key={option.action} type="button" className="aq-btn" disabled={busy} onClick={() => void requestTransition(option.to)}>{option.label}</button>)}
+        </div>
+      </div> : <p className="aq-note">退役或状态未知时不再提供状态操作；如需重新编辑公式，请先人工降级回草稿。</p>}
+      {lifecycleError ? <StatePanel tone="warn">{lifecycleError}</StatePanel> : null}
+      {lifecycleMessage ? <p className="aq-note">{lifecycleMessage}</p> : null}
+    </div> : null}
     {selected && latestVersion ? <div className="aq-factor-trial">
       <h3>本机历史试算 · v{latestVersion.version}</h3>
       <p className="aq-note">仅查询本机 raw 不复权 SQLite 日线，至少 20 个标的和 20 个有效截面日期。仅 OHLCV 字段；未绑定 PIT 财务因子，不替代 purged OOS/CSCV gate，也不用于调分。</p>

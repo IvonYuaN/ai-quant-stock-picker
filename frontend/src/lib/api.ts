@@ -1456,13 +1456,53 @@ export interface FactorFormulaVersion {
   created_at: string;
 }
 
+export type FactorLifecycleStatus = "draft" | "watch" | "active" | "retired";
+
+export interface FactorLifecycleTransition {
+  from: FactorLifecycleStatus;
+  to: FactorLifecycleStatus;
+  actor: string;
+  note: string;
+  evidence_kind: string;
+  evidence_validation_family_id: string | null;
+  changed_at: string;
+  revision: number;
+}
+
+export interface FactorValidationObservation {
+  family_id: string;
+  status: string;
+  generated_at: string;
+  blockers: string[];
+  family_size: number;
+  common_dates: number;
+  observed_at: string;
+  human_review_required: true;
+  promotion_authorized: false;
+  oos_verified: false;
+}
+
 export interface FactorDefinition {
   id: string;
-  status: "draft";
+  status: FactorLifecycleStatus;
   revision: number;
   versions: FactorFormulaVersion[];
   created_at: string;
   updated_at: string;
+  lifecycle_history?: FactorLifecycleTransition[];
+  last_validation?: FactorValidationObservation | null;
+}
+
+export interface FactorTransitionInput {
+  factor_id: string;
+  expected_revision: number;
+  target_status: FactorLifecycleStatus;
+  evidence: {
+    human_confirmed: boolean;
+    actor: string;
+    manual_review_note: string;
+    validation_family_id?: string | null;
+  };
 }
 
 export interface StrategyDefinition {
@@ -1839,7 +1879,7 @@ export interface FactorTrialResult {
 export interface FactorDefinitionsPayload {
   items: FactorDefinition[];
   validation_runs: FactorFamilyValidation[];
-  lifecycle_write_status: "draft_only";
+  lifecycle_write_status: "draft_only" | "human_gated_lifecycle";
 }
 
 
@@ -1983,6 +2023,16 @@ export const api = {
   strategyEvidence: (strategyId = "composite") =>
     get<StrategyOosEvidencePayload>(`/aqsp/strategy-evidence?strategy_id=${encodeURIComponent(strategyId)}&limit=100`),
   factorDefinitions: () => get<FactorDefinitionsPayload>("/aqsp/factor-definitions"),
+  transitionFactorStatus: (input: FactorTransitionInput) =>
+    request<FactorDefinition>(
+      `/aqsp/factor-definitions/${encodeURIComponent(input.factor_id)}/lifecycle`,
+      "POST",
+      {
+        expected_revision: input.expected_revision,
+        target_status: input.target_status,
+        evidence: input.evidence,
+      },
+    ),
   conditionSignals: () => get<SignalDefinitionsPayload>("/aqsp/signal-definitions"),
   conditionSignalOptions: () => get<SignalDefinitionOptions>("/aqsp/signal-definitions/options"),
   signalScans: () => get<SignalScanListPayload>("/aqsp/signal-scans"),

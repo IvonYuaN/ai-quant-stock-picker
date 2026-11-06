@@ -62,7 +62,7 @@ def test_factor_definition_api_versions_drafts_and_appends_preview(monkeypatch, 
     assert trial.status_code == 200
     assert trial.json()["data"]["promotion_authorized"] is False
     listed = client.get("/api/aqsp/factor-definitions")
-    assert listed.json()["data"]["lifecycle_write_status"] == "draft_only"
+    assert listed.json()["data"]["lifecycle_write_status"] == "human_gated_lifecycle"
     assert listed.json()["data"]["items"][0]["versions"][1]["trials"][0]["trial_id"] == "trial-api-1"
 
 
