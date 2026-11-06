@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import time
+import math
 from datetime import date
 from typing import Literal
 import pandas as pd
@@ -124,6 +125,45 @@ class AkshareSource(DataSource):
             out[symbol] = self._annotate_frame(validated)
         require_non_empty_fetch_result(self.name, "日线", symbols, out)
         return out
+
+    def fetch_adjustment_factors(
+        self, symbol: str, start: date, end: date
+    ) -> pd.DataFrame:
+        """Fetch AkShare factor rows normalized to date/adj_factor."""
+        clean_symbol = str(symbol).strip().split(".", 1)[0]
+        if not clean_symbol.isdigit() or len(clean_symbol) != 6:
+            raise ValueError("symbol must be a six-digit A-share code")
+        if end < start:
+            raise ValueError("end must be on or after start")
+        market_prefix = "sh" if clean_symbol.startswith("6") else "sz"
+        try:
+            frame = self._ak.stock_zh_a_daily(
+                symbol=f"{market_prefix}{clean_symbol}", adjust="hfq-factor"
+            )
+        except Exception as exc:
+            raise DataError(f"akshare 复权因子获取失败: {clean_symbol}") from exc
+        required = {"date", "hfq_factor"}
+        if frame is None or frame.empty or not required.issubset(frame.columns):
+            raise DataError(f"akshare 复权因子返回为空或字段不完整: {clean_symbol}")
+
+        factors = frame[["date", "hfq_factor"]].rename(
+            columns={"hfq_factor": "adj_factor"}
+        )
+        factors["date"] = pd.to_datetime(factors["date"], errors="coerce").dt.date
+        factors["adj_factor"] = pd.to_numeric(factors["adj_factor"], errors="coerce")
+        factors = factors.dropna(subset=["date", "adj_factor"])
+        factors = factors[
+            (factors["date"] <= end)
+            & (factors["adj_factor"] > 0)
+            & factors["adj_factor"].map(math.isfinite)
+        ].sort_values("date", kind="stable").drop_duplicates("date", keep="last")
+        prior = factors[factors["date"] < start].tail(1)
+        in_window = factors[factors["date"] >= start]
+        factors = pd.concat([prior, in_window], ignore_index=True)
+        if factors.empty:
+            raise DataError(f"akshare 复权因子截至目标日无有效记录: {clean_symbol}")
+        factors["date"] = factors["date"].map(date.isoformat)
+        return factors.reset_index(drop=True)
 
     @staticmethod
     def _cache_covers_range(cached: pd.DataFrame, start: date, end: date) -> bool:

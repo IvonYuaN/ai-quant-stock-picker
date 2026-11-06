@@ -2254,6 +2254,7 @@ def test_walkforward_grid_cscv_writes_valid_pbo_gate(monkeypatch, tmp_path):
 
     default_gate_path = tmp_path / "default_gate.json"
     gate_path = tmp_path / "custom_gate.json"
+    monkeypatch.setenv("AQSP_RUNTIME_DATA_ROOT", str(tmp_path / "runtime"))
     monkeypatch.setattr(cli_mod, "WALKFORWARD_GATE_PATH", str(default_gate_path))
     monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 20))
     monkeypatch.setattr(
@@ -2407,6 +2408,15 @@ def test_walkforward_grid_cscv_writes_valid_pbo_gate(monkeypatch, tmp_path):
     assert payload["source"] == "sqlite_db"
     assert "price_mode" in payload
     assert validation.pbo_valid is True
+    evidence_files = list(
+        (tmp_path / "runtime" / "strategy_oos_evidence" / "composite").glob("*.json")
+    )
+    assert len(evidence_files) == 1
+    evidence = json.loads(evidence_files[0].read_text(encoding="utf-8"))
+    assert evidence["strategy_id"] == "composite"
+    assert evidence["thresholds_version"] == payload["thresholds_version"]
+    assert evidence["oos_windows"]
+    assert evidence["promotion_authorized"] is False
     report_text = report.read_text(encoding="utf-8")
     assert "## 多变体 CSCV" in report_text
     assert "CSCV 组合数" in report_text

@@ -308,22 +308,29 @@ def workload_fit_label(value: str) -> str:
     return _WORKLOAD_FIT_LABELS.get(value, value)
 
 
-def local_data_status(entry: DataSourceRegistryEntry) -> str:
+def local_data_status(
+    entry: DataSourceRegistryEntry, *, project_root: Path | None = None
+) -> str:
+    root = project_root or Path.cwd()
+
+    def resolve(path: Path) -> Path:
+        return path if path.is_absolute() else root / path
+
     if entry.id == "tdx_vipdoc":
         candidates = [
-            Path("private_data/tdx/vipdoc"),
-            Path("private_data/tdx"),
+            resolve(Path("private_data/tdx/vipdoc")),
+            resolve(Path("private_data/tdx")),
         ]
         if any(path.exists() for path in candidates):
             return "present"
         return "missing"
     if entry.id == "sqlite_db":
         candidates = [
-            Path("A股量化分析数据/astocks_raw.db"),
-            Path("data/aqsp_cache.sqlite"),
+            resolve(Path("A股量化分析数据/astocks_raw.db")),
+            resolve(Path("data/aqsp_cache.sqlite")),
         ]
         env_path = os.getenv("AQSP_SQLITE_DB_PATH", "").strip()
         if env_path:
-            candidates.insert(0, Path(env_path))
+            candidates.insert(0, resolve(Path(env_path)))
         return "present" if any(path.exists() for path in candidates) else "missing"
     return "not_required" if not entry.requires_local_data else "unknown"

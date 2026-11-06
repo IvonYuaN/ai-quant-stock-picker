@@ -53,11 +53,15 @@ export function normalizeAlertEvent(raw: unknown): AlertEvent {
   const record = asRecord(raw);
   return {
     id: asString(record.id),
+    ...(record.kind === "price_observation" || record.kind === "market_event" ? { kind: record.kind } : {}),
+    quote_as_of: asString(record.quote_as_of),
+    quote_source: asString(record.quote_source),
+    user_note: asString(record.user_note),
     level: asString(record.level),
     symbol: asString(record.symbol),
     position_id: typeof record.position_id === "string" ? record.position_id : null,
     trigger_at: asNumber(record.trigger_at),
-    threshold_at: asNumber(record.threshold_at),
+    threshold_at: record.threshold_at == null ? null : asNumber(record.threshold_at),
     pnl_pct: asNumber(record.pnl_pct),
     sellable_now: record.sellable_now === true,
     action_hint: asString(record.action_hint),
@@ -102,7 +106,7 @@ export interface AlertInboxView {
 
 /** 从归一化后的 AlertData 派生收件箱两区（只取 OPEN，按 created_at 倒序）。 */
 export function buildAlertInbox(alerts: AlertData): AlertInboxView {
-  const open = alerts.events.filter((e) => e.status === "OPEN");
+  const open = alerts.events.filter((e) => e.status === "OPEN" && e.kind !== "market_event");
   const byTime = (a: AlertEvent, b: AlertEvent) =>
     asString(b.created_at).localeCompare(asString(a.created_at));
   const actionable = open.filter((e) => e.sellable_now).sort(byTime);
@@ -123,7 +127,7 @@ export interface PositionAlertGroup {
 /** 同仓多规则只占一条；换仓身份与 T+1 状态不同不能误合并。 */
 export function groupPositionAlerts(alerts: AlertData, holdings: readonly Holding[] = []): PositionAlertGroup[] {
   const groups = new Map<string, PositionAlertGroup>();
-  for (const event of alerts.events.filter((row) => row.status === "OPEN")) {
+  for (const event of alerts.events.filter((row) => row.status === "OPEN" && !["price_observation", "market_event"].includes(row.kind || ""))) {
     // 旧事件可能没有 position_id；同代码已有新仓时按当前仓身份归并，
     // 避免一次风险检查在收件箱显示两张相同股票卡。不同 T+1 可卖状态仍分区保留。
     const currentPositionId = holdings.find((row) => row.code === event.symbol)?.position_id;
@@ -141,8 +145,9 @@ export function groupPositionAlerts(alerts: AlertData, holdings: readonly Holdin
   return [...groups.values()].sort((a, b) => b.latest.updated_at.localeCompare(a.latest.updated_at)).map((group) => ({ ...group, events: group.events.sort((a, b) => a.level.localeCompare(b.level)) }));
 }
 
-export function formatAlertPrice(value: number): string {
+export function formatAlertPrice(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "—";
   return Number.isFinite(value) && value > 0 ? value.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 4, useGrouping: false }) : "—";
 }
 
-export const ALERT_LEVEL_NAMES: Record<string, string> = { L1: "成本止损", L2: "均线走弱", L4: "MACD 走弱", L5: "移动止损" };
+export const ALERT_LEVEL_NAMES: Record<string, string> = { L1: "成本止损", L2: "均线走弱", L4: "MACD 走弱", L5: "移动止损", OBSERVATION: "观察条件" };

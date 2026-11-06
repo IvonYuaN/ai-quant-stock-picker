@@ -213,6 +213,19 @@ def test_kline_falls_back_to_tencent_when_mootdx_empty(monkeypatch):
     assert r0["amount"] == 0.0  # 腾讯 K 线不提供成交额，归一化为 0
 
 
+def test_kline_metadata_reports_tencent_display_basis_when_fallback_is_used(monkeypatch):
+    _make_mootdx(monkeypatch, _FakeMootdxClient(bars_result=pd.DataFrame()))
+    _make_urlopen(monkeypatch, _tencent_payload([["2025-09-22", "1", "2", "3", "0.5", "100"]]))
+
+    result = astock.kline_with_metadata("600519", category=4, offset=60)
+
+    assert result.source == "tencent"
+    assert result.price_basis == "qfq_display"
+    assert result.as_of == "2025-09-22"
+    assert result.generated_at.endswith("+08:00")
+    assert result.rows[0]["close"] == 2.0
+
+
 def test_kline_fallback_handles_missing_amount_position(monkeypatch):
     """腾讯 6 元组只有 6 位时 amount 安全归零，不 IndexError。"""
     _make_mootdx(monkeypatch, _FakeMootdxClient(bars_result=pd.DataFrame()))
@@ -283,6 +296,25 @@ def test_kline_prefers_mootdx_when_nonempty(monkeypatch):
     assert rows[0]["close"] == 1.2  # 来自 mootdx 主源
 
 
+def test_kline_metadata_reports_mootdx_when_primary_source_has_bars(monkeypatch):
+    mootdx_df = pd.DataFrame(
+        [
+            {"open": 1.1, "close": 1.2, "high": 1.3, "low": 1.0, "vol": 100},
+            {"open": 1.2, "close": 1.15, "high": 1.25, "low": 1.1, "vol": 120},
+        ],
+        index=pd.to_datetime(["2025-09-23", "2025-09-22"]),
+    )
+    mootdx_df.index.name = "datetime"
+    _make_mootdx(monkeypatch, _FakeMootdxClient(bars_result=mootdx_df))
+
+    result = astock.kline_with_metadata("600519", category=4, offset=60)
+
+    assert result.source == "mootdx"
+    assert result.price_basis == "provider_default"
+    assert result.as_of == "2025-09-23"
+    assert [row["date"] for row in result.rows] == ["2025-09-23", "2025-09-22"]
+
+
 def test_kline_minute_category_has_no_fallback(monkeypatch):
     """60 分钟线（category=11）腾讯日/周/月备源不覆盖 → mootdx 空时返回空。"""
     _make_mootdx(monkeypatch, _FakeMootdxClient(bars_result=pd.DataFrame()))
@@ -308,15 +340,28 @@ def test_kline_fallback_survives_mootdx_factory_failure(monkeypatch):
     assert out and out[0]["date"] == "2025-09-22"
 
 
-def test_kline_raises_dependency_missing_when_mootdx_absent(monkeypatch):
+def test_kline_uses_tencent_daily_fallback_when_mootdx_is_absent(monkeypatch):
     def boom():
         raise astock.DependencyMissing("mootdx 未安装：pip install mootdx")
 
     monkeypatch.setattr(astock, "_mootdx_client", boom)
-    try:
-        astock.kline("600519")
-        raise AssertionError(
-            "DependencyMissing 应继续向上抛（上层据此 501），不被备源吞"
-        )
-    except astock.DependencyMissing:
-        pass
+    _make_urlopen(monkeypatch, _tencent_payload([["2025-09-22", "1", "2", "3", "0.5", "100"]]))
+
+    result = astock.kline_with_metadata("600519")
+
+    assert result.source == "tencent"
+    assert result.price_basis == "qfq_display"
+    assert result.rows[0]["date"] == "2025-09-22"
+
+
+def test_kline_marks_minute_unavailable_when_mootdx_is_absent(monkeypatch):
+    def boom():
+        raise astock.DependencyMissing("mootdx 未安装")
+
+    monkeypatch.setattr(astock, "_mootdx_client", boom)
+
+    result = astock.kline_with_metadata("600519", category=11)
+
+    assert result.rows == ()
+    assert result.source == "unavailable"
+    assert result.price_basis == "unknown"

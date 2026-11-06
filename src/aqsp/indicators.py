@@ -4,6 +4,75 @@ import numpy as np
 import pandas as pd
 
 
+# Indicator periods follow the locked TickFlow daily feature family and are part
+# of the expression contract used by custom strategy scans.
+MA_WINDOWS = (5, 10, 20, 60)
+KDJ_LOOKBACK = 9
+KDJ_SMOOTHING = 3
+BOLLINGER_WINDOW = 20
+BOLLINGER_DEVIATIONS = 2.0
+VOLATILITY_WINDOW = 20
+ANNUAL_TRADING_SESSIONS = 252
+
+DAILY_RAW_FEATURE_FIELDS = frozenset(
+    {"open", "high", "low", "close", "prev_close", "volume", "amount"}
+)
+DAILY_INDICATOR_FIELDS = frozenset(
+    {
+        *(f"ma{window}" for window in MA_WINDOWS),
+        *(f"vol_ma{window}" for window in MA_WINDOWS),
+        "ema12", "ema26", "macd_dif", "macd_dea", "macd_hist", "rsi12",
+        "atr14", "ret_1", "ret_5", "ret_10", "ret_20", "high_20", "low_20",
+        "bias20", "volume_ratio", "amount_ma20", "range_pos",
+        "upper_shadow_pct", "amplitude_pct", "bb_middle20", "bb_upper20",
+        "bb_lower20", "annualized_volatility20", "kdj_k", "kdj_d", "kdj_j",
+    }
+)
+DAILY_EXPRESSION_FIELDS = DAILY_RAW_FEATURE_FIELDS | DAILY_INDICATOR_FIELDS
+DAILY_PIT_PRICE_FIELDS = frozenset(
+    DAILY_RAW_FEATURE_FIELDS & {"open", "high", "low", "close", "prev_close"}
+) | frozenset(
+    {
+        *(f"ma{window}" for window in MA_WINDOWS),
+        "ema12", "ema26", "macd_dif", "macd_dea", "macd_hist", "rsi12",
+        "atr14", "ret_1", "ret_5", "ret_10", "ret_20", "high_20", "low_20",
+        "bias20", "range_pos", "upper_shadow_pct", "amplitude_pct",
+        "bb_middle20", "bb_upper20", "bb_lower20", "annualized_volatility20",
+        "kdj_k", "kdj_d", "kdj_j",
+    }
+)
+DAILY_FEATURE_LOOKBACK_BARS = {
+    **{f"ma{window}": window for window in MA_WINDOWS},
+    **{f"vol_ma{window}": window for window in MA_WINDOWS},
+    "ema12": 12,
+    "ema26": 26,
+    "macd_dif": 26,
+    "macd_dea": 35,
+    "macd_hist": 35,
+    "rsi12": 12,
+    "atr14": 14,
+    "ret_1": 2,
+    "ret_5": 6,
+    "ret_10": 11,
+    "ret_20": 21,
+    "high_20": 20,
+    "low_20": 20,
+    "bias20": 20,
+    "volume_ratio": 5,
+    "amount_ma20": 20,
+    "range_pos": 1,
+    "upper_shadow_pct": 1,
+    "amplitude_pct": 1,
+    "bb_middle20": BOLLINGER_WINDOW,
+    "bb_upper20": BOLLINGER_WINDOW,
+    "bb_lower20": BOLLINGER_WINDOW,
+    "annualized_volatility20": VOLATILITY_WINDOW + 1,
+    "kdj_k": KDJ_LOOKBACK,
+    "kdj_d": KDJ_LOOKBACK + KDJ_SMOOTHING,
+    "kdj_j": KDJ_LOOKBACK + KDJ_SMOOTHING,
+}
+
+
 def enrich_indicators(raw: pd.DataFrame) -> pd.DataFrame:
     df = normalize_ohlcv(raw).copy()
     close = df["close"]
@@ -12,10 +81,11 @@ def enrich_indicators(raw: pd.DataFrame) -> pd.DataFrame:
     volume = df["volume"]
     amount = df["amount"]
 
-    for window in (5, 10, 20, 60):
+    for window in MA_WINDOWS:
         df[f"ma{window}"] = close.rolling(window).mean()
         df[f"vol_ma{window}"] = volume.rolling(window).mean()
 
+    df["prev_close"] = close.shift(1)
     df["ema12"] = close.ewm(span=12, adjust=False).mean()
     df["ema26"] = close.ewm(span=26, adjust=False).mean()
     df["macd_dif"] = df["ema12"] - df["ema26"]
@@ -44,6 +114,23 @@ def enrich_indicators(raw: pd.DataFrame) -> pd.DataFrame:
     df["range_pos"] = (close - low) / (high - low).replace(0, np.nan)
     df["upper_shadow_pct"] = (high - np.maximum(close, df["open"])) / close * 100
     df["amplitude_pct"] = (high - low) / close * 100
+    middle = close.rolling(BOLLINGER_WINDOW).mean()
+    deviation = close.rolling(BOLLINGER_WINDOW).std(ddof=0)
+    df["bb_middle20"] = middle
+    df["bb_upper20"] = middle + BOLLINGER_DEVIATIONS * deviation
+    df["bb_lower20"] = middle - BOLLINGER_DEVIATIONS * deviation
+    df["annualized_volatility20"] = (
+        df["ret_1"].rolling(VOLATILITY_WINDOW).std(ddof=0)
+        * np.sqrt(ANNUAL_TRADING_SESSIONS)
+    )
+    lowest = low.rolling(KDJ_LOOKBACK).min()
+    highest = high.rolling(KDJ_LOOKBACK).max()
+    spread = (highest - lowest).replace(0, np.nan)
+    rsv = (close - lowest) / spread * 100
+    smoothing_alpha = 1 / KDJ_SMOOTHING
+    df["kdj_k"] = rsv.ewm(alpha=smoothing_alpha, adjust=False).mean()
+    df["kdj_d"] = df["kdj_k"].ewm(alpha=smoothing_alpha, adjust=False).mean()
+    df["kdj_j"] = 3 * df["kdj_k"] - 2 * df["kdj_d"]
     return df
 
 

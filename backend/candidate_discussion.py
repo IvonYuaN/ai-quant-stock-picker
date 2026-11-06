@@ -55,6 +55,8 @@ class CandidateDiscussionError(ValueError):
 SYSTEM = """你为未持仓候选提供人工复核材料，不下单、不改量化评分、不改风险阈值。
 只依据输入 evidence；所有 evidence_ids 必须来自 allowed_evidence_ids。
 价格只能引用 price_refs 中的 price_ref，不能自行编造价位或收益预测。
+personal_context 是用户本人提供的问题、期限、假设和反方理由，不是市场证据；不得把它作为 evidence 引用或描述为已验证事实。
+分析时要回应用户的问题与期限，检查其假设和反方理由是否得到 evidence 支持；不支持的部分明确标为待核实，不让个人上下文改变确定性评分。
 可以明确说明证据不足，pause 表示暂不建立观察条件。
 只有 observe 或 buy_review 且引用了价位的 action 才能被用户考虑采用。
 condition 写清楚下一步需要观察的事实，invalidation 写清楚何时条件失效。
@@ -112,6 +114,28 @@ def _evidence(candidate: dict[str, Any], quote_ref: dict[str, Any]) -> dict[str,
     }
 
 
+def _personal_context(value: dict[str, str] | None) -> dict[str, str]:
+    limits = {
+        "personal_intent": 500,
+        "time_horizon": 120,
+        "personal_hypothesis": 500,
+        "counterargument": 500,
+    }
+    if value is None:
+        return {key: "" for key in limits}
+    if not isinstance(value, dict):
+        raise CandidateDiscussionError("个人上下文格式无效")
+    result: dict[str, str] = {}
+    for key, limit in limits.items():
+        text = value.get(key, "")
+        if not isinstance(text, str) or len(text) > limit:
+            raise CandidateDiscussionError("个人上下文长度或格式无效")
+        result[key] = text.strip()
+    if not result["personal_intent"] or not result["time_horizon"]:
+        raise CandidateDiscussionError("请先写明个人问题和观察期限")
+    return result
+
+
 def _parse_result(raw: str, evidence: dict[str, Any], price_refs: dict[str, dict[str, Any]]) -> CandidateSummary:
     text = raw.strip()
     fence = chr(96) * 3
@@ -134,8 +158,10 @@ async def run_candidate_discussion(
     selected_date: str | None = None,
     config: dict[str, str] | None = None,
     server_model: str | None = None,
+    personal_context: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Analyse one current candidate and persist the exact source identity."""
+    context = _personal_context(personal_context)
     checked_at = now_shanghai()
     if selected_date is not None:
         try:
@@ -186,6 +212,7 @@ async def run_candidate_discussion(
         "selected_date": candidate.get("date"),
         "source_snapshot_id": snapshot_id,
         "evidence": evidence,
+        "personal_context": context,
         "price_refs": price_refs,
         "allowed_evidence_ids": sorted(evidence),
         "output_schema": CandidateSummary.model_json_schema(),
@@ -215,6 +242,7 @@ async def run_candidate_discussion(
         "status": status,
         "model": endpoint.model,
         "evidence": evidence,
+        "personal_context": context,
         "price_refs": price_refs,
         "conclusion": summary.conclusion if summary else "",
         "evidence_ids": summary.evidence_ids if summary else [],

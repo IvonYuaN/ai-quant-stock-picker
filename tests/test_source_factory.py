@@ -43,6 +43,25 @@ def test_build_data_source_sqlite_db_preserves_explicit_no_cache(monkeypatch) ->
     assert seen["cache"] is None
 
 
+def test_build_data_source_sqlite_db_does_not_construct_unused_cache(monkeypatch) -> None:
+    from aqsp.data import source_factory as sf
+
+    monkeypatch.setattr(
+        sf,
+        "build_sqlite_db_source_with",
+        lambda **kwargs: kwargs,
+    )
+
+    def unexpected_cache():
+        raise AssertionError("SQLite source must not initialize an unused daily cache")
+
+    monkeypatch.setattr(sf, "DataCache", unexpected_cache)
+
+    result = sf.build_data_source("sqlite_db", cache=None)
+
+    assert result["cache"] is None
+
+
 def test_build_sqlite_db_source_with_reraises_builder_type_error(monkeypatch) -> None:
     from aqsp.data import source_factory as sf
 

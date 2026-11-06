@@ -103,13 +103,13 @@ def build_data_source(
     cache: DataCache | None = None,
     overrides: dict[str, SourceBuilder] | None = None,
 ) -> DataSource:
-    source_cache = cache or DataCache()
     override_builders = overrides or {}
     if source_name == "sqlite_db":
         return build_sqlite_db_source_with(
             cache=cache,
             builder=override_builders.get("sqlite_db"),
         )
+    source_cache = cache or DataCache()
     builders = _source_builders(override_builders)
     if source_name in {"auto", "local_first"}:
         if not online_fallback_allowed():

@@ -85,7 +85,7 @@ export function ClosingReviewPanel() {
   const [payload, setPayload] = useState<ClosingReviewPayload | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
-  // 默认折叠的段：缺数据段置灰折叠；有数据段展开。
+  // 六段长报告统一收起，先让用户扫数据状态和标题。
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
   const load = useCallback(() => {
@@ -97,8 +97,7 @@ export function ClosingReviewPanel() {
         if (!live) return;
         setPayload(data);
         setError("");
-        // 缺数据段进默认折叠集合
-        setCollapsed(new Set(buildClosingSections(data).filter((s) => !s.available).map((s) => s.key)));
+        setCollapsed(new Set(buildClosingSections(data).filter((s) => s.collapsedByDefault).map((s) => s.key)));
       })
       .catch((reason: unknown) => {
         if (!live) return;

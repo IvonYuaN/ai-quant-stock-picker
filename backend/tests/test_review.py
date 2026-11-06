@@ -349,6 +349,25 @@ def test_api_create_review(client, temp_reviews_path):
     assert len(data["data"]["id"]) == 36
 
 
+@pytest.mark.parametrize(
+    ("method", "path", "json_body"),
+    [
+        ("get", "/api/reviews", None),
+        ("post", "/api/reviews", {"signal_id": "sig", "date": "2026-09-20", "symbol": "000001", "rating": 3}),
+        ("put", "/api/reviews/review-id", {"rating": 4}),
+        ("delete", "/api/reviews/review-id", None),
+        ("get", "/api/reviews/tags", None),
+        ("get", "/api/reviews/insights", None),
+    ],
+)
+def test_formal_review_api_rejects_non_local_tenant(client, temp_reviews_path, method, path, json_body):
+    """The legacy single-user review file must never be exposed to another tenant."""
+    response = client.request(method.upper(), path, json=json_body, headers={"X-User-Id": "formal-review-foreign"})
+
+    assert response.status_code == 409
+    assert "本地单用户" in response.json()["detail"]
+
+
 def test_api_create_review_validates_rating(client, temp_reviews_path):
     """POST /api/reviews 应验证评分范围。"""
     response = client.post(

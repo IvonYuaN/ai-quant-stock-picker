@@ -11,13 +11,13 @@ import {
   Tag,
   clickableRowProps,
 } from "@/components/ui/primitives";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { loadWatch, saveWatch } from "@/lib/watchlist";
 import { stockResearchHref } from "@/lib/research-route";
 import { cn } from "@/lib/utils";
-import { api, ApiError, type CandidateAnalysis, type CandidateObservation, type ReviewRecord } from "@/lib/api";
+import { api, ApiError, type CandidateAnalysis, type CandidateDecision, type CandidateObservation, type ReviewRecord } from "@/lib/api";
 import { evidenceLabel, statusLabel } from "@/lib/display-labels";
 import { useOwnership } from "../useOwnership";
 import type { CandidateRow, DailyView, SectionView } from "@/lib/daily-view";
@@ -123,47 +123,65 @@ function LifecycleTag({
 }
 
 function candidateError(reason: unknown): string {
-  if (reason instanceof ApiError && reason.status === 409) return "候选依据已变化，请重新读取后再采用";
+  if (reason instanceof ApiError && reason.status === 409) return "候选状态已变化，或当前查看的不是今日快照；刷新候选后重试";
   if (reason instanceof ApiError && reason.status === 503) return "当前研究依据暂不可用，请稍后重试";
   return reason instanceof Error ? reason.message : "请求未完成，请稍后重试";
 }
 
-function CandidateObservationPanel({ row, date, held }: { row: CandidateRow; date: string; held: boolean }) {
-  const [observation, setObservation] = useState<CandidateObservation | null>(null);
+function CandidateObservationPanel({
+  row, date, held, observation, decision, recordsLoading, recordsError,
+  refreshRecords, onObservationChange, onDecisionChange,
+}: {
+  row: CandidateRow;
+  date: string;
+  held: boolean;
+  observation: CandidateObservation | null;
+  decision: CandidateDecision | null;
+  recordsLoading: boolean;
+  recordsError: string;
+  refreshRecords: () => Promise<void>;
+  onObservationChange: (item: CandidateObservation) => void;
+  onDecisionChange: (item: CandidateDecision) => void;
+}) {
   const [analysis, setAnalysis] = useState<CandidateAnalysis | null>(null);
   const [analysisBusy, setAnalysisBusy] = useState(false);
   const [adopting, setAdopting] = useState(false);
   const [stopping, setStopping] = useState(false);
+  const [decisionBusy, setDecisionBusy] = useState(false);
   const [error, setError] = useState("");
+  const [decisionNote, setDecisionNote] = useState(decision?.note ?? "");
   const [selectedAction, setSelectedAction] = useState<number | null>(null);
   const [comparator, setComparator] = useState<"at_or_above" | "at_or_below" | "">("");
   const [confirmed, setConfirmed] = useState(false);
+  const [personalIntent, setPersonalIntent] = useState("");
+  const [timeHorizon, setTimeHorizon] = useState("");
+  const [personalHypothesis, setPersonalHypothesis] = useState("");
+  const [counterargument, setCounterargument] = useState("");
 
-  async function loadObservation() {
-    try {
-      const payload = await api.candidateObservations();
-      const item = payload.items.find((candidate) => candidate.symbol === row.symbol) ?? null;
-      setObservation(item);
-    } catch (reason) {
-      setError(candidateError(reason));
-    }
+  function invalidateAnalysis() {
+    setAnalysis(null);
+    setSelectedAction(null);
+    setComparator("");
+    setConfirmed(false);
   }
 
   useEffect(() => {
-    let cancelled = false;
-    setObservation(null);
     setAnalysis(null);
     setError("");
     setSelectedAction(null);
     setComparator("");
     setConfirmed(false);
-    api.candidateObservations().then((payload) => {
-      if (!cancelled) setObservation(payload.items.find((candidate) => candidate.symbol === row.symbol) ?? null);
-    }).catch((reason) => {
-      if (!cancelled) setError(candidateError(reason));
-    });
-    return () => { cancelled = true; };
-  }, [row.symbol, date]);
+    setPersonalIntent("");
+    setTimeHorizon("");
+    setPersonalHypothesis("");
+    setCounterargument("");
+    const context = observation?.personal_context ?? decision?.personal_context;
+    setPersonalIntent(context?.personal_intent ?? "");
+    setTimeHorizon(context?.time_horizon ?? "");
+    setPersonalHypothesis(context?.personal_hypothesis ?? "");
+    setCounterargument(context?.counterargument ?? "");
+    setDecisionNote(decision?.note ?? "");
+  }, [row.symbol, date, observation?.revision, decision?.revision]);
 
   async function analyze() {
     if (analysisBusy || adopting || stopping) return;
@@ -173,7 +191,14 @@ function CandidateObservationPanel({ row, date, held }: { row: CandidateRow; dat
     setComparator("");
     setConfirmed(false);
     try {
-      const next = await api.candidateAnalysis({ symbol: row.symbol, date });
+      const next = await api.candidateAnalysis({
+        symbol: row.symbol,
+        date,
+        personal_intent: personalIntent.trim(),
+        time_horizon: timeHorizon.trim(),
+        personal_hypothesis: personalHypothesis.trim(),
+        counterargument: counterargument.trim(),
+      });
       setAnalysis(next);
     } catch (reason) {
       setError(candidateError(reason));
@@ -203,13 +228,14 @@ function CandidateObservationPanel({ row, date, held }: { row: CandidateRow; dat
         source_as_of: analysis.source_as_of,
         expected_version: observation?.state === "active" ? observation.revision : null,
       });
-      setObservation(next);
+      onObservationChange(next);
+      await refreshRecords();
       setSelectedAction(null);
       setComparator("");
       setConfirmed(false);
     } catch (reason) {
       setError(candidateError(reason));
-      await loadObservation();
+      await refreshRecords();
     } finally {
       setAdopting(false);
     }
@@ -220,12 +246,39 @@ function CandidateObservationPanel({ row, date, held }: { row: CandidateRow; dat
     setStopping(true);
     setError("");
     try {
-      setObservation(await api.stopCandidateObservation(observation.id, observation.revision));
+      onObservationChange(await api.stopCandidateObservation(observation.id, observation.revision));
     } catch (reason) {
       setError(candidateError(reason));
-      await loadObservation();
+      await refreshRecords();
     } finally {
       setStopping(false);
+    }
+  }
+
+  async function saveDecision(choice: "defer" | "reject") {
+    if (decisionBusy || held || observation?.state === "active" || !personalIntent.trim() || !timeHorizon.trim() || !decisionNote.trim()) return;
+    setDecisionBusy(true);
+    setError("");
+    try {
+      const saved = await api.saveCandidateDecision({
+        symbol: row.symbol,
+        selected_date: date,
+        choice,
+        note: decisionNote.trim(),
+        personal_context: {
+          personal_intent: personalIntent.trim(),
+          time_horizon: timeHorizon.trim(),
+          personal_hypothesis: personalHypothesis.trim(),
+          counterargument: counterargument.trim(),
+        },
+        expected_version: decision?.selected_date === date ? decision.revision : null,
+      });
+      onDecisionChange(saved);
+    } catch (reason) {
+      setError(candidateError(reason));
+      await refreshRecords();
+    } finally {
+      setDecisionBusy(false);
     }
   }
 
@@ -238,17 +291,40 @@ function CandidateObservationPanel({ row, date, held }: { row: CandidateRow; dat
           <p className="aq-label"><Brain aria-hidden="true" /> AI 入场条件</p>
           <p className="aq-note">{held ? "该标的已在持仓中；已有候选观察可在此停止，新分析请到持仓策略区。" : "只依据当前候选证据生成观察条件，采用后可离页复核。"}</p>
         </div>
-        {!held ? <button type="button" className="aq-btn" onClick={() => void analyze()} disabled={analysisBusy || adopting || stopping || !row.ready}>
+        {!held ? <button type="button" className="aq-btn" onClick={() => void analyze()} disabled={analysisBusy || adopting || stopping || decisionBusy || !row.ready || !personalIntent.trim() || !timeHorizon.trim()}>
           <Brain aria-hidden="true" />{analysisBusy ? "分析中…" : analysis ? "重新分析" : "开始分析"}
         </button> : null}
       </div>
+      {!held ? <fieldset className="aq-candidate-context" disabled={analysisBusy || adopting || stopping || decisionBusy}>
+        <legend>我的判断边界</legend>
+        <div className="aq-candidate-context-grid">
+          <label>这次我想解决什么<textarea className="aq-input" value={personalIntent} maxLength={500} onChange={(event) => { setPersonalIntent(event.target.value); invalidateAnalysis(); }} placeholder="例如：判断这只候选是否值得继续等确认" /></label>
+          <label>我愿意观察多久<input className="aq-input" value={timeHorizon} maxLength={120} onChange={(event) => { setTimeHorizon(event.target.value); invalidateAnalysis(); }} placeholder="例如：未来 3 个交易日" /></label>
+          <label>本人的判断或假设<textarea className="aq-input" value={personalHypothesis} maxLength={500} onChange={(event) => { setPersonalHypothesis(event.target.value); invalidateAnalysis(); }} placeholder="写下目前自己的判断；没有就留空" /></label>
+          <label>反方理由或最担心的证据<textarea className="aq-input" value={counterargument} maxLength={500} onChange={(event) => { setCounterargument(event.target.value); invalidateAnalysis(); }} placeholder="写下可能推翻判断的因素；没有就留空" /></label>
+        </div>
+        <p className="aq-note">问题和期限必填。个人判断会交给 AI 对照证据，不作为市场事实，也不改变量化评分。</p>
+      </fieldset> : null}
       {observation ? <div className="aq-strategy-watch" data-observation-state={observation.state}>
-        <div className="aq-tag-row"><Tag tone={observation.state === "active" ? "ok" : "neutral"}>{observation.state === "active" ? "观察中" : "已停止"}</Tag><Tag>{observation.comparator === "at_or_above" ? "达到或高于" : "达到或低于"} {observation.price.toFixed(2)} 元</Tag></div>
+        <div className="aq-tag-row"><Tag tone={observation.state === "active" ? "ok" : "neutral"}>{observation.state === "active" ? "观察中" : observation.state === "transferred" ? "已转持仓" : observation.state === "transferred_unlinked" ? "已转持仓 · 仓位待核" : "已停止"}</Tag><Tag>{observation.comparator === "at_or_above" ? "达到或高于" : "达到或低于"} {observation.price.toFixed(2)} 元</Tag></div>
         <p><b>等什么：</b>{observation.condition}</p>
         <p><b>何时取消：</b>{observation.invalidation}</p>
+        {observation.personal_context ? <details className="aq-candidate-personal"><summary>本人问题与判断</summary><p><b>问题：</b>{observation.personal_context.personal_intent || "未记录"}</p><p><b>期限：</b>{observation.personal_context.time_horizon || "未记录"}</p>{observation.personal_context.personal_hypothesis ? <p><b>本人假设：</b>{observation.personal_context.personal_hypothesis}</p> : null}{observation.personal_context.counterargument ? <p><b>反方理由：</b>{observation.personal_context.counterargument}</p> : null}</details> : null}
         {observation.last_check ? <p className="aq-note">最近检查 {observation.last_check.price.toFixed(2)} 元 · {observation.last_check.triggered ? "已达到复核价位" : "尚未达到复核价位"} · {new Date(observation.last_check.checked_at).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })}</p> : <p className="aq-note">等待后台监控轮次检查</p>}
         {observation.state === "active" ? <button type="button" className="aq-btn" onClick={() => void stop()} disabled={stopping || adopting}><CircleStop aria-hidden="true" />{stopping ? "停止中…" : "停止观察"}</button> : null}
       </div> : null}
+      {recordsError ? <p className="aq-tone-warn" role="alert">候选个人记录读取失败：{recordsError}</p> : null}
+      {decision ? <div className="aq-candidate-personal aq-tag-row"><Tag tone={decision.choice === "reject" ? "neutral" : decision.choice === "adopted" ? "ok" : "primary"}>{decision.choice === "defer" ? "已暂缓" : decision.choice === "reject" ? "暂不考虑" : "已采用观察"}</Tag><span>{decision.note}</span></div> : null}
+      {!held ? <fieldset className="aq-candidate-context" disabled={recordsLoading || decisionBusy || analysisBusy || adopting || stopping || observation?.state === "active"}>
+        <legend>记录本次决定</legend>
+        <label>暂缓理由、复查条件或不考虑原因<textarea className="aq-input" value={decisionNote} maxLength={500} onChange={(event) => setDecisionNote(event.target.value)} placeholder="写下这次决定的原因；暂缓时注明准备何时或在什么条件下再看" /></label>
+        <p className="aq-note">保存当日候选证据和个人判断，不改变评分、排序、持仓或监控。暂缓与不考虑都可以在复盘页回看和修订。</p>
+        <div className="aq-row-actions">
+          <button type="button" className="aq-btn" disabled={!personalIntent.trim() || !timeHorizon.trim() || !decisionNote.trim()} onClick={() => void saveDecision("defer")}>{decisionBusy ? "保存中…" : "暂缓并记录"}</button>
+          <button type="button" className="aq-btn" disabled={!personalIntent.trim() || !timeHorizon.trim() || !decisionNote.trim()} onClick={() => void saveDecision("reject")}>{decisionBusy ? "保存中…" : "暂不考虑并记录"}</button>
+        </div>
+        {observation?.state === "active" ? <p className="aq-note">当前已有生效中的观察条件；先停止观察，避免决定和后台跟进相互矛盾。</p> : null}
+      </fieldset> : null}
       {error ? <p className="aq-tone-warn" role="alert">{error}</p> : null}
       {analysis ? <div className="aq-strategy-model">
         <p className="aq-note">{analysis.model} · 生成于 {new Date(analysis.generated_at).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })} · {analysis.status === "complete" ? "分析完成" : "未完成"}</p>
@@ -285,6 +361,13 @@ function CandidateDetailCard({
   reviews,
   lifecycle,
   historyWindow,
+  observation,
+  decision,
+  recordsLoading,
+  recordsError,
+  refreshCandidateRecords,
+  onObservationChange,
+  onDecisionChange,
   onToggleCompare,
   onPick,
   date,
@@ -296,6 +379,13 @@ function CandidateDetailCard({
   reviews: ReviewRecord[];
   lifecycle?: AqspCandidateLifecycle;
   historyWindow: number;
+  observation: CandidateObservation | null;
+  decision: CandidateDecision | null;
+  recordsLoading: boolean;
+  recordsError: string;
+  refreshCandidateRecords: () => Promise<void>;
+  onObservationChange: (item: CandidateObservation) => void;
+  onDecisionChange: (item: CandidateDecision) => void;
   onToggleCompare: (symbol: string) => void;
   onPick?: (symbol: string) => void;
   date: string;
@@ -361,7 +451,11 @@ function CandidateDetailCard({
         </button>
       </div>
 
-      {row.symbol ? <CandidateObservationPanel row={row} date={date} held={ownership.holdings.has(row.symbol)} /> : null}
+      {row.symbol ? <CandidateObservationPanel
+        row={row} date={date} held={ownership.holdings.has(row.symbol)}
+        observation={observation} decision={decision} recordsLoading={recordsLoading} recordsError={recordsError}
+        refreshRecords={refreshCandidateRecords} onObservationChange={onObservationChange} onDecisionChange={onDecisionChange}
+      /> : null}
 
       {row.context ? <p className="aq-card-summary">{row.context}</p> : null}
 
@@ -689,6 +783,25 @@ export function CandidateSection({
       cancelled = true;
     };
   }, []);
+  const [candidateObservations, setCandidateObservations] = useState<CandidateObservation[]>([]);
+  const [candidateDecisions, setCandidateDecisions] = useState<CandidateDecision[]>([]);
+  const [candidateRecordsLoading, setCandidateRecordsLoading] = useState(true);
+  const [candidateRecordsError, setCandidateRecordsError] = useState("");
+  const refreshCandidateRecords = useCallback(async () => {
+    setCandidateRecordsLoading(true);
+    try {
+      const payload = await api.candidateObservations();
+      setCandidateObservations(payload.items);
+      setCandidateDecisions(payload.decisions ?? []);
+      setCandidateRecordsError("");
+    } catch (reason) {
+      setCandidateRecordsError(candidateError(reason));
+    } finally {
+      setCandidateRecordsLoading(false);
+    }
+  }, []);
+  useEffect(() => { void refreshCandidateRecords(); }, [refreshCandidateRecords, view.date]);
+
   // 候选池生命周期（issue #317 W1）：新入选/连续在榜/回归一眼可见。
   // 快照面缺失或端点不可用时静默降级，不阻断候选研究主流程。
   const [lifecycles, setLifecycles] = useState<Record<string, AqspCandidateLifecycle>>({});
@@ -745,6 +858,16 @@ export function CandidateSection({
     if (next.length === 0) params.delete("cmp");
     else params.set("cmp", next.join(","));
     setSearchParams(params, { replace: true });
+  };
+  const updateCandidateObservation = (updated: CandidateObservation) => {
+    setCandidateObservations((current) => current.some((item) => item.id === updated.id)
+      ? current.map((item) => item.id === updated.id ? updated : item)
+      : [...current, updated]);
+  };
+  const updateCandidateDecision = (updated: CandidateDecision) => {
+    setCandidateDecisions((current) => current.some((item) => item.id === updated.id)
+      ? current.map((item) => item.id === updated.id ? updated : item)
+      : [...current, updated]);
   };
   return (
     <section id={section.id} className="aq-candidate-workspace">
@@ -854,6 +977,13 @@ export function CandidateSection({
                     reviews={reviewsBySymbol.get(selected.symbol) ?? []}
                     lifecycle={lifecycleDate === view.date ? lifecycles[selected.symbol] : undefined}
                     historyWindow={historyWindow}
+                    observation={candidateObservations.find((item) => item.symbol === selected.symbol) ?? null}
+                    decision={candidateDecisions.filter((item) => item.symbol === selected.symbol && item.selected_date === view.date).sort((left, right) => right.updated_at.localeCompare(left.updated_at))[0] ?? null}
+                    recordsLoading={candidateRecordsLoading}
+                    recordsError={candidateRecordsError}
+                    refreshCandidateRecords={refreshCandidateRecords}
+                    onObservationChange={updateCandidateObservation}
+                    onDecisionChange={updateCandidateDecision}
                     onToggleCompare={(symbol) => setCompareSymbols(toggleCompareSymbol(compareSymbols, symbol))}
                     onPick={onPick}
                   /> : null}

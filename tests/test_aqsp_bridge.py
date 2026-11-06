@@ -699,7 +699,7 @@ def test_aqsp_bridge_exposes_no_portfolio_or_chat_write_route() -> None:
     }
 
     assert aqsp_routes
-    assert all(methods == {"GET"} for methods in aqsp_routes.values())
+    assert aqsp_routes["/api/aqsp/snapshot"] == {"GET"}
     assert not any(
         path.startswith(("/api/aqsp/portfolio", "/api/aqsp/chat"))
         for path in aqsp_routes

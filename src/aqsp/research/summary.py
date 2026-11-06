@@ -14,6 +14,7 @@ from aqsp.research.repo_intake import (
     load_repo_intake,
     summarize_repo_intake,
 )
+from aqsp.strategies.catalog import validate_strategy_current_status
 
 
 @dataclass(frozen=True)
@@ -167,6 +168,16 @@ def load_research_summary(
         or not isinstance(data_config, dict)
     ):
         return None
+    strategy_families = strategy_config.get("families", [])
+    if not isinstance(strategy_families, list):
+        raise ValueError("strategy source families must be a list")
+    for index, family in enumerate(strategy_families):
+        if not isinstance(family, dict):
+            raise ValueError(f"strategy source family at index {index} must be a mapping")
+        validate_strategy_current_status(
+            family.get("current_status"),
+            family_id=str(family.get("id", "") or f"index {index}"),
+        )
 
     pipeline_order = [
         "data_source",
@@ -198,7 +209,7 @@ def load_research_summary(
     implemented_family_count = 0
     report_only_family_count = 0
     gated_family_count = 0
-    for family in strategy_config.get("families", []):
+    for family in strategy_families:
         if not isinstance(family, dict):
             continue
         status = str(family.get("current_status", "") or "")

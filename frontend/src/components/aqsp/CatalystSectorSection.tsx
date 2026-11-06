@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { ExternalLink, RefreshCw } from "lucide-react";
 import { Badge, Card, EmptyState, ErrorState, LoadingState, SectionHeader, Tag } from "@/components/ui/primitives";
 import { groupEventsBySector, impactLabel, impactToneClass, type CatalystEvent } from "@/lib/catalyst-client";
@@ -71,11 +72,13 @@ export function CatalystSectorView({ state, onRefresh }: {
 
 function ConceptEvent({ event }: { event: CatalystEvent }) {
   const sourceUrl = catalystSourceUrl(event.url);
+  const affectedSymbols = [...new Set(event.affected_symbols.filter((symbol) => /^\d{6}$/.test(symbol)))];
   return (
     <article className="aq-event-row">
       <div className="aq-tag-row"><Badge className={impactToneClass(event.impact)}>{impactLabel(event.impact)}</Badge><Tag>{event.category || "消息"}</Tag></div>
       <p className="aq-event-title">{event.title || "未记录标题"}</p>
       <p className="aq-note" title={event.published_at}>事件发布时间：{formatEvidenceTime(event.published_at) || "未记录"}</p>
+      {event.affected_symbols.length ? <p className="aq-detail-muted">影响标的：{affectedSymbols.length ? affectedSymbols.map((symbol) => <Link className="aq-inline-stock" key={symbol} to={`/stock/${symbol}`}>{symbol}</Link>) : "未提供有效股票代码"}</p> : null}
       {event.transmission_path.length ? <p className="aq-transmission-path">传导路径：{event.transmission_path.join(" → ")}</p> : null}
       <p className="aq-detail-muted">传导假设：{event.transmission_hypothesis || "报告未提供"}</p>
       {sourceUrl ? <a className="aq-radar-title" href={sourceUrl} target="_blank" rel="noopener noreferrer">{event.source || "查看原文来源"}<ExternalLink aria-hidden="true" /></a>

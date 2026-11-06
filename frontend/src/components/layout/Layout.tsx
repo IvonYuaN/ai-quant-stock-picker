@@ -3,7 +3,7 @@ import { Link, Outlet, useLocation } from "react-router-dom";
 import { Download, LineChart, Moon, PanelLeftClose, PanelLeftOpen, Search, Sun, Upload, BellRing, Ellipsis, X } from "lucide-react";
 import { Toaster, toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { NAV_LINES, PRIMARY_LINE } from "@/lib/ia";
+import { MY_LINE, NAV_LINES, PRIMARY_LINE } from "@/lib/ia";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import { useAlertOpenCount } from "@/hooks/useAlertOpenCount";
 import { AqspWorkspaceProvider, useAqspSnapshot } from "@/components/aqsp/useAqspSnapshot";
@@ -35,9 +35,29 @@ export function Layout() {
 }
 
 function WorkspaceLayout() {
-  const { pathname, search } = useLocation();
+  const { pathname, search, hash } = useLocation();
   const researchDate = new URLSearchParams(search).get("date");
-  const navHref = (path: string) => researchDate ? `${path}?date=${encodeURIComponent(researchDate)}` : path;
+  const navHref = (target: string) => {
+    if (!researchDate) return target;
+    const hashIndex = target.indexOf("#");
+    const hashPart = hashIndex >= 0 ? target.slice(hashIndex) : "";
+    const pathAndQuery = hashIndex >= 0 ? target.slice(0, hashIndex) : target;
+    const queryIndex = pathAndQuery.indexOf("?");
+    const path = queryIndex >= 0 ? pathAndQuery.slice(0, queryIndex) : pathAndQuery;
+    const params = new URLSearchParams(queryIndex >= 0 ? pathAndQuery.slice(queryIndex + 1) : "");
+    if (!params.has("date")) params.set("date", researchDate);
+    return `${path}?${params.toString()}${hashPart}`;
+  };
+  const navIsActive = (target: string) => {
+    const hashIndex = target.indexOf("#");
+    const hashPart = hashIndex >= 0 ? target.slice(hashIndex) : "";
+    const pathAndQuery = hashIndex >= 0 ? target.slice(0, hashIndex) : target;
+    const queryIndex = pathAndQuery.indexOf("?");
+    const path = queryIndex >= 0 ? pathAndQuery.slice(0, queryIndex) : pathAndQuery;
+    if (path !== pathname) return false;
+    if (hashPart) return hashPart === hash;
+    return !hash;
+  };
   const { dark, toggle } = useDarkMode();
   const { data, loading } = useAqspSnapshot();
   const { openCount: openAlerts, refetch: refetchAlerts } = useAlertOpenCount();
@@ -46,10 +66,10 @@ function WorkspaceLayout() {
   );
   const [temporaryIdentity] = useState(hasTemporaryUserIdentity);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => setMobileToolsOpen(false), [pathname]);
+  useEffect(() => setMobileMenuOpen(false), [pathname]);
 
   useEffect(() => {
     writeLocalPreference("aqsp-sidebar", collapsed ? "collapsed" : "expanded");
@@ -81,7 +101,7 @@ function WorkspaceLayout() {
       <header className="aq-mobile-bar">
         <Link to={navHref("/today")} className="aq-mobile-brand"><LineChart aria-hidden="true" /><b>AQSP</b></Link>
         <span>{NAV_LINES.flatMap((line) => line.items).find((item) => item.to === pathname)?.label ?? "个股研究"}</span>
-        <div className="aq-mobile-actions"><button type="button" className="aq-btn aq-btn-primary" onClick={() => requestOperation()}>我操作了</button><button type="button" className="aq-icon-btn" aria-label="更多工具" aria-controls="aq-mobile-tools" aria-expanded={mobileToolsOpen} onClick={() => setMobileToolsOpen((value) => !value)}><Ellipsis aria-hidden="true" /></button></div>
+        <div className="aq-mobile-actions"><button type="button" className="aq-btn aq-btn-primary" onClick={() => requestOperation()}>我操作了</button></div>
       </header>
       <aside className={cn("aq-sidebar", collapsed && "aq-sidebar-collapsed")}>
         <div className="aq-brand">
@@ -145,25 +165,23 @@ function WorkspaceLayout() {
               {!collapsed ? (
                 <div className="aq-nav-label">
                   <span>{line.title}</span>
-                  <span className="aq-nav-label-sub">{line.subtitle}</span>
                 </div>
               ) : null}
               {line.items.map((item) => {
                 const Icon = item.icon;
-                const active = pathname === item.to;
+                const active = navIsActive(item.to);
                 return (
                   <Link
                     key={item.to}
                     to={navHref(item.to)}
                     aria-current={active ? "page" : undefined}
-                    title={collapsed ? `${item.label} · ${item.desc}` : undefined}
+                      title={`${item.label} · ${item.desc}`}
                     className={cn("aq-nav-item", active && "aq-nav-item-active", collapsed && "aq-nav-item-collapsed")}
                   >
                     <Icon aria-hidden="true" />
                     {!collapsed ? (
                       <span className="aq-nav-text">
                         <span className="aq-nav-title">{item.label}</span>
-                        <span className="aq-nav-desc">{item.desc}</span>
                       </span>
                     ) : null}
                   </Link>
@@ -246,17 +264,31 @@ function WorkspaceLayout() {
         </div>
       </main>
 
-      {mobileToolsOpen ? (
-        <section className="aq-mobile-tools" id="aq-mobile-tools" aria-label="个人工具">
-          <div className="aq-mobile-tools-head"><strong>个人工具</strong><button type="button" className="aq-icon-btn" aria-label="关闭个人工具" onClick={() => setMobileToolsOpen(false)}><X aria-hidden="true" /></button></div>
-          <button type="button" className="aq-mobile-tool" onClick={() => { setMobileToolsOpen(false); setPaletteOpen(true); }}><Search aria-hidden="true" /><span>搜索代码</span></button>
+      {mobileMenuOpen ? (
+        <section className="aq-mobile-tools" id="aq-mobile-tools" aria-label="所有工作区入口">
+          <div className="aq-mobile-tools-head"><strong>工作区</strong><button type="button" className="aq-icon-btn" aria-label="关闭工作区目录" onClick={() => setMobileMenuOpen(false)}><X aria-hidden="true" /></button></div>
+          {NAV_LINES.map((line) => (
+            <div className="aq-mobile-nav-group" key={line.id}>
+              <h2>{line.title}</h2>
+              {line.items.map((item) => {
+                const Icon = item.icon;
+                return <Link key={item.to} to={navHref(item.to)} aria-current={navIsActive(item.to) ? "page" : undefined} className="aq-mobile-tool" title={item.desc}><Icon aria-hidden="true" /><span>{item.label}</span></Link>;
+              })}
+            </div>
+          ))}
+          <div className="aq-mobile-nav-group aq-mobile-utilities">
+            <h2>工具</h2>
+            <button type="button" className="aq-mobile-tool" onClick={() => { setMobileMenuOpen(false); setPaletteOpen(true); }}><Search aria-hidden="true" /><span>搜索代码</span></button>
           <button type="button" className="aq-mobile-tool" onClick={toggle}>{dark ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}<span>{dark ? "切换亮色" : "切换暗色"}</span></button>
           <button type="button" className="aq-mobile-tool" onClick={() => { downloadVault(); toast("已导出备份文件"); }}><Download aria-hidden="true" /><span>导出个人备份</span></button>
           <button type="button" className="aq-mobile-tool" onClick={() => fileRef.current?.click()}><Upload aria-hidden="true" /><span>导入个人备份</span></button>
+          </div>
         </section>
       ) : null}
       <nav className="aq-mobile-nav" aria-label="主要导航">
-        {PRIMARY_LINE.items.map((item) => { const Icon = item.icon; return <Link key={item.to} to={navHref(item.to)} aria-current={pathname === item.to ? "page" : undefined}><Icon aria-hidden="true" /><span>{item.label}</span></Link>; })}
+        {PRIMARY_LINE.items.slice(0, 2).map((item) => { const Icon = item.icon; return <Link key={item.to} to={navHref(item.to)} aria-current={navIsActive(item.to) ? "page" : undefined}><Icon aria-hidden="true" /><span>{item.label}</span></Link>; })}
+        {MY_LINE.items.filter((item) => item.to === "/my/holdings").map((item) => { const Icon = item.icon; return <Link key={item.to} to={navHref(item.to)} aria-current={navIsActive(item.to) ? "page" : undefined}><Icon aria-hidden="true" /><span>{item.label}</span></Link>; })}
+        <button type="button" aria-controls="aq-mobile-tools" aria-expanded={mobileMenuOpen} onClick={() => setMobileMenuOpen((value) => !value)}><Ellipsis aria-hidden="true" /><span>更多</span></button>
       </nav>
 
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />

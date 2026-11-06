@@ -4221,7 +4221,7 @@ def _write_walkforward_gate(
     metadata: dict[str, object] | None = None,
     diagnostics: dict[str, object] | None = None,
     gate_path: str | Path = WALKFORWARD_GATE_PATH,
-) -> None:
+) -> dict[str, object]:
     """写双门 sidecar，供 run_scheduled 的 notify gate 读取。
     独立 JSON，不污染 thresholds.yaml，不 bump version（§1.3 #12/#14）。
     """
@@ -4242,6 +4242,7 @@ def _write_walkforward_gate(
     p = Path(gate_path)
     atomic_write_text(p, json.dumps(payload, indent=2, ensure_ascii=False))
     print(f"✅ 双门 sidecar 已写入: {p}（both_pass={payload['both_pass']}）")
+    return payload
 
 
 def _walkforward_gate_metadata(
@@ -4250,6 +4251,7 @@ def _walkforward_gate_metadata(
     effective_symbols: int | None = None,
     net_fees: bool = False,
     skipped_periods: int | None = None,
+    thresholds_version: str | None = None,
 ) -> dict[str, object]:
     metadata: dict[str, object] = {
         "source": str(getattr(args, "source", "") or ""),
@@ -4277,6 +4279,8 @@ def _walkforward_gate_metadata(
     # 读 Sharpe/DSR 时必须同时看这个字段，否则会把空仓造成的低波动当策略稳定。
     if skipped_periods is not None:
         metadata["skipped_periods"] = int(skipped_periods)
+    if thresholds_version:
+        metadata["thresholds_version"] = thresholds_version
     if bool(getattr(args, "grid_cscv", False)):
         metadata["grid_profile"] = str(
             getattr(args, "grid_profile", "stable") or "stable"
@@ -7899,7 +7903,30 @@ def run_walkforward(args: argparse.Namespace) -> int:
     print(f"\n报告已保存到: {args.report}")
 
     # 写双门 sidecar（不依赖 args.update_yaml，始终写，供 notify gate 用）
-    _write_walkforward_gate(
+    run_metadata = _walkforward_gate_metadata(
+        args,
+        effective_symbols=effective_symbols,
+        net_fees=walkforward_net_fees,
+        skipped_periods=skipped_periods,
+        thresholds_version=thresholds.version,
+    )
+    price_mode = str(run_metadata.get("price_mode", "unknown"))
+    assumptions = {
+        "uses_raw_prices": price_mode == "raw",
+        "uses_point_in_time_data": fetch_result is not None and not bool(args.skip_pit_financials),
+        "train_test_separated": True,
+        "has_purge_window": args.purge_days > 0,
+        "includes_transaction_costs": walkforward_fee_bps > 0 or walkforward_sell_fee_bps > 0,
+        "includes_slippage": walkforward_slippage_bps > 0,
+        "excludes_not_executable": True,
+        "cost_model": (
+            f"fee={walkforward_fee_bps}bps; sell_fee={walkforward_sell_fee_bps}bps; "
+            f"slippage={walkforward_slippage_bps}bps; mode={'net' if walkforward_net_fees else 'legacy'}"
+        ),
+        "price_mode": price_mode,
+        "future_data_used": False,
+    }
+    gate_payload = _write_walkforward_gate(
         dsr=dsr_value,
         pbo=pbo_value,
         run_date=today_shanghai().isoformat(),
@@ -7907,15 +7934,73 @@ def run_walkforward(args: argparse.Namespace) -> int:
         end=args.end,
         n_periods=grid_periods if args.grid_cscv else len(result.periods),
         n_variants=grid_n_variants,
-        metadata=_walkforward_gate_metadata(
-            args,
-            effective_symbols=effective_symbols,
-            net_fees=walkforward_net_fees,
-            skipped_periods=skipped_periods,
-        ),
+        metadata={**run_metadata, "backtest_assumptions": assumptions},
         diagnostics=grid_details if args.grid_cscv and grid_details else None,
         gate_path=getattr(args, "gate_path", WALKFORWARD_GATE_PATH),
     )
+
+    if args.grid_cscv and gate_payload is not None:
+        from aqsp.core.runtime import runtime_data_root
+        from aqsp.research.strategy_evidence import (
+            build_strategy_oos_evidence,
+            save_strategy_oos_evidence,
+        )
+
+        evidence = build_strategy_oos_evidence(
+            strategy_id=str(getattr(strategy, "id", "composite")),
+            strategy_version=str(getattr(strategy, "version", thresholds.version)),
+            parameters={
+                "thresholds": asdict(thresholds),
+                "engine": asdict(engine_cfg),
+                "grid_profile": args.grid_profile,
+                "grid_variant_parameters": [
+                    {
+                        "variant_id": variant.variant_id,
+                        "parameters": asdict(variant),
+                    }
+                    for variant, _sharpe, _total_return, _periods, _trades in grid_rows
+                ],
+            },
+            requested_data_source=str(args.source),
+            actual_data_source=(str(args.source) if args.source == "sqlite_db" else None),
+            price_mode=str(gate_payload.get("price_mode", "unknown")),
+            data_start=str(args.start),
+            data_end=str(args.end),
+            effective_symbols=effective_symbols,
+            metrics={
+                **(
+                    asdict(result.overall)
+                    if hasattr(result.overall, "__dataclass_fields__")
+                    else vars(result.overall)
+                ),
+                "deflated_sharpe": dsr_value,
+                "pbo": pbo_value,
+                "robustness_score": result.robustness_score,
+                "parameter_std": result.parameter_std,
+                "skipped_periods": skipped_periods,
+            },
+            oos_windows=[asdict(period) for period in result.periods],
+            grid_results=[
+                {
+                    "variant_id": variant.variant_id,
+                    "sharpe": sharpe,
+                    "total_return": total_return,
+                    "periods": periods,
+                    "trades": trades,
+                }
+                for variant, sharpe, total_return, periods, trades in grid_rows
+            ],
+            assumptions=assumptions,
+            gate_payload=gate_payload,
+        )
+        evidence_path = save_strategy_oos_evidence(
+            evidence,
+            root=runtime_data_root(),
+        )
+        print(
+            "策略 OOS 研究证据已保存: "
+            f"{evidence_path} ({evidence.evidence_status}; {evidence.artifact_id})"
+        )
 
     if args.update_yaml:
         ok = _update_thresholds_metadata(today_shanghai().isoformat())

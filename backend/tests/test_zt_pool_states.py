@@ -15,9 +15,11 @@
 from __future__ import annotations
 
 import pytest
+from fastapi.testclient import TestClient
 
 import astock
 import market
+import app as app_module
 
 _ZT = [
     {"c": "600001", "n": "甲", "lbc": "3", "zdp": "10.0", "amount": 1e8, "ltsz": 5e9, "hybk": "电池"},
@@ -63,10 +65,29 @@ def test_pool_retries_once_then_succeeds(monkeypatch, no_sleep) -> None:
         state["n"] += 1
         if state["n"] == 1:
             raise RuntimeError("blip")
-        return _Resp({"data": {"pool": _ZT}})
+        return _Resp({"data": {"pool": _ZT, "qdate": "20261019"}})
 
     monkeypatch.setattr(astock, "em_get", flaky)
     assert astock.em_zt_topic_pool("getTopicZTPool", "20261019") == _ZT
+
+
+def test_pool_preserves_actual_source_trading_date(monkeypatch, no_sleep) -> None:
+    monkeypatch.setattr(
+        astock,
+        "em_get",
+        lambda *args, **kwargs: _Resp({"data": {"pool": _ZT, "qdate": "20261030"}}),
+    )
+
+    pool = astock.em_zt_topic_pool("getTopicZTPool", "20261031")
+
+    assert pool == _ZT
+    assert pool.source_date == "20261030"
+
+
+def test_pool_rejects_nonempty_rows_without_source_date(monkeypatch, no_sleep) -> None:
+    monkeypatch.setattr(astock, "em_get", lambda *args, **kwargs: _Resp({"data": {"pool": _ZT}}))
+
+    assert astock.em_zt_topic_pool("getTopicZTPool", "20261031") is None
 
 
 @pytest.mark.parametrize("payload", [{}, {"data": None}, {"data": {}}, {"data": {"pool": None}}])
@@ -123,6 +144,36 @@ def test_emotion_backtracks_on_genuine_empty_day(monkeypatch) -> None:
     assert len([d for e, d in dates if e == "getTopicZTPool"]) == 2  # 回溯了一次
     # 用的是回溯到的那一天，不是今天
     assert payload["date"] != seen[0][:4] + "-" + seen[0][4:6] + "-" + seen[0][6:]
+
+
+def test_emotion_dates_pools_from_provider_qdate_not_weekend_request(monkeypatch) -> None:
+    requested_dates: list[tuple[str, str]] = []
+
+    class Pool(list):
+        def __init__(self, rows, source_date):
+            super().__init__(rows)
+            self.source_date = source_date
+
+    def fetch(endpoint, requested_date, sort=""):
+        requested_dates.append((endpoint, requested_date))
+        if endpoint == "getTopicZTPool":
+            return Pool(_ZT, "20261030")
+        return Pool([], "20261030")
+
+    monkeypatch.setattr(market.astock, "em_zt_topic_pool", fetch)
+    monkeypatch.setattr(market, "_breadth_counts", lambda: None)
+    monkeypatch.setattr(market, "_emotion_assessment", lambda **kwargs: {})
+    class Clock:
+        @staticmethod
+        def now(_tz):
+            from datetime import datetime
+            return datetime(2026, 10, 31, 10)
+    monkeypatch.setattr(market, "datetime", Clock)
+
+    payload = market._emotion()
+
+    assert payload["date"] == "2026-10-30"
+    assert all(day == "20261030" for _endpoint, day in requested_dates[1:])
 
 
 def test_emotion_returns_empty_when_dt_pool_fails(monkeypatch) -> None:
@@ -182,3 +233,68 @@ def test_emotion_counts_zero_dt_when_pool_genuinely_empty(monkeypatch) -> None:
     payload = market._emotion()
     assert payload["dt_count"] == 0
     assert payload["zb_count"] == 0
+
+
+def test_emotion_includes_bounded_objective_abnormal_pools(monkeypatch) -> None:
+    rows = [
+        {"c": "600001", "n": "甲", "lbc": 3, "p": "12345", "zdp": 10.0, "amount": "-", "ltsz": 5e9, "hybk": "电池"},
+        {"c": "600002", "n": "乙", "lbc": 1, "p": "10000", "zdp": 9.0, "amount": 2e8, "hybk": "银行"},
+        {"c": "bad", "n": "脏行"},
+    ]
+    monkeypatch.setattr(
+        market.astock,
+        "em_zt_topic_pool",
+        lambda endpoint, _date, sort="": rows if endpoint == "getTopicZTPool" else [],
+    )
+    monkeypatch.setattr(market, "_breadth_counts", lambda: None)
+    monkeypatch.setattr(market, "_emotion_assessment", lambda **_kwargs: {})
+
+    payload = market._emotion()
+
+    pool = payload["abnormal_pools"]["limit_up"]
+    assert pool["count"] == 3
+    assert pool["displayed_count"] == 2
+    assert [row["code"] for row in pool["items"]] == ["600001", "600002"]
+    assert pool["items"][0]["price"] == 12.35
+    assert pool["items"][0]["amount"] is None
+    assert payload["abnormal_pools"]["blown_up"]["count"] == 0
+    assert payload["abnormal_pools"]["limit_down"]["count"] == 0
+
+
+def test_emotion_keeps_abnormal_pool_truncation_metadata(monkeypatch) -> None:
+    rows = [
+        {"c": f"{600000 + index:06d}", "n": "股票", "p": "10000", "zdp": 10.0}
+        for index in range(market._ABNORMAL_POOL_LIMIT + 1)
+    ]
+    monkeypatch.setattr(
+        market.astock,
+        "em_zt_topic_pool",
+        lambda endpoint, _date, sort="": rows if endpoint == "getTopicZTPool" else [],
+    )
+    monkeypatch.setattr(market, "_breadth_counts", lambda: None)
+    monkeypatch.setattr(market, "_emotion_assessment", lambda **_kwargs: {})
+
+    payload = market._emotion()
+    pool = payload["abnormal_pools"]["limit_up"]
+
+    assert pool["count"] == market._ABNORMAL_POOL_LIMIT + 1
+    assert pool["displayed_count"] == market._ABNORMAL_POOL_LIMIT
+    assert pool["truncated"] is True
+
+
+def test_market_emotion_api_exposes_abnormal_pool_source_day(monkeypatch) -> None:
+    payload = {
+        "date": "2026-10-30",
+        "abnormal_pools": {
+            "limit_up": {"count": 1, "displayed_count": 1, "truncated": False, "items": [{"code": "600001"}]},
+            "blown_up": {"count": 0, "displayed_count": 0, "truncated": False, "items": []},
+            "limit_down": {"count": 0, "displayed_count": 0, "truncated": False, "items": []},
+        },
+    }
+    monkeypatch.setattr(market, "get_short_term_emotion", lambda: payload)
+
+    response = TestClient(app_module.app).get("/api/market/emotion")
+
+    assert response.status_code == 200
+    assert response.json()["data"]["date"] == "2026-10-30"
+    assert response.json()["data"]["abnormal_pools"]["limit_up"]["items"][0]["code"] == "600001"

@@ -137,9 +137,9 @@ def _aqsp_routes() -> list[tuple[str, set[str]]]:
     )
 
 
-def test_aqsp_api_exposes_one_read_only_snapshot_route() -> None:
+def test_aqsp_api_snapshot_route_remains_read_only() -> None:
     assert _aqsp_routes()
-    assert all(methods == {"GET"} for _path, methods in _aqsp_routes())
+    assert dict(_aqsp_routes())[SNAPSHOT_ROUTE] == {"GET"}
     assert not any(
         path.startswith("/api/aqsp/portfolio") for path, _methods in _aqsp_routes()
     )

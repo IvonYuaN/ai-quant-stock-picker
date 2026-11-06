@@ -7,11 +7,15 @@
 from __future__ import annotations
 
 import json
+import math
 import os
+from pathlib import Path
 import threading
 import time
 from collections import Counter
+from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
+from typing import Literal
 
 import astock
 import gstock
@@ -35,10 +39,20 @@ _TTL = 300  # 5 分钟；全站共享，省数据源压力
 # 结果上游故障时**每个请求都去撞**（实测 /api/global/indices 单次 14–53s），
 # 把整页拖死。改成空结果也缓存 60s：既不再连环撞上游，又能较快自愈。
 _NEG_TTL = 60
+_ABNORMAL_POOL_LIMIT = 200
 # stale-while-revalidate 窗口：超过 _TTL 但在该窗口内，返回旧值并后台刷新，
 # 不阻塞请求（根治「首访/缓存过期后同步打上游 14–53s 转圈」）。默认 30 分钟，
 # 可用 AQSP_MARKET_STALE_TTL 覆盖。
 _STALE_TTL = int(os.environ.get("AQSP_MARKET_STALE_TTL", "1800"))
+
+
+@dataclass(frozen=True)
+class ShortTermEmotionSnapshot:
+    data: dict
+    source: str
+    cached_at: str | None
+    age_seconds: float | None
+    freshness: Literal["fresh", "stale", "missing", "unverified"]
 
 
 def _cache_path(key: str) -> str:
@@ -130,6 +144,46 @@ def _num(v) -> int:
         return int(float(v))
     except (ValueError, TypeError):
         return 0
+
+
+def _pool_stock_rows(rows: list[dict], kind: str) -> dict:
+    """Normalize bounded public Eastmoney pool rows for objective display."""
+    normalized = []
+    for row in rows:
+        code = str(row.get("c") or "").strip()
+        if len(code) != 6 or not code.isdigit():
+            continue
+
+        def number(value):
+            try:
+                result = float(value)
+            except (TypeError, ValueError):
+                return None
+            return result if math.isfinite(result) else None
+
+        price_raw = number(row.get("p"))
+        normalized.append({
+            "code": code,
+            "name": str(row.get("n") or code),
+            "price": round(price_raw / 1000, 2) if price_raw is not None else None,
+            "change_pct": number(row.get("zdp")),
+            "boards": _num(row.get("lbc")) or None,
+            "blow_count": _num(row.get("zbc")) or None,
+            "amount": number(row.get("amount")),
+            "industry": str(row.get("hybk") or ""),
+        })
+    if kind == "limit_up":
+        normalized.sort(key=lambda item: (-(item["boards"] or 0), -(item["amount"] or 0)))
+    elif kind == "blown_up":
+        normalized.sort(key=lambda item: (-(item["blow_count"] or 0), -(item["amount"] or 0)))
+    else:
+        normalized.sort(key=lambda item: (item["change_pct"] if item["change_pct"] is not None else 0, -(item["amount"] or 0)))
+    return {
+        "count": len(rows),
+        "displayed_count": min(len(normalized), _ABNORMAL_POOL_LIMIT),
+        "truncated": len(normalized) > _ABNORMAL_POOL_LIMIT,
+        "items": normalized[:_ABNORMAL_POOL_LIMIT],
+    }
 
 
 # 本模块的 akshare 源（板块资金流）的**上游主机**（`akshare.xxx` 只是包装，
@@ -257,10 +311,11 @@ def get_overview() -> dict:
 
 
 def _emotion() -> dict:
-    """短线情绪（聚合口径，**零个股名**）：连板梯队 / 最高连板 / 炸板率 / 封板率 / 晋级率 / 涨跌停家数。
+    """短线情绪与有界的客观涨停/炸板/跌停明细；明细只用于市场观察。
 
-    数据源＝东财涨停板四池（push2ex）。只把池子聚合成计数与比率，
-    **不输出任何个股 code/name**——守产品「零标的」红线（个股清单是甩名单，不做）。
+    数据源＝东财涨停板四池（push2ex）。异常池明细保留来源代码/名称，
+    供用户核对当日公开行情并进入个股研究，不附推荐、评分或交易动作。
+    昨日涨停池只参与晋级率计算，不向页面暴露明细。
     """
     # 定位最近交易日：从今天往前回溯，第一日有涨停池即取（非交易日/盘前返空则继续回溯）。
     # 🔴 回溯只对「成功但空」的日期进行。取数失败（None）时**必须停**：否则会把
@@ -273,7 +328,10 @@ def _emotion() -> dict:
         if pool is None:
             return {}
         if pool:
-            resolved, zt = d, pool
+            resolved = str(getattr(pool, "source_date", "") or d)
+            if len(resolved) != 8 or not resolved.isdigit() or resolved > d:
+                return {}
+            zt = pool
             break
     if not resolved:
         return {}
@@ -281,6 +339,15 @@ def _emotion() -> dict:
     zb = astock.em_zt_topic_pool("getTopicZBPool", resolved, "fbt:asc")  # 炸板池
     dt = astock.em_zt_topic_pool("getTopicDTPool", resolved, "fund:asc")  # 跌停池
     yzt = astock.em_zt_topic_pool("getYesterdayZTPool", resolved, "zs:desc")  # 昨涨停池
+
+    # Every detail pool must describe the same actual source trading day. A source may
+    # silently return its latest available pool for a weekend query; never date it as today.
+    if any(
+        rows is not None
+        and getattr(rows, "source_date", resolved) != resolved
+        for rows in (zt, zb, dt, yzt)
+    ):
+        return {}
 
     # 炸板池/跌停池取不到就整块标「未返回」，不拿 0 冒充：
     # 「跌停 0 家」在强势日是事实，在取数失败时是假话，二者不能混。
@@ -337,6 +404,11 @@ def _emotion() -> dict:
         "break_rate": break_rate,
         "promotion_rate": promotion_rate,
         "yzt_count": yzt_count,
+        "abnormal_pools": {
+            "limit_up": _pool_stock_rows(zt, "limit_up"),
+            "blown_up": _pool_stock_rows(zb, "blown_up"),
+            "limit_down": _pool_stock_rows(dt, "limit_down"),
+        },
     }
 
     # ---- 情绪周期评估（phase + 四维评分）----------------------------------
@@ -432,8 +504,33 @@ def _emotion_assessment(
 
 
 def get_short_term_emotion() -> dict:
-    """短线情绪（含缓存，5 分钟）。"""
-    return _cached("emotion", _emotion)
+    """短线情绪与异动池（实际 qdate、有界明细，5 分钟缓存）。"""
+    # Source-date semantics and pool rows changed; isolate this schema from old
+    # cached payloads that labeled a provider's latest pool with the request date.
+    return _cached("emotion_source_date_v2", _emotion)
+
+
+def get_short_term_emotion_snapshot() -> ShortTermEmotionSnapshot:
+    """Return the shared abnormal-pool cache with age/source metadata for alert gates."""
+    data = get_short_term_emotion()
+    try:
+        entry = json.loads(Path(_cache_path("emotion_source_date_v2")).read_text(encoding="utf-8"))
+        cached_epoch = float(entry["ts"])
+        age = time.time() - cached_epoch
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return ShortTermEmotionSnapshot(data, "eastmoney_push2ex", None, None, "unverified")
+    if not math.isfinite(cached_epoch) or not math.isfinite(age):
+        return ShortTermEmotionSnapshot(data, "eastmoney_push2ex", None, None, "unverified")
+    cached_at = datetime.fromtimestamp(cached_epoch, BEIJING).isoformat(timespec="seconds")
+    if age < 0:
+        freshness: Literal["fresh", "stale", "missing", "unverified"] = "unverified"
+        age_seconds = None
+    else:
+        freshness = "fresh" if age <= _TTL else "stale"
+        age_seconds = age
+    if not data:
+        freshness = "missing"
+    return ShortTermEmotionSnapshot(data, "eastmoney_push2ex", cached_at, age_seconds, freshness)
 
 
 def get_turnover_top() -> dict:

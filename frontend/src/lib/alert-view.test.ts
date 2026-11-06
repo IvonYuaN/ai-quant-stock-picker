@@ -3,7 +3,7 @@
 // 背景：`GET /api/alerts` 在异常/降级（alert_event 簿损坏、新版后端未部署）时
 // 可能给 {} 或部分字段。归一化层要把这些边界钉死，页面才不会白屏；同时
 // buildAlertInbox 的两区派生（actionable vs watch，Q3=A T+1 语义）必须可复现。
-import { buildAlertInbox, formatAlertPrice, groupPositionAlerts, normalizeAlerts, normalizeAlertEvent } from "./alert-view";
+import { ALERT_LEVEL_NAMES, buildAlertInbox, formatAlertPrice, groupPositionAlerts, normalizeAlerts, normalizeAlertEvent } from "./alert-view";
 import type { Holding } from "./api";
 
 const fullFixture = {
@@ -68,6 +68,12 @@ const full = normalizeAlerts(fullFixture);
 export const alertViewContract = {
   groupedRulesCountAsOnePosition: groupPositionAlerts(normalizeAlerts({ events: [fullFixture.events[0], { ...fullFixture.events[0], id: "other", level: "L5" }] })).length === 1,
   groupedRulesKeepBothEvidence: groupPositionAlerts(normalizeAlerts({ events: [fullFixture.events[0], { ...fullFixture.events[0], id: "other", level: "L5" }] }))[0].events.length === 2,
+  genericPriceRuleIsNotRenderedAsPositionRisk: groupPositionAlerts(normalizeAlerts({ events: [fullFixture.events[0], { ...fullFixture.events[0], id: "generic", kind: "price_observation", position_id: null, level: "OBSERVATION" }] })).length === 1,
+  marketEventIsNotRenderedAsPositionRisk: groupPositionAlerts(normalizeAlerts({ events: [{ ...fullFixture.events[0], id: "market", kind: "market_event", symbol: "", position_id: null, level: "MARKET_EVENT" }] })).length === 0,
+  marketEventKindSurvivesNormalization: normalizeAlertEvent({ id: "market", kind: "market_event" }).kind === "market_event",
+  conditionSignalUsesNoNumericThreshold: normalizeAlertEvent({ id: "signal", kind: "price_observation", level: "OBSERVATION", threshold_at: null }).threshold_at === null && formatAlertPrice(null) === "—",
+  observationLevelHasReadableLabel: ALERT_LEVEL_NAMES.OBSERVATION === "观察条件",
+  marketEventDoesNotEnterPositionInbox: buildAlertInbox(normalizeAlerts({ events: [{ ...fullFixture.events[0], id: "market", kind: "market_event", symbol: "", position_id: null, level: "MARKET_EVENT" }] })).openCount === 0,
   differentPositionsNeverMerge: groupPositionAlerts(normalizeAlerts({ events: [ { ...fullFixture.events[0], position_id: "old" }, { ...fullFixture.events[0], id: "other", position_id: "new" } ] })).length === 2,
   legacyEventUsesCurrentHoldingIdentity: groupPositionAlerts(
     normalizeAlerts({ events: [fullFixture.events[0], { ...fullFixture.events[0], id: "new", position_id: "current", level: "L5" }] }),

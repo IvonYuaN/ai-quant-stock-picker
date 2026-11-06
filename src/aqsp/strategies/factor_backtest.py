@@ -21,6 +21,7 @@ class FactorBacktestResult:
     ic_mean: float
     ic_std: float
     ic_ir: float
+    daily_ic: tuple[tuple[str, float], ...] = ()
 
 
 class FactorBacktester:
@@ -34,6 +35,12 @@ class FactorBacktester:
         quantile: int = 5,
         holding_days: int = 5,
     ) -> FactorBacktestResult:
+        """Backtest PIT factor values against forward holding returns.
+
+        `returns` is indexed by its realization session. For each non-null factor
+        observation, the outcome is read from `holding_days` available signal
+        sessions later for the same symbol. Missing factor sessions are skipped.
+        """
         if _is_date_symbol_multiindex(
             factor_values.index
         ) and _is_date_symbol_multiindex(returns.index):
@@ -58,6 +65,7 @@ class FactorBacktester:
         quantile: int = 5,
         holding_days: int = 5,
     ) -> FactorBacktestResult:
+        """Evaluate an expression at signal time and validate its forward horizon."""
         if not _is_date_symbol_multiindex(factor_frame.index) or not (
             _is_date_symbol_multiindex(returns.index)
         ):
@@ -81,6 +89,7 @@ class FactorBacktester:
         returns: pd.Series,
         quantile: int = 5,
     ) -> FactorBacktestResult:
+        """Validate a cross-sectional combination against next-session returns."""
         if not factors or not weights:
             return self._empty_result("")
 
@@ -110,12 +119,27 @@ class FactorBacktester:
         holding_days: int,
         factor_name: str,
     ) -> FactorBacktestResult:
-        aligned = pd.concat([factor_values, returns], axis=1).dropna()
+        if type(holding_days) is not int or holding_days < 1:
+            raise ValueError("holding_days must be a positive integer")
+        canonical_factor_values = factor_values.copy()
+        canonical_factor_values.index = canonical_factor_values.index.reorder_levels(
+            ["date", "symbol"]
+        )
+        aligned = pd.concat(
+            [
+                canonical_factor_values,
+                _align_forward_returns_to_signal_session(
+                    canonical_factor_values, returns, holding_days=holding_days,
+                ),
+            ],
+            axis=1,
+        ).dropna()
         if len(aligned) < 20:
             return self._empty_result(factor_name)
         aligned.columns = ["factor", "return"]
         daily_returns: list[tuple[object, float]] = []
         ic_values: list[float] = []
+        daily_ic: list[tuple[str, float]] = []
         for trade_date, group in aligned.groupby(level=0, sort=True):
             if len(group) < quantile * 2:
                 continue
@@ -137,6 +161,7 @@ class FactorBacktester:
             ic = group["factor"].corr(group["return"], method="spearman")
             if pd.notna(ic):
                 ic_values.append(float(ic))
+                daily_ic.append((str(trade_date), float(ic)))
         if not daily_returns:
             return self._empty_result(factor_name)
         strategy_returns = pd.Series(
@@ -152,6 +177,7 @@ class FactorBacktester:
             ic_mean=ic_mean,
             ic_std=ic_std,
             ic_ir=ic_mean / ic_std if ic_std > 0 else 0.0,
+            daily_ic=tuple(daily_ic),
         )
 
     def _combine_factor_scores(
@@ -187,6 +213,7 @@ class FactorBacktester:
         ic_mean: float,
         ic_std: float,
         ic_ir: float,
+        daily_ic: tuple[tuple[str, float], ...] = (),
     ) -> FactorBacktestResult:
         equity = np.cumprod(1 + strategy_returns.values / 100)
         total_return = float(equity[-1] - 1)
@@ -223,6 +250,7 @@ class FactorBacktester:
             ic_mean=round(ic_mean, 6),
             ic_std=round(ic_std, 6),
             ic_ir=round(ic_ir, 4),
+            daily_ic=daily_ic,
         )
 
     def generate_backtest_report(self, results: list[FactorBacktestResult]) -> str:
@@ -288,24 +316,63 @@ class FactorBacktester:
 
 
 def _is_date_symbol_multiindex(index: pd.Index) -> bool:
-    return isinstance(index, pd.MultiIndex) and index.nlevels >= 2
+    return (
+        isinstance(index, pd.MultiIndex)
+        and index.nlevels == 2
+        and set(index.names) == {"date", "symbol"}
+    )
+
+
+def _align_forward_returns_to_signal_session(
+    factor_values: pd.Series,
+    returns: pd.Series,
+    *,
+    holding_days: int,
+) -> pd.Series:
+    """Map each realized outcome back by N valid signal sessions per symbol."""
+    if not _is_date_symbol_multiindex(returns.index):
+        raise ValueError("forward returns require a (date, symbol) MultiIndex")
+    if not _is_date_symbol_multiindex(factor_values.index):
+        raise ValueError("factor values require a (date, symbol) MultiIndex")
+    if type(holding_days) is not int or holding_days < 1:
+        raise ValueError("holding_days must be a positive integer")
+
+    signals = factor_values.dropna().copy()
+    outcomes = returns.copy()
+    signals.index = signals.index.reorder_levels(["date", "symbol"])
+    outcomes.index = outcomes.index.reorder_levels(["date", "symbol"])
+    if signals.index.has_duplicates or outcomes.index.has_duplicates:
+        raise ValueError("factor values and forward returns must have unique date/symbol rows")
+    signals = signals.sort_index()
+    outcomes = outcomes.sort_index()
+    if signals.empty:
+        return pd.Series(dtype=float, index=signals.index)
+
+    symbol_values = signals.index.get_level_values("symbol").to_numpy()
+    date_values = signals.index.get_level_values("date").to_numpy()
+    realization_dates = pd.Series(index=signals.index, dtype=object)
+    for symbol in pd.unique(symbol_values):
+        positions = np.flatnonzero(symbol_values == symbol)
+        if len(positions) > holding_days:
+            realization_dates.iloc[positions[:-holding_days]] = date_values[
+                positions[holding_days:]
+            ]
+    valid = realization_dates.notna()
+    aligned = pd.Series(np.nan, index=signals.index, dtype=float)
+    if valid.any():
+        realization_index = pd.MultiIndex.from_arrays(
+            [
+                realization_dates.loc[valid].to_numpy(),
+                valid.index.get_level_values("symbol")[valid.to_numpy()],
+            ],
+            names=["date", "symbol"],
+        )
+        aligned.loc[valid] = outcomes.reindex(realization_index).to_numpy()
+    return aligned
 
 
 def _evaluate_expression_by_symbol(
     compiled: FactorExpression,
     frame: pd.DataFrame,
 ) -> pd.Series:
-    symbol_level = (
-        frame.index.names.index("symbol") if "symbol" in frame.index.names else 1
-    )
-    parts: list[pd.Series] = []
-    for _symbol, group in frame.sort_index().groupby(
-        level=symbol_level,
-        sort=False,
-    ):
-        evaluated = compiled.evaluate(group)
-        evaluated.index = group.index
-        parts.append(evaluated)
-    if not parts:
-        return pd.Series(dtype=float, index=frame.index)
-    return pd.concat(parts).sort_index()
+    return compiled.evaluate(frame.sort_index(level=["date", "symbol"]))

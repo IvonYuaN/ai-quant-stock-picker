@@ -3,7 +3,9 @@ from __future__ import annotations
 import os
 import sqlite3
 from collections.abc import Collection
+from dataclasses import dataclass
 from datetime import date, datetime
+from math import isfinite
 from pathlib import Path
 from typing import Optional
 
@@ -14,6 +16,14 @@ from aqsp.core.time import now_shanghai
 _SQLITE_TIMEOUT_SECONDS = 30.0
 _STALE_CACHE_RECENCY_DAYS = 7
 _DEFAULT_CACHE_WORKLOAD = "historical"
+
+
+@dataclass(frozen=True)
+class AdjustmentFactorRecord:
+    date: date
+    value: float
+    source: str
+    fetched_at: str | None
 
 
 def _has_implausible_amount_scale(df: pd.DataFrame) -> bool:
@@ -749,17 +759,38 @@ class DataCache:
             conn.commit()
 
     def get_adj_factor(self, symbol: str, date: date) -> Optional[float]:
+        record = self.get_adj_factor_record(symbol, date)
+        return record.value if record is not None else None
+
+    def get_adj_factor_record(
+        self, symbol: str, requested_date: date
+    ) -> AdjustmentFactorRecord | None:
+        """Return the latest adjustment factor known on or before a date."""
         with sqlite3.connect(self.db_path, timeout=_SQLITE_TIMEOUT_SECONDS) as conn:
             cursor = conn.execute(
                 """
-                SELECT adj_factor FROM adj_factors
+                SELECT date, adj_factor, source, fetched_at FROM adj_factors
                 WHERE symbol = ? AND date <= ?
                 ORDER BY date DESC LIMIT 1
                 """,
-                (symbol, date.strftime("%Y-%m-%d")),
+                (symbol, requested_date.strftime("%Y-%m-%d")),
             )
             row = cursor.fetchone()
-        return row[0] if row else None
+        if row is None:
+            return None
+        try:
+            factor = float(row[1])
+            factor_date = date.fromisoformat(str(row[0])[:10])
+        except (TypeError, ValueError):
+            return None
+        if not isfinite(factor) or factor <= 0:
+            return None
+        return AdjustmentFactorRecord(
+            date=factor_date,
+            value=factor,
+            source=str(row[2] or "unknown"),
+            fetched_at=str(row[3]) if row[3] else None,
+        )
 
     def get_adj_factors(
         self,
@@ -797,6 +828,83 @@ class DataCache:
                 latest_factor = factors_by_day[day]
             resolved[day] = latest_factor
         return resolved
+
+    def get_adj_factor_records_many(
+        self, symbols: list[str], dates: list[date]
+    ) -> dict[str, dict[date, AdjustmentFactorRecord]]:
+        """Resolve dated PIT factors in batches without filling missing history as 1.0."""
+        normalized_symbols = list(dict.fromkeys(str(symbol).strip() for symbol in symbols if str(symbol).strip()))
+        normalized_dates = sorted({item for item in dates if isinstance(item, date)})
+        if not normalized_symbols or not normalized_dates:
+            return {}
+
+        first_day = normalized_dates[0].strftime("%Y-%m-%d")
+        last_day = normalized_dates[-1].strftime("%Y-%m-%d")
+        result: dict[str, dict[date, AdjustmentFactorRecord]] = {}
+        batch_size = 400
+        with sqlite3.connect(self.db_path, timeout=_SQLITE_TIMEOUT_SECONDS) as conn:
+            for offset in range(0, len(normalized_symbols), batch_size):
+                batch = normalized_symbols[offset : offset + batch_size]
+                placeholders = ",".join("?" for _ in batch)
+                prior_rows = conn.execute(
+                    f"""
+                    SELECT factors.symbol, factors.date, factors.adj_factor,
+                           factors.source, factors.fetched_at
+                    FROM adj_factors AS factors
+                    JOIN (
+                        SELECT symbol, MAX(date) AS date
+                        FROM adj_factors
+                        WHERE symbol IN ({placeholders}) AND date <= ?
+                        GROUP BY symbol
+                    ) AS prior
+                      ON factors.symbol = prior.symbol AND factors.date = prior.date
+                    """,
+                    (*batch, first_day),
+                ).fetchall()
+                window_rows = conn.execute(
+                    f"""
+                    SELECT symbol, date, adj_factor, source, fetched_at
+                    FROM adj_factors
+                    WHERE symbol IN ({placeholders}) AND date > ? AND date <= ?
+                    ORDER BY symbol, date
+                    """,
+                    (*batch, first_day, last_day),
+                ).fetchall()
+                records_by_symbol: dict[str, list[AdjustmentFactorRecord]] = {}
+                for raw_symbol, raw_date, raw_factor, raw_source, raw_fetched_at in (
+                    *prior_rows,
+                    *window_rows,
+                ):
+                    try:
+                        factor_date = date.fromisoformat(str(raw_date)[:10])
+                        factor_value = float(raw_factor)
+                    except (TypeError, ValueError):
+                        continue
+                    if not isfinite(factor_value) or factor_value <= 0:
+                        continue
+                    records_by_symbol.setdefault(str(raw_symbol), []).append(
+                        AdjustmentFactorRecord(
+                            date=factor_date,
+                            value=factor_value,
+                            source=str(raw_source or "unknown"),
+                            fetched_at=str(raw_fetched_at) if raw_fetched_at else None,
+                        )
+                    )
+
+                for symbol, records in records_by_symbol.items():
+                    records.sort(key=lambda record: record.date)
+                    index = 0
+                    current: AdjustmentFactorRecord | None = None
+                    dated: dict[date, AdjustmentFactorRecord] = {}
+                    for requested_date in normalized_dates:
+                        while index < len(records) and records[index].date <= requested_date:
+                            current = records[index]
+                            index += 1
+                        if current is not None:
+                            dated[requested_date] = current
+                    if dated:
+                        result[symbol] = dated
+        return result
 
     def set_adj_factors(
         self, symbol: str, df: pd.DataFrame, source: str = "unknown"

@@ -16,7 +16,7 @@ import {
 import { api } from "@/lib/api";
 import { changeClass, formatEvidenceTime, formatSignedPct, formatYi } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import type { InfoStreamData, InfoStreamNewsItem } from "@/types/aqsp";
+import type { InfoStreamData, InfoStreamNarrative, InfoStreamNewsItem } from "@/types/aqsp";
 import { CatalystSectorSection } from "@/components/aqsp/CatalystSectorSection";
 
 function extractMessage(reason: unknown): string {
@@ -109,6 +109,45 @@ function NewsItem({ item }: { item: InfoStreamNewsItem }) {
   );
 }
 
+export function InfoStreamNarrativeSection({
+  narratives,
+  sourceStatus,
+}: {
+  narratives: readonly InfoStreamNarrative[];
+  sourceStatus: string;
+}) {
+  const sourceFailed = sourceStatus.startsWith("error");
+  return (
+    <section className="aq-section" data-info-narratives>
+      <SectionHeader
+        title="叙事主线概览"
+        description="按全部去噪概念标签归并；源未提供数据时间，只作市场环境参考，不是实时信号或推荐。"
+        count={sourceFailed ? "来源缺失" : `${narratives.length} 条主线`}
+      />
+      {sourceFailed ? (
+        <EmptyState title="叙事主线来源不可用" detail={sourceStatus} />
+      ) : narratives.length === 0 ? (
+        <EmptyState title="当前没有匹配的叙事主线" detail="概念来源正常，但过滤后没有形成可归并主线。" />
+      ) : (
+        <div className="aq-table-wrap">
+          <table className="aq-table">
+            <thead><tr><th>主线</th><th>概念标签</th><th className="aq-num">覆盖</th><th className="aq-num">平均涨跌</th><th className="aq-num">最大涨跌</th></tr></thead>
+            <tbody>{narratives.map((narrative) => (
+              <tr key={narrative.name}>
+                <td><strong>{narrative.name}</strong></td>
+                <td>{narrative.labels.join("、") || "—"}</td>
+                <td className="aq-num">{narrative.label_count}</td>
+                <td className={cn("aq-num", changeClass(narrative.mean_change_pct))}>{formatSignedPct(narrative.mean_change_pct)}</td>
+                <td className={cn("aq-num", changeClass(narrative.max_change_pct))}>{formatSignedPct(narrative.max_change_pct)}</td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
 export function InfoStreamPage() {
   const [data, setData] = useState<InfoStreamData | null>(null);
   const [error, setError] = useState("");
@@ -181,6 +220,8 @@ export function InfoStreamPage() {
           {conceptFailed ? (
             <ToneCallout tone="warn" title="缺材料：概念板块源故障" detail={data.sources.concept_board} />
           ) : null}
+
+          <InfoStreamNarrativeSection narratives={data.narratives} sourceStatus={data.sources.concept_board} />
 
           <section className="aq-section">
             <SectionHeader

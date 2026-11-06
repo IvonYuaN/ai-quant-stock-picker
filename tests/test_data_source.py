@@ -41,6 +41,20 @@ def test_data_cache_default_honors_runtime_path(monkeypatch, tmp_path) -> None:
     assert cache_path.exists()
 
 
+def test_sqlite_source_without_daily_cache_does_not_initialize_cache_database(
+    monkeypatch, tmp_path
+) -> None:
+    raw_path = tmp_path / "raw.sqlite"
+    cache_path = tmp_path / "cache.sqlite"
+    with sqlite3.connect(raw_path):
+        pass
+    monkeypatch.setenv("AQSP_CACHE_DB", str(cache_path))
+
+    SqliteDbSource(db_path=raw_path, cache=None)
+
+    assert not cache_path.exists()
+
+
 def test_akshare_source_has_name():
     try:
         source = AkshareSource()
@@ -77,6 +91,65 @@ def test_akshare_normalize_df():
     assert "volume" in normalized.columns
     assert normalized["date"].iloc[0] == "2026-05-27"
     assert normalized["symbol"].iloc[0] == "600000"
+
+
+def test_akshare_fetch_adjustment_factors_includes_pit_carry_in_before_start():
+    source = AkshareSource.__new__(AkshareSource)
+    calls = []
+
+    def _fetch_factors(**kwargs):
+        calls.append(kwargs)
+        return pd.DataFrame(
+            {
+                "date": ["2026-05-26", "2026-05-27", "2026-05-28"],
+                "hfq_factor": [0.9, 1.0, 1.1],
+            }
+        )
+
+    source._ak = SimpleNamespace(
+        stock_zh_a_daily=_fetch_factors
+    )
+
+    factors = source.fetch_adjustment_factors(
+        "600000.SH", date(2026, 5, 27), date(2026, 5, 28)
+    )
+
+    assert factors.to_dict("records") == [
+        {"date": "2026-05-26", "adj_factor": 0.9},
+        {"date": "2026-05-27", "adj_factor": 1.0},
+        {"date": "2026-05-28", "adj_factor": 1.1},
+    ]
+    assert calls == [{"symbol": "sh600000", "adjust": "hfq-factor"}]
+
+
+def test_akshare_fetch_adjustment_factors_fails_closed_on_empty_window():
+    source = AkshareSource.__new__(AkshareSource)
+    source._ak = SimpleNamespace(
+        stock_zh_a_daily=lambda **_kwargs: pd.DataFrame(
+            {"date": ["2026-05-29"], "hfq_factor": [1.0]}
+        )
+    )
+
+    with pytest.raises(DataError, match="截至目标日无有效记录"):
+        source.fetch_adjustment_factors(
+            "600000", date(2026, 5, 27), date(2026, 5, 28)
+        )
+
+
+@pytest.mark.parametrize(("symbol", "expected"), [("000001", "sz000001"), ("300750", "sz300750")])
+def test_akshare_fetch_adjustment_factors_uses_sina_market_prefix(symbol, expected):
+    source = AkshareSource.__new__(AkshareSource)
+    calls = []
+    source._ak = SimpleNamespace(
+        stock_zh_a_daily=lambda **kwargs: calls.append(kwargs)
+        or pd.DataFrame(
+            {"date": ["2026-05-27"], "hfq_factor": [1.0]}
+        )
+    )
+
+    source.fetch_adjustment_factors(symbol, date(2026, 5, 27), date(2026, 5, 28))
+
+    assert calls == [{"symbol": expected, "adjust": "hfq-factor"}]
 
 
 def test_eastmoney_normalize_df_preserves_meaningful_name():
@@ -1112,6 +1185,14 @@ def test_sqlite_db_source_fetch_daily_batches_symbols(
     assert result["600004"]["name"].iloc[0] == "600004.SH"
 
 
+def test_sqlite_db_source_reports_latest_available_daily_date(tmp_path: Path) -> None:
+    db_path = tmp_path / "astocks_raw.db"
+    _make_sqlite_daily_db(db_path, symbols=1, days=3)
+    source = SqliteDbSource(db_path=db_path, cache=None)
+
+    assert source.get_latest_daily_date() == date(2024, 1, 3)
+
+
 def test_sqlite_db_source_get_liquid_symbols_uses_latest_available_day(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -1371,6 +1452,62 @@ def test_sqlite_db_source_fetch_index_uses_raw_close_when_qfq_differs(
     df = result["000300"]
     assert df["close"].iloc[0] == 3505.0
     assert df["close"].iloc[0] != 3005.0
+
+
+def test_sqlite_db_source_keeps_colliding_stock_and_index_codes_separate(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "astocks_raw.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE stocks (ts_code TEXT PRIMARY KEY, name TEXT)")
+        conn.execute(
+            """
+            CREATE TABLE daily_qfq (
+                ts_code TEXT, trade_date TEXT, open REAL, high REAL, low REAL,
+                close_qfq REAL, volume REAL, amount REAL, close REAL,
+                UNIQUE(ts_code, trade_date)
+            )
+            """
+        )
+        conn.executemany(
+            "INSERT INTO stocks(ts_code, name) VALUES (?, ?)",
+            [("000002.SZ", "万科A"), ("000002.SH", "上证A股指数")],
+        )
+        conn.executemany(
+            """
+            INSERT INTO daily_qfq(ts_code, trade_date, open, high, low, close_qfq,
+                                  volume, amount, close)
+                VALUES (?, '20260930', ?, ?, ?, ?, 1, 1000000, ?)
+            """,
+            [
+                ("000002.SZ", 4.0, 4.5, 3.9, 4.26, 4.26),
+                ("000002.SH", 3490.0, 3510.0, 3480.0, 3500.0, 3500.0),
+            ],
+        )
+        conn.execute(
+            """
+            INSERT INTO daily_qfq(ts_code, trade_date, open, high, low, close_qfq,
+                                  volume, amount, close)
+            VALUES ('000002.SH', '20261001', 3500, 3520, 3490, 3510, 1, 1000000, 3510)
+            """
+        )
+
+    source = SqliteDbSource(db_path=db_path, cache=None)
+    stock = source.fetch_daily(
+        ["000002"], date(2026, 9, 30), date(2026, 9, 30), adjust=""
+    )["000002"]
+    index = source.fetch_index(
+        ["000002"], date(2026, 9, 30), date(2026, 9, 30)
+    )["000002"]
+
+    assert stock["name"].iloc[0] == "万科A"
+    assert stock["close"].iloc[0] == 4.26
+    assert index["name"].iloc[0] == "上证A股指数"
+    assert index["close"].iloc[0] == 3500.0
+    assert source.get_available_symbols() == ["000002"]
+    assert source.get_latest_daily_date() == date(2026, 9, 30)
+    with pytest.raises(DataError, match="无效指数代码"):
+        source.fetch_index(["000002.SZ"], date(2026, 9, 30), date(2026, 9, 30))
 
 
 def test_sqlite_db_source_intraday_raises_unsupported(tmp_path: Path) -> None:

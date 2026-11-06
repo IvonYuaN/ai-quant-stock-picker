@@ -336,7 +336,7 @@ export function TodayWorkspace() {
         <HeroState
           tone="warn"
           title="读不到研究快照"
-          detail={`${error}。可点「重试」重新读取；若持续失败，通常是后端未启动，或当日快照（data/runtime/home_dashboard_snapshot.json）尚未产出。`}
+          detail={`${error}。可点「重试」重新读取；若持续失败，可能是服务暂不可用或当日研究快照尚未生成。数据恢复前不会展示未核实的候选与评分。`}
           action={
             <button type="button" className="aq-btn aq-btn-primary" onClick={refresh}>
               <RefreshCw aria-hidden="true" />

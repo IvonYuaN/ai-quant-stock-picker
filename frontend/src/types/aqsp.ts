@@ -132,6 +132,12 @@ export interface AqspVariantSuite {
   coverage_pct: number;
   filters: string;
   last_error: string;
+  refresh_status?: "waiting" | "staged" | "completed" | "timed_out" | "skipped_lock" | "rejected" | "failed" | "unknown";
+  refresh_freshness?: "fresh" | "stale" | "unknown";
+  refresh_generated_at?: string;
+  refresh_message?: string;
+  profiles_staged?: number;
+  profiles_total?: number;
 }
 
 export interface AqspVariantHolding {

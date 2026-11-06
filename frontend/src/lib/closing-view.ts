@@ -18,7 +18,7 @@ export interface ClosingSectionView {
   /** 剥掉首行「## 标题」后的正文 markdown。 */
   body: string;
   available: boolean;
-  /** 缺数据段默认折叠（置灰），有数据段默认展开。 */
+  /** 六段报告统一默认折叠，避免长文本占满复盘首屏。 */
   collapsedByDefault: boolean;
 }
 
@@ -47,6 +47,6 @@ export function buildClosingSections(
     title: section.title,
     body: sectionBody(section.markdown ?? ""),
     available: section.available && (section.markdown ?? "").trim().length > 0,
-    collapsedByDefault: !(section.available && (section.markdown ?? "").trim().length > 0),
+    collapsedByDefault: true,
   }));
 }

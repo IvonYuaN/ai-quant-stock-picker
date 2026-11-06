@@ -30,13 +30,19 @@ python3 -m venv .venv
 | `GET /api/reports?code=600519` | 个股研报列表（含 PDF 链接） | requests |
 | `GET /api/announcements?code=600519` | 近期公告（东财） | requests |
 | `GET /api/news?code=600519` | 个股新闻 | akshare |
-| `GET /api/kline?code=600519` | K线 | mootdx |
+| `GET /api/kline?code=600519` | K线（`data` 保持 bars 数组；`meta` 标记来源、价格展示口径、as-of 与取数时点） | mootdx，日/周/月无数据时使用腾讯前复权展示备源；不用于回测/评分 |
 | `GET /api/finance?code=600519` | 季报财务快照（mootdx，前端未用 / 备用） | mootdx |
 | **资金面·筹码·信号（v3.3）** | `/api/margin` · `/block-trade` · `/holders` · `/dividend` · `/fund-flow` · `/dragon-tiger` · `/lockup` · `/blocks` · `/hot-concepts` · `/investor-qa` · `/industry` | requests |
 | `GET /api/market/overview` · `/api/radar` | 市场情绪+板块资金 · 资讯雷达 | akshare / stdlib |
 | `POST /api/chat` | 系统 AI 对话（function calling，AI 自己调数据工具） | requests |
 | `GET /api/portfolio` | 读取本地持仓与浮动盈亏 | stdlib |
 | `POST/DELETE /api/portfolio/*` | 修改/删除本地持仓、清仓记录；`POST /refresh` 强制刷新行情 | stdlib |
+| `GET/POST /api/aqsp/factor-definitions` | 读取或保存当前租户的因子草稿与不可变公式版本 | 本地租户存储 |
+| `GET/POST/DELETE /api/aqsp/signal-definitions*` | 管理当前租户的日线条件信号；监控已可固定并评估所选修订，策略/回测尚未连接消费者 | 本地租户存储 |
+| `POST /api/price-observation-rules` (`rule_type=signal`) | 把启用的条件信号修订固定到租户观察规则；后台以 raw 日线 + PIT 因子检查并写现有观察提醒账本 | `astocks_raw.db` + PIT factor cache |
+| `POST /api/aqsp/factor-definitions/{id}/versions/{n}/trial` | 本机 raw SQLite OHLCV 的有限分层收益与逐日 IC 诊断试算；结果不晋级 | `astocks_raw.db` |
+| `GET /api/aqsp/auction-benchmark` | 读取 Fuyao/同花顺竞价风向标名单；未配置时显式返回 `source_unavailable` | `FUYAO_API_KEY` + requests |
+| `GET /api/aqsp/abnormal-deviation` | 读取 3/10/30 日交易所偏移观察；依赖 raw SQLite 日线、指数与完整 PIT 因子 | 本地只读数据 |
 | `GET/POST/DELETE /api/myreports*` | 读取、上传、删除本地研报文件 | stdlib |
 | `POST /api/radar/refresh` | 强制刷新 RSS 缓存，会访问外部 RSS 源 | stdlib |
 
@@ -57,10 +63,36 @@ python3 -m venv .venv
 
 ### 未持仓候选观察
 
-- `GET /api/candidate-observations` 读取当前租户的观察记录；`POST` 采用明确的价格条件、失效条件与来源标识；`POST /{id}/stop` 以版本号停止观察。
-- 记录保存在独立的 `candidate_observations.json`，与持仓、评分和成交台账分离。现有 monitor 轮次读取活跃观察并使用带来源时点的行情检查；不要求页面保持打开，不自动下单。
+- `POST /api/candidate-observations/analyze` 要求本人填写问题和观察期限，并可补本人假设与反方理由；AI 只把它们作为个人上下文，不能当市场证据或改确定性评分。
+- `GET /api/candidate-observations` 读取当前租户的观察与暂缓/不考虑决定；`POST` 采用明确的价格条件、失效条件与来源标识；`POST /decision` 以当前候选快照和 revision 保存人工决定；`POST /{id}/stop` 以版本号停止观察；`PUT /{id}/review` 记录人工结果、过程评价、经验和可选成交凭据编号。
+- 记录保存在独立的 `candidate_observations.json`，与持仓、评分和成交台账分离。采用时固化 AI 分析/证据快照；实际成交只引用现有 `trade_journal` 凭据编号，不复制成交事实。
+- 现有 monitor 轮次读取活跃观察并使用带来源时点的行情检查；股票转为真实持仓时，候选观察收束并记录 `position_id`。不要求页面保持打开，不自动下单。
 - 采用时服务端核验租户内完整 AI 分析、候选快照身份、条件内容、分析生成时点和实时行情时点；分析与行情过期或候选快照变化时拒绝。AI 输出仍是待人工判断的材料，不改分数、风控或持仓。
 - 到价通过现有通知运行时按观察 ID 与采用版本去重。监控轮次返回行情缺失/过期原因；到价只提醒人工复核，不自动交易。
+- 复盘写入使用观察 revision 做 CAS；成交凭据必须存在于当前租户、当前股票的真实成交账本。研究快照的 100 条滚动分析保留不影响已采用记录的复盘快照。
+- 暂缓/不考虑决定同样保存候选快照、个人问题/期限/假设/反方和审计历史；只有当前快照可写，已有活跃观察或真实持仓时拒绝写入冲突决定。采用同一快照的观察条件后，原决定转为 `adopted`，不删除历史。
+
+### 通用单标的价格观察
+
+- `GET/POST /api/price-observation-rules` 读取或创建当前租户的代码、1–5 条价格条件、AND/OR 关系、提示级别、再次提醒冷却和本人备注；旧单条件请求继续兼容。`PATCH /api/price-observation-rules/{id}` 以 `expected_revision` 暂停或恢复。每租户最多启用 50 条，重复活动规则与当前持仓标的会被拒绝。
+- 规则独立存于 `price_observation_rules.json`，不混入候选或持仓对象；规则变更使用租户隔离存储、文件锁、原子替换和 revision CAS。人工检查只接受有来源且通过 `position_quote_issue` 新鲜度门禁的行情。标的后来成为持仓时，活动规则在该轮写入 `transferred` 与 `position_id` 审计并结束候选观察，不能恢复；后续由持仓工作区管理。
+- 评估复用现有 LIVE monitor 轮次和同批报价，命中写入既有 `alert_events.json`，保留规则身份/版本、报价来源/时点，并支持原收件箱处置；暂停规则会同步收束其 OPEN 到价事件，重复暂停可修复事件同步中断。外发通知不由这类观察规则触发；到价只表示价格条件成立，不代表买卖信号或成交。
+- 全市场涨停/炸板/跌停观察规则单独存于租户 `market_event_rules.json`；复用东财异常池文件缓存，并要求缓存不超过 5 分钟、实际交易日为今天。陈旧/缺数只记录跳过，不解除 OPEN 事件；有效触发写入同一 `alert_events.json`，但不进入持仓分组或外部通知队列。
+- 行情过期、来源缺失或无效时记录跳过原因，不生成命中，也不关闭此前提醒。冷却只抑制同一规则重新越线后的站内重复提醒；策略规则、个股指标信号、全市场扫描和规则级 Webhook 尚未实现。
+
+### 个人决策索引
+
+- `GET /api/aqsp/decision-history` 是只读投影，可按 `symbol`、`kind`、`status`、`since` 和 `limit` 筛选候选决定/观察、持仓根计划和正式信号复盘。
+- 返回的每类记录保留原领域 ID、来源快照身份和原页面链接；此接口不写入、不合并持仓/候选/正式复盘模型，也不复制成交事实。
+- 正式信号复盘仍使用历史 `reviews.jsonl` 单用户存储；当当前租户不是 `local` 时，该来源返回 `available=false` 和原因，避免跨租户泄漏。
+- 一个来源损坏时保留其他可读取来源，并单独标出来源错误。
+
+### 因子公式研究边界
+
+- 因子定义保存在当前租户的 `factor_definitions.json`；编辑创建不可变版本，revision 使用 CAS，当前只有 `draft` 状态可写。
+- 诊断试算只读取本机 `sqlite_db` 且 `price_mode=raw` 的 OHLCV，需显式给 20–200 个代码、最多 120 个自然日窗口、1–20 个持有交易日和 2–10 层分位。未来收益只作为验证标签回映到过去的信号日期，不进入表达式输入。
+- 当前字段范围不含财务 PIT enrichment；样本不完整、来源/价基不合规或窗口不足会返回阻断状态。试算记录标为 `preview_only`/`blocked`，不改候选分数、不产生正式 OOS gate，也不能晋级或运行策略。
+- 新版 `rank()` 是同交易日的截面排序；`ts_rank()` 与 `ts_*` 窗口按单只股票的历史交易日滚动。前端只允许白名单表达式，不执行 Python 属性或任意函数。
 
 `/api/chat` 请求体：
 ```json
@@ -85,6 +117,10 @@ export VR_ALLOW_ORIGINS="https://your-frontend-host"
 设置 `VR_API_KEY` 也会自动进入公网模式。公网模式下除 `/api/health` 外所有 `/api/*` 都要求 `Authorization: Bearer <VR_API_KEY>`，包括 portfolio、chat、研报上传/删除和 RSS 强制刷新；未配置 key 时接口失败关闭。`VR_ALLOW_ORIGINS` 只接受明确的源，公网模式会忽略 `*`；前后端同源部署可不配置它。公网仍应通过 HTTPS 反向代理，并只暴露代理入口。
 
 `POST /api/chat` 会向请求提供的 OpenAI 兼容 `baseURL` 发起请求。公网模式会阻止云元数据、内网、本机地址及其 IPv4-mapped IPv6 写法（例如 `::ffff:127.0.0.1`），本地模式仍允许本机模型地址。
+
+竞价风向标只在服务端配置 `FUYAO_API_KEY` 后读取 Fuyao/同花顺名单。未配置或来源不可用会返回明确状态，不会以其他榜单补位。名单会尝试关联本地 SQLite raw 日线；当日开盘至收盘只比较同日 raw 价格，跨日结果要求 PIT 因子齐全。全市场 9:25 竞价扫描和追高风险统计仍未接入。
+
+多日偏移只读取已完成的本机 `sqlite_db` raw 日线，按个股代码选择优先指数并显式标记回退；股票跨日收益使用端点日期 PIT 因子，缺 raw bar、基准日期或因子时不计算该窗口。响应标注数据日/freshness/覆盖数；滞后数据只作历史观察，阻断状态不等于“无异动”。当前不外推盘中实时偏移。
 
 ## 2. MCP Server（给 Claude Code / 高手 agent）
 

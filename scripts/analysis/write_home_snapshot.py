@@ -2296,46 +2296,95 @@ def _variant_results_payload() -> tuple[dict[str, Any] | None, str]:
     return payload, ""
 
 
-def _variant_refresh_status_error() -> str:
+def _variant_refresh_status() -> HomeSnapshotVariantSuite:
     path = _runtime_json_path(
         "AQSP_VARIANT_REFRESH_STATUS",
         "data/runtime/variant_refresh_status.json",
     )
     payload = _read_json_object(path)
     if not payload:
-        return ""
+        return HomeSnapshotVariantSuite()
     status = _text(payload.get("status"))
-    message = _text(payload.get("message"))
-    reason = _text(payload.get("reason"))
+    known_statuses = {
+        "waiting",
+        "staged",
+        "completed",
+        "timed_out",
+        "skipped_lock",
+        "rejected",
+        "failed",
+    }
+    if status not in known_statuses:
+        status = "unknown"
     generated_at = _text(payload.get("generated_at"))
-    if status == "waiting" and generated_at[:10] != now_shanghai().date().isoformat():
+    def count_value(key: str) -> int:
+        try:
+            return max(0, int(payload.get(key) or 0))
+        except (TypeError, ValueError):
+            return 0
+
+    stale_waiting = (
+        status == "waiting"
+        and generated_at[:10] != now_shanghai().date().isoformat()
+    )
+    return HomeSnapshotVariantSuite(
+        refresh_status=status,
+        refresh_freshness=(
+            "stale"
+            if stale_waiting
+            else "fresh"
+            if status == "waiting" and generated_at
+            else "unknown"
+        ),
+        refresh_generated_at=generated_at,
+        refresh_message=(
+            "等待状态已过期，等待下一次正式刷新。"
+            if stale_waiting
+            else _text(payload.get("message"))[:240]
+        ),
+        profiles_staged=count_value("profiles_staged"),
+        profiles_total=count_value("profiles_total"),
+    )
+
+
+def _variant_refresh_status_error(status: HomeSnapshotVariantSuite) -> str:
+    """Keep the legacy blocker text when no qualified artifact is available."""
+    message = status.refresh_message
+    current_status = status.refresh_status
+    staged = status.profiles_staged
+    total = status.profiles_total
+    if status.refresh_freshness == "stale":
         return "变体调度状态已过期，等待下一次正式刷新。"
-    staged = int(payload.get("profiles_staged") or 0)
-    total = int(payload.get("profiles_total") or 0)
-    if status == "staged":
+    if current_status == "staged":
         progress = f"已完成 {staged}/{total} 个变体" if total else "已写入分段 staging"
         return f"变体分段构建中：{progress}；{message or '等待下一错峰窗口继续'}"
-    if status == "waiting":
+    if current_status == "waiting":
         return f"变体等待：{message or '等待下一个错峰运行窗口'}"
-    if status == "completed":
+    if current_status in {"completed", "unknown"}:
         return ""
-    if status in {"timed_out", "skipped_lock", "rejected", "failed"}:
-        detail = reason or message
-        return f"变体未发布：{detail or status}"
+    if current_status in {"timed_out", "skipped_lock", "rejected", "failed"}:
+        return f"变体未发布：{message or current_status}"
     return ""
 
 
 def _variant_suite_snapshot() -> HomeSnapshotVariantSuite:
     """Read bounded metadata from the isolated experiment artifact."""
+    refresh = _variant_refresh_status()
     payload, error = _variant_results_payload()
     if not payload:
         universe = _universe_snapshot()
         if universe.last_error:
             return HomeSnapshotVariantSuite(
-                last_error=f"变体等待：{universe.last_error}"
+                **{
+                    **refresh.__dict__,
+                    "last_error": f"变体等待：{universe.last_error}",
+                }
             )
         return HomeSnapshotVariantSuite(
-            last_error=_variant_refresh_status_error() or error
+            **{
+                **refresh.__dict__,
+                "last_error": _variant_refresh_status_error(refresh) or error,
+            }
         )
     universe = payload.get("universe")
     if not isinstance(universe, dict):
@@ -2356,6 +2405,12 @@ def _variant_suite_snapshot() -> HomeSnapshotVariantSuite:
         cycle_id=int(universe.get("cycle_id") or 0),
         coverage_pct=float(universe.get("coverage_pct") or 0.0),
         filters=_text(universe.get("filters")),
+        refresh_status=refresh.refresh_status,
+        refresh_freshness=refresh.refresh_freshness,
+        refresh_generated_at=refresh.refresh_generated_at,
+        refresh_message=refresh.refresh_message,
+        profiles_staged=refresh.profiles_staged,
+        profiles_total=refresh.profiles_total,
     )
 
 

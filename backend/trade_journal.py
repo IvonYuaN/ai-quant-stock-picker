@@ -85,6 +85,25 @@ def read_journal(code: str) -> dict[str, Any]:
         return _view(_data(), code)
 
 
+def read_receipts() -> list[dict[str, Any]]:
+    """Read actual-fill receipts from the current tenant without migration or inference."""
+    path = Path(pf._pf_file())
+    if not path.is_file():
+        return []
+    with pf._LOCK:
+        try:
+            with path.open(encoding="utf-8") as stream:
+                payload = json.load(stream)
+        except FileNotFoundError:
+            return []
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ValueError("无法读取当前租户成交凭据") from exc
+    receipts = payload.get("trade_receipts", []) if isinstance(payload, dict) else None
+    if not isinstance(receipts, list) or any(not isinstance(item, dict) for item in receipts):
+        raise ValueError("当前租户成交凭据格式无效")
+    return deepcopy(receipts)
+
+
 def _code(code: str) -> None:
     if not isinstance(code, str) or len(code) != 6 or not code.isascii() or not code.isdigit():
         raise ValueError('代码必须是6位数字')

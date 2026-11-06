@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+from datetime import datetime, timedelta
 from collections.abc import Callable, Sequence
 from uuid import uuid4
 
@@ -232,6 +233,8 @@ def _upsert_reminders_locked(
         by_key[key] = base
         new_events.append(base)
     for event in events:
+        if event.get("kind") in {"price_observation", "market_event"}:
+            continue
         if (
             active_symbols is not None
             and event.get("symbol") not in active_symbols
@@ -249,6 +252,273 @@ def _upsert_reminders_locked(
                 event["updated_at"] = stamp
     _save(events)
     return new_events
+
+
+def upsert_price_observation_events(
+    triggered: list[dict], *, checked_rule_ids: set[str],
+) -> list[dict]:
+    """Write generic price-rule hits into the existing tenant alert journal."""
+    with _LOCK, advisory_lock(_file()):
+        events = _load()
+        by_key = {_dedup_key(event): event for event in events}
+        stamp = _now_iso()
+        current_keys: set[str] = set()
+        created: list[dict] = []
+        for item in triggered:
+            rule_id = f"price-observation:{item['id']}"
+            key = _dedup_key({"rule_id": rule_id, "rule_revision": item["revision"]})
+            current_keys.add(key)
+            existing = by_key.get(key)
+            if existing and existing.get("status") != "OPEN" and existing.get("condition_active", True):
+                existing["updated_at"] = stamp
+                continue
+            cooldown_minutes = int(item.get("cooldown_minutes", 0) or 0)
+            if existing and cooldown_minutes > 0:
+                try:
+                    last_emitted = datetime.fromisoformat(
+                        str(existing.get("last_emitted_at") or existing.get("created_at"))
+                    )
+                    if last_emitted + timedelta(minutes=cooldown_minutes) > now_shanghai():
+                        continue
+                except (TypeError, ValueError):
+                    pass
+            if item.get("rule_type") == "signal":
+                signal_name = str(item.get("signal_name") or item.get("signal_id") or "条件信号")
+                signal_revision = int(item.get("signal_revision") or 0)
+                basis = {
+                    "rule": f"{item['symbol']} 条件信号：{signal_name}",
+                    "actual": f"raw 日线条件命中；数据日 {item['quote_as_of']}；定义修订 r{signal_revision}",
+                    "evidence": item.get("source") or "条件信号来源未标注",
+                    "signal_id": item.get("signal_id"),
+                    "signal_revision": signal_revision,
+                    "signal_definition_sha256": item.get("signal_definition_sha256"),
+                }
+                threshold_at = None
+            elif item.get("rule_type") == "indicator":
+                metric = str(item.get("metric") or "indicator")
+                metric_label = {"rsi12": "RSI(12)"}.get(metric, metric.upper())
+                comparator = "≥" if item.get("comparator") == "at_or_above" else "≤"
+                threshold = float(item["threshold"])
+                actual = float(item["indicator_value"])
+                basis = {
+                    "rule": f"{item['symbol']} {metric_label} {comparator} {threshold:g}",
+                    "actual": f"{metric_label} {actual:.2f}；数据日 {item['quote_as_of']}",
+                    "evidence": item.get("source") or "指标来源未标注",
+                }
+                threshold_at = threshold
+            else:
+                conditions = item.get("conditions") or [{
+                    "comparator": item.get("comparator"), "price": item.get("price"),
+                }]
+                condition_texts = [
+                    f"{'达到或高于' if row.get('comparator') == 'at_or_above' else '达到或低于'} {float(row['price']):.4f} 元"
+                    for row in conditions
+                ]
+                joiner = " 且 " if item.get("combination", "all") == "all" else " 或 "
+                matched = [row for row in (item.get("matched_conditions") or []) if row.get("triggered")]
+                basis = {
+                    "rule": f"{item['symbol']} {joiner.join(condition_texts)}",
+                    "actual": f"检查价 {item['current_price']:.4f}；命中 {len(matched)}/{len(conditions)} 条；行情 {item['quote_as_of']}",
+                    "evidence": item.get("source") or "行情来源未标注",
+                }
+                threshold_at = float(conditions[0]["price"])
+            row = {
+                "id": uuid4().hex, "kind": "price_observation", "level": "OBSERVATION",
+                "severity": item.get("severity", "info"),
+                "symbol": item["symbol"], "position_id": None,
+                "trigger_at": item["current_price"], "threshold_at": threshold_at,
+                "sellable_now": False,
+                "action_hint": "满足条件信号，请人工复核" if item.get("rule_type") == "signal" else "满足观察指标，请人工复核" if item.get("rule_type") == "indicator" else "到达观察条件，请人工复核",
+                "t1_note": "观察条件不代表买卖信号或成交",
+                "basis_json": basis, "status": "OPEN", "handled_at": None,
+                "handled_note": "", "ignore_streak": 0, "created_at": stamp,
+                "updated_at": stamp, "rule_id": rule_id,
+                "observation_rule_id": item["id"], "rule_revision": item["revision"],
+                "condition_active": True, "freq_mode": "once",
+                "last_notified_at": None, "last_emitted_at": stamp,
+                "quote_as_of": item["quote_as_of"], "quote_source": item.get("source", ""),
+                "user_note": item.get("note", ""),
+                "cooldown_minutes": cooldown_minutes,
+            }
+            if existing and existing.get("status") == "OPEN":
+                existing.update(
+                    trigger_at=row["trigger_at"], threshold_at=row["threshold_at"],
+                    basis_json=basis, updated_at=stamp, quote_as_of=row["quote_as_of"],
+                    quote_source=row["quote_source"], condition_active=True,
+                    severity=row["severity"], cooldown_minutes=cooldown_minutes,
+                )
+                continue
+            events.append(row)
+            by_key[key] = row
+            created.append(row.copy())
+        for event in events:
+            if event.get("observation_rule_id") not in checked_rule_ids:
+                continue
+            if _dedup_key(event) not in current_keys:
+                event["condition_active"] = False
+                if event.get("status") == "OPEN":
+                    event["status"] = "EXPIRED"
+                    event["updated_at"] = stamp
+        _save(events)
+        return created
+
+
+def close_price_observation_rule_events(rule_id: str, reason: str) -> int:
+    """Resolve OPEN observation events after a rule is paused or handed off."""
+    stamp = _now_iso()
+    with _LOCK, advisory_lock(_file()):
+        events = _load()
+        changed = 0
+        for event in events:
+            if (
+                event.get("kind") != "price_observation"
+                or event.get("observation_rule_id") != rule_id
+                or event.get("status") != "OPEN"
+            ):
+                continue
+            event.update(
+                status="EXPIRED",
+                condition_active=False,
+                observation_resolution=reason,
+                updated_at=stamp,
+            )
+            changed += 1
+        if changed:
+            _save(events)
+        return changed
+
+
+def upsert_market_event_rule_events(
+    triggered: list[dict], *, checked_rule_ids: set[str]
+) -> list[dict]:
+    """Persist market-wide abnormal-pool observations without position semantics."""
+    with _LOCK, advisory_lock(_file()):
+        events = _load()
+        by_key = {_dedup_key(event): event for event in events}
+        stamp = _now_iso()
+        current_keys: set[str] = set()
+        created: list[dict] = []
+        for item in triggered:
+            rule_id = f"market-event:{item['id']}"
+            key = _dedup_key({"rule_id": rule_id, "rule_revision": item["revision"]})
+            current_keys.add(key)
+            existing = by_key.get(key)
+            cooldown_minutes = int(item.get("cooldown_minutes", 0) or 0)
+            if existing and existing.get("status") == "OPEN":
+                existing.update(
+                    trigger_at=item["count"],
+                    threshold_at=item["min_count"],
+                    basis_json=_market_event_basis(item),
+                    severity=item["severity"],
+                    updated_at=stamp,
+                    event_trade_date=item["trade_date"],
+                    source_cached_at=item.get("cached_at"),
+                    event_examples=item["examples"],
+                )
+                continue
+            if existing and existing.get("condition_active", True):
+                existing["updated_at"] = stamp
+                continue
+            if existing and cooldown_minutes > 0:
+                try:
+                    last_emitted = datetime.fromisoformat(
+                        str(existing.get("last_emitted_at") or existing.get("created_at"))
+                    )
+                    if last_emitted + timedelta(minutes=cooldown_minutes) > now_shanghai():
+                        continue
+                except (TypeError, ValueError):
+                    pass
+            row = {
+                "id": uuid4().hex,
+                "kind": "market_event",
+                "level": "MARKET_EVENT",
+                "severity": item["severity"],
+                "symbol": "",
+                "position_id": None,
+                "trigger_at": item["count"],
+                "threshold_at": item["min_count"],
+                "pnl_pct": 0.0,
+                "sellable_now": False,
+                "action_hint": "全市场异动条件满足，请人工核对",
+                "t1_note": "市场观察不构成个股买卖建议",
+                "basis_json": _market_event_basis(item),
+                "status": "OPEN",
+                "handled_at": None,
+                "handled_note": "",
+                "ignore_streak": 0,
+                "created_at": stamp,
+                "updated_at": stamp,
+                "rule_id": rule_id,
+                "market_event_rule_id": item["id"],
+                "rule_revision": item["revision"],
+                "condition_active": True,
+                "freq_mode": "once",
+                "last_notified_at": None,
+                "last_emitted_at": stamp,
+                "cooldown_minutes": cooldown_minutes,
+                "event_trade_date": item["trade_date"],
+                "source_cached_at": item.get("cached_at"),
+                "event_examples": item["examples"],
+                "quote_as_of": item["trade_date"],
+                "quote_source": item["source"],
+                "user_note": item.get("note", ""),
+            }
+            if existing:
+                row["ignore_streak"] = int(existing.get("ignore_streak") or 0)
+            events.append(row)
+            by_key[key] = row
+            created.append(row.copy())
+        for event in events:
+            if (
+                event.get("kind") == "market_event"
+                and event.get("market_event_rule_id") in checked_rule_ids
+                and _dedup_key(event) not in current_keys
+            ):
+                event["condition_active"] = False
+                if event.get("status") == "OPEN":
+                    event.update(status="EXPIRED", updated_at=stamp)
+                else:
+                    event["updated_at"] = stamp
+        _save(events)
+        return created
+
+
+def _market_event_basis(item: dict) -> dict[str, str]:
+    labels = {"limit_up": "涨停池", "blown_up": "炸板池", "limit_down": "跌停池"}
+    examples = "、".join(
+        str(row.get("name") or row.get("code") or "")
+        for row in item.get("examples", [])
+        if row.get("name") or row.get("code")
+    )
+    return {
+        "rule": f"{labels.get(item['event_type'], item['event_type'])}标的数 ≥ {item['min_count']}",
+        "actual": f"{item['trade_date']} 返回 {item['count']} 只" + (f"；示例 {examples}" if examples else ""),
+        "evidence": f"{item['source']} · 缓存年龄 {int(item['cache_age_seconds'] or 0)} 秒",
+    }
+
+
+def close_market_event_rule_events(rule_id: str, reason: str) -> int:
+    """Expire open market-event observations after their rule is paused."""
+    stamp = _now_iso()
+    with _LOCK, advisory_lock(_file()):
+        events = _load()
+        changed = 0
+        for event in events:
+            if (
+                event.get("kind") == "market_event"
+                and event.get("market_event_rule_id") == rule_id
+                and event.get("status") == "OPEN"
+            ):
+                event.update(
+                    status="EXPIRED",
+                    condition_active=False,
+                    observation_resolution=reason,
+                    updated_at=stamp,
+                )
+                changed += 1
+        if changed:
+            _save(events)
+        return changed
 
 
 def list_events(status: str | None = None, symbol: str | None = None) -> list[dict]:
@@ -344,6 +614,7 @@ def pending_notifications(eligible_rules: set[str] | None = None) -> list[dict]:
             e
             for e in events
             if e.get("status") == "OPEN"
+            and e.get("kind") != "market_event"
             and (e.get("level") != "L1" or e.get("sellable_now"))
             and (
                 eligible_rules is None

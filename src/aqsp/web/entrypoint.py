@@ -22,6 +22,15 @@ CANONICAL_ENTRY_MARKER_GROUPS = (
     ("AQSP", "今日决策"),
     ("AQSP", "当前研究"),
     ("AQSP", "当天研究"),
+    ("AQSP", "研究复盘"),
+    ("AQSP", "研究验证"),
+    ("AQSP", "策略研究"),
+    ("AQSP", "数据与能力"),
+    ("AQSP", "市场环境"),
+    ("AQSP", "异动监控"),
+    ("AQSP", "个股研究"),
+    ("AQSP", "离页跟进"),
+    ("AQSP", "条件信号"),
 )
 CANONICAL_DASHBOARD_ARTIFACT_NAMES = frozenset(("index.html", "archive.html"))
 LEGACY_ENTRY_MARKERS = (

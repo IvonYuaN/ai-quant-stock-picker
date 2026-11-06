@@ -301,12 +301,12 @@ def performance_payload() -> dict[str, Any]:
     """汇总纸面交易台账的命中率与策略表现（只读）。"""
     path = _ledger_path()
     if not path.exists():
-        return _unavailable(f"未找到台账文件：{path}")
+        return _unavailable("未找到台账文件。请确认正式信号台账已生成后重试。")
 
     try:
         rows = read_ledger(path)
-    except Exception as exc:  # noqa: BLE001 —— 边界统一兜底
-        return _unavailable(f"台账读取失败：{exc}")
+    except Exception:  # noqa: BLE001 —— 边界统一兜底
+        return _unavailable("正式信号台账读取失败，请检查本地数据或服务日志后重试。")
 
     if not rows:
         return _unavailable("台账为空，尚无已记录信号。")
@@ -339,8 +339,8 @@ def performance_payload() -> dict[str, Any]:
             weight_history_path=_weight_history_path(),
         )
         performances = learner.learn_from_ledger(settled, record_history=False)
-    except Exception as exc:  # noqa: BLE001 —— 边界统一兜底
-        degraded.append(f"策略级学习器未完成：{exc}")
+    except Exception:  # noqa: BLE001 —— 边界统一兜底
+        degraded.append("策略级学习器未完成，请检查服务日志。")
         performances = {}
 
     strategies: list[dict[str, Any]] = []
@@ -388,8 +388,8 @@ def performance_payload() -> dict[str, Any]:
             }
             for alert in alerts
         ]
-    except Exception as exc:  # noqa: BLE001
-        degraded.append(f"衰减检测未完成：{exc}")
+    except Exception:  # noqa: BLE001
+        degraded.append("衰减检测未完成，请检查服务日志。")
         decay_alerts = []
 
     notes: list[str] = [
@@ -462,7 +462,7 @@ def dashboard_metrics() -> dict[str, Any]:
     if not path.exists():
         return {
             "available": False,
-            "reason": f"未找到台账文件：{path}",
+            "reason": "未找到台账文件。请确认正式信号台账已生成后重试。",
             "overall_stats": None,
             "strategy_performance": [],
             "time_series": [],
@@ -472,10 +472,10 @@ def dashboard_metrics() -> dict[str, Any]:
 
     try:
         rows = read_ledger(path)
-    except Exception as exc:  # noqa: BLE001
+    except Exception:  # noqa: BLE001
         return {
             "available": False,
-            "reason": f"台账读取失败：{exc}",
+            "reason": "正式信号台账读取失败，请检查本地数据或服务日志后重试。",
             "overall_stats": None,
             "strategy_performance": [],
             "time_series": [],

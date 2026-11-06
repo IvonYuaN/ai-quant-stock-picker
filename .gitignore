@@ -30,6 +30,7 @@ aqsp-*.png
 dashboard-*.png
 aqsp-live-snapshot-*.md
 data/*.db
+backend/data/
 data/*.lock
 data/*.jsonl
 data/snapshots

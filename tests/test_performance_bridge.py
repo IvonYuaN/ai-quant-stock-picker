@@ -54,7 +54,18 @@ def test_missing_ledger_is_honest_not_error(tmp_path, monkeypatch):
     payload = pb.performance_payload()
     assert payload["available"] is False
     assert "未找到台账文件" in payload["reason"]
+    assert str(tmp_path) not in payload["reason"]
     assert payload["strategies"] == []
+
+
+def test_performance_bridge_missing_ledger_reason_when_dashboard_metrics_does_not_include_path(tmp_path, monkeypatch):
+    monkeypatch.setattr(pb, "_ledger_path", lambda: tmp_path / "private-ledger.jsonl")
+
+    payload = pb.dashboard_metrics()
+
+    assert payload["available"] is False
+    assert "未找到台账文件" in payload["reason"]
+    assert str(tmp_path) not in payload["reason"]
 
 
 def test_cold_start_suppresses_hit_rate(tmp_path, monkeypatch):

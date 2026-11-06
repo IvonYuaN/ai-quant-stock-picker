@@ -13,6 +13,7 @@ import type {
   IndustryRow,
   LianbanStock,
   MarketOverview,
+  AbnormalPool,
   SectorFlow,
   ShortTermEmotion,
   TurnoverStock,
@@ -113,6 +114,7 @@ export interface EmotionView {
   sealRate: number | null;
   breakRate: number | null;
   promotionRate: number | null;
+  abnormalPools: Record<"limit_up" | "blown_up" | "limit_down", AbnormalPool> | null;
 }
 
 export interface MarketView {
@@ -289,6 +291,7 @@ function buildEmotion(emotion: ShortTermEmotion | null | undefined): EmotionView
     sealRate: emotion.seal_rate ?? null,
     breakRate: emotion.break_rate ?? null,
     promotionRate: emotion.promotion_rate ?? null,
+    abnormalPools: emotion.abnormal_pools ?? null,
   };
 }
 

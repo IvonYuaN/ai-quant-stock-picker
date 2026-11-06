@@ -90,7 +90,11 @@ export function AqspWorkspaceProvider({ children }: { children: ReactNode }) {
           selectDate("");
           return;
         }
-        setError(reason instanceof ApiError ? reason.message : "研究快照加载失败");
+        setError(
+          reason instanceof ApiError && reason.status < 500
+            ? "研究快照请求未完成，请检查所选日期或访问权限后重试。"
+            : "研究快照暂不可用，请确认本地 API 服务正在运行后重试。",
+        );
       })
       .finally(() => {
         if (active && requestSequence.current === sequence) setLoading(false);

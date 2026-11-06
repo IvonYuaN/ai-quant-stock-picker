@@ -64,6 +64,31 @@ def test_sqlite_db_local_data_status_prefers_raw_default(
     assert local_data_status(entry) == "present"
 
 
+def test_local_data_status_uses_explicit_project_root_from_backend_cwd(
+    tmp_path, monkeypatch
+) -> None:
+    project_root = tmp_path / "project"
+    market_dir = project_root / "A股量化分析数据"
+    market_dir.mkdir(parents=True)
+    (market_dir / "astocks_raw.db").write_text("", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("AQSP_SQLITE_DB_PATH", raising=False)
+    entry = {item.id: item for item in list_registry_entries()}["sqlite_db"]
+
+    assert local_data_status(entry, project_root=project_root) == "present"
+
+
+def test_tdx_local_data_status_uses_explicit_project_root_from_backend_cwd(
+    tmp_path, monkeypatch
+) -> None:
+    project_root = tmp_path / "project"
+    (project_root / "private_data" / "tdx").mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+    entry = {item.id: item for item in list_registry_entries()}["tdx_vipdoc"]
+
+    assert local_data_status(entry, project_root=project_root) == "present"
+
+
 def test_data_registry_sort_prefers_runtime_ready_and_fresher_sources() -> None:
     ordered = sort_registry_entries(ready_only=True)
 

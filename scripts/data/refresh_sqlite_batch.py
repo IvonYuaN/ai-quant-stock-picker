@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import json
 import sqlite3
 import sys
@@ -11,6 +12,7 @@ import time
 from dataclasses import asdict, replace
 from datetime import date
 from pathlib import Path
+from typing import Iterator
 
 import pandas as pd
 
@@ -21,99 +23,15 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(project_root))
 
 from aqsp.core.time import get_previous_trading_day, now_shanghai, today_shanghai
+from aqsp.data.daily_universe import refreshable_daily_universe as _refresh_universe
 from aqsp.data.sqlite_db_source import SqliteDbSource
 from aqsp.data.sina_source import SinaSource
 from aqsp.utils.jsonl_io import atomic_write_text
 from scripts.update_sqlite_daily import UpdateSummary, update_sqlite_daily
 
 
-_MAIN_BOARD_PREFIXES = ("600", "601", "603", "605", "000", "001", "002", "003")
-_CHINEXT_PREFIXES = ("300", "301")
 _EOD_SNAPSHOT_READY_HOUR = 15
 _EOD_SNAPSHOT_READY_MINUTE = 5
-_ACTIVE_BASELINE_MIN_COVERAGE_RATIO = 0.8
-
-
-def _latest_available_day(source: SqliteDbSource, *, not_after: date) -> date | None:
-    with sqlite3.connect(source.db_path) as conn:
-        row = conn.execute(
-            """
-            WITH coverage AS (
-                SELECT trade_date, COUNT(DISTINCT ts_code) AS symbol_count
-                FROM daily_qfq
-                WHERE trade_date <= ?
-                GROUP BY trade_date
-            )
-            SELECT MAX(trade_date)
-            FROM coverage
-            WHERE symbol_count >= (
-                SELECT MAX(symbol_count) * ? FROM coverage
-            )
-            """,
-            (
-                not_after.strftime("%Y%m%d"),
-                _ACTIVE_BASELINE_MIN_COVERAGE_RATIO,
-            ),
-        ).fetchone()
-    raw = str((row or [""])[0] or "")
-    if len(raw) != 8 or not raw.isdigit():
-        return None
-    return date.fromisoformat(f"{raw[:4]}-{raw[4:6]}-{raw[6:]}")
-
-
-def _refresh_universe(
-    source: SqliteDbSource,
-    *,
-    universe_limit: int,
-    reference_day: date | None = None,
-) -> list[str]:
-    """Return the active, deterministic A-share refresh pool without turnover bias.
-
-    ``stocks`` deliberately retains historical symbols for research.  A daily
-    refresh must not treat those delisted records as missing current-day bars,
-    so a prior completed trading day is used as the active-listing baseline.
-    """
-    boards: tuple[list[str], list[str], list[str]] = ([], [], [])
-    for symbol in source.get_available_symbols():
-        code = str(symbol).strip()
-        name = source.get_symbol_name(code).upper().replace(" ", "")
-        if "ST" in name or "退" in name:
-            continue
-        if code.startswith(_MAIN_BOARD_PREFIXES[:4]):
-            boards[0].append(code)
-        elif code.startswith(_MAIN_BOARD_PREFIXES[4:]):
-            boards[1].append(code)
-        elif code.startswith(_CHINEXT_PREFIXES):
-            boards[2].append(code)
-
-    ordered = [sorted(board) for board in boards]
-    result: list[str] = []
-    max_length = max((len(board) for board in ordered), default=0)
-    for index in range(max_length):
-        for board in ordered:
-            if index < len(board):
-                result.append(board[index])
-    if reference_day is not None:
-        coverage_day = _latest_available_day(source, not_after=reference_day)
-        if coverage_day is None:
-            raise RuntimeError(
-                "sqlite daily source has no historical coverage baseline"
-            )
-        covered = set(
-            source.get_symbols_with_daily_coverage(
-                result,
-                coverage_day,
-                coverage_day,
-                min_rows=1,
-                min_coverage_ratio=1.0,
-            )
-        )
-        result = [symbol for symbol in result if symbol in covered]
-    if not result:
-        raise RuntimeError(
-            "sqlite daily source has no active eligible main-board or ChiNext symbols"
-        )
-    return result[:universe_limit] if universe_limit > 0 else result
 
 
 def _read_cursor(path: Path, *, target_day: date) -> int:
@@ -435,6 +353,29 @@ def main() -> int:
         or args.batches < 0
     ):
         raise SystemExit("batch size and timeouts must be positive")
+    with _exclusive_refresh_lock(args.state):
+        return _run_refresh(args)
+
+
+@contextmanager
+def _exclusive_refresh_lock(state_path: Path) -> Iterator[None]:
+    """Prevent the scheduled and user-triggered refresh from writing together."""
+    import fcntl
+
+    lock_path = state_path.with_name(f".{state_path.name}.run.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+") as handle:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise SystemExit("sqlite daily refresh is already running") from exc
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def _run_refresh(args: argparse.Namespace) -> int:
     target_day = (
         date.fromisoformat(args.target_date) if args.target_date else today_shanghai()
     )

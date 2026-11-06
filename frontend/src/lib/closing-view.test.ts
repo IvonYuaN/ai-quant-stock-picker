@@ -53,9 +53,9 @@ export const closingViewContract = {
   viewCountMatchesPayloadSections:
     buildClosingSections({ as_of: "x", sections: [mkSection("news", "## 快讯\n1", true)] }).length ===
     1,
-  availableSectionExpandedByDefault:
+  availableSectionCollapsedByDefault:
     buildClosingSections(mkPayload()).find((s) => s.key === "factor_ic")?.collapsedByDefault ===
-    false,
+    true,
   emptyMarkdownForcedUnavailable:
     buildClosingSections(mkPayload()).find((s) => s.key === "longhubang")?.available === false,
   whitespaceMarkdownForcedUnavailable:

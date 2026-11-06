@@ -8,6 +8,7 @@ import pandas as pd
 
 from aqsp.data.cache import DataCache
 from aqsp.core.errors import DataError
+from aqsp.data.source import DataSource
 
 logger = logging.getLogger(__name__)
 
@@ -20,8 +21,13 @@ class AdjustmentService:
     - point-in-time 复权因子管理
     """
 
-    def __init__(self, cache: DataCache | None = None):
+    def __init__(
+        self,
+        cache: DataCache | None = None,
+        factor_source: DataSource | None = None,
+    ):
         self.cache = cache or DataCache()
+        self.factor_source = factor_source
 
     def get_point_in_time_factors(self, symbol: str, dates: list[str]) -> pd.DataFrame:
         factors = []
@@ -82,25 +88,23 @@ class AdjustmentService:
 
     def fetch_and_cache_factors(self, symbol: str, start: date, end: date) -> None:
         try:
-            import akshare as ak
+            factor_source = self.factor_source
+            if factor_source is None:
+                from aqsp.data.source_factory import build_data_source
 
-            df = ak.stock_zh_a_adjust_factor(symbol=symbol)
-            if not df.empty:
-                df = df[["日期", "复权因子"]].rename(
-                    columns={"日期": "date", "复权因子": "adj_factor"}
+                factor_source = build_data_source("akshare", cache=None)
+            factors = factor_source.fetch_adjustment_factors(symbol, start, end)
+            if factors.empty:
+                raise DataError(
+                    f"复权因子为空: symbol={symbol}, start={start}, end={end}"
                 )
-                df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
-                df = df[
-                    (df["date"] >= start.strftime("%Y-%m-%d"))
-                    & (df["date"] <= end.strftime("%Y-%m-%d"))
-                ]
-                if not df.empty:
-                    self.cache.set_adj_factors(symbol, df, source="akshare")
-                    logger.info(
-                        "复权因子缓存成功: symbol=%s, count=%d", symbol, len(df)
-                    )
-                    return
-            raise DataError(f"复权因子为空: symbol={symbol}, start={start}, end={end}")
+            self.cache.set_adj_factors(symbol, factors, source=factor_source.name)
+            logger.info(
+                "复权因子缓存成功: symbol=%s source=%s count=%d",
+                symbol,
+                factor_source.name,
+                len(factors),
+            )
         except DataError:
             raise
         except Exception as exc:

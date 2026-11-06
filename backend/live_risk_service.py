@@ -5,9 +5,17 @@ from __future__ import annotations
 import math
 import json
 import re
+from datetime import date, datetime, timedelta
 from pathlib import Path
 import structlog
+import pandas as pd
 import portfolio as pf
+from aqsp.data.cache import DataCache
+from aqsp.core.errors import DataError
+from aqsp.core.time import latest_completed_trading_day
+from aqsp.data.adjust import AdjustmentService
+from aqsp.data.source_factory import build_data_source
+from price_observation_rules import IndicatorSnapshot, SignalSnapshot
 
 logger = structlog.get_logger(__name__)
 
@@ -16,9 +24,253 @@ class PortfolioReadError(RuntimeError):
     """Position storage or quotes could not be read."""
 
 
+def _indicator_snapshots(
+    rules: list[dict], *, checked_at: datetime
+) -> dict[str, IndicatorSnapshot]:
+    """Calculate configured indicators from fresh raw bars and PIT factors."""
+    indicator_rules = [
+        row for row in rules
+        if row.get("status") == "active" and row.get("rule_type") == "indicator"
+    ]
+    symbols = sorted({str(row["symbol"]) for row in indicator_rules})
+    if not symbols:
+        return {}
+
+    expected_as_of = latest_completed_trading_day(checked_at)
+    try:
+        source = build_data_source("sqlite_db", cache=None)
+        if source.price_mode() != "raw":
+            raise DataError("指标监控要求 raw 不复权 SQLite 日线")
+        latest = source.get_latest_daily_date()
+        if latest != expected_as_of:
+            actual = latest.isoformat() if latest else "缺失"
+            issue = f"日线数据陈旧：最新 {actual}，预期 {expected_as_of.isoformat()}"
+            return {
+                symbol: IndicatorSnapshot(None, actual if latest else None, "sqlite_db", issue)
+                for symbol in symbols
+            }
+        from datetime import timedelta
+        from aqsp.indicators import enrich_indicators
+
+        start = expected_as_of - timedelta(days=90)
+        frames = source.fetch_daily(symbols, start, expected_as_of, adjust="")
+        adjustment = AdjustmentService(cache=DataCache())
+        snapshots: dict[str, IndicatorSnapshot] = {}
+        for symbol in symbols:
+            frame = frames.get(symbol)
+            if frame is None or frame.empty or len(frame) < 13:
+                snapshots[symbol] = IndicatorSnapshot(
+                    None, expected_as_of.isoformat(), "sqlite_db", "RSI(12) 样本不足"
+                )
+                continue
+            raw_dates = frame.get("date")
+            bar_dates = (
+                pd.to_datetime(raw_dates, errors="coerce").dt.date
+                if raw_dates is not None
+                else None
+            )
+            symbol_as_of = None
+            if bar_dates is not None and not bar_dates.empty:
+                latest_value = bar_dates.max()
+                if not pd.isna(latest_value):
+                    symbol_as_of = latest_value
+            if symbol_as_of != expected_as_of:
+                actual = symbol_as_of.isoformat() if symbol_as_of else "缺失"
+                snapshots[symbol] = IndicatorSnapshot(
+                    None,
+                    actual if symbol_as_of else None,
+                    "sqlite_db",
+                    f"该标的日线陈旧：最新 {actual}，预期 {expected_as_of.isoformat()}",
+                )
+                continue
+            adjusted = adjustment.apply_qfq(frame)
+            adjusted["open"] = adjusted["open_qfq"]
+            adjusted["high"] = adjusted["high_qfq"]
+            adjusted["low"] = adjusted["low_qfq"]
+            adjusted["close"] = adjusted["close_qfq"]
+            enriched = enrich_indicators(adjusted)
+            value = enriched["rsi12"].iloc[-1]
+            if not isinstance(value, (int, float)) or not math.isfinite(float(value)):
+                issue = "RSI(12) 结果不可用"
+                snapshots[symbol] = IndicatorSnapshot(
+                    None, expected_as_of.isoformat(), "sqlite_db", issue
+                )
+                continue
+            snapshots[symbol] = IndicatorSnapshot(
+                float(value), expected_as_of.isoformat(), "sqlite_db"
+            )
+        return snapshots
+    except Exception as exc:  # noqa: BLE001 -- indicator failures stay visible and fail closed
+        logger.warning("indicator_observation_data_unavailable", error=str(exc))
+        return {
+            symbol: IndicatorSnapshot(None, None, "", "指标依据不可用")
+            for symbol in symbols
+        }
+
+
+def _signal_snapshots(
+    rules: list[dict], *, checked_at: datetime
+) -> dict[tuple[str, str], SignalSnapshot]:
+    """Evaluate pinned tenant signal definitions on fresh raw daily bars."""
+    import signal_definitions
+
+    signal_rules = [
+        row for row in rules
+        if row.get("status") == "active" and row.get("rule_type") == "signal"
+    ]
+    definitions: dict[tuple[str, str], dict] = {}
+    for row in signal_rules:
+        signal_id = str(row.get("signal_id") or "")
+        definition = row.get("signal_snapshot")
+        if isinstance(definition, dict):
+            definitions[(str(row.get("symbol", "")), signal_id)] = definition
+    if not definitions:
+        return {}
+
+    expected_as_of = latest_completed_trading_day(checked_at)
+    snapshots: dict[tuple[str, str], SignalSnapshot] = {}
+
+    def block(key: tuple[str, str], reason: str, *, as_of: str | None = None) -> None:
+        definition = definitions.get(key) or {}
+        rule = next((item for item in signal_rules if str(item.get("symbol")) == key[0] and str(item.get("signal_id")) == key[1]), {})
+        snapshots[key] = SignalSnapshot(
+            triggered=None,
+            as_of=as_of,
+            source="sqlite_db" if as_of else "",
+            signal_name=str(definition.get("name") or rule.get("signal_id") or ""),
+            signal_revision=int(definition.get("revision") or 0),
+            definition_sha256=str(rule.get("signal_snapshot_sha256") or ""),
+            issue=reason,
+        )
+
+    try:
+        source = build_data_source("sqlite_db", cache=None)
+        if source.price_mode() != "raw":
+            raise DataError("条件信号监控要求 raw 不复权 SQLite 日线")
+        latest = source.get_latest_daily_date()
+        if latest != expected_as_of:
+            actual = latest.isoformat() if latest else None
+            reason = f"日线数据陈旧：最新 {actual or '缺失'}，预期 {expected_as_of.isoformat()}"
+            for key in definitions:
+                block(key, reason, as_of=actual)
+            return snapshots
+
+        symbols = sorted({symbol for symbol, _signal_id in definitions})
+        latest_by_symbol = source.get_latest_daily_dates(symbols)
+        fresh_symbols: list[str] = []
+        for symbol in symbols:
+            symbol_latest = latest_by_symbol.get(symbol)
+            if symbol_latest != expected_as_of:
+                actual = symbol_latest.isoformat() if symbol_latest else "缺失"
+                for key in definitions:
+                    if key[0] == symbol:
+                        block(
+                            key,
+                            f"该标的日线陈旧：最新 {actual}，预期 {expected_as_of.isoformat()}",
+                            as_of=symbol_latest.isoformat() if symbol_latest else None,
+                        )
+                continue
+            fresh_symbols.append(symbol)
+        if not fresh_symbols:
+            return snapshots
+        max_lookback = max(
+            signal_definitions.max_lookback(definition)
+            for (symbol, _signal_id), definition in definitions.items()
+            if symbol in fresh_symbols
+        )
+        calendar_days = max(90, max_lookback * 4)
+        frames = source.fetch_daily(
+            fresh_symbols, expected_as_of - timedelta(days=calendar_days), expected_as_of, adjust=""
+        )
+        for symbol in fresh_symbols:
+            symbol_keys = [key for key in definitions if key[0] == symbol]
+            frame = frames.get(symbol)
+            if frame is None or frame.empty:
+                for key in symbol_keys:
+                    block(key, "本地 raw 日线缺失")
+                continue
+            frame = frame.copy()
+            parsed_dates = pd.to_datetime(frame.get("date"), errors="coerce")
+            if parsed_dates.isna().any():
+                for key in symbol_keys:
+                    block(key, "该标的日线包含无效日期")
+                continue
+            frame["date"] = parsed_dates.dt.strftime("%Y-%m-%d")
+            frame = frame.sort_values("date", kind="stable").reset_index(drop=True)
+            if frame["date"].duplicated().any():
+                for key in symbol_keys:
+                    block(key, "该标的日线有重复交易日")
+                continue
+            symbol_as_of = date.fromisoformat(str(frame["date"].iloc[-1]))
+            if symbol_as_of != expected_as_of:
+                actual = symbol_as_of.isoformat()
+                for key in symbol_keys:
+                    block(key, f"该标的日线陈旧：最新 {actual}，预期 {expected_as_of.isoformat()}", as_of=actual)
+                continue
+            if len(frame) <= max_lookback:
+                for key in symbol_keys:
+                    block(key, f"信号回看需要 {max_lookback} 根历史日线，实际仅有 {len(frame)} 根", as_of=expected_as_of.isoformat())
+                continue
+            latest_bar = frame.iloc[-1]
+            volume = pd.to_numeric(pd.Series([latest_bar.get("volume")]), errors="coerce").iloc[0]
+            if bool(latest_bar.get("suspended", False)) or pd.isna(volume) or float(volume) <= 0:
+                for key in symbol_keys:
+                    block(key, "该标的最近交易日停牌或无有效成交，信号不触发", as_of=expected_as_of.isoformat())
+                continue
+            frame["raw_close"] = pd.to_numeric(frame["close"], errors="coerce")
+            frame["prev_close"] = frame["raw_close"].shift(1)
+
+            for key in symbol_keys:
+                definition = definitions[key]
+                offsets = signal_definitions.price_factor_offsets(definition)
+                if offsets:
+                    dates = [date.fromisoformat(str(value)) for value in frame["date"]]
+                    factor_records = source.get_point_in_time_adjustment_factors([symbol], dates).get(symbol, {})
+                    required_indices = {-1, *(-1 - offset for offset in offsets)}
+                    unavailable = [
+                        frame["date"].iloc[index]
+                        for index in sorted(required_indices)
+                        if dates[index] not in factor_records
+                    ]
+                    if unavailable:
+                        block(key, f"跨日价格条件缺少 PIT 复权因子：{', '.join(unavailable)}", as_of=expected_as_of.isoformat())
+                        continue
+                    frame["adj_factor"] = [
+                        factor_records[item].value if item in factor_records else float("nan")
+                        for item in dates
+                    ]
+                try:
+                    triggered = bool(signal_definitions.evaluate_signal_series(definition, frame).iloc[-1])
+                except (DataError, KeyError, TypeError, ValueError) as exc:
+                    block(key, f"信号定义无法在当前日线求值：{exc}", as_of=expected_as_of.isoformat())
+                    continue
+                snapshots[key] = SignalSnapshot(
+                    triggered=triggered,
+                    as_of=expected_as_of.isoformat(),
+                    source="sqlite_db",
+                    signal_name=str(definition["name"]),
+                    signal_revision=int(definition["revision"]),
+                    definition_sha256=str(
+                        next(item for item in signal_rules if (str(item.get("symbol")), str(item.get("signal_id"))) == key)["signal_snapshot_sha256"]
+                    ),
+                    current_price=float(frame["raw_close"].iloc[-1]),
+                )
+        return snapshots
+    except Exception as exc:  # noqa: BLE001 -- all signal input failures stay visible and fail closed
+        logger.warning("condition_signal_observation_data_unavailable", error=str(exc))
+        for key in definitions:
+            if key not in snapshots:
+                block(key, "条件信号依据不可用")
+        return snapshots
+
+
 def transition_alert(event_id: str, action: str, note: str = "") -> dict | None:
     """Commit disposition and matching frequency state with retry-safe receipts."""
     import alert_events
+
+    event = next((row for row in alert_events.list_events() if row.get("id") == event_id), None)
+    if event and event.get("kind") == "price_observation":
+        return alert_events.transition(event_id, action, note)
 
     def record(event: dict, recovery: bool) -> dict | None:
         if not event.get("rule_id") or not event.get("position_id"):
@@ -278,33 +530,71 @@ def check_positions(
     except (OSError, ValueError, DataError):
         logger.exception("position_plan_followup_failed")
         checks["skipped"].append({"symbol": "", "level": "PLAN", "reason": "计划跟进未完成；已保存风险检查不受影响，请核对后台记录"})
+    price_observation_rules: dict = {"checked": 0, "triggered": [], "skipped": []}
+    try:
+        import price_observation_rules as price_rules
+
+        all_price_rules = price_rules.list_rules()
+        active_price_rules = [row for row in all_price_rules if row.get("status") == "active"]
+    except Exception:  # noqa: BLE001 -- rule storage failure must not suppress position risk checks
+        logger.exception("price_observation_rules_read_failed")
+        all_price_rules = []
+        active_price_rules = []
+        price_observation_rules["skipped"].append({"symbol": "", "reason": "通用价格观察规则读取失败"})
+
     candidate_observations: dict = {
         "checked": [],
         "skipped": [],
         "notify": [],
         "notify_suppressed": False,
     }
+    active: list[dict] = []
+    candidate_watch = None
     try:
-        import candidate_observations as candidate_watch
+        import candidate_observations as candidate_watch_module
 
+        candidate_watch = candidate_watch_module
         active = [item for item in candidate_watch.list_observations() if item.get("state") == "active"]
-        watch_codes = sorted({item["symbol"] for item in active} - set(prices))
-        watch_quotes = {
-            str(row.get("code")): dict(row.get("quote") or {})
-            for row in pf_data.get("holdings", []) if row.get("code") in prices
-        }
-        for code in prices:
-            holding = next((row for row in pf_data.get("holdings", []) if row.get("code") == code), None)
-            if holding and "price" not in watch_quotes.get(code, {}):
-                watch_quotes.setdefault(code, {})["price"] = prices[code]
-        if watch_codes:
+    except Exception:  # noqa: BLE001 -- one watch store must not block another
+        logger.exception("candidate_observation_read_failed")
+        candidate_observations["skipped"].append({"symbol": "", "reason": "候选观察读取失败；其它监控继续"})
+
+    watch_quotes: dict[str, dict] = {
+        str(row.get("code")): dict(row.get("quote") or {})
+        for row in pf_data.get("holdings", []) if row.get("code") in prices
+    }
+    for code in prices:
+        holding = next((row for row in pf_data.get("holdings", []) if row.get("code") == code), None)
+        if holding and "price" not in watch_quotes.get(code, {}):
+            watch_quotes.setdefault(code, {})["price"] = prices[code]
+    quote_rule_symbols = {
+        str(row["symbol"])
+        for row in active_price_rules
+        if row.get("rule_type", "price") == "price"
+    }
+    watch_codes = sorted(
+        ({item["symbol"] for item in active} | quote_rule_symbols) - set(prices)
+    )
+    if watch_codes:
+        try:
             import astock
 
             watch_quotes.update(astock.tencent_quote(watch_codes))
+        except Exception:  # noqa: BLE001 -- missing quotes fail closed for watch rules
+            logger.exception("watch_quote_batch_failed")
+
+    try:
+        if candidate_watch is None:
+            raise ValueError("候选观察读取失败")
         candidate_observations = candidate_watch.check_observations(
             watch_quotes,
             checked_at=checked_at,
             held_symbols=set(prices),
+            held_positions={
+                str(row["code"]): str(row["position_id"])
+                for row in pf_data.get("holdings", [])
+                if row.get("code") and row.get("position_id")
+            },
         )
         if notify and candidate_observations.get("checked"):
             from candidate_observation_delivery import deliver_triggered
@@ -317,6 +607,52 @@ def check_positions(
     except Exception:  # noqa: BLE001 -- candidate monitoring must not suppress position risk checks
         logger.exception("candidate_observation_check_failed")
         candidate_observations["skipped"].append({"symbol": "", "reason": "候选观察未完成；持仓风险检查不受影响"})
+    try:
+        import price_observation_rules as price_rules
+
+        for code in prices:
+            if code in watch_quotes and "price" not in watch_quotes[code]:
+                watch_quotes[code]["price"] = prices[code]
+        price_observation_rules = price_rules.check_rules(
+            watch_quotes,
+            checked_at=checked_at,
+            indicator_values=_indicator_snapshots(
+                active_price_rules, checked_at=checked_at
+            ),
+            signal_values=_signal_snapshots(
+                active_price_rules, checked_at=checked_at
+            ),
+            held_positions={
+                str(row["code"]): str(row["position_id"])
+                for row in pf_data.get("holdings", [])
+                if row.get("code") and row.get("position_id")
+            },
+        )
+        written = alert_events.upsert_price_observation_events(
+            price_observation_rules["triggered"],
+            checked_rule_ids=set(price_observation_rules.get("checked_rule_ids", set())),
+        )
+        price_observation_rules["new_events"] = written
+    except Exception:  # noqa: BLE001 -- generic rules must not suppress position risk checks
+        logger.exception("price_observation_rule_check_failed")
+        price_observation_rules["skipped"].append({"symbol": "", "reason": "通用价格观察未完成；持仓风险检查不受影响"})
+    market_event_rules: dict = {"checked": 0, "triggered": [], "skipped": []}
+    try:
+        import market_event_rules as market_rules
+
+        if market_rules.active_rules():
+            import market
+
+            market_event_rules = market_rules.check_rules(
+                market.get_short_term_emotion_snapshot(), checked_at=checked_at
+            )
+            market_event_rules["new_events"] = alert_events.upsert_market_event_rule_events(
+                market_event_rules["triggered"],
+                checked_rule_ids=set(market_event_rules.get("checked_rule_ids", set())),
+            )
+    except Exception:  # noqa: BLE001 -- market checks cannot suppress position-risk checks
+        logger.exception("market_event_rule_check_failed")
+        market_event_rules["skipped"].append({"rule_id": "", "reason": "全市场异动检查未完成；旧提醒保持原状态"})
     return {
         "reminders": serialized,
         "new_events": new_events,
@@ -324,6 +660,8 @@ def check_positions(
         "notify_suppressed": suppressed,
         "checks": checks,
         "candidate_observations": candidate_observations,
+        "price_observation_rules": price_observation_rules,
+        "market_event_rules": market_event_rules,
         "last_checked_at": last_checked_at,
     }
 
@@ -345,6 +683,11 @@ def check_existing_tenants(*, notify: bool = False) -> dict:
     watch_files = [root / "candidate_observations.json"]
     if users.is_dir() and not users.is_symlink():
         watch_files += sorted(users.glob("*/candidate_observations.json"))
+    watch_files.append(root / "price_observation_rules.json")
+    watch_files.append(root / "market_event_rules.json")
+    if users.is_dir() and not users.is_symlink():
+        watch_files += sorted(users.glob("*/price_observation_rules.json"))
+        watch_files += sorted(users.glob("*/market_event_rules.json"))
     candidates += watch_files
     seen: set[str] = set()
     summary: dict = {
@@ -365,15 +708,16 @@ def check_existing_tenants(*, notify: bool = False) -> dict:
             payload = json.loads(path.read_text(encoding="utf-8"))
             if not isinstance(payload, dict):
                 continue
-            if path.name == "candidate_observations.json":
+            if path.name in {"candidate_observations.json", "price_observation_rules.json", "market_event_rules.json"}:
                 if not any(isinstance(item, dict) and item.get("state") == "active" for item in payload.get("items", [])):
-                    continue
+                    if path.name == "candidate_observations.json" or not any(isinstance(item, dict) and item.get("status") == "active" for item in payload.get("items", [])):
+                        continue
             elif not (payload.get("holdings") or payload.get("position_reviews")):
                 continue
             token = tenant.current_tenant.set(tid)
             try:
                 seen.add(tid)
-                if path.name == "candidate_observations.json":
+                if path.name in {"candidate_observations.json", "price_observation_rules.json", "market_event_rules.json"}:
                     # The paired portfolio file may not exist for a new candidate-only tenant.
                     payload = {"holdings": [], "position_reviews": {}}
                 result = check_positions(notify=notify)
@@ -381,6 +725,12 @@ def check_existing_tenants(*, notify: bool = False) -> dict:
                 summary["skipped_checks"] += len(result["checks"]["skipped"])
                 summary["skipped_checks"] += len(
                     (result.get("candidate_observations") or {}).get("skipped", [])
+                )
+                summary["skipped_checks"] += len(
+                    (result.get("price_observation_rules") or {}).get("skipped", [])
+                )
+                summary["skipped_checks"] += len(
+                    (result.get("market_event_rules") or {}).get("skipped", [])
                 )
                 import alert_events
 

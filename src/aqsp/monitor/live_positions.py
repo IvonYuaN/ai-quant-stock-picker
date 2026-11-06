@@ -31,6 +31,24 @@ def _subprocess_identity(data_root: Path) -> dict[str, int | list[int]]:
     return {"user": owner.st_uid, "group": owner.st_gid, "extra_groups": []}
 
 
+def _has_monitor_store(data_root: Path) -> bool:
+    """Find an existing portfolio or candidate-watch store without following symlinks."""
+    candidates = [
+        data_root / "portfolio.json",
+        data_root / "candidate_observations.json",
+        data_root / "market_event_rules.json",
+    ]
+    users = data_root / "users"
+    if users.is_dir() and not users.is_symlink():
+        candidates.extend(sorted(users.glob("*/portfolio.json")))
+        candidates.extend(sorted(users.glob("*/candidate_observations.json")))
+        candidates.extend(sorted(users.glob("*/market_event_rules.json")))
+    return any(
+        path.is_file() and not path.is_symlink() and not path.parent.is_symlink()
+        for path in candidates
+    )
+
+
 def check_live_positions(
     *, notify: bool = False, dry_run: bool = False
 ) -> list[MonitorResult]:
@@ -65,9 +83,7 @@ def check_live_positions(
                 )
             ]
         return []
-    if not (data_root / "portfolio.json").is_file() and not any(
-        (data_root / "users").glob("*/portfolio.json")
-    ):
+    if not _has_monitor_store(data_root):
         return []
     from aqsp.monitor.checker import MonitorResult
 

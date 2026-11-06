@@ -1,7 +1,7 @@
 import type { AqspSnapshot } from "@/types/aqsp";
 import { dailyViewFixture } from "./daily-view.test";
 import { buildDailyView } from "./daily-view";
-import { isAqspSnapshotStale } from "./snapshot-freshness";
+import { isAqspSnapshotStale, snapshotFreshness } from "./snapshot-freshness";
 
 const nowFixture = Date.parse("2026-10-23T10:00:00+08:00");
 const futureFixture: AqspSnapshot = { ...dailyViewFixture, stale_after: "2099-10-23T11:00:00+08:00", recommendation_gate: { recommendation_allowed: true, status: "ready", reasons: [] } };
@@ -9,6 +9,9 @@ const expiredFixture: AqspSnapshot = { ...futureFixture, stale_after: "2026-10-2
 const historyFixture: AqspSnapshot = { ...futureFixture, meta: { ...futureFixture.meta!, historical: true } };
 
 export const snapshotFreshnessContract = {
+  missingDeadlineIsUnknown: snapshotFreshness({ ...futureFixture, stale_after: "" }, nowFixture) === "unknown",
+  validFutureDeadlineIsFresh: snapshotFreshness(futureFixture, nowFixture) === "fresh",
+  expiredDeadlineIsStale: snapshotFreshness(expiredFixture, nowFixture) === "stale",
   futureIsFresh: !isAqspSnapshotStale(futureFixture, nowFixture),
   falseMetaCannotExtendExpiry: isAqspSnapshotStale(expiredFixture, nowFixture),
   exactDeadlineExpires: isAqspSnapshotStale({ ...futureFixture, stale_after: "2026-10-23T10:00:00+08:00" }, nowFixture),

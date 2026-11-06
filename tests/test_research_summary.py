@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from aqsp.research.summary import (
     load_research_summary,
     research_findings_badge,
@@ -101,3 +103,25 @@ def test_load_research_summary_returns_none_when_core_configs_missing(
     )
 
     assert summary is None
+
+
+def test_load_research_summary_rejects_unknown_strategy_status(tmp_path: Path) -> None:
+    strategy_sources = tmp_path / "strategy_sources.yaml"
+    data_sources = tmp_path / "data_sources.yaml"
+    strategy_sources.write_text(
+        """
+version: test
+families:
+  - id: multi_factor
+    name: 多因子研究
+    current_status: reseach_absorbed
+""".strip(),
+        encoding="utf-8",
+    )
+    data_sources.write_text("version: test\nsources: []\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="multi_factor.*invalid current_status"):
+        load_research_summary(
+            strategy_sources_path=strategy_sources,
+            data_sources_path=data_sources,
+        )

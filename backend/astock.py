@@ -17,7 +17,9 @@ import os
 import random
 import time
 import urllib.request
+from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import Any
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
@@ -60,6 +62,15 @@ def get_prefix(code: str) -> str:
 
 class DependencyMissing(RuntimeError):
     """惰性依赖未安装时抛出，前端据此提示 pip install。"""
+
+
+@dataclass(frozen=True)
+class KlineResult:
+    rows: tuple[dict[str, Any], ...]
+    source: str
+    price_basis: str
+    as_of: str | None
+    generated_at: str
 
 
 # ---------------------------------------------------------------------------
@@ -509,24 +520,82 @@ def _kline_tencent_fallback(code: str, category: int, offset: int) -> list[dict]
     return out
 
 
+def _mootdx_kline_rows(frame: Any) -> tuple[dict[str, Any], ...]:
+    """Normalize mootdx's date column or datetime index for the JSON contract."""
+    normalized = frame.copy()
+    index_name = normalized.index.name or "index"
+    if "date" not in normalized.columns and "datetime" not in normalized.columns:
+        normalized = normalized.reset_index()
+    rows: list[dict[str, Any]] = []
+    for source_row in normalized.to_dict("records"):
+        row = dict(source_row)
+        date_key = next(
+            (key for key in ("date", "datetime", index_name, "index", "level_0") if key in row),
+            None,
+        )
+        if date_key is None:
+            continue
+        raw_date = row.pop(date_key)
+        date = raw_date.strftime("%Y-%m-%d") if hasattr(raw_date, "strftime") else str(raw_date)[:10]
+        if len(date) != 10:
+            continue
+        row["date"] = date
+        rows.append(row)
+    return tuple(rows)
+
+
+def kline_with_metadata(
+    code: str, category: int = 4, offset: int = 60
+) -> KlineResult:
+    """Return K-lines with the selected provider and its known display basis."""
+    generated_at = _now_shanghai().isoformat()
+    client = None
+    try:
+        client = _mootdx_client()
+        df = client.bars(symbol=code, category=category, offset=offset)
+        if df is not None and not df.empty:
+            rows = _mootdx_kline_rows(df)
+            as_of = max((str(row["date"]) for row in rows), default=None)
+            return KlineResult(
+                rows=rows,
+                source="mootdx",
+                price_basis="provider_default",
+                as_of=as_of or None,
+                generated_at=generated_at,
+            )
+    except DependencyMissing:
+        client = None
+    except Exception:
+        # mootdx 选服/取数任何异常（含重启后首次 factory 选服失败）→ 走腾讯备源。
+        pass
+
+    if category == 11:
+        return KlineResult(
+            rows=(),
+            source="mootdx" if client is not None else "unavailable",
+            price_basis="provider_default" if client is not None else "unknown",
+            as_of=None,
+            generated_at=generated_at,
+        )
+
+    rows = tuple(_kline_tencent_fallback(code, category, offset))
+    return KlineResult(
+        rows=rows,
+        source="tencent",
+        price_basis="qfq_display",
+        as_of=str(rows[-1].get("date"))[:10] if rows else None,
+        generated_at=generated_at,
+    )
+
+
 def kline(code: str, category: int = 4, offset: int = 60) -> list[dict]:
     """K线：category 4=日 5=周 6=月 11=60分钟。
 
     主源 mootdx TDX；生产网络环境 TDX 节点常不可达（bars 恒空，或服务重启后首次
     选服时 ``Quotes.factory`` 抛瞬态 ValueError），此时日/周/月线降级到腾讯 K 线
-    （prod 实测可达）。主源依赖缺失仍向上传 ``DependencyMissing``（上层 501）。
+    （prod 实测可达）。mootdx 缺失时日/周/月仍可用腾讯展示备源；60 分钟没有该备源。
     """
-    try:
-        client = _mootdx_client()
-        df = client.bars(symbol=code, category=category, offset=offset)
-        if df is not None and not df.empty:
-            return df.to_dict("records")
-    except DependencyMissing:
-        raise
-    except Exception:
-        # mootdx 选服/取数任何异常（含重启后首次 factory 选服失败）→ 走腾讯备源
-        pass
-    return _kline_tencent_fallback(code, category, offset)
+    return list(kline_with_metadata(code, category, offset).rows)
 
 
 def finance(code: str) -> dict:
@@ -838,15 +907,22 @@ def em_get(
 
 
 # ---------------------------------------------------------------------------
-# 打板层 · 涨停/炸板/跌停/昨涨停 原始池（东财 push2ex，走 em_get 限流）
-# ⚠️ 合规：原始池含个股 code/name —— 仅供 market.py 聚合成【不含个股名】的短线情绪指标。
-#    切勿把原始池直接接成 API/UI（会甩个股名单、破产品「零标的」红线）。
+# 涨停/炸板/跌停/昨涨停原始池（东财 push2ex，走 em_get 限流）。
+# 原始载荷不直出 API；market.py 负责归一成带日期的客观事件行，不作推荐或评分。
 # ---------------------------------------------------------------------------
 _ZTB_UT = "7eea3edcaed734bea9cbfc24409ed989"
 
 
 _POOL_ATTEMPTS = 2
 _POOL_RETRY_SLEEP = 0.3
+
+
+class EastmoneyTopicPool(list[dict]):
+    """Pool rows annotated with the actual trading date returned by Eastmoney."""
+
+    def __init__(self, rows: list[dict], source_date: str) -> None:
+        super().__init__(rows)
+        self.source_date = source_date
 
 
 def em_zt_topic_pool(endpoint: str, date: str, sort: str = "fbt:asc") -> list[dict] | None:
@@ -875,7 +951,22 @@ def em_zt_topic_pool(endpoint: str, date: str, sort: str = "fbt:asc") -> list[di
     for attempt in range(_POOL_ATTEMPTS):
         try:
             r = em_get(url, params=params, headers=headers, timeout=10)
-            return (r.json().get("data") or {}).get("pool") or []
+            data = r.json().get("data") or {}
+            pool = data.get("pool") or []
+            raw_source_date = str(data.get("qdate") or "").strip()
+            if raw_source_date and (len(raw_source_date) != 8 or not raw_source_date.isdigit()):
+                return None
+            if pool and not raw_source_date:
+                return None
+            source_date = raw_source_date or date
+            try:
+                requested_day = datetime.strptime(date, "%Y%m%d").date()
+                source_day = datetime.strptime(source_date, "%Y%m%d").date()
+            except ValueError:
+                return None
+            if source_day > requested_day or source_day > _now_shanghai().date():
+                return None
+            return EastmoneyTopicPool(pool, source_day.strftime("%Y%m%d"))
         except Exception:
             if attempt + 1 < _POOL_ATTEMPTS:
                 time.sleep(_POOL_RETRY_SLEEP)

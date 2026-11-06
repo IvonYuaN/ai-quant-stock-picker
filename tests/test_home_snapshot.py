@@ -74,6 +74,26 @@ def _snapshot(
     )
 
 
+def test_variant_refresh_state_survives_snapshot_serialization_roundtrip() -> None:
+    snapshot = replace(
+        _snapshot(),
+        variant_suite=HomeSnapshotVariantSuite(
+            variant_count=100,
+            refresh_status="failed",
+            refresh_freshness="unknown",
+            refresh_generated_at="2026-10-30T22:00:00+08:00",
+            refresh_message="变体刷新异常，未发布半成品。",
+        ),
+    )
+
+    restored = home_snapshot._snapshot_from_dict(json.loads(snapshot.to_json()))
+
+    assert restored.variant_suite.refresh_status == "failed"
+    assert restored.variant_suite.refresh_freshness == "unknown"
+    assert restored.variant_suite.refresh_generated_at == "2026-10-30T22:00:00+08:00"
+    assert restored.variant_suite.refresh_message == "变体刷新异常，未发布半成品。"
+
+
 def _candidate(symbol: str) -> HomeSnapshotCandidate:
     return HomeSnapshotCandidate(
         symbol=symbol,

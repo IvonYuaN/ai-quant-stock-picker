@@ -9,11 +9,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import time as _time
-from datetime import datetime
-from typing import Annotated, Any
+from datetime import date, datetime
+from typing import Annotated, Any, Literal
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -282,6 +283,18 @@ def _radar_freshness() -> dict:
 def _gate_freshness_candidates() -> list[str]:
     """gate 判定文件的候选路径（抽成函数，便于测试注入）。"""
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    explicit_path = os.environ.get("AQSP_WALKFORWARD_GATE_PATH", "").strip()
+    if explicit_path:
+        configured = os.path.expanduser(explicit_path)
+        if not os.path.isabs(configured):
+            configured = os.path.join(repo_root, configured)
+        return [configured]
+    runtime_data_root = os.environ.get("AQSP_RUNTIME_DATA_ROOT", "").strip()
+    if runtime_data_root:
+        root = os.path.expanduser(runtime_data_root)
+        if not os.path.isabs(root):
+            root = os.path.join(repo_root, root)
+        return [os.path.join(root, "walkforward_gate.json")]
     return [
         os.path.join(repo_root, "data", "walkforward_gate.json"),
         "/opt/aqsp/data/walkforward_gate.json",
@@ -299,24 +312,71 @@ def _gate_freshness() -> dict:
     现按真实字段映射（``verdict ← both_pass``、``generated_at ← run_date``、
     ``updated ← 文件 mtime``），并把原始判据/指标一并暴露（便于监控与排障）。
     """
+    from aqsp.core.time import now_shanghai
+    from aqsp.walkforward_gate import MAX_GATE_AGE_DAYS, validate_walkforward_gate_payload
+
+    today = now_shanghai().date()
     for path in _gate_freshness_candidates():
         try:
-            with open(path, encoding="utf-8") as fh:
-                data = json.load(fh)
+            with open(path, "rb") as fh:
+                raw_payload = fh.read()
+            data = json.loads(raw_payload.decode("utf-8"))
         except Exception:
+            continue
+        if not isinstance(data, dict):
             continue
         both_pass = data.get("both_pass")
         try:
-            updated = (
-                datetime.fromtimestamp(os.path.getmtime(path)).astimezone().isoformat()
-            )
+            updated = datetime.fromtimestamp(
+                os.path.getmtime(path), tz=now_shanghai().tzinfo,
+            ).isoformat()
         except Exception:
             updated = None
+        try:
+            validation = validate_walkforward_gate_payload(
+                data,
+                today=today,
+                max_age_days=MAX_GATE_AGE_DAYS,
+            )
+        except Exception:
+            return {
+                "present": True,
+                "verdict": None if both_pass is None else ("pass" if both_pass else "fail"),
+                "generated_at": data.get("run_date"),
+                "updated": updated,
+                "freshness": "unverified",
+                "age_days": None,
+                "max_age_days": MAX_GATE_AGE_DAYS,
+                "validation_status": "unverified",
+                "validation_blockers": ["gate artifact could not be validated"],
+                "artifact_id": hashlib.sha256(raw_payload).hexdigest(),
+                "both_pass": both_pass,
+                "dsr_pass": data.get("dsr_pass"),
+                "pbo_pass": data.get("pbo_pass"),
+                "deflated_sharpe": data.get("deflated_sharpe"),
+                "pbo": data.get("pbo"),
+                "n_variants": data.get("n_variants"),
+            }
+        run_date = validation.run_date
+        if run_date is None:
+            freshness = "unverified"
+        elif run_date > today:
+            freshness = "unverified"
+        elif validation.age_days is not None and validation.age_days > MAX_GATE_AGE_DAYS:
+            freshness = "stale"
+        else:
+            freshness = "fresh"
         return {
             "present": True,
             "verdict": None if both_pass is None else ("pass" if both_pass else "fail"),
             "generated_at": data.get("run_date"),
             "updated": updated,
+            "freshness": freshness,
+            "age_days": validation.age_days,
+            "max_age_days": MAX_GATE_AGE_DAYS,
+            "validation_status": "pass" if validation.ok else "blocked",
+            "validation_blockers": list(validation.blockers),
+            "artifact_id": hashlib.sha256(raw_payload).hexdigest(),
             # 原始字段：旧实现不暴露 ⇒ 恒 null 时无从排障
             "both_pass": both_pass,
             "dsr_pass": data.get("dsr_pass"),
@@ -325,7 +385,18 @@ def _gate_freshness() -> dict:
             "pbo": data.get("pbo"),
             "n_variants": data.get("n_variants"),
         }
-    return {"present": False, "verdict": None, "generated_at": None, "updated": None}
+    return {
+        "present": False,
+        "verdict": None,
+        "generated_at": None,
+        "updated": None,
+        "freshness": "missing",
+        "age_days": None,
+        "max_age_days": MAX_GATE_AGE_DAYS,
+        "validation_status": "unverified",
+        "validation_blockers": ["gate artifact missing/invalid"],
+        "artifact_id": None,
+    }
 
 
 @app.get(
@@ -891,6 +962,123 @@ def alerts_list(
     return {"data": {"events": events, "open_count": open_count, "last_checked_at": alert_events.last_checked_at(), "last_check": alert_events.last_check()}}
 
 
+class PriceObservationConditionIn(BaseModel):
+    comparator: Literal["at_or_above", "at_or_below"]
+    price: float = Field(gt=0, allow_inf_nan=False)
+
+
+class PriceObservationRuleIn(BaseModel):
+    symbol: str = Field(min_length=6, max_length=6, pattern=r"^\d{6}$")
+    rule_type: Literal["price", "indicator", "signal"] = "price"
+    signal_id: str | None = Field(default=None, min_length=1, max_length=40, pattern=r"^[a-z0-9_]{1,40}$")
+    metric: Literal["rsi12"] | None = None
+    conditions: list[PriceObservationConditionIn] | None = Field(default=None, min_length=1, max_length=5)
+    comparator: Literal["at_or_above", "at_or_below"] | None = None
+    price: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    threshold: float | None = Field(default=None, ge=0, le=100, allow_inf_nan=False)
+    combination: Literal["all", "any"] = "all"
+    severity: Literal["info", "warn", "critical"] = "info"
+    cooldown_minutes: int = Field(default=0, ge=0, le=1440)
+    note: str = Field(default="", max_length=300)
+
+
+class PriceObservationRulePatch(BaseModel):
+    status: str
+    expected_revision: int = Field(ge=1)
+
+
+class MarketEventRuleIn(BaseModel):
+    event_type: Literal["limit_up", "blown_up", "limit_down"]
+    min_count: int = Field(ge=1, le=10000)
+    severity: Literal["info", "warn", "critical"] = "info"
+    cooldown_minutes: int = Field(default=0, ge=0, le=1440)
+    note: str = Field(default="", max_length=300)
+
+
+class MarketEventRulePatch(BaseModel):
+    status: Literal["active", "paused"]
+    expected_revision: int = Field(ge=1)
+
+
+@app.get("/api/market-event-rules", tags=["监控"], summary="读取当前租户的全市场异动规则")
+def market_event_rules_list() -> dict:
+    import market_event_rules
+
+    return {"data": {"items": market_event_rules.list_rules()}}
+
+
+@app.post("/api/market-event-rules", tags=["监控"], summary="创建全市场涨停、炸板或跌停池观察规则")
+def market_event_rule_create(body: MarketEventRuleIn) -> dict:
+    import market_event_rules
+
+    try:
+        return {"data": market_event_rules.create_rule(body.model_dump())}
+    except ValueError as exc:
+        raise HTTPException(409 if isinstance(exc, market_event_rules.RuleConflict) else 400, str(exc)) from exc
+
+
+@app.patch("/api/market-event-rules/{rule_id}", tags=["监控"], summary="暂停或恢复全市场异动规则")
+def market_event_rule_update(rule_id: str, body: MarketEventRulePatch) -> dict:
+    import market_event_rules
+
+    try:
+        item = market_event_rules.update_rule(
+            rule_id, status=body.status, expected_revision=body.expected_revision,
+        )
+    except ValueError as exc:
+        raise HTTPException(409 if isinstance(exc, market_event_rules.RuleConflict) else 400, str(exc)) from exc
+    if item is None:
+        raise HTTPException(404, "全市场异动规则不存在")
+    if body.status == "paused":
+        import alert_events
+
+        try:
+            alert_events.close_market_event_rule_events(rule_id, "规则已暂停")
+        except (OSError, ValueError) as exc:
+            raise HTTPException(503, "规则已暂停，但提醒状态尚未同步；请重试核对") from exc
+    return {"data": item}
+
+
+@app.get("/api/price-observation-rules", tags=["监控"], summary="读取当前租户的通用价格观察规则")
+def price_observation_rules_list() -> dict:
+    import price_observation_rules
+
+    return {"data": {"items": price_observation_rules.list_rules()}}
+
+
+@app.post("/api/price-observation-rules", tags=["监控"], summary="创建单标的价格或 RSI 指标观察规则")
+def price_observation_rule_create(body: PriceObservationRuleIn) -> dict:
+    import price_observation_rules
+
+    try:
+        return {"data": price_observation_rules.create_rule(body.model_dump())}
+    except ValueError as exc:
+        raise HTTPException(409 if isinstance(exc, price_observation_rules.RuleConflict) else 400, str(exc)) from exc
+
+
+@app.patch("/api/price-observation-rules/{rule_id}", tags=["监控"], summary="暂停或恢复价格观察规则")
+def price_observation_rule_update(rule_id: str, body: PriceObservationRulePatch) -> dict:
+    import price_observation_rules
+
+    try:
+        item = price_observation_rules.update_rule(
+            rule_id, status=body.status, expected_revision=body.expected_revision,
+        )
+    except ValueError as exc:
+        raise HTTPException(409 if isinstance(exc, price_observation_rules.RuleConflict) else 400, str(exc)) from exc
+    if item is None:
+        raise HTTPException(404, "价格观察规则不存在")
+    if body.status == "paused":
+        import alert_events
+
+        try:
+            alert_events.close_price_observation_rule_events(rule_id, "规则已暂停")
+        except (OSError, ValueError) as exc:
+            # Repeating this idempotent PATCH repairs the event journal if it was unavailable.
+            raise HTTPException(503, "规则已暂停，但提醒状态尚未同步；请重试核对") from exc
+    return {"data": item}
+
+
 class AlertReviewPlanIn(BaseModel):
     expected_revision: str | None = None
     choice: str
@@ -1381,6 +1569,7 @@ def market_overview():
     description="""
 返回短线市场情绪指标，包括：
 
+- 涨停、炸板、跌停当日明细（有界客观行情行，含代码/名称与原始交易日）
 - 连板梯队个股清单（代码、名称、连板数等）
 - 最高连板天数
 - 炸板率
@@ -1396,7 +1585,7 @@ def market_overview():
     """,
 )
 def market_emotion():
-    """短线情绪：连板梯队 / 最高连板 / 炸板率 / 封板率 / 晋级率 / 涨跌停家数。
+    """短线情绪与当日涨停/炸板/跌停客观明细；池子取数失败时整块不可用。
 
     含连板梯队个股清单（code/name/连板数等）——2026-07-05 起如实展示客观公开榜单（东财同款），
     只呈现事实，不附推荐/评分/预测/买卖时机。全站共享缓存 5 分钟。
@@ -1793,11 +1982,171 @@ def kline(
     """K线（需 mootdx）。category 4=日 5=周 6=月 11=60分钟。"""
     code = _validate(code)
     try:
-        return {"data": astock.kline(code, category=category, offset=offset)}
+        result = astock.kline_with_metadata(code, category=category, offset=offset)
+        return {
+            "data": list(result.rows),
+            "meta": {
+                "source": result.source,
+                "price_basis": result.price_basis,
+                "as_of": result.as_of,
+                "generated_at": result.generated_at,
+            },
+        }
     except astock.DependencyMissing as e:
         raise HTTPException(501, str(e)) from e
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"K线源异常：{e}") from e
+
+
+@app.get(
+    "/api/stock-levels",
+    tags=["行情"],
+    summary="个股结构价位",
+    description="使用已确认 raw 不复权日线计算少量结构价位；只作描述性研究，不产生交易信号。",
+)
+def stock_levels(
+    code: str = Query(..., description="6位股票代码"),
+    as_of: date | None = Query(default=None, description="最多截至该日期；默认最近已完成交易日"),
+):
+    """Return audited raw-price structural levels and explicit unsupported families."""
+    from aqsp.core.errors import DataError
+    from aqsp.core.time import now_shanghai
+    from stock_levels import load_stock_levels
+
+    code = _validate(code)
+    if as_of and as_of > now_shanghai().date():
+        raise HTTPException(400, "as_of 不能晚于上海当日")
+    try:
+        return {"data": load_stock_levels(code, as_of)}
+    except (DataError, OSError, ValueError) as exc:
+        logger.warning("stock_levels_unavailable", symbol=code, error=str(exc))
+        raise HTTPException(503, "个股不复权日线暂不可用；请稍后重试。") from exc
+
+
+@app.get(
+    "/api/aqsp/abnormal-historical-signals",
+    tags=["市场异动"],
+    summary="读取本地 raw 日线最新历史异动信号",
+    description="只读扫描本机 sqlite_db raw 日线的新高/新低/放量观察；响应始终携带数据日期与 freshness，不参与评分或成交台账。",
+)
+def abnormal_historical_signals() -> dict:
+    """Return a source-stamped historical signal snapshot without writing ledger state."""
+    import abnormal_history
+    from aqsp.core.errors import DataError
+
+    try:
+        return {"data": abnormal_history.scan_local_daily_signals()}
+    except (DataError, OSError, ValueError) as exc:
+        logger.warning("abnormal_historical_signals_unavailable", error=str(exc))
+        raise HTTPException(503, "本地 raw 日线信号暂不可用；没有生成当前异动结果") from exc
+
+
+@app.get(
+    "/api/aqsp/auction-benchmark",
+    tags=["市场异动"],
+    summary="读取盘前竞价风向标名单",
+    description="只读读取 Fuyao/同花顺竞价筛选名单；来源未配置或不可用时显式返回状态，不生成替代名单。",
+)
+def auction_benchmark(benchmark_date: date | None = Query(default=None, alias="date")) -> dict:
+    """Return the optional provider's auction list without converting it to a signal."""
+    import auction_benchmark as auction_service
+
+    return {"data": auction_service.get_auction_benchmark(benchmark_date)}
+
+
+@app.get(
+    "/api/aqsp/abnormal-deviation",
+    tags=["市场异动"],
+    summary="读取多日交易所偏移观察",
+    description="以本地 raw SQLite 收盘、对应指数和 PIT 复权因子计算 3/10/30 日偏离；缺任一输入时失败关闭。",
+)
+def abnormal_deviation(
+    min_closeness: float = Query(0.5, ge=0.0, le=1.0),
+    limit: int = Query(200, ge=1, le=1000),
+) -> dict:
+    """Return a source-stamped historical exchange-deviation snapshot."""
+    import abnormal_deviation as deviation_service
+    from aqsp.core.errors import DataError
+
+    try:
+        return {
+            "data": deviation_service.scan_local_abnormal_deviations(
+                min_closeness=min_closeness,
+                limit=limit,
+            )
+        }
+    except (DataError, OSError, ValueError) as exc:
+        logger.warning("abnormal_deviation_unavailable", error=str(exc))
+        raise HTTPException(
+            503, "本地 raw 日线偏移数据暂不可用；没有生成当前异动结果"
+        ) from exc
+
+
+class StockResearchAnalyzeIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    personal_intent: str = Field(min_length=1, max_length=500)
+    time_horizon: str = Field(min_length=1, max_length=120)
+    personal_hypothesis: str = Field(default="", max_length=500)
+    counterargument: str = Field(default="", max_length=500)
+    llm: LLMConfig | None = None
+    server_model: str | None = Field(default=None, min_length=1, max_length=200)
+
+
+@app.post("/api/stock-research/{code}/analyze", tags=["AQSP 研究"], summary="生成当前个股四维研究草稿")
+async def stock_research_analyze(code: str, body: StockResearchAnalyzeIn) -> dict:
+    """Analyze only server-built current evidence; a complete report remains an unsaved draft."""
+    from stock_research import StockResearchError, StockResearchModelError, run_stock_research
+
+    symbol = _validate(code)
+    try:
+        result = await run_stock_research(
+            symbol,
+            {
+                "personal_intent": body.personal_intent,
+                "time_horizon": body.time_horizon,
+                "personal_hypothesis": body.personal_hypothesis,
+                "counterargument": body.counterargument,
+            },
+            body.llm.model_dump() if body.llm else None,
+            body.server_model,
+        )
+    except StockResearchError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except StockResearchModelError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    return {"data": result}
+
+
+@app.get("/api/stock-research/reports", tags=["AQSP 研究"], summary="读取当前租户已保存的个股研究报告")
+def stock_research_reports(code: str | None = Query(default=None, description="可选的6位股票代码")) -> dict:
+    """List saved reports only; unconfirmed drafts do not enter review history."""
+    from stock_research import list_saved_reports
+
+    symbol = _validate(code) if code else None
+    return {"data": {"items": list_saved_reports(symbol)}}
+
+
+@app.get("/api/stock-research/reports/{report_id}", tags=["AQSP 研究"], summary="按报告身份读取已保存个股研究")
+def stock_research_report(report_id: str) -> dict:
+    """Read one saved report from the current tenant for exact review deep links."""
+    from stock_research import StockResearchError, get_saved_report
+
+    try:
+        return {"data": get_saved_report(report_id)}
+    except StockResearchError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@app.post("/api/stock-research/reports/{report_id}/save", tags=["AQSP 研究"], summary="确认保存个股研究报告")
+def stock_research_report_save(report_id: str) -> dict:
+    """Save one current-tenant draft for read-only review indexing."""
+    from stock_research import StockResearchError, save_report
+
+    try:
+        return {"data": save_report(report_id)}
+    except StockResearchError as exc:
+        raise HTTPException(409, str(exc)) from exc
 
 
 @app.get(
@@ -2263,11 +2612,49 @@ class CandidateObservationStopIn(BaseModel):
     expected_version: int = Field(ge=1, strict=True)
 
 
+class CandidateObservationReviewIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    expected_version: int = Field(ge=1, strict=True)
+    outcome: str = Field(min_length=1, max_length=40)
+    process_quality: str = Field(min_length=1, max_length=40)
+    lesson: str = Field(min_length=1, max_length=1000)
+    receipt_ids: list[str] = Field(default_factory=list, max_length=20)
+    confirm_same_day_order: bool = Field(default=False, strict=True)
+    confirm_cross_position: bool = Field(default=False, strict=True)
+
+
+class CandidateDecisionIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    symbol: str = Field(pattern=r"^\d{6}$")
+    selected_date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    choice: str = Field(pattern=r"^(defer|reject)$")
+    note: str = Field(min_length=1, max_length=500)
+    personal_context: dict[str, str]
+    expected_version: int | None = Field(default=None, ge=1, strict=True)
+
+
+class VariantResearchDecisionIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    artifact_id: str = Field(pattern=r"^[a-f0-9]{64}$")
+    batch_id: str = Field(min_length=1, max_length=200)
+    variant_id: str = Field(min_length=1, max_length=200)
+    choice: str = Field(pattern=r"^(continue_validation|defer|reject)$")
+    note: str = Field(min_length=1, max_length=800)
+    expected_revision: int = Field(ge=0, strict=True)
+
+
 class CandidateDiscussionIn(BaseModel):
     model_config = {"extra": "forbid"}
 
     symbol: str = Field(pattern=r"^\d{6}$")
     date: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    personal_intent: str = Field(min_length=1, max_length=500)
+    time_horizon: str = Field(min_length=1, max_length=120)
+    personal_hypothesis: str = Field(default="", max_length=500)
+    counterargument: str = Field(default="", max_length=500)
     llm: LLMConfig | None = None
     server_model: str | None = Field(default=None, min_length=1, max_length=200)
 
@@ -2283,6 +2670,12 @@ async def candidate_observation_analyze(body: CandidateDiscussionIn) -> dict:
             body.date,
             body.llm.model_dump() if body.llm else None,
             body.server_model,
+            {
+                "personal_intent": body.personal_intent,
+                "time_horizon": body.time_horizon,
+                "personal_hypothesis": body.personal_hypothesis,
+                "counterargument": body.counterargument,
+            },
         )
     except CandidateDiscussionError as exc:
         raise HTTPException(409, str(exc)) from exc
@@ -2291,13 +2684,76 @@ async def candidate_observation_analyze(body: CandidateDiscussionIn) -> dict:
 
 @app.get("/api/candidate-observations", tags=["候选观察"], summary="读取人工采用的候选观察条件")
 def aqsp_candidate_observations() -> dict:
-    """Read tenant observations; this endpoint never fetches market data."""
+    """Read tenant observations and personal candidate decisions."""
     import candidate_observations
 
     try:
-        return {"data": {"items": candidate_observations.list_observations()}}
+        return {"data": {
+            "items": candidate_observations.list_observations(),
+            "decisions": candidate_observations.list_decisions(),
+        }}
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
+
+
+@app.get("/api/aqsp/decision-history", tags=["AQSP 研究"], summary="读取个人决策历史投影")
+def aqsp_decision_history(
+    symbol: str | None = Query(default=None, min_length=6, max_length=6),
+    kind: str | None = Query(default=None),
+    status: str | None = Query(default=None, max_length=40),
+    since: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    limit: int = Query(default=100, ge=1, le=500),
+) -> dict:
+    """Read candidate/position/formal-signal records without merging write models."""
+    from decision_history import build_history
+
+    try:
+        return {"data": build_history(symbol=symbol, kind=kind, status=status, since=since, limit=limit)}
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.get("/api/research/variant-reviews", tags=["研究复核"], summary="读取研究变体与个人复核记录")
+def aqsp_variant_reviews() -> dict:
+    """Return current immutable variants and this tenant's review history."""
+    import research_variant_decisions
+
+    try:
+        return {"data": research_variant_decisions.list_reviews()}
+    except research_variant_decisions.VariantReviewUnavailable as exc:
+        raise HTTPException(503, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(503, str(exc)) from exc
+
+
+@app.post("/api/research/variant-reviews", tags=["研究复核"], summary="记录研究变体的个人复核决定")
+def aqsp_variant_review(body: VariantResearchDecisionIn) -> dict:
+    """Append a tenant-owned decision without changing runtime strategy state."""
+    import research_variant_decisions
+
+    try:
+        return {"data": research_variant_decisions.record_review(**body.model_dump())}
+    except research_variant_decisions.VariantReviewConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except research_variant_decisions.VariantReviewUnavailable as exc:
+        raise HTTPException(503, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/api/candidate-observations/decision", tags=["候选观察"], summary="记录暂缓或不考虑候选")
+def aqsp_candidate_decision(body: CandidateDecisionIn) -> dict:
+    """Persist a tenant-owned human decision against the current snapshot."""
+    import candidate_observations
+
+    values = body.model_dump()
+    expected_version = values.pop("expected_version")
+    try:
+        return {"data": candidate_observations.save_decision(values, expected_version=expected_version)}
+    except candidate_observations.CandidateObservationConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @app.post("/api/candidate-observations", tags=["候选观察"], summary="人工采用候选观察条件")
@@ -2325,6 +2781,24 @@ def aqsp_candidate_observation_stop(observation_id: str, body: CandidateObservat
         item = candidate_observations.stop_observation(observation_id, body.expected_version)
     except candidate_observations.CandidateObservationConflict as exc:
         raise HTTPException(409, str(exc)) from exc
+    if item is None:
+        raise HTTPException(404, "候选观察不存在")
+    return {"data": item}
+
+
+@app.put("/api/candidate-observations/{observation_id}/review", tags=["候选观察"], summary="保存候选结果复盘")
+def aqsp_candidate_observation_review(observation_id: str, body: CandidateObservationReviewIn) -> dict:
+    """Save a user-authored outcome review; actual fills remain in the trade journal."""
+    import candidate_observations
+
+    values = body.model_dump()
+    expected_version = values.pop("expected_version")
+    try:
+        item = candidate_observations.save_review(observation_id, values, expected_version)
+    except candidate_observations.CandidateObservationConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     if item is None:
         raise HTTPException(404, "候选观察不存在")
     return {"data": item}
@@ -2375,6 +2849,507 @@ def aqsp_performance():
     前端在冷启动期内**不得**展示胜率。
     """
     return {"data": performance_bridge.performance_payload()}
+
+
+class StrategyDefinitionIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    id: str = Field(min_length=1, max_length=40)
+    name: str = Field(min_length=1, max_length=120)
+    description: str = Field(default="", max_length=1000)
+    expression: str = Field(min_length=1, max_length=512)
+    exit_expression: str = Field(default="", max_length=512)
+    score_expression: str = Field(default="", max_length=512)
+    enabled: bool = True
+    expected_revision: int | None = Field(default=None, ge=1, strict=True)
+
+
+class StrategyScanIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    strategy_id: str = Field(min_length=1, max_length=40, pattern=r"^[a-z0-9_]{1,40}$")
+    as_of: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+
+
+class StrategyBacktestIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    strategy_id: str = Field(min_length=1, max_length=40, pattern=r"^[a-z0-9_]{1,40}$")
+    mode: Literal["single", "portfolio"] = "single"
+    universe_mode: Literal["explicit", "local_history"] = "explicit"
+    position_sizing: Literal["equal", "score_weight"] = "equal"
+    symbol: str | None = Field(default=None, pattern=r"^\d{6}$")
+    symbols: list[str] | None = Field(default=None, max_length=10_000)
+    initial_capital: float | None = Field(default=None, gt=0, le=1_000_000_000)
+    signal_start: date
+    signal_end: date
+    outcome_as_of: date
+
+
+@app.get("/api/aqsp/strategy-catalog", tags=["AQSP 研究"], summary="读取策略来源与验证目录")
+def aqsp_strategy_catalog() -> dict:
+    """Read strategy hypotheses and validation gates from the repository catalog."""
+    from dataclasses import asdict
+
+    from aqsp.strategies.catalog import load_strategy_catalog
+
+    try:
+        catalog = load_strategy_catalog()
+    except (OSError, ValueError) as exc:
+        raise HTTPException(503, f"策略目录暂不可用：{exc}") from exc
+    return {
+        "data": {
+            "version": catalog.version,
+            "notes": catalog.notes,
+            "families": [
+                {**asdict(item), "runtime_ready": item.runtime_ready}
+                for item in catalog.families
+            ],
+        }
+    }
+
+
+@app.get("/api/aqsp/strategy-definitions/options", tags=["AQSP 研究"], summary="读取安全策略表达式字段目录")
+def aqsp_strategy_definition_options() -> dict:
+    import strategy_definitions
+
+    return {"data": strategy_definitions.options()}
+
+
+@app.get("/api/aqsp/strategy-definitions", tags=["AQSP 研究"], summary="读取当前租户的自定义日线策略")
+def aqsp_strategy_definitions() -> dict:
+    import strategy_definitions
+
+    try:
+        return {"data": {"items": strategy_definitions.list_strategies()}}
+    except ValueError as exc:
+        raise HTTPException(503, str(exc)) from exc
+
+
+@app.post("/api/aqsp/strategy-definitions", tags=["AQSP 研究"], summary="创建或修订当前租户的安全日线策略")
+def aqsp_strategy_definition_save(body: StrategyDefinitionIn) -> dict:
+    import strategy_definitions
+
+    try:
+        item = strategy_definitions.save_strategy(
+            strategy_id=body.id,
+            name=body.name,
+            description=body.description,
+            expression=body.expression,
+            exit_expression=body.exit_expression,
+            score_expression=body.score_expression,
+            enabled=body.enabled,
+            expected_revision=body.expected_revision,
+        )
+    except strategy_definitions.StrategyDefinitionConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"data": item}
+
+
+@app.delete("/api/aqsp/strategy-definitions/{strategy_id}", tags=["AQSP 研究"], summary="删除当前租户的自定义策略定义")
+def aqsp_strategy_definition_delete(strategy_id: str, expected_revision: int = Query(ge=1)) -> dict:
+    import strategy_definitions
+
+    try:
+        deleted = strategy_definitions.delete_strategy(strategy_id, expected_revision)
+    except strategy_definitions.StrategyDefinitionConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    if not deleted:
+        raise HTTPException(404, "策略不存在或已移出当前租户")
+    return {"data": {"id": strategy_id, "deleted": True}}
+
+
+@app.get("/api/aqsp/strategy-scans", tags=["AQSP 研究"], summary="读取当前租户的全市场策略扫描任务")
+def aqsp_strategy_scans(limit: int = Query(default=20, ge=1, le=20)) -> dict:
+    import strategy_scans
+
+    try:
+        return {"data": {"items": strategy_scans.list_runs(limit=limit)}}
+    except ValueError as exc:
+        raise HTTPException(503, str(exc)) from exc
+
+
+@app.post("/api/aqsp/strategy-scans", tags=["AQSP 研究"], summary="启动 raw SQLite 全 A 股策略扫描任务")
+def aqsp_strategy_scan_start(body: StrategyScanIn) -> dict:
+    import strategy_scans
+    from aqsp.core.errors import DataError
+
+    try:
+        return {"data": strategy_scans.start_run(strategy_id=body.strategy_id, as_of=body.as_of)}
+    except strategy_scans.StrategyScanConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except (DataError, OSError, RuntimeError) as exc:
+        raise HTTPException(503, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.get("/api/aqsp/strategy-scans/{run_id}", tags=["AQSP 研究"], summary="读取策略扫描任务与结果")
+def aqsp_strategy_scan(run_id: str) -> dict:
+    import strategy_scans
+
+    try:
+        item = strategy_scans.get_run(run_id)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    if item is None:
+        raise HTTPException(404, "策略扫描任务不存在或已移出当前租户")
+    return {"data": item}
+
+
+@app.post("/api/aqsp/strategy-scans/{run_id}/cancel", tags=["AQSP 研究"], summary="取消当前租户的策略扫描")
+def aqsp_strategy_scan_cancel(run_id: str) -> dict:
+    import strategy_scans
+
+    try:
+        return {"data": strategy_scans.cancel_run(run_id)}
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@app.get("/api/aqsp/strategy-scans/{run_id}/export.csv", tags=["AQSP 研究"], summary="导出策略扫描命中或逐代码覆盖 CSV")
+def aqsp_strategy_scan_export(run_id: str, view: Literal["hits", "coverage"] = Query(default="hits")) -> Response:
+    import strategy_scans
+
+    try:
+        content = strategy_scans.export_csv(run_id, view=view)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return Response(
+        content=content,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="strategy-scan-{run_id}-{view}.csv"'},
+    )
+
+
+@app.delete("/api/aqsp/strategy-scans/{run_id}", tags=["AQSP 研究"], summary="删除当前租户终态策略扫描及结果")
+def aqsp_strategy_scan_delete(run_id: str) -> dict:
+    import strategy_scans
+
+    try:
+        deleted = strategy_scans.delete_run(run_id)
+    except strategy_scans.StrategyScanError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if not deleted:
+        raise HTTPException(404, "策略扫描任务不存在或已移出当前租户")
+    return {"data": {"run_id": run_id, "deleted": True}}
+
+
+@app.get("/api/aqsp/strategy-backtests", tags=["AQSP 研究"], summary="读取当前租户的自定义策略回放任务")
+def aqsp_strategy_backtests(limit: int = Query(default=20, ge=1, le=20)) -> dict:
+    import strategy_backtests
+
+    try:
+        return {"data": {"items": strategy_backtests.list_runs(limit)}}
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/api/aqsp/strategy-backtests", tags=["AQSP 研究"], summary="启动 raw+PIT 单标或策略组合日线回放")
+def aqsp_strategy_backtest_start(body: StrategyBacktestIn) -> dict:
+    import strategy_backtests
+
+    try:
+        item = strategy_backtests.start_run(
+            strategy_id=body.strategy_id,
+            symbols=body.symbols or ([body.symbol] if body.symbol else []),
+            signal_start=body.signal_start.isoformat(),
+            signal_end=body.signal_end.isoformat(),
+            outcome_as_of=body.outcome_as_of.isoformat(),
+            mode=body.mode,
+            initial_capital=body.initial_capital,
+            position_sizing=body.position_sizing,
+            universe_mode=body.universe_mode,
+        )
+        return {"data": item}
+    except strategy_backtests.StrategyBacktestConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except strategy_backtests.StrategyBacktestError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except (OSError, RuntimeError) as exc:
+        raise HTTPException(503, str(exc)) from exc
+
+
+@app.get("/api/aqsp/strategy-backtests/{run_id}", tags=["AQSP 研究"], summary="读取自定义策略回放状态和逐笔结果")
+def aqsp_strategy_backtest(run_id: str) -> dict:
+    import strategy_backtests
+
+    try:
+        item = strategy_backtests.get_run(run_id)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    if item is None:
+        raise HTTPException(404, "自定义策略回放任务不存在或已移出当前租户")
+    return {"data": item}
+
+
+@app.post("/api/aqsp/strategy-backtests/{run_id}/cancel", tags=["AQSP 研究"], summary="取消当前租户的自定义策略回放")
+def aqsp_strategy_backtest_cancel(run_id: str) -> dict:
+    import strategy_backtests
+
+    try:
+        return {"data": strategy_backtests.cancel_run(run_id)}
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@app.get("/api/aqsp/strategy-backtests/{run_id}/report", tags=["AQSP 研究"], summary="下载独立策略回放 Markdown 报告")
+def aqsp_strategy_backtest_report(run_id: str) -> Response:
+    import strategy_backtests
+
+    try:
+        report = strategy_backtests.report_text(run_id)
+    except ValueError as exc:
+        raise HTTPException(413, str(exc)) from exc
+    if report is None:
+        raise HTTPException(404, "已完成策略回放报告不存在")
+    return Response(
+        content=report,
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="aqsp-strategy-replay-{run_id}.md"'},
+    )
+
+
+@app.get("/api/aqsp/strategy-backtests/{run_id}/trades.csv", tags=["AQSP 研究"], summary="导出独立策略逐笔回放 CSV")
+def aqsp_strategy_backtest_trades_csv(run_id: str) -> Response:
+    import csv
+    import io
+    import strategy_backtests
+
+    try:
+        run = strategy_backtests.get_run(run_id)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    if run is None or not isinstance(run.get("result"), dict):
+        raise HTTPException(404, "策略回放逐笔结果不存在")
+    rows = run["result"].get("trades", [])
+    stream = io.StringIO(newline="")
+    writer = csv.DictWriter(stream, fieldnames=list(rows[0]) if rows else [
+        "symbol", "entry_signal_date", "entry_date", "entry_price", "exit_signal_date",
+        "entry_quantity", "exit_date", "exit_price", "exit_quantity", "status",
+        "exit_reason", "return_pct", "pnl_amount", "fees_paid", "commission_paid",
+        "stamp_tax_paid", "slippage_paid", "blocker",
+    ])
+    writer.writeheader()
+    writer.writerows(rows)
+    return Response(
+        content=stream.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="aqsp-strategy-trades-{run_id}.csv"'},
+    )
+
+
+@app.delete("/api/aqsp/strategy-backtests/{run_id}", tags=["AQSP 研究"], summary="删除当前租户终态策略回放")
+def aqsp_strategy_backtest_delete(run_id: str) -> dict:
+    import strategy_backtests
+
+    try:
+        deleted = strategy_backtests.delete_run(run_id)
+    except strategy_backtests.StrategyBacktestConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not deleted:
+        raise HTTPException(404, "自定义策略回放任务不存在或已移出当前租户")
+    return {"data": {"run_id": run_id, "deleted": True}}
+
+
+@app.get("/api/aqsp/strategy-evidence", tags=["AQSP 研究"], summary="读取不可变策略 OOS 研究证据")
+def aqsp_strategy_evidence(
+    strategy_id: str | None = Query(default=None, min_length=1, max_length=100),
+    limit: int = Query(default=100, ge=1, le=500),
+) -> dict:
+    """Read hash-verified research evidence; this endpoint never promotes strategies."""
+    from aqsp.core.runtime import runtime_data_root
+    from aqsp.research.strategy_evidence import list_strategy_oos_evidence
+
+    try:
+        items = list_strategy_oos_evidence(
+            root=runtime_data_root(),
+            strategy_id=strategy_id,
+            limit=limit,
+        )
+    except (OSError, ValueError) as exc:
+        raise HTTPException(503, "策略 OOS 证据暂不可用；产物损坏或目录无效时已停止读取") from exc
+    return {"data": {"items": items, "count": len(items), "promotion_enabled": False}}
+
+
+class BacktestRunIn(BaseModel):
+    strategy_id: Literal["composite"] = "composite"
+    symbols: list[Annotated[str, Field(pattern=r"^\d{6}$")]] = Field(min_length=1, max_length=20)
+    start: date
+    end: date
+    train_days: int = Field(default=120, ge=20, le=1000)
+    test_days: int = Field(default=30, ge=5, le=250)
+    horizon_days: int = Field(default=3, ge=1, le=60)
+
+
+@app.get("/api/aqsp/backtest-runs", tags=["AQSP 研究"], summary="读取当前租户的用户回测任务")
+def aqsp_backtest_runs(limit: int = Query(default=20, ge=1, le=50)) -> dict:
+    import backtest_runs
+
+    try:
+        return {"data": {"items": backtest_runs.list_runs(limit)}}
+    except backtest_runs.BacktestRunError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/api/aqsp/backtest-runs", tags=["AQSP 研究"], summary="启动 raw SQLite composite Walk-forward 回测")
+def aqsp_backtest_run_start(body: BacktestRunIn) -> dict:
+    import backtest_runs
+
+    try:
+        item = backtest_runs.start_run(
+            strategy_id=body.strategy_id,
+            symbols=body.symbols,
+            start=body.start.isoformat(),
+            end=body.end.isoformat(),
+            train_days=body.train_days,
+            test_days=body.test_days,
+            horizon_days=body.horizon_days,
+        )
+        return {"data": item}
+    except backtest_runs.BacktestRunConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except backtest_runs.BacktestRunError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.get("/api/aqsp/backtest-runs/{run_id}", tags=["AQSP 研究"], summary="读取回测任务状态、进度与日志")
+def aqsp_backtest_run(run_id: str) -> dict:
+    import backtest_runs
+
+    try:
+        item = backtest_runs.get_run(run_id)
+    except backtest_runs.BacktestRunError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if item is None:
+        raise HTTPException(404, "回测任务不存在")
+    return {"data": item}
+
+
+@app.post("/api/aqsp/backtest-runs/{run_id}/cancel", tags=["AQSP 研究"], summary="取消当前租户的回测任务")
+def aqsp_backtest_run_cancel(run_id: str) -> dict:
+    import backtest_runs
+
+    try:
+        item = backtest_runs.cancel_run(run_id)
+    except backtest_runs.BacktestRunError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if item is None:
+        raise HTTPException(404, "回测任务不存在")
+    return {"data": item}
+
+
+@app.get("/api/aqsp/backtest-runs/{run_id}/report", tags=["AQSP 研究"], summary="下载已完成回测的 Markdown 报告")
+def aqsp_backtest_run_report(run_id: str) -> Response:
+    import backtest_runs
+
+    try:
+        report = backtest_runs.report_text(run_id)
+    except backtest_runs.BacktestRunError as exc:
+        raise HTTPException(413, str(exc)) from exc
+    if report is None:
+        raise HTTPException(404, "已完成回测报告不存在")
+    return Response(
+        content=report,
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="aqsp-backtest-{run_id}.md"'},
+    )
+
+
+@app.delete("/api/aqsp/backtest-runs/{run_id}", tags=["AQSP 研究"], summary="删除当前租户的终态回测任务与产物")
+def aqsp_backtest_run_delete(run_id: str) -> dict:
+    import backtest_runs
+
+    try:
+        deleted = backtest_runs.delete_run(run_id)
+    except backtest_runs.BacktestRunConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except backtest_runs.BacktestRunError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not deleted:
+        raise HTTPException(404, "回测任务不存在")
+    return {"data": {"run_id": run_id, "deleted": True}}
+
+
+@app.get("/api/aqsp/data-sources", tags=["AQSP 数据"], summary="读取数据源能力与本机就绪状态")
+def aqsp_data_sources() -> dict:
+    """Return configured source capabilities without probing auth or network."""
+    from pathlib import Path
+
+    from aqsp.data.registry import (
+        local_data_status,
+        registry_entry_dict,
+        sort_registry_entries,
+    )
+    from aqsp.data.source_health import read_source_health
+    from aqsp.data.source_readiness import inspect_source_readiness
+
+    try:
+        project_root = Path(__file__).resolve().parents[1]
+        health = read_source_health().get("sources", {})
+        sources = []
+        for entry in sort_registry_entries():
+            readiness = inspect_source_readiness(entry, probe_auth=False)
+            stats = health.get(entry.id, {})
+            sources.append({
+                **registry_entry_dict(entry),
+                "local_status": local_data_status(entry, project_root=project_root),
+                "auth": {
+                    "kind": readiness.auth_kind,
+                    "status": readiness.auth_status,
+                    "message": readiness.auth_message,
+                    "checked_at": readiness.auth_checked_at,
+                    "active_probe": readiness.active_probe,
+                },
+                "workload_fit": readiness.workload_fit,
+                "health": {
+                    "successes": int(stats.get("successes", 0)),
+                    "failures": int(stats.get("failures", 0)),
+                    "last_success": str(stats.get("last_success") or ""),
+                    "last_failure": str(stats.get("last_failure") or ""),
+                },
+            })
+    except (OSError, TypeError, ValueError) as exc:
+        raise HTTPException(503, f"数据源目录暂不可用：{exc}") from exc
+    return {
+        "data": {
+            "sources": sources,
+            "probe_auth": False,
+            "workloads": ["live_short", "walkforward", "pit"],
+        }
+    }
+
+
+@app.get("/api/aqsp/daily-data-refresh", tags=["AQSP 数据"], summary="读取受支持标的 raw 日线覆盖和刷新任务状态")
+def aqsp_daily_data_refresh_status() -> dict:
+    """Return actual target-day universe coverage and the resumable batch task."""
+    import daily_data_refresh
+
+    try:
+        return {"data": daily_data_refresh.daily_refresh_status()}
+    except daily_data_refresh.RefreshUnavailable as exc:
+        raise HTTPException(503, str(exc)) from exc
+
+
+@app.post("/api/aqsp/daily-data-refresh", tags=["AQSP 数据"], summary="启动一轮有界、可续传的受支持标的 raw 日线刷新")
+def aqsp_daily_data_refresh_start() -> dict:
+    """Start the existing cursor-based updater; arbitrary commands are not accepted."""
+    import daily_data_refresh
+
+    if _tenant.current_tenant.get() != "local":
+        raise HTTPException(403, "全局行情刷新仅允许本机 local 租户启动")
+    try:
+        return {"data": daily_data_refresh.start_daily_refresh()}
+    except daily_data_refresh.RefreshConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except daily_data_refresh.RefreshUnavailable as exc:
+        raise HTTPException(503, str(exc)) from exc
 
 
 _DASHBOARD_CACHE: dict = {}  # key="dashboard_metrics" -> (ts, data)
@@ -2433,6 +3408,12 @@ class ReviewUpdateIn(BaseModel):
     notes: str | None = None
 
 
+def _require_local_formal_reviews() -> None:
+    """The legacy formal-review file is single-user and must not cross tenants."""
+    if _tenant.current_tenant.get() != "local":
+        raise HTTPException(409, "正式信号复盘当前仅支持本地单用户租户")
+
+
 @app.get(
     "/api/reviews",
     tags=["AQSP 研究"],
@@ -2459,6 +3440,7 @@ def get_reviews_endpoint(
     min_rating: int | None = Query(default=None, description="最低评分（1-5）"),
 ):
     """查询复盘记录。"""
+    _require_local_formal_reviews()
     try:
         from aqsp.review import get_reviews
 
@@ -2513,6 +3495,7 @@ def get_reviews_endpoint(
 )
 def create_review_endpoint(review_in: ReviewCreateIn):
     """创建复盘记录。"""
+    _require_local_formal_reviews()
     try:
         from aqsp.review import add_review
 
@@ -2551,6 +3534,7 @@ def create_review_endpoint(review_in: ReviewCreateIn):
 )
 def update_review_endpoint(review_id: str, review_in: ReviewUpdateIn):
     """更新复盘记录。"""
+    _require_local_formal_reviews()
     try:
         from aqsp.review import update_review
 
@@ -2589,6 +3573,7 @@ def update_review_endpoint(review_id: str, review_in: ReviewUpdateIn):
 )
 def delete_review_endpoint(review_id: str):
     """删除复盘记录。"""
+    _require_local_formal_reviews()
     try:
         from aqsp.review import delete_review
 
@@ -2616,6 +3601,7 @@ def delete_review_endpoint(review_id: str):
 )
 def get_tags_endpoint():
     """获取所有使用过的标签。"""
+    _require_local_formal_reviews()
     try:
         from aqsp.review import get_all_tags
 
@@ -2642,6 +3628,7 @@ def get_tags_endpoint():
 )
 def review_insights_endpoint():
     """复盘洞察聚合（只读）。"""
+    _require_local_formal_reviews()
     try:
         from aqsp.review import summarize_reviews
 
@@ -2705,9 +3692,14 @@ def ic_history_endpoint():
     try:
         import json as _json
         from pathlib import Path as _Path
+        from datetime import timezone as _timezone
 
-        root = os.environ.get("AQSP_RUNTIME_DATA_ROOT", "").strip() or "/opt/aqsp/data"
-        path = _Path(root) / "pit_cache" / "factor_ic" / "ic_history.jsonl"
+        from aqsp.briefing.closing_review import _factor_ic_runtime_root
+        from aqsp.core.time import latest_completed_trading_day, now_shanghai
+
+        directory = _Path(_factor_ic_runtime_root()) / "pit_cache" / "factor_ic"
+        path = directory / "ic_history.jsonl"
+        ready_path = directory / "IC_READY"
         points: list[dict] = []
         if path.exists():
             for line in path.read_text(encoding="utf-8").splitlines():
@@ -2715,16 +3707,401 @@ def ic_history_endpoint():
                 if not line:
                     continue
                 try:
-                    points.append(_json.loads(line))
+                    point = _json.loads(line)
                 except _json.JSONDecodeError:
                     continue
+                if isinstance(point, dict):
+                    points.append(point)
         points.sort(key=lambda p: str(p.get("run_at", "")))
         latest_factors = points[-1].get("factors", {}) if points else {}
-        return {"data": {"points": points, "latest_factors": latest_factors}}
+        now = now_shanghai()
+        try:
+            max_age_hours = float(os.environ.get("MAX_AGE_HOURS", "36"))
+            if not (0 < max_age_hours < float("inf")):
+                raise ValueError
+        except (TypeError, ValueError):
+            max_age_hours = 36.0
+        try:
+            max_lag_trading_days = int(os.environ.get("IC_MAX_LAG_TRADING_DAYS", "1"))
+            if max_lag_trading_days < 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            max_lag_trading_days = 1
+
+        ready_at = None
+        age_hours = None
+        try:
+            ready_mtime = ready_path.stat().st_mtime
+            ready_at_dt = datetime.fromtimestamp(ready_mtime, tz=_timezone.utc).astimezone(now.tzinfo)
+            ready_at = ready_at_dt.isoformat()
+            age_hours = max(0.0, (now - ready_at_dt).total_seconds() / 3600)
+        except OSError:
+            pass
+
+        latest = points[-1] if points else {}
+        marker_status = (
+            "missing"
+            if ready_at is None
+            else "stale"
+            if age_hours is not None and age_hours > max_age_hours
+            else "fresh"
+        )
+        data_status = "unknown"
+        data_threshold = None
+        completed_data_date = None
+        latest_as_of = _parse_iso_date(latest.get("as_of")) if latest else None
+        if latest_as_of is not None:
+            try:
+                completed_data_date = latest_completed_trading_day(now)
+                data_threshold = _dual_verdict_data_threshold(max_lag_trading_days)
+                if latest_as_of > completed_data_date:
+                    data_status = "unknown"
+                else:
+                    data_status = "stale" if latest_as_of < data_threshold else "fresh"
+            except Exception:  # noqa: BLE001 -- unknown calendar must not assert freshness
+                data_status = "unknown"
+
+        if not points:
+            readiness_status = "empty" if ready_at else "missing"
+            readiness_reason = (
+                "IC_READY 存在，但没有可读取的历史点"
+                if ready_at
+                else "未找到 IC_READY 或单窗 IC 历史产物"
+            )
+        elif marker_status == "missing":
+            readiness_status = "unverified"
+            readiness_reason = "存在 IC 历史点，但缺少 IC_READY，无法确认它是本轮 runner 产物"
+        elif marker_status == "stale":
+            readiness_status = "stale"
+            readiness_reason = f"IC_READY 已超过 {max_age_hours:g} 小时新鲜度上限；历史点仅供回看"
+        elif data_status == "stale":
+            readiness_status = "stale"
+            readiness_reason = (
+                f"IC 窗口数据截至 {latest.get('as_of') or '未标注'}，"
+                f"落后于允许的 {max_lag_trading_days} 个交易日范围"
+            )
+        elif data_status != "fresh":
+            readiness_status = "unverified"
+            readiness_reason = (
+                "IC 窗口数据日期晚于最近已完成交易日"
+                if latest_as_of is not None
+                and completed_data_date is not None
+                and latest_as_of > completed_data_date
+                else "无法核实 IC 窗口数据日期的新鲜度；历史点仅供回看"
+            )
+        else:
+            readiness_status = "fresh"
+            readiness_reason = "IC_READY 与 IC 窗口数据日期均在新鲜度范围内"
+
+        return {"data": {
+            "points": points,
+            "latest_factors": latest_factors,
+            "readiness": {
+                "status": readiness_status,
+                "reason": readiness_reason,
+                "ready_at": ready_at,
+                "age_hours": round(age_hours, 2) if age_hours is not None else None,
+                "max_age_hours": max_age_hours,
+                "marker_status": marker_status,
+                "data_status": data_status,
+                "data_threshold": data_threshold.isoformat() if data_threshold else None,
+                "max_lag_trading_days": max_lag_trading_days,
+                "as_of": latest.get("as_of"),
+                "run_at": latest.get("run_at"),
+            },
+        }}
     except HTTPException:
         raise
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"读取因子 IC 历史失败：{e}") from e
+
+
+class FactorDraftIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    factor_id: str | None = Field(default=None, min_length=1, max_length=80)
+    name: str = Field(min_length=1, max_length=120)
+    hypothesis: str = Field(min_length=1, max_length=500)
+    expression: str = Field(min_length=1, max_length=1000)
+    expected_revision: int | None = Field(default=None, ge=1, strict=True)
+
+
+class FactorExpressionCheckIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    expression: str = Field(min_length=1, max_length=1000)
+
+
+class FactorTrialIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    symbols: list[str] = Field(min_length=20, max_length=200)
+    signal_start: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    signal_end: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    holding_days: int = Field(default=5, ge=1, le=20, strict=True)
+    quantile: int = Field(default=5, ge=2, le=10, strict=True)
+
+
+class FactorValidationIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    trial_id: str = Field(min_length=1, max_length=80)
+
+
+class SignalConditionIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    left: str = Field(min_length=1, max_length=80)
+    op: str = Field(min_length=1, max_length=2)
+    right: str | float
+    left_days: int = Field(default=0, ge=0, strict=True)
+    right_days: int = Field(default=0, ge=0, strict=True)
+
+
+class SignalDefinitionIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    id: str = Field(min_length=1, max_length=40)
+    name: str = Field(min_length=1, max_length=120)
+    kind: str = Field(min_length=1, max_length=16)
+    enabled: bool
+    conditions: list[SignalConditionIn] = Field(min_length=1, max_length=8)
+    expected_revision: int | None = Field(default=None, ge=1, strict=True)
+
+
+class SignalScanIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    signal_ids: list[str] = Field(min_length=1, max_length=5)
+    symbols: list[str] = Field(min_length=1, max_length=20)
+    start: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    end: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+
+
+@app.get("/api/aqsp/factor-expression-catalog", tags=["AQSP 研究"], summary="读取因子编辑器实际支持的字段与算子")
+def aqsp_factor_expression_catalog() -> dict:
+    import factor_trials
+    from aqsp.research.factor_expression import factor_expression_functions
+
+    return {
+        "data": {
+            "fields": sorted(factor_trials.TRIAL_FIELDS),
+            "functions": [
+                {
+                    "name": item.name,
+                    "family": item.family,
+                    "signature": item.signature,
+                    "description": item.description,
+                    "example": item.example,
+                }
+                for item in factor_expression_functions()
+            ],
+        }
+    }
+
+
+@app.post("/api/aqsp/factor-expression-check", tags=["AQSP 研究"], summary="按正式因子 DSL 白名单检查公式语法")
+def aqsp_factor_expression_check(body: FactorExpressionCheckIn) -> dict:
+    from aqsp.core.errors import DataError
+    from aqsp.research.factor_expression import compile_factor_expression
+
+    try:
+        compiled = compile_factor_expression(body.expression)
+    except DataError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {
+        "data": {
+            "valid": True,
+            "fields": list(compiled.fields),
+            "max_lookback": compiled.max_lookback,
+        }
+    }
+
+
+@app.get("/api/aqsp/factor-definitions", tags=["AQSP 研究"], summary="读取当前租户的因子公式草稿与版本")
+def aqsp_factor_definitions() -> dict:
+    import factor_definitions
+
+    try:
+        items = factor_definitions.list_definitions()
+        validation_runs = factor_definitions.list_validation_runs(limit=50)
+    except ValueError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    return {
+        "data": {
+            "items": items,
+            "validation_runs": validation_runs,
+            "lifecycle_write_status": "draft_only",
+        }
+    }
+
+
+@app.post("/api/aqsp/factor-definitions", tags=["AQSP 研究"], summary="保存新的因子公式草稿或不可变新版本")
+def aqsp_factor_definition_save(body: FactorDraftIn) -> dict:
+    import factor_definitions
+    from aqsp.core.errors import DataError
+
+    try:
+        item = factor_definitions.save_draft(
+            factor_id=body.factor_id,
+            name=body.name,
+            hypothesis=body.hypothesis,
+            expression=body.expression,
+            expected_revision=body.expected_revision,
+        )
+    except factor_definitions.FactorDefinitionConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except (DataError, ValueError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"data": item}
+
+
+@app.post("/api/aqsp/factor-definitions/{factor_id}/versions/{version}/trial", tags=["AQSP 研究"], summary="使用本机 raw SQLite 日线试算指定因子版本")
+def aqsp_factor_definition_trial(factor_id: str, version: int, body: FactorTrialIn) -> dict:
+    import factor_definitions
+    import factor_trials
+    from aqsp.core.errors import DataError
+
+    try:
+        selected = factor_definitions.get_version(factor_id, version)
+        trial = factor_trials.run_factor_trial(
+            expression=selected["version"]["expression"],
+            symbols=body.symbols,
+            signal_start=body.signal_start,
+            signal_end=body.signal_end,
+            holding_days=body.holding_days,
+            quantile=body.quantile,
+        )
+        trial["factor_id"] = factor_id
+        trial["factor_version"] = version
+        saved = factor_definitions.append_trial(factor_id, version, trial)
+    except factor_definitions.FactorDefinitionConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except (DataError, OSError) as exc:
+        logger.warning("factor_trial_unavailable", factor_id=factor_id, error=str(exc))
+        raise HTTPException(503, "本机 raw 历史数据暂不可用于试算；本次未保存成功结果") from exc
+    return {"data": saved}
+
+
+@app.post("/api/aqsp/factor-validations", tags=["AQSP 研究"], summary="对同一样本家族的因子试算运行 Newey-West 与 BH-FDR 诊断")
+def aqsp_factor_validation_create(body: FactorValidationIn) -> dict:
+    import factor_definitions
+    import factor_validation
+
+    try:
+        report = factor_validation.validate_factor_trial_family(
+            factor_definitions.list_definitions(),
+            target_trial_id=body.trial_id,
+        )
+        saved = factor_definitions.append_validation_run(report)
+    except factor_validation.FactorTrialNotFound as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    return {"data": saved}
+
+
+@app.get("/api/aqsp/signal-definitions/options", tags=["AQSP 研究"], summary="读取条件信号可用字段与条件边界")
+def aqsp_signal_definition_options() -> dict:
+    import signal_definitions
+
+    return {"data": signal_definitions.options()}
+
+
+@app.get("/api/aqsp/signal-definitions", tags=["AQSP 研究"], summary="读取当前租户的条件信号定义")
+def aqsp_signal_definitions() -> dict:
+    import signal_definitions
+
+    try:
+        return {
+            "data": {
+                "items": signal_definitions.list_signals(),
+                "consumer_status": "monitor_snapshot_and_historical_scan",
+            }
+        }
+    except ValueError as exc:
+        raise HTTPException(503, str(exc)) from exc
+
+
+@app.post("/api/aqsp/signal-definitions", tags=["AQSP 研究"], summary="新建或修订当前租户的条件信号定义")
+def aqsp_signal_definition_save(body: SignalDefinitionIn) -> dict:
+    import signal_definitions
+
+    try:
+        item = signal_definitions.save_signal(
+            signal_id=body.id,
+            name=body.name,
+            kind=body.kind,
+            enabled=body.enabled,
+            conditions=[condition.model_dump() for condition in body.conditions],
+            expected_revision=body.expected_revision,
+        )
+    except signal_definitions.SignalDefinitionConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"data": item}
+
+
+@app.delete("/api/aqsp/signal-definitions/{signal_id}", tags=["AQSP 研究"], summary="删除当前租户的条件信号定义")
+def aqsp_signal_definition_delete(signal_id: str, expected_revision: int = Query(ge=1)) -> dict:
+    import signal_definitions
+
+    try:
+        deleted = signal_definitions.delete_signal(signal_id, expected_revision)
+    except signal_definitions.SignalDefinitionConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    if not deleted:
+        raise HTTPException(404, "信号定义不存在或已移出当前租户")
+    return {"data": {"id": signal_id, "deleted": True}}
+
+
+@app.get("/api/aqsp/signal-scans", tags=["AQSP 研究"], summary="读取当前租户的历史条件信号扫描")
+def aqsp_signal_scans() -> dict:
+    import signal_scans
+
+    try:
+        return {"data": {"items": signal_scans.list_runs()}}
+    except ValueError as exc:
+        raise HTTPException(503, str(exc)) from exc
+
+
+@app.post("/api/aqsp/signal-scans", tags=["AQSP 研究"], summary="运行一次本地 raw 日线条件信号扫描")
+def aqsp_signal_scan_run(body: SignalScanIn) -> dict:
+    import signal_scans
+    from aqsp.core.errors import DataError
+
+    try:
+        result = signal_scans.run_signal_scan(
+            signal_ids=body.signal_ids,
+            symbols=body.symbols,
+            start=body.start,
+            end=body.end,
+        )
+    except signal_scans.SignalScanConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except (DataError, OSError) as exc:
+        raise HTTPException(503, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"data": result}
+
+
+@app.delete("/api/aqsp/signal-scans/{run_id}", tags=["AQSP 研究"], summary="删除一条当前租户的历史信号扫描")
+def aqsp_signal_scan_delete(run_id: str) -> dict:
+    import signal_scans
+
+    try:
+        deleted = signal_scans.delete_run(run_id)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    if not deleted:
+        raise HTTPException(404, "扫描记录不存在或已移出当前租户")
+    return {"data": {"run_id": run_id, "deleted": True}}
 
 
 def _parse_iso_utc_z(value: object):

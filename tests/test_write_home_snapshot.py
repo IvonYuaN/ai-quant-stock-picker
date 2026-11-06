@@ -1437,6 +1437,142 @@ def test_variant_suite_rejects_expired_waiting_status(
     assert suite.last_error == "变体调度状态已过期，等待下一次正式刷新。"
 
 
+def test_variant_suite_keeps_latest_failure_alongside_qualified_artifact(
+    monkeypatch, tmp_path: Path
+) -> None:
+    results_path = tmp_path / "variant_results.json"
+    results_path.write_text(json.dumps(_variant_result_payload()), encoding="utf-8")
+    status_path = tmp_path / "variant_refresh_status.json"
+    status_path.write_text(
+        json.dumps(
+            {
+                "status": "failed",
+                "generated_at": "2026-10-30T22:00:00+08:00",
+                "message": "变体刷新异常，未发布半成品。",
+                "reason": "ValueError: /private/runtime/market.db 不可读",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AQSP_VARIANT_RESULTS", str(results_path))
+    monkeypatch.setenv("AQSP_VARIANT_REFRESH_STATUS", str(status_path))
+
+    suite = write_home_snapshot._variant_suite_snapshot()
+
+    assert suite.variant_count == 100
+    assert suite.refresh_status == "failed"
+    assert suite.refresh_freshness == "unknown"
+    assert suite.refresh_message == "变体刷新异常，未发布半成品。"
+    assert "/private/runtime" not in suite.refresh_message
+    assert suite.last_error == ""
+
+
+def test_variant_suite_exposes_staged_refresh_with_qualified_artifact(
+    monkeypatch, tmp_path: Path
+) -> None:
+    results_path = tmp_path / "variant_results.json"
+    results_path.write_text(json.dumps(_variant_result_payload()), encoding="utf-8")
+    status_path = tmp_path / "variant_refresh_status.json"
+    status_path.write_text(
+        json.dumps(
+            {
+                "status": "staged",
+                "generated_at": "2026-10-30T22:00:00+08:00",
+                "profiles_staged": 32,
+                "profiles_total": 128,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AQSP_VARIANT_RESULTS", str(results_path))
+    monkeypatch.setenv("AQSP_VARIANT_REFRESH_STATUS", str(status_path))
+
+    suite = write_home_snapshot._variant_suite_snapshot()
+
+    assert suite.variant_count == 100
+    assert suite.refresh_status == "staged"
+    assert suite.profiles_staged == 32
+    assert suite.profiles_total == 128
+
+
+def test_variant_suite_treats_malformed_refresh_progress_as_empty_counts(
+    monkeypatch, tmp_path: Path
+) -> None:
+    results_path = tmp_path / "variant_results.json"
+    results_path.write_text(json.dumps(_variant_result_payload()), encoding="utf-8")
+    status_path = tmp_path / "variant_refresh_status.json"
+    status_path.write_text(
+        json.dumps(
+            {
+                "status": "staged",
+                "generated_at": "2026-10-30T22:00:00+08:00",
+                "profiles_staged": "broken",
+                "profiles_total": -1,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AQSP_VARIANT_RESULTS", str(results_path))
+    monkeypatch.setenv("AQSP_VARIANT_REFRESH_STATUS", str(status_path))
+
+    suite = write_home_snapshot._variant_suite_snapshot()
+
+    assert suite.refresh_status == "staged"
+    assert suite.profiles_staged == 0
+    assert suite.profiles_total == 0
+
+
+def test_variant_suite_marks_waiting_status_stale_with_qualified_artifact(
+    monkeypatch, tmp_path: Path
+) -> None:
+    results_path = tmp_path / "variant_results.json"
+    results_path.write_text(json.dumps(_variant_result_payload()), encoding="utf-8")
+    status_path = tmp_path / "variant_refresh_status.json"
+    status_path.write_text(
+        json.dumps(
+            {
+                "status": "waiting",
+                "generated_at": "2026-08-03T12:06:43+08:00",
+                "message": "等待收盘后错峰运行。",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AQSP_VARIANT_RESULTS", str(results_path))
+    monkeypatch.setenv("AQSP_VARIANT_REFRESH_STATUS", str(status_path))
+
+    suite = write_home_snapshot._variant_suite_snapshot()
+
+    assert suite.variant_count == 100
+    assert suite.refresh_status == "waiting"
+    assert suite.refresh_freshness == "stale"
+    assert suite.refresh_message == "等待状态已过期，等待下一次正式刷新。"
+
+
+@pytest.mark.parametrize(
+    ("status_content", "expected_status"),
+    [(None, "unknown"), ("{broken", "unknown"), ('{"status":"new_state"}', "unknown")],
+)
+def test_variant_suite_fails_closed_for_missing_corrupt_or_unknown_refresh_status(
+    monkeypatch, tmp_path: Path, status_content: str | None, expected_status: str
+) -> None:
+    results_path = tmp_path / "variant_results.json"
+    results_path.write_text(json.dumps(_variant_result_payload()), encoding="utf-8")
+    status_path = tmp_path / "variant_refresh_status.json"
+    if status_content is not None:
+        status_path.write_text(status_content, encoding="utf-8")
+    monkeypatch.setenv("AQSP_VARIANT_RESULTS", str(results_path))
+    monkeypatch.setenv("AQSP_VARIANT_REFRESH_STATUS", str(status_path))
+
+    suite = write_home_snapshot._variant_suite_snapshot()
+
+    assert suite.variant_count == 100
+    assert suite.refresh_status == expected_status
+    assert suite.refresh_freshness == "unknown"
+
+
 def test_phase_conclusion_summaries_keep_each_market_phase_separate() -> None:
     class PhaseProvider(_Provider):
         def _signal_task_rows_for_date(self, task_id: str, _signal_date: str):

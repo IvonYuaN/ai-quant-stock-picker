@@ -26,7 +26,7 @@
 - `TROUBLESHOOTING.md`: 常见故障排查手册
 - `vibe-research-migration.md`: AQSP 对外（研究前台）最小只读桥接契约
 - `DASHBOARD_GUIDE.md`: 研究工作台（React 入口 + 历史 Streamlit 回滚）使用指南
-- `STRATEGY_HEALTH_INTEGRATION.md`: 策略健康度监控（`aqsp.monitor.strategy_health`）集成指南
+- `STRATEGY_HEALTH_INTEGRATION.md`: 遗留策略健康度诊断 API（非运行集成、非调权依据）
 - `walkforward-2026-05.md`: walk-forward 报告落点（**亦是 `aqsp walkforward --report` 默认路径，勿删**）
 
 ## Archive

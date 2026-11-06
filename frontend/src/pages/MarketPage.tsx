@@ -4,8 +4,8 @@
 // 每块独立降级：接口失败 → 提示可重试；接口返回空 → 说明数据源未覆盖。两者文案不同。
 import { useMemo, useState } from "react";
 import { Activity, BarChart3, Flame, Globe2, Layers, RefreshCw, TrendingUp } from "lucide-react";
+import { Link } from "react-router-dom";
 import {
-  Badge,
   EmptyState,
   LoadingState,
   SectionHeader,
@@ -91,7 +91,7 @@ function SectorFlowBlock({ view }: { view: MarketView }) {
   const { sectorsTop, sectorsBottom } = view;
   if (sectorsTop.length === 0 && sectorsBottom.length === 0) return null;
   const all = [...sectorsBottom].reverse().concat(sectorsTop); // 由低到高，纵向条形更好读
-  const option = useMemo(() => sectorFlowOption(all, mode), [all.length, mode]);
+  const option = useMemo(() => sectorFlowOption(all, mode), [sectorsTop, sectorsBottom, mode]);
   const row = (name: string, net: number, pct: number) => (
     <div className="aq-flow-row" key={name}>
       <span className="aq-flow-name">{name}</span>
@@ -119,7 +119,7 @@ function SectorFlowBlock({ view }: { view: MarketView }) {
   );
 }
 
-function EmotionBlock({ view, onPick }: { view: MarketView; onPick: (symbol: string) => void }) {
+function EmotionBlock({ view }: { view: MarketView }) {
   const mode = useThemeMode();
   const e = view.emotion;
   const ladderChart = useMemo(
@@ -185,45 +185,6 @@ function EmotionBlock({ view, onPick }: { view: MarketView; onPick: (symbol: str
         </div>
       ) : null}
 
-      {e.lianbanStocks.length > 0 ? (
-        <div className="aq-ladder">
-          <p className="aq-label">
-            连板股清单 · 共 {e.lianbanStocks.length} 只
-            {e.lianbanStocks.length > 20 ? " · 仅展示前 20" : ""} · 客观榜单，非推荐
-          </p>
-          <div className="aq-table-wrap">
-            <table className="aq-table">
-              <thead>
-                <tr>
-                  <th>代码 / 名称</th>
-                  <th className="aq-num">连板</th>
-                  <th className="aq-num">现价</th>
-                  <th className="aq-num">涨跌幅</th>
-                  <th className="aq-num">成交额</th>
-                  <th>行业 / 概念</th>
-                </tr>
-              </thead>
-              <tbody>
-                {e.lianbanStocks.slice(0, 20).map((item) => (
-                  <tr key={item.code} {...clickableRowProps(() => onPick(item.code), "查看个股详情")}>
-                    <td>
-                      <strong>{item.name}</strong>
-                      <div className="aq-code">{item.code}</div>
-                    </td>
-                    <td className="aq-num">
-                      <Badge tone="warn">{item.boards} 板</Badge>
-                    </td>
-                    <td className="aq-num">{item.price.toFixed(2)}</td>
-                    <td className={cn("aq-num", changeClass(item.pct))}>{formatSignedPct(item.pct)}</td>
-                    <td className="aq-num">{formatYi(item.amount)}</td>
-                    <td>{item.industry || "—"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }
@@ -269,7 +230,7 @@ function IndustryBlock({ view }: { view: MarketView }) {
   const mode = useThemeMode();
   if (view.industryTop.length === 0 && view.industryBottom.length === 0) return null;
   const rows = [...view.industryBottom].reverse().concat(view.industryTop);
-  const option = useMemo(() => industryOption(rows, mode), [rows.length, mode]);
+  const option = useMemo(() => industryOption(rows, mode), [view.industryTop, view.industryBottom, mode]);
   const table = (title: string, list: MarketView["industryTop"]) => (
     <div>
       <p className="aq-label">{title}</p>
@@ -334,7 +295,7 @@ function GlobalBlock({ view }: { view: MarketView }) {
   );
 }
 
-export function MarketPage() {
+export function MarketPage({ mode = "all" }: { mode?: "all" | "environment" | "indices" }) {
   const { view, loading, failedSections, refresh } = useMarketData();
   const sources = useSourceHealth();
   const sourceNotice = summarizeSourceHealth(sources);
@@ -368,15 +329,15 @@ export function MarketPage() {
         <div>
           <p className="aq-eyebrow">
             <Globe2 aria-hidden="true" />
-            AQSP · 市场环境
+            AQSP · {mode === "indices" ? "指数行情" : "市场环境"}
           </p>
           <div className="aq-title-row">
-            <h1>市场环境</h1>
+            <h1>{mode === "indices" ? "指数" : "市场环境"}</h1>
             {/* 这是**取数时刻**，不是数据时间。各板块的数据时间在各自区头标注
                 （指数/外围/成交额榜），没有的就写「未标注」——不要用这个时间兜底。 */}
             {view?.updated ? <strong>取数 {view.updated}</strong> : null}
           </div>
-          <p className="aq-page-sub">指数 · 涨跌家数 · 短线情绪 · 成交额榜 · 行业榜 · 隔夜外围</p>
+          <p className="aq-page-sub">{mode === "indices" ? "宽基指数 · 隔夜外围" : mode === "environment" ? "市场宽度 · 短线情绪 · 板块资金 · 行业与成交榜" : "指数 · 涨跌家数 · 短线情绪 · 成交额榜 · 行业榜 · 隔夜外围"}</p>
         </div>
         <button type="button" className="aq-btn" onClick={refresh} disabled={loading} title="刷新市场数据">
           <RefreshCw className={cn(loading && "aq-spin")} aria-hidden="true" />
@@ -399,6 +360,12 @@ export function MarketPage() {
         <ToneCallout tone="warn" title={sourceNotice.title} detail={sourceNotice.detail} />
       ) : null}
 
+      {mode !== "indices" ? <section className="aq-section">
+        <SectionHeader title="市场异动" description="涨停、炸板和跌停池已移到独立异动工作台，便于按交易时间线浏览。">
+          <Link className="aq-btn" to="/abnormal">打开异动监控</Link>
+        </SectionHeader>
+      </section> : null}
+
       {loading && !view ? <LoadingState label="正在读取市场环境数据…" /> : null}
 
       {!loading && !view ? (
@@ -407,7 +374,7 @@ export function MarketPage() {
 
       {view && availability ? (
         <>
-          {section({
+          {mode !== "environment" ? section({
             title: "大盘指数",
             description: `上证 / 深证成指 / 创业板指 / 沪深300${view.indicesUpdated ? ` · 数据时间 ${formatEvidenceTime(view.indicesUpdated)}` : " · 数据时间未标注"}`,
             icon: TrendingUp,
@@ -415,9 +382,9 @@ export function MarketPage() {
             emptyTitle: "指数行情未返回",
             emptyDetail: "行情源未返回指数数据，可稍后刷新重试。",
             children: <IndexCards view={view} />,
-          })}
+          }) : null}
 
-          {section({
+          {mode !== "indices" ? section({
             title: "市场宽度",
             description: "涨跌家数 · 涨跌停 · 宽度分档",
             icon: BarChart3,
@@ -425,9 +392,9 @@ export function MarketPage() {
             emptyTitle: "涨跌家数未返回",
             emptyDetail: "市场活跃度数据源本次未返回；成交额榜、行业榜与板块资金流不受影响。",
             children: <BreadthBlock view={view} />,
-          })}
+          }) : null}
 
-          {section({
+          {mode !== "indices" ? section({
             title: "板块资金流",
             description: "行业资金净流入 / 净流出前列",
             icon: BarChart3,
@@ -435,19 +402,19 @@ export function MarketPage() {
             emptyTitle: "板块资金流未返回",
             emptyDetail: "行业资金流数据源本次未返回；涨跌家数不受影响。",
             children: <SectorFlowBlock view={view} />,
-          })}
+          }) : null}
 
-          {section({
+          {mode !== "indices" ? section({
             title: "短线情绪",
-            description: "连板梯队 · 封板率 / 炸板率 / 晋级率 · 连板股清单",
+            description: "连板梯队 · 封板率 / 炸板率 / 晋级率",
             icon: Flame,
             available: availability.emotion,
             emptyTitle: "短线情绪未返回",
             emptyDetail: "涨停板数据源本次未返回（非交易日或盘前常见）。",
-            children: <EmotionBlock view={view} onPick={setPicked} />,
-          })}
+            children: <EmotionBlock view={view} />,
+          }) : null}
 
-          {section({
+          {mode !== "indices" ? section({
             title: "成交额榜",
             description: `全市场成交额 Top20 · 客观榜单，非推荐${view.turnoverUpdated ? ` · 数据时间 ${formatEvidenceTime(view.turnoverUpdated)}` : " · 数据时间未标注"}`,
             icon: Layers,
@@ -455,9 +422,9 @@ export function MarketPage() {
             emptyTitle: "成交额榜未返回",
             emptyDetail: "行情中心本次未返回榜单数据。",
             children: <TurnoverBlock view={view} onPick={setPicked} />,
-          })}
+          }) : null}
 
-          {section({
+          {mode !== "indices" ? section({
             title: "行业涨跌榜",
             description: `全行业涨跌幅排名${view.industryTotal ? ` · 共 ${view.industryTotal} 个行业` : ""}`,
             icon: Activity,
@@ -465,9 +432,9 @@ export function MarketPage() {
             emptyTitle: "行业排名未返回",
             emptyDetail: "行业板块数据源本次未返回。",
             children: <IndustryBlock view={view} />,
-          })}
+          }) : null}
 
-          {section({
+          {mode !== "environment" ? section({
             title: "隔夜外围",
             description: `美股 / 港股指数 —— A 股开盘前的外部环境${view.globalUpdated ? ` · 数据时间 ${formatEvidenceTime(view.globalUpdated)}` : " · 数据时间未标注"}`,
             icon: Globe2,
@@ -475,7 +442,7 @@ export function MarketPage() {
             emptyTitle: "外围指数未返回",
             emptyDetail: "海外指数数据源本次未返回。",
             children: <GlobalBlock view={view} />,
-          })}
+          }) : null}
         </>
       ) : null}
 

@@ -58,6 +58,60 @@ def test_live_position_monitor_consumes_service_when_store_exists(
     assert "600000" not in result[0].message
 
 
+@pytest.mark.parametrize("tenant_id", [None, "u_0123456789abcdefabcd"])
+def test_live_position_monitor_starts_for_candidate_only_tenant(
+    monitor_store, monkeypatch, tenant_id
+):
+    (monitor_store / "portfolio.json").unlink()
+    tenant_store = monitor_store
+    if tenant_id:
+        tenant_store = monitor_store / "users" / tenant_id
+        tenant_store.mkdir(parents=True)
+    (tenant_store / "candidate_observations.json").write_text(
+        json.dumps({"items": [{"state": "active", "symbol": "600001"}]}),
+        encoding="utf-8",
+    )
+    captured = []
+
+    def run(command, **kwargs):
+        captured.append(command)
+        return SimpleNamespace(
+            stdout=json.dumps(
+                {
+                    "tenants_checked": 1,
+                    "open_events": 0,
+                    "skipped_checks": 0,
+                    "failed_tenants": 0,
+                }
+            )
+        )
+
+    monkeypatch.setattr(monitor.subprocess, "run", run)
+
+    result = monitor.check_live_positions()
+
+    assert len(captured) == 1
+    assert captured[0][-1] == "--monitor"
+    assert result[0].triggered is False
+    assert "1 个数据桶" in result[0].message
+
+
+def test_live_position_monitor_ignores_symlinked_candidate_store(
+    monitor_store, tmp_path, monkeypatch
+):
+    (monitor_store / "portfolio.json").unlink()
+    outside = tmp_path / "outside.json"
+    outside.write_text('{"items": [{"state": "active"}]}', encoding="utf-8")
+    (monitor_store / "candidate_observations.json").symlink_to(outside)
+
+    def unexpected(*args, **kwargs):
+        raise AssertionError("must not start subprocess for a symlinked store")
+
+    monkeypatch.setattr(monitor.subprocess, "run", unexpected)
+
+    assert monitor.check_live_positions() == []
+
+
 @pytest.mark.parametrize(
     ("uid", "gid", "expected"),
     [(1200, 1300, {"user": 1200, "group": 1300, "extra_groups": []}), (0, 0, {})],

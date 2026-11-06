@@ -92,7 +92,7 @@
   `CODEX任务清单.md` / `Codex深度问题修复清单.md` / `修正后的任务清单.md` / `最终修正版任务清单.md`
 - `docs/BEGINNER_DASHBOARD_INTEGRATION.md`（自述"已不再渲染旧新手看板"）→ `docs/archive/process/`
 - Pending Review 4 份的判定结果：
-  - **留 Active**：`DASHBOARD_GUIDE.md`（被 `src/aqsp/web/README.md` 引用，内容与 `deploy/nginx/aqsp-dashboard.conf` 的 302/5899/8900 一致）、`STRATEGY_HEALTH_INTEGRATION.md`（`src/aqsp/monitor/strategy_health.py` 存在，阈值与 API 同源码一致，有 `tests/test_strategy_health.py` 覆盖）
+  - **留 Active（边界已收窄）**：`DASHBOARD_GUIDE.md`（被 `src/aqsp/web/README.md` 引用，内容与 `deploy/nginx/aqsp-dashboard.conf` 的 302/5899/8900 一致）、`STRATEGY_HEALTH_INTEGRATION.md`（仅记录遗留诊断 API；无生产调用者，不作为运行集成或策略调权依据；有 `tests/test_strategy_health.py` 覆盖）
   - **归档 → `docs/archive/process/`**：`model-handoff.md`（2026-06-03 接手快照，已被本文取代）、`FETCHER_USAGE.md`（描述非当前数据面 `MultiSourceFetcher`，且"Tushare 为主源"与 `create_default_fetcher()` 的占位实现不符）
 
 **断链引用**（文档里提到、但 `docs/` 顶层已不存在的文件；已逐处修正）

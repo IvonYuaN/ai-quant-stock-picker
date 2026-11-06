@@ -10,6 +10,26 @@ import yaml
 _DEFAULT_CATALOG_PATH = (
     Path(__file__).resolve().parents[3] / "config" / "strategy_sources.yaml"
 )
+STRATEGY_CURRENT_STATUSES = frozenset(
+    {
+        "implemented",
+        "implemented_partial",
+        "runtime",
+        "data_factor_only",
+        "research_absorbed",
+    }
+)
+
+
+def validate_strategy_current_status(value: Any, *, family_id: str) -> str:
+    """Fail closed when a strategy source uses an unknown lifecycle label."""
+    if not isinstance(value, str) or value not in STRATEGY_CURRENT_STATUSES:
+        allowed = ", ".join(sorted(STRATEGY_CURRENT_STATUSES))
+        raise ValueError(
+            f"strategy family {family_id} has invalid current_status {value!r}; "
+            f"allowed values: {allowed}"
+        )
+    return value
 
 
 @dataclass(frozen=True)
@@ -65,11 +85,14 @@ def load_strategy_catalog(path: str | Path | None = None) -> StrategyCatalog:
 def _entry_from_mapping(raw: Any) -> StrategyCatalogEntry:
     if not isinstance(raw, dict):
         raise ValueError("strategy catalog entry must be a mapping")
+    entry_id = _required_text(raw, "id")
     entry = StrategyCatalogEntry(
-        id=_required_text(raw, "id"),
+        id=entry_id,
         name=_required_text(raw, "name"),
         hypothesis=_required_text(raw, "hypothesis"),
-        current_status=_required_text(raw, "current_status"),
+        current_status=validate_strategy_current_status(
+            raw.get("current_status"), family_id=entry_id,
+        ),
         absorbed_from=_text_tuple(raw.get("absorbed_from")),
         signals=_text_tuple(raw.get("signals")),
         validation_required=_text_tuple(raw.get("validation_required")),

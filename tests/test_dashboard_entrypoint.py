@@ -57,6 +57,15 @@ def test_entrypoint_classification_distinguishes_canonical_legacy_and_redirect()
     assert classify_entry_text("AQSP · T+1 决策工作台") == "canonical"
     assert classify_entry_text("AQSP 今日决策") == "canonical"
     assert classify_entry_text("AQSP / DAILY RESEARCH 当前研究") == "canonical"
+    assert classify_entry_text("AQSP · 研究复盘") == "canonical"
+    assert classify_entry_text("AQSP · 研究验证") == "canonical"
+    assert classify_entry_text("AQSP · 策略研究") == "canonical"
+    assert classify_entry_text("AQSP · 数据与能力") == "canonical"
+    assert classify_entry_text("AQSP · 市场环境") == "canonical"
+    assert classify_entry_text("AQSP · 市场异动 异动监控") == "canonical"
+    assert classify_entry_text("AQSP · 个股研究") == "canonical"
+    assert classify_entry_text("AQSP · 离页跟进") == "canonical"
+    assert classify_entry_text("AQSP · 条件信号") == "canonical"
     assert classify_entry_text("<div>AQSP 日期任务研究台</div>") == "legacy"
     assert (
         classify_entry_text(

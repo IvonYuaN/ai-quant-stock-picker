@@ -10,6 +10,7 @@ import pandas as pd
 
 from aqsp.core.errors import DataError
 from aqsp.data.cache import (
+    AdjustmentFactorRecord,
     DataCache,
 )
 from aqsp.data.source import (
@@ -32,6 +33,19 @@ _PREFILTERED_SYMBOLS_ENV = "AQSP_SQLITE_PREFILTERED_SYMBOLS"
 _ALLOW_EMPTY_SYMBOLS_ENV = "AQSP_SQLITE_ALLOW_EMPTY_SYMBOLS"
 _LIQUID_SYMBOL_MIN_HISTORY_ROWS = 250
 _LIQUID_SYMBOL_LOOKBACK_CALENDAR_DAYS = 500
+_INDEX_NAMES: dict[str, str] = {
+    "000001.SH": "上证指数",
+    "000002.SH": "上证A股指数",
+    "000300.SH": "沪深300",
+    "000688.SH": "科创50",
+    "000852.SH": "中证1000",
+    "000905.SH": "中证500",
+    "399001.SZ": "深证成指",
+    "399102.SZ": "创业板指数",
+    "399107.SZ": "深证A股指数",
+    "899050.BJ": "北证50",
+}
+_INDEX_TS_CODES = tuple(_INDEX_NAMES)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -59,6 +73,48 @@ def _parse_db_date(raw: str) -> date | None:
         return None
 
 
+def _index_ts_code(code: str) -> str:
+    """Resolve an index by exchange-qualified identity, never by stock code."""
+    value = str(code).strip().upper()
+    bare, separator, suffix = value.partition(".")
+    if separator:
+        market = suffix
+    elif bare.startswith(("399", "390")):
+        market = "SZ"
+    elif bare.startswith("899"):
+        market = "BJ"
+    else:
+        market = "SH"
+    ts_code = f"{bare}.{market}"
+    valid_prefixes = {
+        "SH": ("000", "880", "930", "931"),
+        "SZ": ("390", "399"),
+        "BJ": ("899",),
+    }
+    if (
+        market not in valid_prefixes
+        or len(bare) != 6
+        or not bare.isdigit()
+        or not bare.startswith(valid_prefixes[market])
+    ):
+        raise DataError(f"无效指数代码: {code}")
+    return ts_code
+
+
+def _stock_ts_code(symbol: str) -> str | None:
+    """Infer only the exchange suffix for historical raw-bar identities."""
+    value = str(symbol).strip()
+    if len(value) != 6 or not value.isdigit():
+        return None
+    if value.startswith(("600", "601", "603", "605", "688", "689")):
+        return f"{value}.SH"
+    if value.startswith(("000", "001", "002", "003", "300", "301")):
+        return f"{value}.SZ"
+    if value.startswith(("4", "8", "920")):
+        return f"{value}.BJ"
+    return None
+
+
 def _date_within_lag(left: str, right: str, *, max_days: int) -> bool:
     left_day = _parse_db_date(left)
     right_day = _parse_db_date(right)
@@ -84,7 +140,7 @@ class SqliteDbSource(DataSource):
         if not self.db_path.exists():
             raise FileNotFoundError(f"数据库不存在: {self.db_path}")
         self._use_cache = cache is not None
-        self.cache = cache if cache is not None else DataCache()
+        self.cache: DataCache | None = cache
         self._symbol_map: dict[str, str] | None = None
         self._last_coverage_snapshot: tuple[str, str, frozenset[str]] | None = None
         self._active_workload: str | None = None
@@ -117,6 +173,8 @@ class SqliteDbSource(DataSource):
             index=False, name=None
         ):
             ts_code = str(ts_code_raw).strip()
+            if ts_code.upper() in _INDEX_NAMES:
+                continue
             name = str(name_raw).strip().rstrip("\x00")
             if "." in ts_code:
                 symbol = ts_code.split(".")[0]
@@ -137,6 +195,152 @@ class SqliteDbSource(DataSource):
 
     def get_available_symbols(self) -> list[str]:
         return list(self._load_symbol_map().keys())
+
+    def get_symbols_with_daily_bars(self, start: date, end: date) -> list[str]:
+        """List A-share identities present in raw daily rows within the date window.
+
+        This is a local-data universe, not an official PIT listing/status master.
+        """
+        if end < start:
+            raise ValueError("end must be on or after start")
+        with sqlite3.connect(self.db_path, timeout=_SQLITE_TIMEOUT_SECONDS) as conn:
+            rows = conn.execute(
+                """
+                SELECT DISTINCT ts_code
+                FROM daily_qfq
+                WHERE (trade_date >= ? AND trade_date <= ?)
+                   OR (trade_date >= ? AND trade_date <= ?)
+                ORDER BY ts_code
+                """,
+                (
+                    start.strftime("%Y%m%d"), end.strftime("%Y%m%d"),
+                    start.isoformat(), end.isoformat(),
+                ),
+            ).fetchall()
+        symbols: set[str] = set()
+        for (raw_code,) in rows:
+            ts_code = str(raw_code).strip().upper()
+            if ts_code in _INDEX_NAMES:
+                continue
+            bare = ts_code.split(".", 1)[0]
+            if _stock_ts_code(bare) == ts_code:
+                symbols.add(bare)
+        return sorted(symbols)
+
+    def get_latest_daily_date(self) -> date | None:
+        """Return the newest daily bar date stored in the configured database."""
+        placeholders = ",".join("?" for _ in _INDEX_TS_CODES)
+        with sqlite3.connect(self.db_path, timeout=_SQLITE_TIMEOUT_SECONDS) as conn:
+            row = conn.execute(
+                "SELECT MAX(trade_date) FROM daily_qfq "
+                f"WHERE ts_code NOT IN ({placeholders})",
+                _INDEX_TS_CODES,
+            ).fetchone()
+        return _parse_db_date(str(row[0])) if row and row[0] else None
+
+    def get_latest_daily_dates(
+        self, symbols: list[str], *, as_of: date | None = None
+    ) -> dict[str, date]:
+        """Read per-symbol daily coverage dates without applying range completeness gates."""
+        symbol_map = self._resolve_symbol_map(symbols)
+        requested = list(dict.fromkeys(str(item).strip() for item in symbols if str(item).strip()))
+        ts_to_symbol = {
+            symbol_map[symbol]: symbol
+            for symbol in requested
+            if symbol in symbol_map
+        }
+        if not ts_to_symbol:
+            return {}
+        result: dict[str, date] = {}
+        ts_codes = list(ts_to_symbol)
+        with sqlite3.connect(self.db_path, timeout=_SQLITE_TIMEOUT_SECONDS) as conn:
+            for chunk in _chunks(ts_codes, _SQLITE_BATCH_SIZE):
+                placeholders = ",".join("?" for _ in chunk)
+                cutoff = ""
+                params: tuple[object, ...] = tuple(chunk)
+                if as_of is not None:
+                    cutoff = (
+                        " AND ((trade_date NOT LIKE '%-%' AND trade_date <= ?)"
+                        " OR (trade_date LIKE '%-%' AND trade_date <= ?))"
+                    )
+                    params += (as_of.strftime("%Y%m%d"), as_of.isoformat())
+                rows = conn.execute(
+                    "SELECT ts_code, MAX(trade_date) FROM daily_qfq "
+                    f"WHERE ts_code IN ({placeholders}){cutoff} GROUP BY ts_code",
+                    params,
+                ).fetchall()
+                for ts_code, raw_date in rows:
+                    parsed = _parse_db_date(str(raw_date)) if raw_date else None
+                    symbol = ts_to_symbol.get(str(ts_code))
+                    if symbol is not None and parsed is not None:
+                        result[symbol] = parsed
+        return result
+
+    def _resolve_symbol_map(self, symbols: list[str]) -> dict[str, str]:
+        symbol_map = dict(self._load_symbol_map())
+        unresolved = [
+            str(symbol).strip()
+            for symbol in dict.fromkeys(symbols)
+            if str(symbol).strip() not in symbol_map
+        ]
+        candidates = {
+            symbol: _stock_ts_code(symbol)
+            for symbol in unresolved
+        }
+        candidates = {symbol: code for symbol, code in candidates.items() if code}
+        if not candidates:
+            return symbol_map
+        with sqlite3.connect(self.db_path, timeout=_SQLITE_TIMEOUT_SECONDS) as conn:
+            for chunk in _chunks(list(candidates.values()), _SQLITE_BATCH_SIZE):
+                placeholders = ",".join("?" for _ in chunk)
+                rows = conn.execute(
+                    "SELECT DISTINCT ts_code FROM daily_qfq "
+                    f"WHERE ts_code IN ({placeholders})",
+                    chunk,
+                ).fetchall()
+                available = {str(row[0]).strip().upper() for row in rows}
+                for symbol, code in candidates.items():
+                    if code in available:
+                        symbol_map[symbol] = code
+                        self._name_map.setdefault(symbol, symbol)
+        return symbol_map
+
+    def get_available_daily_dates(self, start: date, end: date) -> list[date]:
+        """Return distinct session dates present in the local daily-bar table."""
+        if end < start:
+            raise ValueError("end must be on or after start")
+        with sqlite3.connect(self.db_path, timeout=_SQLITE_TIMEOUT_SECONDS) as conn:
+            rows = conn.execute(
+                """
+                SELECT DISTINCT trade_date
+                FROM daily_qfq
+                WHERE (trade_date >= ? AND trade_date <= ?)
+                   OR (trade_date >= ? AND trade_date <= ?)
+                """,
+                (
+                    start.strftime("%Y%m%d"),
+                    end.strftime("%Y%m%d"),
+                    start.isoformat(),
+                    end.isoformat(),
+                ),
+            ).fetchall()
+        dates: set[date] = set()
+        for row in rows:
+            parsed = _parse_db_date(str(row[0]))
+            if parsed is not None:
+                dates.add(parsed)
+        return sorted(dates)
+
+    def get_point_in_time_adjustment_factors(
+        self, symbols: list[str], dates: list[date]
+    ) -> dict[str, dict[date, AdjustmentFactorRecord]]:
+        """Return factor records resolved as of each date from the research cache."""
+        return self._get_cache().get_adj_factor_records_many(symbols, dates)
+
+    def _get_cache(self) -> DataCache:
+        if self.cache is None:
+            self.cache = DataCache()
+        return self.cache
 
     def get_liquid_symbols(self, *, limit: int, min_amount: float) -> list[str]:
         symbol_map = self._load_symbol_map()
@@ -269,7 +473,7 @@ class SqliteDbSource(DataSource):
         if not _date_within_lag(last_market_day, end_str, max_days=10):
             return []
 
-        symbol_map = self._load_symbol_map()
+        symbol_map = self._resolve_symbol_map(symbols)
         ts_to_symbol = {ts_code: symbol for symbol, ts_code in symbol_map.items()}
         requested_ts_codes = [
             symbol_map[symbol] for symbol in symbols if symbol in symbol_map
@@ -380,7 +584,7 @@ class SqliteDbSource(DataSource):
                 out[symbol] = cached
                 continue
             if self._use_cache and cache_db_path is None:
-                cached = self.cache.get_ohlcv(
+                cached = self._get_cache().get_ohlcv(
                     symbol,
                     start,
                     end,
@@ -396,7 +600,7 @@ class SqliteDbSource(DataSource):
                     continue
             pending_symbols.append(symbol)
 
-        symbol_map = self._load_symbol_map()
+        symbol_map = self._resolve_symbol_map(pending_symbols)
         ts_to_symbol = {ts_code: symbol for symbol, ts_code in symbol_map.items()}
         pending_ts_codes = [
             symbol_map[symbol] for symbol in pending_symbols if symbol in symbol_map
@@ -565,7 +769,7 @@ class SqliteDbSource(DataSource):
         cache_db = self._cache_db_path()
         if cache_db is None or not symbols:
             return {}
-        out = self.cache.get_ohlcv_many(
+        out = self._get_cache().get_ohlcv_many(
             symbols,
             start,
             end,
@@ -590,7 +794,7 @@ class SqliteDbSource(DataSource):
         cache_db = self._cache_db_path()
         if cache_db is None:
             for symbol, frame in frames.items():
-                self.cache.set_ohlcv(
+                self._get_cache().set_ohlcv(
                     symbol,
                     frame,
                     source="sqlite_db",
@@ -598,7 +802,7 @@ class SqliteDbSource(DataSource):
                     workload=getattr(self, "_active_workload", None),
                 )
             return
-        self.cache.set_ohlcv_many(
+        self._get_cache().set_ohlcv_many(
             frames,
             source=self.name,
             workload=getattr(self, "_active_workload", None),
@@ -680,9 +884,10 @@ class SqliteDbSource(DataSource):
 
         with sqlite3.connect(self.db_path, timeout=_SQLITE_TIMEOUT_SECONDS) as conn:
             for code in index_codes:
+                ts_code = _index_ts_code(code)
                 cached = (
-                    self.cache.get_index(
-                        code,
+                    self._get_cache().get_index(
+                        ts_code,
                         start,
                         end,
                         source=self.name,
@@ -692,11 +897,9 @@ class SqliteDbSource(DataSource):
                     else None
                 )
                 if cached is not None and not cached.empty:
+                    cached["symbol"] = code
+                    cached["name"] = _INDEX_NAMES.get(ts_code, ts_code)
                     out[code] = cached
-                    continue
-
-                ts_code = self._to_ts_code(code)
-                if ts_code is None:
                     continue
 
                 df = pd.read_sql(
@@ -719,7 +922,7 @@ class SqliteDbSource(DataSource):
                 )
                 df = df.drop(columns=["trade_date"])
                 df["symbol"] = code
-                df["name"] = self.get_symbol_name(code)
+                df["name"] = _INDEX_NAMES.get(ts_code, ts_code)
                 for col in ["open", "high", "low", "close", "volume", "amount"]:
                     if col in df.columns:
                         df[col] = pd.to_numeric(df[col], errors="coerce")
@@ -732,8 +935,8 @@ class SqliteDbSource(DataSource):
                 )
                 validated = self._validate_ohlcv(df, code)
                 if self._use_cache:
-                    self.cache.set_index(
-                        code,
+                    self._get_cache().set_index(
+                        ts_code,
                         validated,
                         source=self.name,
                         workload=getattr(self, "_active_workload", None),

@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Literal
 import pandas as pd
 
 from aqsp.core.errors import DataError
+from aqsp.data.cache import AdjustmentFactorRecord
 
 if TYPE_CHECKING:
     from aqsp.data.cache import DataCache
@@ -129,6 +130,32 @@ def require_fetched_mapping(
 
 class DataSource(ABC):
     name: str
+
+    def get_latest_daily_date(self) -> date | None:
+        """Return the newest available daily bar date when the source can report it."""
+        return None
+
+    def get_latest_daily_dates(
+        self, symbols: list[str], *, as_of: date | None = None
+    ) -> dict[str, date]:
+        """Return each requested symbol's latest daily bar date when supported."""
+        return {}
+
+    def get_symbols_with_daily_bars(self, start: date, end: date) -> list[str]:
+        """Return symbols with raw daily rows in a date range when supported."""
+        return []
+
+    def get_point_in_time_adjustment_factors(
+        self, symbols: list[str], dates: list[date]
+    ) -> dict[str, dict[date, AdjustmentFactorRecord]]:
+        """Return per-symbol factors known on each requested date, when supported."""
+        return {}
+
+    def fetch_adjustment_factors(
+        self, symbol: str, start: date, end: date
+    ) -> pd.DataFrame:
+        """Fetch dated positive adjustment factors from a provider that supports them."""
+        raise DataError(f"{self.name} 不支持复权因子抓取")
 
     @abstractmethod
     def fetch_daily(

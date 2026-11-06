@@ -225,6 +225,53 @@ def test_cache_adj_factor(tmp_path):
     assert result == 1.1
 
 
+def test_cache_adj_factor_record_preserves_point_in_time_provenance(tmp_path):
+    cache = DataCache(tmp_path / "cache.db")
+    cache.set_adj_factors(
+        "600000",
+        pd.DataFrame({"date": ["2026-05-27"], "adj_factor": [1.1]}),
+        source="pit-fixture",
+    )
+
+    record = cache.get_adj_factor_record("600000", date(2026, 5, 28))
+
+    assert record is not None
+    assert record.date == date(2026, 5, 27)
+    assert record.value == 1.1
+    assert record.source == "pit-fixture"
+    assert record.fetched_at
+    assert cache.get_adj_factor_record("000001", date(2026, 5, 28)) is None
+    assert cache.get_adj_factor_record("600000", date(2026, 5, 26)) is None
+
+
+def test_cache_adj_factor_records_many_uses_only_factors_known_by_each_date(tmp_path):
+    cache = DataCache(tmp_path / "cache.db")
+    cache.set_adj_factors(
+        "600000",
+        pd.DataFrame(
+            {
+                "date": ["2026-05-27", "2026-05-29", "2026-05-31"],
+                "adj_factor": [1.0, 1.2, 1.5],
+            }
+        ),
+        source="pit-fixture",
+    )
+    requested = [
+        date(2026, 5, 26),
+        date(2026, 5, 27),
+        date(2026, 5, 28),
+        date(2026, 5, 29),
+        date(2026, 5, 30),
+    ]
+
+    records = cache.get_adj_factor_records_many(["600000", "000001"], requested)
+
+    assert "000001" not in records
+    assert date(2026, 5, 26) not in records["600000"]
+    assert [records["600000"][day].value for day in requested[1:]] == [1.0, 1.0, 1.2, 1.2]
+    assert records["600000"][date(2026, 5, 30)].source == "pit-fixture"
+
+
 def test_cache_get_adj_factors_returns_forward_filled_mapping(tmp_path):
     cache = DataCache(db_path=tmp_path / "test_cache.db")
     df = pd.DataFrame(
@@ -384,6 +431,32 @@ def test_adjustment_get_point_in_time_factors(tmp_path):
     assert len(factors) == 2
     assert factors["adj_factor"].iloc[0] == 1.0
     assert factors["adj_factor"].iloc[1] == 1.1
+
+
+def test_adjustment_fetches_factors_through_datasource_and_caches_them(tmp_path):
+    class FactorSource:
+        name = "akshare"
+
+        def fetch_adjustment_factors(self, symbol, start, end):
+            assert (symbol, start, end) == (
+                "600000",
+                date(2026, 5, 27),
+                date(2026, 5, 28),
+            )
+            return pd.DataFrame(
+                {
+                    "date": ["2026-05-27", "2026-05-28"],
+                    "adj_factor": [1.0, 1.1],
+                }
+            )
+
+    cache = DataCache(db_path=tmp_path / "test_cache.db")
+    service = AdjustmentService(cache=cache, factor_source=FactorSource())
+
+    service.fetch_and_cache_factors("600000", date(2026, 5, 27), date(2026, 5, 28))
+
+    assert cache.get_adj_factor("600000", date(2026, 5, 27)) == 1.0
+    assert cache.get_adj_factor_record("600000", date(2026, 5, 28)).source == "akshare"
 
 
 def test_adjustment_get_point_in_time_factors_raises_when_missing(tmp_path):

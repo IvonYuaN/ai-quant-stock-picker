@@ -50,6 +50,10 @@ import { todayResearchHref } from "@/lib/research-route";
 import { evidenceLabel, statusLabel } from "@/lib/display-labels";
 import { loadWatch, saveWatch, WATCHLIST_CHANGED_EVENT } from "@/lib/watchlist";
 import { OwnedPositionPlanEntry } from "@/components/aqsp/OwnedPositionPlanEntry";
+import { StockKlinePanel } from "@/components/aqsp/StockKlinePanel";
+import { StockFinancialsPanel } from "@/components/aqsp/StockFinancialsPanel";
+import { StockLevelsPanel } from "@/components/aqsp/StockLevelsPanel";
+import { StockResearchAnalysisPanel } from "@/components/aqsp/StockResearchAnalysisPanel";
 import { cn } from "@/lib/utils";
 
 function extractMessage(reason: unknown): string {
@@ -77,6 +81,7 @@ export function StockResearchPage() {
   const debate = view?.debates.find((result) => result.symbol === code);
   const datedMessages = snapshot && code ? messagesForCandidate(snapshot.messages, code) : [];
   const validCode = Boolean(code && /^\d{6}$/.test(code));
+  const currentResearch = Boolean(!workspace.selectedDate && !workspace.switching);
   const researchDate = view?.date || workspace.selectedDate;
 
   useEffect(() => {
@@ -177,7 +182,7 @@ export function StockResearchPage() {
 
       <section className="aq-research-summary" aria-label="同日研究摘要">
         {workspace.loading && !view ? <LoadingState label="正在读取所选日期的研究依据…" /> : null}
-        {workspace.error ? <StatePanel tone="warn" action={<button type="button" className="aq-btn" onClick={workspace.refresh}>重试研究</button>}>{workspace.error}，暂不展示未核实的评分与依据。</StatePanel> : null}
+        {workspace.error ? <StatePanel tone="warn" action={<button type="button" className="aq-btn" onClick={workspace.refresh}>重试研究</button>}>研究快照暂不可用，暂不展示未核实的评分与依据。</StatePanel> : null}
         {view ? (
           <>
             <div className="aq-tag-row"><Badge tone={view.isHistorical ? "neutral" : view.gate.tone}>{view.isHistorical ? "历史记录 · 仅供回看" : view.gate.label}</Badge><span className="aq-detail-muted">快照更新 {formatAqspTime(view.generatedAt)}</span></div>
@@ -197,6 +202,10 @@ export function StockResearchPage() {
           </>
         ) : null}
       </section>
+
+      <StockKlinePanel symbol={code} />
+      <StockLevelsPanel symbol={code} />
+      <StockFinancialsPanel symbol={code} />
 
       {view && row ? <section className="aq-detail-block">
         <SectionHeader title="同日消息与多空复核" description={`${view.date} 的个股证据，与下方实时行情分别呈现。`} count={`${datedMessages.length} 条消息`} />
@@ -313,6 +322,13 @@ export function StockResearchPage() {
           </>
         ) : null}
       </section>
+
+      <StockResearchAnalysisPanel
+        symbol={code}
+        currentResearch={currentResearch}
+        historicalResearch={Boolean(view?.isHistorical || workspace.selectedDate)}
+        candidateResearch={Boolean(currentResearch && row)}
+      />
     </div>
   );
 }

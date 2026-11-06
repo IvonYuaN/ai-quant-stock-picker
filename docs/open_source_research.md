@@ -34,6 +34,10 @@
 6. 真实交易约束：信号日只记录，不假设能以收盘价成交；验证用下一交易日开盘价，计入滑点、手续费、止损止盈和持有期。
 7. 自优化：按策略历史胜率和平均超额收益生成动态权重，表现差的策略自动降权，表现好的策略自动加权。
 
+### 策略来源状态契约
+
+`config/strategy_sources.yaml` 的 `current_status` 只接受 `implemented`、`implemented_partial`、`runtime`、`data_factor_only`、`research_absorbed`。策略目录 API 与研究摘要共用同一状态校验；未知、缺失或非字符串状态会显式失败，不能静默从吸收队列或下一步动作中消失。`research_absorbed` 仅代表研究收录，不代表人工晋级或运行启用；`data_factor_only` 代表数据/因子输入，不表示策略已通过验证。
+
 ## 数据源优先级建议
 
 1. 免费快速原型：AKShare。

@@ -60,3 +60,23 @@ families:
 
     with pytest.raises(ValueError, match="duplicate strategy catalog id"):
         load_strategy_catalog(path)
+
+
+def test_load_strategy_catalog_rejects_unknown_status(tmp_path) -> None:
+    path = tmp_path / "strategy_sources.yaml"
+    path.write_text(
+        """
+version: test
+families:
+  - id: multi_factor
+    name: 多因子研究
+    hypothesis: 先通过样本外检验。
+    current_status: reseach_absorbed
+    absorbed_from: [repo/a]
+    validation_required: [walk-forward]
+""".strip(),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="multi_factor.*invalid current_status"):
+        load_strategy_catalog(path)

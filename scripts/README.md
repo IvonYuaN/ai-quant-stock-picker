@@ -134,6 +134,7 @@ check_release_consistency.py
 
 **数据回填脚本**:
 - `backfill_akshare.py` - AKShare 数据回填
+- `data/backfill_adjustment_factors.py` - 通过 DataSource 分批回补 PIT 复权因子，支持 offset 续跑与失败代码重试
 - `backfill_index_to_sqlite.py` - 指数数据回填
 - `backfill_intraday_debate.py` - 盘中辩论数据回填
 
@@ -431,6 +432,10 @@ python3 monitor/analyze_logs.py
 ```bash
 # 每日数据更新
 python3 data/update_sqlite_daily.py
+
+# 回补 PIT 复权因子；单批默认最多 100 只，可按 --offset 分批继续
+python3 data/backfill_adjustment_factors.py --db /path/to/astocks_raw.db --all \
+  --start 2010-01-01 --end 2026-09-30 --limit 100 --offset 0
 
 # 批量刷新
 python3 data/refresh_sqlite_batch.py

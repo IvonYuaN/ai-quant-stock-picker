@@ -36,7 +36,9 @@ function loadEcharts(): Promise<EchartsModule | null> {
       ]);
       core.use([
         charts.BarChart,
+        charts.CandlestickChart,
         charts.LineChart,
+        components.DataZoomComponent,
         components.GridComponent,
         components.TooltipComponent,
         components.MarkLineComponent,

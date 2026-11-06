@@ -263,6 +263,12 @@ class HomeSnapshotVariantSuite:
     coverage_pct: float = 0.0
     filters: str = ""
     last_error: str = ""
+    refresh_status: str = "unknown"
+    refresh_freshness: str = "unknown"
+    refresh_generated_at: str = ""
+    refresh_message: str = ""
+    profiles_staged: int = 0
+    profiles_total: int = 0
 
 
 @dataclass(frozen=True)
@@ -1344,6 +1350,12 @@ def _variant_suite_from_dict(payload: object) -> HomeSnapshotVariantSuite:
             "coverage_pct",
             "filters",
             "last_error",
+            "refresh_status",
+            "refresh_freshness",
+            "refresh_generated_at",
+            "refresh_message",
+            "profiles_staged",
+            "profiles_total",
         },
     )
     return HomeSnapshotVariantSuite(
@@ -1372,6 +1384,27 @@ def _variant_suite_from_dict(payload: object) -> HomeSnapshotVariantSuite:
         filters=_optional_text(mapping.get("filters"), "variant_suite.filters"),
         last_error=_optional_text(
             mapping.get("last_error"), "variant_suite.last_error"
+        ),
+        refresh_status=_optional_text(
+            mapping.get("refresh_status"), "variant_suite.refresh_status"
+        )
+        or "unknown",
+        refresh_freshness=_optional_text(
+            mapping.get("refresh_freshness"), "variant_suite.refresh_freshness"
+        )
+        or "unknown",
+        refresh_generated_at=_optional_text(
+            mapping.get("refresh_generated_at"),
+            "variant_suite.refresh_generated_at",
+        ),
+        refresh_message=_optional_text(
+            mapping.get("refresh_message"), "variant_suite.refresh_message"
+        ),
+        profiles_staged=_integer(
+            mapping.get("profiles_staged", 0), "variant_suite.profiles_staged"
+        ),
+        profiles_total=_integer(
+            mapping.get("profiles_total", 0), "variant_suite.profiles_total"
         ),
     )
 

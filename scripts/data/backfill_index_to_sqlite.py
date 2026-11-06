@@ -3,34 +3,22 @@
 
 Rationale
 ---------
-``SqliteDbSource.fetch_index`` resolves an index code (e.g. ``000300``) to a
-``ts_code`` (``000300.SH``) through the ``stocks`` table, then reads its bars
-from ``daily_qfq``.  The raw production DB only carries stock bars, so the
-default walkforward benchmark ``000300`` (and the universe-pool indices) resolve
-to nothing and the walkforward gate fails with ``sqlite_db 指数获取失败``.
+``SqliteDbSource.fetch_index`` resolves indices by exchange-qualified
+``ts_code`` rather than the stock symbol map. This keeps indices distinct from
+stocks with the same six-digit code (for example ``000002.SH`` and
+``000002.SZ``).
 
-This script fetches index daily bars from Tencent and upserts them into the
-same two tables using the raw-DB convention (``close_qfq = close``, qfq
-open/high/low left NULL — identical to ``refresh_sqlite_batch``).  It is
-idempotent (``UNIQUE(ts_code, trade_date)``) and incremental (fetches only since
-each index's latest stored date), so it is safe to run on a schedule for timely
-updates.
+This script fetches the benchmark indices used by TickFlow's abnormal-move
+rules plus the walk-forward benchmark. It upserts bars using the raw-DB
+convention (``close_qfq = close``, qfq open/high/low left NULL), and is
+idempotent and incremental. Index records remain keyed by their full
+``ts_code``.
 
 Notes
 -----
 - Tencent caps a single daily request at 640 bars and returns the *most recent*
   640, so full history is fetched by walking backward in calendar-day chunks.
-- ``SqliteDbSource._load_symbol_map`` keys the ``stocks`` table by the *bare*
-  code (``ts_code.split(".")[0]``), so an index whose code collides with a real
-  stock symbol would silently shadow that stock.  Three universe-pool index
-  codes collide and are therefore excluded:
-    * ``000001`` 上证指数 vs ``000001.SZ`` 平安银行
-    * ``000905`` 中证500  vs ``000905.SZ`` 厦门港务
-    * ``000852`` 中证1000 vs ``000852.SZ`` 石化机械
-  Only ``000300`` (沪深300) — the walkforward benchmark, which is the sole
-  index fetched via ``fetch_index`` — is backfilled.  The remaining pool
-  indices are resolved through ``load_optional_index_constituents`` (Tushare
-  point-in-time), not through ``fetch_index``, so they need no sqlite bars.
+  Indices are stored independently from stock symbols and keyed by full ``ts_code``.
 """
 
 from __future__ import annotations
@@ -57,11 +45,18 @@ DEFAULT_START_DATE = date(2018, 1, 1)
 # ~340 trading days per chunk, comfortably under Tencent's 640-bar response cap.
 CHUNK_CALENDAR_DAYS = 500
 
-# The walkforward benchmark ``000300`` is the only index fetched through
-# ``fetch_index``.  Universe-pool index codes that collide with a real stock
-# symbol in the shared ``stocks`` table (``000001``/``000905``/``000852``) are
-# excluded — see the module docstring for the full collision list.
-INDEX_UNIVERSE: tuple[tuple[str, str], ...] = (("000300", "沪深300"),)
+INDEX_UNIVERSE: tuple[tuple[str, str], ...] = (
+    ("000001", "上证指数"),
+    ("000002", "上证A股指数"),
+    ("000300", "沪深300"),
+    ("000688", "科创50"),
+    ("000852", "中证1000"),
+    ("000905", "中证500"),
+    ("399001", "深证成指"),
+    ("399102", "创业板指数"),
+    ("399107", "深证A股指数"),
+    ("899050", "北证50"),
+)
 
 _INSERT_DAILY_SQL = """
     INSERT OR REPLACE INTO daily_qfq(
