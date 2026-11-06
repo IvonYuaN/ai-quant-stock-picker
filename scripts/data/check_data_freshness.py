@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import sqlite3
 import sys
 from datetime import date
 from pathlib import Path
@@ -40,14 +39,18 @@ def _n_trading_days_before(d: date, n: int) -> date:
 
 
 def _db_max_trade_date(db: Path, table: str) -> date | None:
-    with sqlite3.connect(db) as conn:
-        row = conn.execute(
-            f"SELECT MAX(CAST(trade_date AS TEXT)) FROM {table} "
-            "WHERE trade_date != 'SKIP'"
-        ).fetchone()
-    if not row or not row[0]:
+    """Verified market date, not a bare MAX that one symbol can fake.
+
+    ``table`` is kept for CLI compatibility; the verdict always uses the
+    daily_qfq cross-section so a partial push cannot be reported as fresh.
+    """
+    from aqsp.data.daily_coverage import verified_market_date
+
+    del table
+    s = verified_market_date(str(db))
+    if not s:
         return None
-    s = str(row[0])
+    s = str(s)
     if len(s) == 8 and s.isdigit():
         return date.fromisoformat(f"{s[:4]}-{s[4:6]}-{s[6:8]}")
     return date.fromisoformat(s[:10])

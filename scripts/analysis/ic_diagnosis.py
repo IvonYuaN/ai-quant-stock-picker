@@ -41,12 +41,17 @@ _REC_SPAN = 20  # 近 20 截面的短期口径（因子翻向侦测）
 
 
 def _as_of(db: str) -> str:
-    """库内 MAX(trade_date)（YYYYMMDD → YYYY-MM-DD）。窗口右端由它截断，永不写未来。"""
-    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
-    try:
-        (m,) = con.execute("SELECT MAX(trade_date) FROM daily_qfq").fetchone()
-    finally:
-        con.close()
+    """通过横截面覆盖核验的市场 as-of（YYYYMMDD → YYYY-MM-DD）。
+
+    A bare MAX(trade_date) can be set by one refreshed symbol; IC windows must
+    never be cut off against an incomplete market session.
+    """
+    from aqsp.core.errors import DataError
+    from aqsp.data.daily_coverage import verified_market_date
+
+    m = verified_market_date(db)
+    if not m:
+        raise DataError("日线横截面覆盖不足或不可核验；IC 诊断拒绝使用不完整市场日")
     m = str(m)
     return f"{m[:4]}-{m[4:6]}-{m[6:8]}"
 
