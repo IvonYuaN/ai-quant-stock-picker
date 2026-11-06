@@ -15,6 +15,7 @@ from aqsp.data.cache import (
 )
 from aqsp.data.daily_coverage import (
     market_date_is_usable,
+    min_market_daily_coverage_ratio,
     summarize_daily_coverage,
     verified_market_date,
 )
@@ -55,32 +56,9 @@ _INDEX_TS_CODES = tuple(_INDEX_NAMES)
 # Market-level daily coverage gate. A single refreshed symbol can raise
 # MAX(trade_date) while thousands of symbols are months behind; treating that
 # date as a complete market session would feed incomplete data into every
-# consumer. This is a data-readiness contract, not a strategy threshold, and
-# can only be relaxed by explicitly setting the environment variable.
-_MARKET_DAILY_COVERAGE_ENV = "AQSP_MIN_MARKET_DAILY_COVERAGE"
-_DEFAULT_MIN_MARKET_DAILY_COVERAGE = 0.8
-
+# consumer. ``min_market_daily_coverage_ratio`` lives in daily_coverage.py so
+# both development lines share one data-readiness contract.
 _LOGGER = logging.getLogger(__name__)
-
-
-def min_market_daily_coverage_ratio() -> float:
-    """Read the coverage threshold, falling back to the strict default."""
-    raw = str(os.getenv(_MARKET_DAILY_COVERAGE_ENV, "")).strip()
-    if not raw:
-        return _DEFAULT_MIN_MARKET_DAILY_COVERAGE
-    try:
-        value = float(raw)
-    except ValueError:
-        value = 0.0
-    if not 0 < value <= 1:
-        _LOGGER.warning(
-            "invalid_market_daily_coverage_ratio env=%s value=%s fallback=%s",
-            _MARKET_DAILY_COVERAGE_ENV,
-            raw,
-            _DEFAULT_MIN_MARKET_DAILY_COVERAGE,
-        )
-        return _DEFAULT_MIN_MARKET_DAILY_COVERAGE
-    return value
 
 
 def _truthy_env(name: str) -> bool:

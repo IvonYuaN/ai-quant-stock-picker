@@ -143,7 +143,7 @@ def _persist_target_snapshot(
     # A one-symbol snapshot must not create a fake "latest market day" that
     # every downstream MAX(trade_date) then treats as a complete session.
     # Require the same cross-section ratio as the read-side coverage gate.
-    from aqsp.data.sqlite_db_source import min_market_daily_coverage_ratio
+    from aqsp.data.daily_coverage import min_market_daily_coverage_ratio
 
     required = max(
         1,

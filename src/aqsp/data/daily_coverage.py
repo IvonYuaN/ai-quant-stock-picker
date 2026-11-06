@@ -14,6 +14,26 @@ import sqlite3
 
 from aqsp.core.errors import DataError
 
+# Data-readiness contract shared by both development lines. This is not a
+# strategy threshold: it only decides whether a daily cross-section may be
+# treated as a complete market session.
+_MARKET_DAILY_COVERAGE_ENV = "AQSP_MIN_MARKET_DAILY_COVERAGE"
+_DEFAULT_MIN_MARKET_DAILY_COVERAGE = 0.8
+
+
+def min_market_daily_coverage_ratio() -> float:
+    """Read the coverage threshold, falling back to the strict default."""
+    import os
+
+    raw = str(os.getenv(_MARKET_DAILY_COVERAGE_ENV, "")).strip()
+    if not raw:
+        return _DEFAULT_MIN_MARKET_DAILY_COVERAGE
+    try:
+        value = float(raw)
+    except ValueError:
+        value = 0.0
+    return value if 0 < value <= 1 else _DEFAULT_MIN_MARKET_DAILY_COVERAGE
+
 
 @dataclass(frozen=True)
 class DailyCoverageSummary:
@@ -124,23 +144,19 @@ def latest_date_histogram(db_path: str) -> tuple[tuple[str, int], ...]:
     return tuple((str(latest), int(count)) for latest, count in rows if latest)
 
 
-def verified_market_date(db_path: str) -> str | None:
+def verified_market_date(
+    db_path: str, *, exclude_symbols: tuple[str, ...] = ()
+) -> str | None:
     """Single entry point for consumers that used a bare ``MAX(trade_date)``.
 
     Returns the newest ``YYYYMMDD`` date only when its cross-section passes the
-    market coverage gate; index rows are excluded to match ``SqliteDbSource``.
-    Anything unverifiable returns ``None`` so callers fail closed instead of
-    treating a single refreshed symbol as a complete market session.
+    market coverage gate. Anything unverifiable returns ``None`` so callers
+    fail closed instead of treating one refreshed symbol as a complete session.
+    Index-row exclusion is opt-in so this module stays independent of any
+    particular data-source implementation.
     """
-    # Local import avoids a module-level cycle: sqlite_db_source imports this
-    # module for the summary helpers.
-    from aqsp.data.sqlite_db_source import (
-        _INDEX_TS_CODES,
-        min_market_daily_coverage_ratio,
-    )
-
     try:
-        summary = summarize_daily_coverage(db_path, exclude_symbols=_INDEX_TS_CODES)
+        summary = summarize_daily_coverage(db_path, exclude_symbols=exclude_symbols)
     except (DataError, OSError, ValueError, RuntimeError):
         return None
     if not market_date_is_usable(
