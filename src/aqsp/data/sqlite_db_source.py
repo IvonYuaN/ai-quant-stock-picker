@@ -13,6 +13,7 @@ from aqsp.data.cache import (
     AdjustmentFactorRecord,
     DataCache,
 )
+from aqsp.data.daily_coverage import market_date_is_usable, summarize_daily_coverage
 from aqsp.data.source import (
     DataSource,
     OhlcvFrame,
@@ -47,7 +48,35 @@ _INDEX_NAMES: dict[str, str] = {
 }
 _INDEX_TS_CODES = tuple(_INDEX_NAMES)
 
+# Market-level daily coverage gate. A single refreshed symbol can raise
+# MAX(trade_date) while thousands of symbols are months behind; treating that
+# date as a complete market session would feed incomplete data into every
+# consumer. This is a data-readiness contract, not a strategy threshold, and
+# can only be relaxed by explicitly setting the environment variable.
+_MARKET_DAILY_COVERAGE_ENV = "AQSP_MIN_MARKET_DAILY_COVERAGE"
+_DEFAULT_MIN_MARKET_DAILY_COVERAGE = 0.8
+
 _LOGGER = logging.getLogger(__name__)
+
+
+def min_market_daily_coverage_ratio() -> float:
+    """Read the coverage threshold, falling back to the strict default."""
+    raw = str(os.getenv(_MARKET_DAILY_COVERAGE_ENV, "")).strip()
+    if not raw:
+        return _DEFAULT_MIN_MARKET_DAILY_COVERAGE
+    try:
+        value = float(raw)
+    except ValueError:
+        value = 0.0
+    if not 0 < value <= 1:
+        _LOGGER.warning(
+            "invalid_market_daily_coverage_ratio env=%s value=%s fallback=%s",
+            _MARKET_DAILY_COVERAGE_ENV,
+            raw,
+            _DEFAULT_MIN_MARKET_DAILY_COVERAGE,
+        )
+        return _DEFAULT_MIN_MARKET_DAILY_COVERAGE
+    return value
 
 
 def _truthy_env(name: str) -> bool:
@@ -228,15 +257,31 @@ class SqliteDbSource(DataSource):
         return sorted(symbols)
 
     def get_latest_daily_date(self) -> date | None:
-        """Return the newest daily bar date stored in the configured database."""
-        placeholders = ",".join("?" for _ in _INDEX_TS_CODES)
-        with sqlite3.connect(self.db_path, timeout=_SQLITE_TIMEOUT_SECONDS) as conn:
-            row = conn.execute(
-                "SELECT MAX(trade_date) FROM daily_qfq "
-                f"WHERE ts_code NOT IN ({placeholders})",
-                _INDEX_TS_CODES,
-            ).fetchone()
-        return _parse_db_date(str(row[0])) if row and row[0] else None
+        """Return the newest daily date only when the market cross-section is complete.
+
+        ``MAX(trade_date)`` alone is not a market as-of date: one refreshed
+        symbol can set it while thousands of others are months behind. When the
+        newest date does not cover enough symbols we return ``None`` so every
+        consumer fails closed instead of treating incomplete bars as complete
+        market data.
+        """
+        ratio = min_market_daily_coverage_ratio()
+        summary = summarize_daily_coverage(
+            self.db_path, exclude_symbols=_INDEX_TS_CODES
+        )
+        if not market_date_is_usable(summary, min_coverage_ratio=ratio):
+            _LOGGER.warning(
+                "market_daily_coverage_incomplete db=%s max_date=%s "
+                "covered=%s total=%s min_ratio=%s sentinels=%s",
+                self.db_path,
+                summary.market_max_date,
+                summary.symbols_on_max_date,
+                summary.total_symbols,
+                ratio,
+                ",".join(summary.sentinel_symbols[:10]),
+            )
+            return None
+        return _parse_db_date(str(summary.market_max_date))
 
     def get_latest_daily_dates(
         self, symbols: list[str], *, as_of: date | None = None

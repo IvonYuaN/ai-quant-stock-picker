@@ -3286,6 +3286,45 @@ def aqsp_backtest_run_delete(run_id: str) -> dict:
     return {"data": {"run_id": run_id, "deleted": True}}
 
 
+@app.get("/api/aqsp/data-coverage", tags=["AQSP 数据"], summary="读取全市场日线横截面覆盖与完整性判定")
+def aqsp_data_coverage() -> dict:
+    """Expose whether the newest daily date really represents a complete market session.
+
+    ``MAX(trade_date)`` can be set by a single refreshed symbol. The data source
+    already refuses to publish such a date as a market as-of; this endpoint makes
+    that refusal visible to the operator instead of hiding it behind a stale
+    warning in ten different consumers.
+    """
+    from aqsp.core.errors import DataError
+    from aqsp.data.daily_coverage import market_date_is_usable, summarize_daily_coverage
+    from aqsp.data.source_factory import resolve_sqlite_db_path
+    from aqsp.data.sqlite_db_source import _INDEX_TS_CODES, min_market_daily_coverage_ratio
+
+    db_path = resolve_sqlite_db_path()
+    if not db_path:
+        return {"data": {"available": False, "reason": "未找到本机 raw 日线数据库"}}
+    try:
+        summary = summarize_daily_coverage(db_path, exclude_symbols=_INDEX_TS_CODES)
+    except (DataError, OSError, ValueError, RuntimeError) as exc:
+        raise HTTPException(503, f"日线覆盖不可核验：{exc}") from exc
+    ratio = min_market_daily_coverage_ratio()
+    usable = market_date_is_usable(summary, min_coverage_ratio=ratio)
+    return {
+        "data": {
+            "available": True,
+            "db_path": summary.db_path,
+            "market_max_date": summary.market_max_date,
+            "total_symbols": summary.total_symbols,
+            "symbols_on_max_date": summary.symbols_on_max_date,
+            "coverage_pct": summary.coverage_pct,
+            "sentinel_symbols": list(summary.sentinel_symbols[:20]),
+            "min_coverage_ratio": ratio,
+            "market_date_usable": usable,
+            "verified_market_date": summary.market_max_date if usable else None,
+        }
+    }
+
+
 @app.get("/api/aqsp/data-sources", tags=["AQSP 数据"], summary="读取数据源能力与本机就绪状态")
 def aqsp_data_sources() -> dict:
     """Return configured source capabilities without probing auth or network."""

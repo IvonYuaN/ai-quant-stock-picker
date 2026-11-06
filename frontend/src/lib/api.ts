@@ -65,6 +65,20 @@ export interface MonitorIndicatorSpec {
   price_based: boolean;
 }
 
+export interface DataCoveragePayload {
+  available: boolean;
+  reason?: string;
+  db_path?: string;
+  market_max_date?: string | null;
+  total_symbols?: number;
+  symbols_on_max_date?: number;
+  coverage_pct?: number;
+  sentinel_symbols?: string[];
+  min_coverage_ratio?: number;
+  market_date_usable?: boolean;
+  verified_market_date?: string | null;
+}
+
 export interface PriceObservationRule {
   id: string;
   symbol: string;
@@ -2083,6 +2097,7 @@ export const api = {
   /** 数据源健康台账（进程内、重启清空）。只做观测，不影响 `ok`。 */
   health: () => get<HealthPayload>("/health"),
   dataSources: () => get<DataSourcesPayload>("/aqsp/data-sources"),
+  dataCoverage: () => get<DataCoveragePayload>("/aqsp/data-coverage"),
   dailyDataRefresh: () => get<DailyDataRefreshPayload>("/aqsp/daily-data-refresh"),
   startDailyDataRefresh: () => request<{ run_id: string; status: string; target_day: string }>("/aqsp/daily-data-refresh", "POST", {}),
   events: (code: string) => get<EventCalendarData>(`/events?code=${code}`),

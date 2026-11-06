@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { Database, RefreshCw } from "lucide-react";
 import { Badge, LoadingState, SectionHeader, StatePanel, Tag } from "@/components/ui/primitives";
-import { api, type DailyDataRefreshPayload, type DataSourceCapability, type HealthPayload } from "@/lib/api";
+import { api, type DailyDataRefreshPayload, type DataCoveragePayload, type DataSourceCapability, type HealthPayload } from "@/lib/api";
+import { dataCoverageVerdict } from "@/lib/data-coverage-view";
 import { formatEvidenceTime } from "@/lib/format";
 import { useWorkspaceSnapshot } from "@/components/aqsp/useAqspSnapshot";
 import { productionGateLabel } from "@/lib/research-workbench-view";
@@ -106,6 +107,8 @@ export function DataWorkbenchPage() {
   const [health, setHealth] = useState<HealthPayload | null>(null);
   const [sources, setSources] = useState<DataSourceCapability[]>([]);
   const [dailyData, setDailyData] = useState<DailyDataRefreshPayload | null>(null);
+  const [coverage, setCoverage] = useState<DataCoveragePayload | null>(null);
+  const [coverageError, setCoverageError] = useState("");
   const [loading, setLoading] = useState(true);
   const [sourcesLoading, setSourcesLoading] = useState(true);
   const [dailyLoading, setDailyLoading] = useState(true);
@@ -132,6 +135,10 @@ export function DataWorkbenchPage() {
       .catch((reason) => setDailyError(reason instanceof Error ? reason.message : "日线覆盖状态读取失败"))
       .finally(() => setDailyLoading(false));
   }, []);
+  const loadCoverage = useCallback(() => {
+    api.dataCoverage().then((result) => { setCoverage(result); setCoverageError(""); })
+      .catch((reason) => setCoverageError(reason instanceof Error ? reason.message : "日线完整性核验失败"));
+  }, []);
   const startDailyRefresh = useCallback(async () => {
     setDailyStarting(true);
     setDailyError("");
@@ -144,7 +151,7 @@ export function DataWorkbenchPage() {
       setDailyStarting(false);
     }
   }, [loadDailyData]);
-  useEffect(() => { load(); loadSources(); loadDailyData(); }, [load, loadSources, loadDailyData]);
+  useEffect(() => { load(); loadSources(); loadDailyData(); loadCoverage(); }, [load, loadSources, loadDailyData, loadCoverage]);
   const refreshRunning = ["starting", "running"].includes(dailyData?.job.status || "");
   useEffect(() => {
     if (!refreshRunning) return undefined;
@@ -154,8 +161,13 @@ export function DataWorkbenchPage() {
   const source = snapshot.data?.source;
   const freshness = snapshot.data ? snapshotFreshness(snapshot.data) : "unknown";
   const freshnessLabel = freshness === "fresh" ? "研究快照在时效内" : freshness === "stale" ? "研究快照已过期或为历史记录" : "研究快照时效未知";
+  const coverageVerdict = dataCoverageVerdict(coverage, coverageError);
   return <div className="aq-page">
-    <header className="aq-page-head"><div><p className="aq-eyebrow"><Database aria-hidden="true" />AQSP · 数据与能力</p><div className="aq-title-row"><h1>数据</h1><Badge tone={freshness === "fresh" ? "ok" : "warn"}>{freshnessLabel}</Badge></div><p className="aq-page-sub">展示 AQSP 实际研究快照、数据源能力、就绪状态和来源时点。</p></div><button type="button" className="aq-btn" disabled={loading || sourcesLoading} onClick={() => { load(); loadSources(); }}><RefreshCw aria-hidden="true" />刷新</button></header>
+    <header className="aq-page-head"><div><p className="aq-eyebrow"><Database aria-hidden="true" />AQSP · 数据与能力</p><div className="aq-title-row"><h1>数据</h1><Badge tone={freshness === "fresh" ? "ok" : "warn"}>{freshnessLabel}</Badge></div><p className="aq-page-sub">展示 AQSP 实际研究快照、数据源能力、就绪状态和来源时点。</p></div><button type="button" className="aq-btn" disabled={loading || sourcesLoading} onClick={() => { load(); loadSources(); loadCoverage(); }}><RefreshCw aria-hidden="true" />刷新</button></header>
+    <section className="aq-section">
+      <SectionHeader title="日线完整性" description="库内最大日期不等于完整市场日。只有最新交易日覆盖足够比例的标的，才允许被依赖市场日线的功能使用。" />
+      <StatePanel tone={coverageVerdict.tone}><b>{coverageVerdict.title}</b><p className="aq-note">{coverageVerdict.detail}</p>{coverage?.available ? <div className="aq-total-grid"><div className="aq-total-card"><span>库内最大日期</span><b>{coverage.market_max_date ?? "—"}</b></div><div className="aq-total-card"><span>该日覆盖标的</span><b>{coverage.symbols_on_max_date ?? 0} / {coverage.total_symbols ?? 0}</b></div><div className="aq-total-card"><span>覆盖率</span><b>{((coverage.coverage_pct ?? 0) * 100).toFixed(2)}%</b></div><div className="aq-total-card"><span>可作市场日</span><b>{coverage.verified_market_date ?? "否（已拦截）"}</b></div></div> : null}</StatePanel>
+    </section>
     <section className="aq-section"><SectionHeader title="研究快照" description="今日确定性选股流水线的实际输出，不由本页重新计算。" />{snapshot.error ? <StatePanel tone="warn">研究快照暂不可用；当前不以估算数据替代。</StatePanel> : snapshot.loading && !snapshot.data ? <LoadingState label="读取研究快照…" /> : snapshot.data ? <div className="aq-total-grid"><div className="aq-total-card"><span>运行状态</span><b>{source?.status || "未知"}</b></div><div className="aq-total-card"><span>最近交易日</span><b>{source?.latest_trade_date || "—"}</b></div><div className="aq-total-card"><span>数据延迟</span><b>{source?.lag_days ?? "—"} 日</b></div><div className="aq-total-card"><span>快照更新时间</span><b>{formatEvidenceTime(snapshot.data.generated_at)}</b></div></div> : null}</section>
     <section className="aq-section">
       <SectionHeader title="可刷新标的日线覆盖" description="按当前刷新器支持的主板、科创板和创业板活跃标的逐只核验；北交所暂未接入。数据库最大日期不代表该范围已覆盖。" />
