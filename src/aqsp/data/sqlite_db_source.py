@@ -13,7 +13,11 @@ from aqsp.data.cache import (
     AdjustmentFactorRecord,
     DataCache,
 )
-from aqsp.data.daily_coverage import market_date_is_usable, summarize_daily_coverage
+from aqsp.data.daily_coverage import (
+    market_date_is_usable,
+    summarize_daily_coverage,
+    verified_market_date,
+)
 from aqsp.data.source import (
     DataSource,
     OhlcvFrame,
@@ -405,10 +409,9 @@ class SqliteDbSource(DataSource):
             if row_limit > 0:
                 params.append(row_limit)
             with sqlite3.connect(self.db_path, timeout=_SQLITE_TIMEOUT_SECONDS) as conn:
-                latest = conn.execute(
-                    "SELECT MAX(trade_date) FROM daily_qfq"
-                ).fetchone()
-                latest_day = str((latest or [""])[0] or "")
+                # Same coverage gate as get_latest_daily_date(): a single
+                # refreshed symbol must not define the liquid-symbol window.
+                latest_day = verified_market_date(self.db_path) or ""
                 if not latest_day:
                     return []
                 latest_date = _parse_db_date(latest_day)

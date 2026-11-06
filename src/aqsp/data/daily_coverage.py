@@ -124,9 +124,36 @@ def latest_date_histogram(db_path: str) -> tuple[tuple[str, int], ...]:
     return tuple((str(latest), int(count)) for latest, count in rows if latest)
 
 
+def verified_market_date(db_path: str) -> str | None:
+    """Single entry point for consumers that used a bare ``MAX(trade_date)``.
+
+    Returns the newest ``YYYYMMDD`` date only when its cross-section passes the
+    market coverage gate; index rows are excluded to match ``SqliteDbSource``.
+    Anything unverifiable returns ``None`` so callers fail closed instead of
+    treating a single refreshed symbol as a complete market session.
+    """
+    # Local import avoids a module-level cycle: sqlite_db_source imports this
+    # module for the summary helpers.
+    from aqsp.data.sqlite_db_source import (
+        _INDEX_TS_CODES,
+        min_market_daily_coverage_ratio,
+    )
+
+    try:
+        summary = summarize_daily_coverage(db_path, exclude_symbols=_INDEX_TS_CODES)
+    except (DataError, OSError, ValueError, RuntimeError):
+        return None
+    if not market_date_is_usable(
+        summary, min_coverage_ratio=min_market_daily_coverage_ratio()
+    ):
+        return None
+    return summary.market_max_date
+
+
 __all__ = [
     "DailyCoverageSummary",
     "latest_date_histogram",
     "market_date_is_usable",
     "summarize_daily_coverage",
+    "verified_market_date",
 ]
