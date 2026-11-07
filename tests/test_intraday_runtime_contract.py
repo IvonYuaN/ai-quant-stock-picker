@@ -199,26 +199,36 @@ if args[:2] == ["-m", "aqsp"]:
     # Keep this stub's evidence synthetic while exercising the real validator.
     if "--symbols" in args:
         import hashlib
-        from datetime import datetime
+        from datetime import date, datetime, time
         from zoneinfo import ZoneInfo
 
+        from aqsp.portfolio.snapshot import snapshot_trading_date
+
         now = datetime.now(ZoneInfo("Asia/Shanghai"))
+        # 校验侧会把非交易日回退到上一交易日（session），凭据里的 session_date、
+        # source_time、fetched_at 必须同一口径，否则周末/节假日构造的凭据永远
+        # 被判"不属于当前交易日"或"缺少同日来源证据"。
+        session = snapshot_trading_date(now.date().isoformat())
+        if session == now.date().isoformat():
+            observed = now
+        else:
+            observed = datetime.combine(date.fromisoformat(session), time(15, 0), tzinfo=now.tzinfo)
         requested = value(args, "--symbols").split(",")
         fetched_count = int(os.getenv("AQSP_TEST_FETCHED_COUNT", str(len(requested))))
         fetched = requested[:fetched_count]
         payload = {
             "schema_version": 1,
-            "session_date": now.date().isoformat(),
-            "observed_at": now.isoformat(),
+            "session_date": session,
+            "observed_at": observed.isoformat(),
             "request_fingerprint": "synthetic-batch",
             "requested_symbols": requested,
             "scanned_symbols": requested,
             "fetched_symbols": fetched,
             "valid_quotes": [{
                 "symbol": symbol, "source": "fixture",
-                "source_time": now.date().isoformat(),
+                "source_time": session,
                 "source_time_precision": "day", "timestamp_source": "bar_time",
-                "fetched_at": now.isoformat(),
+                "fetched_at": observed.isoformat(),
             } for symbol in fetched],
             "missing_symbols": [symbol for symbol in requested if symbol not in fetched],
         }
