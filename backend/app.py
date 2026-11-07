@@ -2199,6 +2199,57 @@ def aqsp_dates():
     return {"data": _aqsp_bridge_call(aqsp_bridge.dates_payload)}
 
 
+@app.get(
+    "/api/aqsp/data-coverage",
+    tags=["AQSP 数据"],
+    summary="读取全市场日线横截面覆盖与完整性判定",
+    description="""
+把「最新日线日期是否真的代表一个完整市场交易日」暴露给运维与前端。
+
+`MAX(trade_date)` 可能只被一只刷新过的票顶高。数据源本身已经拒绝把这种
+日期当作市场 as-of，本端点把那次拒绝显式呈现出来，而不是让它分散在各种
+「数据陈旧」告警里。
+
+- 只读，不触发回补
+- `market_date_usable=false` 时 `verified_market_date` 为 null
+    """,
+)
+def aqsp_data_coverage() -> dict:
+    """Expose whether the newest daily date really represents a complete session."""
+    from aqsp.core.errors import DataError
+    from aqsp.data.daily_coverage import (
+        market_date_is_usable,
+        min_market_daily_coverage_ratio,
+        summarize_daily_coverage,
+    )
+    from aqsp.data.source_factory import resolve_sqlite_db_path
+    from aqsp.data.sqlite_db_source import _INDEX_TS_CODES
+
+    db_path = resolve_sqlite_db_path()
+    if not db_path:
+        return {"data": {"available": False, "reason": "未找到本机 raw 日线数据库"}}
+    try:
+        summary = summarize_daily_coverage(db_path, exclude_symbols=_INDEX_TS_CODES)
+    except (DataError, OSError, ValueError, RuntimeError) as exc:
+        raise HTTPException(503, f"日线覆盖不可核验：{exc}") from exc
+    ratio = min_market_daily_coverage_ratio()
+    usable = market_date_is_usable(summary, min_coverage_ratio=ratio)
+    return {
+        "data": {
+            "available": True,
+            "db_path": summary.db_path,
+            "market_max_date": summary.market_max_date,
+            "total_symbols": summary.total_symbols,
+            "symbols_on_max_date": summary.symbols_on_max_date,
+            "coverage_pct": summary.coverage_pct,
+            "sentinel_symbols": list(summary.sentinel_symbols[:20]),
+            "min_coverage_ratio": ratio,
+            "market_date_usable": usable,
+            "verified_market_date": summary.market_max_date if usable else None,
+        }
+    }
+
+
 def _aqsp_candidate(symbol: str, date: str | None = None):
     return {"data": _aqsp_bridge_call(aqsp_bridge.candidate_payload, symbol, date)}
 

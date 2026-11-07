@@ -32,6 +32,21 @@ _PREFILTERED_SYMBOLS_ENV = "AQSP_SQLITE_PREFILTERED_SYMBOLS"
 _ALLOW_EMPTY_SYMBOLS_ENV = "AQSP_SQLITE_ALLOW_EMPTY_SYMBOLS"
 _LIQUID_SYMBOL_MIN_HISTORY_ROWS = 250
 _LIQUID_SYMBOL_LOOKBACK_CALENDAR_DAYS = 500
+# 指数行不是市场横截面的一部分。它们混在 daily_qfq 里会把覆盖率的分子分母
+# 一起抬高，让「单只指数刷新」看起来像「市场已完整」。覆盖率核验必须剔除。
+_INDEX_NAMES: dict[str, str] = {
+    "000001.SH": "上证指数",
+    "000002.SH": "上证A股指数",
+    "000300.SH": "沪深300",
+    "000688.SH": "科创50",
+    "000852.SH": "中证1000",
+    "000905.SH": "中证500",
+    "399001.SZ": "深证成指",
+    "399102.SZ": "创业板指数",
+    "399107.SZ": "深证A股指数",
+    "899050.BJ": "北证50",
+}
+_INDEX_TS_CODES = tuple(_INDEX_NAMES)
 
 _LOGGER = logging.getLogger(__name__)
 
