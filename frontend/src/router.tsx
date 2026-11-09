@@ -13,6 +13,8 @@ const FactorsPage = lazy(() => import("@/pages/FactorsPage").then((m) => ({ defa
 const BacktestPage = lazy(() => import("@/pages/BacktestPage").then((m) => ({ default: m.BacktestPage })));
 const DataPage = lazy(() => import("@/pages/DataPage").then((m) => ({ default: m.DataPage })));
 const MonitorPage = lazy(() => import("@/pages/MonitorPage").then((m) => ({ default: m.MonitorPage })));
+const WatchlistPage = lazy(() => import("@/pages/WatchlistPage").then((m) => ({ default: m.WatchlistPage })));
+const IndicesPage = lazy(() => import("@/pages/IndicesPage").then((m) => ({ default: m.IndicesPage })));
 const EvidencePage = lazy(() => import("@/pages/EvidencePage").then((m) => ({ default: m.EvidencePage })));
 const ReviewPage = lazy(() => import("@/pages/ReviewPage").then((m) => ({ default: m.ReviewPage })));
 const MarketPage = lazy(() => import("@/pages/MarketPage").then((m) => ({ default: m.MarketPage })));
@@ -47,6 +49,8 @@ export const router = createBrowserRouter([
       { path: "/backtest", element: <BacktestPage /> },
       { path: "/data", element: <DataPage /> },
       { path: "/monitor", element: <MonitorPage /> },
+      { path: "/watchlist", element: <WatchlistPage /> },
+      { path: "/indices", element: <IndicesPage /> },
       { path: "/evidence", element: <EvidencePage /> },
       { path: "/review", element: <ReviewPage /> },
       { path: "/stream", element: <InfoStreamPage /> },
