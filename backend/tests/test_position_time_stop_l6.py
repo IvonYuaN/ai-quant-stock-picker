@@ -63,17 +63,18 @@ def test_l6_respects_disabled_and_t1():
     ) == []
 
 
-def test_ensure_rules_creates_l6_default_20_days():
+def test_ensure_rules_creates_l6_default_ten_days():
+    # 默认 10 日：组合级模拟最优（27.2%/Sharpe 1.07），且对齐 risk.max_holding_days。
     data = {"holdings": [{"code": "600000", "shares": 100, "cost": 10.0}]}
     rules = risk_rules.ensure_rules(data)
     l6 = [r for r in rules if r["level"] == "L6"]
-    assert len(l6) == 1 and l6[0]["param_value"] == 20 and l6[0]["enabled"] is True
+    assert len(l6) == 1 and l6[0]["param_value"] == 10 and l6[0]["enabled"] is True
 
 
 def test_patch_rule_validates_l6_window():
-    rule = {"id": "600000-L6", "level": "L6", "param_value": 20, "enabled": True}
-    risk_rules.patch_rule(rule, {"param_value": 10})
-    assert rule["param_value"] == 10
+    rule = {"id": "600000-L6", "level": "L6", "param_value": 10, "enabled": True}
+    risk_rules.patch_rule(rule, {"param_value": 20})
+    assert rule["param_value"] == 20
     try:
         risk_rules.patch_rule(rule, {"param_value": 7})
     except ValueError as exc:
