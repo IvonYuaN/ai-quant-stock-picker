@@ -59,22 +59,31 @@ def _live_risk_alert_markdown(events: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def _downgrade_on_corporate_action(reminders, *, today, source=None, cache_path=None):
-    """除权除息保护：不复权价跳空会让 L1/L5 误触发「该卖」。
+def _downgrade_on_corporate_action(
+    reminders, holdings, *, today, source=None, cache_path=None,
+):
+    """除权除息保护：不复权口径的亏损可能被除权放大，导致 L1/L5 误判「该卖」。
 
-    只对**已触发**的 L1/L5 提醒做一次轻量核对：拉最近 20 天「不复权 vs 前复权」
-    日线，若当日不复权跌幅显著大于前复权跌幅（差额 >= 0.5pp），判定为除权/除息日
-    ⇒ 把「该卖」降级为「观察」并写入核对提示，避免因分红送转误杀持仓。
+    只对**已触发**的 L1/L5 提醒做一次核对：取「入场日 → 最新」的前复权与前复权
+    收益率，若**前复权累计收益**明显好于**不复权口径**（差额 ≥ 0.5pp），说明中间
+    发生过分红/送转，把「该卖」降级为「观察」并写明两个口径的收益。
 
-    取不到复权数据时不改变原提醒（宁可照常提示，也不静默吞掉风险）。
+    取不到复权数据时保持原提醒（宁可照常提示，也不静默吞掉风险）。
     """
     if not EX_RIGHT_GUARD_ENABLED:
         return reminders
     targets = [r for r in reminders if getattr(r, "level", "") in {"L1", "L5"}]
     if not targets:
         return reminders
+    opened_by_code = {
+        str(h.get("code")): h.get("opened_at") for h in holdings if h.get("code")
+    }
+    dated = [c for c in (opened_by_code.get(r.symbol) for r in targets) if c]
+    if not dated:
+        return reminders
     symbols = sorted({r.symbol for r in targets})
-    from datetime import timedelta
+
+    from datetime import date, timedelta
 
     from aqsp.data.cache import DataCache
     from aqsp.data.source_factory import build_data_source
@@ -82,7 +91,7 @@ def _downgrade_on_corporate_action(reminders, *, today, source=None, cache_path=
     try:
         if source is None:
             source = build_data_source("tencent", cache=DataCache(cache_path))
-        start = today - timedelta(days=20)
+        start = min(date.fromisoformat(value) for value in dated) - timedelta(days=5)
         raw = source.fetch_daily(symbols, start, today, adjust="")
         qfq = source.fetch_daily(symbols, start, today, adjust="qfq")
     except Exception as exc:  # noqa: BLE001 -- 核对失败不改变原提醒
@@ -93,28 +102,29 @@ def _downgrade_on_corporate_action(reminders, *, today, source=None, cache_path=
 
     patched: dict[int, object] = {}
     for reminder in targets:
+        opened_at = opened_by_code.get(reminder.symbol)
         frame_raw = raw.get(reminder.symbol)
         frame_qfq = qfq.get(reminder.symbol)
-        if frame_raw is None or frame_qfq is None or frame_raw.empty or frame_qfq.empty:
+        if not opened_at or frame_raw is None or frame_qfq is None:
+            continue
+        if frame_raw.empty or frame_qfq.empty:
             continue
         try:
-            raw_closes = [float(v) for v in frame_raw["close"].tail(2)]
-            qfq_closes = [float(v) for v in frame_qfq["close"].tail(2)]
+            entry_qfq = _close_on_or_after(frame_qfq, opened_at)
+            today_qfq = float(frame_qfq["close"].iloc[-1])
         except (KeyError, TypeError, ValueError):
             continue
-        if len(raw_closes) < 2 or len(qfq_closes) < 2:
+        if entry_qfq is None or not math.isfinite(today_qfq) or today_qfq <= 0:
             continue
-        if not all(math.isfinite(v) and v > 0 for v in raw_closes + qfq_closes):
-            continue
-        raw_ret = raw_closes[-1] / raw_closes[-2] - 1.0
-        qfq_ret = qfq_closes[-1] / qfq_closes[-2] - 1.0
+        qfq_ret = today_qfq / entry_qfq - 1.0
+        raw_ret = float(reminder.pnl_pct)
         gap = qfq_ret - raw_ret
         if gap < 0.005:
             continue
         evidence = (
             str(reminder.basis.get("evidence", ""))
-            + f"；当日不复权跌幅比前复权多 {gap:.2%}，疑似除权除息，"
-            "止损线需按复权口径重算，请核对后再决定"
+            + f"；不复权口径 {raw_ret:.2%} / 前复权口径 {qfq_ret:.2%}（差 {gap:.2%}），"
+            "疑似除权除息所致，请核对后再决定"
         )
         note = (reminder.t1_note + " " if reminder.t1_note else "") + (
             "除权除息日保护：本次降级为观察"
@@ -126,6 +136,22 @@ def _downgrade_on_corporate_action(reminders, *, today, source=None, cache_path=
             t1_note=note,
         )
     return [patched.get(id(item), item) for item in reminders]
+
+
+def _close_on_or_after(frame, opened_at):
+    """取入场日（或其后第一个交易日）的收盘价。"""
+    from datetime import date
+
+    target = date.fromisoformat(str(opened_at))
+    dates = frame["date"]
+    if hasattr(dates, "dt"):
+        parsed = dates.dt.date
+    else:  # 已经是 date 序列
+        parsed = dates
+    for value, close in zip(parsed, frame["close"]):
+        if value >= target:
+            return float(close)
+    return None
 
 
 def check_positions(
@@ -291,6 +317,7 @@ def check_positions(
     )
     reminders = _downgrade_on_corporate_action(
         reminders,
+        pf_data.get("holdings", []),
         today=today_shanghai(),
         source=history_source,
         cache_path=Path(pf._tenant_dir()) / "live-risk-history.db",
