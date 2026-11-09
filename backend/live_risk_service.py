@@ -202,6 +202,9 @@ def check_positions(
             checked_rules.add(rule["id"])
             usable_rules.append(rule)
 
+    actual_holding_days = pf.resolve_actual_holding_days(
+        pf_data.get("holdings", [])
+    )
     reminders = run_live_risk_check(
         holdings,
         prices,
@@ -209,6 +212,7 @@ def check_positions(
         stop_config=None,  # 生产 thresholds（L1 8% / L5 ATR×2.0）
         price_history=histories,
         position_rules=usable_rules,
+        actual_holding_days=actual_holding_days,
     )
     import alert_events
     from decision_context import build_position_context, load_cached_market_overview

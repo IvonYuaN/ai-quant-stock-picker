@@ -230,6 +230,7 @@ def run_live_risk_check(
     price_history: Optional[Dict[str, pd.DataFrame]] = None,
     stop_config: Optional[StopLossConfig] = None,
     position_rules: Optional[List[Dict[str, object]]] = None,
+    actual_holding_days: Optional[Dict[str, int]] = None,
 ) -> List[SellReminder]:
     """对实盘持仓跑 L1/L5 风控，产「该卖提醒」列表（独立 LIVE 入口）。
 
@@ -253,6 +254,7 @@ def run_live_risk_check(
             holding_days or {},
             price_history or {},
             position_rules,
+            actual_holding_days or {},
         )
     days = holding_days or {}
     history = price_history or {}
@@ -312,6 +314,7 @@ def _check_position_rules(
     days: Dict[str, int],
     history: Dict[str, pd.DataFrame],
     rules: List[Dict[str, object]],
+    actual_days: Optional[Dict[str, int]] = None,
 ) -> List[SellReminder]:
     """Pure LIVE-only evaluation; user defaults never reach backtest thresholds.
 
@@ -356,7 +359,9 @@ def _check_position_rules(
                     }
             elif level == "L6":
                 need_days = int(float(rule["param_value"]))
-                held_days = int(days.get(code, 0))
+                # `days` 只是 T+1 的 0/1 标记，不能当真实持有天数；优先用
+                # resolve_actual_holding_days 的交易日计数（2026-11-09 修复）。
+                held_days = int((actual_days or {}).get(code, 0))
                 if need_days > 0 and held_days >= need_days:
                     # 时间止损无价格阈值：threshold 仅作展示参照，basis 明确说明是时间触发。
                     threshold = cost
