@@ -20,8 +20,11 @@ class PositionRuleDefaults:
     hard_stop_pct: float = 0.03
     trend_window: int = 5
     trailing_pct: float = 0.08
-    # L6 时间止损：持有交易日数达到阈值即提醒（模拟证据：3y +24% vs 无时间止损 +15%）。
-    max_holding_days: int = 20
+    # L6 时间止损：持有交易日数达到阈值即提醒。
+    # 组合级模拟（3y、20bp/边、8 槽、含 L5 移动止损）：10 日最优——年化 27.2%、
+    # 回撤 −19.4%、Sharpe 1.07；20 日为 24.4%/−24.4%/0.99；无时间止损仅 15.4%/0.72。
+    # 也正好对齐 thresholds.risk.max_holding_days=10（回测口径），避免两套数字。
+    max_holding_days: int = 10
     ignored_before_daily: int = 2
     history_calendar_days: int = 120
     macd_fast: int = 12
