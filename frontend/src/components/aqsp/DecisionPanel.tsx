@@ -96,7 +96,7 @@ export function DecisionPanel({ snapshot }: { snapshot: AqspSnapshot }) {
       <SectionHeader
         icon={decision?.canAct ? ClipboardCheck : OctagonPause}
         title="今天能不能买"
-        description="综合筛选门禁、当轮候选研究、策略健康与台账时效，区分本轮新研究和保留观察"
+        description="放行 · 候选 · 策略 · 台账"
         count={
           <Badge tone={mode === "act" ? "ok" : "warn"}>
             {mode === "act" ? "可动" : "仅观察"}

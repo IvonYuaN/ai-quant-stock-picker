@@ -29,7 +29,7 @@ export function CatalystSectorView({ state, onRefresh }: {
   const metadata = data ? catalystReportMetadata(data) : null;
   return (
     <section className="aq-section aq-catalyst-section" aria-label="板块催化与传导" aria-busy={loading}>
-      <SectionHeader title="板块催化与传导" description="按报告中的受影响板块归集；传导路径与假设供核验。">
+      <SectionHeader title="板块催化与传导" description="按受影响板块归集">
         <button type="button" className="aq-btn" onClick={onRefresh} disabled={loading}>
           <RefreshCw className="aq-inline-icon" aria-hidden="true" />
           刷新催化报告
@@ -56,7 +56,7 @@ export function CatalystSectorView({ state, onRefresh }: {
       {groups.length ? (
         <details className="aq-catalyst-evidence">
           <summary>{data?.events.length} 条催化 · {groups.length} 个板块 · 展开传导证据</summary>
-          <p className="aq-note">事件可能同时影响多个板块；以下为报告假设，需结合原文核验。</p>
+          <p className="aq-note">多板块可能同时受影响，需核对原文。</p>
           {groups.map((group) => (
             <Card key={group.sector} className="aq-concept-card">
               <header className="aq-concept-head"><h3>{group.sector}</h3><span className="aq-section-count">{group.events.length} 条</span></header>

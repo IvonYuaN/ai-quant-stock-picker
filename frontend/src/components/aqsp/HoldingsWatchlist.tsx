@@ -198,7 +198,7 @@ export function HoldingsWatchlist({ portfolio, alerts, candidates, candidateDate
       </div> : null}
       {portfolio && !portfolio.holdings.length ? <section className="aq-section"><SectionHeader title="持仓事实" /><EmptyState title="尚未录入已有持仓" detail="可以先研究候选、加入自选；已有真实成交可点“我操作了”补录。" /></section> : null}
       <section id={WATCHLIST_ANCHOR_ID} className="aq-section" aria-label="我的自选">
-        <SectionHeader title="我的自选" description="关注标的与当前持仓分开查看；加入自选不会生成持仓。" count={`${codes.length} 只`} />
+        <SectionHeader title="我的自选" description="自选与持仓分开" count={`${codes.length} 只`} />
         <form className="aq-watch-entry" onSubmit={addWatch}>
           <label htmlFor="holding-watch-codes">添加自选</label>
           <div className="aq-row-actions">
@@ -214,7 +214,7 @@ export function HoldingsWatchlist({ portfolio, alerts, candidates, candidateDate
       {renderRiskSettings && portfolio?.holdings.length ? <section id="holding-rules" className="aq-section aq-risk-rules-section" aria-label="风险规则">
         <SectionHeader
           title="风险规则"
-          description="规则只负责提醒和复核，不直接替代持有、减仓或做 T 分析。按股票展开后才读取详细设置。"
+          description="规则只提醒，不代操作"
           count={`${portfolio.holdings.filter((row) => row.risk_rules?.some((rule) => rule.enabled)).length} 只已启用`}
         />
         <div className="aq-risk-stock-list">
