@@ -31,8 +31,9 @@ def _l6_rules(code="600000", days=20, enabled=True):
 
 def test_l6_fires_when_holding_days_reach_threshold():
     reminders = run_live_risk_check(
-        _holding(), {"600000": 10.5}, holding_days={"600000": 20},
+        _holding(), {"600000": 10.5}, holding_days={"600000": 1},
         position_rules=_l6_rules(days=20),
+        actual_holding_days={"600000": 20},
     )
     assert [r.level for r in reminders] == ["L6"]
     assert reminders[0].action_hint == "该卖"
@@ -41,21 +42,24 @@ def test_l6_fires_when_holding_days_reach_threshold():
 
 def test_l6_does_not_fire_before_threshold():
     reminders = run_live_risk_check(
-        _holding(), {"600000": 10.5}, holding_days={"600000": 19},
+        _holding(), {"600000": 10.5}, holding_days={"600000": 1},
         position_rules=_l6_rules(days=20),
+        actual_holding_days={"600000": 19},
     )
     assert reminders == []
 
 
 def test_l6_respects_disabled_and_t1():
     assert run_live_risk_check(
-        _holding(), {"600000": 10.5}, holding_days={"600000": 30},
+        _holding(), {"600000": 10.5}, holding_days={"600000": 1},
         position_rules=_l6_rules(days=20, enabled=False),
+        actual_holding_days={"600000": 30},
     ) == []
     # 当日买入（holding_days=0）不催卖，也不应触发时间止损
     assert run_live_risk_check(
         _holding(), {"600000": 10.5}, holding_days={"600000": 0},
         position_rules=_l6_rules(days=5),
+        actual_holding_days={"600000": 0},
     ) == []
 
 
@@ -84,3 +88,57 @@ def test_default_rules_enable_only_evidence_layers():
     rules = risk_rules.ensure_rules(data)
     enabled = {r["level"]: r["enabled"] for r in rules}
     assert enabled == {"L1": True, "L2": False, "L4": False, "L5": True, "L6": True}
+
+
+def _business_days(a, b):
+    from datetime import date, timedelta
+
+    from aqsp.core.time import is_trading_day
+
+    start, end = date.fromisoformat(a), date.fromisoformat(b)
+    n, cur = 0, start + timedelta(days=1)
+    while cur <= end:
+        n += 1 if is_trading_day(cur) else 0
+        cur += timedelta(days=1)
+    return n
+
+
+def test_actual_holding_days_counts_trading_days_not_t_plus_one_marker():
+    """L6 必须用真实交易日数，而不是 T+1 的 0/1 标记（否则永不触发）。"""
+    import portfolio as pf_mod
+
+    expected = _business_days("2026-10-22", "2026-11-09")
+    assert expected >= 10, "样本区间应覆盖足够交易日"
+    days = pf_mod.resolve_actual_holding_days(
+        [{"code": "600000", "opened_at": "2026-10-22"}]
+    )
+    assert days["600000"] == expected
+    # T+1 标记保持原语义（0/1）
+    marker = pf_mod.resolve_holding_days(
+        [{"code": "600000", "opened_at": "2026-10-22"}]
+    )
+    assert marker["600000"] == 1
+
+
+def test_actual_holding_days_uses_latest_lot_after_add():
+    """加仓视为新入场：时间止损从最近一次加仓日算，避免老仓时间止损清掉新仓。"""
+    import portfolio as pf_mod
+
+    days = pf_mod.resolve_actual_holding_days([{
+        "code": "600000",
+        "opened_at": "2026-10-01",
+        "lots": [
+            {"shares": 100, "opened_at": "2026-10-01"},
+            {"shares": 100, "opened_at": "2026-11-06"},
+        ],
+    }])
+    assert days["600000"] == _business_days("2026-11-06", "2026-11-09")
+
+
+def test_l6_ignores_t_plus_one_marker_when_actual_days_missing():
+    """没有真实天数时 L6 不得凭 0/1 标记误触发。"""
+    reminders = run_live_risk_check(
+        _holding(), {"600000": 10.5}, holding_days={"600000": 1},
+        position_rules=_l6_rules(days=1),
+    )
+    assert reminders == []

@@ -172,6 +172,48 @@ def resolve_holding_days(
     return days
 
 
+def resolve_actual_holding_days(
+    holdings: list[dict], today: date | None = None,
+) -> dict[str, int]:
+    """从最近一次开仓/加仓日起，统计已持有的交易日数（不含开仓当日）。
+
+    `resolve_holding_days` 只产出 T+1 需要的 0/1 标记，**不是**真实持有天数；
+    L6 时间止损若复用它就永远不会触发（2026-11-09 修复的死规则）。本函数按
+    交易日历逐日计数，供 L6 使用。
+
+    加仓视为新的入场信号：以该持仓 ``lots`` 中最新的 ``opened_at`` 为基准，
+    避免「持有 19 天后加仓，次日被老仓时间止损整仓清掉」。
+    """
+    from aqsp.core.time import is_trading_day
+
+    current = today or today_shanghai()
+    out: dict[str, int] = {}
+    for holding in holdings:
+        code = holding.get("code")
+        if not code:
+            continue
+        lots = holding.get("lots") or []
+        opened_values = [lot.get("opened_at") for lot in lots if lot.get("opened_at")]
+        opened_at = max(opened_values) if opened_values else holding.get("opened_at")
+        if not opened_at:
+            continue
+        try:
+            opened = _parse_opened_at(opened_at, current)
+        except ValueError:
+            continue
+        if opened >= current:
+            out[code] = 0
+            continue
+        count = 0
+        cursor = opened + timedelta(days=1)
+        while cursor <= current:
+            if is_trading_day(cursor):
+                count += 1
+            cursor += timedelta(days=1)
+        out[code] = count
+    return out
+
+
 def _apply_holding(
     data: dict, code: str, shares: float, cost: float, opened_at: str,
 ) -> dict:
