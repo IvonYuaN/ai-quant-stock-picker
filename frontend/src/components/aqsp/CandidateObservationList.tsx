@@ -41,6 +41,6 @@ export function CandidateObservationList() {
   return <section className="aq-candidate-observation-list" aria-label="我的候选观察">
     <div className="aq-candidate-observation-head"><div><p className="aq-eyebrow">离开页面也持续跟进</p><h2>我的候选观察{current.length ? <small> {current.length}</small> : null}</h2></div><button type="button" className="aq-btn" disabled={loading} onClick={() => void load()}>{loading ? "读取中…" : "更新观察"}</button></div>
     {error ? <p role="alert">{error}。保留上次记录；当前状态待重新核对。</p> : null}
-    {!current.length ? <p className="aq-note">{loading ? "正在读取已保存的候选条件…" : "还没有正在观察的入场条件。从下方候选进入个股研究，让 AI 比较，再采用一项条件。"}</p> : <><p className="aq-note">这里是上次后台检查记录。到价只提示复核；进入个股研究可读取当前依据。</p><div className="aq-candidate-observation-rows">{current.slice(0, 5).map(row)}</div>{current.length > 5 ? <details><summary>其余 {current.length - 5} 项观察</summary><div className="aq-candidate-observation-rows">{current.slice(5).map(row)}</div></details> : null}</>}
+    {!current.length ? <p className="aq-note">{loading ? "正在读取已保存的候选条件…" : "暂无观察条件，可从下方候选进入研究。"}</p> : <><p className="aq-note">这里是上次后台检查记录。到价只提示复核；进入个股研究可读取当前依据。</p><div className="aq-candidate-observation-rows">{current.slice(0, 5).map(row)}</div>{current.length > 5 ? <details><summary>其余 {current.length - 5} 项观察</summary><div className="aq-candidate-observation-rows">{current.slice(5).map(row)}</div></details> : null}</>}
   </section>;
 }
