@@ -45,7 +45,7 @@ export function CandidatesPage() {
             <strong>{view.date}</strong>
           </div>
           <p className="aq-page-sub">
-            当日候选名单、逐票证据链与并排对比；证据齐了才进纸面复核。
+            当日候选名单与逐票证据链。
           </p>
         </div>
       </header>

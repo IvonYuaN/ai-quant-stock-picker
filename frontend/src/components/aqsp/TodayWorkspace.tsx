@@ -52,7 +52,7 @@ function TodayHeader({
           <strong>{shanghaiDate()}</strong>
         </div>
         <p className="aq-page-sub">
-          先看大盘与行业，再研究选股理由和 AI 路线；采用条件后继续跟进。
+          先看大盘与结论，再研究候选与 AI 路线。
         </p>
         <div className="aq-meta-row">
           <span>候选日期 {date || "待产出"}</span>

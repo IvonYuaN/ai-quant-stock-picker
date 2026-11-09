@@ -44,7 +44,7 @@ export function EvidencePage() {
             <strong>{view.date}</strong>
           </div>
           <p className="aq-page-sub">
-            消息证据、多空复核、门禁判定与冻结参数 —— 判断前先把依据摊开看。
+            消息证据、多空复核与门禁判定。
           </p>
         </div>
       </header>
