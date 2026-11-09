@@ -76,3 +76,11 @@ def test_patch_rule_validates_l6_window():
         assert "时间止损" in str(exc)
     else:
         raise AssertionError("非法天数应被拒绝")
+
+
+def test_default_rules_enable_only_evidence_layers():
+    """默认只开 L1/L5/L6；L2/L4 为模拟负贡献，默认关闭但可手工开启。"""
+    data = {"holdings": [{"code": "600000", "shares": 100, "cost": 10.0}]}
+    rules = risk_rules.ensure_rules(data)
+    enabled = {r["level"]: r["enabled"] for r in rules}
+    assert enabled == {"L1": True, "L2": False, "L4": False, "L5": True, "L6": True}

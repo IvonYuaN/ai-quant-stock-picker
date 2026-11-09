@@ -29,6 +29,16 @@ class PositionRuleDefaults:
     macd_signal: int = 9
 
 
+def _default_enabled(level: str) -> bool:
+    """默认只启用有正证据的层：L1/L5/L6。
+
+    2026-11-09 逐笔/组合模拟：L2（均线跌破）与 L4（MACD 死叉）为负贡献
+    （MA20 破位 −0.57%/笔、仅 1/6 窗为正），默认关闭；用户可在前端手工开启，
+    开启后行为与旧默认完全一致。
+    """
+    return level in {"L1", "L5", "L6"}
+
+
 def ensure_rules(data: dict) -> list[dict]:
     """Attach missing defaults in the same portfolio transaction; preserve edits."""
     defaults = PositionRuleDefaults()
@@ -62,7 +72,7 @@ def ensure_rules(data: dict) -> list[dict]:
                     "position_id": position_id,
                     "symbol": symbol,
                     "level": level,
-                    "enabled": True,
+                    "enabled": _default_enabled(level),
                     "param_value": param,
                     "trigger_price": None,
                     # All new rules start at the quietest cadence.  L4 is

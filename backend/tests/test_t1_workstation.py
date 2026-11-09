@@ -236,6 +236,8 @@ def test_t1_l5_never_moves_down_when_price_retraces(workstation):
 
 def test_t1_engine_consumes_enabled_rules_when_user_edits(workstation):
     pf.add_holding("600000", 100, 10, "2026-10-22")
+    # L2/L4 自 2026-11-09 起默认关闭（模拟负贡献），此用例显式模拟用户开启。
+    pf.update_risk_rule("600000-L2", {"enabled": True})
     rules = pf.get_risk_rules()
     history = pd.DataFrame(
         {"date": pd.date_range("2026-10-15", periods=5), "close": [10, 10, 10, 10, 10]}
@@ -630,6 +632,8 @@ def test_t1_check_reports_gaps_when_history_missing(workstation, monkeypatch):
 
     monkeypatch.setattr(source_factory, "build_data_source", lambda name, **kwargs: EmptySource())
     pf.add_holding("600000", 100, 10, "2026-10-22")
+    for level in ("L2", "L4"):
+        pf.update_risk_rule(f"600000-{level}", {"enabled": True})
     result = workstation.post("/api/live-risk/check", json={"notify": False})
     assert result.status_code == 200
     data = result.json()["data"]
@@ -666,6 +670,8 @@ def test_t1_history_uses_tenant_cache_when_scheduler_cache_unavailable(
     token = tenant.current_tenant.set(tenant_id)
     try:
         pf.add_holding("600000", 100, 10, "2026-10-22")
+        for level in ("L2", "L4"):
+            pf.update_risk_rule(f"600000-{level}", {"enabled": True})
         import live_risk_service as service
 
         result = service.check_positions(notify=False)
@@ -882,6 +888,7 @@ def test_t1_tenant_monitor_keeps_collected_positions_when_candidate_store_corrup
 
 def test_t1_engine_macd_cross_when_raw_history_ends_below_signal(workstation):
     pf.add_holding("600000", 100, 10, "2026-10-22")
+    pf.update_risk_rule("600000-L4", {"enabled": True})
     rules = [r for r in pf.get_risk_rules() if r["level"] == "L4"]
     closes = list(range(10, 50)) + [10]
     history = pd.DataFrame(
