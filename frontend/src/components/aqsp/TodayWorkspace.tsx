@@ -55,7 +55,7 @@ function TodayHeader({
           先看大盘与结论，再研究候选与 AI 路线。
         </p>
         <div className="aq-meta-row">
-          <span>候选日期 {date || "待产出"}</span>
+          <span>研究日期 {date || "待产出"}</span>
           {snapshot ? <span>更新 {formatAqspTime(snapshot.generated_at)}</span> : null}
           {snapshot ? (
             <Badge tone={historical || stale ? "warn" : "ok"}>
@@ -155,21 +155,11 @@ function PhaseStrip({ view }: { view: DailyView }) {
           </div>
         ))}
       </div>
+      {/* 候选 / 消息 / 复核 / 覆盖 的数字已经在上面的 KPI 行里给过，
+          这里只补 KPI 没有的一项：阶段进度。重复一遍只会让人怀疑口径。 */}
       <div className="aq-status-line">
-        <span>
-          <b>{view.candidates.length}</b>候选
-        </span>
-        <span>
-          <b>{view.messages.length}</b>消息
-        </span>
-        <span>
-          <b>{view.debates.length}</b>复核
-        </span>
-        <span>
-          <b>{view.coverageText}</b>全池周期覆盖
-        </span>
         <span className="aq-status-muted">
-          阶段 {produced}/{phases.length}
+          阶段 {produced}/{phases.length} 已产出
         </span>
       </div>
     </div>
@@ -193,8 +183,14 @@ function PersistentBlock({ view }: { view: DailyView }) {
         </section>
 
         <div className="aq-lead-gate">
-          <ToneCallout tone={view.gate.tone} title={view.gate.label} detail={view.gate.detail} />
-          <ToneCallout tone={view.chain.tone} title={view.chain.label} detail={view.chain.detail} />
+          <p className="aq-lead-detail">
+            <b>门禁</b>
+            <span>{view.gate.detail}</span>
+          </p>
+          <p className="aq-lead-detail">
+            <b>研究链</b>
+            <span>{view.chain.detail}</span>
+          </p>
           {view.isEmptyObservation ? (
             <ToneCallout
               tone="warn"
@@ -215,8 +211,9 @@ function KpiRow({ view }: { view: DailyView }) {
   const top = view.candidates.reduce((max, row) => Math.max(max, row.score ?? 0), 0);
   const tiles: Array<{ label: string; value: string; sub?: string; tone?: "ok" | "warn" | "neutral" }> = [
     { label: "候选", value: String(view.candidates.length), sub: view.candidates.length ? `最高 ${top.toFixed(1)} 分` : "今日无标的", tone: view.candidates.length ? "ok" : "neutral" },
-    { label: "门禁", value: view.gate.label, sub: view.gate.detail, tone: view.gate.tone },
-    { label: "研究链", value: view.chain.label, sub: view.chainDetail, tone: view.chain.tone },
+    // 门禁 / 研究链：这里只给状态词，展开的原因放在结论区，避免同一句话出现两遍。
+    { label: "门禁", value: view.gate.label, tone: view.gate.tone },
+    { label: "研究链", value: view.chain.label, tone: view.chain.tone },
     { label: "覆盖", value: view.coverageText || "—", sub: view.hasLiveContent ? "实时产物" : "非实时", tone: "neutral" },
     { label: "消息/复核", value: `${view.messages.length} / ${view.debates.length}`, sub: "条消息 · 只复核", tone: "neutral" },
   ];

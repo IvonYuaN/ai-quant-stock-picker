@@ -4374,3 +4374,43 @@ h2 { letter-spacing: -0.012em; }
 .aq-brand-name { font-size: 1.05rem; }
 .aq-search-trigger { min-height: 1.9rem; margin-top: 0.35rem; font-size: 0.78rem; }
 .aq-alert-badge { min-height: 1.95rem; padding: 0.3rem 0.55rem; font-size: 0.82rem; }
+
+/* ---------- 结论区的依据小卡（替代重复的 ToneCallout） ----------
+   门禁 / 研究链的状态词在顶部 KPI 行已给过一次，这里只补「为什么」，
+   同一句话不再出现两遍。 */
+.aq-lead-detail {
+  display: flex;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid hsl(var(--surface-line));
+  border-radius: 0.6rem;
+  background: hsl(var(--muted) / 0.22);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+.aq-lead-detail b { flex-shrink: 0; color: hsl(var(--muted-foreground)); font-weight: 600; }
+.aq-lead-detail span { min-width: 0; color: hsl(var(--foreground)); }
+
+/* ---------- 表下说明：同值文案只给一次 ---------- */
+.aq-table-notes {
+  display: grid;
+  gap: 0.25rem;
+  margin-top: 0.5rem;
+}
+.aq-table-notes p {
+  display: flex;
+  gap: 0.5rem;
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+.aq-table-notes b { flex-shrink: 0; color: hsl(var(--muted-foreground)); font-weight: 600; }
+.aq-table-notes span { min-width: 0; color: hsl(var(--foreground)); }
+
+/* ---------- 名单分组说明：同组一致的字段只说一次 ---------- */
+.aq-roster-note {
+  margin: 0.15rem 0 0.35rem;
+  font-size: 0.74rem;
+  color: hsl(var(--muted-foreground));
+}

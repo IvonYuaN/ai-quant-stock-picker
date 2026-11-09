@@ -55,6 +55,14 @@ const EMPTY_PERF: PerformancePayload = {
   notes: [],
 };
 
+
+/** 同一列若多行文案完全相同，表内不重复长句：统一「同上」，真实文案在表下给一次。 */
+function sameAcross(values: readonly string[]): { same: boolean; text: string } {
+  const uniq = [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+  if (uniq.length === 1 && values.length > 1) return { same: true, text: uniq[0] };
+  return { same: false, text: "" };
+}
+
 export function DecisionPanel({ snapshot }: { snapshot: AqspSnapshot }) {
   const [perfPayload, setPerfPayload] = useState<PerformancePayload | null>(null);
   const [perfError, setPerfError] = useState("");
@@ -130,7 +138,19 @@ export function DecisionPanel({ snapshot }: { snapshot: AqspSnapshot }) {
       ) : null}
 
       {/* 候选表：gate 未放行时整表降级为"观察"，列头措辞随之切换。 */}
-      {decision && decision.candidates.length > 0 ? (
+      {decision && decision.candidates.length > 0 ? (() => {
+        // 同一天的几只候选常共享同一个状态、同一组策略、同一句观察动作 ——
+        // 逐行重复会让表看起来像每只票都单独核过。表内写「同上」，真实文案表下给一次。
+        const statusSame = sameAcross(decision.candidates.map((row) => row.statusMessage || statusLabel(row.status)));
+        const strategySame = sameAcross(decision.candidates.map((row) => row.strategies || "—"));
+        const nextSame = sameAcross(decision.candidates.map((row) => (row.invalidated ? "已采用观察需重新复核" : (row.coverageNote || row.nextStep || "—"))));
+        const notes = [
+          { label: "状态", text: statusSame.text },
+          { label: "关联策略", text: strategySame.text },
+          { label: "下一步", text: nextSame.text },
+        ].filter((note) => note.text);
+        return (
+        <>
         <div className="aq-table-wrap">
           <table className="aq-table aq-decision-table">
             <thead>
@@ -150,15 +170,24 @@ export function DecisionPanel({ snapshot }: { snapshot: AqspSnapshot }) {
                     <span className="aq-decision-cand-name">{row.name}</span>
                   </td>
                   <td className="aq-num">{row.score}</td>
-                  <td>{row.statusMessage ? <Tag tone="warn">{row.statusMessage}</Tag> : statusLabel(row.status)}</td>
-                  <td>{row.strategies || "—"}</td>
-                  <td>{row.invalidated ? "已采用观察需重新复核" : row.coverageNote || row.nextStep || "—"}</td>
+                  <td>{statusSame.same ? "同上" : (row.statusMessage ? <Tag tone="warn">{row.statusMessage}</Tag> : statusLabel(row.status))}</td>
+                  <td>{strategySame.same ? "同上" : (row.strategies || "—")}</td>
+                  <td>{nextSame.same ? "同上" : (row.invalidated ? "已采用观察需重新复核" : (row.coverageNote || row.nextStep || "—"))}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-      ) : decision ? (
+        {notes.length ? (
+          <div className="aq-table-notes">
+            {notes.map((note) => (
+              <p key={note.label}><b>{note.label}（各行相同）</b><span>{note.text}</span></p>
+            ))}
+          </div>
+        ) : null}
+        </>
+        );
+      })() : decision ? (
         <div className="aq-state aq-state-neutral">
           <span className="aq-state-text">今日无候选可列。</span>
         </div>
