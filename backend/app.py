@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import time as _time
 from datetime import datetime
 from typing import Annotated, Any
@@ -2230,7 +2231,10 @@ def aqsp_data_coverage() -> dict:
         return {"data": {"available": False, "reason": "未找到本机 raw 日线数据库"}}
     try:
         summary = summarize_daily_coverage(db_path, exclude_symbols=_INDEX_TS_CODES)
-    except (DataError, OSError, ValueError, RuntimeError) as exc:
+    except (DataError, OSError, ValueError, RuntimeError, sqlite3.Error) as exc:
+        # sqlite3.Error 不是 OSError 子类：WAL 库在只读连接下拿不到 -shm 写权限时
+        # 抛的是 ``attempt to write a readonly database``，漏捕会让端点以 500 冒泡，
+        # 监控读成「服务崩了」，而真实原因是「数据依赖不可读」。
         raise HTTPException(503, f"日线覆盖不可核验：{exc}") from exc
     ratio = min_market_daily_coverage_ratio()
     usable = market_date_is_usable(summary, min_coverage_ratio=ratio)
