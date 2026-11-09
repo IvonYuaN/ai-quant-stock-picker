@@ -520,3 +520,43 @@ def test_position_discussion_persists_safe_backoff_when_summary_is_limited(discu
     assert result["summary"] is None and result["summary_failure_kind"] == "rate_limited"
     stored = discussion.read_action_plan(event_id)["comparison"]
     assert stored["summary_retry_after_seconds"] == result["summary_retry_after_seconds"] == 45
+
+
+def test_position_discussion_drops_unsourced_action_but_keeps_the_opinion(discussion_client, monkeypatch) -> None:
+    """动作里出现无源引用时，只剔除该动作 —— 观点与结论必须保留。
+
+    2026-11-09 实测：风险复核角色的动作引用了无源数字，后端把**整份意见**丢弃，
+    于是 missing_roles=[risk] → status=partial → 用户看到「未完成」，整场讨论白跑。
+    这里锁住降级语义：门槛被剔除，观点不丢。
+    """
+    client, event_id, worksheet, _calls = discussion_client
+
+    async def fake_model(endpoint, payload, timeout, limits):
+        if "rounds" in payload:
+            return json.dumps(SUMMARY, ensure_ascii=False)
+        peers = payload["peer_opinions"]
+        poisoned = {
+            **OPINION,
+            "actions": [{**OPINION["actions"][0], "condition": "等待price_0001后人工复核"}],
+            "reply_to": list(peers)[:1],
+            "challenge": "同意需核对费用，但缺少板块数据不能确认方向" if peers else "",
+        }
+        return json.dumps(poisoned, ensure_ascii=False)
+
+    monkeypatch.setattr(discussion, "call_model", fake_model)
+    response = client.post(
+        f"/api/alerts/{event_id}/discussion",
+        json={"choice": "t_watch", "expected_position": worksheet["position_snapshot"], "expected_revision": worksheet["revision"]},
+    )
+    assert response.status_code == 200, response.text
+    result = response.json()["data"]
+    # 三个角色都产出了观点（risk 不再整份消失），因此不再是缺角色。
+    assert result["synthesis_basis"]["missing_roles"] == []
+    roles = [row["role"] for row in result["rounds"][0]["opinions"]]
+    assert roles == ["trend", "t_review", "risk"]
+    risk = next(row for row in result["rounds"][0]["opinions"] if row["role"] == "risk")
+    assert risk["status"] == "ok"
+    assert risk["opinion"]["actions"] == []
+    assert "无源数字" in risk["issue"]
+    # 汇总结论照常给出。
+    assert result["summary"] is not None

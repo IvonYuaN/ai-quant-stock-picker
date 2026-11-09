@@ -4061,13 +4061,19 @@
    ============================================================ */
 
 @layer base {
-  :root {
+  /* 只在暗色下生效：`:root` 与 `.light` 同特异性，写在这里会覆盖掉浅色变量，
+     导致浅色模式变成「暗底暗字」（2026-11-09 实测）。 */
+  :root:not(.light) {
     --radius: 0.75rem;
     --background: 222 18% 7.5%;
     --card: 222 15% 10.5%;
     --muted: 222 12% 15%;
     --border: 220 10% 20%;
     --surface-line: 0 0% 100% / 0.06;
+  }
+  /* 浅色下的描边色要换成深色半透明，否则白底上所有卡片会「消失」。 */
+  .light {
+    --surface-line: 215 25% 22% / 0.14;
   }
   body {
     font-size: 14px;
@@ -4414,3 +4420,68 @@ h2 { letter-spacing: -0.012em; }
   font-size: 0.74rem;
   color: hsl(var(--muted-foreground));
 }
+
+/* ---------- 持仓 AI 讨论面板：结论优先、角色并排、事实成格 ----------
+   原版把「模型设置」放最前、结论与证据写成连续长句、三角色原文平铺三段，
+   读起来是一团糊。现在：状态条 → 结论 → 事实网格 → 条件 → 角色卡片 → 配置下沉。 */
+.aq-discussion-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-bottom: 0.7rem;
+}
+.aq-discussion-verdict {
+  padding: 0.7rem 0.85rem;
+  border: 1px solid hsl(var(--primary) / 0.3);
+  border-radius: 0.7rem;
+  background: hsl(var(--primary) / 0.07);
+}
+.aq-discussion-verdict .aq-label { margin: 0 0 0.25rem; }
+.aq-discussion-verdict strong { display: block; font-size: 1rem; line-height: 1.55; }
+.aq-fact-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 0.4rem;
+  margin: 0.7rem 0;
+}
+.aq-fact-grid p {
+  display: grid;
+  gap: 0.15rem;
+  margin: 0;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid hsl(var(--surface-line));
+  border-radius: 0.55rem;
+  background: hsl(var(--muted) / 0.2);
+  font-size: 0.79rem;
+  line-height: 1.5;
+}
+.aq-fact-grid b { color: hsl(var(--muted-foreground)); font-weight: 600; }
+.aq-role-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+  gap: 0.5rem;
+  margin-top: 0.8rem;
+}
+.aq-role-card {
+  display: grid;
+  gap: 0.3rem;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid hsl(var(--surface-line));
+  border-radius: 0.65rem;
+  background: hsl(var(--card) / 0.7);
+}
+.aq-role-card-warn { border-color: hsl(var(--destructive) / 0.35); background: hsl(var(--destructive) / 0.06); }
+.aq-role-card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding-bottom: 0.25rem;
+  border-bottom: 1px solid hsl(var(--surface-line));
+}
+.aq-role-card-head b { font-size: 0.86rem; }
+.aq-role-card-head span { font-size: 0.72rem; color: hsl(var(--muted-foreground)); }
+.aq-role-card-summary { margin: 0; font-size: 0.83rem; line-height: 1.6; }
+.aq-role-card-note { margin: 0; font-size: 0.76rem; line-height: 1.55; color: hsl(var(--muted-foreground)); }
+.aq-model-settings { margin-top: 0.8rem; border-top: 1px solid hsl(var(--surface-line)); padding-top: 0.4rem; }
+.aq-model-settings > summary { min-height: 2.2rem; padding-block: 0.4rem; cursor: pointer; color: hsl(var(--muted-foreground)); font-size: 0.82rem; }
