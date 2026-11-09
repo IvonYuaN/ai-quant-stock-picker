@@ -64,7 +64,7 @@ def test_t1_rules_attach_and_preserve_when_cost_changes(workstation):
     pf.add_holding("600000", 100, 10, "2026-10-22", "buy-1")
     initial = workstation.get("/api/portfolio/risk-rules").json()["data"]
     assert initial["unsupported_levels"] == ["L3"]
-    assert {r["level"] for r in initial["rules"]} == {"L1", "L2", "L4", "L5"}
+    assert {r["level"] for r in initial["rules"]} == {"L1", "L2", "L4", "L5", "L6"}
     patch = workstation.patch(
         "/api/portfolio/risk-rules/600000-L1",
         json={"enabled": False, "param_value": 0.1, "freq_mode": "always"},
@@ -632,7 +632,7 @@ def test_t1_check_reports_gaps_when_history_missing(workstation, monkeypatch):
     result = workstation.post("/api/live-risk/check", json={"notify": False})
     assert result.status_code == 200
     data = result.json()["data"]
-    assert set(data["checks"]["checked"]) == {"600000:L1", "600000:L5"}
+    assert set(data["checks"]["checked"]) == {"600000:L1", "600000:L5", "600000:L6"}
     assert {r["level"] for r in data["checks"]["skipped"]} == {"L2", "L4"}
     inbox = workstation.get("/api/alerts").json()["data"]
     assert inbox["last_checked_at"] == data["last_checked_at"]

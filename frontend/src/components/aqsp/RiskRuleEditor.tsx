@@ -3,7 +3,7 @@ import { Check, RefreshCw, ShieldCheck } from "lucide-react";
 import { api, type AlertFrequency, type PositionAlertRule } from "@/lib/api";
 import { ALERTS_CHANGED_EVENT, PORTFOLIO_CHANGED_EVENT } from "@/lib/operation";
 
-const labels = { L1: "成本硬止损", L2: "均线跌破", L4: "MACD 死叉", L5: "高水位移动止损" };
+const labels = { L1: "成本硬止损", L2: "均线跌破", L4: "MACD 死叉", L5: "高水位移动止损", L6: "持有天数止损" };
 
 function RuleForm({ rule, onSave, disabled = false }: { rule: PositionAlertRule; onSave: (value: PositionAlertRule) => void; disabled?: boolean }) {
   const [enabled, setEnabled] = useState(rule.enabled);
@@ -29,7 +29,7 @@ function RuleForm({ rule, onSave, disabled = false }: { rule: PositionAlertRule;
   return <form className="aq-rule-form" onSubmit={(event) => void save(event)}>
     <div className="aq-rule-title"><label><input type="checkbox" checked={enabled} disabled={busy || disabled} onChange={(event) => setEnabled(event.target.checked)} />{rule.level} {labels[rule.level]}</label><small>{rule.origin === "AUTO_DEFAULT" ? "自动规则" : "自定义"}</small></div>
     <div className="aq-rule-fields">
-      {rule.level === "L2" ? <label>均线周期<select className="aq-input" value={value} disabled={busy || disabled} onChange={(event) => setValue(event.target.value)}>{[5, 10, 20].map((days) => <option key={days} value={days}>MA{days}</option>)}</select></label> : percentage ? <label>{rule.level === "L1" ? "成本回撤（%）" : "高水位回撤（%）"}<input type="number" className="aq-input" min="0.01" max="99.99" step="any" value={value} disabled={busy || disabled} onChange={(event) => setValue(event.target.value)} required /></label> : <span className="aq-operation-note">固定 MACD（12,26,9）</span>}
+      {rule.level === "L2" ? <label>均线周期<select className="aq-input" value={value} disabled={busy || disabled} onChange={(event) => setValue(event.target.value)}>{[5, 10, 20].map((days) => <option key={days} value={days}>MA{days}</option>)}</select></label> : rule.level === "L6" ? <label>持有交易日<select className="aq-input" value={value} disabled={busy || disabled} onChange={(event) => setValue(event.target.value)}>{[5, 10, 20, 30].map((days) => <option key={days} value={days}>{days} 个交易日</option>)}</select></label> : percentage ? <label>{rule.level === "L1" ? "成本回撤（%）" : "高水位回撤（%）"}<input type="number" className="aq-input" min="0.01" max="99.99" step="any" value={value} disabled={busy || disabled} onChange={(event) => setValue(event.target.value)} required /></label> : <span className="aq-operation-note">固定 MACD（12,26,9）</span>}
       <label>提醒频率<select className="aq-input" value={frequency} disabled={busy || disabled} onChange={(event) => setFrequency(event.target.value as AlertFrequency)}><option value="once">本次触发仅一次</option><option value="daily">每日一次</option><option value="always">每次检查</option></select></label>
       <button type="submit" className="aq-btn" disabled={busy || disabled}><Check aria-hidden="true" />{busy ? "保存中…" : "保存规则"}</button>
     </div>

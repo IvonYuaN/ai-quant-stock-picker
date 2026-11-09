@@ -72,7 +72,7 @@ def channel(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
 
     def run() -> delivery.PositionDeliveryResult:
         return delivery.deliver_position_alerts(
-            {f"600000-{level}" for level in ("L1", "L2", "L4", "L5")},
+            {f"600000-{level}" for level in ("L1", "L2", "L4", "L5", "L6")},
             clock[0].isoformat(),
             render=lambda events: ",".join(event["id"] for event in events),
             acknowledge=acknowledge,

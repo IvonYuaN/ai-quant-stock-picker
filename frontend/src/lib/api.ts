@@ -340,7 +340,7 @@ export interface Holding {
 export type AlertFrequency = "once" | "daily" | "always";
 export interface PositionAlertRule {
   id: string; position_id: string; symbol: string;
-  level: "L1" | "L2" | "L4" | "L5";
+  level: "L1" | "L2" | "L4" | "L5" | "L6";
   enabled: boolean; param_value: number; trigger_price: number | null;
   freq_mode: AlertFrequency; origin: "AUTO_DEFAULT" | "MANUAL";
   effective_from: string | null; created_at: string; updated_at: string;
