@@ -15,7 +15,7 @@ export function ReviewPage() {
           <div className="aq-title-row">
             <h1>收盘复盘</h1>
           </div>
-          <p className="aq-page-sub">当日结论回看、持仓复盘与明日待办；口径与证据同页可查。</p>
+          <p className="aq-page-sub">当日结论回看与明日待办。</p>
         </div>
       </header>
 

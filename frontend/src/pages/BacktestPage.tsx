@@ -35,7 +35,7 @@ export function BacktestPage() {
             <h1>回测</h1>
             <strong>{view.date}</strong>
           </div>
-          <p className="aq-page-sub">研究变体的收益、成交与阻断原因；台账是研究记录，不等于实盘结果。</p>
+          <p className="aq-page-sub">研究变体的收益、成交与阻断原因。</p>
         </div>
       </header>
 

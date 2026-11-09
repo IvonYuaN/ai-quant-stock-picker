@@ -53,7 +53,7 @@ export function DataPage() {
             <h1>数据</h1>
             <strong>{view.date}</strong>
           </div>
-          <p className="aq-page-sub">行情来源、最新交易日、漏斗覆盖与快照时点；数据不新鲜时结论不可用。</p>
+          <p className="aq-page-sub">来源健康、漏斗覆盖与快照时点。</p>
         </div>
       </header>
 

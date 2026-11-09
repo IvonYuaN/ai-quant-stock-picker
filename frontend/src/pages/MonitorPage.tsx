@@ -45,7 +45,7 @@ export function MonitorPage() {
           <div className="aq-title-row">
             <h1>监控</h1>
           </div>
-          <p className="aq-page-sub">持仓风险、后台跟进与候选观察的完整记录；到价只表示需要复核，不代表成交。</p>
+          <p className="aq-page-sub">持仓风险、后台跟进与候选观察记录。</p>
         </div>
       </header>
 

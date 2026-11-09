@@ -37,7 +37,7 @@ export function ScreenerPage() {
             <h1>策略</h1>
             <strong>{view.date}</strong>
           </div>
-          <p className="aq-page-sub">当前候选命中了哪些策略假设；策略命中不等于买点，先看证据是否齐。</p>
+          <p className="aq-page-sub">当前候选命中了哪些策略假设。</p>
         </div>
       </header>
 

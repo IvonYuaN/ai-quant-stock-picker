@@ -39,7 +39,7 @@ export function FactorsPage() {
             <h1>因子</h1>
             <strong>{view.date}</strong>
           </div>
-          <p className="aq-page-sub">候选的评分因子、取值与覆盖情况；因子只解释分数，不单独构成结论。</p>
+          <p className="aq-page-sub">评分因子、取值与覆盖情况。</p>
         </div>
       </header>
 

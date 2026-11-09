@@ -4103,7 +4103,16 @@
 .aq-brand-sub { margin-top: 0.35rem; font-size: 0.78rem; color: hsl(var(--muted-foreground) / 0.85); }
 .aq-brand-mark { height: 1.9rem; width: 1.9rem; border-radius: 0.55rem; }
 
-.aq-nav { padding: 0.9rem 0.7rem; }
+.aq-nav {
+  padding: 0.9rem 0.7rem;
+  /* 14 个模块后侧栏装不下：导航区必须自己可滚，否则底部模块被裁掉点不到。 */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.aq-nav::-webkit-scrollbar { width: 6px; }
+.aq-nav::-webkit-scrollbar-thumb { background: hsl(var(--surface-line)); border-radius: 999px; }
 .aq-nav-group + .aq-nav-group { margin-top: 1.35rem; }
 .aq-nav-label {
   padding: 0 0.55rem 0.4rem;
