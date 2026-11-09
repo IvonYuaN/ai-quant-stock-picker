@@ -7042,6 +7042,9 @@ def _run_walkforward_grid_cscv(
 
     variant_returns: list[list[float]] = []
     variant_rows: list[tuple[WalkForwardGridVariant, float, float, int, int]] = []
+    # 变体声明的 tr 权重可能被 #382 强制清零（base invert=true 时）。
+    # 记录每个变体的**生效** tr 权重，供 report.md 变体表如实展示（#xxx）。
+    effective_tr_weights: dict[str, float] = {}
     period_labels: list[str] | None = None
     min_periods: int | None = None
 
@@ -7051,6 +7054,7 @@ def _run_walkforward_grid_cscv(
         variant_thresholds = _apply_walkforward_grid_variant(thresholds, variant)
         effective_trw = float(variant_thresholds.composite.triple_rise_weight)
         declared_trw = float(variant.triple_rise_weight)
+        effective_tr_weights[variant.variant_id] = effective_trw
         trw_note = (
             f" trw={declared_trw:.1f}"
             if effective_trw == declared_trw
@@ -7204,6 +7208,7 @@ def _run_walkforward_grid_cscv(
         n_trials=len(variant_rows),
         n_obs=dsr_n_obs,
     )
+    details["effective_triple_rise_weights"] = effective_tr_weights
     return dsr, pbo, int(min_periods), variant_rows, details
 
 
@@ -7400,6 +7405,16 @@ def _append_walkforward_grid_rows(
             "--------|--------|----------------|--------|",
         ]
     )
+    # #382：base invert=true 时声明 tr 权重会被强制清零 ⇒ 表中必须展示**生效值**，
+    # 否则报告显示 0.4/0.3 等申请值、读者会误以为 triple_rise 参与了打分。
+    eff_tr_map: dict[str, float] = {}
+    if details:
+        raw_map = details.get("effective_triple_rise_weights")
+        if isinstance(raw_map, dict):
+            eff_tr_map = {
+                str(k): float(v) for k, v in raw_map.items() if v is not None
+            }
+    any_tr_zeroed = False
     for variant, sharpe, total_return, period_count, _trade_count in rows:
         utilization = _walkforward_utilization(variant.horizon_days, test_days)
         if utilization:
@@ -7421,10 +7436,17 @@ def _append_walkforward_grid_rows(
         else:
             # 旧 2 维 mix：qual/val/vol/mr/htf 未参与该 mix，权重为 0
             qual = val = vol = mr_w = htf = 0.0
+        declared_tr = float(variant.triple_rise_weight)
+        eff_tr = eff_tr_map.get(variant.variant_id)
+        if eff_tr is not None and abs(eff_tr - declared_tr) > 1e-9:
+            tr_cell = f"{eff_tr:.1f}*"
+            any_tr_zeroed = True
+        else:
+            tr_cell = f"{declared_tr:.1f}"
         report_lines.append(
             f"| {variant.variant_id} | "
             f"{variant.momentum_weight:.1f} | "
-            f"{variant.triple_rise_weight:.1f} | "
+            f"{tr_cell} | "
             f"{qual:.1f} | {val:.1f} | {vol:.1f} | {mr_w:.1f} | {htf:.1f} | "
             f"{variant.lookback_days} | "
             f"{variant.horizon_days} | "
@@ -7433,6 +7455,16 @@ def _append_walkforward_grid_rows(
             f"{total_return:.2%} | "
             f"{normalized} | "
             f"{period_count} |"
+        )
+    if any_tr_zeroed:
+        report_lines.extend(
+            [
+                "",
+                "> ⚠️ `tr` 列带 `*` = 该变体**声明的 triple_rise 权重被 #382 强制清零**"
+                "（base `momentum.invert_signal=true` 时 tr 必须为 0，否则与动量反向纠正"
+                "冲突）。星号值为**实际生效权重**；此类变体实跑 = mom(inv)+pvc(inherited)，"
+                "**并未使用 triple_rise 因子**，变体表各列不再代表「因子族多样性」。",
+            ]
         )
     if test_days:
         report_lines.extend(
