@@ -230,7 +230,8 @@ def test_t1_l5_never_moves_down_when_price_retraces(workstation):
     pf.observe_risk_prices({"600000": 12})
     rule = next(r for r in pf.get_risk_rules() if r["level"] == "L5")
     assert rule["high_water_price"] == 15
-    assert rule["trigger_price"] == pytest.approx(14.25)
+    # 默认高水位回撤 2026-11-09 起为 8%（模拟：L1=3%+L5=8% 最优）
+    assert rule["trigger_price"] == pytest.approx(13.8)
 
 
 def test_t1_engine_consumes_enabled_rules_when_user_edits(workstation):
