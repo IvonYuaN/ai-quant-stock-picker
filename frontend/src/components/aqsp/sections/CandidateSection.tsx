@@ -100,17 +100,18 @@ function ComparePanel({
                 <p><b>支持</b><span>{card.support}</span></p>
                 <p><b>反证 / 缺口</b><span>{card.counter}</span></p>
                 <p><b>接下来等</b><span>{card.next}</span></p>
-                <details className="aq-evidence-fold"><summary>板块依据与 AI 分歧</summary><div>
-                  <p><b>板块</b><span>{card.sector}</span></p>
-                  <p><b>该票 AI 分歧</b><span>{card.debate}</span></p>
-                </div></details>
+                <p><b>板块</b><span>{card.sector}</span></p>
+                <p><b>该票 AI 分歧</b><span>{card.debate}</span></p>
                 <Link to={`${stockResearchHref(card.symbol, date)}#candidate-observation`} className="aq-btn">看 AI 讨论、观察条件与跟进 <ArrowRight aria-hidden="true" /></Link>
               </article>
             ))}
           </div>
         </>
       )}
-      <details className="aq-candidate-decision-metrics"><summary>展开原始指标对比</summary>
+      <div className="aq-inline-head">
+        <strong>原始指标对比</strong>
+        <span>同口径逐项对照，先看差异再看结论</span>
+      </div>
       <div className="aq-table-wrap">
       <table className="aq-table">
         <thead>
@@ -145,7 +146,7 @@ function ComparePanel({
           ))}
         </tbody>
       </table>
-      </div></details>
+      </div>
     </section>
   );
 }
@@ -307,16 +308,24 @@ function CandidateDetailCard({
       ) : null}
 
       {row.coverageNote ? <p className="aq-note" role="status">{row.coverageNote}</p> : null}
-      <details className="aq-evidence-fold"><summary>技术指标、评分与来源</summary><div>
+      <div className="aq-evidence-block">
+        <div className="aq-inline-head">
+          <strong>技术指标、评分与来源</strong>
+          <span>快照口径 · 非推断</span>
+        </div>
       {row.metrics.length > 0 ? (
-        <><div className="aq-metric-grid">
+        <div className="aq-metric-grid">
           {row.metrics.map((metric) => (
             <div key={metric.key}>
               <span>{metric.label}</span>
               <b>{metric.value}</b>
             </div>
           ))}
-        </div>{row.technicalProvenance ? <details className="aq-provenance"><summary>{row.technicalProvenance.summary}</summary><p>{row.technicalProvenance.detail}</p></details> : null}</>
+        </div>
+      ) : null}
+
+      {row.technicalProvenance ? (
+        <p className="aq-provenance"><b>{row.technicalProvenance.summary}</b> {row.technicalProvenance.detail}</p>
       ) : null}
 
       {row.breakdown.length > 0 ? (
@@ -327,7 +336,7 @@ function CandidateDetailCard({
       ) : null}
 
         {row.provenance ? <p className="aq-provenance">快照行情：{row.provenance}</p> : null}
-      </div></details>
+      </div>
     </Card>
   );
 }
@@ -682,26 +691,24 @@ export function CandidateSection({
 
       {!ownershipKnown ? <p className="aq-note" role="status">持仓身份待确认，已暂停持仓筛选与计数；不影响查看候选研究。可在跟进模块“更新跟进状态”重试。</p> : null}
       {added.length > 0 ? (
-        <details className="aq-candidate-increment" aria-label="盘中新增候选">
-          <summary className="aq-candidate-increment-head">
+        <div className="aq-candidate-increment" aria-label="盘中新增候选">
+          <div className="aq-candidate-increment-head">
             <strong>盘中新增 {added.length} 只候选</strong>
-            <span>展开查看 · 不改变冻结名单</span>
-          </summary>
-          {added.map((change) => (
-            <div className="aq-candidate-increment-row" key={change.symbol}>
-              <div className="aq-candidate-increment-identity">
+            <span>不改变冻结名单</span>
+          </div>
+          <div className="aq-chip-grid">
+            {added.map((change) => (
+              <div className="aq-candidate-increment-identity" key={change.symbol}>
                 <Tag tone="primary">新增</Tag>
                 <strong>{candidateName(change)}</strong>
                 <span className="aq-code">{change.symbol}</span>
+                {onPick ? (
+                  <button type="button" className="aq-btn" onClick={() => onPick(change.symbol)}>查看</button>
+                ) : null}
               </div>
-              {onPick ? (
-                <button type="button" className="aq-btn" onClick={() => onPick(change.symbol)}>
-                  查看个股
-                </button>
-              ) : null}
-            </div>
-          ))}
-        </details>
+            ))}
+          </div>
+        </div>
       ) : null}
 
       {view.candidates.length === 0 ? (
@@ -725,8 +732,12 @@ export function CandidateSection({
             </div>
             {compareNames.length ? <div className="aq-candidate-compare-selection" aria-label="已选比较股票">{compareNames.map((row) => <button key={row.symbol} type="button" className="aq-chip" aria-label={`移出比较 ${row.name}`} onClick={() => setCompareSymbols(toggleCompareSymbol(compareSymbols, row.symbol))}>{row.name}<span aria-hidden="true"> ×</span></button>)}</div> : <p className="aq-note">选一只看入选理由；需要横向比较时，再加入对比。</p>}
           </div>
-          <details className="aq-candidate-filters">
-            <summary><SlidersHorizontal aria-hidden="true" />筛选与排序 <span>{visible.length} / {view.candidates.length} 只 · {owned.watchlist} 已自选{selection.hidden ? ` · 已筛除 ${selection.hidden} 只` : ""}</span></summary>
+          <div className="aq-candidate-filters">
+            <div className="aq-inline-head">
+              <SlidersHorizontal aria-hidden="true" />
+              <strong>筛选与排序</strong>
+              <span>{visible.length} / {view.candidates.length} 只 · {owned.watchlist} 已自选{selection.hidden ? ` · 已筛除 ${selection.hidden} 只` : ""}</span>
+            </div>
           <div className="aq-tag-row">
             <Tag tone={!ownershipKnown ? "warn" : owned.holding + owned.watchlist > 0 ? "primary" : "neutral"}>{ownershipSummaryLabel(view.candidates.map((row) => row.symbol), ownership)}</Tag>
             <button type="button" disabled={!ownershipKnown} className={cn("aq-btn", ownershipKnown && onlyOwned && "aq-btn-primary")} aria-pressed={ownershipKnown && onlyOwned} onClick={() => { setOnlyOwned(!onlyOwned); setHideOwned(false); }}>只看我的命中</button>
@@ -746,7 +757,7 @@ export function CandidateSection({
               if (next.onlyOwned !== undefined) setOnlyOwned(next.onlyOwned);
             }}
           />
-          </details>
+          </div>
 
           {visible.length === 0 && !showComparison ? (
             <EmptyState

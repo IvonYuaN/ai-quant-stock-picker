@@ -7,6 +7,14 @@ import { RiskRuleEditor } from "@/components/aqsp/RiskRuleEditor";
 // 路由级代码分割：多数人只打开「今日研究」，没必要为市场 / 雷达 / 持仓页付首屏流量。
 // 每个页面单独成 chunk，进入该路由时才拉；Layout 里用 Suspense 兜住加载态。
 const TodayPage = lazy(() => import("@/pages/TodayPage").then((m) => ({ default: m.TodayPage })));
+const CandidatesPage = lazy(() => import("@/pages/CandidatesPage").then((m) => ({ default: m.CandidatesPage })));
+const ScreenerPage = lazy(() => import("@/pages/ScreenerPage").then((m) => ({ default: m.ScreenerPage })));
+const FactorsPage = lazy(() => import("@/pages/FactorsPage").then((m) => ({ default: m.FactorsPage })));
+const BacktestPage = lazy(() => import("@/pages/BacktestPage").then((m) => ({ default: m.BacktestPage })));
+const DataPage = lazy(() => import("@/pages/DataPage").then((m) => ({ default: m.DataPage })));
+const MonitorPage = lazy(() => import("@/pages/MonitorPage").then((m) => ({ default: m.MonitorPage })));
+const EvidencePage = lazy(() => import("@/pages/EvidencePage").then((m) => ({ default: m.EvidencePage })));
+const ReviewPage = lazy(() => import("@/pages/ReviewPage").then((m) => ({ default: m.ReviewPage })));
 const MarketPage = lazy(() => import("@/pages/MarketPage").then((m) => ({ default: m.MarketPage })));
 const HoldingsPage = lazy(() => import("@/pages/my/HoldingsPage").then((m) => ({ default: m.HoldingsPage })));
 const PositionPlanPage = lazy(() => import("@/pages/my/PositionPlanPage").then((m) => ({ default: m.PositionPlanPage })));
@@ -33,6 +41,14 @@ export const router = createBrowserRouter([
     children: [
       { path: "/", element: <Navigate to={DEFAULT_ROUTE} replace /> },
       { path: "/today", element: <TodayPage /> },
+      { path: "/candidates", element: <CandidatesPage /> },
+      { path: "/screener", element: <ScreenerPage /> },
+      { path: "/factors", element: <FactorsPage /> },
+      { path: "/backtest", element: <BacktestPage /> },
+      { path: "/data", element: <DataPage /> },
+      { path: "/monitor", element: <MonitorPage /> },
+      { path: "/evidence", element: <EvidencePage /> },
+      { path: "/review", element: <ReviewPage /> },
       { path: "/stream", element: <InfoStreamPage /> },
       { path: "/market", element: <MarketPage /> },
       { path: "/my/holdings", element: <HoldingsPage renderRiskSettings={(code, expanded) => <RiskRuleEditor code={code} expanded={expanded} />} /> },

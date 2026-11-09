@@ -21,9 +21,14 @@ export const operationContract = {
   futureDateRejected: errorFor({ date: "2026-10-24" }) !== "",
   invalidDateRejected: errorFor({ date: "2026-02-31" }) !== "",
   shanghaiBoundary: shanghaiDate(new Date("2026-10-22T16:01:00Z")) === "2026-10-23",
-  fourNavigationItems: NAV_LINES.flatMap((line) => line.items).length === 4,
-  navigationOrder: NAV_LINES.flatMap((line) => line.items.map((item) => item.to)).join(",") === "/today,/my/holdings,/market,/stream",
-  navigationLabelsMatchT1Spec: NAV_LINES.flatMap((line) => line.items.map((item) => item.label)).join(",") === "今日,我的持仓,大盘,消息",
+  // 2026-11-09：导航从 4 项主线改为三组 14 个模块（参考 investment-news / TickFlow 的多模块视图切换器）。
+  navigationModuleCount: NAV_LINES.flatMap((line) => line.items).length === 14,
+  navigationOrder: NAV_LINES.flatMap((line) => line.items.map((item) => item.to)).join(",") ===
+    "/today,/candidates,/screener,/factors,/backtest,/market,/data,/stream,/my/holdings,/monitor,/review,/evidence,/my/notes,/my/reports",
+  navigationLabelsFollowModulePlan: NAV_LINES.flatMap((line) => line.items.map((item) => item.label)).join(",") ===
+    "看板,候选,策略,因子,回测,市场环境,数据,消息,持仓,监控,复盘,研究依据,笔记,研报",
+  navigationGroupsAreThree: NAV_LINES.map((line) => line.title).join(",") === "研究,决策,资料",
+  navigationRoutesAreUnique: new Set(NAV_LINES.flatMap((line) => line.items.map((item) => item.to))).size === 14,
   watchlistCompatibility: LEGACY_ROUTES["/my/watchlist"] === "/my/holdings#watchlist",
   conceptsCompatibility: LEGACY_ROUTES["/concepts"] === "/stream",
   sellableSharesPreserved: portfolioFixture.holdings[0].sellable_shares === 100,

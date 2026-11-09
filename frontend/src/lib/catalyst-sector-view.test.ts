@@ -60,5 +60,5 @@ export const catalystSectorViewContract = {
       (html.match(/aq-state-warn/g) ?? []).length === 1;
   })(),
   legacyWrapperSharesSameSection: renderToStaticMarkup(createElement(ConceptsPage)).includes("板块催化与传导"),
-  routeAndFourNavigationRemain: LEGACY_ROUTES["/concepts"] === "/stream" && NAV_LINES.flatMap((line) => line.items).length === 4,
+  routeAndModuleNavigationRemain: LEGACY_ROUTES["/concepts"] === "/stream" && NAV_LINES.flatMap((line) => line.items).length === 14,
 };

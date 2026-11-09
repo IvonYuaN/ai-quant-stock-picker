@@ -3,7 +3,7 @@ import { Link, Outlet, useLocation } from "react-router-dom";
 import { Download, LineChart, Moon, PanelLeftClose, PanelLeftOpen, Search, Sun, Upload, BellRing, Ellipsis, X } from "lucide-react";
 import { Toaster, toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { NAV_LINES, PRIMARY_LINE } from "@/lib/ia";
+import { NAV_LINES, PRIMARY_LINE, type NavItem } from "@/lib/ia";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import { useAlertOpenCount } from "@/hooks/useAlertOpenCount";
 import { AqspWorkspaceProvider, useAqspSnapshot } from "@/components/aqsp/useAqspSnapshot";
@@ -14,6 +14,38 @@ import { OperationRecorder } from "@/components/aqsp/OperationRecorder";
 import { requestOperation } from "@/lib/operation";
 import { hasTemporaryUserIdentity } from "@/lib/api";
 import { readLocalPreference, writeLocalPreference } from "@/lib/browser-session";
+
+/**
+ * 左栏计数：每个模块右侧给出这一屏里到底有多少条（参考 investment-news 的做法）。
+ * 没取到快照就返回 null —— 显示 0 会把"还没读"说成"确实没有"，那是假数据。
+ */
+function navCount(
+  item: NavItem,
+  data: {
+    candidates: readonly unknown[];
+    messages: readonly unknown[];
+    debates: readonly unknown[];
+    variants?: readonly unknown[];
+  } | null,
+  openAlerts: number,
+): number | null {
+  switch (item.metric) {
+    case "candidates":
+      return data ? data.candidates.length : null;
+    case "messages":
+      return data ? data.messages.length : null;
+    case "debates":
+      return data ? data.debates.length : null;
+    case "factors":
+      return data ? data.candidates.length : null;
+    case "variants":
+      return data?.variants ? data.variants.length : null;
+    case "alerts":
+      return openAlerts > 0 ? openAlerts : null;
+    default:
+      return null;
+  }
+}
 
 /** 输入框里打字时不要抢快捷键 */
 function isTyping(target: EventTarget | null): boolean {
@@ -108,7 +140,7 @@ function WorkspaceLayout() {
 
         {openAlerts > 0 ? (
           <Link
-            to="/today"
+            to={navHref("/alerts")}
             className="aq-alert-badge"
             title={`${openAlerts} 只持仓风险待复核，点击查看`}
             onClick={() => void refetchAlerts()}
@@ -151,6 +183,7 @@ function WorkspaceLayout() {
               {line.items.map((item) => {
                 const Icon = item.icon;
                 const active = pathname === item.to;
+                const count = navCount(item, data, openAlerts);
                 return (
                   <Link
                     key={item.to}
@@ -162,7 +195,10 @@ function WorkspaceLayout() {
                     <Icon aria-hidden="true" />
                     {!collapsed ? (
                       <span className="aq-nav-text">
-                        <span className="aq-nav-title">{item.label}</span>
+                        <span className="aq-nav-title">
+                          {item.label}
+                          {count !== null ? <span className="aq-nav-count">{count}</span> : null}
+                        </span>
                         <span className="aq-nav-desc">{item.desc}</span>
                       </span>
                     ) : null}

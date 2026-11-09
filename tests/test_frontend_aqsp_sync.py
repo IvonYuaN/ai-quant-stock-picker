@@ -14,6 +14,10 @@
 IA 变化显式记在这里：原 4 分区（overview / messages / candidates / discussion）
 变为今天工作区 3 分区（candidates / messages / discussion）；原独立「实验室」页
 已于 2026-10-09 按 #317 W4 收敛删除，变体承接落点迁至候选链「历史变体」列。
+
+2026-11-09：分区承接落点从「今天工作区一个文件」改为**按模块页分散承接** ——
+候选分区在 `/candidates` 页，消息与多空分区在 `/evidence` 页。保证强度不变：
+目录里每个 id 仍必须被某个页面真正 import 并渲染（见下方断言）。
 """
 
 from pathlib import Path
@@ -23,6 +27,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 FRONTEND_SRC = PROJECT_ROOT / "frontend" / "src"
 TODAY_WORKSPACE = FRONTEND_SRC / "components" / "aqsp" / "TodayWorkspace.tsx"
 CANDIDATE_SECTION = FRONTEND_SRC / "components" / "aqsp" / "sections" / "CandidateSection.tsx"
+CANDIDATES_PAGE = FRONTEND_SRC / "pages" / "CandidatesPage.tsx"
+EVIDENCE_PAGE = FRONTEND_SRC / "pages" / "EvidencePage.tsx"
 DAILY_VIEW = FRONTEND_SRC / "lib" / "daily-view.ts"
 CANDIDATE_CHAIN = FRONTEND_SRC / "lib" / "candidate-chain.ts"
 
@@ -45,13 +51,23 @@ def test_frontend_today_workspace_renders_every_catalogue_section() -> None:
     for section_id in ("candidates", "messages", "discussion"):
         assert f'id: "{section_id}"' in catalogue, f"目录缺少分区 {section_id}"
 
-    # 每个分区 id 都要有独立组件承接（import + 分派都在工作区里）
-    assert 'import { CandidateSection } from "./sections/CandidateSection";' in workspace
-    assert 'import { MessageSection } from "./sections/MessageSection";' in workspace
-    assert 'import { DiscussionSection } from "./sections/DiscussionSection";' in workspace
-    assert 'section.id === "candidates"' in workspace
-    assert 'section.id === "messages"' in workspace
-    assert "<DiscussionSection" in workspace
+    # 每个分区 id 都要有独立组件承接。2026-11-09 起承接落点按模块页分布：
+    # 候选分区在 /candidates 页，消息与多空分区在 /evidence 页 —— 断言强度不变，
+    # 仍然是「import + 真正渲染」两件事都要成立，目录加分区却没人渲染这里就会红。
+    candidates_page = _read(CANDIDATES_PAGE)
+    evidence_page = _read(EVIDENCE_PAGE)
+
+    assert 'from "@/components/aqsp/sections/CandidateSection"' in candidates_page
+    assert "<CandidateSection" in candidates_page
+    assert 'from "@/components/aqsp/sections/MessageSection"' in evidence_page
+    assert "<MessageSection" in evidence_page
+    assert 'from "@/components/aqsp/sections/DiscussionSection"' in evidence_page
+    assert "<DiscussionSection" in evidence_page
+
+    # 今天工作区已瘦身成总览页：不再自己渲染分区，但必须保留候选摘要入口，
+    # 否则总览页与候选模块之间会断链。
+    assert "CandidateSummary" in workspace
+    assert "<CandidateSummary" in workspace
 
     # 变体实验不再挂在今天工作区。独立「实验室」页已按 #317 W4 收敛删除，
     # 保证随之迁移：候选链表必须有「历史变体」列承接（variantCount 由
