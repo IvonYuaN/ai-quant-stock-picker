@@ -273,14 +273,35 @@ async def call_model(endpoint: ModelEndpoint, payload: dict[str, Any], timeout: 
     return await asyncio.wait_for(fetch(), timeout=timeout)
 
 
-def _parse(text: str, schema: type[BaseModel], evidence: dict[str, Any], prices: dict[str, Any], peers: set[str], guards: dict[str, Any]) -> dict[str, Any]:
+def _parse(text: str, schema: type[BaseModel], evidence: dict[str, Any], prices: dict[str, Any], peers: set[str], guards: dict[str, Any], allow_action_drop: bool = False) -> dict[str, Any]:
+    """Parse and validate one model payload.
+
+    `allow_action_drop=True` 把「动作里出现无源数字」从**丢弃整份意见**降级为
+    **只剔除该动作**：观点与结论保留，数字无源的门槛永远不进可跟踪列表。
+    没有这一层时，模型在风险角色上多写一个费用数字就会让整场讨论作废
+    （2026-11-09 实测：risk 角色被整份丢弃 → status=partial → 用户看到「未完成」）。
+    正文里的无源数字仍然整篇拒绝 —— 结论不能引用没出处的数字。
+    """
     raw = text.strip()
     fence = chr(96) * 3
     if raw.startswith(fence) and raw.endswith(fence):
         raw = raw.split("\n", 1)[1].rsplit(fence, 1)[0]
     parsed = schema.model_validate_json(raw).model_dump()
     from strategy_review_context import validate_position_action_numbers
+    dropped_actions = 0
+    if allow_action_drop and parsed.get("actions"):
+        kept = []
+        for action in parsed["actions"]:
+            try:
+                validate_position_action_numbers({**parsed, "actions": [action]}, evidence, prices)
+            except (ModelContractError, ValueError):
+                dropped_actions += 1
+                continue
+            kept.append(action)
+        parsed["actions"] = kept
     validate_position_action_numbers(parsed, evidence, prices)
+    if dropped_actions:
+        parsed["dropped_action_count"] = dropped_actions
     if any(key not in evidence for key in parsed.get("evidence_ids", [])):
         raise ModelContractError('evidence_reference')
     if schema is ComparisonSummary:
@@ -494,8 +515,12 @@ async def run_discussion(event_id: str, choice: str | None, expected_position: d
                              "回应同行：指出同意、反对或缺证，不必改变原判断；每个文字字段用一句话。reply_to至少填一个peer_opinions的键，challenge必须写实际回应，不能留空"),
                     "allowed_evidence_ids": sorted(evidence),
                     "peer_opinions": peers or {}, "output_schema": output_schema(RoleOpinion, evidence, prices, set(peers or {}), condition_catalog=catalog, guards=guards)}, limits.role_timeout, limits)
-                result = _parse(raw, RoleOpinion, evidence, prices, set(peers or {}), guards)
+                result = _parse(raw, RoleOpinion, evidence, prices, set(peers or {}), guards, allow_action_drop=True)
+                dropped = int(result.pop("dropped_action_count", 0) or 0)
+                note = (f"本角色的 {dropped} 条动作因引用无源数字被剔除，观点保留、该动作不作为门槛。"
+                        if dropped else "")
                 return {"role": role, "label": ROLES[role][0], "status": "ok", "opinion": result,
+                        **({"issue": note} if note else {}),
                         "elapsed_seconds": round(time.monotonic() - call_started, 2)}
             except (ValueError, KeyError, TypeError, IndexError, AttributeError, RuntimeError, httpx.HTTPError, TimeoutError) as exc:
                 return {"role": role, "label": ROLES[role][0], "status": "failed", **_model_failure(exc),
@@ -532,7 +557,7 @@ async def run_discussion(event_id: str, choice: str | None, expected_position: d
                     "synthesis_basis": synthesis_basis,
                     "allowed_evidence_ids": sorted(evidence),
                     "output_schema": output_schema(schema, evidence, prices, set(), limits, condition_catalog=catalog, guards=guards)}, limits.synthesis_timeout, limits)
-                summary = _parse(raw, schema, evidence, prices, set(), guards)
+                summary = _parse(raw, schema, evidence, prices, set(), guards, allow_action_drop=True)
             except (ValueError, KeyError, TypeError, IndexError, AttributeError, RuntimeError, httpx.HTTPError, TimeoutError) as exc:
                 summary_failure = _model_failure(exc)
             summary_seconds = round(time.monotonic() - summary_started, 2)

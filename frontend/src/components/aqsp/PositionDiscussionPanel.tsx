@@ -8,8 +8,10 @@ import { worksheetGuard } from "@/lib/position-workspace";
 import { PLAN_CHOICES } from "@/lib/position-plan";
 import { directionWatchAction, discussionSourceKey, discussionSynthesisNotice, discussionStrategyCurrent, strategyWatchInput, strategyWatchIssue } from "@/lib/strategy-watch";
 import { ALERTS_CHANGED_EVENT } from "@/lib/operation";
+import { cn } from "@/lib/utils";
 
 const actionLabels = { observe: "继续观察", sell_review: "卖出复核", buy_review: "回补复核", pause: "暂停操作" };
+const roleLabels: Readonly<Record<string, string>> = { trend: "趋势分析", t_review: "做 T 评估", risk: "风险复核" };
 
 export function PositionDiscussionPanel({ eventId, target, choice, worksheet, disabled, disabledReason, onComplete, onWorksheet }: {
   eventId?: string; target?: PlanTarget; onComplete?: () => void; onWorksheet?: (next: ActionWorksheet) => void; choice: ReviewChoice | null; worksheet: ActionWorksheet; disabled: boolean; disabledReason?: string;
@@ -33,6 +35,8 @@ export function PositionDiscussionPanel({ eventId, target, choice, worksheet, di
   const [comparator, setComparator] = useState<WatchComparator | "">("");
   const [watchConfirmed, setWatchConfirmed] = useState("");
   const sourceKey = discussionSourceKey(result);
+  // 缺角色 ⇒ 结论少一维度，不能被当成可采用的动作（此前只判 partial_initial，漏了这一路）。
+  const missingRoles = result?.synthesis_basis?.missing_roles ?? [];
   const [adopting, setAdopting] = useState(false);
   const adoptFlight = useRef(false);
   const active = useRef(true);
@@ -123,41 +127,127 @@ export function PositionDiscussionPanel({ eventId, target, choice, worksheet, di
       </li>;
     })}</ol>;
   }
+  const roleCards = (result?.rounds ?? []).flatMap((round) =>
+    round.opinions.map((row) => ({ round, row })),
+  );
+  const evidence = result?.evidence_snapshot;
   return <div className="aq-position-discussion" aria-label="AI 持仓方案讨论">
-    <div className="aq-action-plan-heading"><h4>{comparison ? "AI 帮我比较处理策略" : "AI 分析这条路线的下一步"}</h4><button type="button" className="aq-btn" disabled={disabled || !!worksheet.archived || !worksheet.revision || busy || adopting || (!custom && (selectedUnavailable || catalogBusy))} onClick={() => void discuss()}>{busy ? "正在分析…" : worksheet.review_plan.watch ? "AI 复核当前方案" : result ? "重新分析" : comparison ? "帮我比较" : "开始分析"}</button></div>
-    <p className="aq-note">{comparison ? "分析仅供参考，选完后由你决定。" : "从趋势 / 做 T / 风险三角度核对。"}</p>
+    <div className="aq-action-plan-heading">
+      <h4>{comparison ? "AI 帮我比较处理策略" : "AI 分析这条路线的下一步"}</h4>
+      <button type="button" className="aq-btn" disabled={disabled || !!worksheet.archived || !worksheet.revision || busy || adopting || (!custom && (selectedUnavailable || catalogBusy))} onClick={() => void discuss()}>{busy ? "正在分析…" : worksheet.review_plan.watch ? "AI 复核当前方案" : result ? "重新分析" : comparison ? "帮我比较" : "开始分析"}</button>
+    </div>
     {disabled && disabledReason ? <p role="status">{disabledReason}</p> : null}
-    {!custom && catalog?.listed === false ? <p role="status">默认型号可能已迭代，请展开模型设置，选择可用型号验证。</p> : null}
-    <details onToggle={(event) => { if (event.currentTarget.open && !catalog && !catalogBusy) void loadModels(); }}><summary>模型设置 · {custom ? "本次输入" : serverModel || "使用现有配置"}</summary>
+    {!custom && catalog?.listed === false ? <p role="status">默认型号可能已迭代，请在下方模型设置里选择可用型号。</p> : null}
+    {busy ? <div role="status"><p>{({ preparing: "正在准备持仓依据…", independent: "三个角色正在独立分析…", challenge: "正在互相核对观点与缺证…", synthesis: "正在整理三条路的理由与分歧…" } as Record<string, string>)[stage] || "正在分析…"}</p><button type="button" className="aq-btn" onClick={() => controller.current?.abort()}>停止本次分析</button></div> : null}
+    {error ? <p role="alert">{error}</p> : null}
+    {result && !snapshotMatches ? <p role="status">持仓或选择已变化，旧讨论不再展示，请重新分析。</p> : null}
+    {result && snapshotMatches && !evidenceMatches ? <p role="status">风险、环境或个人条件已变化，或分析已旧；保留原分析供核对，重新分析后再采用。</p> : null}
+
+    {result && snapshotMatches ? <section className="aq-discussion-result" aria-label="AI 策略结果">
+      {/* ① 状态条：一行看清这次讨论是什么状态、谁做的、什么时候 */}
+      <div className="aq-discussion-status">
+        <span className={cn("aq-chip", result.status === "complete" ? "aq-tag-primary" : "aq-tone-warn")}>
+          {result.status === "complete" ? "讨论完成" : result.status === "partial" ? "部分完成" : "未完成"}
+        </span>
+        <span className="aq-chip">{result.model}</span>
+        <span className="aq-chip">{formatEvidenceTime(result.generated_at)}</span>
+        {missingRoles.length ? (
+          <span className="aq-chip aq-tone-warn">
+            缺 {missingRoles.map((role) => roleLabels[role] ?? role).join("、")}
+          </span>
+        ) : null}
+      </div>
+
+      {/* ② 结论置顶；缺角色时明确说清不能当买卖依据 */}
+      {result.summary ? (
+        <div className="aq-discussion-verdict">
+          <p className="aq-label">委员会结论</p>
+          <strong>{result.summary.conclusion}</strong>
+        </div>
+      ) : (
+        <p role="status" className="aq-note">尚无通过校验的汇总结论。{!result.summary_failure_kind && result.summary_issue ? `${result.summary_issue}；` : ""}可展开下方已完成角色。</p>
+      )}
+      {missingRoles.length ? (
+        <p role="status" className="aq-note aq-tone-warn">
+          {result.synthesis_basis?.mode === "partial_initial"
+            ? `这次缺 ${missingRoles.map((role) => roleLabels[role] ?? role).join("、")} 角色，汇总只供阅读，不能采用。`
+            : `这次缺 ${missingRoles.map((role) => roleLabels[role] ?? role).join("、")} 角色：结论没有这一维度，采用前请人工确认该维度。`}
+        </p>
+      ) : null}
+      {synthesisNotice ? <p role="status" className="aq-note">{synthesisNotice}</p> : null}
+
+      {/* ③ 关键事实：两列网格，不再是长句堆叠 */}
+      <div className="aq-fact-grid">
+        <p><b>价格</b><span>分析时 {evidence?.quote.price ?? "未知"} 元 · 当前 {worksheet.basis.price ?? "待更新"} 元</span></p>
+        <p><b>行情时点</b><span>{evidence?.quote.as_of ? formatEvidenceTime(evidence.quote.as_of) : "未记录"} · {evidence?.quote.source || "来源待核验"}</span></p>
+        <p><b>大盘</b><span>{evidence?.market?.summary || "依据不足"}</span></p>
+        <p><b>板块</b><span>{evidence?.sector?.summary || "依据不足"}</span></p>
+      </div>
+
+      {comparison && result.summary ? (
+        <>
+          <p className="aq-comparison-conclusion">{result.summary.conclusion}</p>
+          <p>{result.summary.focus_choice ? `可先核对${PLAN_CHOICES[result.summary.focus_choice].title}：` : "暂不选定路线："}{result.summary.focus_reason}</p>
+          <dl className="aq-comparison-routes">{result.summary.routes?.map((row) => <div key={row.choice}><dt>{PLAN_CHOICES[row.choice].title}<small>({({ investigate: "可进一步核对", not_now: "当前不宜", insufficient: "依据不足" })[row.judgment]})</small></dt><dd>{row.reason}{row.needs.length ? <small>还需：{row.needs.join("、")}</small> : null}</dd></div>)}</dl>
+        </>
+      ) : null}
+
+      {result.summary ? (
+        <>
+          {result.summary.actions.length ? (
+            <div className="aq-strategy-next"><h4>下一步等什么，什么时候改变计划</h4>{actions(result.summary.actions, true)}</div>
+          ) : <p className="aq-note">当前证据还不足以给出具体买卖观察条件。</p>}
+          {result.summary.disagreements.length ? <p>仍有分歧：{result.summary.disagreements.join("；")}</p> : null}
+          {result.summary.missing_evidence.length ? <p>还缺什么：{result.summary.missing_evidence.join("；")}</p> : null}
+          {result.summary.agreements.length ? <details><summary>共同认可的依据（{result.summary.agreements.length} 条）</summary><ul>{result.summary.agreements.map((line, i) => <li key={i}>{line}</li>)}</ul></details> : null}
+        </>
+      ) : null}
+
+      {/* ④ 三角色观点：并排卡片，一眼看到谁说了什么、谁没产出 */}
+      <div className="aq-role-grid">
+        {roleCards.map(({ round, row }) => (
+          <article key={`${round.stage}-${row.role}`} className={cn("aq-role-card", !row.opinion && "aq-role-card-warn")}>
+            <div className="aq-role-card-head">
+              <b>{row.label || roleLabels[row.role] || row.role}</b>
+              <span>{round.stage === "independent" ? "独立分析" : "交叉回应"}</span>
+            </div>
+            {row.opinion ? (
+              <>
+                {row.issue ? <p className="aq-role-card-note aq-tone-warn">{row.issue}</p> : null}
+                <p className="aq-role-card-summary">{row.opinion.summary}</p>
+                {row.opinion.challenge ? (
+                  <p className="aq-role-card-note">回应 {row.opinion.reply_to.map((role) => roleLabels[role] ?? role).join("、")}：{row.opinion.challenge}</p>
+                ) : null}
+                {row.opinion.evidence_ids.length ? <p className="aq-role-card-note">依据：{row.opinion.evidence_ids.join("、")}</p> : null}
+                {row.opinion.uncertainties.length ? <p className="aq-role-card-note">不确定：{row.opinion.uncertainties.join("；")}</p> : null}
+                {row.opinion.actions.length ? (
+                  <details><summary>可执行条件 {row.opinion.actions.length} 条</summary>{actions(row.opinion.actions)}</details>
+                ) : null}
+              </>
+            ) : (
+              <p className="aq-role-card-note aq-tone-warn">{row.issue || "本角色未产出观点"}</p>
+            )}
+          </article>
+        ))}
+      </div>
+
+      <DiscussionFailures result={result} />
+      <details><summary>模型与边界说明</summary><p className="aq-note">{result.notice}</p></details>
+      {worksheet.strategy_review_context === undefined ? <StrategyReviewContextPanel context={result.review_context} /> : null}
+    </section> : null}
+
+    {/* 模型设置放在最后：它是配置，不该抢在结论前面占满一屏 */}
+    <details className="aq-model-settings" onToggle={(event) => { if (event.currentTarget.open && !catalog && !catalogBusy) void loadModels(); }}>
+      <summary>模型设置 · {custom ? "本次输入" : serverModel || "使用现有配置"}</summary>
       {!custom ? <div className="aq-model-selection"><label>本设备使用的型号<select aria-label="服务器模型型号" disabled={busy || catalogBusy} value={serverModel} onChange={(event) => { const model = event.target.value; setServerModel(model); if (catalog) { try { localStorage.setItem(`aqsp-position-model:${catalog.catalog_id}`, model); } catch { /* A blocked store keeps a request-only selection. */ } } }}>
         {!catalog ? <option value="">现有配置</option> : [...new Set([catalog.current_model, serverModel, ...catalog.models])].filter(Boolean).map((model) => <option key={model} value={model}>{model}{model === catalog.current_model ? " · 当前默认" : ""}{!catalog.models.includes(model) && (catalog.directory_complete ?? catalog.listed !== null) ? " · 未在目录中" : ""}</option>)}
       </select></label><button type="button" className="aq-btn" disabled={catalogBusy || busy} onClick={() => void loadModels(true)}>{catalogBusy ? "读取中…" : "刷新可用型号"}</button>
       {selectedUnavailable ? <p role="status">此前选择的型号不在当前目录中，请重新选择；没有自动切换。</p> : null}
       {catalog?.issue || catalogError ? <p role="status">{catalogError || catalog?.issue}</p> : null}
       {catalog ? <p className="aq-note">{catalog.notice} 型号偏好仅保存在本设备，不修改服务器全局配置。</p> : null}</div> : null}
-      <label className="aq-action-plan-confirm"><input type="checkbox" checked={custom} disabled={busy} onChange={(event) => setCustom(event.target.checked)} />本次使用已有 OpenAI 兼容接口</label>
+      <label className="aq-action-plan-confirm"><input type="checkbox" checked={custom} disabled={busy} onChange={(event) => setCustom(event.currentTarget.checked)} />本次使用已有 OpenAI 兼容接口</label>
       {custom ? <div className="aq-action-plan-fields">{(["baseURL", "model", "apiKey"] as const).map((key) => <label key={key}>{({ baseURL: "接口地址", model: "模型名称", apiKey: "API Key" })[key]}<input aria-label={key} type={key === "apiKey" ? "password" : "text"} autoComplete="off" disabled={busy} value={config[key]} onChange={(event) => setConfig({ ...config, [key]: event.target.value })} /></label>)}</div> : null}
       <p className="aq-note">接口凭据仅用于本次请求，不写入持仓记录或浏览器存储；点击分析会将本仓位、风险与行情快照发送给所选模型服务。</p>
     </details>
-    {busy ? <div role="status"><p>{({ preparing: "正在准备持仓依据…", independent: "三个角色正在独立分析…", challenge: "正在互相核对观点与缺证…", synthesis: "正在整理三条路的理由与分歧…" } as Record<string, string>)[stage] || "正在分析…"}</p><button type="button" className="aq-btn" onClick={() => controller.current?.abort()}>停止本次分析</button></div> : null}
-    {error ? <p role="alert">{error}</p> : null}
-    {result && !snapshotMatches ? <p role="status">持仓或选择已变化，旧讨论不再展示，请重新分析。</p> : null}
-    {result && snapshotMatches && !evidenceMatches ? <p role="status">风险、环境或个人条件已变化，或分析已旧；保留原分析供核对，重新分析后再采用。</p> : null}
-    {result && snapshotMatches ? <section className="aq-discussion-result" aria-label="AI 策略结果"><h4>{evidenceMatches ? "当前策略与下一步条件" : "生成时的策略分析"}</h4>
-      <p className="aq-note">{result.mode} · {result.model} · {formatEvidenceTime(result.generated_at)} · {result.status === "complete" ? "讨论完成" : result.status === "partial" ? "部分完成" : "未完成"}</p>
-      {synthesisNotice ? <p role="status" className="aq-note">{synthesisNotice}</p> : null}
-      <p className="aq-note">分析时 {result.evidence_snapshot?.quote.price ?? "未知"} 元 · 当前 {worksheet.basis.price ?? "待更新"} 元；环境或风险变化需重核。</p>
-      {result.evidence_snapshot ? <details><summary>分析当时使用的证据</summary><p>当时价格 {result.evidence_snapshot.quote.price ?? "未知"} 元 · {result.evidence_snapshot.quote.source || "来源待核验"} · {formatEvidenceTime(result.evidence_snapshot.quote.as_of)}</p>{(["market", "sector"] as const).map((key) => { const row = result.evidence_snapshot![key]; return <p key={key}>{key === "market" ? "大盘" : "板块"}：{row.summary || "依据不足"} · {row.source || "来源待核验"} · {formatEvidenceTime(row.as_of)}</p>; })}</details> : null}
-      {disabled ? <p role="status">输入或行情依据已变化；以下为已保存的历史讨论。</p> : null}
-      {result.summary ? <>{worksheet.strategy_review_context === undefined ? <StrategyReviewContextPanel context={result.review_context} /> : null}{comparison ? <><p className="aq-comparison-conclusion">{result.summary.conclusion}</p><p>{result.summary.focus_choice ? `可先核对${PLAN_CHOICES[result.summary.focus_choice].title}：` : "暂不选定路线："}{result.summary.focus_reason}</p><dl className="aq-comparison-routes">{result.summary.routes?.map((row) => <div key={row.choice}><dt>{PLAN_CHOICES[row.choice].title}<small>{({ investigate: "可进一步核对", not_now: "当前不宜", insufficient: "依据不足" })[row.judgment]}</small></dt><dd>{row.reason}{row.needs.length ? <small>还需：{row.needs.join("、")}</small> : null}</dd></div>)}</dl></> : <><p className="aq-comparison-conclusion">{result.summary.conclusion}</p></>}
-        {result.summary.actions.length ? <div className="aq-strategy-next"><h4>下一步等什么，什么时候改变计划</h4>{actions(result.summary.actions, true)}</div> : <p>当前证据还不足以给出具体买卖观察条件。</p>}
-        {result.summary.disagreements.length ? <p>仍有分歧：{result.summary.disagreements.join("；")}</p> : null}
-        {result.summary.missing_evidence.length ? <p>还缺什么：{result.summary.missing_evidence.join("；")}</p> : null}
-        {result.summary.agreements.length ? <details><summary>共同认可的依据</summary><ul>{result.summary.agreements.map((line, i) => <li key={i}>{line}</li>)}</ul></details> : null}
-      </> : <p role="status">尚无通过校验的汇总结论。{!result.summary_failure_kind && result.summary_issue ? `${result.summary_issue}；` : ""}可展开查看已完成角色。</p>}
-      <DiscussionFailures result={result} />
-      <details><summary>查看各角色观点与相互回应（模型原文，待核对）</summary>{result.rounds.map((round, index) => <div key={index}><h5>{round.stage === "independent" ? "独立分析" : "交叉回应"}</h5>{round.opinions.map((row) => <article key={row.role}><b>{row.label}</b>{row.opinion ? <><p>{row.opinion.summary}</p>{row.opinion.challenge ? <p>回应 {row.opinion.reply_to.map((role) => ({ trend: "趋势分析", t_review: "做 T 评估", risk: "风险复核" })[role] ?? role).join("、")}：{row.opinion.challenge}</p> : null}<p className="aq-note">依据：{row.opinion.evidence_ids.join("、")}</p>{row.opinion.uncertainties.length ? <p>不确定：{row.opinion.uncertainties.join("；")}</p> : null}{actions(row.opinion.actions)}</> : <p>{row.issue}</p>}</article>)}</div>)}</details>
-      <details><summary>模型与边界说明</summary><p className="aq-note">{result.notice}</p></details>
-    </section> : null}
   </div>;
 }
