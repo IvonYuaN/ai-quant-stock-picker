@@ -15,9 +15,11 @@ from aqsp.core.time import get_next_trading_day, now_shanghai
 
 @dataclass(frozen=True)
 class PositionRuleDefaults:
-    hard_stop_pct: float = 0.05
+    # 证据默认值（2026-11-09 模拟：L1=3%+L5=8%+L6=20日 → 年化 24.4%、Sharpe 0.99；
+    # 旧默认 L1=5%/L5=5% 组合仅 12.5%、Sharpe 0.59）。
+    hard_stop_pct: float = 0.03
     trend_window: int = 5
-    trailing_pct: float = 0.05
+    trailing_pct: float = 0.08
     # L6 时间止损：持有交易日数达到阈值即提醒（模拟证据：3y +24% vs 无时间止损 +15%）。
     max_holding_days: int = 20
     ignored_before_daily: int = 2
