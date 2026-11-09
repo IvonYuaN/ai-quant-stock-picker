@@ -2431,8 +2431,12 @@ def test_walkforward_grid_cscv_writes_valid_pbo_gate(monkeypatch, tmp_path):
         "Sharpe | 总收益 | 暴露归一化收益 | 周期数 |"
         in report_text
     )
-    # WF-001（2 维 mix 基线臂）新增五列全为 0.0，其余列逐位不变
-    assert "| WF-001 | 0.3 | 0.3 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 60 | 3 | 10 |" in report_text
+    # WF-001（2 维 mix 基线臂）新增五列全为 0.0，其余列逐位不变。
+    # tr 列例外：base momentum.invert_signal=True 时 #382 会把声明的 tr 权重
+    # 强制清零 ⇒ 这里必须渲染**生效值 0.0***（2026-11-09 修正：此前显示申请值
+    # 0.3，读者会误以为 triple_rise 参与了打分）。
+    assert "| WF-001 | 0.3 | 0.0* | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 60 | 3 | 10 |" in report_text
+    assert "强制清零" in report_text
     # 2026-10-06：本用例未传 skip_pit_financials ⇒ 报告**不得**出现「跳过 PIT 财务」警示。
     # 警示的真端到端（skip_pit=True 时出现）由 tests/test_report_pit_skip_disclosure.py
     # 的绑定守卫 + 下面的负向断言共同锁定，避免任何一侧无条件打印。
