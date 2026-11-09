@@ -4,7 +4,7 @@
 口径已验证与库内一致（000001.SZ 20261105 逐字段比对）：
   腾讯 day = [date, open, close, high, low, volume(手)]
   库 daily_qfq = (open, high, low, close, close_qfq, volume(股), amount)
-  => volume(股) = 腾讯 volume(手) * 100
+  => volume(股) = 腾讯 volume(手) * 100（科创板除外，见 volume_scale）
   => close 与 close_qfq 写同值（price_mode=raw）
 
 amount 腾讯不提供，写 NULL；覆盖率门禁只依赖 ts_code 计数，不受影响。
@@ -29,6 +29,26 @@ SSL_CTX = ssl._create_unverified_context()
 def to_tx(ts_code: str) -> str:
     code, _, mkt = ts_code.partition(".")
     return ("sh" if mkt.upper() == "SH" else "sz") + code
+
+
+# 科创板（688/689）腾讯返回的 volume 已是「股」，其余板块是「手」。
+# 实测 2026-11-06：sh688001=8_630_559、sh688469=111_188_422（股）；
+# sh600000=642_707、sz000001=1_640_276（手）。对科创板再乘 100 会把
+# volume 放大两个数量级，污染成交额、换手率与任何绝对量阈值。
+_STAR_BOARD_PREFIXES = ("688", "689")
+
+
+def volume_scale(ts_code: str) -> int:
+    """腾讯 fqkline 的 volume 换算到「股」所需的倍数。
+
+    入参必须是本脚本通篇使用的 ``ts_code``（``688001.SH``）形态，
+    而不是 ``to_tx`` 产出的 ``sh688001`` —— 两种形态混用正是这个
+    缺陷最初没被发现的原因。
+    """
+    code = ts_code.partition(".")[0]
+    if code.startswith(_STAR_BOARD_PREFIXES):
+        return 1
+    return 100
 
 
 def fetch(sym: str, start: str, end: str) -> list[list[str]]:
@@ -88,6 +108,7 @@ def main() -> int:
                 if not bars:
                     failed += 1
                     continue
+                scale = volume_scale(sym)
                 for bar in bars:
                     if len(bar) < 6:
                         continue
@@ -101,7 +122,7 @@ def main() -> int:
                                 float(h) if h else None,
                                 float(low) if low else None,
                                 float(c) if c else None,
-                                int(float(vol) * 100) if vol else None,
+                                int(float(vol) * scale) if vol else None,
                                 float(c) if c else None,
                             )
                         )
