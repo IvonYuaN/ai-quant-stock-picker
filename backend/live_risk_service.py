@@ -14,6 +14,10 @@ from aqsp.core.errors import DataError
 
 logger = structlog.get_logger(__name__)
 
+# 除权除息保护需要一次额外的复权行情核对；测试环境必须关掉以免打网络
+# （backend/tests/conftest.py 会全局置 False；专项用例显式打开）。
+EX_RIGHT_GUARD_ENABLED = True
+
 
 class PortfolioReadError(RuntimeError):
     """Position storage or quotes could not be read."""
@@ -53,6 +57,75 @@ def _live_risk_alert_markdown(events: list[dict]) -> str:
         )
     lines.extend(["", "规则触发不等于全仓卖出指令；请结合大盘、板块与个股证据复核持有、减仓或做 T 条件。做 T 不保证解套，既有硬风险仍保留。"])
     return "\n".join(lines)
+
+
+def _downgrade_on_corporate_action(reminders, *, today, source=None, cache_path=None):
+    """除权除息保护：不复权价跳空会让 L1/L5 误触发「该卖」。
+
+    只对**已触发**的 L1/L5 提醒做一次轻量核对：拉最近 20 天「不复权 vs 前复权」
+    日线，若当日不复权跌幅显著大于前复权跌幅（差额 >= 0.5pp），判定为除权/除息日
+    ⇒ 把「该卖」降级为「观察」并写入核对提示，避免因分红送转误杀持仓。
+
+    取不到复权数据时不改变原提醒（宁可照常提示，也不静默吞掉风险）。
+    """
+    if not EX_RIGHT_GUARD_ENABLED:
+        return reminders
+    targets = [r for r in reminders if getattr(r, "level", "") in {"L1", "L5"}]
+    if not targets:
+        return reminders
+    symbols = sorted({r.symbol for r in targets})
+    from datetime import timedelta
+
+    from aqsp.data.cache import DataCache
+    from aqsp.data.source_factory import build_data_source
+
+    try:
+        if source is None:
+            source = build_data_source("tencent", cache=DataCache(cache_path))
+        start = today - timedelta(days=20)
+        raw = source.fetch_daily(symbols, start, today, adjust="")
+        qfq = source.fetch_daily(symbols, start, today, adjust="qfq")
+    except Exception as exc:  # noqa: BLE001 -- 核对失败不改变原提醒
+        logger.warning("ex_right_check_unavailable", error=str(exc))
+        return reminders
+
+    from dataclasses import replace
+
+    patched: dict[int, object] = {}
+    for reminder in targets:
+        frame_raw = raw.get(reminder.symbol)
+        frame_qfq = qfq.get(reminder.symbol)
+        if frame_raw is None or frame_qfq is None or frame_raw.empty or frame_qfq.empty:
+            continue
+        try:
+            raw_closes = [float(v) for v in frame_raw["close"].tail(2)]
+            qfq_closes = [float(v) for v in frame_qfq["close"].tail(2)]
+        except (KeyError, TypeError, ValueError):
+            continue
+        if len(raw_closes) < 2 or len(qfq_closes) < 2:
+            continue
+        if not all(math.isfinite(v) and v > 0 for v in raw_closes + qfq_closes):
+            continue
+        raw_ret = raw_closes[-1] / raw_closes[-2] - 1.0
+        qfq_ret = qfq_closes[-1] / qfq_closes[-2] - 1.0
+        gap = qfq_ret - raw_ret
+        if gap < 0.005:
+            continue
+        evidence = (
+            str(reminder.basis.get("evidence", ""))
+            + f"；当日不复权跌幅比前复权多 {gap:.2%}，疑似除权除息，"
+            "止损线需按复权口径重算，请核对后再决定"
+        )
+        note = (reminder.t1_note + " " if reminder.t1_note else "") + (
+            "除权除息日保护：本次降级为观察"
+        )
+        patched[id(reminder)] = replace(
+            reminder,
+            action_hint="观察",
+            basis={**reminder.basis, "evidence": evidence},
+            t1_note=note,
+        )
+    return [patched.get(id(item), item) for item in reminders]
 
 
 def check_positions(
@@ -120,6 +193,7 @@ def check_positions(
     active_codes = {h["code"] for h in holdings}
     rules = [r for r in rules if r["symbol"] in active_codes]
     histories: dict[str, pd.DataFrame] = {}
+    history_source = None
     checks: dict = {"checked": [], "skipped": []}
     history_rules = [r for r in rules if r["enabled"] and r["symbol"] in prices and r["level"] in {"L2", "L4"}]
     if history_rules:
@@ -130,6 +204,7 @@ def check_positions(
                 "tencent",
                 cache=DataCache(Path(pf._tenant_dir()) / "live-risk-history.db"),
             )
+            history_source = source
             histories = source.fetch_daily(
                 sorted({r["symbol"] for r in history_rules}),
                 today
@@ -213,6 +288,12 @@ def check_positions(
         price_history=histories,
         position_rules=usable_rules,
         actual_holding_days=actual_holding_days,
+    )
+    reminders = _downgrade_on_corporate_action(
+        reminders,
+        today=today_shanghai(),
+        source=history_source,
+        cache_path=Path(pf._tenant_dir()) / "live-risk-history.db",
     )
     import alert_events
     from decision_context import build_position_context, load_cached_market_overview
