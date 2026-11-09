@@ -221,11 +221,8 @@ export function InfoStreamPage() {
             {conceptFailed || data.concepts.length === 0 ? (
               <EmptyState title="暂无概念异动数据" detail={conceptFailed ? data.sources.concept_board : "源正常但未返回板块"} />
             ) : (
-              <details className="aq-workspace-fold">
-                <summary>展开概念异动榜<span>已取得 {data.concepts.length} 个概念 · 源时间未提供</span></summary>
-                <div className="aq-workspace-fold-body">
-                  <div className="aq-table-wrap">
-                    <table className="aq-table">
+              <div className="aq-table-wrap">
+                <table className="aq-table">
                   <thead>
                     <tr>
                       <th>板块</th>
@@ -257,10 +254,8 @@ export function InfoStreamPage() {
                       </tr>
                     ))}
                   </tbody>
-                    </table>
-                  </div>
-                </div>
-              </details>
+                </table>
+              </div>
             )}
           </>
         ) : loading ? <LoadingState label="正在读取概念异动依据…" />

@@ -12,6 +12,10 @@ export const strategyAttentionDisplayContracts = {
   stockHasNameCodeReasonAndNext: ["合成持仓", "600000", "原检查时风险线触发", "下一步", "用当前依据"].every((text) => html.includes(text)),
   previousCheckNeverClaimsCurrentTrigger: html.includes("记录时点") && html.includes("当前是否仍成立需重核") && !html.includes("现在触发"),
   stableStockIdentityForAcceptance: html.includes('data-strategy-symbol="600000"'),
-  fullRecordControlsRemainDiscoverable: details.includes("完整风险检查、处置与候选观察记录"),
-  collapsedRecordsDoNotMountDuplicateReaders: !details.includes("检查持仓并通知") && !details.includes("我的候选观察") && !details.includes(' open=""'),
+  // 2026-11-09：完整风险检查与观察记录已拆成 /alerts、/observations 两个模块页，
+  // 这里不再用折叠容器承载，改成两个直接入口；断言入口可发现且不再重复挂载读取器。
+  fullRecordControlsRemainDiscoverable:
+    details.includes("风险检查与观察记录") && details.includes('href="/monitor"'),
+  collapsedRecordsDoNotMountDuplicateReaders:
+    !details.includes("检查持仓并通知") && !details.includes("我的候选观察") && !details.includes("<details"),
 };

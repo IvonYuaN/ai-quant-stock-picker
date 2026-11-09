@@ -1,14 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { api, type PortfolioData } from "@/lib/api";
 import { browserAlertRefreshSource, subscribeAlertRefresh } from "@/lib/alert-refresh";
 import { CANDIDATE_OBSERVATIONS_CHANGED_EVENT } from "@/lib/candidate-observation";
 import { PORTFOLIO_CHANGED_EVENT } from "@/lib/operation";
 import { formatEvidenceTime } from "@/lib/format";
-import { scheduleHashTargetScroll } from "@/lib/hash-navigation";
 import { buildTodayStrategy, readTodayStrategySources, type TodayStrategySources, type StrategyAttention } from "@/lib/today-strategy";
-import { AlertInbox } from "./AlertInbox";
-import { CandidateObservationList } from "./CandidateObservationList";
 
 export function TodayStrategyBoard({ onPortfolio }: { onPortfolio?: (portfolio: PortfolioData | null) => void }) {
   const [sources, setSources] = useState<TodayStrategySources | null>(null);
@@ -41,18 +38,22 @@ export function TodayStrategyBoard({ onPortfolio }: { onPortfolio?: (portfolio: 
   </section>;
 }
 
-/** The original controls only mount after disclosure; the default home has one read batch. */
+/**
+ * 风险检查与观察记录已各自独立成模块页（/alerts、/observations），
+ * 这里只留入口，不再重复拉数据，也不再用折叠把结果藏起来。
+ */
 export function StrategyRecordDetails() {
-  const location = useLocation();
-  const [open, setOpen] = useState(false);
-  useEffect(() => { if (["#alerts", "#strategy-records"].includes(location.hash)) setOpen(true); }, [location.hash]);
-  useEffect(() => {
-    if (open && ["#alerts", "#strategy-records"].includes(location.hash)) return scheduleHashTargetScroll(location.hash);
-  }, [open, location.hash]);
-  return <details id="strategy-records" className="aq-workspace-fold aq-strategy-records" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
-    <summary>完整风险检查、处置与候选观察记录<span>需要时展开</span></summary>
-    {open ? <div className="aq-workspace-fold-body"><AlertInbox /><CandidateObservationList /></div> : null}
-  </details>;
+  return (
+    <section id="strategy-records" className="aq-section aq-module-links" aria-label="风险与观察记录入口">
+      <div className="aq-inline-head">
+        <strong>风险检查与观察记录</strong>
+        <span>完整记录在独立模块里，不折叠</span>
+      </div>
+      <div className="aq-row-actions">
+        <Link className="aq-btn" to="/monitor">监控（风险 · 跟进 · 观察）→</Link>
+      </div>
+    </section>
+  );
 }
 
 export function StrategyAttentionItem({ item, index }: { item: StrategyAttention; index: number }) {

@@ -1,33 +1,26 @@
 // 「今日研究」页的编排层。
 //
-// 先看市场/行业，再进入候选理由、AI路线及持续跟进。
-// 已有方案的变化接在研究判断后；研究过程与记账不占主入口。
-// 所有派生都在 daily-view 里完成，本文件不做业务判断。
+// 2026-11-09 瘦身：候选池 / 研究依据 / 风险提醒 / 候选观察 / 收盘复盘已各自独立成
+// 路由模块（见 lib/ia.ts 的导航三组），本页只留**总览**——当天结论、门禁、阶段进度、
+// 候选摘要与持仓跟进。原来塞在这里的证据链、消息讨论、决策依据都搬去了对应模块，
+// 不再用折叠区藏起来。
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { Link, useLocation, useSearchParams } from "react-router-dom";
+import { useLocation, useSearchParams } from "react-router-dom";
 import { CalendarDays, Compass, RefreshCw, Sparkles } from "lucide-react";
 import { Badge, HeroState, LoadingState, ToneCallout } from "@/components/ui/primitives";
-import { PageOutline } from "@/components/ui/PageOutline";
 import { cn } from "@/lib/utils";
 import {
   buildDailyView,
-  resolveTodaySection,
   type DailyView,
-  type SectionView,
 } from "@/lib/daily-view";
 import { formatResearchDate } from "@/lib/research-view";
 import { scheduleHashTargetScroll } from "@/lib/hash-navigation";
 import { formatAqspTime, isAqspSnapshotStale, useWorkspaceSnapshot } from "./useAqspSnapshot";
 import { MarketStrip } from "./MarketStrip";
 import { ReviewExportButton } from "./ReviewExportButton";
-import { DecisionPanel } from "./DecisionPanel";
-import { ClosingReviewPanel } from "./ClosingReviewPanel";
-import { StockDetailDrawer, type StockIntro } from "./StockDetailDrawer";
-import { CandidateSection } from "./sections/CandidateSection";
-import { MessageSection } from "./sections/MessageSection";
-import { DiscussionSection } from "./sections/DiscussionSection";
+import { CandidateSummary } from "./CandidateSummary";
+import { CandidateDrawer } from "./CandidateDrawer";
 import { TodayStrategyBoard, StrategyRecordDetails } from "./TodayStrategyBoard";
-import type { PortfolioData } from "@/lib/api";
 import type { AqspSnapshot } from "@/types/aqsp";
 import { ALERTS_CHANGED_EVENT, shanghaiDate } from "@/lib/operation";
 
@@ -187,7 +180,6 @@ function PhaseStrip({ view }: { view: DailyView }) {
 function PersistentBlock({ view }: { view: DailyView }) {
   return (
     <div className="aq-persistent">
-      <KpiRow view={view} />
       <CrossMarketStrip view={view} />
 
       <div className="aq-lead-grid">
@@ -241,52 +233,14 @@ function KpiRow({ view }: { view: DailyView }) {
   );
 }
 
-function SectionTabs({ active, sections }: { active: string; sections: readonly SectionView[] }) {
-  const { search } = useLocation();
-  return (
-    <nav className="aq-tabs" aria-label="今日研究分段">
-      {sections.map((section) => (
-        <Link
-          key={section.id}
-          to={`/today${search}#${section.id}`}
-          className={cn("aq-tab", active === section.id && "aq-tab-active")}
-        >
-          <span className="aq-tab-label">{section.tabLabel}</span>
-          <span className="aq-tab-desc">{section.description}</span>
-        </Link>
-      ))}
-    </nav>
-  );
-}
-
-function ActiveSection({
-  view,
-  active,
-}: {
-  view: DailyView;
-  active: string;
-}) {
-  // 候选段已固定在首屏（见 TodayWorkspace 的渲染顺序），本组件只承载「细节段」。
-  // 所以兜底**不能**再落到 sections[0] —— 那是候选段，会让首屏那份被渲染第二遍。
-  const section =
-    view.sections.find((item) => item.id === active && item.id !== "candidates") ??
-    view.sections.find((item) => item.id !== "candidates");
-  if (!section) return null;
-  if (section.id === "messages") return <MessageSection view={view} section={section} />;
-  return <DiscussionSection view={view} section={section} />;
-}
-
 export function TodayWorkspace() {
-  const [personalPortfolio, setPersonalPortfolio] = useState<PortfolioData | null>(null);
   const { data, loading, error, refresh, selectedDate, switching } = useWorkspaceSnapshot();
   const location = useLocation();
   const { hash } = location;
-  const active = resolveTodaySection(hash);
   const [searchParams, setSearchParams] = useSearchParams();
   // `?symbol=` 让命令面板 / 分享链接能直接打开某只股票的详情
   const symbolParam = searchParams.get("symbol");
   const [picked, setPicked] = useState<string | null>(symbolParam);
-  const [panel, setPanel] = useState<"evidence" | "basis" | "review">("evidence");
 
   useEffect(() => {
     if (symbolParam) setPicked(symbolParam);
@@ -304,33 +258,12 @@ export function TodayWorkspace() {
   const view = data && !switching ? buildDailyView(data) : null;
   const researchReady = !!view;
   useEffect(() => {
-    if (["#market-context", "#candidates", "#discussion", "#strategy-followups"].includes(hash)) {
+    if (["#market-context", "#candidates", "#strategy-followups"].includes(hash)) {
       return scheduleHashTargetScroll(hash);
     }
   }, [hash, researchReady]);
 
-  // 候选保持主区，原始消息和研究验证按需展开。
-  const candidateSection = view?.sections.find((section) => section.id === "candidates");
-  const detailSections = view ? view.sections.filter((section) => section.id !== "candidates") : [];
-  const activeDetailId =
-    detailSections.some((section) => section.id === active) ? active : detailSections[0]?.id ?? "";
-
   const targetDate = selectedDate || data?.selected_date || "";
-
-  // 抽屉只展示 AQSP 自己的判断；落在当天候选里时才有评分与证据链
-  const pickedRow = picked ? view?.candidates.find((row) => row.symbol === picked) : undefined;
-  const intro: StockIntro | undefined = pickedRow
-    ? {
-        scoreText: pickedRow.scoreText,
-        status: pickedRow.status,
-        evidence: pickedRow.evidence,
-        ready: pickedRow.ready,
-        strategies: pickedRow.strategies ? [pickedRow.strategies] : [],
-        reasons: pickedRow.reasons,
-        nextStep: pickedRow.nextStep,
-        context: pickedRow.context,
-      }
-    : undefined;
 
   return (
     <div className="aq-page aq-today-workspace">
@@ -342,13 +275,7 @@ export function TodayWorkspace() {
         actions={view ? <ReviewExportButton view={view} /> : null}
       />
 
-      <PageOutline items={[{ id: "market-context", label: "大盘与行业" }, ...(candidateSection ? [{ id: "candidates", label: "候选与 AI 研究" }] : []), { id: "strategy-followups", label: "买卖条件与跟进" }, ...(view && data ? [{ id: "research-evidence", label: "补充研究证据" }] : [])]} />
-
       {data ? <DatePicker snapshot={data} /> : null}
-
-      <section id="market-context" className="aq-section aq-market-anchor" aria-label="市场与行业方向">
-        <MarketStrip />
-      </section>
 
       {error && data && !switching ? (
         <div className="aq-refresh-warning" role="alert">
@@ -379,45 +306,20 @@ export function TodayWorkspace() {
         <LoadingState />
       ) : (
         <>
+          {/* 首屏仪表盘：先给总量与门禁，再看市场与结论。 */}
+          <KpiRow view={view} />
+          <section id="market-context" className="aq-section aq-market-anchor" aria-label="市场与行业方向">
+            <MarketStrip />
+          </section>
           <PersistentBlock view={view} />
-          {candidateSection ? (
-            <CandidateSection view={view} section={candidateSection} onPick={setPicked} ownedHoldings={personalPortfolio?.holdings ?? null} />
-          ) : null}
+          <CandidateSummary view={view} onPick={setPicked} />
         </>
       )}
 
-      <TodayStrategyBoard onPortfolio={setPersonalPortfolio} />
+      <TodayStrategyBoard />
+      <StrategyRecordDetails />
 
-      {view && data ? (
-        <section className="aq-secondary-modules" aria-label="研究证据与历史记录">
-          <nav className="aq-seg" aria-label="今日辅助面板">
-            {([
-              ["evidence", "消息与讨论", `${view.messages.length} · ${view.debates.length}`],
-              ["basis", "研究依据", ""],
-              ["review", "收盘复盘", ""],
-            ] as const).map(([key, label, count]) => (
-              <button key={key} type="button" className={cn("aq-seg-item", panel === key && "aq-seg-item-active")} aria-pressed={panel === key} onClick={() => setPanel(key)}>
-                {label}
-                {count ? <span className="aq-seg-count">{count}</span> : null}
-              </button>
-            ))}
-          </nav>
-
-          <div className="aq-panel" role="region" aria-live="polite">
-            {panel === "evidence" ? (
-              <>
-                <SectionTabs active={activeDetailId} sections={detailSections} />
-                <div className="aq-active-section"><ActiveSection view={view} active={activeDetailId} /></div>
-              </>
-            ) : null}
-            {panel === "basis" ? <div className="aq-panel-grid"><DecisionPanel snapshot={data} /></div> : null}
-            {panel === "review" ? <ClosingReviewPanel /> : null}
-          </div>
-          <StrategyRecordDetails />
-        </section>
-      ) : <StrategyRecordDetails />}
-
-      <StockDetailDrawer symbol={picked} onClose={closeDrawer} intro={intro} />
+      <CandidateDrawer view={view} symbol={picked} onClose={closeDrawer} />
     </div>
   );
 }

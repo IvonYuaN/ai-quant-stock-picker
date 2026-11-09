@@ -1614,42 +1614,6 @@
 
   /* ---------------------------------------------------------- 今日：页签 */
 
-  .aq-tabs {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.35rem;
-    border-bottom: 1px solid hsl(var(--border) / 0.6);
-    padding-bottom: 0.5rem;
-  }
-  .aq-tab {
-    display: grid;
-    gap: 0.1rem;
-    border: 1px solid transparent;
-    border-radius: 0.5rem;
-    padding: 0.4rem 0.7rem;
-    color: hsl(var(--muted-foreground));
-    transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
-  }
-  .aq-tab:hover {
-    color: hsl(var(--foreground));
-    background: hsl(var(--muted) / 0.45);
-  }
-  .aq-tab-label {
-    font-size: 0.984rem;
-    font-weight: 600;
-  }
-  .aq-tab-desc {
-    font-size: 0.744rem;
-    color: hsl(var(--muted-foreground) / 0.85);
-  }
-  .aq-tab-active {
-    border-color: hsl(var(--primary) / 0.35);
-    background: hsl(var(--primary) / 0.1);
-  }
-  .aq-tab-active .aq-tab-label,
-  .aq-tab-active .aq-tab-desc {
-    color: hsl(var(--primary));
-  }
   .aq-active-section {
     min-width: 0;
   }
@@ -3254,9 +3218,6 @@
     border-left: 0;
     padding-left: 0;
   }
-  .aq-tabs {
-    flex-direction: column;
-  }
   .aq-market-strip {
     flex-direction: column;
   }
@@ -3622,8 +3583,6 @@
   .aq-candidate-increment { min-width: 0; border: 1px solid hsl(var(--primary) / 0.35); border-radius: 0.5rem; background: hsl(var(--primary) / 0.04); }
   .aq-candidate-increment-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.55rem; padding: 0.7rem 0.9rem; cursor: pointer; min-height: 2.5rem; }
   .aq-candidate-increment-head span { color: hsl(var(--muted-foreground)); font-size: 0.72rem; }
-  .aq-candidate-increment-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.7rem; padding: 0.65rem 0.9rem; border-top: 1px solid hsl(var(--border) / 0.7); }
-  .aq-candidate-increment-row:first-of-type { border-top: 0; }
   .aq-candidate-increment-identity { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.45rem; min-width: 0; }
   .aq-candidate-increment-identity strong { overflow-wrap: anywhere; }
   .aq-candidate-roster-empty { padding: 1rem; }
@@ -3677,8 +3636,6 @@
   .aq-candidate-decision-card p { display: grid; gap: 0.15rem; margin: 0; font-size: 0.78rem; line-height: 1.55; overflow-wrap: anywhere; }
   .aq-candidate-decision-card p b { color: hsl(var(--muted-foreground)); font-size: 0.7rem; }
   .aq-candidate-decision-card > .aq-btn { width: fit-content; margin-top: 0.3rem; }
-  .aq-candidate-decision-metrics { min-width: 0; border-top: 1px solid hsl(var(--border)); padding-top: 0.55rem; }
-  .aq-candidate-decision-metrics summary { min-height: 2.5rem; display: flex; align-items: center; cursor: pointer; font-size: 0.8rem; color: hsl(var(--muted-foreground)); }
   .aq-workspace-fold { min-width: 0; border: 1px solid hsl(var(--border)); border-radius: 0.65rem; background: hsl(var(--card)); }
   .aq-workspace-fold > summary { display: list-item; cursor: pointer; padding: 1rem 1.25rem; font-size: 0.9rem; font-weight: 600; overflow-wrap: anywhere; }
   .aq-workspace-fold > summary span { margin-left: 0.6rem; font-size: 0.75rem; font-weight: 400; color: hsl(var(--muted-foreground)); }
@@ -4252,43 +4209,115 @@ h2 { letter-spacing: -0.012em; }
 .aq-kpi-ok .aq-kpi-value { color: hsl(var(--success)); }
 .aq-kpi-warn .aq-kpi-value { color: hsl(var(--warning)); }
 
-.aq-seg {
-  display: inline-flex;
-  gap: 0.15rem;
-  padding: 0.2rem;
-  border: 1px solid hsl(var(--surface-line));
-  border-radius: 0.7rem;
-  background: hsl(var(--muted) / 0.25);
+
+/* =============================================================================
+   2026-11-09 · 模块化导航 + 信息平铺层
+   -----------------------------------------------------------------------------
+   做法参考 investment-news：左栏 = 视图切换器（分组 + 名称 + 实时计数），
+   右侧每一屏 = 一个模块的高密度数据；页面内不再用折叠把信息藏起来。
+   ========================================================================== */
+
+/* ---------- 侧栏：名称 + 计数 ---------- */
+.aq-nav-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
 }
-.aq-seg-item {
+.aq-nav-count {
+  flex-shrink: 0;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  border: 1px solid hsl(var(--surface-line));
+  background: hsl(var(--muted) / 0.5);
+  color: hsl(var(--muted-foreground));
+  font-size: 0.68rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+}
+.aq-nav-item-active .aq-nav-count {
+  border-color: hsl(var(--primary) / 0.35);
+  background: hsl(var(--primary) / 0.16);
+  color: hsl(var(--foreground));
+}
+.aq-nav-item-collapsed .aq-nav-count { display: none; }
+
+/* ---------- 一行标题条：块内小标题 + 右侧补充 ---------- */
+.aq-inline-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem 0.75rem;
+  padding-bottom: 0.45rem;
+  border-bottom: 1px solid hsl(var(--surface-line));
+}
+.aq-inline-head strong { font-size: 0.86rem; font-weight: 600; }
+.aq-inline-head span {
+  font-size: 0.75rem;
+  color: hsl(var(--muted-foreground) / 0.85);
+}
+.aq-inline-head svg { width: 0.9rem; height: 0.9rem; color: hsl(var(--muted-foreground)); }
+
+/* ---------- 常驻块（替代 details） ---------- */
+.aq-evidence-block,
+.aq-module-links {
+  display: grid;
+  gap: 0.6rem;
+  margin-top: 0.75rem;
+  padding-top: 0.7rem;
+  border-top: 1px solid hsl(var(--surface-line));
+}
+.aq-module-links { border-top: 1px solid hsl(var(--surface-line)); }
+
+/* ---------- 网格：候选 chip / 新增候选 ---------- */
+.aq-chip-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+  gap: 0.4rem;
+  padding: 0.55rem 0.7rem 0.7rem;
+}
+.aq-candidate-increment {
+  border: 1px solid hsl(var(--primary) / 0.28);
+  border-radius: 0.75rem;
+  background: hsl(var(--primary) / 0.05);
+}
+.aq-candidate-increment-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.55rem;
+  padding: 0.6rem 0.8rem 0.15rem;
+}
+.aq-candidate-increment-head span { color: hsl(var(--muted-foreground)); font-size: 0.72rem; }
+.aq-candidate-increment-identity {
   display: inline-flex;
   align-items: center;
-  gap: 0.35rem;
-  border-radius: 0.55rem;
-  padding: 0.42rem 0.8rem;
-  font-size: 0.84rem;
-  color: hsl(var(--muted-foreground));
-  transition: background 140ms ease, color 140ms ease;
-}
-.aq-seg-item:hover { color: hsl(var(--foreground)); }
-.aq-seg-item-active {
-  background: hsl(var(--card));
-  color: hsl(var(--foreground));
-  font-weight: 600;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
-}
-.aq-seg-count {
-  padding: 0.05rem 0.35rem;
-  border-radius: 999px;
-  background: hsl(var(--primary) / 0.16);
-  color: hsl(var(--primary));
-  font-size: 0.7rem;
-  font-variant-numeric: tabular-nums;
-}
-.aq-panel {
+  gap: 0.4rem;
+  min-width: 0;
+  padding: 0.3rem 0.5rem;
   border: 1px solid hsl(var(--surface-line));
-  border-radius: 1rem;
-  background: hsl(var(--card) / 0.5);
-  padding: 1rem 1.15rem;
+  border-radius: 0.55rem;
+  background: hsl(var(--card) / 0.75);
+  font-size: 0.8rem;
 }
-.aq-panel-grid { display: grid; gap: 1rem; }
+.aq-candidate-increment-identity strong { overflow-wrap: anywhere; }
+
+/* ---------- 筛选条常驻 ---------- */
+.aq-candidate-filters {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid hsl(var(--surface-line));
+  border-radius: 0.8rem;
+  background: hsl(var(--muted) / 0.22);
+}
+
+/* ---------- 模块页容器 ---------- */
+.aq-module-page { gap: 1rem; }
+.aq-module-page > .aq-section { gap: 0.75rem; }
+
+/* ---------- 摘要表 ---------- */
+.aq-summary-table { font-size: 0.86rem; }
+.aq-summary-table td { padding: 0.5rem 0.7rem; }
+.aq-summary-table td:first-child { white-space: nowrap; }
+.aq-summary-table td:first-child .aq-code { margin-left: 0.45rem; }
