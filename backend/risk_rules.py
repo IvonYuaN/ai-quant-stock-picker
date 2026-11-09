@@ -18,6 +18,8 @@ class PositionRuleDefaults:
     hard_stop_pct: float = 0.05
     trend_window: int = 5
     trailing_pct: float = 0.05
+    # L6 时间止损：持有交易日数达到阈值即提醒（模拟证据：3y +24% vs 无时间止损 +15%）。
+    max_holding_days: int = 20
     ignored_before_daily: int = 2
     history_calendar_days: int = 120
     macd_fast: int = 12
@@ -38,6 +40,7 @@ def ensure_rules(data: dict) -> list[dict]:
             ("L2", defaults.trend_window),
             ("L4", 0),
             ("L5", defaults.trailing_pct),
+            ("L6", defaults.max_holding_days),
         ):
             rule = next(
                 (r for r in rules if r["symbol"] == symbol and r["level"] == level),
@@ -122,6 +125,8 @@ def patch_rule(rule: dict, patch: dict) -> None:
             raise ValueError("趋势均线仅支持 MA5、MA10、MA20")
         if rule["level"] == "L4":
             raise ValueError("L4 使用固定 MACD(12,26,9)，仅支持开关和提醒频率")
+        if rule["level"] == "L6" and value not in {5, 10, 20, 30}:
+            raise ValueError("时间止损仅支持持有 5/10/20/30 个交易日")
     if any(key in patch and rule.get(key) != patch[key] for key in ("enabled", "param_value")):
         rule["revision"] = int(rule.get("revision", 0)) + 1
     rule.update(patch)

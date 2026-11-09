@@ -354,6 +354,17 @@ def _check_position_rules(
                         "actual": f"现价 {price:.4f}",
                         "evidence": "L5 持仓期已观测价格，不使用开仓前高点",
                     }
+            elif level == "L6":
+                need_days = int(float(rule["param_value"]))
+                held_days = int(days.get(code, 0))
+                if need_days > 0 and held_days >= need_days:
+                    # 时间止损无价格阈值：threshold 仅作展示参照，basis 明确说明是时间触发。
+                    threshold = cost
+                    basis = {
+                        "rule": f"已持有 {held_days} 个交易日 ≥ 时间止损阈值 {need_days} 日",
+                        "actual": f"现价 {price:.4f}",
+                        "evidence": "L6 时间止损：入场信号有效期已过，建议了结或重新评估",
+                    }
             elif level == "L2" and frame is not None and "close" in frame:
                 window = int(float(rule["param_value"]))
                 closes = pd.to_numeric(frame["close"], errors="coerce")

@@ -145,7 +145,7 @@ def test_position_risk_does_not_notify_or_observe_peak_when_quote_unverifiable(p
     result = service.check_positions(notify=True)
     assert result["reminders"] == [] and result["notify"] == []
     assert not result["checks"]["checked"]
-    assert {row["level"] for row in result["checks"]["skipped"]} == {"L1", "L5"}
+    assert {row["level"] for row in result["checks"]["skipped"]} == {"L1", "L5", "L6"}
     assert not captured
     assert {event["id"]: event for event in ae.list_events()} == before
     assert {rule["id"]: rule["high_water_price"] for rule in pf.get_risk_rules() if rule["level"] == "L5"} == peaks
