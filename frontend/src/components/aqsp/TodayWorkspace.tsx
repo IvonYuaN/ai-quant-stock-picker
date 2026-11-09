@@ -187,6 +187,7 @@ function PhaseStrip({ view }: { view: DailyView }) {
 function PersistentBlock({ view }: { view: DailyView }) {
   return (
     <div className="aq-persistent">
+      <KpiRow view={view} />
       <CrossMarketStrip view={view} />
 
       <div className="aq-lead-grid">
@@ -213,6 +214,29 @@ function PersistentBlock({ view }: { view: DailyView }) {
       </div>
 
       <PhaseStrip view={view} />
+    </div>
+  );
+}
+
+/** 顶部 KPI 数据块：候选 / 门禁 / 研究链 / 覆盖 / 消息，一眼可读。 */
+function KpiRow({ view }: { view: DailyView }) {
+  const top = view.candidates.reduce((max, row) => Math.max(max, row.score ?? 0), 0);
+  const tiles: Array<{ label: string; value: string; sub?: string; tone?: "ok" | "warn" | "neutral" }> = [
+    { label: "候选", value: String(view.candidates.length), sub: view.candidates.length ? `最高 ${top.toFixed(1)} 分` : "今日无标的", tone: view.candidates.length ? "ok" : "neutral" },
+    { label: "门禁", value: view.gate.label, sub: view.gate.detail, tone: view.gate.tone },
+    { label: "研究链", value: view.chain.label, sub: view.chainDetail, tone: view.chain.tone },
+    { label: "覆盖", value: view.coverageText || "—", sub: view.hasLiveContent ? "实时产物" : "非实时", tone: "neutral" },
+    { label: "消息/复核", value: `${view.messages.length} / ${view.debates.length}`, sub: "条消息 · 只复核", tone: "neutral" },
+  ];
+  return (
+    <div className="aq-kpi-row">
+      {tiles.map((tile) => (
+        <div key={tile.label} className={cn("aq-kpi", tile.tone && `aq-kpi-${tile.tone}`)}>
+          <span className="aq-kpi-label">{tile.label}</span>
+          <strong className="aq-kpi-value">{tile.value}</strong>
+          {tile.sub ? <span className="aq-kpi-sub">{tile.sub}</span> : null}
+        </div>
+      ))}
     </div>
   );
 }
@@ -262,6 +286,7 @@ export function TodayWorkspace() {
   // `?symbol=` 让命令面板 / 分享链接能直接打开某只股票的详情
   const symbolParam = searchParams.get("symbol");
   const [picked, setPicked] = useState<string | null>(symbolParam);
+  const [panel, setPanel] = useState<"evidence" | "basis" | "review">("evidence");
 
   useEffect(() => {
     if (symbolParam) setPicked(symbolParam);
@@ -354,6 +379,7 @@ export function TodayWorkspace() {
         <LoadingState />
       ) : (
         <>
+          <PersistentBlock view={view} />
           {candidateSection ? (
             <CandidateSection view={view} section={candidateSection} onPick={setPicked} ownedHoldings={personalPortfolio?.holdings ?? null} />
           ) : null}
@@ -364,21 +390,29 @@ export function TodayWorkspace() {
 
       {view && data ? (
         <section className="aq-secondary-modules" aria-label="研究证据与历史记录">
-          <details id="research-evidence" className="aq-workspace-fold" open={active !== "candidates" || undefined} key={active}>
-            <summary>消息证据与多空讨论 <span>{view.messages.length} 条消息 · {view.debates.length} 只复核</span></summary>
-            <div className="aq-workspace-fold-body">
-              <SectionTabs active={activeDetailId} sections={detailSections} />
-              <div className="aq-active-section" aria-live="polite"><ActiveSection view={view} active={activeDetailId} /></div>
-            </div>
-          </details>
-          <details className="aq-workspace-fold">
-            <summary>研究过程与验证依据</summary>
-            <div className="aq-workspace-fold-body"><PersistentBlock view={view} /><DecisionPanel snapshot={data} /></div>
-          </details>
-          <details className="aq-workspace-fold">
-            <summary>收盘复盘与历史验证</summary>
-            <div className="aq-workspace-fold-body"><ClosingReviewPanel /></div>
-          </details>
+          <nav className="aq-seg" aria-label="今日辅助面板">
+            {([
+              ["evidence", "消息与讨论", `${view.messages.length} · ${view.debates.length}`],
+              ["basis", "研究依据", ""],
+              ["review", "收盘复盘", ""],
+            ] as const).map(([key, label, count]) => (
+              <button key={key} type="button" className={cn("aq-seg-item", panel === key && "aq-seg-item-active")} aria-pressed={panel === key} onClick={() => setPanel(key)}>
+                {label}
+                {count ? <span className="aq-seg-count">{count}</span> : null}
+              </button>
+            ))}
+          </nav>
+
+          <div className="aq-panel" role="region" aria-live="polite">
+            {panel === "evidence" ? (
+              <>
+                <SectionTabs active={activeDetailId} sections={detailSections} />
+                <div className="aq-active-section"><ActiveSection view={view} active={activeDetailId} /></div>
+              </>
+            ) : null}
+            {panel === "basis" ? <div className="aq-panel-grid"><DecisionPanel snapshot={data} /></div> : null}
+            {panel === "review" ? <ClosingReviewPanel /> : null}
+          </div>
           <StrategyRecordDetails />
         </section>
       ) : <StrategyRecordDetails />}
