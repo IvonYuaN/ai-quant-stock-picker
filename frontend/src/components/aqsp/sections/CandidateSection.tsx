@@ -347,6 +347,16 @@ const CELL_TONE: Readonly<Record<"ok" | "warn", string>> = {
   warn: "aq-tone-warn",
 };
 
+/**
+ * 同一列若多行文案完全相同，就不要每行重复同一句话：
+ * 表内统一显示「同上」，真实文案在表下给一次。信息不丢，密度更高。
+ */
+function sameAcross(values: readonly string[]): { same: boolean; text: string } {
+  const uniq = [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+  if (uniq.length === 1 && values.length > 1) return { same: true, text: uniq[0] };
+  return { same: false, text: "" };
+}
+
 function ChainCell({ label, tone, detail }: { label: string; tone?: "ok" | "warn"; detail: string }) {
   return (
     <div className={cn("aq-chain-cell", tone && CELL_TONE[tone])}>
@@ -371,9 +381,22 @@ function CandidateChainTable({
   historyWindow: number;
   onPick?: (symbol: string) => void;
 }) {
+  // 四列的说明文案常常逐行相同（同一批候选共享同一个兜底理由），
+  // 逐行重复同一句话只会让人以为每只票都单独查过 —— 同值的合并成一条说明。
+  const messageDetail = sameAcross(rows.map((row) => row.firstMessageTitle || "来源已抓取，但没有可引用到该候选的高影响事件"));
+  const debateDetail = sameAcross(rows.map((row) => row.debateConclusion || "缺少个股消息支持、反证与可证伪条件"));
+  const variantDetail = sameAcross(rows.map(() => (variantDate ? `实验截至 ${variantDate}，不替代当天证据` : "尚无可核验变体日期")));
+  const nextDetail = sameAcross(rows.map((row) => (row.ready ? row.nextStep || "按当前结论跟进" : "等材料补齐再跟进")));
+  const notes: Array<{ label: string; text: string }> = [
+    { label: "消息证据", text: messageDetail.text },
+    { label: "讨论复核", text: debateDetail.text },
+    { label: "历史变体", text: variantDetail.text },
+    { label: "当前复核", text: nextDetail.text },
+  ].filter((note) => note.text);
   return (
-    <div className="aq-table-wrap">
-      <table className="aq-table aq-chain-table">
+    <>
+      <div className="aq-table-wrap">
+        <table className="aq-table aq-chain-table">
         <thead>
           <tr>
             <th>候选</th>
@@ -406,34 +429,45 @@ function CandidateChainTable({
                 <ChainCell
                   tone={row.messageCount > 0 ? "ok" : "warn"}
                   label={row.messageCount > 0 ? `${row.messageCount} 条个股证据` : "未形成个股证据"}
-                  detail={row.firstMessageTitle || "来源已抓取，但没有可引用到该候选的高影响事件"}
+                  detail={messageDetail.same ? "同上" : (row.firstMessageTitle || "来源已抓取，但没有可引用到该候选的高影响事件")}
                 />
               </td>
               <td>
                 <ChainCell
                   tone={row.debateRounds !== null ? "ok" : "warn"}
                   label={row.debateRounds !== null ? `已完成 ${row.debateRounds} 轮` : "讨论阻断"}
-                  detail={row.debateConclusion || "缺少个股消息支持、反证与可证伪条件"}
+                  detail={debateDetail.same ? "同上" : (row.debateConclusion || "缺少个股消息支持、反证与可证伪条件")}
                 />
               </td>
               <td>
                 <ChainCell
                   label={row.variantCount ? `历史持仓覆盖 ${row.variantCount} 组` : "历史持仓未覆盖"}
-                  detail={variantDate ? `实验截至 ${variantDate}，不替代当天证据` : "尚无可核验变体日期"}
+                  detail={variantDetail.same ? "同上" : (variantDate ? `实验截至 ${variantDate}，不替代当天证据` : "尚无可核验变体日期")}
                 />
               </td>
               <td>
                 <ChainCell
                   tone={row.ready ? "ok" : "warn"}
                   label={row.ready ? "材料齐了" : "材料待补"}
-                  detail={row.ready ? row.nextStep || "按当前结论跟进" : "等材料补齐再跟进"}
+                  detail={nextDetail.same ? "同上" : (row.ready ? row.nextStep || "按当前结论跟进" : "等材料补齐再跟进")}
                 />
               </td>
             </tr>
           ))}
         </tbody>
       </table>
-    </div>
+      </div>
+      {notes.length ? (
+        <div className="aq-table-notes">
+          {notes.map((note) => (
+            <p key={note.label}>
+              <b>{note.label}（各行相同）</b>
+              <span>{note.text}</span>
+            </p>
+          ))}
+        </div>
+      ) : null}
+    </>
   );
 }
 
@@ -775,13 +809,37 @@ export function CandidateSection({
                     return group.rows.length ? (
                       <section className="aq-candidate-roster-group" key={group.kind} data-candidate-group={group.kind} aria-label={`${group.label} ${group.rows.length} 只`}>
                         <div className="aq-candidate-roster-group-head"><strong>{group.label}</strong><span>{group.rows.length} 只</span></div>
-                        {group.rows.map((row, index) => (
+                        {(() => {
+                          // 同组候选的状态 / 消息 / 复核常常完全一致 —— 组头说一次，
+                          // 名单行内不再逐行重复同一句话。
+                          const statusSame = sameAcross(group.rows.map((item) => statusLabel(item.status)));
+                          const msgSame = sameAcross(group.rows.map((item) => `${item.messageCount} 条消息`));
+                          const debateSame = sameAcross(group.rows.map((item) => (item.debateRounds !== null ? `${item.debateRounds} 轮复核` : "待复核")));
+                          const notes = [
+                            statusSame.text ? `状态 ${statusSame.text}` : "",
+                            msgSame.text ? `消息 ${msgSame.text}` : "",
+                            debateSame.text ? `复核 ${debateSame.text}` : "",
+                          ].filter(Boolean);
+                          return (
+                            <>
+                        {notes.length ? <p className="aq-roster-note">{notes.join(" · ")}</p> : null}
+                        {group.rows.map((row, index) => {
+                          const rowMeta = [
+                            statusSame.same ? "" : statusLabel(row.status),
+                            msgSame.same ? "" : `${row.messageCount} 条消息`,
+                            debateSame.same ? "" : (row.debateRounds !== null ? `${row.debateRounds} 轮复核` : "待复核"),
+                          ].filter(Boolean).join(" · ");
+                          return (
                           <button key={row.symbol} type="button" className={cn("aq-candidate-choice", selected?.symbol === row.symbol && "aq-candidate-choice-active")} aria-pressed={selected?.symbol === row.symbol} onClick={() => { setSelectedSymbol(row.symbol); setComparing(false); }}>
                             <span className="aq-candidate-rank">{String(rankOffset + index + 1).padStart(2, "0")}</span>
-                            <span className="aq-candidate-choice-body"><span className="aq-candidate-choice-title"><b>{row.name}</b><span className="aq-code">{row.symbol}</span>{invalidated.has(row.symbol) ? <Tag tone="warn">已失效</Tag> : null}</span><span>{statusLabel(row.status)} · {row.messageCount} 条消息 · {row.debateRounds !== null ? `${row.debateRounds} 轮复核` : "待复核"}</span><OwnerTag ownership={ownership} code={row.symbol} /></span>
+                            <span className="aq-candidate-choice-body"><span className="aq-candidate-choice-title"><b>{row.name}</b><span className="aq-code">{row.symbol}</span>{invalidated.has(row.symbol) ? <Tag tone="warn">已失效</Tag> : null}</span>{rowMeta ? <span>{rowMeta}</span> : null}<OwnerTag ownership={ownership} code={row.symbol} /></span>
                             <strong className="aq-candidate-choice-score">{row.scoreText}</strong>
                           </button>
-                        ))}
+                          );
+                        })}
+                            </>
+                          );
+                        })()}
                       </section>
                     ) : null;
                   })}

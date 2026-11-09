@@ -24,7 +24,18 @@ const BUCKET_LABELS: Readonly<Record<string, string>> = {
   uncertainty: "不确定性",
 };
 
-function DebateCard({ result }: { result: AqspAgentResult }) {
+
+/** 同一列若多行文案完全相同，不重复长句：统一「同上」，真实文案在表下给一次。 */
+function sameAcross(values: readonly string[]): { same: boolean; text: string } {
+  const uniq = [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+  if (uniq.length === 1 && values.length > 1) return { same: true, text: uniq[0] };
+  return { same: false, text: "" };
+}
+
+function DebateCard({ results, showFootNotes }: { results: readonly AqspAgentResult[]; showFootNotes: boolean }) {
+  // 同一批候选常由同一份讨论结论覆盖（跨市叙事一致时尤其如此）。
+  // 内容完全相同的票合并成一张卡并标明共享，避免同一段话重复 5 遍。
+  const result = results[0];
   const conclusion = result.conclusion.trim();
   const process = debateProcessText(result);
   const rounds = dedupeResearchText((result.round_summaries ?? []).map(cleanDebateRoundText))
@@ -35,6 +46,7 @@ function DebateCard({ result }: { result: AqspAgentResult }) {
     .slice(0, 6);
   const disagreement = unique(result.disagreement_points, 3);
   const hasDisagreement = disagreement.length > 0;
+  const shared = results.length > 1;
 
   return (
     <Card accent="info" className="aq-debate-card">
@@ -44,12 +56,22 @@ function DebateCard({ result }: { result: AqspAgentResult }) {
             <Bot aria-hidden="true" />
           </span>
           <div>
-            <h3>{result.display_name || result.symbol || "对象未记录"}</h3>
-            <span className="aq-code">{result.symbol || "代码未记录"}</span>
+            <h3>
+              {shared
+                ? `${result.display_name || result.symbol || "对象未记录"} 等 ${results.length} 只`
+                : (result.display_name || result.symbol || "对象未记录")}
+            </h3>
+            <span className="aq-code">
+              {shared ? results.map((item) => item.symbol).filter(Boolean).join(" · ") : (result.symbol || "代码未记录")}
+            </span>
           </div>
         </div>
         <Badge tone={hasDisagreement ? "ok" : "warn"}>{hasDisagreement ? "有个股分歧" : "待补个股反驳"}</Badge>
       </div>
+
+      {shared ? (
+        <p className="aq-note">这 {results.length} 只候选共用同一份讨论结论（逐票差异化复核未产生差异）。</p>
+      ) : null}
 
       <div className="aq-conclusion-block">
         <p className="aq-label">委员会结论</p>
@@ -125,7 +147,7 @@ function DebateCard({ result }: { result: AqspAgentResult }) {
         </span>
       </div>
 
-      {result.primary_risk_gate || result.next_trigger ? (
+      {showFootNotes && (result.primary_risk_gate || result.next_trigger) ? (
         <div className="aq-foot-notes">
           {result.primary_risk_gate ? (
             <span>
@@ -173,12 +195,47 @@ export function DiscussionSection({ view, section }: { view: DailyView; section:
           icon={ShieldAlert}
         />
       ) : (
-        <div className="aq-card-grid">
-          {view.debates.map((result) => (
-            <DebateCard key={result.symbol} result={result} />
-          ))}
-        </div>
+        <>
+          {(() => {
+            // 风险与下一验证常常逐票一字不差 —— 提到网格上方给一次，卡内不再重复。
+            const groups = groupDebates(view.debates);
+            const riskSame = sameAcross(groups.map((group) => group.results[0].primary_risk_gate ?? ""));
+            const nextSame = sameAcross(groups.map((group) => group.results[0].next_trigger ?? ""));
+            const shared = riskSame.same || nextSame.same;
+            return (
+              <>
+                {shared ? (
+                  <div className="aq-table-notes">
+                    {riskSame.text ? <p><b>共性风险</b><span>{riskSame.text}</span></p> : null}
+                    {nextSame.text ? <p><b>共性下一验证</b><span>{nextSame.text}</span></p> : null}
+                  </div>
+                ) : null}
+                <div className="aq-card-grid">
+                  {groups.map((group) => (
+                    <DebateCard key={group.key} results={group.results} showFootNotes={!shared} />
+                  ))}
+                </div>
+              </>
+            );
+          })()}
+        </>
       )}
     </section>
   );
+}
+
+/**
+ * 把结论 / 风险 / 下一验证完全一致的讨论并成一组。
+ * 分组键只取"这只票自己的判断"，不含过程文案 —— 过程本来就允许逐票不同，
+ * 但结论、风险与下一验证若一字不差，就说明这几只票实际共享同一份判断。
+ */
+function groupDebates(results: readonly AqspAgentResult[]): Array<{ key: string; results: AqspAgentResult[] }> {
+  const groups = new Map<string, AqspAgentResult[]>();
+  for (const result of results) {
+    const key = [result.conclusion.trim(), result.primary_risk_gate ?? "", result.next_trigger ?? ""].join("||");
+    const bucket = groups.get(key) ?? [];
+    bucket.push(result);
+    groups.set(key, bucket);
+  }
+  return [...groups.entries()].map(([key, items]) => ({ key, results: items }));
 }

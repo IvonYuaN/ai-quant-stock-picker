@@ -13,13 +13,13 @@ import {
   ClipboardCheck,
   Compass,
   Database,
-  FileText,
   Globe2,
   ListFilter,
-  NotebookPen,
   Scale,
+  Star,
   TableProperties,
   Target,
+  TrendingUp,
   Wallet,
   Zap,
   type LucideIcon,
@@ -33,7 +33,7 @@ export interface NavItem {
   desc: string;
   icon: LucideIcon;
   /** 左栏右侧的实时计数（由 Layout 按当前快照注入）。 */
-  metric?: "candidates" | "messages" | "debates" | "alerts" | "holdings" | "factors" | "variants";
+  metric?: "candidates" | "messages" | "debates" | "alerts" | "holdings" | "factors" | "variants" | "watchlist";
 }
 
 export interface NavLine {
@@ -58,6 +58,7 @@ export const RESEARCH_LINE: NavLine = {
     { to: "/factors", label: "因子", desc: "评分因子 · 来源与覆盖", icon: TableProperties, metric: "factors" },
     { to: "/backtest", label: "回测", desc: "变体台账 · 研究链", icon: BarChart3, metric: "variants" },
     { to: "/market", label: "市场环境", desc: "大盘 · 行业 · 情绪与外围", icon: Globe2 },
+    { to: "/indices", label: "指数", desc: "宽基指数 · 隔夜外围", icon: TrendingUp },
     { to: "/data", label: "数据", desc: "来源健康 · 漏斗 · 时点", icon: Database },
     { to: "/stream", label: "消息", desc: "快讯 · 板块 · 概念异动", icon: Zap, metric: "messages" },
   ],
@@ -70,26 +71,15 @@ export const DECISION_LINE: NavLine = {
   subtitle: "我的持仓 · 风险 · 跟进",
   scope: "private",
   items: [
-    { to: "/my/holdings", label: "持仓", desc: "真实持仓 · 自选 · 买卖条件", icon: Wallet, metric: "holdings" },
+    { to: "/my/holdings", label: "持仓", desc: "真实持仓 · 买卖条件", icon: Wallet, metric: "holdings" },
     { to: "/monitor", label: "监控", desc: "风险提醒 · 跟进 · 观察", icon: BellRing, metric: "alerts" },
     { to: "/review", label: "复盘", desc: "收盘回顾 · 明日待办", icon: ClipboardCheck },
     { to: "/evidence", label: "研究依据", desc: "消息复核 · 门禁 · 冻结参数", icon: Scale },
+    { to: "/watchlist", label: "自选", desc: "我的关注 · 实时跟踪", icon: Star, metric: "watchlist" },
   ],
 };
 
-/** 资料线：本人手动维护的私有材料。 */
-export const ASSET_LINE: NavLine = {
-  id: "assets",
-  title: "资料",
-  subtitle: "本人手工维护 · 按身份隔离",
-  scope: "private",
-  items: [
-    { to: "/my/notes", label: "笔记", desc: "自选笔记 · 人工记录", icon: NotebookPen },
-    { to: "/my/reports", label: "研报", desc: "上传的研报文件", icon: FileText },
-  ],
-};
-
-export const NAV_LINES: readonly NavLine[] = [RESEARCH_LINE, DECISION_LINE, ASSET_LINE];
+export const NAV_LINES: readonly NavLine[] = [RESEARCH_LINE, DECISION_LINE];
 
 /** 移动端底栏只放最常用的三个入口。 */
 export const PRIMARY_LINE: NavLine = {
@@ -121,9 +111,10 @@ export const LEGACY_ROUTES: Readonly<Record<string, string>> = {
   "/reviews": "/review",
   // 「我的测试」已升级为「我的持仓」；对照所需的额外列已并入「我的自选」。
   "/my/lab": "/my/holdings",
-  "/my/watchlist": "/my/holdings#watchlist",
+  "/my/watchlist": "/watchlist",
   "/concepts": "/stream",
   // 2026-11-09：/alerts 与 /observations 并入「监控」模块页，旧链接仍然可用。
   "/alerts": "/monitor",
   "/observations": "/monitor",
+  // 笔记与研报仍在（用户可从旧链接进入），但不再占左栏一级模块位。
 };

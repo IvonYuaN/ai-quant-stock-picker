@@ -1,6 +1,6 @@
 import { Suspense, useEffect, useRef, useState } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
-import { Download, LineChart, Moon, PanelLeftClose, PanelLeftOpen, Search, Sun, Upload, BellRing, Ellipsis, X } from "lucide-react";
+import { Download, LineChart, Moon, PanelLeftClose, PanelLeftOpen, Search, Sun, Upload, BellRing, Ellipsis, SquarePen, X } from "lucide-react";
 import { Toaster, toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { NAV_LINES, PRIMARY_LINE, type NavItem } from "@/lib/ia";
@@ -14,6 +14,7 @@ import { OperationRecorder } from "@/components/aqsp/OperationRecorder";
 import { requestOperation } from "@/lib/operation";
 import { hasTemporaryUserIdentity } from "@/lib/api";
 import { readLocalPreference, writeLocalPreference } from "@/lib/browser-session";
+import { loadWatch, WATCHLIST_CHANGED_EVENT } from "@/lib/watchlist";
 
 /**
  * 左栏计数：每个模块右侧给出这一屏里到底有多少条（参考 investment-news 的做法）。
@@ -28,6 +29,7 @@ function navCount(
     variants?: readonly unknown[];
   } | null,
   openAlerts: number,
+  watchCount: number,
 ): number | null {
   switch (item.metric) {
     case "candidates":
@@ -42,6 +44,8 @@ function navCount(
       return data?.variants ? data.variants.length : null;
     case "alerts":
       return openAlerts > 0 ? openAlerts : null;
+    case "watchlist":
+      return watchCount > 0 ? watchCount : null;
     default:
       return null;
   }
@@ -77,6 +81,8 @@ function WorkspaceLayout() {
     () => readLocalPreference("aqsp-sidebar") === "collapsed",
   );
   const [temporaryIdentity] = useState(hasTemporaryUserIdentity);
+  // 自选数量：左栏计数用（本机浏览器里的自选条数）。
+  const [watchCount, setWatchCount] = useState(() => loadWatch().length);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -86,6 +92,16 @@ function WorkspaceLayout() {
   useEffect(() => {
     writeLocalPreference("aqsp-sidebar", collapsed ? "collapsed" : "expanded");
   }, [collapsed]);
+
+  useEffect(() => {
+    const sync = () => setWatchCount(loadWatch().length);
+    window.addEventListener(WATCHLIST_CHANGED_EVENT, sync);
+    window.addEventListener("storage", sync);
+    return () => {
+      window.removeEventListener(WATCHLIST_CHANGED_EVENT, sync);
+      window.removeEventListener("storage", sync);
+    };
+  }, []);
 
   // 全局快捷键：Cmd/Ctrl+K 打开命令面板；不在输入时按 / 也可打开
   useEffect(() => {
@@ -124,23 +140,35 @@ function WorkspaceLayout() {
               </span>
               {!collapsed ? <span className="aq-brand-name">AQSP</span> : null}
             </Link>
-            <button
-              type="button"
-              onClick={() => setCollapsed((value) => !value)}
-              className="aq-icon-btn"
-              title={collapsed ? "展开侧栏" : "收起侧栏"}
-              aria-label={collapsed ? "展开侧栏" : "收起侧栏"}
-              aria-expanded={!collapsed}
-            >
-              {collapsed ? <PanelLeftOpen aria-hidden="true" /> : <PanelLeftClose aria-hidden="true" />}
-            </button>
+            {/* 顶部只留必要的：品牌、回录、折叠。副标题与整块按钮都撤掉，
+                侧栏上半屏让给模块导航。 */}
+            <div className="aq-brand-actions">
+              <button
+                type="button"
+                className="aq-icon-btn"
+                onClick={() => requestOperation()}
+                title="回录已完成的买入或卖出"
+                aria-label="回录已完成的买入或卖出"
+              >
+                <SquarePen aria-hidden="true" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setCollapsed((value) => !value)}
+                className="aq-icon-btn"
+                title={collapsed ? "展开侧栏" : "收起侧栏"}
+                aria-label={collapsed ? "展开侧栏" : "收起侧栏"}
+                aria-expanded={!collapsed}
+              >
+                {collapsed ? <PanelLeftOpen aria-hidden="true" /> : <PanelLeftClose aria-hidden="true" />}
+              </button>
+            </div>
           </div>
-          {!collapsed ? <p className="aq-brand-sub">T+1 持仓决策工作台</p> : null}
         </div>
 
         {openAlerts > 0 ? (
           <Link
-            to={navHref("/alerts")}
+            to={navHref("/monitor")}
             className="aq-alert-badge"
             title={`${openAlerts} 只持仓风险待复核，点击查看`}
             onClick={() => void refetchAlerts()}
@@ -150,15 +178,6 @@ function WorkspaceLayout() {
             <span className="aq-alert-badge-count">{openAlerts}</span>
           </Link>
         ) : null}
-
-        <button
-          type="button"
-          className="aq-btn aq-btn-primary aq-record-trigger"
-          onClick={() => requestOperation()}
-          title="回录已完成的买入或卖出"
-        >
-          <LineChart aria-hidden="true" />{!collapsed ? "我操作了" : null}
-        </button>
 
         <button
           type="button"
@@ -183,7 +202,7 @@ function WorkspaceLayout() {
               {line.items.map((item) => {
                 const Icon = item.icon;
                 const active = pathname === item.to;
-                const count = navCount(item, data, openAlerts);
+                const count = navCount(item, data, openAlerts, watchCount);
                 return (
                   <Link
                     key={item.to}
