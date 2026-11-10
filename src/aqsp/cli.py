@@ -877,17 +877,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     wf.add_argument(
         "--grid-profile",
-        choices=(
-            "stable",
-            "stable_plus",
-            "exploratory",
-            "htf_mr",
-            "planb_v1",
-            "planb_v2",
-            "planb_v3",
-        ),
+        # 🔴 2026-11-10：白名单由 `walkforward_grid_profiles()` **派生**（同一事实源）。
+        # 此前此处是**第三份**手抄 choices（入口脚本 + 双窗口脚本 + 本处）⇒
+        # 「新增档位必漏网」的三处全漏：`holder_overlay` 若照抄，**子进程**
+        # `aqsp walkforward` 会直接 argparse 拒绝 ⇒ 跑起来必失败（实测实证：
+        # 外层 gate 驱动已接受 holder_overlay，子进程仍报 invalid choice）。
+        choices=walkforward_grid_profiles(),
         default="stable",
-        help="grid CSCV 变体集合：stable 用于上线门禁（N=5），stable_plus 用于功效增强（N=8，含因子族多样性），exploratory 保留研究探索网格（N=13），htf_mr 为 T3 方案 A 因子族替换验证网格（htf+mr 换 mom+tr，N=8，不改动默认）",
+        help="grid CSCV 变体集合：stable 用于上线门禁（N=5），stable_plus 用于功效增强（N=8，含因子族多样性），exploratory 保留研究探索网格（N=13），htf_mr 为 T3 方案 A 因子族替换验证网格（htf+mr 换 mom+tr，N=8，不改动默认），holder_overlay 为股东户数筹码集中度 overlay 专用验证网格（N=13，研究用，不进默认值）",
     )
     wf.add_argument(
         "--pool",

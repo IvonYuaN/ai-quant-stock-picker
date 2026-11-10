@@ -24,6 +24,7 @@
 from __future__ import annotations
 
 import ast
+import os
 import re
 from pathlib import Path
 
@@ -44,6 +45,13 @@ GATE_ENTRY_SCRIPTS: tuple[Path, ...] = (
     REPO_ROOT / "scripts" / "runner" / "run_production_walkforward_gate.py",
     REPO_ROOT / "scripts" / "runner" / "run_dual_window_gate.py",
 )
+
+#: 🔴 2026-11-10 真机实证补充：白名单共**三处**，第三处最隐蔽 ——
+#: ``src/aqsp/cli.py`` 里 ``aqsp walkforward`` 子命令的 argparse。它是 gate 驱动
+#: **派生出的子进程**入口：外层 gate 驱动已接受 holder_overlay、子进程仍报
+#: ``invalid choice: 'holder_overlay'`` ⇒ 取证一秒失败。
+#: ⇒ 三处必须同时派生，缺一即漏。
+CLI_MODULE: Path = REPO_ROOT / "src" / "aqsp" / "cli.py"
 
 #: 手抄 choices 元组的特征（一旦出现即说明有人绕过单一事实源又抄了一份）。
 _HAND_COPIED_CHOICES = re.compile(r'choices\s*=\s*\(\s*"stable"')
@@ -119,3 +127,45 @@ def test_entry_script_white_list_covers_all_profiles(script: Path) -> None:
     # 关键回归点：这些档位历史上漏过，必须确保它们现在都被接受
     for profile in ("htf_mr", "holder_overlay", "stable_plus"):
         assert profile in choices, f"{script.name}: 档位 {profile} 仍被入口拒绝"
+
+
+def test_cli_walkforward_subcommand_derives_its_whitelist() -> None:
+    """第三处白名单：``src/aqsp/cli.py`` 的 ``aqsp walkforward`` 子命令。
+
+    🔴 2026-11-10 真机实证：这处最隐蔽 —— 它是 gate 驱动**派生的子进程**入口。
+    外层 gate 驱动已接受 holder_overlay，子进程仍报 invalid choice ⇒ 取证一秒失败。
+    """
+    source = _source_of(CLI_MODULE)
+    assert "choices=walkforward_grid_profiles()" in source, (
+        "aqsp walkforward 子命令的 --grid-profile 白名单未从单一事实源派生"
+    )
+    assert not _HAND_COPIED_CHOICES.search(source), (
+        "cli.py 仍残留手抄的 choices 元组 —— 存在第二份副本即漏网风险"
+    )
+
+
+def test_aqsp_walkforward_cli_accepts_every_routable_profile() -> None:
+    """**真跑** ``aqsp walkforward --grid-profile <档位>`` 断言全部被接受。
+
+    这是最硬的一条守卫：静态检查抓不到「子进程 argparse 拒绝」这种错位
+    （2026-11-10 真机就是这样炸的：外层已修好、子进程仍拒）。
+    这里用 ``--help`` 触发解析（不真跑回测），逐个档位验证 argparse 不拒绝。
+    """
+    import subprocess
+    import sys
+
+    for profile in walkforward_grid_profiles():
+        completed = subprocess.run(
+            [sys.executable, "-m", "aqsp", "walkforward", "--grid-profile", profile, "--help"],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            cwd=str(REPO_ROOT),
+            env={**os.environ, "PYTHONPATH": str(REPO_ROOT / "src")},
+        )
+        assert completed.returncode == 0, (
+            f"aqsp walkforward 拒绝档位 {profile!r}：\n{completed.stderr[-600:]}"
+        )
+        assert "invalid choice" not in completed.stderr, (
+            f"档位 {profile!r} 被 argparse 拒绝（invalid choice）"
+        )
