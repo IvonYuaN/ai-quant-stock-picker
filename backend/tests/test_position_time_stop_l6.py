@@ -108,10 +108,15 @@ def test_actual_holding_days_counts_trading_days_not_t_plus_one_marker():
     """L6 必须用真实交易日数，而不是 T+1 的 0/1 标记（否则永不触发）。"""
     import portfolio as pf_mod
 
+    # 基准日固定：实现按「算到今天」计数，期望值若跟着今天漂移，
+    # 这条测试就会在某个日期突然变红（2026-11-10 暴露）。
+    from datetime import date
+
+    base = date(2026, 11, 9)
     expected = _business_days("2026-10-22", "2026-11-09")
     assert expected >= 10, "样本区间应覆盖足够交易日"
     days = pf_mod.resolve_actual_holding_days(
-        [{"code": "600000", "opened_at": "2026-10-22"}]
+        [{"code": "600000", "opened_at": "2026-10-22"}], today=base
     )
     assert days["600000"] == expected
     # T+1 标记保持原语义（0/1）
@@ -125,6 +130,8 @@ def test_actual_holding_days_uses_latest_lot_after_add():
     """加仓视为新入场：时间止损从最近一次加仓日算，避免老仓时间止损清掉新仓。"""
     import portfolio as pf_mod
 
+    from datetime import date
+
     days = pf_mod.resolve_actual_holding_days([{
         "code": "600000",
         "opened_at": "2026-10-01",
@@ -132,7 +139,7 @@ def test_actual_holding_days_uses_latest_lot_after_add():
             {"shares": 100, "opened_at": "2026-10-01"},
             {"shares": 100, "opened_at": "2026-11-06"},
         ],
-    }])
+    }], today=date(2026, 11, 9))
     assert days["600000"] == _business_days("2026-11-06", "2026-11-09")
 
 
