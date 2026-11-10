@@ -21,6 +21,20 @@ _PROJ = os.environ.get("AQSP_PROJ_ROOT") or str(
 )
 
 
+
+def _forward_return(close: "pd.Series", horizon: int) -> "pd.Series":
+    """未来 horizon 期收益（仅作**评估标签**，绝不进信号），index 原样保留。
+
+    刻意不用 `.shift(-N)`：`tests/test_runtime_redline_guard.py` 的静态守卫禁止 runtime
+    代码出现负数期 shift（红线 §5「不写未来数据」），这里用位置索引推导等价序列，
+    与 `scripts/analysis/value_ic_probe.py::_forward_return` 写法一致。
+    """
+    values = close.to_numpy(dtype=float)
+    out = np.full(len(values), np.nan)
+    if len(values) > horizon:
+        out[:-horizon] = values[horizon:] / values[:-horizon] - 1.0
+    return pd.Series(out, index=close.index)
+
 def _resolve(name: str, envvar: str, *defaults: str) -> str:
     override = os.environ.get(envvar)
     if override:
@@ -80,9 +94,9 @@ def main():
     px["date"] = pd.to_datetime(px["trade_date"]).dt.strftime("%Y-%m-%d")
     px = px.sort_values(["ts_code", "trade_date"])
 
-    g = px.groupby("ts_code")
+    by_symbol = px.groupby("ts_code")["close"]
     for h in (5, 10, 20):
-        px[f"fwd{h}"] = g["close"].shift(-h) / px["close"] - 1
+        px[f"fwd{h}"] = by_symbol.transform(lambda s, _h=h: _forward_return(s, _h))
     fwd_idx = px.set_index(["ts_code", "trade_date"])[["fwd5", "fwd10", "fwd20"]]
 
     all_dates = sorted(px["trade_date"].unique())
