@@ -26,7 +26,12 @@
 set -euo pipefail
 
 RUNNER_ROOT="${RUNNER_ROOT:-/opt/aqsp-runner}"
-RELEASE="$RUNNER_ROOT/aqsp-scheduler-current"
+# 🔴 2026-11-10：RELEASE 改为可被 env 覆盖（此前是硬赋值，只能跑生产软链
+# aqsp-scheduler-current）。旁路取证（如 holder_overlay 专用网格）需要在**独立
+# release** 上跑，不能切生产软链 ⇒ 必须能指定跑哪个 release。
+# 默认值不变（仍指生产软链）⇒ 生产行为零改变。
+# ⚠️ 覆盖时务必给**绝对路径的真实 release 目录**（不是软链），否则又会跑回生产版。
+RELEASE="${RELEASE:-$RUNNER_ROOT/aqsp-scheduler-current}"
 VENV="${VENV:-$RUNNER_ROOT/venv}"
 DATA="$RUNNER_ROOT/data/astocks_raw.db"
 # OUT 可覆盖：多组研究对照实验各占一个目录，避免互相覆盖 walkforward_gate.json，

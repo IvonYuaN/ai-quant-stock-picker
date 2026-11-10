@@ -124,6 +124,7 @@ cat <<EOF
   # 步骤 3：跑 gate（前置压力复核 + setsid nohup 后台脱钩 + 共享业务机让位守卫）
   ssh $RUNNER_HOST "
     cd $REL && \\
+    RELEASE=$REL \\
     AQSP_HOLDER_COUNT_CSV=$RUNNER_HOLDER_CSV \\
     AQSP_RUNTIME_DATA_ROOT=$RUNNER_ROOT \\
     OUT=$OUT_DIR \\
@@ -135,6 +136,10 @@ cat <<EOF
     setsid nohup bash $REL/scripts/runner/runner_gate.sh \\
       > $OUT_DIR/runner_holder_gate.log 2>&1 &
   "
+
+  # 步骤 3b：启动后 30s 内实证「跑的是旁路 release 且 overlay 真启用」
+  #   （防再次静默跑成生产版：看日志里的 release sha + 第一臂的 WO- 前缀）
+  ssh $RUNNER_HOST "sleep 30; grep -E 'release sha|grid variant' $OUT_DIR/runner_holder_gate.log | head -5"
 
   # 步骤 4：取回产物（gate json + report.md），本地做「逐变体表」判读
   scp $RUNNER_HOST:$OUT_DIR/walkforward_gate.json \
