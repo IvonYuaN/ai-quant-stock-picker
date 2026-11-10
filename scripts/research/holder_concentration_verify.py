@@ -13,16 +13,40 @@ import sqlite3
 import numpy as np
 import pandas as pd
 
-# 指向已落地的 prod pit_cache 副本，避免触网
-os.environ["AQSP_HOLDER_COUNT_CSV"] = (
-    "/Users/ivon/Documents/AI量化选股/research/theme_factor_probe/holder_count.csv"
+# 可移植路径解析：env 覆盖 > 项目根相对回落（本地直接跑 / runner 设 env 即用）。
+# 项目根 = 本脚本上溯两级（<root>/scripts/research/*.py → <root>）。
+import pathlib
+
+_PROJ = os.environ.get("AQSP_PROJ_ROOT") or str(
+    pathlib.Path(__file__).resolve().parents[2]
+)
+
+
+def _resolve(name: str, envvar: str, *defaults: str) -> str:
+    override = os.environ.get(envvar)
+    if override:
+        return override
+    for rel in defaults:
+        p = os.path.join(_PROJ, rel)
+        if os.path.exists(p):
+            return p
+    return os.path.join(_PROJ, defaults[0])
+
+
+# 指向已落地的 holder_count.csv（pit_cache 优先，其次研究目录副本），避免触网
+os.environ["AQSP_HOLDER_COUNT_CSV"] = _resolve(
+    "holder_count.csv",
+    "AQSP_HOLDER_COUNT_CSV",
+    "pit_cache/holder_count.csv",
+    "research/theme_factor_probe/holder_count.csv",
 )
 
 from aqsp.strategies.composite import CompositeStrategy
 from aqsp.strategies.thresholds import load_thresholds
 
-DB = "/Users/ivon/Documents/AI量化选股/A股量化分析数据/astocks_raw.db"
-YAML = "/Users/ivon/Documents/AI量化选股/.worktrees/hc-factor/config/thresholds.yaml"
+DB = _resolve("astocks_raw.db", "AQSP_STOCKS_DB",
+             "A股量化分析数据/astocks_raw.db", "data/astocks_raw.db")
+YAML = os.environ.get("AQSP_THRESHOLDS_YAML") or os.path.join(_PROJ, "config", "thresholds.yaml")
 N_SELECT = 50
 TOP_N_DATES = 8
 SEED = 20261110
