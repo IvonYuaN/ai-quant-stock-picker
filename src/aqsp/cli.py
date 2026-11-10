@@ -6893,7 +6893,6 @@ def _apply_walkforward_grid_variant(
     from aqsp.strategies.thresholds import (
         CompositeThresholds,
         MomentumThresholds,
-        HolderConcentrationThresholds,
     )
 
     # 变体必须显式声明其完整因子集：先把所有因子权重清零，再按 strategy_mix 写入声明项。

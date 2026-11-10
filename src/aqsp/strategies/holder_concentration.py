@@ -35,7 +35,6 @@ import os
 from datetime import date, datetime
 from typing import Dict, List, Optional
 
-import numpy as np
 import pandas as pd
 
 from aqsp.strategies.base import BaseStrategy, StrategyConfig

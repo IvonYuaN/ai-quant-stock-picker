@@ -100,9 +100,9 @@ def test_holder_overlay_distinct_from_baseline_score() -> None:
     assert not any("holder_concentration" in v for v in base_detail.values()), (
         "基线变体不该带 holder_concentration 列（overlay 应关闭）"
     )
-from aqsp.strategies.composite import CompositeStrategy
-from aqsp.strategies.thresholds import load_thresholds
-from aqsp.walkforward_gate import MIN_CSCV_VARIANTS
+from aqsp.strategies.composite import CompositeStrategy  # noqa: E402
+from aqsp.strategies.thresholds import load_thresholds  # noqa: E402
+from aqsp.walkforward_gate import MIN_CSCV_VARIANTS  # noqa: E402
 
 PROFILES = ("stable", "stable_plus", "exploratory", "htf_mr", "planb_v1", "planb_v2", "planb_v3", "holder_overlay")
 

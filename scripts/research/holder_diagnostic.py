@@ -39,10 +39,10 @@ os.environ["AQSP_HOLDER_COUNT_CSV"] = _resolve(
     "research/theme_factor_probe/holder_count.csv",
 )
 
-from aqsp.strategies.composite import CompositeStrategy
-from aqsp.strategies.thresholds import load_thresholds
-from aqsp.strategies.holder_concentration import HolderConcentrationStrategy
-from aqsp.strategies.base import StrategyConfig
+from aqsp.strategies.composite import CompositeStrategy  # noqa: E402
+from aqsp.strategies.thresholds import load_thresholds  # noqa: E402
+from aqsp.strategies.holder_concentration import HolderConcentrationStrategy  # noqa: E402
+from aqsp.strategies.base import StrategyConfig  # noqa: E402
 
 DB = _resolve("astocks_raw.db", "AQSP_STOCKS_DB",
              "A股量化分析数据/astocks_raw.db", "data/astocks_raw.db")
@@ -187,7 +187,7 @@ def main():
         )
         print(f"  比例 in [0.4,0.6] (近中性): {((allh>=0.4)&(allh<=0.6)).mean()*100:.0f}%")
     if corr_with_2f:
-        print(f"\n=== holder 分 vs 2f composite 分 Spearman 相关（正交性）===")
+        print("\n=== holder 分 vs 2f composite 分 Spearman 相关（正交性）===")
         print(f"  各估值日: {[f'{c:.2f}' for c in corr_with_2f]}")
         print(f"  均值: {np.mean(corr_with_2f):.3f}  → 接近 0 = 真正交")
 

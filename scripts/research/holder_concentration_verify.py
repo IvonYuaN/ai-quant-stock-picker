@@ -41,8 +41,8 @@ os.environ["AQSP_HOLDER_COUNT_CSV"] = _resolve(
     "research/theme_factor_probe/holder_count.csv",
 )
 
-from aqsp.strategies.composite import CompositeStrategy
-from aqsp.strategies.thresholds import load_thresholds
+from aqsp.strategies.composite import CompositeStrategy  # noqa: E402
+from aqsp.strategies.thresholds import load_thresholds  # noqa: E402
 
 DB = _resolve("astocks_raw.db", "AQSP_STOCKS_DB",
              "A股量化分析数据/astocks_raw.db", "data/astocks_raw.db")
