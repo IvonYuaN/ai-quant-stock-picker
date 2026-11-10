@@ -1,5 +1,5 @@
-version: "1.1.21"
-effective_from: '2026-10-13'
+version: "1.1.22"
+effective_from: '2026-11-10'
 composite:
   base_blend_weight: 0.7
   min_total_score: 0.70
