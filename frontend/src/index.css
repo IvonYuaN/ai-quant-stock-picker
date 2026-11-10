@@ -737,6 +737,27 @@
     line-height: 1.55;
     color: hsl(var(--foreground) / 0.8);
   }
+  /* 快讯正文：去掉与标题重复的【】后，按数据自带分段 + 句读给视觉落点。
+     不截断、不折叠 —— 证据要能一眼读完，也要能一眼分清层次。 */
+  .aq-news-body {
+    margin-top: 0.55rem;
+    max-width: 72ch;
+    font-size: 0.876rem;
+    line-height: 1.72;
+    color: hsl(var(--foreground) / 0.82);
+  }
+  .aq-news-paragraph {
+    margin: 0 0 0.42rem;
+    white-space: pre-line;
+    overflow-wrap: anywhere;
+  }
+  .aq-news-paragraph:last-child {
+    margin-bottom: 0;
+  }
+  /* 长短快讯混排时不要把短卡拉成等高大白板（看起来像内容缺失）。 */
+  .aq-news-grid {
+    align-items: start;
+  }
   .aq-card-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr));
@@ -1787,15 +1808,21 @@
     line-height: 1.45;
   }
   .aq-inline-field {
-    margin-top: 0.5rem;
+    display: grid;
+    grid-template-columns: 4.8rem minmax(0, 1fr);
+    gap: 0.15rem 0.55rem;
+    align-items: start;
+    margin-top: 0.55rem;
     font-size: 0.828rem;
-    line-height: 1.5;
+    line-height: 1.72;
     color: hsl(var(--foreground) / 0.8);
+    overflow-wrap: anywhere;
   }
   .aq-inline-field b {
-    margin-right: 0.35rem;
+    margin-right: 0;
     font-weight: 650;
     color: hsl(var(--primary));
+    white-space: nowrap;
   }
   .aq-inline-field.aq-tone-warn b {
     color: hsl(var(--warning));
@@ -1907,6 +1934,17 @@
   }
   .aq-link-list span {
     color: hsl(var(--muted-foreground));
+  }
+  /* 长推演串由后端拼接，前端只给行距与折行落点，不拆字、不改证据。 */
+  .aq-transmission,
+  .aq-transmission p,
+  .aq-link-list div,
+  .aq-bullet-list {
+    line-height: 1.72;
+    overflow-wrap: anywhere;
+  }
+  .aq-link-list div {
+    gap: 0.28rem;
   }
 
   /* ---------------------------------------------------------- 讨论 */

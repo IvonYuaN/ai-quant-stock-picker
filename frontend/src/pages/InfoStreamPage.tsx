@@ -35,6 +35,52 @@ function newsTime(ctime: string): string {
   return formatEvidenceTime(ctime) || "时间未记录";
 }
 
+/**
+ * 快讯正文展示口径：同一句话只出现一次，长正文给出视觉落点。
+ *
+ * 财联社电报的 summary 常以「【标题】」开头，把卡片标题原样再念一遍；
+ * 正文自带的 \n 分段在 <p> 里又会被浏览器折叠掉，几十条 160+ 字的整块
+ * 文字就糊成一屏。这里只做两件事：
+ *   1. 去掉与标题**完全一致**的【…】前缀（不一致时原样保留，不猜、不改写内容）
+ *   2. 保留数据自带分段；过长的单段按句末标点切成约 90 字的句群
+ * 全程不截断、不折叠、不改写任何数字 —— 证据一个字都不能少。
+ */
+export function stripTitleEcho(summary: string, title: string): string {
+  const head = title.trim();
+  if (!head) return summary;
+  const prefix = `【${head}】`;
+  return summary.startsWith(prefix) ? summary.slice(prefix.length) : summary;
+}
+
+function splitLongParagraph(paragraph: string, target = 55): string[] {
+  if (paragraph.length <= target) return [paragraph];
+  // 按句末标点切、保留标点本身；没有句读时不硬切，交给浏览器折行。
+  const sentences = paragraph.split(/(?<=[。！？；])/).filter(Boolean);
+  if (sentences.length < 2) return [paragraph];
+  const groups: string[] = [];
+  let current = "";
+  for (const sentence of sentences) {
+    if (current && current.length + sentence.length > target) {
+      groups.push(current);
+      current = sentence;
+    } else {
+      current += sentence;
+    }
+  }
+  if (current) groups.push(current);
+  return groups;
+}
+
+export function newsBody(summary: string | undefined, title: string | undefined): string[] {
+  const text = stripTitleEcho((summary || "").trim(), title || "");
+  if (!text) return [];
+  return text
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .flatMap((line) => splitLongParagraph(line));
+}
+
 function SourceHealthBar({ data }: { data: InfoStreamData }) {
   const entries: ReadonlyArray<readonly [string, string, string]> = [
     ["cls_news", "财联社快讯", "cls_news"],
@@ -86,9 +132,10 @@ export function InfoStreamLoadStatus({
   );
 }
 
-function NewsItem({ item, time, showSource }: { item: InfoStreamNewsItem; time: string; showSource: boolean }) {
+export function NewsItem({ item, time, showSource }: { item: InfoStreamNewsItem; time: string; showSource: boolean }) {
+  const body = newsBody(item.summary, item.title);
   return (
-    <div className="aq-card">
+    <div className="aq-card aq-news-card">
       <div className="aq-card-head">
         <div className="aq-card-title">
           <h3>{item.title || "（无标题）"}</h3>
@@ -98,7 +145,13 @@ function NewsItem({ item, time, showSource }: { item: InfoStreamNewsItem; time: 
           {item.level || "?"} 级
         </Tag>
       </div>
-      {item.summary ? <p className="aq-card-summary">{item.summary}</p> : null}
+      {body.length ? (
+        <div className="aq-news-body">
+          {body.map((paragraph, index) => (
+            <p key={index} className="aq-news-paragraph">{paragraph}</p>
+          ))}
+        </div>
+      ) : null}
       <div className="aq-tag-row">
         {showSource ? (
           <Tag tone="primary" title={`来源：${item.source} · id ${item.item_id}`}>
@@ -219,7 +272,7 @@ export function InfoStreamPage() {
                 {sharedNewsSource ? (
                   <p className="aq-note">本批快讯来源相同：{sharedNewsSource}</p>
                 ) : null}
-                <div className="aq-card-grid">
+                <div className="aq-card-grid aq-news-grid">
                   {newsRows.map((row) => (
                     <NewsItem
                       key={row.item.item_id}

@@ -2,7 +2,7 @@ import { MemoryRouter } from "react-router-dom";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server.edge";
 import { CatalystSectorView } from "@/components/aqsp/CatalystSectorSection";
-import { InfoStreamLoadStatus, InfoStreamPage } from "@/pages/InfoStreamPage";
+import { InfoStreamLoadStatus, InfoStreamPage, NewsItem, newsBody, stripTitleEcho } from "@/pages/InfoStreamPage";
 import { ConceptsPage } from "@/pages/ConceptsPage";
 import { catalystReportMetadata, catalystSourceUrl } from "./catalyst-sector-view";
 import { type CatalystData, type CatalystEvent } from "./catalyst-client";
@@ -61,4 +61,31 @@ export const catalystSectorViewContract = {
   })(),
   legacyWrapperSharesSameSection: renderToStaticMarkup(createElement(ConceptsPage)).includes("板块催化与传导"),
   routeAndModuleNavigationRemain: LEGACY_ROUTES["/concepts"] === "/stream" && NAV_LINES.flatMap((line) => line.items).length === 15,
+};
+
+// 快讯正文（#540）：标题不念第二遍、长文有视觉落点、一个字都不丢。
+const echoTitle = "ETF两市成交额3067.50亿 同比减少606.85亿";
+const echoSummary = `【${echoTitle}】财联社11月10日电，截至午间收盘，ETF两市成交额报3067.50亿元，较昨日此时减少606.85亿元。\n分类型来看，股票型ETF成交额807.51亿元，减少34.43亿元；货币型ETF成交额290.01亿元，增加53.34亿元。`;
+const echoBody = newsBody(echoSummary, echoTitle);
+const newsHtml = renderToStaticMarkup(createElement(NewsItem, {
+  item: {
+    item_id: "2529886", title: echoTitle, summary: echoSummary,
+    ctime: "2026-11-10T11:51:01+08:00", level: "C",
+    subjects: ["盘面直播"], source: "财联社电报",
+  },
+  time: "11-10 11:51", showSource: true,
+}));
+const longProse = "这句话用来验证长正文会被切成多个句群但不会丢字。".repeat(12);
+const longParts = newsBody(longProse, "不匹配的前缀");
+
+export const infoStreamNewsContract = {
+  titleEchoIsNotRenderedTwice: newsHtml.includes(echoTitle) && !newsHtml.includes(`【${echoTitle}】`),
+  differentTitleEchoIsPreserved: stripTitleEcho("【另一条标题】正文内容", echoTitle) === "【另一条标题】正文内容",
+  emptySummaryHasNoBody: newsBody(undefined, echoTitle).length === 0 && newsBody("   ", echoTitle).length === 0,
+  dataParagraphsRemainSeparate: echoBody.length >= 2 && echoBody.some((part) => part.includes("分类型来看")),
+  everySourceNumberSurvives: ["3067.50亿元", "606.85亿元", "807.51亿元", "34.43亿元", "290.01亿元", "53.34亿元"]
+    .every((value) => newsHtml.includes(value)),
+  longProseIsSplitWithoutLosingText: longParts.length > 1 && longParts.join("") === longProse,
+  paragraphsAreRenderedAsBlocks: (newsHtml.match(/aq-news-paragraph/g) ?? []).length === echoBody.length,
+  newsContentIsNeverFolded: !newsHtml.includes("<details") && !newsHtml.includes("aq-news-clamp"),
 };
