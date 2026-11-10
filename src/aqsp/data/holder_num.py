@@ -48,15 +48,24 @@ _EM_HEADERS = {
 }
 _PAGE_SIZE = 500
 _MAX_PAGES_PER_QUARTER = 40  # 40×500=20000 行/季守卫：A 股全市场远小于此
-_DEFAULT_QUARTERS = 4
+# 🔴 2026-11-10：季度数改为可配置（默认值不变 ⇒ 生产行为零改变）。
+# 研究需要在 3 年 gate 窗口内都有数据（4 季只覆盖 37% ⇒ 其余时段因子全中性、
+# overlay 空转）。用 env 放大：
+#   AQSP_HOLDER_QUARTERS=14      每次抓取/刷新的季度数
+#   AQSP_HOLDER_MAX_QUARTERS=16  合并写时保留的季度上限
+_DEFAULT_QUARTERS = int(os.environ.get("AQSP_HOLDER_QUARTERS", "4") or 4)
 _DISCLOSURE_WINDOW_DAYS = 45  # 季末后该天数视为「该季数据基本披露完」
 # 单页瞬时故障（东财 502 / Response ended prematurely / 超时）重试：
 # 09-28 首自动跑批实证 2026-03-31 p3 断流 ⇒ 旧实现整季 raise、后续季度全不抓、
 # load() 随后空结果 to_csv 把好数据截断。修复 = 页级重试 + 局部失败降级（#259）。
 _PAGE_RETRIES = 3
 _PAGE_BACKOFF_SECONDS = (2, 4, 8)
-# 合并写封顶最近 8 季：4 季常规 + 4 季缓冲，防缓存无限膨胀（#259）。
-_MAX_CACHED_QUARTERS = 8
+# 合并写封顶季数：4 季常规 + 4 季缓冲，防缓存无限膨胀（#259）。
+# 🔴 2026-11-10：改为可 env 覆盖（默认 8 不变 ⇒ 生产行为零改变）。
+# 研究需覆盖 3y gate 窗口（约 14 季），否则 63% 窗口无数据 ⇒ 因子全中性。
+_MAX_CACHED_QUARTERS = int(
+    os.environ.get("AQSP_HOLDER_MAX_QUARTERS", "8") or 8
+)
 _logger = logging.getLogger("aqsp.data.holder_num")
 
 
@@ -269,8 +278,19 @@ class HolderNumSource:
             return []
 
     def load(
-        self, force: bool = False, quarters: Optional[list[str]] = None
+        self,
+        force: bool = False,
+        quarters: Optional[list[str]] = None,
+        allow_fetch: bool = True,
     ) -> list[HolderNumItem]:
+        """读缓存；``allow_fetch=False`` 时**绝不触网**（只读路径必须用它）。
+
+        🔴 2026-11-10 事故：此前打分路径直接调 ``load()``，当缓存文件缺失/为空时
+        会**静默回落到实时网络抓取**并回写默认 4 季 ⇒ 两个后果：
+        ①gate 跑批可能长时间阻塞在抓取上；②悄悄把 14 季研究数据覆写成 4 季
+        （实测 73644 行被覆盖成 21422 行，且无任何报错）。
+        打分是**只读**路径，抓取属于独立的数据更新任务 ⇒ 这里必须能禁止触网。
+        """
         if quarters is None:
             quarters = _recent_quarter_ends(today_shanghai(), _default_quarter_count())
         path = self._default_cache_path()
@@ -279,6 +299,9 @@ class HolderNumSource:
             if cached:
                 self._items = cached
                 return self._items
+        if not allow_fetch:
+            # 只读路径：无缓存就返回空（上层按「无数据 ⇒ 中性」处理，且可观测）
+            return self._items
         # force 场景下旧缓存仅作「全灭兜底」，不得替代本次强制重抓（#259）
         prev_items = self._read_cache(path) if force else []
         fetched = self._fetch(quarters)

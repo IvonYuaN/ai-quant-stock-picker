@@ -72,6 +72,10 @@ class HolderConcentrationStrategy(BaseStrategy):
         self._source = HolderNumSource(cache_path=cache_path)
         self._series: Dict[str, List[tuple[date, float]]] = {}
         self._loaded = False
+        self._notice_fallback = 0
+        #: 最近一次 `calculate_score` 的覆盖面统计（可观测性；供判读区分
+        #: 「因子无效」与「因子没启用」）。
+        self.last_stats: Dict[str, float] = {}
         super().__init__(
             config,
             id="holder_concentration",
@@ -87,10 +91,19 @@ class HolderConcentrationStrategy(BaseStrategy):
         if self._loaded:
             return
         try:
-            items = self._source.load()
+            # 只读：绝不触网。缓存缺失 ⇒ 空 ⇒ 全部中性（可观测，见 last_stats）。
+            items = self._source.load(allow_fetch=False)
         except Exception:
             items = []
-        by_sym: Dict[str, List[tuple[date, float]]] = {}
+        # 🔴 2026-11-10 PIT 修正：可用时点必须是**披露日**（notice_date），
+        # 不是季末日（quarter）。
+        # 实证（本地 21434 行）：披露滞后于季末 **中位 36 天 / P90 114 天 /
+        # 最长 243 天** ⇒ 旧实现拿季末当「已知」，等于提前 1~8 个月看到数据，
+        # 是**真前视**，会把 IC/收益系统性抬高。
+        # 现改为：变更 (cur) 的可用时点 = 该季的 notice_date；notice_date 缺失/
+        # 非法才回退季末（并计入 fallback 计数，供审计）。
+        by_sym: Dict[str, List[tuple[date, date, float]]] = {}
+        notice_fallback = 0
         for it in items:
             qe = _parse_date(it.quarter)
             try:
@@ -99,16 +112,28 @@ class HolderConcentrationStrategy(BaseStrategy):
                 continue
             if qe is None or hc <= 0:
                 continue
-            by_sym.setdefault(it.symbol, []).append((qe, hc))
+            nd = _parse_date(getattr(it, "notice_date", None))
+            if nd is None:
+                notice_fallback += 1
+                nd = qe
+            by_sym.setdefault(it.symbol, []).append((qe, nd, hc))
         for sym, lst in by_sym.items():
             lst.sort(key=lambda x: x[0])
             changes: List[tuple[date, float]] = []
             for i in range(1, len(lst)):
-                prev, cur = lst[i - 1][1], lst[i][1]
+                prev, cur = lst[i - 1][2], lst[i][2]
                 if prev > 0:
-                    changes.append((lst[i][0], (cur - prev) / prev))
+                    # 可用时点取「本期披露日」——本期数字披露后才知道环比
+                    changes.append((lst[i][1], (cur - prev) / prev))
             if changes:
+                # 🔴 必须按**可用时点**排序，不能按季末排序：
+                # 披露日相对季末的滞后最长可达 ~294 天且**非单调**（同一票不同
+                # 季度的滞后可能忽长忽短）⇒ 若按季末排、再用 `as_of` 提前 break，
+                # 会因某季披露特别晚而把其后所有本可用的季度**一起丢掉**
+                # （2026-11-10 实测：中间时段命中率被错误压到 0%）。
+                changes.sort(key=lambda x: x[0])
                 self._series[sym] = changes
+        self._notice_fallback = notice_fallback
         self._loaded = True
 
     def _change_as_of(self, sym6: str, as_of: Optional[date]) -> Optional[float]:
@@ -118,8 +143,8 @@ class HolderConcentrationStrategy(BaseStrategy):
         if not series:
             return None
         chosen: Optional[float] = None
-        for qe, pct in series:
-            if qe <= as_of:
+        for avail, pct in series:
+            if avail <= as_of:      # PIT：只认已披露
                 chosen = pct
             else:
                 break
@@ -142,7 +167,13 @@ class HolderConcentrationStrategy(BaseStrategy):
         self._ensure_loaded()
         cfg = self._cfg
         scores: Dict[str, float] = {}
+        # 🔴 2026-11-10 可观测性：记录本次打分的覆盖面，供判读区分
+        # 「因子无效」与「因子没启用」（历史事故：63% 窗口无数据 ⇒ 全中性 ⇒
+        # overlay 空转，但外部只看到"ΔSharpe 接近 0"，会误判成"因子无用"）。
+        n_total = 0
+        n_hit = 0
         for symbol, df in data.items():
+            n_total += 1
             if df is None or len(df) == 0:
                 scores[symbol] = 0.5
                 continue
@@ -150,12 +181,28 @@ class HolderConcentrationStrategy(BaseStrategy):
             if pct is None:
                 scores[symbol] = 0.5
                 continue
+            n_hit += 1
             # 集中（pct<0）→ 高分；扩散（pct>0）→ 低分。
             score = 0.5 - cfg.spread * pct
             score = float(max(0.001, min(0.999, score)))
             if cfg.invert_signal:
                 score = 1.0 - score
             scores[symbol] = score
+        self.last_stats = {
+            "n_total": n_total,
+            "n_hit": n_hit,
+            "n_neutral": n_total - n_hit,
+            "hit_ratio": (n_hit / n_total) if n_total else 0.0,
+            "notice_fallback": getattr(self, "_notice_fallback", 0),
+        }
+        if os.environ.get("AQSP_HOLDER_DIAG") == "1":
+            s = self.last_stats
+            print(
+                f"[holder-diag] total={s['n_total']} hit={s['n_hit']} "
+                f"neutral={s['n_neutral']} hit_ratio={s['hit_ratio']:.1%} "
+                f"notice_fallback={s['notice_fallback']}",
+                flush=True,
+            )
         return scores
 
     @property

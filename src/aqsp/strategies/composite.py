@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Dict, List
 import pandas as pd
 
@@ -514,9 +515,39 @@ class CompositeStrategy(BaseStrategy):
         # 🔴 overlay 集成：2f 达标池内按 holder 集中度重排取 top-n。
         # 这是 holder 因子的唯一启用路径（不进加权平均），直接兑现「正交确认层」
         # —— 打破因子池单风格塌缩，且不稀释基础分。gate 变体内 weight 被清零 ⇒ 此路关闭。
+        #
+        # 🔴 2026-11-10 可观测性：记录「重排到底改变了多少仓位」。
+        # 历史教训（同日实证）：holder CSV 只覆盖 37% 的 gate 窗口 ⇒ 其余时段
+        # 分数全 0.5 ⇒ 重排等价于保持原序 ⇒ overlay **完全无效但不报错**，
+        # 外部只看到「ΔSharpe ≈ 0」，极易误判成「因子无用」。
+        # 故这里把 pool/n/changed 记进 `last_overlay_stats`，供判读区分二者。
         if self._has_holder_concentration() and len(filtered) > n:
             h = self.holder_concentration_strategy.calculate_score(data)
             pool_size = max(n * 2, self.thresholds.holder_concentration.overlay_pool)
             pool = filtered[:pool_size]
-            filtered = sorted(pool, key=lambda s: -h.get(s, 0.5))
+            reranked = sorted(pool, key=lambda s: -h.get(s, 0.5))
+            kept = reranked[:n]
+            changed = sum(1 for i, sym in enumerate(kept) if i >= len(filtered[:n]) or filtered[i] != sym)
+            self.last_overlay_stats = {
+                "pool": len(pool),
+                "n": n,
+                "changed": changed,
+                "changed_ratio": (changed / n) if n else 0.0,
+                "hit_ratio": float(
+                    getattr(self.holder_concentration_strategy, "last_stats", {}).get(
+                        "hit_ratio", 0.0
+                    )
+                ),
+            }
+            if os.environ.get("AQSP_HOLDER_DIAG") == "1":
+                s = self.last_overlay_stats
+                print(
+                    f"[overlay-diag] pool={s['pool']} n={s['n']} "
+                    f"changed={s['changed']}({s['changed_ratio']:.0%}) "
+                    f"factor_hit={s['hit_ratio']:.1%}",
+                    flush=True,
+                )
+            filtered = reranked
+        else:
+            self.last_overlay_stats = {}
         return filtered[:n]
