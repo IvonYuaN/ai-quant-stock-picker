@@ -6637,6 +6637,12 @@ class WalkForwardGridVariant:
     # 仅 planb_* profile 使用；非 None 时 _apply_walkforward_grid_variant 按此直接注入，
     # 绕过旧 4 种 strategy_mix（只能表达 momentum/tr 2 维，表达不了 7 维候选）。
     composite_weights: tuple[float, ...] | None = None
+    # 2026-11-10：holder 筹码集中度 overlay 专用开关。仅 gate 专用 profile
+    # `holder_overlay` 的变体会置 True；`_apply_walkforward_grid_variant` 据此把
+    # `holder_concentration_weight` 从 0.0 改回 0.3（overlay 启用开关，不进加权平均）
+    # 并 enable 该因子。默认 False ⇒ 所有既有变体（含默认网格）overlay 关闭，gate
+    # 仍只验证 2f 基线，绝不改变生产 verdict（红线：不擅改 gate 判决）。
+    holder_overlay: bool = False
 
 
 _WALKFORWARD_VALIDATED_GRID_VARIANTS: tuple[WalkForwardGridVariant, ...] = (
@@ -6696,6 +6702,26 @@ _WALKFORWARD_HTF_MR_GRID_VARIANTS: tuple[WalkForwardGridVariant, ...] = (
     WalkForwardGridVariant("WF-H07", 0.0, 0.0, 60, 10, 10, "htf_mr"),
     WalkForwardGridVariant("WF-H08", 0.0, 0.0, 40, 5, 5, "htf_mr"),
 )
+
+# 2026-11-10：gate 专用 holder 筹码集中度 overlay 验证网格（独立 profile，不碰默认
+# stable / stable_plus 判决，#245 红线：不擅改生产 gate verdict）。
+# 直接复用 14 个已验证互异的 `_WALKFORWARD_VALIDATED_GRID_VARIANTS`，对每个置
+# holder_overlay=True ⇒ `_apply_walkforward_grid_variant` 把 holder weight 改回 0.3
+# 并 enable 因子（overlay 只在 select_stocks 重排，不进加权平均）。
+# 关键不变式：overlay **不改 calculate_score 的 total**（只在 select_stocks 按 holder
+# 重排达标池），故 14 个变体的「打分+top_n+horizon」互异签名与原 14 个**逐位相同**
+# ⇒ 互异列数仍 >= MIN_CSCV_VARIANTS=8，CSCV/PBO 统计可信，不会被重复列凑数。
+# 这是把 holder 正交因子送进 gate 拿 CSCV/DSR 证据的唯一路径（默认网格 holder weight
+# 恒 0.0，跑不出 overlay 差异；本 profile 显式启用后才可比「overlay on vs 2f 基线」）。
+_WALKFORWARD_HOLDER_OVERLAY_GRID_VARIANTS: tuple[WalkForwardGridVariant, ...] = tuple(
+    replace(
+        variant,
+        variant_id=f"WO-{variant.variant_id}",
+        holder_overlay=True,
+    )
+    for variant in _WALKFORWARD_VALIDATED_GRID_VARIANTS
+)
+
 
 # 方案 B（预注册裁决单，revisit_family 触发版）：7 维 composite 候选网格。
 # 旧 4 种 strategy_mix（momentum/volume/mean_reversion/htf_mr）只能表达 momentum/tr
@@ -6766,6 +6792,9 @@ def _walkforward_grid_variants(
         return _WALKFORWARD_STABLE_PLUS_GRID_VARIANTS
     if profile == "htf_mr":
         return _WALKFORWARD_HTF_MR_GRID_VARIANTS
+    if profile == "holder_overlay":
+        # 2026-11-10：gate 专用 holder 正交因子验证网格（不碰默认判决）
+        return _WALKFORWARD_HOLDER_OVERLAY_GRID_VARIANTS
     if profile in _PLANB_VARIANTS:
         return _PLANB_VARIANTS[profile]
     return _WALKFORWARD_STABLE_GRID_VARIANTS
@@ -6864,6 +6893,7 @@ def _apply_walkforward_grid_variant(
     from aqsp.strategies.thresholds import (
         CompositeThresholds,
         MomentumThresholds,
+        HolderConcentrationThresholds,
     )
 
     # 变体必须显式声明其完整因子集：先把所有因子权重清零，再按 strategy_mix 写入声明项。
@@ -6884,6 +6914,11 @@ def _apply_walkforward_grid_variant(
         # 后续若要在 gate 内验证 holder，需新增专用变体显式置 >0 才会启用 overlay。
         "holder_concentration_weight": 0.0,
     }
+    # 2026-11-10：gate 专用 holder overlay 变体。仅当变体声明 holder_overlay=True
+    # 才把 weight 从 0.0 改回 0.3（overlay 启用开关，不进加权平均）并 enable 因子。
+    # 其余变体（含全部默认网格）保持 0.0 ⇒ overlay 关闭，gate 仍只验证 2f 基线。
+    if getattr(variant, "holder_overlay", False):
+        composite_updates["holder_concentration_weight"] = 0.3
     strategy_mix = variant.strategy_mix or "momentum"
     enable_volume = False
     enable_mr = False
@@ -7018,6 +7053,13 @@ def _apply_walkforward_grid_variant(
         replace_kwargs["quality"] = replace(thresholds.quality, enabled=True)
     if enable_value:
         replace_kwargs["value"] = replace(thresholds.value, enabled=True)
+    if getattr(variant, "holder_overlay", False):
+        # holder overlay 走正交确认层（不进加权平均），只需 enable 因子 + weight>0
+        # （weight 已在上面 composite_updates 置 0.3）。因子的 invert_signal 保持默认
+        # False（IC 为正，原生看涨），与 prod YAML 约定一致。
+        replace_kwargs["holder_concentration"] = replace(
+            thresholds.holder_concentration, enabled=True
+        )
     return replace(thresholds, **replace_kwargs)
 
 

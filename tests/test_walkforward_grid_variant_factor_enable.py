@@ -30,15 +30,85 @@ from aqsp.cli import (
     _apply_walkforward_grid_variant,
     _walkforward_grid_variants,
 )
+
+
+# ---------------------------------------------------------------------------
+# 2026-11-10：holder 筹码集中度 overlay 专用 gate profile（holder_overlay）。
+# 防「overlay 变体静默退化」：声明 holder_overlay 的变体应用后必须真的启用
+# holder 因子（weight>0 且 enabled），默认变体必须保持关闭（gate 判决不变）。
+# ---------------------------------------------------------------------------
+
+
+def test_holder_overlay_profile_enables_holder_factor() -> None:
+    """holder_overlay 档位每个变体应用后 holder overlay 必须真启用。"""
+    thresholds = load_thresholds()
+    variants = _walkforward_grid_variants("holder_overlay")
+    assert len(variants) >= MIN_CSCV_VARIANTS, (
+        f"holder_overlay 只有 {len(variants)} 变体 < MIN_CSCV_VARIANTS，CSCV 不可信"
+    )
+    for variant in variants:
+        assert variant.holder_overlay, f"{variant.variant_id} 未声明 holder_overlay"
+        applied = _apply_walkforward_grid_variant(thresholds, variant)
+        strat = CompositeStrategy(thresholds=applied)
+        assert applied.composite.holder_concentration_weight > 0, (
+            f"{variant.variant_id} 声明 overlay 但 weight=0（开关未回写）"
+        )
+        assert applied.holder_concentration.enabled, (
+            f"{variant.variant_id} 声明 overlay 但因子未 enabled（静默退化）"
+        )
+        assert strat._has_holder_concentration(), f"{variant.variant_id} overlay 未生效"
+
+
+def test_default_variants_keep_holder_overlay_disabled() -> None:
+    """既有默认档位（stable / stable_plus）的变体必须保持 holder overlay 关闭。
+
+    #245 红线：不擅改生产 gate verdict —— 默认 grid 的 CSCV/PBO 仍只验 2f 基线，
+    任何默认变体若意外启用 holder overlay 即等于静默改变生产判决。
+    """
+    thresholds = load_thresholds()
+    for profile in ("stable", "stable_plus", "htf_mr"):
+        for variant in _walkforward_grid_variants(profile):
+            applied = _apply_walkforward_grid_variant(thresholds, variant)
+            assert applied.composite.holder_concentration_weight == 0.0, (
+                f"{profile}/{variant.variant_id} 默认变体意外带上了 holder overlay"
+            )
+            assert not CompositeStrategy(thresholds=applied)._has_holder_concentration(), (
+                f"{profile}/{variant.variant_id} 默认变体 holder overlay 未关闭"
+            )
+
+
+def test_holder_overlay_distinct_from_baseline_score() -> None:
+    """overlay 不影响 total（走 select_stocks 重排），但启用后 detailed 多一列
+    holder_concentration。断言两变体 total 相同（overlay 不改打分）以锁死
+    「overlay 不正交稀释基础分」这条不变式。"""
+    thresholds = load_thresholds()
+    data = _data()
+    base_variant = next(v for v in _walkforward_grid_variants("stable_plus") if v.variant_id == "WF-001")
+    wo_variant = next(v for v in _walkforward_grid_variants("holder_overlay") if v.variant_id == "WO-WF-001")
+    base_strat = CompositeStrategy(thresholds=_apply_walkforward_grid_variant(thresholds, base_variant))
+    wo_strat = CompositeStrategy(thresholds=_apply_walkforward_grid_variant(thresholds, wo_variant))
+    # 基础分（calculate_score 走 weighted avg，holder 不进）必须逐位相同
+    assert base_strat.calculate_score(data, regime="unknown") == wo_strat.calculate_score(
+        data, regime="unknown"
+    ), "holder overlay 泄漏进基础分（违反「不进加权平均」不变式）"
+    # 但 detailed_scores 里 overlay 变体多一列 holder_concentration
+    base_detail = base_strat.calculate_detailed_scores(data, regime="unknown")
+    wo_detail = wo_strat.calculate_detailed_scores(data, regime="unknown")
+    assert any("holder_concentration" in v for v in wo_detail.values()), (
+        "overlay 变体 detailed_scores 未带 holder_concentration 列（未生效）"
+    )
+    assert not any("holder_concentration" in v for v in base_detail.values()), (
+        "基线变体不该带 holder_concentration 列（overlay 应关闭）"
+    )
 from aqsp.strategies.composite import CompositeStrategy
 from aqsp.strategies.thresholds import load_thresholds
 from aqsp.walkforward_gate import MIN_CSCV_VARIANTS
 
-PROFILES = ("stable", "stable_plus", "exploratory", "htf_mr", "planb_v1", "planb_v2", "planb_v3")
+PROFILES = ("stable", "stable_plus", "exploratory", "htf_mr", "planb_v1", "planb_v2", "planb_v3", "holder_overlay")
 
 #: 变体数 >= MIN_CSCV_VARIANTS 的档位 —— 只有这些档位才受「互异列数必须真正够数」
 #: 这条守卫约束（``stable`` N=5 天然不足，不在此列）。
-PROFILES_MEETING_MIN_CSCV = ("stable_plus", "exploratory", "htf_mr", "planb_v1", "planb_v2", "planb_v3")
+PROFILES_MEETING_MIN_CSCV = ("stable_plus", "exploratory", "htf_mr", "planb_v1", "planb_v2", "planb_v3", "holder_overlay")
 
 BARS = 220
 SYMBOL_COUNT = 40
