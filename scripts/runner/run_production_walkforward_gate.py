@@ -318,10 +318,42 @@ def _grid_variant_count(grid_profile: str) -> int:
 
     硬依赖：import 失败必须让 gate 响亮地挂掉，而不是静默回退 1——静默回退
     等于把 #305 的修复悄悄关掉。
+
+    🔴 2026-11-10：**未知/空档位仍回落 stable 的臂数**（既有契约，见
+    ``tests/test_production_walkforward_gate.py::test_grid_variant_count_matches_profile_table``）。
+    本函数只用于按臂数估算超时倍率等**辅助量**，未知档位给个默认臂数是安全的；
+    而真正的「跑哪个档位」由 ``--grid-profile`` 的 argparse 白名单把关
+    （未知档位在那里就被拒绝，不会走到这里）。
+    ⇒ 故这里**不**把 ``_walkforward_grid_variants`` 的 fail-closed 异常透传出来
+    （那会让本辅助函数在未知档位时崩掉，破坏既有契约）。
     """
     from aqsp.cli import _walkforward_grid_variants
 
-    return max(1, len(_walkforward_grid_variants(str(grid_profile or "stable"))))
+    try:
+        variants = _walkforward_grid_variants(str(grid_profile or "stable"))
+    except ValueError:
+        # 未知档位：回落 stable 的臂数（既有契约；真正拦截在 argparse choices）
+        variants = _walkforward_grid_variants("stable")
+    return max(1, len(variants))
+
+
+def _grid_profile_choices() -> tuple[str, ...]:
+    """``--grid-profile`` 的**合法档位白名单**（派生自 aqsp.cli 的档位查表）。
+
+    🔴 2026-11-10：此前这里手抄一份 choices 元组，与 `aqsp.cli` 的档位路由
+    是**两处维护** ⇒ 新增档位必然漏网。实证：`htf_mr` 长期不在白名单里
+    （只能靠 T3 构建脚本打补丁注入才能跑）；`holder_overlay` 若照抄，
+    argparse 会直接拒绝 ⇒ 跑起来必失败且报错信息与真实原因不符。
+
+    改为从 `aqsp.cli.walkforward_grid_profiles()` 派生 ⇒ 档位集合只有一个
+    事实源，新增档位只需改 `cli.py` 一处，入口自动跟上。
+
+    硬依赖：import 失败必须让 gate 响亮地挂掉，而不是静默回退到手抄列表 ——
+    静默回退等于把这次修复悄悄关掉（与 `_grid_variant_count` 同一纪律）。
+    """
+    from aqsp.cli import walkforward_grid_profiles
+
+    return walkforward_grid_profiles()
 
 
 def _total_memory_gib() -> float | None:
@@ -2062,11 +2094,16 @@ def main() -> int:
     )
     parser.add_argument(
         "--grid-profile",
-        choices=("stable", "stable_plus", "exploratory", "planb_v1", "planb_v2", "planb_v3"),
+        # 🔴 2026-11-10：白名单由 `aqsp.cli.walkforward_grid_profiles()` **派生**，
+        # 不再手抄一份。手抄就是「新增档位漏网」的根源（`htf_mr` 曾因此漏掉，
+        # 只能靠 T3 构建脚本打补丁注入才能跑；`holder_overlay` 若照抄也会漏）。
+        # 派生后新增档位只需改 `cli.py` 一处，入口自动跟上。
+        choices=_grid_profile_choices(),
         default="stable_plus",
         help="grid CSCV 变体集合：stable_plus(N=8，默认，满足 CSCV n_variants>=8 硬前置) 功效增强，"
         "stable(N=5，CSCV 变体不足、门禁 fail-closed) 已被取代，exploratory(N=11) 仅供研究，"
-        "planb_v1/v2/v3(N=8) 为方案B预注册7维候选实验档位（不进默认值）",
+        "planb_v1/v2/v3(N=8) 为方案B预注册7维候选实验档位（不进默认值），"
+        "holder_overlay 为股东户数筹码集中度 overlay 专用验证档位（研究用，不进默认值）",
     )
     parser.add_argument(
         "--crash-protection",

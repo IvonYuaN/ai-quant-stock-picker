@@ -6782,22 +6782,56 @@ _WALKFORWARD_GRID_VARIANTS: tuple[WalkForwardGridVariant, ...] = (
     _WALKFORWARD_EXPLORATORY_GRID_VARIANTS
 )
 
+# 🔴 2026-11-10：档位路由查表（**单一事实源**）。
+# 此前路由是 if 链 + 末尾兜底回落 stable，两处缺陷：
+#   ①「能路由哪些档位」不可枚举 ⇒ 各 CLI 入口的 --grid-profile 白名单只能手抄
+#      ⇒ 新增档位必漏（htf_mr 就漏过，只能靠 T3 构建脚本打补丁注入才能跑）；
+#   ②拼错档位名会**静默回落 stable** ⇒ 判读人以为跑的是 A 档、实跑的是 stable。
+# 改为查表后：档位集合可枚举（walkforward_grid_profiles()），入口白名单可派生，
+# 未知档位显式 fail-closed。
+_WALKFORWARD_GRID_VARIANT_TABLE: dict[str, tuple[WalkForwardGridVariant, ...]] = {
+    "stable": _WALKFORWARD_STABLE_GRID_VARIANTS,
+    "stable_plus": _WALKFORWARD_STABLE_PLUS_GRID_VARIANTS,
+    "exploratory": _WALKFORWARD_EXPLORATORY_GRID_VARIANTS,
+    "htf_mr": _WALKFORWARD_HTF_MR_GRID_VARIANTS,
+    # 2026-11-10：gate 专用 holder 正交因子验证网格（独立档位，不碰默认判决）
+    "holder_overlay": _WALKFORWARD_HOLDER_OVERLAY_GRID_VARIANTS,
+    **_PLANB_VARIANTS,
+}
+
 
 def _walkforward_grid_variants(
     profile: str = "stable",
 ) -> tuple[WalkForwardGridVariant, ...]:
-    if profile == "exploratory":
-        return _WALKFORWARD_EXPLORATORY_GRID_VARIANTS
-    if profile == "stable_plus":
-        return _WALKFORWARD_STABLE_PLUS_GRID_VARIANTS
-    if profile == "htf_mr":
-        return _WALKFORWARD_HTF_MR_GRID_VARIANTS
-    if profile == "holder_overlay":
-        # 2026-11-10：gate 专用 holder 正交因子验证网格（不碰默认判决）
-        return _WALKFORWARD_HOLDER_OVERLAY_GRID_VARIANTS
-    if profile in _PLANB_VARIANTS:
-        return _PLANB_VARIANTS[profile]
-    return _WALKFORWARD_STABLE_GRID_VARIANTS
+    """按档位取网格变体集合（**档位路由的单一事实源**）。
+
+    🔴 2026-11-10：改为查表（此前是 if 链 + 末尾兜底回落 stable）。
+    查表让「本函数能路由的档位」成为一个**可枚举的集合**
+    ⇒ ``WALKFORWARD_GRID_PROFILES`` 可由它派生 ⇒ 各 CLI 入口的
+    ``--grid-profile`` 白名单不再各手抄一份 ⇒ **新增档位不会再漏网**
+    （历史缺陷：``htf_mr`` 不在任何入口白名单里，只能靠 T3 构建脚本
+    打补丁注入才能跑，正是「档位路由与入口白名单两处维护 ⇒ 漏网」的症状）。
+
+    未知档位**不再静默回落 stable**（旧行为：拼错档位名会静默跑成 stable，
+    判读人以为跑的是自己要的那档）⇒ 改为显式抛错 fail-closed。
+    """
+    try:
+        return _WALKFORWARD_GRID_VARIANT_TABLE[profile]
+    except KeyError:
+        raise ValueError(
+            f"unknown grid profile: {profile!r} "
+            f"(known: {', '.join(sorted(_WALKFORWARD_GRID_VARIANT_TABLE))})"
+        ) from None
+
+
+def walkforward_grid_profiles() -> tuple[str, ...]:
+    """本项目可路由的全部 grid 档位名（CLI ``--grid-profile`` 白名单的权威来源）。
+
+    入口脚本（``scripts/runner/run_production_walkforward_gate.py`` 等）应
+    ``choices=walkforward_grid_profiles()`` 派生白名单，**不要手抄** ——
+    手抄就是「新增档位漏网」的根源（``htf_mr`` 曾因此漏掉）。
+    """
+    return tuple(sorted(_WALKFORWARD_GRID_VARIANT_TABLE))
 
 
 def _parse_walkforward_period_range(period: object) -> tuple[str, str] | None:
