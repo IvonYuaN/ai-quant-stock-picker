@@ -11,15 +11,32 @@ gate 结果逐臂对比即可，无需再跑一轮 17h 的 overlay-off 基线。
 
 判读口径（缺一不可）
 --------------------
-1. **逐臂对比（主证据）**：按**参数签名**（mom/tr/qual/val/vol/mr/htf/lb/h/top）
-   匹配两边的臂 —— 不能按 id 匹配（`WO-WF-001` 与 `WF-001` 参数同、名字不同）。
-   看 ΔSharpe / Δ总收益：overlay 只改 `select_stocks` 的重排 ⇒ 同参数臂的差异
-   **只能**来自 overlay。
+1. **逐臂对比（主证据）**：按**变体 id 去 `WO-` 前缀**匹配两边的臂（档位由
+   `replace(v, variant_id=f"WO-{v.variant_id}")` 逐臂复制 ⇒ 构造即 1:1）。
+   **不能按参数签名匹配**：报告表的权重列是**声明值**，`WF-001` 与 `WF-V01`
+   声明参数完全相同（但后者额外启用 volume）⇒ 按签名会把两臂塌成一个
+   （实测 8 臂只解析出 7 个）。看 ΔSharpe / Δ总收益：overlay 只改
+   `select_stocks` 的重排 ⇒ 同参数臂的差异**只能**来自 overlay。
 2. **gate 级判据（DSR/PBO）不可跨臂数直接比**：DSR 的多重检验惩罚依赖
    `n_variants`（基线 8 臂 vs 本档位 13 臂）⇒ 两个 DSR 数值不同不能直接判优劣，
    只能作参考。真正可比的是逐臂。
 3. **窗口差异必须显式标注**：生产基线窗口 2023-11-07..2026-11-06，本档位
    2023-11-10..2026-11-09（差 3 天、长度一致）。差异极小但不为零 ⇒ 结论里标注。
+
+🔴 预注册判据（2026-11-10 跑批**开始后、结果未知时**定下，防事后按结果编标准）
+--------------------------------------------------------------------------------
+「overlay 有正效果、可考虑开生产」须**同时**满足：
+
+- **A（主判据）**：8 个可配对臂中 **≥5 臂 ΔSharpe > 0**，且 **ΔSharpe 均值 > 0**。
+  （≥5/8 才不是噪声级翻转；只看均值会被单臂极值带偏，故两个条件都要。）
+- **B（辅助判据）**：全档位 DSR 优于基线 **−1.2463**。
+  ⚠️ 本档位 13 臂 vs 基线 8 臂 ⇒ 本档位受**更重**的多重检验惩罚，故 B 通过
+  含义更强；但 B **不通过不足以单独否决**（臂数不同，非同口径）。
+
+任一条不满足 ⇒ **不得**开生产 overlay（`thresholds.yaml` 保持
+`holder_concentration_weight: 0.0` + `enabled: false`），结论如实记为
+「无已证 edge」，**不许改判据/换窗口/挑臂重跑**（红线：禁「亏损就调参」）。
+即使 A+B 都通过，开生产仍是**须老大拍板**的红线动作（AGENTS §6.1）。
 
 用法
 ----
@@ -156,6 +173,62 @@ def _gate_summary(payload: dict[str, Any]) -> str:
     return "、".join(f"{k}={payload.get(k)}" for k in keys)
 
 
+#: 生产基线（`stable_plus`，overlay OFF）的 DSR。用于预注册判据 B。
+BASELINE_DSR = -1.2463
+
+#: 预注册判据 A 的阈值：8 个可配对臂中最少多少臂 ΔSharpe>0。
+MIN_IMPROVED_ARMS = 5
+
+
+def _preregistered_verdict(
+    *,
+    matched: int,
+    baseline_total: int,
+    deltas: list[float],
+    baseline_gate: dict[str, Any] | None,
+    candidate_gate: dict[str, Any] | None,
+) -> tuple[str, list[str]]:
+    """按**预注册判据**（结果未知时定下）给出 PASS/FAIL/未完成 与理由。
+
+    A：8 个可配对臂中 ≥5 臂 ΔSharpe>0 且 ΔSharpe 均值>0。
+    B：全档位 DSR 优于基线 `BASELINE_DSR`。
+    两条都满足才算「有正效果」；任一条不满足即不得开生产 overlay。
+    未跑完（配对臂数 < 基线臂数）⇒ 明确「暂不判定」，不做半程结论。
+    """
+    reasons: list[str] = []
+    if matched < baseline_total:
+        return (
+            f"未完成（已配对 {matched}/{baseline_total} 臂）——**暂不判定**",
+            ["半程数据不构成结论；跑完后重跑本脚本。"],
+        )
+    improved = sum(1 for d in deltas if d > 0)
+    mean_delta = sum(deltas) / len(deltas) if deltas else 0.0
+    a_pass = improved >= MIN_IMPROVED_ARMS and mean_delta > 0
+    reasons.append(
+        f"A 逐臂：改善 {improved}/{len(deltas)} 臂（门槛 ≥{MIN_IMPROVED_ARMS}）、"
+        f"ΔSharpe 均值 {mean_delta:+.3f}（门槛 >0）⇒ {'PASS' if a_pass else 'FAIL'}"
+    )
+
+    cand_dsr = (candidate_gate or {}).get("deflated_sharpe")
+    if isinstance(cand_dsr, (int, float)):
+        b_pass = float(cand_dsr) > BASELINE_DSR
+        reasons.append(
+            f"B DSR：本档位 {float(cand_dsr):.4f} vs 基线 {BASELINE_DSR:.4f} "
+            f"⇒ {'PASS' if b_pass else 'FAIL'}"
+        )
+    else:
+        b_pass = False
+        reasons.append("B DSR：gate json 未就绪 ⇒ 暂缺（视为未通过，不作半程结论）")
+
+    if a_pass and b_pass:
+        verdict = "**PASS（有正效果）** —— 可提「开生产 overlay」给老大拍板"
+    elif not a_pass and not b_pass:
+        verdict = "**FAIL（无已证 edge）** —— 不得开生产 overlay；许可结论记「无已证 edge」"
+    else:
+        verdict = "**部分通过** —— 按预注册规则视为「未达可开」；如实记录，不许改判据重跑"
+    return verdict, reasons
+
+
 def build_report(
     *,
     baseline: dict[str, dict[str, Any]],
@@ -166,6 +239,51 @@ def build_report(
 ) -> str:
     """生成判读 markdown。"""
     lines: list[str] = ["# holder_overlay 取证判读（overlay on vs 基线 off）", ""]
+
+    # 候选侧：优先用 report（有完整表）；否则用日志（按 id 近似）
+    cand_by_id: dict[str, dict[str, Any]] = {}
+    if candidate:
+        for vid, row in candidate.items():
+            cand_by_id[_strip_overlay_prefix(vid)] = row
+    elif candidate_log:
+        for vid, row in candidate_log.items():
+            cand_by_id[_strip_overlay_prefix(vid)] = row
+
+    # 先算逐臂 Δ（预注册判定要用），再统一输出
+    matched = 0
+    deltas: list[float] = []
+    unmatched_baseline: list[str] = []
+    for base_id, base_row in sorted(baseline.items()):
+        cand_row = cand_by_id.get(base_id)
+        if cand_row is None:
+            unmatched_baseline.append(base_id)
+            continue
+        deltas.append(cand_row["sharpe"] - base_row["sharpe"])
+        matched += 1
+
+    verdict, reasons = _preregistered_verdict(
+        matched=matched,
+        baseline_total=len(baseline),
+        deltas=deltas,
+        baseline_gate=baseline_gate,
+        candidate_gate=candidate_gate,
+    )
+    lines += [
+        "## 零、预注册判定（判据在结果未知时定下，防事后编标准）",
+        "",
+        f"**{verdict}**",
+        "",
+    ]
+    lines += [f"- {r}" for r in reasons]
+    lines += [
+        "",
+        "> 判据 A：8 个可配对臂中 ≥5 臂 ΔSharpe>0 **且** ΔSharpe 均值>0。",
+        "> 判据 B：全档位 DSR 优于基线 −1.2463（本档位 13 臂 vs 基线 8 臂 ⇒ 受更重",
+        "> 多重检验惩罚，故 B 通过含义更强；B 不通过不足以单独否决）。",
+        "> **任一条不满足 ⇒ 不得开生产 overlay**；不许改判据/换窗口/挑臂重跑",
+        "> （红线：禁「亏损就调参」）。A+B 全过也只是「可提议」，开生产仍须老大拍板。",
+        "",
+    ]
 
     lines += ["## 一、gate 级判据（⚠️ 不可跨臂数直接比）", ""]
     lines.append(f"- 基线（overlay OFF）：{_gate_summary(baseline_gate or {})}")
@@ -183,22 +301,9 @@ def build_report(
     )
     lines.append("|---|---|---|---|---|---|---|")
 
-    # 候选侧：优先用 report（有完整表）；否则用日志（按 id 近似）
-    cand_by_id: dict[str, dict[str, Any]] = {}
-    if candidate:
-        for vid, row in candidate.items():
-            cand_by_id[_strip_overlay_prefix(vid)] = row
-    elif candidate_log:
-        for vid, row in candidate_log.items():
-            cand_by_id[_strip_overlay_prefix(vid)] = row
-
-    matched = 0
-    deltas: list[float] = []
-    unmatched_baseline: list[str] = []
     for base_id, base_row in sorted(baseline.items()):
         cand_row = cand_by_id.get(base_id)
         if cand_row is None:
-            unmatched_baseline.append(base_id)
             lines.append(
                 f"| {base_id} | {base_row['sharpe']:.2f} | {base_row['total_return']:.2%} | "
                 "（未完成/无对应臂） | - | - | - |"
@@ -206,8 +311,6 @@ def build_report(
             continue
         delta_sharpe = cand_row["sharpe"] - base_row["sharpe"]
         delta_ret = cand_row["total_return"] - base_row["total_return"]
-        deltas.append(delta_sharpe)
-        matched += 1
         lines.append(
             f"| {base_id} | {base_row['sharpe']:.2f} | {base_row['total_return']:.2%} | "
             f"WO-{base_id} | {cand_row['sharpe']:.2f} | {delta_sharpe:+.2f} | {delta_ret:+.2%} |"
@@ -223,6 +326,25 @@ def build_report(
             f"改善 **{improved}/{len(deltas)}** 臂、"
             f"最好 **{max(deltas):+.2f}**、最差 **{min(deltas):+.2f}**。"
         )
+
+    # 自动检测「period 数不一致」——窗口错位会让对齐期数变化，直接影响可比性，
+    # 必须机器报出来而不是靠人记着（2026-11-10 实测首臂 19 期 vs 基线 20 期）。
+    period_mismatch: list[str] = []
+    for base_id, base_row in sorted(baseline.items()):
+        cand_row = cand_by_id.get(base_id)
+        if cand_row is None:
+            continue
+        base_p = str(base_row.get("periods", "")).strip()
+        cand_p = str(cand_row.get("periods", "")).strip()
+        if base_p and cand_p and base_p != cand_p:
+            period_mismatch.append(f"{base_id}: 基线 {base_p} 期 vs overlay {cand_p} 期")
+    if period_mismatch:
+        lines += [
+            "",
+            "> 🔴 **period 数不一致（对齐期数不同 ⇒ 可比性下降，结论须降权）**：",
+        ]
+        lines += [f"> - {item}" for item in period_mismatch]
+
     lines += [
         "",
         "> ⚠️ 窗口差异：生产基线 `2023-11-07..2026-11-06`、本档位 `2023-11-10..2026-11-09`",

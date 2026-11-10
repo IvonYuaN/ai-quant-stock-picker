@@ -133,3 +133,76 @@ def test_json_roundtrip_gate_summary(tmp_path: Path) -> None:
     )
     assert "deflated_sharpe=-1.2463" in text
     assert "pbo=0.6627" in text
+
+
+# --------------------------------------------------------------------------- #
+# 预注册判定：防止「看到结果再编标准」
+# --------------------------------------------------------------------------- #
+
+
+def _verdict(matched: int, baseline_total: int, deltas, cand_dsr=None):
+    from compare_holder_overlay import _preregistered_verdict
+
+    return _preregistered_verdict(
+        matched=matched,
+        baseline_total=baseline_total,
+        deltas=list(deltas),
+        baseline_gate={"deflated_sharpe": -1.2463},
+        candidate_gate=({} if cand_dsr is None else {"deflated_sharpe": cand_dsr}),
+    )
+
+
+def test_verdict_refuses_halfway_conclusion() -> None:
+    """未跑完（配对臂数 < 基线臂数）必须明确「暂不判定」，不给半程结论。"""
+    verdict, reasons = _verdict(3, 8, [0.5, 0.4, 0.3], cand_dsr=0.5)
+    assert "未完成" in verdict and "暂不判定" in verdict
+    assert any("半程数据不构成结论" in r for r in reasons)
+
+
+def test_verdict_pass_requires_both_criteria() -> None:
+    """A（≥5/8 臂改善且均值>0）+ B（DSR 优于基线）都满足才算 PASS。"""
+    deltas = [0.2, 0.1, 0.05, 0.03, 0.02, -0.01, -0.02, -0.03]  # 5 改善、均值>0
+    verdict, reasons = _verdict(8, 8, deltas, cand_dsr=-1.0)
+    assert "PASS" in verdict
+    assert any("A 逐臂：改善 5/8" in r for r in reasons)
+
+
+def test_verdict_fail_when_arms_not_improved() -> None:
+    """改善臂数不足（<5）时，即使均值>0 也不得 PASS（防单臂极值带偏）。"""
+    deltas = [3.0, -0.1, -0.1, -0.1, -0.1, -0.1, -0.1, -0.1]  # 仅 1 臂改善
+    verdict, _ = _verdict(8, 8, deltas, cand_dsr=0.5)
+    assert "FAIL" in verdict or "部分通过" in verdict
+    assert "PASS（有正效果）" not in verdict
+
+
+def test_verdict_fail_when_dsr_worse() -> None:
+    """DSR 未优于基线时不得判 PASS。"""
+    deltas = [0.9, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3]
+    verdict, reasons = _verdict(8, 8, deltas, cand_dsr=-1.5)
+    assert "PASS（有正效果）" not in verdict
+    assert any("B DSR" in r and "FAIL" in r for r in reasons)
+
+
+def test_report_includes_preregistered_section() -> None:
+    """报告必须含「预注册判定」章节，且写明不许改判据重跑。"""
+    text = build_report(baseline=parse_report_table(BASELINE_MD))
+    assert "预注册判定" in text
+    assert "不许改判据" in text
+
+
+def test_report_flags_period_count_mismatch() -> None:
+    """period 数不一致必须被自动报出（窗口错位 ⇒ 对齐期数不同 ⇒ 可比性下降）。"""
+    baseline = parse_report_table(BASELINE_MD)  # 全部 20 期
+    # 日志里首臂实测 19 期
+    log = "grid variant WO-WF-001: periods=19 sharpe=0.40 return=8.86%\n"
+    text = build_report(baseline=baseline, candidate_log=parse_log_arms(log))
+    assert "period 数不一致" in text
+    assert "WF-001: 基线 20 期 vs overlay 19 期" in text
+
+
+def test_report_no_period_warning_when_aligned() -> None:
+    """期数一致时不得误报。"""
+    baseline = parse_report_table(BASELINE_MD)
+    log = "grid variant WO-WF-001: periods=20 sharpe=0.40 return=8.86%\n"
+    text = build_report(baseline=baseline, candidate_log=parse_log_arms(log))
+    assert "period 数不一致" not in text
