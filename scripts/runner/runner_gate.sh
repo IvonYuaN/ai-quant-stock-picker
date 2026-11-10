@@ -89,9 +89,11 @@ if [ "$LOAD_GUARD" = "1" ]; then
 fi
 
 # 1) 前置校验：代码 / 数据 / venv
-[ -d "$RELEASE" ] || { echo "缺 release：$RELEASE（先跑 runner_sync.sh）"; exit 1; }
-[ -f "$DATA" ] || { echo "缺数据：$DATA（先跑 runner_sync.sh）"; exit 1; }
-[ -x "$VENV/bin/python" ] || { echo "缺 venv：$VENV（见 docs/two-node-handoff.md §3）"; exit 1; }
+# ⚠️ 变量名必须写 ${VAR}：紧跟全角括号时 bash 会把「（」并入变量名 ⇒
+# `set -u` 下报 unbound variable，本该打印的提示反而打不出来（2026-11-10 实测）。
+[ -d "$RELEASE" ] || { echo "缺 release：${RELEASE}（先跑 runner_sync.sh）"; exit 1; }
+[ -f "$DATA" ] || { echo "缺数据：${DATA}（先跑 runner_sync.sh）"; exit 1; }
+[ -x "$VENV/bin/python" ] || { echo "缺 venv：${VENV}（见 docs/two-node-handoff.md §3）"; exit 1; }
 
 PY="$VENV/bin/python"
 export PYTHONPATH="$RELEASE/src:$RELEASE"
