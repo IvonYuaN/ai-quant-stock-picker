@@ -23,13 +23,14 @@ export const operationContract = {
   shanghaiBoundary: shanghaiDate(new Date("2026-10-22T16:01:00Z")) === "2026-10-23",
   // 2026-11-09：导航从 4 项主线改为三组 14 个模块（参考 investment-news / TickFlow 的多模块视图切换器）。
   // 2026-11-09 二次调整：笔记与研报撤出左栏（用户不用），补上自选与指数两个真用得上的模块。
-  navigationModuleCount: NAV_LINES.flatMap((line) => line.items).length === 14,
+  // 2026-11-10 补「信号」模块（用既有 /api/performance 台账，非空壳）。
+  navigationModuleCount: NAV_LINES.flatMap((line) => line.items).length === 15,
   navigationOrder: NAV_LINES.flatMap((line) => line.items.map((item) => item.to)).join(",") ===
-    "/today,/candidates,/screener,/factors,/backtest,/market,/indices,/data,/stream,/my/holdings,/monitor,/review,/evidence,/watchlist",
+    "/today,/candidates,/screener,/factors,/backtest,/signals,/market,/indices,/data,/stream,/my/holdings,/monitor,/review,/evidence,/watchlist",
   navigationLabelsFollowModulePlan: NAV_LINES.flatMap((line) => line.items.map((item) => item.label)).join(",") ===
-    "看板,候选,策略,因子,回测,市场环境,指数,数据,消息,持仓,监控,复盘,研究依据,自选",
+    "看板,候选,策略,因子,回测,信号,市场环境,指数,数据,消息,持仓,监控,复盘,研究依据,自选",
   navigationGroupsAreTwo: NAV_LINES.map((line) => line.title).join(",") === "研究,决策",
-  navigationRoutesAreUnique: new Set(NAV_LINES.flatMap((line) => line.items.map((item) => item.to))).size === 14,
+  navigationRoutesAreUnique: new Set(NAV_LINES.flatMap((line) => line.items.map((item) => item.to))).size === 15,
   unusedModulesAreNotInNavigation: !NAV_LINES.flatMap((line) => line.items).some((item) => item.to === "/my/notes" || item.to === "/my/reports"),
   // 2026-11-09：自选独立成模块页 /watchlist，旧入口跳过去。
   watchlistCompatibility: LEGACY_ROUTES["/my/watchlist"] === "/watchlist",
