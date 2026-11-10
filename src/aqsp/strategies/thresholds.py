@@ -149,6 +149,13 @@ class CompositeThresholds:
     #    **且 `invert_signal: true`**（IC 为负，不反转等于赌反方向）。
     # ⚠️ 本维度不参与 regime 权重调整（同 pvc/volume_surge/volatility_position 保守处理）。
     lower_shadow_ratio_weight: float = 0.0
+    # 🔴 2026-11-10 真突破新增维度：股东户数筹码集中度（−Δ户数%）。
+    # 探针实测 5 日 IC = +0.073（正号！与现役全负 IC 的 OHLCV 反转因子相反），
+    # 对 mom20/rev5/turn20 截面相关 ≈0 ⇒ 真正正交、可互补。
+    # ⚠️ 默认 0.0 ⇒ 合并不改变任何生产行为；启用需同时 `holder_concentration.enabled: true`
+    #    （`_has_*` 守卫要求 enabled AND weight>0）**且 invert_signal 保持 False**（IC 为正）。
+    # ⚠️ 本维度不参与 regime 权重调整（同 pvc/volume_surge 第一版保守处理）。
+    holder_concentration_weight: float = 0.0
     min_total_score: float = 0.6
     base_blend_weight: float = 0.7
     regime_blend_weight: float = 0.3
@@ -772,6 +779,33 @@ class LowerShadowRatioThresholds:
     invert_signal: bool = False
 
 
+@dataclass
+class HolderConcentrationThresholds:
+    """股东户数筹码集中度因子（2026-11-10 真突破新增）。
+
+    数据源：prod pit_cache/holder_count.csv（HolderNumSource）。
+    因子 = −Δ股东户数%（季度环比）；户数减少=筹码集中=看多。
+    探针实测 5 日 IC = +0.073（正号，与现役全负 IC 的 OHLCV 反转因子相反），
+    对 mom20/rev5/turn20 截面相关 ≈0 ⇒ 真正正交、可互补。
+    ⚠️ 原生方向即看涨 ⇒ **invert_signal 默认 False（不反转）**；与 pvc/volume_surge 等
+       IC 为负的因子相反约定，切勿误改。
+    ⚠️ 默认 composite.holder_concentration_weight=0.0 ⇒ 合并不改变任何生产行为；
+       启用需同时把 `holder_concentration.enabled` 设为 true
+       （`_has_*` 守卫要求 enabled AND weight>0）。
+    🔴 集成路线 = overlay（非等权混合）：holder 不进入 `_dimension_specs` 的加权
+       平均（避免 90% 中性分稀释基础分），而是在 `select_stocks` 里对「2f 达标池」
+       按 holder 集中度重排选股。故 `composite.holder_concentration_weight` 在此语义下
+       **仅作 overlay 启用开关（>0 即开）**，不再参与加权。
+    """
+
+    enabled: bool = False
+    spread: float = 2.0
+    invert_signal: bool = False
+    # overlay 候选池大小：对「2f 基础分达标」的前 overlay_pool 只按 holder 重排取 top-n。
+    # 池过小→挑不到 holder 信号；过大→退化为纯 holder 选股。默认 100 与验证脚本一致。
+    overlay_pool: int = 100
+
+
 @dataclass(frozen=True)
 class Thresholds:
     version: str = "2.0.0"
@@ -791,6 +825,9 @@ class Thresholds:
     macd_hist: MacdHistThresholds = field(default_factory=MacdHistThresholds)
     lower_shadow_ratio: LowerShadowRatioThresholds = field(
         default_factory=LowerShadowRatioThresholds
+    )
+    holder_concentration: HolderConcentrationThresholds = field(
+        default_factory=HolderConcentrationThresholds
     )
     composite: CompositeThresholds = field(default_factory=CompositeThresholds)
     risk: RiskThresholds = field(default_factory=RiskThresholds)
@@ -909,6 +946,12 @@ def _parse_macd_hist(data: dict) -> MacdHistThresholds:
 def _parse_lower_shadow_ratio(data: dict) -> LowerShadowRatioThresholds:
     return LowerShadowRatioThresholds(
         **_filter_dataclass_kwargs(LowerShadowRatioThresholds, _as_dict(data))
+    )
+
+
+def _parse_holder_concentration(data: dict) -> HolderConcentrationThresholds:
+    return HolderConcentrationThresholds(
+        **_filter_dataclass_kwargs(HolderConcentrationThresholds, _as_dict(data))
     )
 
 
@@ -1077,6 +1120,9 @@ def load_thresholds(
         macd_hist=_parse_macd_hist(data.get("macd_hist", {})),
         lower_shadow_ratio=_parse_lower_shadow_ratio(
             data.get("lower_shadow_ratio", {})
+        ),
+        holder_concentration=_parse_holder_concentration(
+            data.get("holder_concentration", {})
         ),
         composite=CompositeThresholds(
             **_filter_dataclass_kwargs(CompositeThresholds, data.get("composite", {}))

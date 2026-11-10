@@ -11,6 +11,13 @@ composite:
   mean_reversion_weight: 0.0
   triple_rise_weight: 0.0
   price_volume_corr_weight: 0.3
+  # 🔴 2026-11-10 真突破：股东户数筹码集中度（−Δ户数%）。探针实测 5 日 IC=+0.073（正号，
+  # 与现役全负 IC 的 OHLCV 反转因子相反），对 mom20/rev5/turn20 截面相关≈0 ⇒ 真正正交。
+  # 启用需同时 `holder_concentration.enabled: true` 且 invert_signal 保持 False。
+  # ⚠️ 集成路线 = overlay（非等权混合）：本 weight 在此**仅作 overlay 启用开关（>0 即开）**，
+  #   不再参与加权；因子在 `select_stocks` 内对 2f 达标池按集中度重排。
+  #   gate 变体内被显式清零 ⇒ 生产 gate 仍只验证 2f 基线条，overlay 不进 gate。
+  holder_concentration_weight: 0.3
   # v1.1.21（2026-10-13）：#199 DSR 负值修复 = 反向 alpha 方向纠正（方案 A，守卫合规最小集）。
   # 实测依据：momentum 近 3 年 A 股反向有效（IC −2.52 / 样本内 t=−6.46 / OOS t=−3.85），
   # 生产给它 0.3 权重 = 系统性买反；price_volume_corr 是唯一「既有显著 alpha 又与现有信号
@@ -78,6 +85,14 @@ price_volume_corr:
   enabled: true
   window: 10
   invert_signal: true
+# 🔴 2026-11-10 真突破新增：股东户数筹码集中度（−Δ户数%）。
+# 探针实测 5 日 IC=+0.073（正号，与现役全负 IC 反转因子相反），截面正交；
+# 与 composite.holder_concentration_weight=0.3 成对生效（_has_* 守卫要求 enabled AND weight>0）。
+# ⚠️ invert_signal 必须保持 False：本因子原生即看涨（IC 为正），反转会赌反方向。
+holder_concentration:
+  enabled: true
+  spread: 2.0
+  invert_signal: false
 quality:
   enabled: false
   eps_growth_min: 0.1

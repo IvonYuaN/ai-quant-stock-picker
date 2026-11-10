@@ -6878,6 +6878,11 @@ def _apply_walkforward_grid_variant(
         "volume_weight": 0.0,
         "quality_weight": 0.0,
         "value_weight": 0.0,
+        # 🔴 2026-11-10：股东户数集中度维度走 overlay 路线（不进加权平均），
+        # `holder_concentration_weight` 在此语义下仅作 overlay 启用开关。清零 ⇒ 所有既有变体
+        # （WF-001/B*/V01/MR1）的 overlay 关闭，gate 仍只验证 2f 基线条；
+        # 后续若要在 gate 内验证 holder，需新增专用变体显式置 >0 才会启用 overlay。
+        "holder_concentration_weight": 0.0,
     }
     strategy_mix = variant.strategy_mix or "momentum"
     enable_volume = False

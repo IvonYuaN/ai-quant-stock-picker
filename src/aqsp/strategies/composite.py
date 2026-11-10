@@ -9,6 +9,7 @@ from aqsp.strategies.momentum import MomentumStrategy
 from aqsp.strategies.quality import QualityStrategy
 from aqsp.strategies.value import ValueStrategy
 from aqsp.strategies.price_volume_corr import PriceVolumeLevelCorrelation
+from aqsp.strategies.holder_concentration import HolderConcentrationStrategy
 from aqsp.strategies.volume_surge import VolumeSurge
 from aqsp.strategies.volatility_position import VolatilityPositionStrategy
 from aqsp.strategies.macd_hist import MACDHistStrategy
@@ -51,6 +52,13 @@ class CompositeStrategy(BaseStrategy):
         )
         self.price_volume_corr_strategy = PriceVolumeLevelCorrelation(
             StrategyConfig(name="price_volume_corr", enabled=True), self.thresholds
+        )
+        self.holder_concentration_strategy = HolderConcentrationStrategy(
+            StrategyConfig(
+                name="holder_concentration",
+                enabled=self._has_holder_concentration(),
+            ),
+            self.thresholds,
         )
         self.volume_surge_strategy = VolumeSurge(
             StrategyConfig(name="volume_surge", enabled=True), self.thresholds
@@ -163,6 +171,12 @@ class CompositeStrategy(BaseStrategy):
             and self.thresholds.composite.price_volume_corr_weight > 0
         )
 
+    def _has_holder_concentration(self) -> bool:
+        return (
+            self.thresholds.holder_concentration.enabled
+            and self.thresholds.composite.holder_concentration_weight > 0
+        )
+
     def _has_htf(self) -> bool:
         return (
             self.thresholds.high_tight_flag.enabled
@@ -261,6 +275,29 @@ class CompositeStrategy(BaseStrategy):
         mult = float(getattr(adj, "price_volume_corr", 0.0) or 1.0) if adj else 1.0
         blended = base.base_blend_weight + base.regime_blend_weight * mult
         return base.price_volume_corr_weight * blended
+
+    def holder_concentration_weight_for(self, regime: str) -> float:
+        """股东户数集中度维度的 **regime 调整后**权重（与 pvc/volume_surge 同源语义）。
+
+        `regime.strategy_weights` 目前**没有** `holder_concentration` 项
+        ⇒ 取中性乘子 1.0 ⇒ `blended(1.0) = 0.7 + 0.3 = 1.0`
+        ⇒ 数值上与「不调整」相同，但语义正确（将来 yaml 补项即自动生效）。
+        """
+        base = self.thresholds.composite
+        canonical = canonicalize_regime(regime)
+        adj = self.thresholds.regime.strategy_weights.get(canonical)
+        if adj is None:
+            legacy = {
+                "aggressive_bull": "stable_bull",
+                "volatile_bull": "volatile_bull",
+                "defensive_bear": "volatile_bear",
+                "rotation_sideways": "stable_sideways",
+            }.get(canonical)
+            if legacy:
+                adj = self.thresholds.regime.strategy_weights.get(legacy)
+        mult = float(getattr(adj, "holder_concentration", 0.0) or 1.0) if adj else 1.0
+        blended = base.base_blend_weight + base.regime_blend_weight * mult
+        return base.holder_concentration_weight * blended
 
     def volatility_position_weight_for(self, regime: str) -> float:
         """波动/位置维度的 **regime 调整后**权重（与 pvc/volume_surge 同源语义）。
@@ -372,6 +409,11 @@ class CompositeStrategy(BaseStrategy):
                     0.5,
                 )
             )
+        # 🔴 holder_concentration 走 overlay 路线（不进加权平均，避免 90% 中性分稀释
+        # 基础分）。它在 `select_stocks` 内对 2f 达标池按集中度重排，并在
+        # `calculate_detailed_scores` 里作为辅助列展示（不计入 total）。
+        # 这样既兑现「正交确认层」价值，又保留 _dimension_specs 单一事实源
+        # （base total ≡ 2f，TD-0 不变量成立）。
         if self._has_volume_surge():
             specs.append(
                 (
@@ -453,6 +495,12 @@ class CompositeStrategy(BaseStrategy):
             entry["total"] = max(0.0, min(1.0, base_total))
             detailed[symbol] = entry
 
+        # overlay 辅助列：holder 集中度作为正交确认信号展示，不计入 total（TD-0 不变）。
+        if self._has_holder_concentration():
+            h = self.holder_concentration_strategy.calculate_score(data)
+            for symbol in detailed:
+                detailed[symbol]["holder_concentration"] = h.get(symbol, 0.5)
+
         return detailed
 
     def select_stocks(
@@ -463,4 +511,12 @@ class CompositeStrategy(BaseStrategy):
         filtered = [
             s for s in ranked if scores[s] >= self.thresholds.composite.min_total_score
         ]
+        # 🔴 overlay 集成：2f 达标池内按 holder 集中度重排取 top-n。
+        # 这是 holder 因子的唯一启用路径（不进加权平均），直接兑现「正交确认层」
+        # —— 打破因子池单风格塌缩，且不稀释基础分。gate 变体内 weight 被清零 ⇒ 此路关闭。
+        if self._has_holder_concentration() and len(filtered) > n:
+            h = self.holder_concentration_strategy.calculate_score(data)
+            pool_size = max(n * 2, self.thresholds.holder_concentration.overlay_pool)
+            pool = filtered[:pool_size]
+            filtered = sorted(pool, key=lambda s: -h.get(s, 0.5))
         return filtered[:n]
