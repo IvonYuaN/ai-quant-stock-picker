@@ -86,13 +86,13 @@ export function InfoStreamLoadStatus({
   );
 }
 
-function NewsItem({ item }: { item: InfoStreamNewsItem }) {
+function NewsItem({ item, time, showSource }: { item: InfoStreamNewsItem; time: string; showSource: boolean }) {
   return (
     <div className="aq-card">
       <div className="aq-card-head">
         <div className="aq-card-title">
           <h3>{item.title || "（无标题）"}</h3>
-          <span className="aq-code">{newsTime(item.ctime)}</span>
+          {time ? <span className="aq-code">{time}</span> : null}
         </div>
         <Tag tone={item.level === "A" ? "primary" : item.level === "B" ? "ok" : "neutral"}>
           {item.level || "?"} 级
@@ -100,15 +100,24 @@ function NewsItem({ item }: { item: InfoStreamNewsItem }) {
       </div>
       {item.summary ? <p className="aq-card-summary">{item.summary}</p> : null}
       <div className="aq-tag-row">
-        <Tag tone="primary" title={`来源：${item.source} · id ${item.item_id}`}>
-          {item.source}
-        </Tag>
+        {showSource ? (
+          <Tag tone="primary" title={`来源：${item.source} · id ${item.item_id}`}>
+            {item.source}
+          </Tag>
+        ) : null}
         {item.subjects.map((subject) => (
           <Tag key={subject}>{subject}</Tag>
         ))}
       </div>
     </div>
   );
+}
+
+/** 全部取值相同且不止一条时返回该值（供上提），否则返回 null。 */
+function sharedValue(values: readonly (string | undefined)[]): string | null {
+  const filled = values.map((value) => (value || "").trim()).filter(Boolean);
+  const uniq = [...new Set(filled)];
+  return uniq.length === 1 && filled.length > 1 ? uniq[0] : null;
 }
 
 export function InfoStreamPage() {
@@ -145,6 +154,17 @@ export function InfoStreamPage() {
   const news = data
     ? [...data.news].sort((a, b) => (a.ctime < b.ctime ? 1 : a.ctime > b.ctime ? -1 : 0))
     : [];
+  // 一屏 20~30 条快讯里，来源常常只有一两个、同一时刻会连发好几条。
+  // 逐条重复"来源 + 时间"就是几十份同样的字 —— 来源上提到列表头，
+  // 同一时刻只在第一条出现。
+  const sharedNewsSource = sharedValue(news.map((item) => item.source));
+  const seenNewsTimes = new Set<string>();
+  const newsRows = news.map((item) => {
+    const time = newsTime(item.ctime);
+    const firstTime = time && !seenNewsTimes.has(time);
+    if (time) seenNewsTimes.add(time);
+    return { item, time: firstTime ? time : "" };
+  });
   const clsFailed = data ? data.sources.cls_news.startsWith("error") : false;
   const conceptFailed = data ? data.sources.concept_board.startsWith("error") : false;
 
@@ -195,11 +215,21 @@ export function InfoStreamPage() {
             {clsFailed || news.length === 0 ? (
               <EmptyState title="暂无快讯" detail={clsFailed ? data.sources.cls_news : "源正常但未返回快讯"} />
             ) : (
-              <div className="aq-card-grid">
-                {news.map((item) => (
-                  <NewsItem key={item.item_id} item={item} />
-                ))}
-              </div>
+              <>
+                {sharedNewsSource ? (
+                  <p className="aq-note">本批快讯来源相同：{sharedNewsSource}</p>
+                ) : null}
+                <div className="aq-card-grid">
+                  {newsRows.map((row) => (
+                    <NewsItem
+                      key={row.item.item_id}
+                      item={row.item}
+                      time={row.time}
+                      showSource={!sharedNewsSource}
+                    />
+                  ))}
+                </div>
+              </>
             )}
           </>
         ) : null}

@@ -32,7 +32,7 @@ function sameAcross(values: readonly string[]): { same: boolean; text: string } 
   return { same: false, text: "" };
 }
 
-function DebateCard({ results, showFootNotes }: { results: readonly AqspAgentResult[]; showFootNotes: boolean }) {
+function DebateCard({ results, showFootNotes, showNoDisagreement }: { results: readonly AqspAgentResult[]; showFootNotes: boolean; showNoDisagreement: boolean }) {
   // 同一批候选常由同一份讨论结论覆盖（跨市叙事一致时尤其如此）。
   // 内容完全相同的票合并成一张卡并标明共享，避免同一段话重复 5 遍。
   const result = results[0];
@@ -127,11 +127,11 @@ function DebateCard({ results, showFootNotes }: { results: readonly AqspAgentRes
                 </span>
               ))}
             </div>
-          ) : (
+          ) : showNoDisagreement ? (
             <p className="aq-tone-warn aq-note">
               没有个股级反驳证据，当前只保留规则复核，不宣称形成有效复合讨论。
             </p>
-          )}
+          ) : null}
         </div>
       </details>
 
@@ -199,6 +199,9 @@ export function DiscussionSection({ view, section }: { view: DailyView; section:
           {(() => {
             // 风险与下一验证常常逐票一字不差 —— 提到网格上方给一次，卡内不再重复。
             const groups = groupDebates(view.debates);
+            const noDisagreementCount = groups.filter(
+              (group) => !(group.results[0].disagreement_points?.length ?? 0),
+            ).length;
             const riskSame = sameAcross(groups.map((group) => group.results[0].primary_risk_gate ?? ""));
             const nextSame = sameAcross(groups.map((group) => group.results[0].next_trigger ?? ""));
             const shared = riskSame.same || nextSame.same;
@@ -210,9 +213,20 @@ export function DiscussionSection({ view, section }: { view: DailyView; section:
                     {nextSame.text ? <p><b>共性下一验证</b><span>{nextSame.text}</span></p> : null}
                   </div>
                 ) : null}
+                {/* 多个角色都缺反驳证据时，这句固定说明在区头给一次就够了。 */}
+                {noDisagreementCount > 1 ? (
+                  <p className="aq-note aq-tone-warn">
+                    {noDisagreementCount} 个角色没有个股级反驳证据，当前只保留规则复核，不宣称形成有效复合讨论。
+                  </p>
+                ) : null}
                 <div className="aq-card-grid">
                   {groups.map((group) => (
-                    <DebateCard key={group.key} results={group.results} showFootNotes={!shared} />
+                    <DebateCard
+                      key={group.key}
+                      results={group.results}
+                      showFootNotes={!shared}
+                      showNoDisagreement={noDisagreementCount <= 1}
+                    />
                   ))}
                 </div>
               </>
