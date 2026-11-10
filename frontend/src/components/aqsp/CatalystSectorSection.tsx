@@ -27,6 +27,32 @@ export function CatalystSectorView({ state, onRefresh }: {
   const { data, loading, error } = state;
   const groups = data ? groupEventsBySector(data.events) : [];
   const metadata = data ? catalystReportMetadata(data) : null;
+  // 同一批催化事件里，「传导路径 / 传导假设 / 来源 / 发布时间」常常一字不差。
+  // 逐条重复会把这一屏撑成几十份同样的长句 —— 全量相同的提到区头给一次，
+  // 板块内相同的提到板块头，只有真正因事件而异的才留在事件行。
+  // 同一批催化事件横跨多个板块，字段常常只在**全量**层面才看得出重复。
+  // 统一用「首次出现」：某个值只在它第一次出现的那条里显示，后面不再重复。
+  const seenPaths = new Set<string>();
+  const seenHypotheses = new Set<string>();
+  const seenSources = new Set<string>();
+  const seenTimes = new Set<string>();
+  const firstOf = (seen: Set<string>, value: string): boolean => {
+    const key = (value || "").trim();
+    if (!key) return true;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  };
+  const renderedGroups = groups.map((group) => ({
+    ...group,
+    events: group.events.map((event) => ({
+      event,
+      showPath: firstOf(seenPaths, event.transmission_path.join(" → ")),
+      showHypothesis: firstOf(seenHypotheses, event.transmission_hypothesis || ""),
+      showSource: firstOf(seenSources, event.source || ""),
+      showPublished: firstOf(seenTimes, event.published_at || ""),
+    })),
+  }));
   return (
     <section className="aq-section aq-catalyst-section" aria-label="板块催化与传导" aria-busy={loading}>
       <SectionHeader title="板块催化与传导" description="按受影响板块归集">
@@ -57,10 +83,20 @@ export function CatalystSectorView({ state, onRefresh }: {
         <details className="aq-catalyst-evidence">
           <summary>{data?.events.length} 条催化 · {groups.length} 个板块 · 展开传导证据</summary>
           <p className="aq-note">多板块可能同时受影响，需核对原文。</p>
-          {groups.map((group) => (
+          <p className="aq-note">传导路径、假设、来源与发布时间在事件间重复时只显示第一次。</p>
+          {renderedGroups.map((group) => (
             <Card key={group.sector} className="aq-concept-card">
               <header className="aq-concept-head"><h3>{group.sector}</h3><span className="aq-section-count">{group.events.length} 条</span></header>
-              {group.events.map((event, index) => <ConceptEvent key={`${event.url || event.title}-${index}`} event={event} />)}
+              {group.events.map((row, index) => (
+                <ConceptEvent
+                  key={`${row.event.url || row.event.title}-${index}`}
+                  event={row.event}
+                  showPath={row.showPath}
+                  showHypothesis={row.showHypothesis}
+                  showSource={row.showSource}
+                  showPublished={row.showPublished}
+                />
+              ))}
             </Card>
           ))}
         </details>
@@ -69,17 +105,26 @@ export function CatalystSectorView({ state, onRefresh }: {
   );
 }
 
-function ConceptEvent({ event }: { event: CatalystEvent }) {
+function ConceptEvent({ event, showPath, showHypothesis, showSource, showPublished }: {
+  event: CatalystEvent;
+  showPath: boolean;
+  showHypothesis: boolean;
+  showSource: boolean;
+  showPublished: boolean;
+}) {
   const sourceUrl = catalystSourceUrl(event.url);
+  const path = event.transmission_path.join(" → ");
   return (
     <article className="aq-event-row">
       <div className="aq-tag-row"><Badge className={impactToneClass(event.impact)}>{impactLabel(event.impact)}</Badge><Tag>{event.category || "消息"}</Tag></div>
       <p className="aq-event-title">{event.title || "未记录标题"}</p>
-      <p className="aq-note" title={event.published_at}>事件发布时间：{formatEvidenceTime(event.published_at) || "未记录"}</p>
-      {event.transmission_path.length ? <p className="aq-transmission-path">传导路径：{event.transmission_path.join(" → ")}</p> : null}
-      <p className="aq-detail-muted">传导假设：{event.transmission_hypothesis || "报告未提供"}</p>
-      {sourceUrl ? <a className="aq-radar-title" href={sourceUrl} target="_blank" rel="noopener noreferrer">{event.source || "查看原文来源"}<ExternalLink aria-hidden="true" /></a>
-        : <span className="aq-detail-muted">来源：{event.source || "未记录"} · 原文链接未提供</span>}
+      {showPublished ? <p className="aq-note" title={event.published_at}>事件发布时间：{formatEvidenceTime(event.published_at) || "未记录"}</p> : null}
+      {showPath ? <p className="aq-transmission-path">传导路径：{path}</p> : null}
+      {showHypothesis ? <p className="aq-detail-muted">传导假设：{event.transmission_hypothesis || "报告未提供"}</p> : null}
+      {showSource ? (
+        sourceUrl ? <a className="aq-radar-title" href={sourceUrl} target="_blank" rel="noopener noreferrer">{event.source || "查看原文来源"}<ExternalLink aria-hidden="true" /></a>
+          : <span className="aq-detail-muted">来源：{event.source || "未记录"} · 原文链接未提供</span>
+      ) : null}
     </article>
   );
 }
