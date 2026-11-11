@@ -85,6 +85,28 @@ if [ ! -f "$LOCAL_DIR/baseline_report.md" ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# 1b) 生效性核验：overlay 到底有没有真的重排过？
+#     审计要求：若 ΔSharpe≈0，必须能区分「因子无效」与「overlay 没生效」。
+#     依赖跑批时开 AQSP_HOLDER_DIAG=1 产生的 `[overlay-diag]` 行。
+# ---------------------------------------------------------------------------
+if [ -f "$LOCAL_DIR/candidate.log" ]; then
+  n_diag=$(grep -c "\[overlay-diag\]" "$LOCAL_DIR/candidate.log" 2>/dev/null || true)
+  n_diag=${n_diag:-0}
+  echo "[verdict] overlay-diag 行数 = ${n_diag}"
+  if [ "$n_diag" -gt 0 ]; then
+    awk '/\[overlay-diag\]/ {
+      for (i=1;i<=NF;i++) {
+        if ($i ~ /^changed=/) { gsub(/changed=|\(.*\)/,"",$i); s+=$i; c++ }
+      }
+    } END { if (c>0) printf "[verdict] overlay 平均换仓 %.1f 只/次（样本 %d 次）\n", s/c, c }' \
+      "$LOCAL_DIR/candidate.log"
+  else
+    echo "[verdict] ⚠️ 无 overlay-diag 输出 —— 无法确认 overlay 是否生效，"
+    echo "          ΔSharpe≈0 不能直接解读为「因子无效」（可能是没启用）"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
 # 2) 跑预注册判定（候选侧优先用 report，缺则用日志）
 # ---------------------------------------------------------------------------
 ARGS=(--baseline-report "$LOCAL_DIR/baseline_report.md")
