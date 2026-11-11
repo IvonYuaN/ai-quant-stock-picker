@@ -18,7 +18,8 @@ set -uo pipefail
 
 RUNNER_HOST="${RUNNER_HOST:-aqsp-runner}"
 RUNNER_ROOT="${RUNNER_ROOT:-/opt/aqsp-runner}"
-OUT_DIR="${OUT_DIR:-$RUNNER_ROOT/gate_run_holder_overlay}"
+# 2026-11-11：默认指向 v3（holders_overlay8 档位、窗口对齐基线 2023-11-07..2026-11-06）
+OUT_DIR="${OUT_DIR:-$RUNNER_ROOT/gate_run_holder_overlay_v3}"
 BASE_DIR="${BASE_DIR:-$RUNNER_ROOT/gate_run}"     # 生产基线（只读，勿写）
 LOCAL_DIR="${LOCAL_DIR:-/tmp/holder_eval}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
