@@ -150,8 +150,9 @@ class CompositeThresholds:
     # ⚠️ 本维度不参与 regime 权重调整（同 pvc/volume_surge/volatility_position 保守处理）。
     lower_shadow_ratio_weight: float = 0.0
     # 🔴 2026-11-10 真突破新增维度：股东户数筹码集中度（−Δ户数%）。
-    # 探针实测 5 日 IC = +0.073（正号！与现役全负 IC 的 OHLCV 反转因子相反），
-    # 对 mom20/rev5/turn20 截面相关 ≈0 ⇒ 真正正交、可互补。
+    # IC 口径（2026-11-11 重测，唯一可引用）：PIT 正确（按披露日）+ 15 季历史 ⇒
+    # 5 日 +0.0172(t=+3.14) / 10 日 +0.0199(t=+2.54) / 20 日 +0.0284(t=+2.79)，
+    # 与 mom20/rev5/turn20 正交 ρ≈0。⚠️ 旧值「5 日 IC=+0.073」已作废（含前视、不可复现）。
     # ⚠️ 默认 0.0 ⇒ 合并不改变任何生产行为；启用需同时 `holder_concentration.enabled: true`
     #    （`_has_*` 守卫要求 enabled AND weight>0）**且 invert_signal 保持 False**（IC 为正）。
     # ⚠️ 本维度不参与 regime 权重调整（同 pvc/volume_surge 第一版保守处理）。
@@ -785,8 +786,9 @@ class HolderConcentrationThresholds:
 
     数据源：prod pit_cache/holder_count.csv（HolderNumSource）。
     因子 = −Δ股东户数%（季度环比）；户数减少=筹码集中=看多。
-    探针实测 5 日 IC = +0.073（正号，与现役全负 IC 的 OHLCV 反转因子相反），
-    对 mom20/rev5/turn20 截面相关 ≈0 ⇒ 真正正交、可互补。
+    IC（2026-11-11 重测，PIT 正确 + 15 季）：5 日 +0.0172(t=+3.14) /
+    10 日 +0.0199(t=+2.54) / 20 日 +0.0284(t=+2.79)，与 2f 正交 ρ≈0。
+    ⚠️ 旧值「5 日 IC=+0.073」已作废（含前视、仓库内不可复现），禁再引用。
     ⚠️ 原生方向即看涨 ⇒ **invert_signal 默认 False（不反转）**；与 pvc/volume_surge 等
        IC 为负的因子相反约定，切勿误改。
     ⚠️ 默认 composite.holder_concentration_weight=0.0 ⇒ 合并不改变任何生产行为；

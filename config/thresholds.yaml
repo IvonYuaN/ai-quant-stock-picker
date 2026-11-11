@@ -11,8 +11,9 @@ composite:
   mean_reversion_weight: 0.0
   triple_rise_weight: 0.0
   price_volume_corr_weight: 0.3
-  # 2026-11-10 真突破：股东户数筹码集中度（−Δ户数%）。探针实测 5 日 IC=+0.073（正号，
-  # 与现役全负 IC 的 OHLCV 反转因子相反），对 mom20/rev5/turn20 截面相关≈0 ⇒ 真正正交。
+  # 2026-11-10 真突破：股东户数筹码集中度（−Δ户数%）。IC（2026-11-11 重测，PIT 正确
+  # + 15 季历史）：5 日 +0.0172(t=+3.14) / 10 日 +0.0199(t=+2.54) / 20 日 +0.0284(t=+2.79)，
+  # 与 mom20/rev5/turn20 正交 ρ≈0。⚠️ 旧值「5 日 IC=+0.073」已作废（含前视、不可复现）。
   # ⚠️ 集成路线 = overlay（非等权混合）：本 weight 在此**仅作 overlay 启用开关（>0 即开）**，
   #   不再参与加权；因子在 `select_stocks` 内对 2f 达标池按集中度重排。
   # 🔴 生产默认 0.0（**关闭**）：本能力随 PR 进 main，但默认不改变生产 2f 基线选股。
@@ -90,7 +91,8 @@ price_volume_corr:
   window: 10
   invert_signal: true
 # 2026-11-10 真突破新增：股东户数筹码集中度（−Δ户数%）。
-# 探针实测 5 日 IC=+0.073（正号，与现役全负 IC 反转因子相反），截面正交。
+# IC（2026-11-11 重测，PIT 正确 + 15 季）：5 日 +0.0172(t=+3.14) / 10 日 +0.0199(t=+2.54)
+# / 20 日 +0.0284(t=+2.79)，与 2f 正交 ρ≈0。⚠️ 旧值「5 日 IC=+0.073」已作废（含前视）。
 # 🔴 生产默认 enabled: false（**关闭**）：本能力随 PR 进 main，但默认不改变生产 2f 基线。
 #   `_has_*` 守卫要求 enabled AND weight>0，与 composite.holder_concentration_weight=0.0
 #   共同保证默认关。开启需 gate 专用 `holder_overlay` 跑出 CSCV/DSR 正证据 + 老大拍板。
