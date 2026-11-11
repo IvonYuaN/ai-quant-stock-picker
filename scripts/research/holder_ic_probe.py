@@ -80,6 +80,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--horizon", type=int, default=20)
     parser.add_argument("--step", type=int, default=20)
     parser.add_argument("--min-bars", type=int, default=60)
+    parser.add_argument(
+        "--portfolio-n",
+        default="",
+        help="逗号分隔的 top-n 列表；给了就额外做**组合级 A/B**（overlay on vs off）。"
+        "例：--portfolio-n 10,20",
+    )
     args = parser.parse_args(argv)
 
     os.environ["AQSP_HOLDER_COUNT_CSV"] = str(args.holder_csv)
@@ -131,6 +137,8 @@ def main(argv: list[str] | None = None) -> int:
     base = CompositeStrategy(thresholds=th_on)
 
     rows = []
+    portfolio_ns = [int(x) for x in args.portfolio_n.split(",") if x.strip()]
+    port_rows: list[dict] = []
     for d in rebal:
         data = {}
         labels = {}
@@ -162,6 +170,28 @@ def main(argv: list[str] | None = None) -> int:
             "date": d, "n": len(syms), "ic": ic, "rho_2f": rho,
             "hit_ratio": holder.last_stats.get("hit_ratio", 0.0),
         })
+        # 组合级 A/B：2f top-n vs overlay 重排 top-n（同窗口同参数，唯一差异=overlay）
+        if portfolio_ns:
+            thr = float(th.composite.min_total_score)
+            passed = sorted(
+                (s for s in data if s in b and b[s] >= thr),
+                key=lambda s: -b[s],
+            )
+            for n_sel in portfolio_ns:
+                pool = passed[: max(n_sel * 2, int(th.holder_concentration.overlay_pool))]
+                off_sel = passed[:n_sel]
+                on_sel = sorted(pool, key=lambda s: -h.get(s, 0.5))[:n_sel]
+                if len(off_sel) < n_sel or len(on_sel) < n_sel:
+                    continue
+                ret_off = float(np.mean([labels[s] for s in off_sel]))
+                ret_on = float(np.mean([labels[s] for s in on_sel]))
+                port_rows.append({
+                    "date": d, "n": n_sel,
+                    "ret_off": ret_off, "ret_on": ret_on,
+                    "diff": ret_on - ret_off,
+                    "changed": len(set(off_sel) - set(on_sel)),
+                    "pool": len(pool),
+                })
 
     df = pd.DataFrame(rows)
     if df.empty:
@@ -184,6 +214,31 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[ic] 与 2f 正交性 ρ 均值={df['rho_2f'].dropna().mean():+.3f}")
         verdict = "有信号" if (mean_ic > 0.01 and t > 2) else "无显著信号"
         print(f"[ic] 判读（|t|>2 且 IC>0.01 才算有信号）：**{verdict}**")
+
+    # ---- 组合级 A/B 汇总 ----
+    if port_rows:
+        pdf = pd.DataFrame(port_rows)
+        print("\n[port] 组合级 A/B（2f top-n vs overlay 重排 top-n，同窗口）")
+        for n_sel, g in pdf.groupby("n"):
+            diffs = g["diff"].to_numpy()
+            m, sd = float(diffs.mean()), float(diffs.std(ddof=1))
+            tt = m / (sd / np.sqrt(len(diffs))) if sd > 0 else float("nan")
+            periods_per_year = 250.0 / args.step
+            sh_off = (
+                g["ret_off"].mean() / g["ret_off"].std(ddof=1) * np.sqrt(periods_per_year)
+                if g["ret_off"].std(ddof=1) > 0 else float("nan")
+            )
+            sh_on = (
+                g["ret_on"].mean() / g["ret_on"].std(ddof=1) * np.sqrt(periods_per_year)
+                if g["ret_on"].std(ddof=1) > 0 else float("nan")
+            )
+            print(
+                f"  n={n_sel}: 截面 {len(g)} | 每期均收益 off={g['ret_off'].mean():+.4%} "
+                f"on={g['ret_on'].mean():+.4%} | Δ均值={m:+.4%} t={tt:+.2f} | "
+                f"粗年化Sharpe off={sh_off:+.2f} on={sh_on:+.2f} | "
+                f"平均换掉 {g['changed'].mean():.1f}/{n_sel} 只"
+            )
+        print("  ⚠️ 粗年化 Sharpe 未扣成本/滑点，非 gate 口径，仅用于判断「值不值得跑 12h」")
     return 0
 
 
