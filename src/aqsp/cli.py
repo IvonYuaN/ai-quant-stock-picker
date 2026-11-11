@@ -6719,6 +6719,25 @@ _WALKFORWARD_HOLDER_OVERLAY_GRID_VARIANTS: tuple[WalkForwardGridVariant, ...] = 
     for variant in _WALKFORWARD_VALIDATED_GRID_VARIANTS
 )
 
+# 🔴 2026-11-11：与**生产档位同臂集**的 overlay 档位（判据 B 需要）。
+#
+# 为什么必须有它：DSR 的多重检验惩罚依赖 `n_variants`（试次数）。生产基线
+# `stable_plus` 是 8 臂，若 overlay 用 13 臂（上面的 holder_overlay），两个 DSR
+# 受的惩罚不同 ⇒ **不可直接比**，只能当参考。用与基线**完全相同的 8 臂**（仅
+# 加 `WO-` 前缀 + 打开 overlay）⇒ n=8 vs n=8，DSR/PBO 变成可比的同口径。
+# 同时省掉 5 个无基线对照的臂（每臂约 0.9h）⇒ 跑批时间显著下降。
+#
+# ⚠️ 这不是「挑臂」：8 臂是生产档位 `stable_plus` 的**完整集合**（不是从 13 臂里
+# 按结果挑出来的），且在跑批出任何结果**之前**定下。
+_WALKFORWARD_HOLDER_OVERLAY8_GRID_VARIANTS: tuple[WalkForwardGridVariant, ...] = tuple(
+    replace(
+        variant,
+        variant_id=f"WO-{variant.variant_id}",
+        holder_overlay=True,
+    )
+    for variant in _WALKFORWARD_STABLE_PLUS_GRID_VARIANTS
+)
+
 
 # 方案 B（预注册裁决单，revisit_family 触发版）：7 维 composite 候选网格。
 # 旧 4 种 strategy_mix（momentum/volume/mean_reversion/htf_mr）只能表达 momentum/tr
@@ -6793,6 +6812,8 @@ _WALKFORWARD_GRID_VARIANT_TABLE: dict[str, tuple[WalkForwardGridVariant, ...]] =
     "htf_mr": _WALKFORWARD_HTF_MR_GRID_VARIANTS,
     # 2026-11-10：gate 专用 holder 正交因子验证网格（独立档位，不碰默认判决）
     "holder_overlay": _WALKFORWARD_HOLDER_OVERLAY_GRID_VARIANTS,
+    # 2026-11-11：与生产 stable_plus **同臂集**（8 臂）+ overlay ⇒ DSR/PBO 同口径可比
+    "holder_overlay8": _WALKFORWARD_HOLDER_OVERLAY8_GRID_VARIANTS,
     **_PLANB_VARIANTS,
 }
 
