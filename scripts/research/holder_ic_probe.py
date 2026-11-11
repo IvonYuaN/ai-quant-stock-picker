@@ -92,6 +92,13 @@ def main(argv: list[str] | None = None) -> int:
         help="额外算「**达标池内**」的 holder IC —— 这才是 overlay 的真实作业面。"
         "全市场 IC 高但池内 IC≈0 时，overlay 不可能有效；反之才有 edge。",
     )
+    parser.add_argument(
+        "--blend-lambda",
+        default="",
+        help="逗号分隔的混合系数 λ：最终排序分 = λ*holder + (1-λ)*基础分。"
+        "λ=1 等价于现行 pure-overlay（完全覆盖），λ=0 等价于纯 2f。"
+        "例：--blend-lambda 1.0,0.3,0.15 用来比较不同集成方式的换手与净效果。",
+    )
     args = parser.parse_args(argv)
 
     os.environ["AQSP_HOLDER_COUNT_CSV"] = str(args.holder_csv)
@@ -144,6 +151,7 @@ def main(argv: list[str] | None = None) -> int:
 
     rows = []
     portfolio_ns = [int(x) for x in args.portfolio_n.split(",") if x.strip()]
+    blend_lams = [float(x) for x in args.blend_lambda.split(",") if x.strip()] or [1.0]
     port_rows: list[dict] = []
     for d in rebal:
         data = {}
@@ -211,18 +219,30 @@ def main(argv: list[str] | None = None) -> int:
             for n_sel in portfolio_ns:
                 pool = passed[: max(n_sel * 2, int(th.holder_concentration.overlay_pool))]
                 off_sel = passed[:n_sel]
-                on_sel = sorted(pool, key=lambda s: -h.get(s, 0.5))[:n_sel]
-                if len(off_sel) < n_sel or len(on_sel) < n_sel:
-                    continue
-                ret_off = float(np.mean([labels[s] for s in off_sel]))
-                ret_on = float(np.mean([labels[s] for s in on_sel]))
-                port_rows.append({
-                    "date": d, "n": n_sel,
-                    "ret_off": ret_off, "ret_on": ret_on,
-                    "diff": ret_on - ret_off,
-                    "changed": len(set(off_sel) - set(on_sel)),
-                    "pool": len(pool),
-                })
+                for lam in blend_lams:
+                    # λ=1：纯 holder 覆盖（现行 pure-overlay）；λ<1：与基础分混合
+                    if lam >= 1.0:
+                        key = lambda s: -h.get(s, 0.5)  # noqa: E731
+                    elif lam <= 0.0:
+                        key = lambda s: -b[s]  # noqa: E731
+                    else:
+                        key = lambda s: -(lam * h.get(s, 0.5) + (1 - lam) * b[s])  # noqa: E731
+                    on_sel = sorted(pool, key=key)[:n_sel]
+                    if len(off_sel) < n_sel or len(on_sel) < n_sel:
+                        continue
+                    ret_off = float(np.mean([labels[s] for s in off_sel]))
+                    ret_on = float(np.mean([labels[s] for s in on_sel]))
+                    changed = len(set(off_sel) - set(on_sel))
+                    # 边际成本：overlay 相对基线多换的量 × 单边成本 × 2（卖出+买入）
+                    round_trip = 2.0 * (3.0 + 5.0) / 10000.0
+                    port_rows.append({
+                        "date": d, "n": n_sel, "lam": lam,
+                        "ret_off": ret_off, "ret_on": ret_on,
+                        "diff": ret_on - ret_off,
+                        "net_diff": ret_on - ret_off - (changed / n_sel) * round_trip,
+                        "changed": changed,
+                        "pool": len(pool),
+                    })
 
     df = pd.DataFrame(rows)
     if df.empty:
@@ -272,27 +292,25 @@ def main(argv: list[str] | None = None) -> int:
     # ---- 组合级 A/B 汇总 ----
     if port_rows:
         pdf = pd.DataFrame(port_rows)
-        print("\n[port] 组合级 A/B（2f top-n vs overlay 重排 top-n，同窗口）")
-        for n_sel, g in pdf.groupby("n"):
+        print("\n[port] 组合级 A/B（2f top-n vs 重排 top-n，同窗口；λ=1 为现行 pure-overlay）")
+        for (n_sel, lam), g in pdf.groupby(["n", "lam"]):
             diffs = g["diff"].to_numpy()
+            nets = g["net_diff"].to_numpy()
             m, sd = float(diffs.mean()), float(diffs.std(ddof=1))
             tt = m / (sd / np.sqrt(len(diffs))) if sd > 0 else float("nan")
+            mn, sdn = float(nets.mean()), float(nets.std(ddof=1))
+            tn = mn / (sdn / np.sqrt(len(nets))) if sdn > 0 else float("nan")
             periods_per_year = 250.0 / args.step
-            sh_off = (
-                g["ret_off"].mean() / g["ret_off"].std(ddof=1) * np.sqrt(periods_per_year)
-                if g["ret_off"].std(ddof=1) > 0 else float("nan")
-            )
             sh_on = (
                 g["ret_on"].mean() / g["ret_on"].std(ddof=1) * np.sqrt(periods_per_year)
                 if g["ret_on"].std(ddof=1) > 0 else float("nan")
             )
             print(
-                f"  n={n_sel}: 截面 {len(g)} | 每期均收益 off={g['ret_off'].mean():+.4%} "
-                f"on={g['ret_on'].mean():+.4%} | Δ均值={m:+.4%} t={tt:+.2f} | "
-                f"粗年化Sharpe off={sh_off:+.2f} on={sh_on:+.2f} | "
-                f"平均换掉 {g['changed'].mean():.1f}/{n_sel} 只"
+                f"  n={n_sel} λ={lam:g}: 截面 {len(g)} | 毛 Δ={m:+.4%} t={tt:+.2f} | "
+                f"净 Δ={mn:+.4%} t={tn:+.2f} | 换掉 {g['changed'].mean():.1f}/{n_sel} | "
+                f"on 粗Sharpe={sh_on:+.2f}"
             )
-        print("  ⚠️ 粗年化 Sharpe 未扣成本/滑点，非 gate 口径，仅用于判断「值不值得跑 12h」")
+        print("  ⚠️ 粗 Sharpe 未扣成本、非 gate 口径；净 Δ 已按 单边8bp×2 估算边际成本")
     return 0
 
 
