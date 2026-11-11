@@ -86,6 +86,12 @@ def main(argv: list[str] | None = None) -> int:
         help="逗号分隔的 top-n 列表；给了就额外做**组合级 A/B**（overlay on vs off）。"
         "例：--portfolio-n 10,20",
     )
+    parser.add_argument(
+        "--pool-ic",
+        action="store_true",
+        help="额外算「**达标池内**」的 holder IC —— 这才是 overlay 的真实作业面。"
+        "全市场 IC 高但池内 IC≈0 时，overlay 不可能有效；反之才有 edge。",
+    )
     args = parser.parse_args(argv)
 
     os.environ["AQSP_HOLDER_COUNT_CSV"] = str(args.holder_csv)
@@ -166,18 +172,42 @@ def main(argv: list[str] | None = None) -> int:
         rho = _spearman(
             np.array([h[s] for s in syms]), np.array([b[s] for s in syms])
         )
-        rows.append({
-            "date": d, "n": len(syms), "ic": ic, "rho_2f": rho,
-            "hit_ratio": holder.last_stats.get("hit_ratio", 0.0),
-        })
-        # 组合级 A/B：2f top-n vs overlay 重排 top-n（同窗口同参数，唯一差异=overlay）
-        if portfolio_ns:
+        # 达标池（overlay 的真实作业面）：先按 2f 阈值筛，再按基础分降序
+        passed: list[str] = []
+        if portfolio_ns or args.pool_ic:
             thr = float(th.composite.min_total_score)
             # 只在「有可用前向收益」的票里选（停牌/退市不可买），否则取均值会 KeyError
             passed = sorted(
                 (s for s in data if s in b and s in labels and b[s] >= thr),
                 key=lambda s: -b[s],
             )
+
+        # 🔴 池内 IC：全市场 IC 高但池内 IC≈0 时，overlay 不可能有效。
+        ic_pool = float("nan")
+        ic_top = float("nan")
+        pool_n = 0
+        if args.pool_ic and passed:
+            pool_n = len(passed)
+            ps = [s for s in passed if abs(h.get(s, 0.5) - 0.5) > 1e-12]
+            if len(ps) >= 30:
+                ic_pool = _spearman(
+                    np.array([h[s] for s in ps]), np.array([labels[s] for s in ps])
+                )
+            overlay_pool = int(th.holder_concentration.overlay_pool)
+            top = passed[: max(20, overlay_pool)]
+            ts = [s for s in top if abs(h.get(s, 0.5) - 0.5) > 1e-12]
+            if len(ts) >= 20:
+                ic_top = _spearman(
+                    np.array([h[s] for s in ts]), np.array([labels[s] for s in ts])
+                )
+
+        rows.append({
+            "date": d, "n": len(syms), "ic": ic, "rho_2f": rho,
+            "hit_ratio": holder.last_stats.get("hit_ratio", 0.0),
+            "pool_n": pool_n, "ic_pool": ic_pool, "ic_top": ic_top,
+        })
+        # 组合级 A/B：2f top-n vs overlay 重排 top-n（同窗口同参数，唯一差异=overlay）
+        if portfolio_ns:
             for n_sel in portfolio_ns:
                 pool = passed[: max(n_sel * 2, int(th.holder_concentration.overlay_pool))]
                 off_sel = passed[:n_sel]
@@ -215,6 +245,29 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[ic] 与 2f 正交性 ρ 均值={df['rho_2f'].dropna().mean():+.3f}")
         verdict = "有信号" if (mean_ic > 0.01 and t > 2) else "无显著信号"
         print(f"[ic] 判读（|t|>2 且 IC>0.01 才算有信号）：**{verdict}**")
+
+    # ---- 池内 IC 汇总（overlay 的真实作业面）----
+    if args.pool_ic and "ic_pool" in df.columns:
+        print("\n[pool-ic] 达标池内 IC（overlay 只能在这个池子里重排）")
+        for col, label in (("ic_pool", "达标池内全部"), ("ic_top", "overlay 池前 N")):
+            vals = df[col].dropna().to_numpy()
+            if len(vals) >= 2:
+                m, sd = float(vals.mean()), float(vals.std(ddof=1))
+                tt = m / (sd / np.sqrt(len(vals))) if sd > 0 else float("nan")
+                print(
+                    f"  {label}: 截面 {len(vals)} | 均值IC {m:+.4f} | t={tt:+.2f} "
+                    f"| 正占比 {(vals > 0).mean():.0%}"
+                )
+        print(
+            f"  平均达标池规模 {df['pool_n'].mean():.0f} 只"
+            "（若池内 IC 显著低于全市场 IC ⇒ overlay 的边际价值被池子吃掉）"
+        )
+        pool_ics = df["ic_pool"].dropna().to_numpy()
+        full_ics = df["ic"].dropna().to_numpy()
+        if len(pool_ics) >= 2 and len(full_ics) >= 2:
+            print(
+                f"  全市场 IC {full_ics.mean():+.4f} vs 池内 IC {pool_ics.mean():+.4f}"
+            )
 
     # ---- 组合级 A/B 汇总 ----
     if port_rows:
