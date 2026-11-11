@@ -173,8 +173,9 @@ def main(argv: list[str] | None = None) -> int:
         # 组合级 A/B：2f top-n vs overlay 重排 top-n（同窗口同参数，唯一差异=overlay）
         if portfolio_ns:
             thr = float(th.composite.min_total_score)
+            # 只在「有可用前向收益」的票里选（停牌/退市不可买），否则取均值会 KeyError
             passed = sorted(
-                (s for s in data if s in b and b[s] >= thr),
+                (s for s in data if s in b and s in labels and b[s] >= thr),
                 key=lambda s: -b[s],
             )
             for n_sel in portfolio_ns:
