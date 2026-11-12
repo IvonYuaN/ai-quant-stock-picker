@@ -1924,3 +1924,50 @@ def test_calculate_weight_ignores_negative_avg_return_per_section_8(tmp_path) ->
     weight = learner._calculate_weight(result)
     # win_rate > 0.6 → ×1.2，avg_return 负不再追加 ×0.7
     assert weight == 1.2
+
+
+class TestResolveExitThresholdSanity:
+    """绝对价阈值必须过语义校验 —— 2026-11-12 实证的真缺陷。
+
+    行内 `stop_loss` / `take_profit` 是信号时写入的**绝对价**。若结算所用价格序列
+    与之标度不同（复权基准变更 / 数据源切换），止损价可能**高于市价** ⇒
+    `low <= stop_loss` 恒成立 ⇒ 当日立即"止损"出场，算出物理不可能的收益。
+    实测 19/218 行受害，最大 +317%（301312：库内 122.70，行内出场 257.40，×2.08）。
+    """
+
+    @staticmethod
+    def _window():
+        import pandas as pd
+
+        return pd.DataFrame(
+            {
+                "date": ["20260414", "20260415"],
+                "open": [123.71, 123.04],
+                "high": [124.5, 124.0],
+                "low": [121.0, 120.5],
+                "close": [122.70, 121.08],
+            }
+        )
+
+    def test_absurd_stop_loss_above_entry_is_ignored(self) -> None:
+        from aqsp.ledger.base import _resolve_exit
+
+        row = {"stop_loss": 257.4, "take_profit": 0, "slippage_bps": 20}
+        bar, price, reason = _resolve_exit(self._window(), row, entry_price=123.96)
+        assert reason == "horizon_close", "脏止损价必须被忽略，不得当日误触发"
+        assert price == pytest.approx(121.08 * (1 - 20 / 10000), rel=1e-9)
+
+    def test_valid_stop_loss_still_triggers(self) -> None:
+        from aqsp.ledger.base import _resolve_exit
+
+        row = {"stop_loss": 121.5, "take_profit": 0, "slippage_bps": 0}
+        _bar, price, reason = _resolve_exit(self._window(), row, entry_price=123.96)
+        assert reason == "stop_loss"
+        assert price == pytest.approx(121.5, rel=1e-9)
+
+    def test_take_profit_below_entry_is_ignored(self) -> None:
+        from aqsp.ledger.base import _resolve_exit
+
+        row = {"stop_loss": 0, "take_profit": 50.0, "slippage_bps": 0}
+        _bar, _price, reason = _resolve_exit(self._window(), row, entry_price=123.96)
+        assert reason == "horizon_close"
