@@ -797,7 +797,7 @@ def validate_predictions(
             1 + float(row.get("slippage_bps") or 0) / 10000
         )
         fee_pct = float(row.get("fee_bps") or 0) / 100
-        exit_bar, exit_price, exit_reason = _resolve_exit(eval_window, row)
+        exit_bar, exit_price, exit_reason = _resolve_exit(eval_window, row, entry_price)
         ret = (exit_price - entry_price) / entry_price * 100 - fee_pct
         benchmark_ret = _benchmark_return(frames, row, entry_bar, exit_bar)
         excess = ret - benchmark_ret if benchmark_ret is not None else None
@@ -889,9 +889,28 @@ def strategy_weights_from_ledger(
     return weights
 
 
-def _resolve_exit(window: pd.DataFrame, row: dict) -> tuple[pd.Series, float, str]:
+def _resolve_exit(
+    window: pd.DataFrame, row: dict, entry_price: float | None = None
+) -> tuple[pd.Series, float, str]:
+    """在 ``window`` 内决定出场。返回 (出场 bar, 出场价, 原因)。
+
+    🔴 **绝对价阈值必须先做语义校验**（2026-11-12 实证的真缺陷）：
+    行内的 `stop_loss` / `take_profit` 是**信号时写入的绝对价**。若它与本次结算
+    所用的价格序列**标度不同**（复权基准变更、数据源切换），止损价可能**高于市价** ⇒
+    `low <= stop_loss` 恒成立 ⇒ 当日立即"止损"出场，算出物理不可能的收益。
+    实测 19/218 行受害，最大 `+317%`（301312：库内 122.70，行内出场 257.40，×2.08）。
+
+    因此：止损价只有在 ``0 < stop_loss < entry_price`` 时才可信；止盈价只有在
+    ``take_profit > entry_price`` 时才可信。不满足即视为脏阈值**忽略该触发条件**，
+    让它按持有到期结算——宁可少一个触发，也不要一个假成交。
+    """
     stop_loss = float(row.get("stop_loss") or 0)
     take_profit = float(row.get("take_profit") or 0)
+    if entry_price is not None and entry_price > 0:
+        if not (0 < stop_loss < entry_price):
+            stop_loss = 0.0
+        if take_profit <= entry_price:
+            take_profit = 0.0
     slippage = float(row.get("slippage_bps") or 0) / 10000
     for bar in window.itertuples(index=False, name="PriceBar"):
         bar_close = float(getattr(bar, "close"))
