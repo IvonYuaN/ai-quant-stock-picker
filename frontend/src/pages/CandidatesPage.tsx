@@ -10,6 +10,7 @@ import { CandidateSection } from "@/components/aqsp/sections/CandidateSection";
 import { CandidateDrawer } from "@/components/aqsp/CandidateDrawer";
 import { useWorkspaceSnapshot } from "@/components/aqsp/useAqspSnapshot";
 import { buildDailyView } from "@/lib/daily-view";
+import { MarketRiskBanner } from "@/components/aqsp/MarketRiskBanner";
 
 export function CandidatesPage() {
   const { data, loading, error, switching } = useWorkspaceSnapshot();
@@ -49,6 +50,9 @@ export function CandidatesPage() {
           </p>
         </div>
       </header>
+
+      {/* 候选名单必须配市场风险上下文：同一天里"选什么"和"该不该重仓"是两个问题。 */}
+      <MarketRiskBanner />
 
       <CandidateSection view={view} section={section} onPick={setPicked} />
       <CandidateDrawer view={view} symbol={picked} onClose={() => setPicked(null)} />
