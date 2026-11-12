@@ -163,11 +163,15 @@ def main(argv: list[str] | None = None) -> int:
 
     con = sqlite3.connect(f"file:{args.db}?mode=ro", uri=True)
     px = pd.read_sql(
-        "SELECT ts_code, trade_date, close FROM daily_qfq WHERE trade_date >= ?",
+        # 必须取全 OHLCV：composite 内部各维度（pvc 需要 volume、shadow 需要 low 等）
+        "SELECT ts_code, trade_date, open, high, low, close, volume FROM daily_qfq"
+        " WHERE trade_date >= ?",
         con, params=(args.start.replace("-", "")[:4] + "0101",),
     )
     con.close()
     px = px.sort_values(["ts_code", "trade_date"])
+    # 策略内部按 "date" 列排序（`df.sort_values("date")`）→ 必须补这一列
+    px["date"] = px["trade_date"]
     frames = {ts: g.reset_index(drop=True) for ts, g in px.groupby("ts_code")}
     fwd = {ts: _forward_return(df["close"], args.horizon) for ts, df in frames.items()}
     all_dates = sorted(px["trade_date"].unique())
