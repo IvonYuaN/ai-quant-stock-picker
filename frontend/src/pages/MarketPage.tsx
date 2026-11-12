@@ -24,6 +24,7 @@ import { sectionAvailability, summarizeSourceHealth, type MarketView } from "@/l
 import { useMarketData, useSourceHealth } from "@/components/aqsp/useMarketData";
 import { MARKET_SECTION_LABELS, type MarketSection } from "@/lib/market-load";
 import { StockDetailDrawer } from "@/components/aqsp/StockDetailDrawer";
+import { MarketRiskBanner } from "@/components/aqsp/MarketRiskBanner";
 
 function IndexCards({ view }: { view: MarketView }) {
   return (
@@ -410,6 +411,9 @@ export function MarketPage() {
       {sourceNotice ? (
         <ToneCallout tone="warn" title={sourceNotice.title} detail={sourceNotice.detail} />
       ) : null}
+
+      {/* 市场级风险提示：回答"今天能不能动"。只做提示，不参与打分。 */}
+      <MarketRiskBanner />
 
       {loading && !view ? <LoadingState label="正在读取市场环境数据…" /> : null}
 

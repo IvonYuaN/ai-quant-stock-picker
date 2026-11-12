@@ -191,6 +191,28 @@ export interface MarketSentiment {
 export interface SectorFlow {
   name: string; pct: number; net: number; inflow: number; outflow: number; firms: number;
 }
+/**
+ * 市场级风险快照（`GET /api/market-risk`）。
+ *
+ * 🔴 用途锁定：`usage` 恒为 `risk_warning_only`。实测依据 —— 把"趋势曝光"
+ * 叠加到 walk-forward 真实逐期收益后，均值 Sharpe 由 +0.66 降到 +0.53（更差），
+ * 仅最大回撤改善（−10.8% → −3.9%）。**不得**把它接进打分或选股权重。
+ */
+export interface MarketRisk {
+  available: boolean;
+  reason?: string;
+  as_of?: string;
+  level?: "low" | "medium" | "high";
+  trend_20?: number;
+  trend_60?: number;
+  breadth?: number;
+  drawdown_252?: number;
+  reasons?: string[];
+  n_symbols?: number;
+  summary?: string;
+  usage?: "risk_warning_only";
+}
+
 export interface MarketOverview {
   sentiment: MarketSentiment; sectors: SectorFlow[]; updated: string;
 }
@@ -805,6 +827,12 @@ export const api = {
     get<InfoStreamData>(force ? "/aqsp/info-stream?force=true" : "/aqsp/info-stream"),
   indices: (options?: AqspRequestOptions) => get<IndexQuote[]>("/indices", options),
   marketOverview: (options?: AqspRequestOptions) => get<MarketOverview>("/market/overview", options),
+  /**
+   * 市场级风险快照（趋势/广度/回撤）。
+   * 🔴 `usage` 恒为 `risk_warning_only` —— 只做风险提示，**不得**用于加分或择时 alpha。
+   * 依据：2026-11-12 叠加"趋势曝光"后 walk-forward 均值 Sharpe 由 +0.66 降到 +0.53。
+   */
+  marketRisk: (options?: AqspRequestOptions) => get<MarketRisk>("/market-risk", options),
   emotion: (options?: AqspRequestOptions) => get<ShortTermEmotion>("/market/emotion", options),
   turnoverTop: (options?: AqspRequestOptions) => get<TurnoverTop>("/market/turnover-top", options),
   globalIndices: (options?: AqspRequestOptions) => get<GlobalIndex[]>("/global/indices", options),
