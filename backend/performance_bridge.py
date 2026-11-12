@@ -229,7 +229,22 @@ def _excess_summary(settled: pd.DataFrame) -> dict[str, Any]:
             "reason": "台账无 excess_return_pct 字段",
             "n_settled": n_settled,
         }
-    vals = pd.to_numeric(settled["excess_return_pct"], errors="coerce").dropna()
+    # 🔴 剔除**物理上不可能**的当日收益：A股单日涨跌幅上限 20%（科创/创业板），
+    # 北交所 30%，故「当日了结 + |收益|>30%」必为结算口径错误而非真实收益。
+    # 实测 2026-11-12：19/218 行属此类（全是 stop_loss，exit/entry 比值呈 ×2、×1.3
+    # 这类复权基准不一致特征）。根因是 `_resolve_exit` 用行内**绝对价** stop_loss 出场，
+    # 而入场用 entry_bar["open"]，两者复权基准不一致；修复属结算层设计问题，另行处理。
+    # 此处只保证"展示的数字不被这些脏行污染"，并如实报出剔除了多少条。
+    excluded = 0
+    frame = settled
+    if {"entry_date", "exit_date", "return_pct"}.issubset(settled.columns):
+        same_day = settled["entry_date"].astype(str) == settled["exit_date"].astype(str)
+        ret_abs = pd.to_numeric(settled["return_pct"], errors="coerce").abs()
+        implausible = same_day & (ret_abs > 30)
+        excluded = int(implausible.sum())
+        frame = settled.loc[~implausible]
+
+    vals = pd.to_numeric(frame["excess_return_pct"], errors="coerce").dropna()
     k = int(len(vals))
     if k == 0:
         return {
@@ -240,12 +255,18 @@ def _excess_summary(settled: pd.DataFrame) -> dict[str, Any]:
     return {
         "available": True,
         "n_settled": n_settled,
+        "n_excluded_implausible": excluded,
+        "n_considered": int(len(frame)),
         "n_with_excess": k,
-        "coverage": round(k / n_settled, 4) if n_settled else 0.0,
+        # 覆盖率分母用**剔除脏行后**的样本数，否则剔除会让覆盖率无故变低
+        "coverage": round(k / len(frame), 4) if len(frame) else 0.0,
         "avg_excess_pct": round(float(vals.mean()), 4),
         "median_excess_pct": round(float(vals.median()), 4),
         "positive_ratio": round(float((vals > 0).mean()), 4),
-        "note": "逐笔超额取台账 excess_return_pct；缺失行不计入，未回填。",
+        "note": (
+            "逐笔超额取台账 excess_return_pct；缺失行不计入，未回填。"
+            "已剔除「当日了结且|收益|>30%」的物理不可能记录（结算口径缺陷，见代码注释）。"
+        ),
     }
 
 def _recent_picks(settled: pd.DataFrame, limit: int = RECENT_PICKS_LIMIT) -> list[dict[str, Any]]:

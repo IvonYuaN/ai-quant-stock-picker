@@ -51,6 +51,34 @@ def volume_scale(ts_code: str) -> int:
     return 100
 
 
+def fetch_range(sym: str, start: str, end: str) -> list[list[str]]:
+    """按 ~300 自然日窗口**分段**拉取（腾讯单次上限 320 根 K 线）。
+
+    不分段时一次请求只会拿到尾部 320 根：本机回补 2023-12-29 → 2026-11-12
+    （约 690 个交易日）会**静默丢掉前 ~370 天**，看起来"补完了"其实缺一年多。
+    """
+    from datetime import date, timedelta
+
+    def _d(x: str) -> date:
+        y, m, d = x.split("-")
+        return date(int(y), int(m), int(d))
+
+    out: list[list[str]] = []
+    seen: set[str] = set()
+    cursor = _d(start)
+    hard_end = _d(end)
+    while cursor <= hard_end:
+        window_end = min(cursor + timedelta(days=300), hard_end)
+        for bar in fetch(sym, cursor.isoformat(), window_end.isoformat()):
+            key = bar[0] if bar else ""
+            if key and key not in seen:
+                seen.add(key)
+                out.append(bar)
+        cursor = window_end + timedelta(days=1)
+    out.sort(key=lambda b: b[0])
+    return out
+
+
 def fetch(sym: str, start: str, end: str) -> list[list[str]]:
     url = API.format(sym=sym, start=start, end=end)
     req = urllib.request.Request(url, headers=UA)
@@ -97,7 +125,7 @@ def main() -> int:
         chunk = pending[i : i + args.batch]
         rows: list[tuple] = []
         with ThreadPoolExecutor(max_workers=args.workers) as pool:
-            futures = {s: pool.submit(fetch, to_tx(s), start_dt, end_dt) for s in chunk}
+            futures = {s: pool.submit(fetch_range, to_tx(s), start_dt, end_dt) for s in chunk}
             for sym, fut in futures.items():
                 try:
                     bars = fut.result()

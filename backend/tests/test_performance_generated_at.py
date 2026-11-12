@@ -101,3 +101,36 @@ def test_excess_summary_refuses_zero_when_all_missing(monkeypatch, tmp_path):
     ex = pb.performance_payload()["excess"]
     assert ex["available"] is False
     assert "avg_excess_pct" not in ex
+
+
+def test_excess_excludes_physically_impossible_same_day_returns(monkeypatch, tmp_path):
+    """当日了结且 |收益|>30% 必须剔除 —— A股单日涨跌幅上限 20%/30%。
+
+    实测 2026-11-12：19/218 行属此类（全是 stop_loss，exit/entry 比值呈 ×2、×1.3
+    这类复权基准不一致特征）。若不过滤，聚合超额会被抬高到 +9.9%（真值约 −1%）。
+    """
+    import performance_bridge as pb
+
+    path = tmp_path / "pred.jsonl"
+    _write_ledger(path, [
+        # 正常：隔日了结
+        {"id": "1", "signal_date": "2026-09-01", "status": "validated",
+         "entry_date": "2026-09-01", "exit_date": "2026-09-08",
+         "return_pct": 5.0, "excess_return_pct": 3.0},
+        # 脏行：当日了结 +41.3%（不可能）
+        {"id": "2", "signal_date": "2026-05-07", "status": "validated",
+         "entry_date": "2026-05-07", "exit_date": "2026-05-07",
+         "return_pct": 41.33, "excess_return_pct": 41.23, "exit_reason": "stop_loss"},
+        # 当日了结但正常幅度：保留
+        {"id": "3", "signal_date": "2026-06-18", "status": "validated",
+         "entry_date": "2026-06-18", "exit_date": "2026-06-18",
+         "return_pct": -1.7, "excess_return_pct": -2.2, "exit_reason": "stop_loss"},
+    ])
+    monkeypatch.setenv("AQSP_LEDGER", str(path))
+    ex = pb.performance_payload()["excess"]
+    assert ex["n_settled"] == 3
+    assert ex["n_excluded_implausible"] == 1
+    assert ex["n_considered"] == 2
+    assert ex["n_with_excess"] == 2
+    # 均值只由 3.0 与 -2.2 决定，不含 41.23
+    assert ex["avg_excess_pct"] == round((3.0 + -2.2) / 2, 4)
