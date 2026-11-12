@@ -213,6 +213,41 @@ def _settled_frame(rows: list[dict]) -> pd.DataFrame:
     return df.loc[keep].copy()
 
 
+
+def _excess_summary(settled: pd.DataFrame) -> dict[str, Any]:
+    """已结算信号的**超额收益**聚合（相对台账内记录的基准）。
+
+    §8 诚实边界：
+    - 只用台账原值 `excess_return_pct`，**不回填、不插值**；缺失行不计入均值，
+      并把覆盖率如实带出去（`coverage`），避免"用了 30% 的样本冒充全量"。
+    - 已结算但无超额记录时 `available=False`，**不返回 0** —— 0 会被读成"没跑赢也没跑输"。
+    """
+    n_settled = int(len(settled))
+    if settled.empty or "excess_return_pct" not in settled.columns:
+        return {
+            "available": False,
+            "reason": "台账无 excess_return_pct 字段",
+            "n_settled": n_settled,
+        }
+    vals = pd.to_numeric(settled["excess_return_pct"], errors="coerce").dropna()
+    k = int(len(vals))
+    if k == 0:
+        return {
+            "available": False,
+            "reason": "已结算信号均无超额记录",
+            "n_settled": n_settled,
+        }
+    return {
+        "available": True,
+        "n_settled": n_settled,
+        "n_with_excess": k,
+        "coverage": round(k / n_settled, 4) if n_settled else 0.0,
+        "avg_excess_pct": round(float(vals.mean()), 4),
+        "median_excess_pct": round(float(vals.median()), 4),
+        "positive_ratio": round(float((vals > 0).mean()), 4),
+        "note": "逐笔超额取台账 excess_return_pct；缺失行不计入，未回填。",
+    }
+
 def _recent_picks(settled: pd.DataFrame, limit: int = RECENT_PICKS_LIMIT) -> list[dict[str, Any]]:
     """票级复盘明细：最近 N 笔已结算（validated）信号，按 signal_date 新→旧。
 
@@ -416,6 +451,8 @@ def performance_payload() -> dict[str, Any]:
         },
         "freshness": _freshness(rows, path),
         "overall": overall,
+        # 聚合超额：策略"跑赢还是跑输"的直接答案，与胜率/收益并列但不互相替代
+        "excess": _excess_summary(settled),
         "strategies": strategies,
         # 票级复盘明细：回答"上次具体选了哪只票、事后如何"，与策略级聚合并列。
         # 数据全部取自 settled（validated 且非模拟行），只读、不落任何计算。
