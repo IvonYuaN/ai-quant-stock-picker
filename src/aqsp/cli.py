@@ -951,6 +951,11 @@ def main(argv: list[str] | None = None) -> int:
     static_dash_cmd.add_argument("--ledger", default="data/predictions.jsonl")
     static_dash_cmd.add_argument("--output", default="dist/dashboard/index.html")
 
+    mr_cmd = sub.add_parser(
+        "market-risk", help="print market risk snapshot (risk warning only, NOT alpha)"
+    )
+    mr_cmd.add_argument("--as-of", default="", help="YYYYMMDD; default latest trade date")
+    mr_cmd.add_argument("--json", action="store_true", help="emit JSON instead of text")
     monitor_cmd = sub.add_parser("monitor", help="run monitoring checks")
     monitor_cmd.add_argument("--config", default="config/monitors.yaml")
     monitor_cmd.add_argument("--notify", action="store_true")
@@ -1260,6 +1265,8 @@ def main(argv: list[str] | None = None) -> int:
             return run_walkforward(args)
         if args.command == "briefing":
             return run_briefing(args)
+        if args.command == "market-risk":
+            return run_market_risk(args)
         if args.command == "monitor":
             return run_monitor(args)
         if args.command == "news-catalysts":
@@ -8398,6 +8405,66 @@ def run_briefing(args: argparse.Namespace) -> int:
             )
             print("✅ 邮件已发送" if ok else "❌ 邮件发送失败")
 
+    return 0
+
+
+def run_market_risk(args: argparse.Namespace) -> int:
+    """打印市场级风险快照。
+
+    🔴 **只做风险提示，不是 alpha 信号**。实测（2026-11-12）：把"趋势曝光"
+    叠加到 walk-forward 真实逐期收益后，均值 Sharpe 由 +0.66 降到 +0.53（更差），
+    仅最大回撤改善（−10.8% → −3.9%）。详见 ``aqsp/market_risk.py``。
+    """
+    import sqlite3
+
+    from aqsp.data.source_factory import resolve_sqlite_db_path
+    from aqsp.market_risk import compute_market_risk
+
+    db_path = resolve_sqlite_db_path()
+    if not db_path:
+        print("未找到本机日线库（AQSP_SQLITE_DB_PATH / .env / 默认路径均不可用）", file=sys.stderr)
+        return 2
+
+    day = str(getattr(args, "as_of", "") or "").strip()
+    if not day:
+        con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        try:
+            row = con.execute("SELECT MAX(trade_date) FROM daily_qfq").fetchone()
+        finally:
+            con.close()
+        day = str(row[0]) if row and row[0] else ""
+    if not day:
+        print("库内没有交易日数据", file=sys.stderr)
+        return 2
+
+    snap = compute_market_risk(db_path, day)
+    if snap is None:
+        print(f"样本不足，无法计算（as_of={day}；需 ≥65 个交易日且 ≥300 只票）", file=sys.stderr)
+        return 1
+
+    if getattr(args, "json", False):
+        print(
+            json.dumps(
+                {
+                    "as_of": snap.as_of,
+                    "level": snap.level,
+                    "trend_20": snap.trend_20,
+                    "trend_60": snap.trend_60,
+                    "breadth": snap.breadth,
+                    "drawdown_252": snap.drawdown_252,
+                    "reasons": list(snap.reasons),
+                    "n_symbols": snap.n_symbols,
+                    "usage": "risk_warning_only",
+                },
+                ensure_ascii=False,
+            )
+        )
+        return 0
+
+    print(snap.summary())
+    for reason in snap.reasons:
+        print(f"  - {reason}")
+    print("（仅作风险提示，不参与选股打分）")
     return 0
 
 
