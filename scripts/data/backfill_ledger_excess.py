@@ -34,7 +34,7 @@ import json
 import shutil
 import sqlite3
 import sys
-from datetime import datetime, timezone
+import time
 from pathlib import Path
 
 
@@ -133,7 +133,9 @@ def main(argv: list[str] | None = None) -> int:
         print("\n[dry-run] 未写入。确认无误后加 --apply。")
         return 0
 
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    # 红线：runtime python 禁用裸 datetime.now（项目统一时钟在 aqsp.core.time）。
+    # 这里只用于备份文件名，不参与任何业务判断，故用 time.strftime。
+    stamp = time.strftime("%Y%m%d%H%M%S")
     backup = ledger.with_suffix(ledger.suffix + f".bak-{stamp}")
     shutil.copy2(ledger, backup)
     tmp = ledger.with_suffix(ledger.suffix + ".tmp")
