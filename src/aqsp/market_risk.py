@@ -34,6 +34,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import Literal
 
+import numpy as np
 import pandas as pd
 
 __all__ = ["MarketRiskSnapshot", "compute_market_risk"]
@@ -124,22 +125,30 @@ def _compute_cached(
     if wide.empty or wide.shape[0] < 65 or wide.shape[1] < min_symbols:
         return None
 
-    rets = wide.pct_change()
-    mkt = rets.median(axis=1).dropna()
-    if len(mkt) < 60:
+    # 🔴 等权**买入持有**指数：每只票以窗口首个有效价归一到 1，再按票取均值。
+    #
+    # 曾经写成 `eq = (1 + wide.pct_change().median(axis=1)).cumprod()` —— **错的**。
+    # 截面「中位日收益」不能直接累乘：收益分布右偏，中位日收益系统性低于组合增长率，
+    # 长期复利把误差放大到几十个点。2026-11-12 实测同一段窗口：
+    #   等权买入持有 +2.30%｜中位票 −9.07%｜median 累乘 **−71.89%**（荒谬）。
+    # 该错误曾让 UI 显示"距一年高点回撤 −49.8%""60 日 −15.22%"，全部作废。
+    filled = wide.ffill()
+    base = filled.apply(lambda col: col.dropna().iloc[0] if col.notna().any() else np.nan)
+    scaled = filled.divide(base, axis=1)
+    eq = scaled.mean(axis=1, skipna=True).dropna()
+    if len(eq) < 60:
         return None
 
-    trend_20 = float((1 + mkt.tail(20)).prod() - 1)
-    trend_60 = float((1 + mkt.tail(60)).prod() - 1)
+    trend_20 = float(eq.iloc[-1] / eq.iloc[-21] - 1) if len(eq) >= 21 else float("nan")
+    trend_60 = float(eq.iloc[-1] / eq.iloc[-61] - 1) if len(eq) >= 61 else float("nan")
 
     ma20 = wide.rolling(20).mean()
     last = wide.iloc[-1]
     above = (last > ma20.iloc[-1]).sum()
     breadth = float(above / max(1, last.notna().sum()))
 
-    eq = (1 + mkt).cumprod()
     peak = eq.cummax()
-    drawdown_252 = float((eq.iloc[-1] / peak.iloc[-1]) - 1)
+    drawdown_252 = float(eq.iloc[-1] / peak.iloc[-1] - 1)
 
     reasons: list[str] = []
     if trend_20 < 0:
@@ -159,7 +168,7 @@ def _compute_cached(
         level = "low"
 
     return MarketRiskSnapshot(
-        as_of=str(mkt.index[-1]),
+        as_of=str(eq.index[-1]),
         trend_20=trend_20,
         trend_60=trend_60,
         breadth=breadth,
