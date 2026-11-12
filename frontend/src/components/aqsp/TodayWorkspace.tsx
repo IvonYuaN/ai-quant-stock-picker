@@ -5,7 +5,7 @@
 // 候选摘要与持仓跟进。原来塞在这里的证据链、消息讨论、决策依据都搬去了对应模块，
 // 不再用折叠区藏起来。
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { useLocation, useSearchParams } from "react-router-dom";
+import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { CalendarDays, Compass, RefreshCw, Sparkles } from "lucide-react";
 import { Badge, HeroState, LoadingState, ToneCallout } from "@/components/ui/primitives";
 import { MarketRiskBanner } from "@/components/aqsp/MarketRiskBanner";
@@ -17,7 +17,6 @@ import {
 import { formatResearchDate } from "@/lib/research-view";
 import { scheduleHashTargetScroll } from "@/lib/hash-navigation";
 import { formatAqspTime, isAqspSnapshotStale, useWorkspaceSnapshot } from "./useAqspSnapshot";
-import { MarketStrip } from "./MarketStrip";
 import { ReviewExportButton } from "./ReviewExportButton";
 import { CandidateSummary } from "./CandidateSummary";
 import { CandidateDrawer } from "./CandidateDrawer";
@@ -310,7 +309,15 @@ export function TodayWorkspace() {
           {/* 首屏仪表盘：先给总量与门禁，再看市场与结论。 */}
           <KpiRow view={view} />
           <section id="market-context" className="aq-section aq-market-anchor" aria-label="市场与行业方向">
-            <MarketStrip />
+            {/* IA（docs/information-architecture.md）：市场与行业方向的**唯一家**是 /market。
+                此处原先直接渲染 <MarketStrip />，与 /market 重复实现同一份数据，
+                导致加一条信息要改三处。现在只留一行指向，不再重复渲染。 */}
+            <p className="aq-hint">
+              大盘 / 行业 / 情绪 / 外围与市场风险分级的完整数据在
+              {" "}
+              <Link to="/market">市场环境</Link>
+              {" "}页。
+            </p>
           </section>
           <PersistentBlock view={view} />
           <CandidateSummary view={view} onPick={setPicked} />
