@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Literal
 
 import pandas as pd
@@ -61,7 +62,12 @@ class MarketRiskSnapshot:
 
 
 def _load_wide(db: str, as_of: str, lookback_days: int = 320) -> pd.DataFrame:
-    """读近 ``lookback_days`` 个交易日的收盘价宽表（按票采样，控制内存）。"""
+    """读近 ``lookback_days`` 个交易日的收盘价宽表（按票采样，控制内存）。
+
+    🔴 SQL 必须带**日期下界**：早期实现只写 `trade_date <= as_of`，
+    等于把每只票的**全部历史**都读进来（1200 票 × 数千行 ≈ 600 万行），
+    再用 `tail()` 丢掉 95% —— 单次 3~4 秒就慢在这里。
+    """
     con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
     try:
         codes = [
@@ -74,12 +80,23 @@ def _load_wide(db: str, as_of: str, lookback_days: int = 320) -> pd.DataFrame:
         ]
         if not codes:
             return pd.DataFrame()
+        days = [
+            r[0]
+            for r in con.execute(
+                "SELECT DISTINCT trade_date FROM daily_qfq WHERE trade_date <= ?"
+                " ORDER BY trade_date DESC LIMIT ?",
+                (as_of, lookback_days),
+            )
+        ]
+        if len(days) < min(65, lookback_days):
+            return pd.DataFrame()
+        lo = min(days)
         marks = ",".join("?" * len(codes))
         px = pd.read_sql(
             f"SELECT ts_code, trade_date, close FROM daily_qfq"
-            f" WHERE ts_code IN ({marks}) AND trade_date <= ?",
+            f" WHERE ts_code IN ({marks}) AND trade_date BETWEEN ? AND ?",
             con,
-            params=(*codes, as_of),
+            params=(*codes, lo, as_of),
         )
     finally:
         con.close()
@@ -90,7 +107,19 @@ def _load_wide(db: str, as_of: str, lookback_days: int = 320) -> pd.DataFrame:
 def compute_market_risk(
     db: str, as_of: str, *, min_symbols: int = 300
 ) -> MarketRiskSnapshot | None:
-    """计算 ``as_of``（YYYYMMDD）当日的市场风险快照；数据不足返回 ``None``。"""
+    """计算 ``as_of``（YYYYMMDD）当日的市场风险快照；数据不足返回 ``None``。
+
+    带进程内缓存：单次计算实测 **3.4~4.0 秒**（1200 票 × 320 日 pandas 透视），
+    直接挂在页面/首页快照上会明显拖慢。同一 ``(db, as_of)`` 的历史快照是**确定的**
+    （不随之后的数据变化），故按三元组缓存，TTL 由 ``as_of`` 变化自然决定。
+    """
+    return _compute_cached(str(db), str(as_of), int(min_symbols))
+
+
+@lru_cache(maxsize=64)
+def _compute_cached(
+    db: str, as_of: str, min_symbols: int
+) -> MarketRiskSnapshot | None:
     wide = _load_wide(db, as_of)
     if wide.empty or wide.shape[0] < 65 or wide.shape[1] < min_symbols:
         return None
