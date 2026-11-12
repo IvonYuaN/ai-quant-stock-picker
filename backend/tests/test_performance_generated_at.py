@@ -57,3 +57,47 @@ def test_generated_at_never_shifts_by_host_timezone(monkeypatch, hour) -> None:
     assert performance_bridge._generated_at() == (moment + timedelta(hours=8)).strftime(
         "%Y-%m-%d %H:%M"
     )
+
+
+# ---------------- 聚合超额：诚实边界 ----------------
+
+def _write_ledger(path, rows):
+    import json
+    path.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows), encoding="utf-8")
+
+
+def test_excess_summary_aggregates_available_rows(monkeypatch, tmp_path):
+    """有若干行带 excess_return_pct 时，均值/覆盖率必须基于实际可用行。"""
+    import performance_bridge as pb
+
+    path = tmp_path / "pred.jsonl"
+    _write_ledger(path, [
+        {"id": "1", "signal_date": "2026-09-01", "status": "validated",
+         "excess_return_pct": 3.0, "return_pct": 5.0},
+        {"id": "2", "signal_date": "2026-09-02", "status": "validated",
+         "excess_return_pct": -1.0, "return_pct": 1.0},
+        {"id": "3", "signal_date": "2026-09-03", "status": "validated",
+         "return_pct": 2.0},  # 无超额 → 不计入均值，但要计入 n_settled
+    ])
+    monkeypatch.setenv("AQSP_LEDGER", str(path))
+    payload = pb.performance_payload()
+    ex = payload["excess"]
+    assert ex["available"] is True
+    assert ex["n_settled"] == 3
+    assert ex["n_with_excess"] == 2
+    assert ex["coverage"] == round(2 / 3, 4)
+    assert ex["avg_excess_pct"] == round(1.0, 4)
+
+
+def test_excess_summary_refuses_zero_when_all_missing(monkeypatch, tmp_path):
+    """全部缺失时必须 available=False —— 返回 0 会被读成"没跑赢也没跑输"。"""
+    import performance_bridge as pb
+
+    path = tmp_path / "pred.jsonl"
+    _write_ledger(path, [
+        {"id": "1", "signal_date": "2026-09-01", "status": "validated", "return_pct": 5.0},
+    ])
+    monkeypatch.setenv("AQSP_LEDGER", str(path))
+    ex = pb.performance_payload()["excess"]
+    assert ex["available"] is False
+    assert "avg_excess_pct" not in ex
