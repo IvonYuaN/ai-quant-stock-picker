@@ -8,6 +8,7 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useLocation, useSearchParams } from "react-router-dom";
 import { CalendarDays, Compass, RefreshCw, Sparkles } from "lucide-react";
 import { Badge, HeroState, LoadingState, ToneCallout } from "@/components/ui/primitives";
+import { MarketRiskBanner } from "@/components/aqsp/MarketRiskBanner";
 import { cn } from "@/lib/utils";
 import {
   buildDailyView,
@@ -273,6 +274,9 @@ export function TodayWorkspace() {
       />
 
       {data ? <DatePicker snapshot={data} /> : null}
+
+      {/* 今日研究第一屏先回答「今天能不能动」，再谈「选什么」。 */}
+      <MarketRiskBanner />
 
       {error && data && !switching ? (
         <div className="aq-refresh-warning" role="alert">
