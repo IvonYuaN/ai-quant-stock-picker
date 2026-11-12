@@ -8,6 +8,12 @@ import { LoadingState, SectionHeader, Tag } from "@/components/ui/primitives";
 import { api, type PerformancePayload } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
+/** 超额百分数（后端已是百分数，例如 3.0 表示 +3%）→ 带符号展示；缺失给「—」。 */
+function fmtPct(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "—";
+  return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
+}
+
 const EXIT_REASON: Readonly<Record<string, string>> = {
   horizon_close: "到期了结",
   take_profit: "止盈了结",
@@ -51,6 +57,7 @@ export function SignalsPage() {
   const freshness = data.freshness;
   const cold = data.cold_start;
   const picks = data.recent_picks ?? [];
+  const excess = data.excess;
 
   return (
     <div className="aq-page aq-module-page">
@@ -96,9 +103,36 @@ export function SignalsPage() {
         ) : null}
       </section>
 
+      <section className="aq-section" aria-label="已结算信号超额">
+        <SectionHeader
+          number="02 · 超额"
+          title="是否跑赢基准"
+          description="逐笔超额来自台账 excess_return_pct：只看已结算、且有超额记录的行；缺失不计入、不回填 0。"
+          count={excess?.n_with_excess ? `${excess.n_with_excess} / ${excess.n_settled}` : "无记录"}
+        />
+        {excess?.available ? (
+          <>
+            <div className="aq-fact-grid">
+              <p><b>平均超额</b><span>{fmtPct(excess.avg_excess_pct)}</span></p>
+              <p><b>中位超额</b><span>{fmtPct(excess.median_excess_pct)}</span></p>
+              <p><b>正超额占比</b><span>{excess.positive_ratio == null ? "—" : `${(excess.positive_ratio * 100).toFixed(0)}%`}</span></p>
+              <p><b>覆盖率</b><span>{excess.coverage == null ? "—" : `${(excess.coverage * 100).toFixed(0)}%`}</span></p>
+            </div>
+            <p className="aq-note">
+              超额只统计有记录的已结算信号；覆盖率低于 100% 时，上面的均值不代表全部信号。
+            </p>
+          </>
+        ) : (
+          <p className="aq-note aq-tone-warn">
+            暂无可用超额记录（{excess?.reason || "台账未提供"}）。此处不显示 0——
+            那会被误读成「既没跑赢也没跑输」。
+          </p>
+        )}
+      </section>
+
       <section className="aq-section" aria-label="策略信号台账">
         <SectionHeader
-          number="02 · 策略"
+          number="03 · 策略"
           title="各策略的信号表现"
           description="独立信号日不足门槛时不展示命中率（冷启动期）；平均收益只作观测，不作主指标。"
           count={data.strategies?.length}
@@ -167,7 +201,7 @@ export function SignalsPage() {
 
       <section className="aq-section" aria-label="最近信号">
         <SectionHeader
-          number="03 · 明细"
+          number="04 · 明细"
           title="最近信号明细"
           description="按信号日从新到旧；收益与超额为该笔已了结信号的结果。"
           count={picks.length}

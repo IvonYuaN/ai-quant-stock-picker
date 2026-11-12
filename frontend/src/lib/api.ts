@@ -748,6 +748,23 @@ export interface PerformanceFreshness {
   stale_after_trading_days: number;
 }
 
+/** 已结算信号的聚合超额（`GET /api/aqsp/performance` 的 `excess`）。
+
+ * 🔴 诚实边界：缺失行不计入均值（`coverage` 如实给出）；全部缺失时
+ * `available=false` 且**不含** `avg_excess_pct` —— 0 会被读成"没跑赢也没跑输"。
+ */
+export interface PerformanceExcess {
+  available: boolean;
+  reason?: string;
+  n_settled: number;
+  n_with_excess?: number;
+  coverage?: number;
+  avg_excess_pct?: number;
+  median_excess_pct?: number;
+  positive_ratio?: number;
+  note?: string;
+}
+
 export interface PerformancePayload {
   schema_version: string;
   generated_at: string;
@@ -767,6 +784,8 @@ export interface PerformancePayload {
     hit_rate: number;
     displayable: boolean;
   } | null;
+  /** 聚合超额。旧版后端无此键 ⇒ 前端视为"不可用"，不显示 0。 */
+  excess?: PerformanceExcess;
   strategies: PerformanceStrategy[];
   decay_alerts: PerformanceDecayAlert[];
   /**
