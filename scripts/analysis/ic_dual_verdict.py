@@ -128,6 +128,32 @@ def verdict_for_factor(stats_a: dict, stats_b: dict) -> dict:
     }
 
 
+def _window_invalid(stats_map: dict, label: str) -> str:
+    """检查某窗的 per-factor 统计是否**整体无效**；无效返回原因字符串。
+
+    判定：全部因子的 ``n <= 0`` 或 ``mean`` 非有限（NaN/inf）。
+    只要还有一个因子有有效统计就不算整体无效（避免误杀部分缺失场景）。
+    """
+    if not stats_map:
+        return f"{label} 窗没有任何因子统计"
+
+    def _ok(stats: object) -> bool:
+        if not isinstance(stats, dict):
+            return False
+        n = stats.get("n", 0)
+        mean = stats.get("mean")
+        try:
+            if float(n) <= 0:
+                return False
+            return mean is not None and float(mean) == float(mean)
+        except (TypeError, ValueError):
+            return False
+
+    if any(_ok(s) for s in stats_map.values()):
+        return ""
+    return f"{label} 窗全部因子统计无效（n<=0 或 mean 非有限），共 {len(stats_map)} 个因子"
+
+
 def factor_streak(ledger_rows: list[dict], factor: str) -> int:
     """某因子从最近一个数据日往回的「连续达标数据日数」。
 
@@ -228,6 +254,27 @@ def run_dual_verdict(
         name: verdict_for_factor(ra["factors"].get(name, {}), rb["factors"].get(name, {}))
         for name in rb["factors"]
     }
+
+    # 🔴 2026-11-11 fail-closed 守卫：**拒绝为无效统计出具判决**。
+    #
+    # 事故实证：runner 上 2026-11-11T02:19 那轮 as_of_b=2026-11-09，B 窗标的池只有
+    # **4 只**（A 窗 299 只），全因子 `mean=nan, t=nan, n=0`，而流水线照样写出
+    # 「达标=无」并推进 ledger。后果：**因子准入机制永远不可能触发**，
+    # 表现为"所有因子都不显著"，与"因子确实无效"完全无法区分 ——
+    # 这正是「因子池只剩 2 个」长期无法改善的隐性原因之一。
+    #
+    # 现在：任一侧窗口的全部因子统计无效（n<=0 或 mean 非有限）⇒ **抛错中止**，
+    # 不写 ledger、不写 IC_READY ⇒ cron/CI 会看到失败，而不是一份"干净的无"。
+    for _label, _res in (("A", ra), ("B", rb)):
+        _reason = _window_invalid(_res.get("factors") or {}, _label)
+        if _reason:
+            raise RuntimeError(
+                f"双窗 IC 判决拒绝出具：{_reason} "
+                f"（as_of_{_label.lower()}="
+                f"{as_of_a if _label == 'A' else as_of_b}）—— "
+                "统计无效不得当作『无因子达标』"
+            )
+
     hits = [n for n, v in verdicts.items() if v["hit"]]
 
     run_at = now_shanghai().astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")

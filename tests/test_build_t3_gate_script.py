@@ -31,8 +31,8 @@ from pathlib import Path
 import pytest
 
 from scripts.build_t3_gate_script import (
-    CHOICES_ANCHOR,
-    CHOICES_PATCHED,
+    CHOICES_DERIVED_MARKER,
+    CHOICES_REQUIRED_PROFILE,
     POOL_ANCHOR,
     POOL_PATCHED,
     BuildError,
@@ -85,18 +85,38 @@ def _load_built_module(source_text: str, tmp_path: Path):
 # --------------------------------------------------------------------------- #
 
 
-def test_build_applies_exactly_the_two_documented_patches() -> None:
-    """The output differs from the tracked source by exactly P1 and P2."""
+def test_build_applies_exactly_the_documented_patch() -> None:
+    """The output differs from the tracked source by exactly P2 (P1 is now an assert).
+
+    🔴 2026-11-10：P1 从「文本替换（注入 htf_mr）」改为「断言派生已含 htf_mr」，
+    因为入口白名单已改为从 ``aqsp.cli`` 派生 ⇒ 没有任何 choices 文本需要替换。
+    故净 diff 只剩 P2 的两行（``--benchmark-symbol ""``）。
+    """
     source = _tracked_source()
     patched = build(source)
 
     hunks = _changed_hunks(source, patched)
     assert sorted(hunks) == sorted(
-        ["-" + CHOICES_ANCHOR.rstrip("\n"), "+" + CHOICES_PATCHED.rstrip("\n")]
-        + ["+" + line for line in POOL_PATCHED.splitlines()[2:]]
+        ["+" + line for line in POOL_PATCHED.splitlines()[2:]]
     ), f"unexpected patch set: {hunks}"
     # net effect is exactly the two extra child-command arguments
     assert len(patched.splitlines()) == len(source.splitlines()) + 2
+
+
+def test_build_source_derives_grid_profile_whitelist() -> None:
+    """P1：wrapper 的 ``--grid-profile`` 白名单必须**从单一事实源派生**。
+
+    手抄 choices 就是「新增档位漏网」的根源（``htf_mr`` 长期漏掉、
+    ``holder_overlay`` 若照抄会被 argparse 直接拒绝）⇒ 派生是硬要求。
+    """
+    source = _tracked_source()
+    assert CHOICES_DERIVED_MARKER in source, (
+        "tracked source 不再从 aqsp.cli 派生 --grid-profile 白名单"
+    )
+    # 且源码里**不得**残留手抄的 choices 元组（第二份副本 = 病根）
+    assert 'choices=("stable"' not in source, (
+        "tracked source 仍残留手抄的 choices 元组 —— 存在第二份副本即漏网风险"
+    )
 
 
 def test_build_output_is_valid_python() -> None:
@@ -106,14 +126,22 @@ def test_build_output_is_valid_python() -> None:
 def test_built_wrapper_accepts_htf_mr_grid_profile(tmp_path: Path) -> None:
     """P1: the *wrapper's own* parser must offer ``htf_mr``.
 
-    The wrapper declares its own ``choices`` tuple and does not inherit the
-    CLI's, so copying ``run_production_walkforward_gate.py`` verbatim yields
-    ``invalid choice: 'htf_mr'`` and the campaign cannot start.
+    The wrapper's whitelist is **derived** from ``aqsp.cli`` (single source of
+    truth), so ``htf_mr`` is offered because it is routable there — not because
+    a second hand-copied choices tuple was patched in.
+
+    🔴 2026-11-10: 断言方式随之改变（源码里不再有 ``"htf_mr"`` 字面量 ——
+    派生才是正解）；改为**实际解析**该档位，证明 wrapper 真能接受它。
     """
     module = _load_built_module(build(_tracked_source()), tmp_path)
-    parser_source = Path(module.__file__).read_text(encoding="utf-8")  # type: ignore[arg-type]
-    assert '"htf_mr"' in parser_source
-    assert CHOICES_PATCHED.rstrip("\n") in parser_source
+    parser = module._build_parser() if hasattr(module, "_build_parser") else None
+    if parser is None:
+        # 该脚本未暴露 parser 构造器 ⇒ 直接校验派生的档位集合含 htf_mr
+        from aqsp.cli import walkforward_grid_profiles
+
+        assert CHOICES_REQUIRED_PROFILE in walkforward_grid_profiles()
+    else:
+        parser.parse_args(["--db", "/tmp/x.db", "--grid-profile", "htf_mr"])
 
 
 def _namespace_for(function: object) -> argparse.Namespace:
@@ -146,8 +174,13 @@ def test_built_wrapper_passes_empty_benchmark_symbol_to_child(tmp_path: Path) ->
 # --------------------------------------------------------------------------- #
 
 
-def test_build_refuses_when_choices_anchor_is_missing() -> None:
-    drifted = _tracked_source().replace(CHOICES_ANCHOR, "        choices=()\n", 1)
+def test_build_refuses_when_choices_are_no_longer_derived() -> None:
+    """P1 fail-closed：源码若不再从单一事实源派生白名单 ⇒ 构建中止。
+
+    🔴 2026-11-10：P1 由「文本替换」改为「断言派生」⇒ 漂移信号随之改变：
+    不再是「choices 锚点缺失」，而是「派生调用不在位」。
+    """
+    drifted = _tracked_source().replace(CHOICES_DERIVED_MARKER, "choices=()", 1)
     with pytest.raises(BuildError, match="P1"):
         build(drifted)
 
@@ -167,6 +200,6 @@ def test_build_refuses_double_apply() -> None:
 
 def test_build_refuses_when_anchor_matches_more_than_once() -> None:
     """Ambiguous anchors are a drift signal, not something to guess at."""
-    drifted = _tracked_source().replace(CHOICES_ANCHOR, CHOICES_ANCHOR + CHOICES_ANCHOR, 1)
+    drifted = _tracked_source().replace(POOL_ANCHOR, POOL_ANCHOR + POOL_ANCHOR, 1)
     with pytest.raises(BuildError, match="matched 2 times"):
         build(drifted)
