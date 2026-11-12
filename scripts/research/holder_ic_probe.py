@@ -159,7 +159,11 @@ def main(argv: list[str] | None = None) -> int:
     base = CompositeStrategy(thresholds=th_on)
 
     # 全因子筛选用：从 CompositeStrategy 取各维度实例（**同一实现**，
-    # 避免"另写一套因子"导致与生产口径漂移）
+    # 避免"另写一套因子"导致与生产口径漂移）。
+    # 🔴 但**必须强制 enabled=True**：停用因子（mean_reversion/volume/macd_hist…）
+    # 在 enabled=False 时直接返回**常量**（实测 mean_reversion 全 0.0、
+    # quality/value 全 0.5）⇒ 截面 Spearman 退化为 NaN ⇒ 表里看不到读数。
+    # 筛选的目的是"这个因子有没有信息"，与"生产是否启用"无关。
     factor_map: dict[str, object] = {}
     if args.factors:
         for name, attr in (
@@ -177,9 +181,24 @@ def main(argv: list[str] | None = None) -> int:
             ("value", "value_strategy"),
         ):
             inst = getattr(base, attr, None)
-            if inst is not None:
+            if inst is None:
+                continue
+            # 🔴 关键：`enabled` 判定读的是 **thresholds**（`self.thresholds.<factor>.enabled`），
+            # 不是 `self.config`。实测 mean_reversion/quality 在 yaml 里 enabled=False 时
+            # 直接 `return 0.0/0.5` 常量 ⇒ 截面 Spearman 退化 NaN、表里看不到读数。
+            # 故这里按因子名把对应阈值对象的 enabled 改成 True（不改 yaml、不改生产）。
+            th_f = th_on
+            try:
+                sub = getattr(th_on, name, None)
+                if sub is not None and hasattr(sub, "enabled"):
+                    th_f = replace(th_on, **{name: replace(sub, enabled=True)})
+            except (TypeError, ValueError):
+                th_f = th_on
+            try:
+                factor_map[name] = type(inst)(StrategyConfig(name=name, enabled=True), th_f)
+            except Exception:
                 factor_map[name] = inst
-        print(f"[factors] 参与筛选：{list(factor_map)}")
+        print(f"[factors] 参与筛选（强制 enabled=True）：{list(factor_map)}")
 
     rows = []
     portfolio_ns = [int(x) for x in args.portfolio_n.split(",") if x.strip()]
