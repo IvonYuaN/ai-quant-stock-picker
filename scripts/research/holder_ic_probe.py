@@ -99,6 +99,11 @@ def main(argv: list[str] | None = None) -> int:
         "λ=1 等价于现行 pure-overlay（完全覆盖），λ=0 等价于纯 2f。"
         "例：--blend-lambda 1.0,0.3,0.15 用来比较不同集成方式的换手与净效果。",
     )
+    parser.add_argument(
+        "--factors",
+        action="store_true",
+        help="额外对**全部候选因子**算 全市场 IC + 池内 IC（作业面），用于筛因子。",
+    )
     args = parser.parse_args(argv)
 
     os.environ["AQSP_HOLDER_COUNT_CSV"] = str(args.holder_csv)
@@ -149,10 +154,34 @@ def main(argv: list[str] | None = None) -> int:
     )
     base = CompositeStrategy(thresholds=th_on)
 
+    # 全因子筛选用：从 CompositeStrategy 取各维度实例（**同一实现**，
+    # 避免"另写一套因子"导致与生产口径漂移）
+    factor_map: dict[str, object] = {}
+    if args.factors:
+        for name, attr in (
+            ("momentum", "momentum_strategy"),
+            ("price_volume_corr", "price_volume_corr_strategy"),
+            ("volume", "volume_strategy"),
+            ("mean_reversion", "mean_reversion_strategy"),
+            ("triple_rise", "triple_rise_strategy"),
+            ("htf", "htf_strategy"),
+            ("volume_surge", "volume_surge_strategy"),
+            ("volatility_position", "volatility_position_strategy"),
+            ("macd_hist", "macd_hist_strategy"),
+            ("lower_shadow_ratio", "lower_shadow_ratio_strategy"),
+            ("quality", "quality_strategy"),
+            ("value", "value_strategy"),
+        ):
+            inst = getattr(base, attr, None)
+            if inst is not None:
+                factor_map[name] = inst
+        print(f"[factors] 参与筛选：{list(factor_map)}")
+
     rows = []
     portfolio_ns = [int(x) for x in args.portfolio_n.split(",") if x.strip()]
     blend_lams = [float(x) for x in args.blend_lambda.split(",") if x.strip()] or [1.0]
     port_rows: list[dict] = []
+    factor_rows: list[dict] = []
     for d in rebal:
         data = {}
         labels = {}
@@ -182,13 +211,36 @@ def main(argv: list[str] | None = None) -> int:
         )
         # 达标池（overlay 的真实作业面）：先按 2f 阈值筛，再按基础分降序
         passed: list[str] = []
-        if portfolio_ns or args.pool_ic:
+        if portfolio_ns or args.pool_ic or factor_map:
             thr = float(th.composite.min_total_score)
             # 只在「有可用前向收益」的票里选（停牌/退市不可买），否则取均值会 KeyError
             passed = sorted(
                 (s for s in data if s in b and s in labels and b[s] >= thr),
                 key=lambda s: -b[s],
             )
+
+        # 全因子筛选：各因子在全市场 / 达标池内的截面 IC
+        for fname, finst in factor_map.items():
+            try:
+                fs = finst.calculate_score(data)  # type: ignore[attr-defined]
+            except Exception:
+                continue
+            act = [s for s in data if s in labels and abs(fs.get(s, 0.5) - 0.5) > 1e-12]
+            if len(act) >= 100:
+                factor_rows.append({
+                    "date": d, "factor": fname, "scope": "all", "n": len(act),
+                    "ic": _spearman(
+                        np.array([fs[s] for s in act]), np.array([labels[s] for s in act])
+                    ),
+                })
+            pact = [s for s in passed if abs(fs.get(s, 0.5) - 0.5) > 1e-12]
+            if len(pact) >= 30:
+                factor_rows.append({
+                    "date": d, "factor": fname, "scope": "pool", "n": len(pact),
+                    "ic": _spearman(
+                        np.array([fs[s] for s in pact]), np.array([labels[s] for s in pact])
+                    ),
+                })
 
         # 🔴 池内 IC：全市场 IC 高但池内 IC≈0 时，overlay 不可能有效。
         ic_pool = float("nan")
@@ -311,6 +363,37 @@ def main(argv: list[str] | None = None) -> int:
                 f"on 粗Sharpe={sh_on:+.2f}"
             )
         print("  ⚠️ 粗 Sharpe 未扣成本、非 gate 口径；净 Δ 已按 单边8bp×2 估算边际成本")
+
+    # ---- 全因子筛选汇总 ----
+    if factor_rows:
+        fdf = pd.DataFrame(factor_rows)
+        print("\n[factors] 因子筛选（全市场 vs 达标池内 = 作业面）")
+        print("| 因子 | 全市场 IC | t | 池内 IC | 池内 t | 池内正占比 | 判读 |")
+        print("|---|---|---|---|---|---|---|")
+        for fname, g in fdf.groupby("factor"):
+            out = []
+            for scope in ("all", "pool"):
+                vals = g[g["scope"] == scope]["ic"].dropna().to_numpy()
+                if len(vals) >= 2:
+                    m, sd = float(vals.mean()), float(vals.std(ddof=1))
+                    tv = m / (sd / np.sqrt(len(vals))) if sd > 0 else float("nan")
+                    out.append((m, tv, float((vals > 0).mean())))
+                else:
+                    out.append((float("nan"), float("nan"), float("nan")))
+            (ma, ta, _), (mp, tp, hitp) = out
+            # 判读只看**作业面**：池内 |t|>=2 且 IC 同号才算可用
+            if abs(tp) >= 2 and abs(mp) >= 0.01:
+                verdict = "✅ 作业面有效"
+            elif abs(tp) >= 1 and abs(mp) >= 0.01:
+                verdict = "⚠️ 边缘"
+            else:
+                verdict = "❌ 作业面无效"
+            print(
+                f"| {fname} | {ma:+.4f} | {ta:+.2f} | {mp:+.4f} | {tp:+.2f} | "
+                f"{hitp:.0%} | {verdict} |"
+            )
+        print("  ⚠️ 判读以**池内**为准：全市场 IC 好但池内无效 ⇒ 该因子在真实可选集合里没有用")
+    return 0
     return 0
 
 
