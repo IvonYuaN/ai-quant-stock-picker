@@ -2254,6 +2254,66 @@ def aqsp_data_coverage() -> dict:
     }
 
 
+@app.get("/api/market-risk", tags=["市场风险"], summary="市场级风险快照（趋势/广度/回撤）")
+def market_risk_get(as_of: str | None = None) -> dict:
+    """市场级风险快照：20/60 日等权趋势、MA20 广度、距一年高点回撤。
+
+    🔴 **只做风险提示，不参与打分**。2026-11-12 实测：把「趋势曝光」叠加到
+    walk-forward 真实逐期收益后，均值 Sharpe 由 +0.66 降到 +0.53（更差），
+    仅最大回撤改善（−10.8% → −3.9%）。详见 ``aqsp/market_risk.py`` 文档。
+
+    ``as_of`` 缺省取库内最新交易日；格式 YYYYMMDD。
+    """
+    import sqlite3
+
+    from aqsp.data.source_factory import resolve_sqlite_db_path
+    from aqsp.market_risk import compute_market_risk
+
+    db_path = resolve_sqlite_db_path()
+    if not db_path:
+        return {"data": {"available": False, "reason": "未找到本机 raw 日线数据库"}}
+
+    day = as_of
+    if not day:
+        con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        try:
+            row = con.execute("SELECT MAX(trade_date) FROM daily_qfq").fetchone()
+        finally:
+            con.close()
+        day = str(row[0]) if row and row[0] else ""
+    if not day:
+        return {"data": {"available": False, "reason": "库内没有交易日数据"}}
+
+    try:
+        snap = compute_market_risk(db_path, day)
+    except (OSError, ValueError, RuntimeError) as exc:
+        raise HTTPException(503, f"市场风险计算失败：{exc}") from exc
+    if snap is None:
+        return {
+            "data": {
+                "available": False,
+                "reason": "样本不足（需 ≥65 个交易日且 ≥300 只票）",
+                "as_of": day,
+            }
+        }
+    return {
+        "data": {
+            "available": True,
+            "as_of": snap.as_of,
+            "level": snap.level,
+            "trend_20": snap.trend_20,
+            "trend_60": snap.trend_60,
+            "breadth": snap.breadth,
+            "drawdown_252": snap.drawdown_252,
+            "reasons": list(snap.reasons),
+            "n_symbols": snap.n_symbols,
+            "summary": snap.summary(),
+            # 用途声明随接口返回，防止消费方误当 alpha 用
+            "usage": "risk_warning_only",
+        }
+    }
+
+
 def _aqsp_candidate(symbol: str, date: str | None = None):
     return {"data": _aqsp_bridge_call(aqsp_bridge.candidate_payload, symbol, date)}
 
