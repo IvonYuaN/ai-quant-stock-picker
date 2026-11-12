@@ -40,11 +40,11 @@
 
 | # | 违规 | 证据 | 收敛动作 |
 |---|---|---|---|
-| 1 | `/today` 内含 `#market-context`、`#candidates`、`#strategy-followups` 三块，与 `/market`、`/candidates` 重复实现 | `TodayWorkspace.tsx` 的 hash 锚点跳转 | 降级为「一行摘要 + 跳转」，内容只留在主页 |
-| 2 | `/market` 与 `/indices` 描述都覆盖"大盘/外围" | `ia.ts` 中 `desc` 文案 | 按上表切分：指数只给数值，市场管行业/情绪/风险 |
-| 3 | `/signals`（"策略命中"）与 `/screener`（"当前命中"）撞词 | `ia.ts` 两条 desc | `/screener` 改述为"假设与规则"，"命中"只属 `/signals` |
+| 1 | `/today` 内含 `#market-context`、`#candidates`、`#strategy-followups` 三块，与 `/market`、`/candidates` 重复实现 | `TodayWorkspace.tsx` 的 hash 锚点跳转 | ✅ 2026-11-12：`#market-context` 已降级为一行 + 指向 `/market`（原直接渲染 `<MarketStrip />`）；`CandidateSummary` 本就是「摘要 + 跳转 `/candidates`」，合规 |
+| 2 | `/market` 与 `/indices` 描述都覆盖"大盘/外围" | `ia.ts` 中 `desc` 文案 | ✅ 2026-11-12：`/market` = 行业·情绪·板块资金·市场风险；`/indices` = 宽基指数行情·隔夜外围数值 |
+| 3 | `/signals`（"策略命中"）与 `/screener`（"当前命中"）撞词 | `ia.ts` 两条 desc | ✅ 2026-11-12：`/screener` 改述为"当前规则"，"命中"归 `/signals` 独占 |
 | 4 | `pages/my/WatchlistPage.tsx` 有实现、无路由（`/my/watchlist` 已重定向到 `/watchlist`） | 全仓 grep 零引用 | ✅ 2026-11-12 已删除 |
-| 5 | React 前端与 **Streamlit 旧看板**（`src/aqsp/web/dashboard.py`，8000+ 行）并存，市场上下文两处渲染 | `_snapshot_market_context_lines` | 标注 legacy，新功能不再进 Streamlit |
+| 5 | React 前端与 **Streamlit 旧看板**（`src/aqsp/web/dashboard.py`，8000+ 行）并存，市场上下文两处渲染 | `_snapshot_market_context_lines` | ✅ 2026-11-12 已在模块 docstring 标注 **LEGACY**：不收新功能，只允许修 bug 与下线清理 |
 | 6 | 废弃路由靠重定向维持：`/my/lab`→`/my/holdings`、`/my/watchlist`→`/watchlist` | `ia.ts` 重定向表 | 保留重定向，但不再新增 |
 
 ## 四、新增信息时的检查清单
