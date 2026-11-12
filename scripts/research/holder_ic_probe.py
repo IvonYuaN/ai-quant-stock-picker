@@ -124,7 +124,11 @@ def main(argv: list[str] | None = None) -> int:
     # 价格（只读）
     con = sqlite3.connect(f"file:{args.db}?mode=ro", uri=True)
     px = pd.read_sql(
-        "SELECT ts_code, trade_date, close, volume FROM daily_qfq WHERE trade_date >= ?",
+        # 🔴 必须取全 OHLC：`htf` 需要 high、`lower_shadow_ratio` 需要 low。
+        # 2026-11-12 实测：只取 close/volume 时这两个因子抛 KeyError，
+        # 而筛选器当时**静默跳过**它们 ⇒ 表里少了 2 个因子却看不出异常。
+        "SELECT ts_code, trade_date, open, high, low, close, volume, amount"
+        " FROM daily_qfq WHERE trade_date >= ?",
         con,
         params=(args.start.replace("-", "")[:4] + "0101",),
     )
@@ -182,6 +186,7 @@ def main(argv: list[str] | None = None) -> int:
     blend_lams = [float(x) for x in args.blend_lambda.split(",") if x.strip()] or [1.0]
     port_rows: list[dict] = []
     factor_rows: list[dict] = []
+    factor_errors: dict[str, str] = {}
     for d in rebal:
         data = {}
         labels = {}
@@ -223,7 +228,8 @@ def main(argv: list[str] | None = None) -> int:
         for fname, finst in factor_map.items():
             try:
                 fs = finst.calculate_score(data)  # type: ignore[attr-defined]
-            except Exception:
+            except Exception as exc:  # noqa: BLE001 - 记录失败，绝不静默跳过
+                factor_errors.setdefault(fname, f"{type(exc).__name__}: {str(exc)[:80]}")
                 continue
             act = [s for s in data if s in labels and abs(fs.get(s, 0.5) - 0.5) > 1e-12]
             if len(act) >= 100:
@@ -393,6 +399,16 @@ def main(argv: list[str] | None = None) -> int:
                 f"{hitp:.0%} | {verdict} |"
             )
         print("  ⚠️ 判读以**池内**为准：全市场 IC 好但池内无效 ⇒ 该因子在真实可选集合里没有用")
+
+        # 🔴 失败/无效必须显式列出：静默跳过会让"缺席"与"无效"无法区分
+        if factor_errors:
+            print("\n[factors] ❌ 计算失败（不是「无效」，是「没算出来」）：")
+            for fname, msg in sorted(factor_errors.items()):
+                print(f"  - {fname}: {msg}")
+        produced = set(fdf["factor"].unique())
+        missing = [n for n in factor_map if n not in produced and n not in factor_errors]
+        if missing:
+            print(f"\n[factors] ⚠️ 无有效截面（可能全中性/停用）：{missing}")
     return 0
     return 0
 
