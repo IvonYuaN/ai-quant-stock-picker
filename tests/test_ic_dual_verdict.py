@@ -337,3 +337,67 @@ class TestRunDualVerdict:
         for n, s in latest["streaks"].items():
             assert s <= 1, f"{n} 静态期 streak 应 ≤1，实为 {s}"
         assert latest["event"] in (None, "revisit_family")
+
+
+# --------------------------------------------------------------------------- #
+# fail-closed：统计无效时**拒绝出具判决**（2026-11-11 实证）
+# --------------------------------------------------------------------------- #
+
+
+def test_window_invalid_detects_all_nan():
+    """全窗因子 mean=NaN/n=0 ⇒ 判为无效（runner 2026-11-11 事故形态）。"""
+    from scripts.analysis.ic_dual_verdict import _window_invalid
+
+    bad = {"momentum": {"mean": float("nan"), "t": float("nan"), "n": 0}}
+    assert _window_invalid(bad, "B")
+    assert "B 窗" in _window_invalid(bad, "B")
+
+
+def test_window_invalid_accepts_partial():
+    """只要有一个因子有有效统计，就不算整体无效（避免误杀）。"""
+    from scripts.analysis.ic_dual_verdict import _window_invalid
+
+    mixed = {
+        "momentum": {"mean": float("nan"), "t": float("nan"), "n": 0},
+        "pvc": {"mean": 0.03, "t": 2.5, "n": 73},
+    }
+    assert _window_invalid(mixed, "B") == ""
+
+
+def test_window_invalid_rejects_empty():
+    from scripts.analysis.ic_dual_verdict import _window_invalid
+
+    assert _window_invalid({}, "A")
+
+
+def test_run_dual_verdict_refuses_when_window_stats_invalid(monkeypatch, tmp_path):
+    """端到端：B 窗全 NaN 时必须抛错，且**不得**写出 latest/history 产物。
+
+    这是关键回归点：此前它会安静地写出「达标=无」，让因子准入机制永不触发。
+    """
+    import scripts.analysis.ic_dual_verdict as mod
+
+    good = {"momentum": {"mean": 0.01, "t": 1.0, "n": 73}}
+    bad = {"momentum": {"mean": float("nan"), "t": float("nan"), "n": 0}}
+
+    calls = {"n": 0}
+
+    def _fake_run(db, *, as_of, out_dir, **kwargs):
+        calls["n"] += 1
+        factors = bad if calls["n"] == 1 else good  # 第一次是 B 窗
+        return {"factors": factors, "n_sections": 73}
+
+    monkeypatch.setattr(mod, "run", _fake_run)
+    monkeypatch.setattr(mod, "_as_of", lambda db: "2026-11-09")
+    monkeypatch.setattr(mod, "_window_a_as_of", lambda db, b, w: "2025-05-09")
+
+    out = tmp_path / "ic"
+    try:
+        mod.run_dual_verdict("x.db", out_dir=out, write_ready=False)
+    except RuntimeError as exc:
+        assert "拒绝出具" in str(exc)
+    else:
+        raise AssertionError("B 窗统计无效时必须抛错，不得静默出判决")
+
+    assert not (out / "dual_window_latest.json").exists()
+    assert not (out / "dual_window_history.jsonl").exists()

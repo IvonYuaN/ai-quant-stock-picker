@@ -38,6 +38,20 @@ PROJECT_ROOT = _find_project_root(Path(__file__).resolve().parent)
 PRODUCTION_GATE = PROJECT_ROOT / "scripts" / "run_production_walkforward_gate.py"
 
 
+def _grid_profile_choices() -> tuple[str, ...]:
+    """``--grid-profile`` 合法档位白名单（派生自 aqsp.cli 的档位查表）。
+
+    🔴 2026-11-10：此前手抄一份 choices，与 `aqsp.cli` 档位路由两处维护 ⇒
+    新增档位必然漏网（`htf_mr` 长期漏掉、`holder_overlay` 若照抄会被 argparse
+    直接拒绝）。改为派生 ⇒ 档位集合只有一个事实源。
+
+    硬依赖：import 失败必须响亮挂掉，不静默回退到手抄列表（否则等于把修复关掉）。
+    """
+    from aqsp.cli import walkforward_grid_profiles
+
+    return walkforward_grid_profiles()
+
+
 def parse_window_spec(spec: str) -> tuple[str, str, str]:
     """解析 ``LABEL:START:END``（START/END 为 YYYY-MM-DD）。"""
     parts = [item.strip() for item in spec.split(":")]
@@ -142,7 +156,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--grid-profile",
         default="stable_plus",
-        choices=("stable", "stable_plus", "exploratory"),
+        # 🔴 2026-11-10：白名单派生自 aqsp.cli 的档位查表（单一事实源），
+        # 不再手抄 —— 手抄就是「新增档位漏网」的根源。
+        choices=_grid_profile_choices(),
     )
     parser.add_argument("--crash-protection", action="store_true")
     parser.add_argument(
