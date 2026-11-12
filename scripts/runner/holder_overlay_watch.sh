@@ -53,7 +53,10 @@ except Exception:
     fi
     case "$status" in
       completed|failed|blocked|no_status)
-        log "跑批终止（status=$status），开始收尾判读"
+        # ⚠️ 必须写 ${status} 而不是 $status：紧跟全角括号时 bash 把「（」并入
+        # 变量名 ⇒ set -u 下报 unbound variable，收尾逻辑根本不执行
+        # （2026-11-12 实测：gate 09:40 跑完，守护在这里崩掉，结论没生成）。
+        log "跑批终止（status=${status}），开始收尾判读"
         OUT_DIR="$OUT_DIR" LOCAL_DIR="$LOCAL_DIR" \
           bash "$REPO_ROOT/scripts/runner/holder_overlay_verdict.sh" \
           && log "✅ 结论已出：$LOCAL_DIR/verdict.md" \

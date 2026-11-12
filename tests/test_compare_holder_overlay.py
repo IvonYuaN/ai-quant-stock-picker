@@ -206,3 +206,19 @@ def test_report_no_period_warning_when_aligned() -> None:
     log = "grid variant WO-WF-001: periods=20 sharpe=0.40 return=8.86%\n"
     text = build_report(baseline=baseline, candidate_log=parse_log_arms(log))
     assert "period 数不一致" not in text
+
+
+def test_parse_handles_starred_values() -> None:
+    """报告表里 `tr` 列会有 `0.0*`（#382 强制配对标记），不得因此丢掉整行。
+
+    2026-11-12 实测：候选侧 8 臂全被跳过 ⇒ 逐臂表显示"已配对 0/8"，
+    而 gate 级数字其实正确 —— 极易误判为"没有可对比的臂"。
+    """
+    md = """
+| 变体 | mom | tr | qual | val | vol | mr | htf | lb | h | top | Sharpe | 总收益 | 暴露归一化收益 | 周期数 |
+|------|-----|----|------|-----|-----|----|-----|---|-----|--------|--------|----------------|--------|
+| WO-WF-001 | 0.3 | 0.0* | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 60 | 3 | 10 | 0.09 | 0.92% | 9.23% | 20 |
+"""
+    rows = parse_report_table(md)
+    assert "WO-WF-001" in rows
+    assert rows["WO-WF-001"]["sharpe"] == 0.09

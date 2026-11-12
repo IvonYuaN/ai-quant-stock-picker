@@ -68,8 +68,14 @@ _PARAM_KEYS = ("mom", "tr", "qual", "val", "vol", "mr", "htf", "lb", "h", "top")
 
 
 def _to_float(text: str) -> float:
-    """把 ``0.3`` / ``-3.81%`` / ``+0.13%`` 统一解析成 float（百分数转成小数）。"""
-    s = text.strip().replace(",", "")
+    """把 ``0.3`` / ``-3.81%`` / ``+0.13%`` / ``0.0*`` 统一解析成 float。
+
+    ⚠️ 报告表里会有**带标记的数值**：`tr` 列的 ``0.0*`` 表示「#382 强制配对后
+    的生效值与被声明值不同」。早期实现不做清洗 ⇒ ``float("0.0*")`` 抛错 ⇒
+    **整行被跳过**（实测：候选侧 8 臂全部解析失败，逐臂表显示"已配对 0/8"，
+    而 gate 级数字其实是对的）。故先把非数值尾缀剥掉。
+    """
+    s = text.strip().replace(",", "").rstrip("*").strip()
     if not s:
         raise ValueError("empty number")
     if s.endswith("%"):
@@ -278,8 +284,9 @@ def build_report(
     lines += [
         "",
         "> 判据 A：8 个可配对臂中 ≥5 臂 ΔSharpe>0 **且** ΔSharpe 均值>0。",
-        "> 判据 B：全档位 DSR 优于基线 −1.2463（本档位 13 臂 vs 基线 8 臂 ⇒ 受更重",
-        "> 多重检验惩罚，故 B 通过含义更强；B 不通过不足以单独否决）。",
+        "> 判据 B：全档位 DSR 优于基线 −1.2463。"
+        "⚠️ 仅当两侧 `n_variants` **相同**时 DSR 才可直接比"
+        "（试次数不同则多重检验惩罚不同）——本报告的 n_variants 见上面第一节。",
         "> **任一条不满足 ⇒ 不得开生产 overlay**；不许改判据/换窗口/挑臂重跑",
         "> （红线：禁「亏损就调参」）。A+B 全过也只是「可提议」，开生产仍须老大拍板。",
         "",
@@ -345,10 +352,26 @@ def build_report(
         ]
         lines += [f"> - {item}" for item in period_mismatch]
 
+    # 窗口一致性：直接读两次 gate 的 data_start/end，**动态**给结论，
+    # 不写死日期（写死会随实验配置变化而说谎：2026-11-12 实测两轮已同窗，
+    # 旧文案仍在说"差 3 天"，属误导）。
+    win_a = ((baseline_gate or {}).get("data_start"), (baseline_gate or {}).get("data_end"))
+    win_b = ((candidate_gate or {}).get("data_start"), (candidate_gate or {}).get("data_end"))
+    lines.append("")
+    if None not in win_a and None not in win_b:
+        if win_a == win_b:
+            lines.append(
+                f"> ✅ 窗口一致：两侧均为 `{win_a[0]}..{win_a[1]}` "
+                "⇒ 逐臂 Δ 不受窗口位移混杂。"
+            )
+        else:
+            lines.append(
+                f"> ⚠️ 窗口差异：基线 `{win_a[0]}..{win_a[1]}` vs 本档位 "
+                f"`{win_b[0]}..{win_b[1]}` ⇒ 逐臂 Δ 含窗口位移混杂，结论须降权。"
+            )
+    else:
+        lines.append("> ⚠️ 窗口未知（gate json 未就绪）⇒ 无法确认两侧同窗。")
     lines += [
-        "",
-        "> ⚠️ 窗口差异：生产基线 `2023-11-07..2026-11-06`、本档位 `2023-11-10..2026-11-09`",
-        "> （差 3 天、长度一致）⇒ 极小但不为零，结论里须保留此标注。",
         ">",
         "> ⚠️ 匹配口径：`holder_overlay` 档位是 `replace(v, variant_id=f\"WO-{v.variant_id}\")`",
         "> 逐臂复制的（构造即 1:1）⇒ 按 id 去 `WO-` 前缀匹配是**精确**的。",
