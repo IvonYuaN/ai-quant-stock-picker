@@ -53,6 +53,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--ledger", required=True)
     ap.add_argument("--db", required=True)
     ap.add_argument("--apply", action="store_true", help="真正写入（默认只预览）")
+    ap.add_argument(
+        "--assume-default-benchmark",
+        default="",
+        help="benchmark_symbol 为空时按此值兜底（如 000300）。"
+        "仅在明确知道系统默认基准时才用；不给则空值一律跳过。",
+    )
     args = ap.parse_args(argv)
 
     ledger = Path(args.ledger)
@@ -86,6 +92,10 @@ def main(argv: list[str] | None = None) -> int:
                 continue
 
             symbol = str(row.get("benchmark_symbol") or "").strip()
+            if not symbol and args.assume_default_benchmark:
+                # `aqsp.ledger.base` 里 benchmark_symbol 的**代码默认值就是 000300**，
+                # 空串来自某条写入路径没传参。只在显式指定时才兜底，不擅自假设。
+                symbol = args.assume_default_benchmark.strip()
             entry_date = str(row.get("entry_date") or "").replace("-", "")
             exit_date = str(row.get("exit_date") or "").replace("-", "")
             ret = row.get("return_pct")
@@ -95,7 +105,10 @@ def main(argv: list[str] | None = None) -> int:
                 continue
 
             rows = _bench(con, symbol, entry_date, exit_date)
-            if len(rows) < 2:
+            # 🔴 不能要求 ≥2 行：当日了结（entry_date == exit_date）的基准窗口只有 1 行，
+            # 而 `_benchmark_return` 本来就是「entry_rows 第 0 行的 open → exit_rows 最后一行的 close」，
+            # 单行时即当日 open→close，完全可算。曾误判为"行情不足"跳过 44 条。
+            if not rows:
                 skipped_no_price += 1
                 out_lines.append(line)
                 continue
