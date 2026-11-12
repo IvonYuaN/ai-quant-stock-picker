@@ -49,10 +49,13 @@ _NEG_TYPES = ("预减", "略减", "首亏", "续亏", "增亏")
 def _spearman(a: np.ndarray, b: np.ndarray) -> float:
     if len(a) < 3:
         return float("nan")
+    # ⚠️ 必须用「重新赋值」而非就地 `-=`：pandas `.to_numpy()` 可能返回
+    # **只读视图**，就地运算会抛 `ValueError: output array is read-only`
+    # （2026-11-12 实测：forecast 因子到第 2 个截面就崩）。
     ra = pd.Series(a).rank().to_numpy()
     rb = pd.Series(b).rank().to_numpy()
-    ra -= ra.mean()
-    rb -= rb.mean()
+    ra = ra - ra.mean()
+    rb = rb - rb.mean()
     denom = np.sqrt((ra**2).sum() * (rb**2).sum())
     return float((ra * rb).sum() / denom) if denom > 0 else float("nan")
 

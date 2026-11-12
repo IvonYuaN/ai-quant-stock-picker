@@ -135,7 +135,7 @@ def fetch_longhubang(start: dt.date, end: dt.date, out: Path) -> int:
 
 def fetch_forecast(start: dt.date, end: dt.date, out: Path) -> int:
     quarters: list[dt.date] = []
-    y, cur = start.year, start
+    cur = start
     while cur <= end:
         q_end_month = ((cur.month - 1) // 3 + 1) * 3
         last = {3: 31, 6: 30, 9: 30, 12: 31}[q_end_month]
