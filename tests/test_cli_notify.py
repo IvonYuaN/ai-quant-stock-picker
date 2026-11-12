@@ -1443,6 +1443,13 @@ def test_run_monitor_notifies_warning_when_warning_notify_enabled(
             return [warning]
 
     monkeypatch.setattr("aqsp.monitor.checker.MonitorChecker", DummyChecker)
+    # 🔴 `run_monitor` 还会调 `check_live_positions(...)`，本用例只关心 warning 路径。
+    # 不打桩的话它去读真实持仓账本：单文件跑时账本为空（测试通过），
+    # 整跑时被其他用例写脏 ⇒ 多出 triggered 结果 ⇒ `sent == [[warning]]` 失败。
+    # 这就是「整跑红、单文件绿」的根因，必须显式打桩以保证确定性。
+    monkeypatch.setattr(
+        "aqsp.monitor.live_positions.check_live_positions", lambda **kwargs: []
+    )
     monkeypatch.setattr("aqsp.monitor.notifier.format_alert", lambda alerts: "alert")
     monkeypatch.setattr(
         "aqsp.monitor.notifier.send_alerts",
