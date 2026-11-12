@@ -81,17 +81,24 @@ def _load_wide(db: str, as_of: str, lookback_days: int = 320) -> pd.DataFrame:
         ]
         if not codes:
             return pd.DataFrame()
-        days = [
-            r[0]
-            for r in con.execute(
-                "SELECT DISTINCT trade_date FROM daily_qfq WHERE trade_date <= ?"
-                " ORDER BY trade_date DESC LIMIT ?",
-                (as_of, lookback_days),
-            )
-        ]
-        if len(days) < min(65, lookback_days):
+        # 🔴 必须剔除「半截日」（只有少数票刷进来的日期）。
+        # `MAX(trade_date)` 可被**单只票**决定：prod 实测 20261112 只有 1 只票，
+        # 若直接用它当 as_of ⇒ 广度 0%、趋势失真（线上曾真的显示 0%）。
+        # 取近 60 个日期里「票数 ≥ 最高票数 50%」的最新日作为有效 as_of。
+        rows = con.execute(
+            "SELECT trade_date, COUNT(*) AS c FROM daily_qfq WHERE trade_date <= ?"
+            " GROUP BY trade_date ORDER BY trade_date DESC LIMIT ?",
+            (as_of, lookback_days + 30),
+        ).fetchall()
+        if not rows:
             return pd.DataFrame()
+        peak = max(int(c) for _, c in rows)
+        valid = [d for d, c in rows if int(c) >= peak * 0.5]
+        if len(valid) < min(65, lookback_days):
+            return pd.DataFrame()
+        days = valid[:lookback_days]
         lo = min(days)
+        as_of = max(days)  # 有效 as_of（剔除半截日后的最新日）
         marks = ",".join("?" * len(codes))
         px = pd.read_sql(
             f"SELECT ts_code, trade_date, close FROM daily_qfq"
