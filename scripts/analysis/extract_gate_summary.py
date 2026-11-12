@@ -202,11 +202,38 @@ def build_summary(gate: dict, variants: list[dict], report_text: str) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _excess_section(arms_dir: str, db: str, sample: int) -> str:
+    """超额收益段：策略 vs 全市场等权买入持有。实现见 `aqsp.backtest.excess`。"""
+    try:
+        from aqsp.backtest.excess import (
+            equal_weight_curve,
+            load_arm_periods,
+            render_markdown,
+        )
+    except Exception as exc:  # noqa: BLE001 - 摘要脚本不应因可选段失败而整体失败
+        return f"> ⚠️ 超额收益段不可用（导入失败）：{type(exc).__name__}: {exc}"
+
+    arms = load_arm_periods(arms_dir)
+    if not arms:
+        return "> ⚠️ 未在 `--arms-dir` 找到逐期记录，超额收益段跳过。"
+    curve = equal_weight_curve(db, sample=sample)
+    if curve.empty:
+        return "> ⚠️ 行情库无可用数据，超额收益段跳过。"
+    body = render_markdown(arms, curve)
+    return "## 超额收益（策略 vs 等权基准）\n\n" + body
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--gate", required=True)
     ap.add_argument("--report", required=True)
     ap.add_argument("--output", required=True)
+    # 可选：给出逐期记录目录与行情库时，摘要**额外**附「超额收益」表。
+    # gate 只报绝对收益，"亏 14%" 与 "跑输等权 7pp/年" 是两件完全不同的事，
+    # 不叠这一层就会把"大幅跑输"误读成"只是小亏"。
+    ap.add_argument("--arms-dir", default="", help="含 walkforward_gate_resume_*.jsonl.<arm> 的目录")
+    ap.add_argument("--db", default="", help="行情库路径（用于等权基准）")
+    ap.add_argument("--sample", type=int, default=1200)
     args = ap.parse_args()
 
     gate_path, report_path = Path(args.gate), Path(args.report)
@@ -219,6 +246,12 @@ def main() -> int:
     print(f"[info] gate.json 已解析；report.md 变体行数={len(variants)}")
 
     summary = build_summary(gate, variants, report_text)
+
+    if args.arms_dir and args.db:
+        summary += "\n\n" + _excess_section(args.arms_dir, args.db, args.sample)
+    elif args.arms_dir or args.db:
+        summary += "\n\n> ⚠️ 超额收益需要 `--arms-dir` 与 `--db` **同时**提供，本次跳过。"
+
     Path(args.output).write_text(summary, encoding="utf-8")
     print(summary)
     print(f"[ok] 摘要已写出: {args.output}")
