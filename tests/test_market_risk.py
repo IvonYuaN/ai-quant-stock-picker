@@ -119,3 +119,39 @@ def test_index_is_equal_weight_buy_and_hold_not_median_of_daily_returns(tmp_path
     )
     assert abs(snap.drawdown_252 - exp_dd) < 1e-6
     assert snap.drawdown_252 > -0.9, "median 累乘会把回撤放大到荒谬量级"
+
+
+def test_partial_trade_date_is_skipped(tmp_path: Path) -> None:
+    """半截日必须剔除：`MAX(trade_date)` 可被单只票决定。
+
+    prod 实测 20261112 只有 **1 只票**刷新，若直接当 as_of ⇒ 广度 0%、趋势失真
+    （线上真的显示过「广度 0%」）。本用例构造同样的场景，断言 as_of 回落到
+    最后一个「票数 ≥ 峰值 50%」的日期。
+    """
+    import sqlite3
+
+    from aqsp.market_risk import compute_market_risk
+
+    db = tmp_path / "partial.db"
+    con = sqlite3.connect(db)
+    con.execute("CREATE TABLE daily_qfq (ts_code TEXT, trade_date TEXT, close REAL)")
+    rows = []
+    for d in range(320):
+        day = f"2026{(d // 28) + 1:02d}{d % 28 + 1:02d}"
+        for s in range(400):
+            # 必须有波动：单调下跌会让「全部票都在 MA20 下方」⇒ 广度假性为 0，
+            # 那测的就不是半截日逻辑了（本次先踩后修）。
+            import math
+
+            px = 10.0 + 0.01 * s + math.sin(d / 5.0 + s)
+            rows.append((f"{600000 + s}.SH", day, px))
+    # 半截日：只 1 只票
+    rows.append(("600000.SH", "20261231", 5.0))
+    con.executemany("INSERT INTO daily_qfq VALUES (?,?,?)", rows)
+    con.commit()
+    con.close()
+
+    snap = compute_market_risk(str(db), "20261231")
+    assert snap is not None
+    assert snap.as_of != "20261231", "半截日不得作为 as_of"
+    assert snap.breadth > 0, "半截日会让广度假性归零"
