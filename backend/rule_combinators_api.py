@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 
 import rule_combinators as rc
 
-router = APIRouter(prefix="/api/aqsp/rule-combinators", tags=["监控规则"])
+router = APIRouter(prefix="/api/lab/rule-combinators", tags=["监控规则"])
 
 # 字段契约来自 alert_events.py 的 upsert_price_observation_events 事件 schema
 _ALERT_FIELDS = (
@@ -59,8 +59,8 @@ _CONTRACT: dict[str, Any] = {
     "alert_payload_fields": list(_ALERT_FIELDS),
     "basis_json_keys": ["rule", "actual", "evidence"],
     "endpoints": {
-        "POST /api/aqsp/rule-combinators/evaluate": "只读三值求值",
-        "GET /api/aqsp/rule-combinators/contract": "本契约说明",
+        "POST /api/lab/rule-combinators/evaluate": "只读三值求值",
+        "GET /api/lab/rule-combinators/contract": "本契约说明",
     },
 }
 
