@@ -319,11 +319,11 @@ def client():
         yield test_client
 
 
-URL = "/api/aqsp/rule-combinators/evaluate"
+URL = "/api/lab/rule-combinators/evaluate"
 
 
 def test_api_contract_endpoint(client):
-    response = client.get("/api/aqsp/rule-combinators/contract")
+    response = client.get("/api/lab/rule-combinators/contract")
     assert response.status_code == 200
     body = response.json()
     assert body["truth_values"] == ["TRUE", "FALSE", "UNKNOWN"]
@@ -409,8 +409,8 @@ def test_api_evaluate_should_emit_at_boundary(client):
 def test_api_is_read_only(client):
     paths = {route.path for route in api.router.routes}
     assert paths == {
-        "/api/aqsp/rule-combinators/contract",
-        "/api/aqsp/rule-combinators/evaluate",
+        "/api/lab/rule-combinators/contract",
+        "/api/lab/rule-combinators/evaluate",
     }
     methods = {method for route in api.router.routes for method in route.methods}
     assert not (methods & {"PUT", "PATCH", "DELETE"})

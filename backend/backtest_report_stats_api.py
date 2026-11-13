@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 
 import backtest_report_stats as stats
 
-router = APIRouter(prefix="/api/aqsp/report-stats", tags=["回测报告"])
+router = APIRouter(prefix="/api/lab/report-stats", tags=["回测报告"])
 
 
 class EquityPoint(BaseModel):
@@ -47,7 +47,7 @@ class ReportStatsRequest(BaseModel):
 
 
 CONTRACT: dict[str, Any] = {
-    "prefix": "/api/aqsp/report-stats",
+    "prefix": "/api/lab/report-stats",
     "read_only": True,
     "description": "回测报告统计只读计算端点；不写文件、不读生产库、不触发回测、不碰评分。",
     "endpoints": [

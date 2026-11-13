@@ -292,7 +292,7 @@ def test_safe_report_path_within_tenant(tenant_dir):
 
 
 def test_api_get_returns_default(client):
-    response = client.get("/api/aqsp/review-control")
+    response = client.get("/api/lab/review-control")
     assert response.status_code == 200
     data = response.json()["data"]
     assert data["exists"] is False
@@ -302,7 +302,7 @@ def test_api_get_returns_default(client):
 
 def test_api_put_returns_diff_and_persists(client, tmp_path):
     payload = _valid_payload()
-    response = client.put("/api/aqsp/review-control", json=payload)
+    response = client.put("/api/lab/review-control", json=payload)
     assert response.status_code == 200
     data = response.json()["data"]
     assert data["saved"] is True
@@ -310,7 +310,7 @@ def test_api_put_returns_diff_and_persists(client, tmp_path):
     assert {c["field"] for c in data["diff"]} == {
         "enabled", "mode", "channels", "prompt", "retention_days"
     }
-    again = client.get("/api/aqsp/review-control").json()["data"]
+    again = client.get("/api/lab/review-control").json()["data"]
     assert again["settings"] == payload
     assert again["exists"] is True
     assert (tmp_path / rc.SETTINGS_FILENAME).exists()
@@ -318,7 +318,7 @@ def test_api_put_returns_diff_and_persists(client, tmp_path):
 
 def test_api_put_invalid_returns_422_with_fields(client):
     response = client.put(
-        "/api/aqsp/review-control", json=_valid_payload(run_time="99:99", timezone="UTC")
+        "/api/lab/review-control", json=_valid_payload(run_time="99:99", timezone="UTC")
     )
     assert response.status_code == 422
     detail = response.json()["detail"]
@@ -328,7 +328,7 @@ def test_api_put_invalid_returns_422_with_fields(client):
 @pytest.mark.parametrize("action", ["archive", "delete"])
 def test_api_post_plan(client, action):
     response = client.post(
-        "/api/aqsp/review-control", json={"action": action, "report_ids": ["r1", "r2"]}
+        "/api/lab/review-control", json={"action": action, "report_ids": ["r1", "r2"]}
     )
     assert response.status_code == 200
     data = response.json()["data"]
@@ -340,14 +340,14 @@ def test_api_post_plan(client, action):
 
 def test_api_post_rejects_unknown_action(client):
     response = client.post(
-        "/api/aqsp/review-control", json={"action": "purge", "report_ids": ["r1"]}
+        "/api/lab/review-control", json={"action": "purge", "report_ids": ["r1"]}
     )
     assert response.status_code == 422
 
 
 def test_api_post_marks_traversal_rejected(client):
     response = client.post(
-        "/api/aqsp/review-control",
+        "/api/lab/review-control",
         json={"action": "delete", "report_ids": ["ok_1", "../secret"]},
     )
     assert response.status_code == 200
@@ -362,7 +362,7 @@ def test_api_post_plan_never_deletes_files(client, tmp_path):
     keep = tmp_path / "keep.txt"
     keep.write_text("keep", "utf-8")
     response = client.post(
-        "/api/aqsp/review-control", json={"action": "delete", "report_ids": ["keep", "r1"]}
+        "/api/lab/review-control", json={"action": "delete", "report_ids": ["keep", "r1"]}
     )
     assert response.status_code == 200
     assert keep.exists()
@@ -371,17 +371,17 @@ def test_api_post_plan_never_deletes_files(client, tmp_path):
 
 def test_api_rejects_traversal_tenant(client, monkeypatch):
     monkeypatch.setattr(api, "_current_tenant_id", lambda: "../../etc")
-    response = client.get("/api/aqsp/review-control")
+    response = client.get("/api/lab/review-control")
     assert response.status_code == 400
 
 
 def test_api_tenant_isolation(client, monkeypatch, tmp_path):
     monkeypatch.setattr(api, "_current_tenant_id", lambda: "tenant_a")
-    response = client.put("/api/aqsp/review-control", json=_valid_payload())
+    response = client.put("/api/lab/review-control", json=_valid_payload())
     assert response.status_code == 200
 
     monkeypatch.setattr(api, "_current_tenant_id", lambda: "tenant_b")
-    other = client.get("/api/aqsp/review-control").json()["data"]
+    other = client.get("/api/lab/review-control").json()["data"]
     assert other["exists"] is False
     assert other["settings"]["enabled"] is False
     assert (tmp_path / "users" / "tenant_a" / rc.SETTINGS_FILENAME).exists()
@@ -391,6 +391,6 @@ def test_api_tenant_isolation(client, monkeypatch, tmp_path):
 def test_api_corrupt_settings_fail_closed(client, tmp_path):
     broken = tmp_path / rc.SETTINGS_FILENAME
     broken.write_text("{broken", "utf-8")
-    assert client.get("/api/aqsp/review-control").status_code == 409
-    assert client.put("/api/aqsp/review-control", json=_valid_payload()).status_code == 409
+    assert client.get("/api/lab/review-control").status_code == 409
+    assert client.put("/api/lab/review-control", json=_valid_payload()).status_code == 409
     assert broken.read_text("utf-8") == "{broken"
