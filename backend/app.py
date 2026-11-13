@@ -53,6 +53,9 @@ import source_health
 import tenant as _tenant
 import watchlist
 import trade_journal
+import backtest_report_stats_api
+import rule_combinators_api
+import review_control_api
 from candidate_observation_api import router as candidate_observation_router
 
 app = FastAPI(
@@ -134,6 +137,10 @@ def _cors_origins(raw: str | None, public_mode: bool) -> list[str]:
 _raw_origins = os.environ.get("VR_ALLOW_ORIGINS")
 _ORIGINS = _cors_origins(_raw_origins, _PUBLIC_MODE)
 app.include_router(candidate_observation_router)
+# TickFlow Stage A 缺口补齐：只读能力，契约见各模块 GET /contract。
+app.include_router(backtest_report_stats_api.router)
+app.include_router(rule_combinators_api.router)
+app.include_router(review_control_api.router)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_ORIGINS,
