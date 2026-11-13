@@ -9,6 +9,7 @@ truststore 会话级注入。
 from __future__ import annotations
 
 import io
+import ssl
 
 import pandas as pd
 import pytest
@@ -165,15 +166,110 @@ class _FakeResponse:
 
 
 def test_sw_session_mounts_truststore_adapter():
-    import truststore
-
     session = industry_pit._sw_session()
     adapter = session.get_adapter("https://www.swsresearch.com")
     assert isinstance(adapter, requests.adapters.HTTPAdapter)
     ssl_ctx = adapter.poolmanager.connection_pool_kw["ssl_context"]
-    assert isinstance(ssl_ctx, truststore.SSLContext), (
-        "truststore SSLContext 必须注入申万会话连接池（而非全局 inject）"
+    assert isinstance(ssl_ctx, ssl.SSLContext), (
+        "申万会话连接池必须带自定义 SSLContext（否则退回 certifi，缺中间证书必验不过）"
     )
+    # 钉中间证书 ≠ 关闭校验：必须仍是完整校验。
+    assert ssl_ctx.verify_mode == ssl.CERT_REQUIRED
+    assert ssl_ctx.check_hostname is True
+
+
+# ---------------------------------------------------------------------------
+# #556 修复：requests 走代理时 proxy_manager_for() 另建连接池且不带 ssl_context
+# ⇒ truststore 被静默丢弃、退回 certifi ⇒ CERTIFICATE_VERIFY_FAILED（实测根因）
+# ---------------------------------------------------------------------------
+def test_sw_session_proxy_pool_carries_ssl_context(monkeypatch):
+    """代理池也必须带 ssl_context —— 否则走系统代理时申万抓取必然失败。"""
+    captured: dict[str, object] = {}
+
+    def _fake_proxy_manager_for(self, proxy, **kwargs):  # noqa: ANN001, ANN001
+        captured["proxy"] = proxy
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(
+        requests.adapters.HTTPAdapter, "proxy_manager_for", _fake_proxy_manager_for
+    )
+    adapter = industry_pit._make_sw_adapter()
+    adapter.proxy_manager_for("http://127.0.0.1:7890")
+    assert captured.get("proxy") == "http://127.0.0.1:7890"
+    assert isinstance(captured.get("ssl_context"), ssl.SSLContext), (
+        "代理连接池必须透传 ssl_context（否则 truststore 被丢弃 → 退回 certifi → 验不过）"
+    )
+
+
+def test_pinned_intermediate_lands_in_trust_store():
+    """钉住的中间证书必须真的进了信任库（补链，不是装饰）。"""
+    ctx = ssl.create_default_context()
+    industry_pit._pin_intermediate(ctx)
+    names = set(_common_names(ctx))
+    assert "GeoTrust G2 TLS CN RSA4096 SHA256 2022 CA1" in names, (
+        "钉住的中间证书未进信任库 ⇒ 链仍然断（unable to get local issuer certificate）"
+    )
+
+
+def test_pinned_intermediate_identity_is_pinned(tmp_path):
+    """钉住的这张证书必须是预期的 DigiCert 中间证书（防被替换/损坏/过期）。"""
+    import datetime as _dt
+
+    pem_path = tmp_path / "geotrust_inter.pem"
+    pem_path.write_text(industry_pit._GEO_TRUST_G2_TLS_CN_RSA4096_SHA256_2022_CA1_PEM)
+    info = ssl._ssl._test_decode_cert(str(pem_path))  # noqa: SLF001 - CPython 稳定私有接口
+
+    def _cn(block: tuple) -> str:
+        for rdn in block:
+            for key, value in rdn:
+                if key == "commonName":
+                    return value
+        return ""
+
+    assert _cn(info["subject"]) == "GeoTrust G2 TLS CN RSA4096 SHA256 2022 CA1"
+    assert _cn(info["issuer"]) == "DigiCert Global Root G2"
+    # 有效期必须覆盖当下（钉过期证书等于没钉）
+    now = _dt.datetime.now(_dt.timezone.utc)
+    not_before = _dt.datetime.strptime(info["notBefore"], "%b %d %H:%M:%S %Y %Z").replace(
+        tzinfo=_dt.timezone.utc
+    )
+    not_after = _dt.datetime.strptime(info["notAfter"], "%b %d %H:%M:%S %Y %Z").replace(
+        tzinfo=_dt.timezone.utc
+    )
+    assert not_before <= now <= not_after
+
+
+def test_new_ssl_context_survives_missing_truststore(monkeypatch):
+    """truststore 缺失时必须退回 stdlib 上下文，而不是抛错让行业 PIT 恒空。"""
+    import builtins as _builtins
+
+    real_import = _builtins.__import__
+
+    def _fake_import(name, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+        if name == "truststore":
+            raise ImportError("simulated: truststore not installed")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(_builtins, "__import__", _fake_import)
+    ctx = industry_pit._new_ssl_context()
+    assert isinstance(ctx, ssl.SSLContext)
+    assert ctx.verify_mode == ssl.CERT_REQUIRED
+
+
+def _common_names(ctx: ssl.SSLContext) -> list[str]:
+    """从信任库里抽出所有 commonName（truststore 的 get_ca_certs 会抛，故容错）。"""
+    try:
+        certs = ctx.get_ca_certs()
+    except NotImplementedError:  # pragma: no cover - truststore 实现差异
+        return []
+    names: list[str] = []
+    for cert in certs:
+        for rdn in cert.get("subject", ()):  # type: ignore[union-attr]
+            for key, value in rdn:
+                if key == "commonName":
+                    names.append(value)
+    return names
 
 
 def test_sw_industry_history_routes_through_truststore_session(monkeypatch):

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import io
 import os
+import ssl
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
@@ -33,6 +34,54 @@ if TYPE_CHECKING:  # pragma: no cover - 仅类型检查
 SW_URL = (
     "https://www.swsresearch.com/swindex/pdf/SwClass2021/StockClassifyUse_stock.xls"
 )
+
+# ── 申万站点证书链：实测取证与中间证书钉住（2026-11-13）────────────
+# openssl s_client 实测：www.swsresearch.com **只发叶子证书、不发中间证书**
+# （`-showcerts` 只有 1 张 BEGIN CERTIFICATE），叶子的 issuer 是
+#   C=US, O=DigiCert, Inc., CN=GeoTrust G2 TLS CN RSA4096 SHA256 2022 CA1
+# 而这张**中间证书**既不在 certifi（实测 grep "GeoTrust" = 0）、
+# 也不在 Debian/Ubuntu ca-certificates（prod 实测 grep = 0），
+# 只有 macOS/Windows 系统钥匙串里才有 ⇒ 任何「只装根证书」的信任库
+# （certifi / Linux 系统 CA 目录）一律报
+#   "unable to get local issuer certificate" / Verify return code: 21。
+#
+# 官方 AIA（证书的 CA Issuers 扩展）直接给出该中间证书地址，已取回并钉住：
+#   http://cacerts.digicert.cn/GeoTrustG2TLSCNRSA4096SHA2562022CA1.crt
+# 钉住中间证书 ≠ 关闭校验：**根仍由系统信任库验证**，链完整闭环。
+_GEO_TRUST_G2_TLS_CN_RSA4096_SHA256_2022_CA1_PEM = """-----BEGIN CERTIFICATE-----
+MIIFxjCCBK6gAwIBAgIQDwa7CTBhSCZ/yhtxwduAfTANBgkqhkiG9w0BAQsFADBh
+MQswCQYDVQQGEwJVUzEVMBMGA1UEChMMRGlnaUNlcnQgSW5jMRkwFwYDVQQLExB3
+d3cuZGlnaWNlcnQuY29tMSAwHgYDVQQDExdEaWdpQ2VydCBHbG9iYWwgUm9vdCBH
+MjAeFw0yMjEyMTUwMDAwMDBaFw0zMjEyMTQyMzU5NTlaMFsxCzAJBgNVBAYTAlVT
+MRcwFQYDVQQKEw5EaWdpQ2VydCwgSW5jLjEzMDEGA1UEAxMqR2VvVHJ1c3QgRzIg
+VExTIENOIFJTQTQwOTYgU0hBMjU2IDIwMjIgQ0ExMIICIjANBgkqhkiG9w0BAQEF
+AAOCAg8AMIICCgKCAgEAn1dxOo4OzYa4O1EJd0nhFI5QB/kXAJTHRI6C1J2Gz86B
+Ge9+DD8R4vexG7/QnUvV+5887o+G4enlkDwJV1Pehq4i0n+X6VKIPg5cThCx6/o0
+3bUkLWld7slhi3Hli/MaosZZuytdU1uCzQlGpaLB2TiTZbDImiVaykdfwl8V6AXP
+0Ab4wIcvPggl4qlwyPsBY6NODbP884BmL1ntdXfzecGst30FnAtm4w+PTo0I1T3F
+ITYXaNuIJnKonD1xXaN4Ar/rvcpKpntxVyZQ2T1Lb7vlfYISqNF+1ugpTzKnI1z7
+xV7tSqXd2vs6Csy6yFN+QLWwMnGWuQkvrO1m+F7V85S9ECpbqn9qNtKl8gIQ7JeZ
+BmBdLroW+4j1PDzBWmSWKB+gvRubVSTuoDR3VCtlI4G/Uh+ObF4UStbhKjr1SNCW
+JcrB1oF+wWBl8Bvozm4xflyyGDY47KCP/Fn9X5GHDNLQA9R0zqDKRumipp1UXswF
+uzH0I+gOuqSdZSsYID9XSVq6adcJ3rIMAcTuODcrPrJssOFKGFUbmY/VxbxMgYHI
+/07Zfdxoa+q0osWpofbMhLPZz9UuJFBCLsjgSckkSU02/4itmLm9e3lt6E/4q9Mc
+MCaS8+qrLWKG9wQtviC8zGynEXpxjEQE8WyrfeYKyXwZFCPB4rpTw1joJmGFeLUC
+AwEAAaOCAX4wggF6MBIGA1UdEwEB/wQIMAYBAf8CAQAwHQYDVR0OBBYEFEFOjmmd
+9G4l7HgUHH7XzR2Zz/lrMB8GA1UdIwQYMBaAFE4iVCAYlebjbuYP+vq5Eu0GF485
+MA4GA1UdDwEB/wQEAwIBhjAdBgNVHSUEFjAUBggrBgEFBQcDAQYIKwYBBQUHAwIw
+dAYIKwYBBQUHAQEEaDBmMCMGCCsGAQUFBzABhhdodHRwOi8vb2NzcC5kaWdpY2Vy
+dC5jbjA/BggrBgEFBQcwAoYzaHR0cDovL2NhY2VydHMuZGlnaWNlcnQuY24vRGln
+aUNlcnRHbG9iYWxSb290RzIuY3J0MEAGA1UdHwQ5MDcwNaAzoDGGL2h0dHA6Ly9j
+cmwuZGlnaWNlcnQuY24vRGlnaUNlcnRHbG9iYWxSb290RzIuY3JsMD0GA1UdIAQ2
+MDQwCwYJYIZIAYb9bAIBMAcGBWeBDAEBMAgGBmeBDAECATAIBgZngQwBAgIwCAYG
+Z4EMAQIDMA0GCSqGSIb3DQEBCwUAA4IBAQAkpDVI+nCKnAEEpDfldytHXUYOr2ys
+aGeboE3d1KAN4Gt+eioRvgNdmDKbVFCYY0C6ErIXIvSGXafsprU2dclka/kmH+9U
+4q3v5Acx6KwcnEuYLN0QOtrlQ9s3Z4IbIzdYUv8IauXC27a3x99x2WMVxNu1KGJy
+0r1Z+Xya1adf9/e1LFj1CGdq9HfQ/HFWP2khzxQZ4u62sOHuZdPgtNidFOhQLC+2
+5cNsPgqsaCrGLbSjzni7VN7NhAbTsLhA1oz41vHHB+q4ZzNlC01elmPBOtupe2HM
+/lqMA/J/nTxc718THdxpszFllAET1/lFEolnqihpUFPaPjRwU7yZIseS
+-----END CERTIFICATE-----
+"""
 
 
 @dataclass(frozen=True)
@@ -71,33 +120,86 @@ def _normalize(raw: pd.DataFrame) -> pd.DataFrame:
     return df.sort_values(["code", "start_date"]).reset_index(drop=True)
 
 
+def _new_ssl_context() -> ssl.SSLContext:
+    """建「根信任」上下文：优先 truststore（macOS/Windows 原生信任链）。
+
+    缺 truststore 时退回 stdlib ``ssl.create_default_context()``（等价系统 CA
+    目录，Linux prod 走这条）—— 不再硬失败：prod 早期镜像里 truststore 并未
+    安装，硬失败会让行业 PIT 在生产**恒空**。
+    """
+    try:
+        import truststore
+    except ImportError:  # pragma: no cover - 依赖缺失属环境态，走 stdlib 回退
+        return ssl.create_default_context()
+    # truststore 只挂载到本模块的连接池（会话级），不做进程级全局注入。
+    return truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+
+
+def _pin_intermediate(ctx: ssl.SSLContext) -> ssl.SSLContext:
+    """把站点缺失的中间证书钉进信任库（服务器不发，客户端必须自带）。
+
+    钉中间证书是**补链**，不是降级：根仍由系统信任库验证，
+    ``verify_mode`` 仍是 ``CERT_REQUIRED``。
+    """
+    ctx.load_verify_locations(cadata=_GEO_TRUST_G2_TLS_CN_RSA4096_SHA256_2022_CA1_PEM)
+    return ctx
+
+
+def _sw_ssl_context() -> ssl.SSLContext:
+    """申万源专用 SSL 上下文 —— 完整校验，**绝不** ``verify=False``（安全红线）。
+
+    三件事缺一不可（2026-11-13 实测定位）：
+
+    1. **根信任**：``_new_ssl_context()``（truststore 优先 / stdlib 回退）。
+    2. **中间证书**：站点不发中间证书 ⇒ 必须钉住 GeoTrust G2 TLS CN RSA4096
+       SHA256 2022 CA1（见模块级常量）。缺它 ⇒ 只装根证书的信任库一律
+       ``unable to get local issuer certificate``（certifi / Linux 系统 CA
+       目录实测均失败，macOS 钥匙串才有）。
+    3. **代理**：requests 一旦走代理，``HTTPAdapter.proxy_manager_for()`` 会
+       **另建**一个连接池，且**不带** adapter 里的 ``ssl_context`` ⇒ truststore
+       被丢弃、退回 certifi ⇒ 必然验不过（macOS 系统代理 127.0.0.1:7890 实测）。
+       故 adapter 覆写 ``proxy_manager_for`` 把 ``ssl_context`` 一并透传。
+
+    上下文的 ``verify_mode`` 始终为 ``CERT_REQUIRED``、``check_hostname`` 为真
+    —— 钉中间证书是**补链**，不是降级。
+    """
+    return _pin_intermediate(_new_ssl_context())
+
+
+def _make_sw_adapter() -> "requests.adapters.HTTPAdapter":
+    """构造申万源专用 adapter（延迟 import requests，保持模块导入轻量）。
+
+    两个连接池都要带 ``ssl_context``：直连池（``init_poolmanager``）与
+    代理池（``proxy_manager_for``）—— 少任何一个都会退回 certifi 而验不过。
+    """
+    import requests
+
+    class _SwTruststoreAdapter(requests.adapters.HTTPAdapter):  # type: ignore[name-defined]
+        """把申万源 SSLContext 注入本 adapter 的连接池（非全局）。"""
+
+        def init_poolmanager(self, *args: object, **kwargs: object) -> None:
+            kwargs["ssl_context"] = _sw_ssl_context()
+            super().init_poolmanager(*args, **kwargs)  # type: ignore[arg-type]
+
+        def proxy_manager_for(self, proxy: str, **proxy_kwargs: object) -> object:
+            # requests 的代理池是**另一个** PoolManager，默认不带 ssl_context
+            # ⇒ 走代理时 truststore 被静默丢弃（2026-11-13 实测根因）。
+            proxy_kwargs.setdefault("ssl_context", _sw_ssl_context())
+            return super().proxy_manager_for(proxy, **proxy_kwargs)  # type: ignore[arg-type]
+
+    return _SwTruststoreAdapter()
+
+
 def _sw_session() -> "requests.Session":
-    """申万源专用会话：swsresearch.com 证书链只发叶子证书、不发中间证书
-    （openssl s_client 实测 Verify return code: 21），默认 verify 在 prod 直连
-    时 CERTIFICATE_VERIFY_FAILED。用 truststore 走系统信任库（macOS/Windows
-    原生信任链）完成完整校验——**不是** verify=False（安全红线，禁止）。
+    """申万源专用会话（完整 TLS 校验，见 ``_sw_ssl_context`` 的三层信任说明）。
 
     truststore 只挂载到本会话的连接池（会话级注入），不做进程级全局
     ``inject_into_ssl()``，避免影响其他模块的 TLS 行为。
     """
-    import ssl
-
     import requests
 
-    try:
-        import truststore
-    except ImportError as e:  # pragma: no cover - 依赖缺失属环境态
-        raise DataError(f"industry_pit: 缺少依赖 truststore（{e}）") from e
-
-    class _TruststoreHTTPAdapter(requests.adapters.HTTPAdapter):
-        """把 truststore SSLContext 注入本 adapter 的连接池（非全局）。"""
-
-        def init_poolmanager(self, *args: object, **kwargs: object) -> None:
-            kwargs["ssl_context"] = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-            super().init_poolmanager(*args, **kwargs)  # type: ignore[arg-type]
-
     session = requests.Session()
-    session.mount("https://", _TruststoreHTTPAdapter())
+    session.mount("https://", _make_sw_adapter())
     return session
 
 
