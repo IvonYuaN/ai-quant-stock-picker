@@ -48,10 +48,10 @@ export function MarketStrip() {
           <div className="aq-breadth-chips">
             <Badge tone={summary.tone}>{summary.headline}</Badge>
             <span className="aq-breadth-item">
-              涨停 <b className="aq-tone-up">{summary.breadth.ztReal || summary.breadth.zt}</b>
+              涨停 <b className="aq-tone-up">{summary.breadth.ztReal ?? summary.breadth.zt ?? "—"}</b>
             </span>
             <span className="aq-breadth-item">
-              跌停 <b className="aq-tone-down">{summary.breadth.dtReal || summary.breadth.dt}</b>
+              跌停 <b className="aq-tone-down">{summary.breadth.dtReal ?? summary.breadth.dt ?? "—"}</b>
             </span>
             {summary.breadth.active ? (
               <span className="aq-breadth-item">

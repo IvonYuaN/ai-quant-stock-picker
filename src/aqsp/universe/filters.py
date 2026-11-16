@@ -34,6 +34,10 @@ class STFilter:
         # name 缺失保守处理：名称通道无法确认「非 ST」，且无第二通道佐证时，
         # 保守排除（选股宁可漏不可误纳入风险警示标的）。健康报告 #R4。
         if not clean_name:
+            import logging
+            logging.getLogger("aqsp.universe.filters").warning(
+                f"Symbol {symbol} has missing name; conservatively treating as ST"
+            )
             return True
         return False
 
@@ -91,6 +95,11 @@ class NewStockFilter:
         try:
             listed = datetime.strptime(listing_date, "%Y-%m-%d").date()
         except ValueError:
+            # 上市日期格式错误：保守当作新股排除，但记录警告
+            import logging
+            logging.getLogger("aqsp.universe.filters").warning(
+                f"Unparseable listing_date '{listing_date}'; treating as new stock"
+            )
             return True
 
         # 上市天数必须相对评估基准日计算，沿用 pool.get_symbols/runtime 的 as_of

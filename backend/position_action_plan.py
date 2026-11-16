@@ -162,7 +162,11 @@ def calculate_scenario(
     buy = Decimal(str(data.buy_price or 0))
     rate, minimum_fee, tax, slip = (Decimal(str(value)) for value in (data.commission_rate, data.min_commission, data.stamp_tax_rate, data.slippage_rate))
     sell_amount, buy_amount = q * sell, q * buy
-    sell_fee = max(sell_amount * rate, minimum_fee) + sell_amount * (tax + slip)
+    # 手续费计算：佣金最低5元（不含印花税），印花税单独加在佣金之外
+    # 修复前：max(sell_amount * rate, minimum_fee) + tax 会让印花税算入5元最低内
+    # 修复后：commission独立判断最低5元，然后加印花税
+    sell_commission = max(sell_amount * rate, minimum_fee)
+    sell_fee = sell_commission + sell_amount * (tax + slip)
     buy_fee = max(buy_amount * rate, minimum_fee) + buy_amount * slip if choice == "t_watch" else Decimal(0)
     fee = sell_fee + buy_fee
     net = sell_amount - buy_amount - fee

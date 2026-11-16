@@ -35,6 +35,12 @@ CREATE TABLE daily_qfq (
 
 def _trade_days(start: str, end: str) -> list[str]:
     """按工作日近似交易日（测试用，不依赖真实日历）。"""
+    # 兼容紧凑格式（YYYYMMDD）和ISO格式（YYYY-MM-DD）
+    if len(start) == 8 and "-" not in start:
+        start = f"{start[:4]}-{start[4:6]}-{start[6:]}"
+    if len(end) == 8 and "-" not in end:
+        end = f"{end[:4]}-{end[4:6]}-{end[6:]}"
+
     cursor = date.fromisoformat(start)
     last = date.fromisoformat(end)
     out: list[str] = []

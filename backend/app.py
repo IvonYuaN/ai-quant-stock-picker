@@ -54,6 +54,11 @@ import tenant as _tenant
 import watchlist
 import trade_journal
 
+# TickFlow Stage A 缺口补齐：只读能力，各自带独立定向测试。
+import backtest_report_stats_api
+import rule_combinators_api
+import review_control_api
+
 app = FastAPI(
     title="AQSP API",
     version="0.1.3",
@@ -107,6 +112,12 @@ A 股数据层 HTTP 接口，提供行情、财务、资讯、持仓管理及量
         {"name": "AI 对话", "description": "系统 AI 对话流式接口"},
     ],
 )
+
+# 只读能力路由：回测报告统计 / Monitor 规则组合 / 复盘控制面。
+# 三者都不写生产库、不发通知、不注册定时任务；契约见各模块 GET /contract。
+app.include_router(backtest_report_stats_api.router)
+app.include_router(rule_combinators_api.router)
+app.include_router(review_control_api.router)
 
 # 每半小时后台刷新持仓数据（仅本地/私有模式：单用户，tenant 恒为 local）。
 # 公网/鉴权模式（设了 VR_API_KEY）下多用户各自有独立租户目录，全局调度器无法

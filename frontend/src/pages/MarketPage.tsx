@@ -65,11 +65,11 @@ function BreadthBlock({ view }: { view: MarketView }) {
         </div>
         <div>
           <span>涨停</span>
-          <b className="aq-tone-up aq-num">{b.ztReal || b.zt || "—"}</b>
+          <b className="aq-tone-up aq-num">{b.ztReal ?? b.zt ?? "—"}</b>
         </div>
         <div>
           <span>跌停</span>
-          <b className="aq-tone-down aq-num">{b.dtReal || b.dt || "—"}</b>
+          <b className="aq-tone-down aq-num">{b.dtReal ?? b.dt ?? "—"}</b>
         </div>
         <div>
           <span>宽度</span>

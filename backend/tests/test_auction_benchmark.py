@@ -49,7 +49,12 @@ def test_auction_benchmark_normalizes_rows_when_provider_returns_valid_data(monk
             json=lambda: envelope,
         )
 
+    # Mock掉_enrich_raw_returns，避免真实的数据库调用
+    def mock_enrich(items, trade_date):
+        return items, None
+
     monkeypatch.setattr(auction_benchmark.requests, "get", fetch)
+    monkeypatch.setattr(auction_benchmark, "_enrich_raw_returns", mock_enrich)
 
     result = auction_benchmark.get_auction_benchmark()
 

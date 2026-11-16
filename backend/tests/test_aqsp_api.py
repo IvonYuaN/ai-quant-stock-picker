@@ -130,11 +130,15 @@ def aqsp_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
 
 
 def _aqsp_routes() -> list[tuple[str, set[str]]]:
-    return sorted(
-        (route.path, set(route.methods or ()))
-        for route in app_module.app.routes
-        if route.path.startswith("/api/aqsp")
-    )
+    """Extract AQSP routes, handling both Route and _IncludedRouter types."""
+    routes = []
+    for route in app_module.app.routes:
+        # _IncludedRouter (from include_router) has no .path; skip it
+        if not hasattr(route, "path"):
+            continue
+        if route.path.startswith("/api/aqsp"):
+            routes.append((route.path, set(route.methods or ())))
+    return sorted(routes)
 
 
 def test_aqsp_api_snapshot_route_remains_read_only() -> None:

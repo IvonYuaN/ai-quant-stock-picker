@@ -74,6 +74,8 @@ def _view(data: dict[str, Any], code: str) -> dict[str, Any]:
     return deepcopy({'revision': _revision(data), 'code': code,
         'position': {'position_id': holding.get('position_id'), 'revision': position_revision(data, code),
                      'shares': holding.get('shares', 0), 'cost': holding.get('cost', 0),
+                     # T+1可卖判定：使用今日日期（字符串格式YYYY-MM-DD），opened_at < today的lot可卖
+                     # 注意：字符串比较在ISO 8601格式下正确，但需确保数据源格式一致
                      'sellable_shares': sum(float(lot['shares']) for lot in lots if not lot.get('opened_at') or lot['opened_at'] < today)},
         'receipts': receipts, 'links': links, 'summary': summarize_trades(receipts, links)})
 

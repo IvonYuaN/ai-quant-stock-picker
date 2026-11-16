@@ -692,10 +692,15 @@ def test_aqsp_bridge_rejects_malformed_symbol_as_bad_request(
 
 
 def test_aqsp_bridge_exposes_no_portfolio_or_chat_write_route() -> None:
+    """AQSP 桥接层只暴露 GET 只读端点，不暴露写入端点。
+
+    注意：app.routes 可能包含 _IncludedRouter（来自 include_router），
+    它没有 .path 属性；需要用 hasattr 或 isinstance(APIRoute) 过滤。
+    """
     aqsp_routes = {
         route.path: set(route.methods or ())
         for route in app_module.app.routes
-        if route.path.startswith("/api/aqsp")
+        if hasattr(route, "path") and route.path.startswith("/api/aqsp")
     }
 
     assert aqsp_routes
