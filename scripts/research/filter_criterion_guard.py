@@ -359,6 +359,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--probe-csv", help="regime_robustness_probe.py --out 的 CSV")
     ap.add_argument("--out", help="判决 JSON 输出路径（缺省打印 stdout）")
+    ap.add_argument(
+        "--emit-verdict", action="store_true",
+        help="配 --probe-csv：额外把 build_verdict_artifact 的前端工件（verdict_artifact）一并写出/打印",
+    )
+    ap.add_argument("--as-of", default="unknown",
+                   help="verdict 工件的 as_of（= runner 探针最新交易日，YYYY-MM-DD）")
+    ap.add_argument("--source", default="filter_criterion_guard",
+                   help="verdict 工件的来源标注（供前端 02 节展示）")
     args = ap.parse_args(argv)
 
     # 本模块是「判据单一事实源」：给定判据参数即可自判；
@@ -380,6 +388,13 @@ def main(argv: Optional[List[str]] = None) -> int:
             {"h": r["horizon"], "mean": r.get("excess_mean"), "t": r.get("excess_t_nw")}
             for r in base
         ]
+        # 前端 02 节工件投影：给一份探针 CSV 即可离线一键生成 pit_cache/filter_verdict.json
+        # （无需重跑探针），供 /api/aqsp/filter-verdict 读取、前端动态渲染。
+        # 向后兼容：不加 --emit-verdict 时输出形状不变。
+        if args.emit_verdict:
+            summary["verdict_artifact"] = build_verdict_artifact(
+                rows, as_of=args.as_of, source=args.source
+            )
     out = json.dumps(summary, ensure_ascii=False, indent=2)
     if args.out:
         with open(args.out, "w") as fh:

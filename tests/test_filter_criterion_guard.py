@@ -14,7 +14,10 @@
 """
 from __future__ import annotations
 
+import csv
+import json
 import math
+import os
 
 import numpy as np
 
@@ -231,3 +234,66 @@ def test_build_verdict_artifact_conditioning_consensus() -> None:
     art2 = g.build_verdict_artifact(_regime3(10) + [_row("基线A_整体", "ALL", 10, 0.0, 0.5, "True")],
                                     as_of="x")
     assert art2["conditioning_ok"] is False
+
+
+# ---------------------------------------------------------------------------
+# CLI 出口：--probe-csv + --emit-verdict 一键离线生成前端工件
+# （runner 重算探针后，给一份 CSV 即可产 pit_cache/filter_verdict.json，不重算、不联网）
+# ---------------------------------------------------------------------------
+def _write_probe_csv(tmp, rows: list) -> str:
+    """把 rows 写成探针 main() 实际落盘形状的 CSV（字段 = 探针 records 列的并集）。"""
+    path = os.path.join(tmp, "probe.csv")
+    # 探针 records 列并集（不同 view 缺的列留空，DictWriter 容错）
+    cols = ["horizon", "view", "regime", "direction",
+            "excess_mean", "excess_t_nw", "win_vs_pool", "n", "not_sig_neg", "spread_pp"]
+    with open(path, "w", newline="", encoding="utf-8") as fh:
+        w = csv.DictWriter(fh, fieldnames=cols, extrasaction="ignore")
+        w.writeheader()
+        for r in rows:
+            w.writerow({c: r.get(c, "") for c in cols})
+    return path
+
+
+def _full_records() -> list:
+    """探针 main() 会写的完整 records：h=10/20 各（分regime + 整体 + 条件化）。"""
+    rows = []
+    for H in (10, 20):
+        for r, c in (("bear", "熊"), ("sideways", "震荡"), ("bull", "牛")):
+            rows.append(_row("基线A_分regime", f"{r}_{c}", H, 0.003 if H == 10 else -0.01,
+                             0.5 if H == 10 else -1.67, "True"))
+        rows.append(_row("基线A_整体", "ALL", H, 0.0001, 0.3, "True"))
+        for r, c in (("bear", "熊"), ("sideways", "震荡"), ("bull", "牛")):
+            for d in ("A_双反向(当前yaml)", "B_双正向(历史实验)"):
+                rows.append(dict(_row("条件化_方向×regime", f"{r}_{c}", H, 0.0, 1.0, "True"),
+                                 direction=d))
+    return rows
+
+
+def test_cli_emit_verdict_writes_artifact(tmp_path) -> None:
+    p = _write_probe_csv(str(tmp_path), _full_records())
+    out = str(tmp_path / "verdict.json")
+    rc = g.main(["--probe-csv", p, "--emit-verdict", "--as-of", "2026-11-16", "--out", out])
+    assert rc == 0
+    doc = json.loads(open(out, encoding="utf-8").read())
+    art = doc["verdict_artifact"]
+    # 前端 FilterVerdict 字段齐全
+    for k in ("viable", "baseline", "positioning", "criterion",
+              "dynamicSwitching", "dynamicNote", "evidence", "as_of", "source"):
+        assert k in art, f"verdict_artifact 缺字段 {k}"
+    assert art["as_of"] == "2026-11-16"
+    assert art["viable"] is True
+    assert len(art["evidence"]) == 6, "h=10/20 × 3 regime = 6 行"
+    # 固定序：每个 horizon 内 熊/震荡/牛
+    assert [e["regime"] for e in art["evidence"][:3]] == ["熊", "震荡", "牛"]
+
+
+def test_cli_without_emit_verdict_is_backward_compatible(tmp_path) -> None:
+    p = _write_probe_csv(str(tmp_path), _full_records())
+    out = str(tmp_path / "summary.json")
+    rc = g.main(["--probe-csv", p, "--out", out])
+    assert rc == 0
+    doc = json.loads(open(out, encoding="utf-8").read())
+    # 不加 --emit-verdict ⇒ 输出形状不变（有 criterion/baseline_overall，无 verdict_artifact）
+    assert "criterion" in doc
+    assert "probe_rows" in doc
+    assert "verdict_artifact" not in doc, "向后兼容：无 flag 不得凭空多出 verdict_artifact"
