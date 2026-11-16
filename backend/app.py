@@ -2321,6 +2321,55 @@ def market_risk_get(as_of: str | None = None) -> dict:
     }
 
 
+@app.get(
+    "/api/aqsp/filter-verdict",
+    tags=["AQSP 研究"],
+    summary="筛选器可行/稳健判决（只读 pit_cache 工件，缺失降级）",
+    description="""
+返回「双反向 2f 是否可行筛选器」的判决工件，供前端 02 节渲染。
+
+## 数据来源
+
+- 只读 `$AQSP_RUNTIME_DATA_ROOT/pit_cache/filter_verdict.json`
+  （runner 重算探针 `regime_robustness_probe.py --json-out` 写出），**绝不联网、不现算**。
+- 缺工件 ≠ 筛选器不可用，用 `available` 区分；前端在 `available=false` 时回退硬编码快照。
+
+## 定位锁定
+
+这是「可行筛选器」的**研究结论**（runner 重算才变，低频），非每日变动的行情数据；
+前端据此展示 as-of，不把它当实时 alpha。
+
+## Fail-soft 策略
+
+文件缺失 / JSON 损坏 / 必需字段缺失 → 200 + `available=false`，绝不 500。
+    """,
+)
+def aqsp_filter_verdict() -> dict:
+    """只读 pit_cache 的筛选器判决工件；缺/坏 fail-soft，绝不 500。"""
+
+    def _fallback(reason: str) -> dict:
+        return {"data": {"available": False, "reason": reason}}
+
+    root = (os.environ.get("AQSP_RUNTIME_DATA_ROOT") or "").strip()
+    if not root:
+        return _fallback("未配置 AQSP_RUNTIME_DATA_ROOT，无筛选器判决工件")
+    path = os.path.join(root, "pit_cache", "filter_verdict.json")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            doc = json.load(fh)
+    except FileNotFoundError:
+        return _fallback("pit_cache/filter_verdict.json 尚未生成（待 runner 重算探针）")
+    except (OSError, ValueError) as exc:
+        return _fallback(f"筛选器判决工件读取失败：{exc}")
+    if not isinstance(doc, dict):
+        return _fallback("工件格式非法（应为 JSON object）")
+    # 必需字段守卫：缺了就是脏工件，宁可让前端回退也不渲染半残数据。
+    for key in ("viable", "evidence"):
+        if key not in doc:
+            return _fallback(f"工件缺少必需字段 {key!r}")
+    return {"data": {"available": True, **doc}}
+
+
 def _aqsp_candidate(symbol: str, date: str | None = None):
     return {"data": _aqsp_bridge_call(aqsp_bridge.candidate_payload, symbol, date)}
 

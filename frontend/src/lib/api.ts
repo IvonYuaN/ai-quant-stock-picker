@@ -213,6 +213,36 @@ export interface MarketRisk {
   usage?: "risk_warning_only";
 }
 
+/** 单条「筛选器可行/稳健」证据行（双反向 2f，regime 轴）。`ok`=不显著为负。 */
+export interface FilterVerdictRow {
+  horizon: number;
+  regime: string;
+  excess: string;
+  t: string;
+  ok: boolean;
+}
+
+/**
+ * 「双反向 2f 是否可行筛选器」的判决工件（`GET /api/aqsp/filter-verdict`）。
+ *
+ * 定位 = 选股筛选工具（不追正 alpha，只要求「不是垃圾」）。这是**研究结论**
+ * （runner 重算探针 `regime_robustness_probe.py --json-out` 才变，低频），
+ * 非每日变动的行情数据。`available=false` = 工件缺失/损坏，前端应回退硬编码快照。
+ */
+export interface FilterVerdict {
+  available: boolean;
+  reason?: string;
+  viable?: boolean;
+  baseline?: string;
+  positioning?: string;
+  criterion?: string;
+  dynamicSwitching?: boolean;
+  dynamicNote?: string;
+  evidence?: FilterVerdictRow[];
+  as_of?: string;
+  source?: string;
+}
+
 export interface MarketOverview {
   sentiment: MarketSentiment; sectors: SectorFlow[]; updated: string;
 }
@@ -852,6 +882,11 @@ export const api = {
    * 依据：2026-11-12 叠加"趋势曝光"后 walk-forward 均值 Sharpe 由 +0.66 降到 +0.53。
    */
   marketRisk: (options?: AqspRequestOptions) => get<MarketRisk>("/market-risk", options),
+  /**
+   * 筛选器可行/稳健判决（`GET /api/aqsp/filter-verdict`）。只读 pit_cache 工件，
+   * 缺失/损坏时 `available=false`（前端回退硬编码快照），绝不 500。研究结论，非行情数据。
+   */
+  filterVerdict: (options?: AqspRequestOptions) => get<FilterVerdict>("/aqsp/filter-verdict", options),
   emotion: (options?: AqspRequestOptions) => get<ShortTermEmotion>("/market/emotion", options),
   turnoverTop: (options?: AqspRequestOptions) => get<TurnoverTop>("/market/turnover-top", options),
   globalIndices: (options?: AqspRequestOptions) => get<GlobalIndex[]>("/global/indices", options),

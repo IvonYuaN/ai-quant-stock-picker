@@ -9,11 +9,12 @@ import { useWorkspaceSnapshot } from "@/components/aqsp/useAqspSnapshot";
 import { buildDailyView } from "@/lib/daily-view";
 import { strategyCounts } from "@/lib/candidate-view";
 import { statusLabel } from "@/lib/display-labels";
-import { api, type MarketRisk } from "@/lib/api";
+import { api, type FilterVerdict, type FilterVerdictRow, type MarketRisk } from "@/lib/api";
 
-// 「筛选器判读」证据（固化自 research/pit_factors/筛选器定位_决策.md，2026-11-16 锁定）。
-// 定位 = 选股筛选工具：不承诺正超额，只要求「可行/稳健」。数字为 runner 作业面
-// 事件研究结果（h=10/20 × 熊/震荡/牛），**非每日变动的实数据**，故写成常量、不重算。
+// 「筛选器判读」快照（固化自 research/pit_factors/筛选器定位_决策.md，2026-11-16 锁定）。
+// 定位 = 选股筛选工具：不承诺正超额，只要求「可行/稳健」。
+// 动态链路：优先读 /api/aqsp/filter-verdict（runner 重算探针写出的 pit_cache 工件，低频更新）；
+// 端点缺失/失败时回退本常量作兜底快照，并在界面上标注 as-of。
 const FILTER_VERDICT = {
   viable: true,
   baseline: "双反向 2f · mom_20 + pv_corr_20 均反向 · top10 生产池",
@@ -54,6 +55,18 @@ export function ScreenerPage() {
     return () => { active = false; };
   }, []);
 
+  // 02 节「筛选器判读」判决工件：读 /api/aqsp/filter-verdict（runner 重算探针才更新的低频研究结论）。
+  // 与所选日期无关 ⇒ 无条件调用（hooks 规则：放所有条件 return 前）。端点缺失/失败不阻塞 02 主体，
+  // 渲染时按 available 回退硬编码 FILTER_VERDICT 快照（见下方 `verdict` 选择）。
+  const [filterVerdict, setFilterVerdict] = useState<FilterVerdict | null>(null);
+  useEffect(() => {
+    let active = true;
+    api.filterVerdict()
+      .then((v) => { if (active) setFilterVerdict(v); })
+      .catch(() => { /* fail-soft：端点/网络异常视为未取到，渲染时回退快照 */ });
+    return () => { active = false; };
+  }, []);
+
   if (error && !data) {
     return <div className="aq-page"><HeroState tone="warn" title="读不到候选快照" detail={error} /></div>;
   }
@@ -71,6 +84,37 @@ export function ScreenerPage() {
 
   const riskLevel = marketRisk?.available ? marketRisk.level : undefined;
   const riskContext = marketRisk?.available ? marketRisk : null;
+
+  // 02 节统一渲染模型：端点 available 则用 runner 工件（低频更新），否则回退硬编码快照。
+  // evidence 归一为 FilterVerdictRow[]（快照常量元素是 as const 字面量，逐字段重建成普通对象），
+  // 保证无论数据来源，`.map` 与 `row.*` 访问类型一致、无 union array 问题。
+  const ev: FilterVerdictRow[] =
+    filterVerdict?.available && filterVerdict.evidence && filterVerdict.evidence.length > 0
+      ? filterVerdict.evidence
+      : FILTER_VERDICT.evidence.map((r) => ({
+          horizon: r.horizon, regime: r.regime, excess: r.excess, t: r.t, ok: r.ok,
+        }));
+  const verdict = filterVerdict?.available
+    ? {
+        viable: filterVerdict.viable ?? FILTER_VERDICT.viable,
+        baseline: filterVerdict.baseline ?? FILTER_VERDICT.baseline,
+        positioning: filterVerdict.positioning ?? FILTER_VERDICT.positioning,
+        criterion: filterVerdict.criterion ?? FILTER_VERDICT.criterion,
+        dynamicNote: filterVerdict.dynamicNote ?? FILTER_VERDICT.dynamicNote,
+        evidence: ev,
+        asOf: filterVerdict.as_of ? `as-of ${filterVerdict.as_of}（runner 工件）` : "（工件未标 as-of）",
+        sourceLabel: "runner 重算工件",
+      }
+    : {
+        viable: FILTER_VERDICT.viable,
+        baseline: FILTER_VERDICT.baseline,
+        positioning: FILTER_VERDICT.positioning,
+        criterion: FILTER_VERDICT.criterion,
+        dynamicNote: FILTER_VERDICT.dynamicNote,
+        evidence: ev,
+        asOf: "as-of 2026-11-16 固化快照（runner 工件未就绪，回退内嵌值）",
+        sourceLabel: "内嵌快照",
+      };
 
   return (
     <div className="aq-page aq-module-page">
@@ -128,31 +172,33 @@ export function ScreenerPage() {
         <SectionHeader
           number="02 · 筛选器判读"
           title="当前筛选器是否可用"
-          description={FILTER_VERDICT.positioning}
+          description={verdict.positioning}
           icon={ShieldCheck}
         />
 
         {/* 判据（定位已锁定：稳健性，非正收益） */}
-        <div className="aq-note">判据：{FILTER_VERDICT.criterion}</div>
+        <div className="aq-note">判据：{verdict.criterion}</div>
+        {/* 数据来源与时效（动态链路：优先 runner 工件，回退内嵌快照） */}
+        <div className="aq-note">来源：{verdict.sourceLabel} · {verdict.asOf}</div>
 
         {/* 结论 */}
         <table className="aq-table aq-summary-table">
           <tbody>
             <tr>
               <td><strong>生产基线</strong></td>
-              <td>{FILTER_VERDICT.baseline}</td>
+              <td>{verdict.baseline}</td>
             </tr>
             <tr>
               <td><strong>可行筛选器</strong></td>
               <td>
-                {FILTER_VERDICT.viable
+                {verdict.viable
                   ? "✅ 跨 3 市场面 + 2025/2026 均不显著为负"
                   : "❌ 未通过判据"}
               </td>
             </tr>
             <tr>
               <td><strong>动态切换</strong></td>
-              <td>{FILTER_VERDICT.dynamicNote}</td>
+              <td>{verdict.dynamicNote}</td>
             </tr>
             {riskContext ? (
               <tr>
@@ -188,7 +234,7 @@ export function ScreenerPage() {
               </tr>
             </thead>
             <tbody>
-              {FILTER_VERDICT.evidence.map((row) => (
+              {verdict.evidence.map((row) => (
                 <tr key={`${row.horizon}-${row.regime}`}>
                   <td>{row.horizon}</td>
                   <td>{row.regime}</td>
@@ -201,7 +247,7 @@ export function ScreenerPage() {
           </table>
           <p className="aq-note">
             证据来自 runner 作业面事件研究（双反向 2f，top10 生产池，同截面池等权为基准，
-            as-of 2026-11-16 快照）。不跨期累乘、只用 ≤t 数据无前视。此为**研究结论**，
+            {verdict.asOf}）。不跨期累乘、只用 ≤t 数据无前视。此为**研究结论**，
             会随行情数据更新而重算，非实盘盈亏。
           </p>
         </div>

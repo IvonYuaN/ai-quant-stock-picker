@@ -162,3 +162,72 @@ def test_verdict_summary() -> None:
     v = g.verdict(regime, yearly, cond)
     assert v["filter_viable"] is True
     assert v["do_dynamic_switching"] is False  # 定位锁定：恒不动态切换
+
+
+# ---------------------------------------------------------------------------
+# 前端工件投影（build_verdict_artifact）
+# 合成 probe CSV 行做投影，验证：regime 中文化 + 固定序、百分比/t 格式化、
+# viable 逐 horizon 保守交集、conditioning 保守全真、缺 cond 行即 False。
+# 零联网、不碰 db（重计算仍留 runner 探针）。
+# ---------------------------------------------------------------------------
+def _row(view: str, regime: str, h: int, mean: float, t: float,
+         not_sig_neg: str) -> dict:
+    """模拟 probe CSV 读回的字符串字段（regime 带机器前缀、数值存成字符串）。"""
+    return {"view": view, "regime": regime, "horizon": str(h),
+            "excess_mean": str(mean), "excess_t_nw": str(t), "not_sig_neg": not_sig_neg}
+
+
+def _regime3(h: int, mean: float = 0.0, t: float = 0.5, ok: str = "True") -> list:
+    return [_row("基线A_分regime", f"{r}_{c}", h, mean, t, ok)
+            for r, c in (("bear", "熊"), ("sideways", "震荡"), ("bull", "牛"))]
+
+
+def test_build_verdict_artifact_all_viable() -> None:
+    rows = _regime3(10) + _regime3(20, mean=-0.01, t=-1.67)  # h=20 单 regime 显著负
+    rows.append(_row("基线A_整体", "ALL", 10, 0.0001, 0.3, "True"))
+    rows.append(_row("基线A_整体", "ALL", 20, -0.0005, -0.4, "True"))
+    art = g.build_verdict_artifact(rows, as_of="2026-11-16")
+    assert art["viable"] is True
+    assert len(art["evidence"]) == 6
+    # regime 机器前缀 → 中文，且按「熊/震荡/牛」固定序（不依赖 Unicode 码位）
+    assert [e["regime"] for e in art["evidence"][:3]] == ["熊", "震荡", "牛"]
+    assert art["evidence"][0]["excess"] == "+0.00%"
+    assert art["as_of"] == "2026-11-16"
+    assert art["dynamicSwitching"] is False  # 定位锁定：恒不动态切换
+
+
+def test_build_verdict_artifact_h_fail_widens_to_false() -> None:
+    # h=10 熊显著为负(1/3 容许) + h=20 熊显著为负 ⇒ 两 horizon 均过容许上限
+    rows = (
+        [_row("基线A_分regime", "bear_熊", 10, -0.05, -3.0, "False")]
+        + [_row("基线A_分regime", f"{r}_{c}", 10, 0.0, 0.5, "True")
+           for r, c in (("sideways", "震荡"), ("bull", "牛"))]
+        + _regime3(20, mean=-0.05, t=-3.0, ok="False")
+        + [_row("基线A_整体", "ALL", 10, -0.05, -3.0, "False")]
+        + [_row("基线A_整体", "ALL", 20, -0.05, -3.0, "False")]
+    )
+    art = g.build_verdict_artifact(rows, as_of="x")
+    assert art["viable"] is False  # h=10: 1 sig-neg ≤1/3 但整体 False ⇒ 不满足
+
+
+def test_build_verdict_artifact_nan_formats_to_dash() -> None:
+    r = _row("基线A_分regime", "bear_熊", 10, float("nan"), float("nan"), "True")
+    art = g.build_verdict_artifact([r, _row("基线A_整体", "ALL", 10, 0.0, 0.5, "True")],
+                                   as_of="x")
+    assert art["evidence"][0]["excess"] == "—"
+    assert art["evidence"][0]["t"] == "—"
+
+
+def test_build_verdict_artifact_conditioning_consensus() -> None:
+    rows = (
+        _regime3(10)
+        + [_row("基线A_整体", "ALL", 10, 0.0, 0.5, "True")]
+        + [_row("条件化_方向×regime", f"{r}_{c}", 10, 0.0, 1.0, "True")
+           for r, c in (("bear", "熊"), ("sideways", "震荡"), ("bull", "牛"))]
+    )
+    art = g.build_verdict_artifact(rows, as_of="x")
+    assert art["conditioning_ok"] is True
+    # 无 cond 行 ⇒ 保守判 False（不做动态切换的提示仍成立）
+    art2 = g.build_verdict_artifact(_regime3(10) + [_row("基线A_整体", "ALL", 10, 0.0, 0.5, "True")],
+                                    as_of="x")
+    assert art2["conditioning_ok"] is False

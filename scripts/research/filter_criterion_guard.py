@@ -239,6 +239,122 @@ def read_probe_csv(path: str) -> List[dict]:
     return rows
 
 
+# ---------------------------------------------------------------------------
+# 前端工件投影（runner 探针 --json-out 调用；CI 用合成 rows 回归其正确性）
+# ---------------------------------------------------------------------------
+# 探针 records 里 regime 名带机器前缀（bear_熊…），前端证据表要纯中文；映射在此。
+REGIME_LABEL = {
+    "bear_熊": "熊",
+    "sideways_震荡": "震荡",
+    "bull_牛": "牛",
+}
+
+# 02 节固定文案（研究结论，非行情数据）。工件透传给前端，前端 available=true 时全用之，
+# 缺失时回退前端内嵌快照（同一组文案），故此处为单一事实源。
+_POSITIONING = "选股筛选工具：不承诺正超额，只要求「不是垃圾策略」"
+_CRITERION = "多数 regime / 多数年度下，相对同截面池等权的超额「不显著为负」（Newey-West t > −1.96，双侧 95%）"
+
+
+def _to_float(value: object) -> float:
+    """CSV 读回全是字符串；NaN/空 一律给 nan（前端再决定显示 — ）。"""
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return float("nan")
+
+
+def _flag(value: object) -> bool:
+    """CSV 里布尔存成 'True'/'False'；宽松解析，非真值一律 False。"""
+    return str(value).strip().lower() in ("true", "1", "yes")
+
+
+def _fmt_pct(x: float) -> str:
+    return f"{x:+.2%}" if math.isfinite(x) else "—"
+
+
+def _fmt_t(x: float) -> str:
+    return f"{x:+.2f}" if math.isfinite(x) else "—"
+
+
+def build_verdict_artifact(
+    rows: List[dict],
+    as_of: str,
+    source: str = "regime_robustness_probe.py",
+) -> Dict:
+    """把探针 `--out` CSV 的 rows 投影成前端 `/api/aqsp/filter-verdict` 的工件。
+
+    纯函数、零联网、零重算：只读探针已算好的数值列（excess_mean/excess_t_nw/
+    not_sig_neg），做「中文 regime 名 + 百分比/t 格式化 + viable/cond 推导」。
+    前端 `FilterVerdict` 接口字段与此一一对应；`available` 由后端端点负责，
+    本函数只产「工件本体」。
+
+    口径（对齐探针 main() 的判决逻辑，用 records 里已落地的字段重推，不重算统计量）：
+    - viable = ≥2/3 报告的 regime 不显著为负，且「基线A_整体」不显著为负；
+    - conditioning_ok（cond_pass）= 每个报告的 regime 下**所有**方向都不显著为负。
+    """
+    regime_rows = [r for r in rows if r.get("view") == "基线A_分regime"]
+    overall_rows = [r for r in rows if r.get("view") == "基线A_整体"]
+    cond_rows = [r for r in rows if r.get("view") == "条件化_方向×regime"]
+
+    # evidence：regime 轴，按 (horizon, regime) 稳定排序，保证前端渲染顺序确定。
+    evidence = [
+        {
+            "horizon": int(float(r.get("horizon", 0) or 0)),
+            "regime": REGIME_LABEL.get(str(r.get("regime")), str(r.get("regime"))),
+            "excess": _fmt_pct(_to_float(r.get("excess_mean"))),
+            "t": _fmt_t(_to_float(r.get("excess_t_nw"))),
+            "ok": _flag(r.get("not_sig_neg")),
+        }
+        for r in regime_rows
+    ]
+    # regime 固定展示序（对齐前端 02 节「熊/震荡/牛」），不依赖 Unicode 码位排序；
+    # 未知 regime 排最后、按名称稳定。
+    _ORDER = {"熊": 0, "震荡": 1, "牛": 2}
+    evidence.sort(key=lambda e: (e["horizon"], _ORDER.get(e["regime"], 99), e["regime"]))
+
+    def _h(r: dict) -> int:
+        return int(float(r.get("horizon", 0) or 0))
+
+    horizons = sorted({_h(r) for r in regime_rows} | { _h(r) for r in overall_rows })
+
+    # viable：**逐 horizon 判、取交集**（逐位对齐探针 main() 的 per-horizon 判决）。
+    # 探针口径：viable_h = (报告 regime>0) and (显著负 regime ≤ 1/3) and (该 h 整体不显著为负)。
+    # 跨 horizon 混合会放宽（允许更多 regime 显著负）⇒ 必须分组判，避免与探针判决漂移。
+    viable = bool(horizons)
+    for H in horizons:
+        rh = [r for r in regime_rows if _h(r) == H]
+        n_rep = len(rh)
+        n_neg = sum(1 for r in rh if not _flag(r.get("not_sig_neg")))
+        oh = [r for r in overall_rows if _h(r) == H]
+        overall_ok = bool(oh) and _flag(oh[0].get("not_sig_neg"))
+        viable = viable and (n_rep > 0 and n_neg <= max(1, n_rep // 3) and overall_ok)
+
+    # conditioning_ok（保守）：所有报告的 cond 行 not_sig_neg=True 且非空。
+    # 探针 main() 按「3 regime 全方向不显著为负」累积，且某 regime 截面不足即 False；
+    # CSV 的 cond 行只含截面≥MIN_SECTIONS 的方向，故「全部报告行 ok」已是保守下界。
+    # 该轴前端只驱动一句提示文案（非生死判据），保守即可，不硬编码 regime 数。
+    cond_pass = bool(cond_rows) and all(_flag(r.get("not_sig_neg")) for r in cond_rows)
+
+    dynamic_note = (
+        "各 regime 最优方向漂移 ⇒ 不做动态切换（过拟合风险）"
+        if not cond_pass
+        else "各 regime 各方向均不显著为负"
+    )
+
+    return {
+        "viable": bool(viable),
+        "baseline": BASELINE,
+        "positioning": _POSITIONING,
+        "criterion": _CRITERION,
+        "dynamicSwitching": False,
+        "dynamicNote": dynamic_note,
+        "conditioning_ok": bool(cond_pass),
+        "evidence": evidence,
+        "as_of": as_of,
+        "source": source,
+    }
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--probe-csv", help="regime_robustness_probe.py --out 的 CSV")
