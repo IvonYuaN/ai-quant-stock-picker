@@ -30,6 +30,14 @@ from aqsp.core.errors import DataError
 _MARKET_DAILY_COVERAGE_ENV = "AQSP_MIN_MARKET_DAILY_COVERAGE"
 _DEFAULT_MIN_MARKET_DAILY_COVERAGE = 0.8
 
+# Denominator scope. ``0`` keeps the original contract (every symbol ever
+# stored, including delisted and long-suspended tickers). Production is a
+# display tier that only maintains liquid, currently listed symbols, so a
+# whole-history denominator makes it report a permanent shortfall that says
+# nothing about whether *its* data is fresh.
+_COVERAGE_UNIVERSE_LOOKBACK_ENV = "AQSP_COVERAGE_UNIVERSE_LOOKBACK_DAYS"
+_DEFAULT_COVERAGE_UNIVERSE_LOOKBACK_DAYS = 0
+
 
 def min_market_daily_coverage_ratio() -> float:
     """Read the coverage threshold, falling back to the strict default."""
@@ -43,6 +51,25 @@ def min_market_daily_coverage_ratio() -> float:
     except ValueError:
         value = 0.0
     return value if 0 < value <= 1 else _DEFAULT_MIN_MARKET_DAILY_COVERAGE
+
+
+def coverage_universe_lookback_days() -> int:
+    """Calendar days that define the denominator's "active universe".
+
+    ``0`` means "every symbol ever stored". A positive value restricts the
+    denominator to symbols that traded within that window, which is what a
+    display-tier database actually commits to keeping current.
+    """
+    import os
+
+    raw = str(os.getenv(_COVERAGE_UNIVERSE_LOOKBACK_ENV, "")).strip()
+    if not raw:
+        return _DEFAULT_COVERAGE_UNIVERSE_LOOKBACK_DAYS
+    try:
+        value = int(raw)
+    except ValueError:
+        return _DEFAULT_COVERAGE_UNIVERSE_LOOKBACK_DAYS
+    return value if value > 0 else 0
 
 
 @dataclass(frozen=True)
@@ -107,6 +134,20 @@ def _normalize_date(value: object) -> str | None:
     return compact or None
 
 
+def _shift_date(raw: str, days: int) -> str:
+    """Subtract ``days`` from a stored date, preserving its own formatting.
+
+    ``daily_qfq`` stores ``20261105`` and ``ohlcv`` stores ``2026-11-05``; the
+    shifted boundary has to be comparable with the column it filters.
+    """
+    from datetime import datetime, timedelta
+
+    dashed = "-" in raw
+    compact = raw.strip().replace("-", "").replace("/", "")
+    shifted = datetime.strptime(compact, "%Y%m%d") - timedelta(days=days)
+    return shifted.strftime("%Y-%m-%d") if dashed else shifted.strftime("%Y%m%d")
+
+
 @dataclass(frozen=True)
 class DailyCoverageSummary:
     """Coverage of the newest daily bar date across all symbols."""
@@ -166,12 +207,27 @@ def summarize_daily_coverage(
             params,
         ).fetchone()
         raw_max = str(row[0]) if row and row[0] else None
-        total = int(
-            conn.execute(
-                f"SELECT COUNT(DISTINCT {spec.symbol_col}) FROM {spec.table}{where}",  # noqa: S608
-                params,
-            ).fetchone()[0]
-        )
+        # Denominator: whole history by default, or only symbols that traded
+        # inside the configured lookback window.
+        lookback = coverage_universe_lookback_days()
+        if lookback > 0 and raw_max:
+            floor = _shift_date(raw_max, lookback)
+            universe_where = (
+                f"{where} AND {spec.date_col} >= ?" if where else f" WHERE {spec.date_col} >= ?"
+            )
+            total = int(
+                conn.execute(
+                    f"SELECT COUNT(DISTINCT {spec.symbol_col}) FROM {spec.table}{universe_where}",  # noqa: S608
+                    [*params, floor],
+                ).fetchone()[0]
+            )
+        else:
+            total = int(
+                conn.execute(
+                    f"SELECT COUNT(DISTINCT {spec.symbol_col}) FROM {spec.table}{where}",  # noqa: S608
+                    params,
+                ).fetchone()[0]
+            )
         sentinels: tuple[str, ...] = ()
         if raw_max:
             condition = f"{where} AND {spec.date_col} = ?" if where else f" WHERE {spec.date_col} = ?"
