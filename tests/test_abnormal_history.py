@@ -1,13 +1,23 @@
+"""异常历史快照构建测试；输入全部为本地合成数据。"""
+
 from __future__ import annotations
 
+import sys
 from datetime import date, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 
 import pandas as pd
 
 from aqsp.data.cache import AdjustmentFactorRecord
-import abnormal_history
-from abnormal_history import build_historical_signal_snapshot
+
+
+BACKEND_DIR = Path(__file__).resolve().parents[1] / "backend"
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
+
+import abnormal_history  # noqa: E402 - 需在 sys.path 注入后导入
+from abnormal_history import build_historical_signal_snapshot  # noqa: E402
 
 
 def _daily_frame(
