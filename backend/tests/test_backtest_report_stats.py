@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 import backtest_report_stats as stats
 import backtest_report_stats_api as api
 
-PREFIX = "/api/aqsp/report-stats"
+PREFIX = "/api/lab/report-stats"
 
 
 def _equity(values: list[float], start: str = "2026-01-05") -> list[dict]:

@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 import review_control as rc
 import tenant
 
-router = APIRouter(prefix="/api/aqsp/review-control", tags=["复盘控制面"])
+router = APIRouter(prefix="/api/lab/review-control", tags=["复盘控制面"])
 
 
 class PlanRequest(BaseModel):
