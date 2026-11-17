@@ -162,3 +162,86 @@ def test_default_cache_path_lands_in_pit_cache():
     src = ValuationPitSource()
     path = src._default_cache_path()
     assert path.endswith(os.path.join("pit_cache", "valuation_history.csv"))
+
+
+# ------------------------------------------------- 全市场截面分位（命门 B）
+def _whole_market_points() -> list[ValuationPoint]:
+    """两个快照日，全市场多票（含不同板块段，模拟 000/300 混合）。
+
+    20240110：便宜票 000001(PB 0.5)、000002(PB 3.0)、300001(PB 1.0)、300002(PE 40)。
+    20240124：未来期 ⇒ 20240110 的分位**绝不能**用到这些未来值。
+    """
+    return [
+        ValuationPoint("000001", "20240110", pe_ttm=5.0, pb_mrq=0.5),
+        ValuationPoint("000002", "20240110", pe_ttm=20.0, pb_mrq=3.0),
+        ValuationPoint("300001", "20240110", pe_ttm=10.0, pb_mrq=1.0),
+        ValuationPoint("300002", "20240110", pe_ttm=40.0, pb_mrq=2.0),
+        # 未来期（20240124）
+        ValuationPoint("000001", "20240124", pe_ttm=99.0, pb_mrq=9.0),
+        ValuationPoint("300001", "20240124", pe_ttm=50.0, pb_mrq=5.0),
+    ]
+
+
+def test_bp_ep_pct_ranked_over_whole_market_snapshot():
+    """分位是**当期全市场截面**的便宜度 rank(pct)（越高越便宜），不是单票。"""
+    src = ValuationPitSource().from_points(_whole_market_points())
+    # 20240110 当期 4 票 BP=1/PB：000001=2.0(最便宜)、300002=0.5(最贵)
+    # EP=1/PE：000001=0.2(最便宜)、300002=0.025(最贵)
+    assert src.bp_pct("000001", "20240110") > src.bp_pct("300002", "20240110")
+    assert src.ep_pct("000001", "20240110") > src.ep_pct("300002", "20240110")
+    # 000001 在 4 票截面里最便宜 ⇒ 分位最高（≈1.0）
+    assert src.bp_pct("000001", "20240110") == 1.0
+    assert src.ep_pct("000001", "20240110") == 1.0
+    # 中间票介于两端之间
+    assert src.bp_pct("300001", "20240110") < src.bp_pct("000001", "20240110")
+
+
+def test_bp_ep_pct_pit_never_uses_future_snapshot():
+    """🔴 红线：as_of=20240110 的分位只用当期 4 票，绝不含未来期 20240124 的值。
+
+    若误用全期池化（旧病根 §24），000001 会被 20240124 的 PB=9 拉低排名；
+    严格 PIT 下 000001 在 20240110 当期仍是 4 票中最便宜 ⇒ 分位 1.0。
+    """
+    src = ValuationPitSource().from_points(_whole_market_points())
+    # 当期（4 票）最便宜
+    assert src.bp_pct("000001", "20240110") == 1.0
+    # 若把 as_of 推到未来期 20240124（当期只有 2 票 000001/300001），
+    # 000001 的 PB=9 变成更贵的 ⇒ 分位应**下降**（证明逐日截面、不跨期）
+    assert src.bp_pct("000001", "20240124") < src.bp_pct("000001", "20240110")
+
+
+def test_bp_ep_pct_single_code_snapshot_is_none():
+    """单票截面无区分度 ⇒ 不制造假分位（fail-soft ⇒ None）。"""
+    src = ValuationPitSource().from_points(
+        [ValuationPoint("000001", "20240110", pe_ttm=5.0, pb_mrq=0.5)]
+    )
+    assert src.bp_pct("000001", "20240110") is None
+    assert src.ep_pct("000001", "20240110") is None
+
+
+def test_bp_ep_pct_invalid_value_is_none():
+    """某票当期该维度值缺失/非正 ⇒ 无分位（None），不影响其它票的分位。"""
+    pts = [
+        ValuationPoint("000001", "20240110", pe_ttm=5.0, pb_mrq=0.5),
+        ValuationPoint("000002", "20240110", pe_ttm=-1.0, pb_mrq=3.0),  # 负 PE 无效
+    ]
+    src = ValuationPitSource().from_points(pts)
+    # 000002 的 EP 无效（负 PE）⇒ 无 EP 分位
+    assert src.ep_pct("000002", "20240110") is None
+    # 000001 的 EP 仍可得（2 票中 1 有效 ⇒ 仍无区分度？_pct_rank 需 ≥2 有效）
+    # 000002 EP 无效，只剩 000001 一个有效 EP ⇒ <2 ⇒ 无分位
+    assert src.ep_pct("000001", "20240110") is None
+    # BP 两票都有效 ⇒ 有分位
+    assert src.bp_pct("000001", "20240110") is not None
+
+
+def test_bp_ep_pct_unknown_code_is_none():
+    src = ValuationPitSource().from_points(_whole_market_points())
+    assert src.bp_pct("999999", "20240110") is None
+    assert src.ep_pct("999999", "20240110") is None
+
+
+def test_bp_ep_pct_supports_dashed_asof():
+    src = ValuationPitSource().from_points(_whole_market_points())
+    assert src.bp_pct("000001", "2024-01-10") == src.bp_pct("000001", "20240110")
+
