@@ -1,10 +1,14 @@
 from __future__ import annotations
 
-from typing import Dict
+from typing import Dict, Optional
 import pandas as pd
 
+from aqsp.data.valuation_pit import ValuationPitSource
 from aqsp.strategies.base import BaseStrategy, StrategyConfig
 from aqsp.strategies.thresholds import Thresholds, load_thresholds
+
+# PIT 估值源单例（cache-only，绝不联网；缺失 ⇒ fail-soft 回退）
+_VALUATION_SOURCE = ValuationPitSource()
 
 
 class ValueStrategy(BaseStrategy):
@@ -21,19 +25,107 @@ class ValueStrategy(BaseStrategy):
         )
 
     def calculate_score(self, data: Dict[str, pd.DataFrame]) -> Dict[str, float]:
-        scores = {}
+        """估值维度打分。
 
-        for symbol, df in data.items():
+        🔴 **截面分位**（2026-07 改造）：原实现是绝对水平 ``1 - pe/max_pe``，
+        而 ``max_pe``（默认 30、门槛 15）远大于多数个股 PE ⇒ 几乎所有票得分
+        挤在 1 附近、**零区分度**（这正是"7 维里有 3 维是常量"的根因之一）。
+        现改为**横截面分位**：越便宜分位越高 ⇒ 恢复区分度。
+
+        PIT 纪律：估值取 ``as_of <= 该票决策日`` 的最近一期快照（见
+        :class:`aqsp.data.valuation_pit.ValuationPitSource`），**绝不取未来期**。
+        数据缺失 ⇒ 该票取中性 0.5（fail-soft，行为与"无数据"时一致）。
+        """
+        # ① 逐票取决策日 + PIT 估值（asof = 该票 df 末行日期）
+        raw: Dict[str, Dict[str, Optional[float]]] = {}
+        for symbol, df in (data or {}).items():
             if df is None or df.empty:
-                scores[symbol] = 0.0
                 continue
+            raw[symbol] = self._pit_valuation(symbol, df)
 
-            score = self._calculate_single_score(df)
-            scores[symbol] = score
+        # ② 截面分位（大 = 便宜 ⇒ 分位高）
+        pe_rank = self._cross_section_rank(
+            {s: v["pe"] for s, v in raw.items()}, higher_is_cheaper=True
+        )
+        pb_rank = self._cross_section_rank(
+            {s: v["pb"] for s, v in raw.items()}, higher_is_cheaper=True
+        )
 
+        w = self.thresholds.value.weights
+        # ③ 加权合成：dividend 本期无 PIT 数据 ⇒ 取中性 0.5 并把权重按可用分量归一
+        scores: Dict[str, float] = {}
+        for symbol in (data or {}):
+            if symbol not in raw:
+                scores[symbol] = 0.5  # 无估值数据 ⇒ 中性（fail-soft）
+                continue
+            pe_score = pe_rank.get(symbol, 0.5)
+            pb_score = pb_rank.get(symbol, 0.5)
+            # dividend 分量恒中性 ⇒ 其权重在归一后抵消（等价于按 pe/pb 权重比例分配）
+            avail = w.pe + w.pb
+            if avail <= 0:
+                scores[symbol] = 0.5
+                continue
+            final = (pe_score * w.pe + pb_score * w.pb + 0.5 * w.dividend) / (
+                w.pe + w.pb + w.dividend
+            )
+            scores[symbol] = max(0.0, min(1.0, final))
         return scores
 
+    # ------------------------------------------------------------------ PIT 取数
+    def _pit_valuation(
+        self, symbol: str, df: pd.DataFrame
+    ) -> Dict[str, Optional[float]]:
+        """按该票决策日（df 末行日期）取 PIT 估值快照。"""
+        out: Dict[str, Optional[float]] = {"pe": None, "pb": None}
+        # 决策日 = df 末行日期（walk-forward 逐日切片后即信号日）
+        try:
+            as_of = df.sort_values("date").iloc[-1]["date"]
+        except Exception:
+            return out
+        as_of_str = str(as_of)[:10].replace("-", "")
+        if len(as_of_str) != 8:
+            return out
+        code = symbol.split(".")[0]
+        point = _VALUATION_SOURCE.lookup(code, as_of_str)
+        if point is None:
+            return out
+        out["pe"] = point.pe_ttm
+        out["pb"] = point.pb_mrq
+        return out
+
+    # ------------------------------------------------------------------ 截面分位
+    @staticmethod
+    def _cross_section_rank(
+        values: Dict[str, Optional[float]], higher_is_cheaper: bool = True
+    ) -> Dict[str, float]:
+        """横截面分位（0~1）：**便宜 ⇒ 分位高**。
+
+        入参是估值原值（PE / PB，越大越贵）；``higher_is_cheaper=True`` 时
+        内部先取倒数再排名，使"更便宜 ⇒ 更高分"。缺失值 ⇒ 中性 0.5；
+        单一有效样本 ⇒ 0.5（无区分度，不制造假信号）。
+        """
+        valid = {
+            s: v
+            for s, v in values.items()
+            if v is not None and v == v and float(v) > 0
+        }
+        out: Dict[str, float] = {s: 0.5 for s in values}
+        if len(valid) < 2:
+            return out
+        series = pd.Series(valid, dtype=float)
+        if higher_is_cheaper:
+            series = 1.0 / series          # 便宜（PE 小）⇒ 值大 ⇒ 分位高
+        ranks = series.rank(pct=True)
+        for symbol, value in ranks.items():
+            out[symbol] = float(value)
+        return out
+
     def _calculate_single_score(self, df: pd.DataFrame) -> float:
+        """⚠️ 旧单票绝对水平路径（**已弃用**，保留仅为向后兼容）。
+
+        绝对水平 ``1 - pe/max_pe`` 在 max_pe=15~30 下几乎所有票得分挤在 1 附近
+        ⇒ 零区分度。新的 :meth:`calculate_score` 走 **PIT 估值 + 截面分位**。
+        """
         df = df.sort_values("date").tail(5)
 
         if len(df) < 1:
