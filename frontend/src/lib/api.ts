@@ -239,8 +239,10 @@ export interface FilterVerdict {
   dynamicSwitching?: boolean;
   dynamicNote?: string;
   evidence?: FilterVerdictRow[];
+  evidence_strength?: string;
   as_of?: string;
   source?: string;
+  review?: { verdict?: string; method?: string; detail?: string };
 }
 
 export interface MarketOverview {

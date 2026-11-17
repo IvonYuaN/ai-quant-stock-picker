@@ -103,6 +103,7 @@ export function ScreenerPage() {
         dynamicNote: filterVerdict.dynamicNote ?? FILTER_VERDICT.dynamicNote,
         evidence: ev,
         asOf: filterVerdict.as_of ? `as-of ${filterVerdict.as_of}（runner 工件）` : "（工件未标 as-of）",
+        evidenceStrength: filterVerdict.evidence_strength ?? "UNKNOWN",
         sourceLabel: "runner 重算工件",
       }
     : {
@@ -113,6 +114,7 @@ export function ScreenerPage() {
         dynamicNote: FILTER_VERDICT.dynamicNote,
         evidence: ev,
         asOf: "as-of 2026-11-16 固化快照（runner 工件未就绪，回退内嵌值）",
+        evidenceStrength: "INCONCLUSIVE_LEGACY_SNAPSHOT",
         sourceLabel: "内嵌快照",
       };
 
@@ -191,9 +193,11 @@ export function ScreenerPage() {
             <tr>
               <td><strong>可行筛选器</strong></td>
               <td>
-                {verdict.viable
-                  ? "✅ 跨 3 市场面 + 2025/2026 均不显著为负"
-                  : "❌ 未通过判据"}
+                {String(verdict.evidenceStrength).startsWith("INCONCLUSIVE")
+                  ? "⚠️ 证据不足：统计上无法判定可行，不构成有效性结论"
+                  : verdict.viable
+                    ? "✅ 跨 3 市场面 + 2025/2026 均不显著为负"
+                    : "❌ 未通过判据"}
               </td>
             </tr>
             <tr>
