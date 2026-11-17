@@ -187,10 +187,11 @@ def _regime3(h: int, mean: float = 0.0, t: float = 0.5, ok: str = "True") -> lis
 
 def test_build_verdict_artifact_all_viable() -> None:
     rows = _regime3(10) + _regime3(20, mean=-0.01, t=-1.67)  # h=20 单 regime 显著负
-    rows.append(_row("基线A_整体", "ALL", 10, 0.0001, 0.3, "True"))
-    rows.append(_row("基线A_整体", "ALL", 20, -0.0005, -0.4, "True"))
+    rows.append(_row("基线A_整体", "ALL", 10, 0.0001, 2.5, "True"))
+    rows.append(_row("基线A_整体", "ALL", 20, 0.0005, 2.2, "True"))
     art = g.build_verdict_artifact(rows, as_of="2026-11-16")
     assert art["viable"] is True
+    assert art["evidence_strength"] == "POSITIVE_EVIDENCE"
     assert len(art["evidence"]) == 6
     # regime 机器前缀 → 中文，且按「熊/震荡/牛」固定序（不依赖 Unicode 码位）
     assert [e["regime"] for e in art["evidence"][:3]] == ["熊", "震荡", "牛"]
@@ -211,6 +212,17 @@ def test_build_verdict_artifact_h_fail_widens_to_false() -> None:
     )
     art = g.build_verdict_artifact(rows, as_of="x")
     assert art["viable"] is False  # h=10: 1 sig-neg ≤1/3 但整体 False ⇒ 不满足
+
+
+def test_build_verdict_artifact_inconclusive_when_no_positive_evidence() -> None:
+    """fail-closed：整体超额未显著为正(不显著为负) ⇒ 不得宣称可行，降级 INCONCLUSIVE。"""
+    rows = _regime3(10) + _regime3(20)
+    rows.append(_row("基线A_整体", "ALL", 10, 0.0001, 0.3, "True"))
+    rows.append(_row("基线A_整体", "ALL", 20, -0.0005, -0.4, "True"))
+    art = g.build_verdict_artifact(rows, as_of="x")
+    assert art["viable"] is False
+    assert art["evidence_strength"] == "INCONCLUSIVE_NO_POSITIVE_EVIDENCE"
+    assert "不显著" in art["criterion"] and "无证据" in art["criterion"]
 
 
 def test_build_verdict_artifact_nan_formats_to_dash() -> None:
@@ -261,7 +273,7 @@ def _full_records() -> list:
         for r, c in (("bear", "熊"), ("sideways", "震荡"), ("bull", "牛")):
             rows.append(_row("基线A_分regime", f"{r}_{c}", H, 0.003 if H == 10 else -0.01,
                              0.5 if H == 10 else -1.67, "True"))
-        rows.append(_row("基线A_整体", "ALL", H, 0.0001, 0.3, "True"))
+        rows.append(_row("基线A_整体", "ALL", H, 0.0001, 2.5, "True"))
         for r, c in (("bear", "熊"), ("sideways", "震荡"), ("bull", "牛")):
             for d in ("A_双反向(当前yaml)", "B_双正向(历史实验)"):
                 rows.append(dict(_row("条件化_方向×regime", f"{r}_{c}", H, 0.0, 1.0, "True"),
@@ -277,7 +289,7 @@ def test_cli_emit_verdict_writes_artifact(tmp_path) -> None:
     doc = json.loads(open(out, encoding="utf-8").read())
     art = doc["verdict_artifact"]
     # 前端 FilterVerdict 字段齐全
-    for k in ("viable", "baseline", "positioning", "criterion",
+    for k in ("viable", "baseline", "positioning", "criterion", "evidence_strength",
               "dynamicSwitching", "dynamicNote", "evidence", "as_of", "source"):
         assert k in art, f"verdict_artifact 缺字段 {k}"
     assert art["as_of"] == "2026-11-16"

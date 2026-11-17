@@ -253,6 +253,7 @@ REGIME_LABEL = {
 # 缺失时回退前端内嵌快照（同一组文案），故此处为单一事实源。
 _POSITIONING = "选股筛选工具：不承诺正超额，只要求「不是垃圾策略」"
 _CRITERION = "多数 regime / 多数年度下，相对同截面池等权的超额「不显著为负」（Newey-West t > −1.96，双侧 95%）"
+_CRITERION_ADD = "【证据强度门 fail-closed】「不显著为负」仅=无证据，不足以判可行；须至少一个 horizon 整体超额显著为正（NW-t ≥ +1.96）才保留 viable=True。"
 
 
 def _to_float(value: object) -> float:
@@ -329,6 +330,27 @@ def build_verdict_artifact(
         overall_ok = bool(oh) and _flag(oh[0].get("not_sig_neg"))
         viable = viable and (n_rep > 0 and n_neg <= max(1, n_rep // 3) and overall_ok)
 
+    # 11-17 fail-closed 证据强度门：原判据把「不显著为负」当「可行」，但统计上
+    # 「不显著」仅 = 无证据（预注册安慰剂检验证实 top10 超额落在随机选股分布内）。
+    # 要宣称可行，须至少一个 horizon 的整体超额显著为正（NW-t >= +1.96）；
+    # 否则降级为「无证据支持」，绝不输出 viable=True。
+    overall_t = []
+    for r in overall_rows:
+        tv = r.get("excess_t_nw")
+        try:
+            if tv is not None and str(tv).strip() not in ("", "nan", "None"):
+                overall_t.append(float(tv))
+        except (TypeError, ValueError):
+            continue
+    best_t = max(overall_t) if overall_t else None
+    if best_t is None or best_t < 1.96:
+        viable = False
+        evidence_strength = "INCONCLUSIVE_NO_POSITIVE_EVIDENCE"
+        criterion_out = _CRITERION + " " + _CRITERION_ADD
+    else:
+        evidence_strength = "POSITIVE_EVIDENCE"
+        criterion_out = _CRITERION
+
     # conditioning_ok（保守）：所有报告的 cond 行 not_sig_neg=True 且非空。
     # 探针 main() 按「3 regime 全方向不显著为负」累积，且某 regime 截面不足即 False；
     # CSV 的 cond 行只含截面≥MIN_SECTIONS 的方向，故「全部报告行 ok」已是保守下界。
@@ -345,7 +367,8 @@ def build_verdict_artifact(
         "viable": bool(viable),
         "baseline": BASELINE,
         "positioning": _POSITIONING,
-        "criterion": _CRITERION,
+        "criterion": criterion_out,
+        "evidence_strength": evidence_strength,
         "dynamicSwitching": False,
         "dynamicNote": dynamic_note,
         "conditioning_ok": bool(cond_pass),
