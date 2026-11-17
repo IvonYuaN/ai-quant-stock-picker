@@ -67,6 +67,18 @@ def _coerce_code(value: object) -> str:
     return text.zfill(6)
 
 
+def _pct_rank(values: dict[str, float]) -> dict[str, float]:
+    """截面 ``rank(pct=True)``（0~1）；样本 < 2 ⇒ 空（不制造假分位）。
+
+    入参 ``{code: 便宜度}``（便宜度 = 1/pb 或 1/pe，越大越便宜），
+    返回值与入参同 key，越高越便宜。单票截面无区分度 ⇒ 不排名。
+    """
+    if len(values) < 2:
+        return {}
+    series = pd.Series(values, dtype=float)
+    return {code: float(v) for code, v in series.rank(pct=True).items()}
+
+
 class ValuationPitSource:
     """估值 PIT 源：本地缓存加载 + 时点查询。"""
 
@@ -75,6 +87,9 @@ class ValuationPitSource:
         self._points: list[ValuationPoint] = []
         # code -> 该 code 的快照日期（升序），配合 bisect 做 asof 查询
         self._index: dict[str, list[str]] = {}
+        # 全市场截面分位索引：(trade_date, code) -> 便宜度分位（bp_pct/ep_pct）
+        # 预计算，与 batch 切法无关（gate streaming 截面失真根因，命门 B）
+        self._pct_index: dict[tuple[str, str], float] = {}
 
     # ---------------------------------------------------------------- 缓存
     def _default_cache_path(self) -> str:
@@ -141,6 +156,13 @@ class ValuationPitSource:
 
         索引同时保存**该 code 自己的 points 列表** —— 位置必须与日期一一对应，
         否则会串票（全局 points 下标 ≠ 该 code 内下标）。
+
+        顺带预计算**全市场截面分位**（``_pct_index``）：按快照日把当期全市场
+        各票的便宜度（1/pb、1/pe）做一次横截面 ``rank(pct)``，越高越便宜。
+        这一步只用当期截面、**绝不跨期**，PIT 安全；且与 streaming 的
+        batch 切法无关（命门 B：gate 在 500 只 batch 内现算分位，板块高度
+        同质 ⇒ 分位被扭曲成"本批次内"而非"全市场"，现改为离线预计算全市场
+        分位成列，打分时直接查表，跨 batch 组成不变）。
         """
         buckets: dict[str, list[ValuationPoint]] = {}
         for point in self._points:
@@ -148,6 +170,37 @@ class ValuationPitSource:
         self._index = {
             code: ([p.trade_date for p in pts], pts) for code, pts in buckets.items()
         }
+        self._pct_index = self._build_pct_index()
+
+    def _build_pct_index(self) -> dict[tuple[str, str, str], float]:
+        """按 (快照日, code, 维度) 预计算全市场便宜度分位（PIT 安全，只用当期截面）。
+
+        每个快照日，把当期**全市场**各票的便宜度（``1/pb_mrq`` / ``1/pe_ttm``）
+        做一次横截面 ``rank(pct)``，越高越便宜；存三键 ``_pct_index``。
+        与 streaming 的 batch 切法无关（命门 B）：gate 原来在 500 只 batch 内
+        现算分位，板块高度同质 ⇒ 分位被扭曲成"本批次内"；现改为离线预计算
+        全市场分位成列，打分时直接查表，跨 batch 组成不变。
+        """
+        by_date: dict[str, dict[str, ValuationPoint]] = {}
+        for point in self._points:
+            by_date.setdefault(point.trade_date, {})[point.code] = point
+        out: dict[tuple[str, str, str], float] = {}
+        for date, code_points in by_date.items():
+            pb_cheaper = {
+                code: (1.0 / p.pb_mrq)
+                for code, p in code_points.items()
+                if p.pb_mrq is not None and p.pb_mrq > 0
+            }
+            pe_cheaper = {
+                code: (1.0 / p.pe_ttm)
+                for code, p in code_points.items()
+                if p.pe_ttm is not None and p.pe_ttm > 0
+            }
+            for code, rank in _pct_rank(pb_cheaper).items():
+                out[(date, code, "pb")] = rank
+            for code, rank in _pct_rank(pe_cheaper).items():
+                out[(date, code, "pe")] = rank
+        return out
 
     # ---------------------------------------------------------------- 查询
     def _as_of_point(self, code: str, as_of: str) -> Optional[ValuationPoint]:
@@ -191,3 +244,35 @@ class ValuationPitSource:
     def total_market_cap(self, code: str, as_of: str, autoload: bool = True) -> Optional[float]:
         point = self.lookup(code, as_of, autoload=autoload)
         return point.total_market_cap if point else None
+
+    # ---------------------------------------------------- 全市场截面分位（命门 B）
+    def _as_of_pct(self, code: str, as_of: str, dim: str, autoload: bool) -> Optional[float]:
+        """取 ``as_of`` 当期全市场截面分位（PIT 安全：as_of 定位的快照日 ≤ 信号日）。
+
+        返回 ``rank(pct)``（0~1，越高越便宜）；该票当期无该维度有效值（缺 / 非正）
+        ⇒ 无分位，返回 ``None``（调用方 fail-soft 回退）。
+        """
+        if not self._points and autoload:
+            self.load_cached()
+        if not self._points:
+            return None
+        norm = str(as_of).replace("-", "")
+        if len(norm) != 8 or not norm.isdigit():
+            return None
+        entry = self._index.get(code)
+        if not entry:
+            return None
+        dates, _pts = entry
+        pos = bisect_right(dates, norm) - 1
+        if pos < 0:
+            return None
+        snap_date = dates[pos]
+        return self._pct_index.get((snap_date, _coerce_code(code), dim))
+
+    def bp_pct(self, code: str, as_of: str, autoload: bool = True) -> Optional[float]:
+        """当期全市场 BP（=1/PB）便宜度分位，越高越便宜（与 batch 切法无关）。"""
+        return self._as_of_pct(code, as_of, "pb", autoload)
+
+    def ep_pct(self, code: str, as_of: str, autoload: bool = True) -> Optional[float]:
+        """当期全市场 EP（=1/PE）便宜度分位，越高越便宜（与 batch 切法无关）。"""
+        return self._as_of_pct(code, as_of, "pe", autoload)

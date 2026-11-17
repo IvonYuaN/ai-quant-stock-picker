@@ -44,12 +44,14 @@ class ValueStrategy(BaseStrategy):
             raw[symbol] = self._pit_valuation(symbol, df)
 
         # ② 截面分位（大 = 便宜 ⇒ 分位高）
-        pe_rank = self._cross_section_rank(
-            {s: v["pe"] for s, v in raw.items()}, higher_is_cheaper=True
-        )
-        pb_rank = self._cross_section_rank(
-            {s: v["pb"] for s, v in raw.items()}, higher_is_cheaper=True
-        )
+        #
+        # 🔴 命门 B（2026-11-17）：gate 走 streaming，value 是**截面分位**策略，
+        # 但 streaming 在每个 500 只 batch 内现算分位、且 batch 板块高度同质
+        # （covered 票按 ts_code 顺序切）⇒ "便宜/贵"分位实际是在 000 段或 300 段内
+        # 排的、**不是全市场 ~5200 只** ⇒ 结构性失真。现改为优先用 PIT 源预计算
+        # 的**全市场截面分位**（与 batch 切法无关）；缺失才回退本批次现算
+        # （fail-soft，保持"无数据 ⇒ 中性"的原行为）。
+        pe_rank, pb_rank, _ = self._value_ranks(raw)
 
         w = self.thresholds.value.weights
         # ③ 加权合成：dividend 本期无 PIT 数据 ⇒ 取中性 0.5 并把权重按可用分量归一
@@ -75,8 +77,19 @@ class ValueStrategy(BaseStrategy):
     def _pit_valuation(
         self, symbol: str, df: pd.DataFrame
     ) -> Dict[str, Optional[float]]:
-        """按该票决策日（df 末行日期）取 PIT 估值快照。"""
-        out: Dict[str, Optional[float]] = {"pe": None, "pb": None}
+        """按该票决策日（df 末行日期）取 PIT 估值快照 + 全市场截面分位。
+
+        返回键：
+        - ``pe``/``pb``：原值（PE_TTM / PB_MRQ），用于回退的 batch 内现算；
+        - ``pe_pct``/``pb_pct``：PIT 源预计算的**全市场** EP/BP 便宜度分位
+          （与 streaming batch 切法无关，命门 B）。缺失 ⇒ None。
+        """
+        out: Dict[str, Optional[float]] = {
+            "pe": None,
+            "pb": None,
+            "pe_pct": None,
+            "pb_pct": None,
+        }
         # 决策日 = df 末行日期（walk-forward 逐日切片后即信号日）
         try:
             as_of = df.sort_values("date").iloc[-1]["date"]
@@ -91,9 +104,46 @@ class ValueStrategy(BaseStrategy):
             return out
         out["pe"] = point.pe_ttm
         out["pb"] = point.pb_mrq
+        # 全市场分位（PIT 源按当期快照日预计算，与 batch 组成无关）
+        out["pe_pct"] = _VALUATION_SOURCE.ep_pct(code, as_of_str, autoload=False)
+        out["pb_pct"] = _VALUATION_SOURCE.bp_pct(code, as_of_str, autoload=False)
         return out
 
     # ------------------------------------------------------------------ 截面分位
+    def _value_ranks(
+        self, raw: Dict[str, Dict[str, Optional[float]]]
+    ) -> tuple[Dict[str, float], Dict[str, float], Dict[str, bool]]:
+        """估值维度分位（命门 B：优先全市场分位，缺失才回退 batch 内现算）。
+
+        返回 ``(pe_rank, pb_rank, whole_market_used)``，两个维度**独立**判断：
+        - 该维度**任一**票带全市场分位（``*_pct``）⇒ 全市场路径：``*_pct``
+          本就是 PIT 源按当期快照日预计算好的 0~1 便宜度（越高越便宜，与
+          streaming batch 切法无关），直接透传；缺失票中性 0.5；
+        - 该维度全市场分位整体缺失（PIT 源无估值数据）⇒ 回退本批次内用
+          ``pe``/``pb`` 原值现算（保持"无数据 ⇒ 中性"的旧行为，fail-soft）。
+        """
+        result: Dict[str, Dict[str, float]] = {"pe": {}, "pb": {}}
+        used: Dict[str, bool] = {}
+        for dim in ("pe", "pb"):
+            pct_key, orig_key = f"{dim}_pct", dim
+            # 全市场分位是否可用（任一票带值即启用全市场口径，缺失票中性 0.5）
+            whole_market_avail = any(
+                raw[s].get(pct_key) is not None for s in raw
+            )
+            if whole_market_avail:
+                result[dim] = {
+                    s: (float(raw[s][pct_key]) if raw[s].get(pct_key) is not None else 0.5)
+                    for s in raw
+                }
+                used[dim] = True
+            else:
+                # 回退：本批次内用估值原值现算截面分位（旧行为，fail-soft）
+                result[dim] = self._cross_section_rank(
+                    {s: raw[s].get(orig_key) for s in raw}, higher_is_cheaper=True
+                )
+                used[dim] = False
+        return result["pe"], result["pb"], used
+
     @staticmethod
     def _cross_section_rank(
         values: Dict[str, Optional[float]], higher_is_cheaper: bool = True
