@@ -877,15 +877,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     wf.add_argument(
         "--grid-profile",
-        choices=(
-            "stable",
-            "stable_plus",
-            "exploratory",
-            "htf_mr",
-            "planb_v1",
-            "planb_v2",
-            "planb_v3",
-        ),
+        # 🔴 单一事实源：白名单由 aqsp.cli.walkforward_grid_profiles() **派生**（档位查表
+        # _WALKFORWARD_GRID_VARIANT_TABLE），不再手抄 —— 与 gate 入口同源，新增档位
+        # （planb_value 等）自动纳入，杜绝「gate 能跑、cli 被 argparse 拒」的分裂。
+        choices=walkforward_grid_profiles(),
         default="stable",
         help="grid CSCV 变体集合：stable 用于上线门禁（N=5），stable_plus 用于功效增强（N=8，含因子族多样性），exploratory 保留研究探索网格（N=13），htf_mr 为 T3 方案 A 因子族替换验证网格（htf+mr 换 mom+tr，N=8，不改动默认）",
     )
@@ -6753,6 +6748,26 @@ _PLANB_VARIANTS: dict[str, tuple[WalkForwardGridVariant, ...]] = {
             tn,
             "planb",
             composite_weights=(0.0, 0.2, 0.2, 0.2, 0.0, 0.0, 0.4),
+        )
+        for hz in (3, 5)
+        for tn in (10, 20, 30, 50)
+    ),
+    # V-LOW 低估值臂（gate申请_引入低估值维度 §三 预注册）：基线 2f（mom 0.3）之上
+    # 把 value 置 0.3、其余 7 维保持 0，与现役 V1/V2/V3 同构——CSCV 的 8 个互异臂
+    # 由 top_n×horizon 展开（top_n∈{10,20,30,50} × horizon∈{3,5}，无重复列）。
+    # 权重 (mom=0.3, value=0.3) 走查表权威派生：_apply_walkforward_grid_variant 见
+    # planb_val>0 自动 enable_value 并 replace(thresholds.value, enabled=True)，
+    # 无需改 config/thresholds.yaml（单一事实源，#286/#287 病根已修）。
+    "planb_value": tuple(
+        WalkForwardGridVariant(
+            f"WB-VLOW-{tn}x{hz}",
+            0.0,
+            0.0,
+            60,
+            hz,
+            tn,
+            "planb",
+            composite_weights=(0.3, 0.0, 0.3, 0.0, 0.0, 0.0, 0.0),
         )
         for hz in (3, 5)
         for tn in (10, 20, 30, 50)

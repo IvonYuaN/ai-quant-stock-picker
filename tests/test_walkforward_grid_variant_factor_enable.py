@@ -34,11 +34,11 @@ from aqsp.strategies.composite import CompositeStrategy
 from aqsp.strategies.thresholds import load_thresholds
 from aqsp.walkforward_gate import MIN_CSCV_VARIANTS
 
-PROFILES = ("stable", "stable_plus", "exploratory", "htf_mr", "planb_v1", "planb_v2", "planb_v3")
+PROFILES = ("stable", "stable_plus", "exploratory", "htf_mr", "planb_v1", "planb_v2", "planb_v3", "planb_value")
 
 #: 变体数 >= MIN_CSCV_VARIANTS 的档位 —— 只有这些档位才受「互异列数必须真正够数」
 #: 这条守卫约束（``stable`` N=5 天然不足，不在此列）。
-PROFILES_MEETING_MIN_CSCV = ("stable_plus", "exploratory", "htf_mr", "planb_v1", "planb_v2", "planb_v3")
+PROFILES_MEETING_MIN_CSCV = ("stable_plus", "exploratory", "htf_mr", "planb_v1", "planb_v2", "planb_v3", "planb_value")
 
 BARS = 220
 SYMBOL_COUNT = 40
@@ -294,6 +294,28 @@ def test_planb_v1_not_collapsed_to_volume_only(profile: str) -> None:
     scores = strat.calculate_score(data, regime="unknown")
     assert len(scores) > 0
     assert any(s != 0.0 for s in scores.values()), "V1 打分为全 0（因子族全未生效）"
+
+
+def test_planb_value_not_collapsed() -> None:
+    """V-LOW 低估值臂（gate申请_引入低估值维度 预注册）：value 0.3 权重必须真实参与
+    打分（防静默塌缩回「只 mom 0.3 一维」的幽灵变体）。
+
+    向量 (0.3,0,0.3,0,0,0,0)：momentum 0.3（无 enabled 字段、默认核心参与）+ value 0.3
+    （须 enabled）。若 value 维度恒为常量 0.5（PIT 注入未生效）则退化成单 mom 维度，
+    gate 结论失真 —— 此契约确保 value 因子族在 planb_value 臂里真实生效。
+    """
+    data = _data()
+    vlow = _walkforward_grid_variants("planb_value")[0]
+    assert vlow.composite_weights == (0.3, 0.0, 0.3, 0.0, 0.0, 0.0, 0.0), (
+        f"planb_value 向量应为 (0.3,0,0.3,0,0,0,0)，实为 {vlow.composite_weights}"
+    )
+    strat = CompositeStrategy(
+        thresholds=_apply_walkforward_grid_variant(load_thresholds(), vlow)
+    )
+    assert strat._has_value(), "planb_value value 未生效（塌缩成单 mom 维风险）"
+    scores = strat.calculate_score(data, regime="unknown")
+    assert len(scores) > 0
+    assert any(s != 0.0 for s in scores.values()), "planb_value 打分为全 0（因子族全未生效）"
 
 
 def test_variant_application_preserves_invert_triple_rise_pairing() -> None:
