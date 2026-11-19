@@ -83,3 +83,13 @@ scripts/data/walkforward_production_symbols.json
 # 自动进化产物（auto_evolution 写 evolution_history / threshold_proposals 等）：
 # 默认锚定 runtime_data_root()（dev 回落 repo 根），属运行时数据而非源码，本地忽略。
 evolution/
+
+# 短线影子账户的运行时产物（账本 / 前端 payload / HTML 报告 / 快照 / 时点 marker）
+# 这些是每天被 runner 覆盖的数据，不是源码；误提交会让 CI 拿旧数字当结论。
+research/paper_arena.json
+research/paper_arena_api.json
+research/paper_report.html
+research/paper_report_preview.html
+research/state/
+research/snapshots/
+data/paper_arena.json

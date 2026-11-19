@@ -48,6 +48,7 @@ import newsradar
 import portfolio as pf
 import market
 import myreports as mr
+import paper_arena_bridge
 import performance_bridge
 import source_health
 import tenant as _tenant
@@ -2477,6 +2478,43 @@ def aqsp_performance():
     前端在冷启动期内**不得**展示胜率。
     """
     return {"data": performance_bridge.performance_payload()}
+
+
+@app.get(
+    "/api/aqsp/paper-arena",
+    tags=["AQSP 研究"],
+    summary="短线多策略影子账户（前向验证）",
+    description="""
+返回短线多策略纸面账户的前向验证记录（只读）。
+
+## 这是什么
+
+5 个互不相同的短线策略各一个 ¥1 万纸面账户，从同一天起跑，只用真实报价成交，
+**不回填、不复用任何历史回测结果**。与「研究变体」的区别：变体验证的是历史区间，
+影子账户只从起跑日往后累加。
+
+## 判读铁律
+
+- `exc_mean` / `t_exc` / `q_exc` 一律是**相对全市场等权基准的超额**，不是绝对收益；
+  下跌市里绝对收益也能为正，那是 β 不是 α。
+- `t_exc` 按**交易日聚类**（同一天多个信号先平均成一个观测），按笔算会虚高约 2 倍。
+- `q_exc` 是 5 个策略一起测的 BH-FDR 校正值，`q < 0.10` 才算扛住多重检验。
+- 触板即封死（卖一为 0）的成交不进主统计，只计入 `sealed_n`。
+- 一字跌停卖不掉的持仓顺延，不按当日收盘假装成交。
+
+## 缺失时
+
+产物缺失或 schema 不匹配时返回 `available=false` + `reason`，
+前端必须显示"暂无"，**不得显示 0**（0 会被读成"收益为零"）。
+    """,
+)
+def aqsp_paper_arena():
+    """短线多策略影子账户的前向验证记录（只读）。
+
+    口径全部由 runner 侧 `research/paper_ledger.py` 算好，这里不做二次统计 ——
+    否则前端显示和账本会分叉。产物缺失时 `available=false`，绝不返回 0 冒充结果。
+    """
+    return {"data": paper_arena_bridge.payload()}
 
 
 _DASHBOARD_CACHE: dict = {}  # key="dashboard_metrics" -> (ts, data)

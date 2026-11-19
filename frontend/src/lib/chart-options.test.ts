@@ -9,6 +9,7 @@ import {
   chartPalette,
   industryOption,
   ladderOption,
+  paperNavOption,
   sectorFlowOption,
 } from "./chart-options";
 import type { LadderRow } from "./market-view";
@@ -47,6 +48,18 @@ const industries = [
 const sectorChart = sectorFlowOption(sectors, "dark");
 const ladderChart = ladderOption(ladder, "dark");
 const industryChart = industryOption(industries, "dark");
+// 影子账户净值：基准第二天故意给 null —— 缺快照那天必须留空，
+// 不能被画成 0（0 会被读成"基准当天不涨不跌"）。
+const paperNav = paperNavOption(
+  { dates: ["2026-11-19", "2026-11-20"], port: [-1.2, 0.4], bench: [-0.9, null] },
+  "dark",
+);
+const paperSeries = paperNav.series as unknown as Array<{
+  name?: string;
+  data: Array<number | null>;
+  connectNulls?: boolean;
+  lineStyle?: { type?: string; width?: number };
+}>;
 
 export const chartOptionsContract = {
   /* ---- 板块资金流：按净额降序、红绿按方向 ---- */
@@ -68,6 +81,16 @@ export const chartOptionsContract = {
   industryRisingIsRed: firstSeries(industryChart).data[0].itemStyle?.color === UP_COLOR,
   industryFallingIsGreen: firstSeries(industryChart).data[1].itemStyle?.color === DOWN_COLOR,
   industryToleratesEmpty: firstSeries(industryOption([], "dark")).data.length === 0,
+
+  /* ---- 影子账户净值：两条线、基准虚线、缺值留空 ---- */
+  paperNavHasPortAndBench: paperSeries.length === 2 && paperSeries[0].name?.startsWith("组合") === true && paperSeries[1].name === "全市场等权",
+  paperNavPortIsSolid: paperSeries[0].lineStyle?.type === undefined,
+  paperNavBenchIsDashed: paperSeries[1].lineStyle?.type === "dashed",
+  paperNavBenchGapStaysNull: paperSeries[1].data[1] === null,
+  paperNavKeepsGapsConnected: paperSeries[0].connectNulls === true && paperSeries[1].connectNulls === true,
+  paperNavDatesPassThrough: (xAxis(paperNav).data ?? []).join("|") === "2026-11-19|2026-11-20",
+  paperNavYAxisIsPercent: (paperNav.yAxis as unknown as { axisLabel?: { formatter?: string } }).axisLabel?.formatter === "{value}%",
+  paperNavToleratesEmpty: (paperNavOption({ dates: [], port: [], bench: [] }, "light").series as unknown as unknown[]).length === 2,
 
   /* ---- 主题配色 ---- */
   darkPaletteUsesLightText: chartPalette("dark").text === "#8b95a7",

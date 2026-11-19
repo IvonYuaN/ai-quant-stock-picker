@@ -38,6 +38,9 @@ function loadEcharts(): Promise<EchartsModule | null> {
         charts.BarChart,
         charts.LineChart,
         components.GridComponent,
+        // LegendComponent 必须显式注册：不注册时 option.legend 被静默忽略，
+        // 图能画出来但**没有任何图例**（多线图因此无法分辨哪条是哪个）。
+        components.LegendComponent,
         components.TooltipComponent,
         components.MarkLineComponent,
         components.MarkPointComponent,

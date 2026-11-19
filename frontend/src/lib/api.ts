@@ -862,8 +862,88 @@ export interface ClosingReviewPayload {
 }
 
 
+/** 影子账户单个策略（`GET /api/aqsp/paper-arena` 的 `data.sleeves` 元素）。
+ *
+ * 口径铁律：`exc_*` 是**减掉同期全市场等权基准后**的超额，不是绝对收益；
+ * `t_exc` 按**交易日聚类**（同一天多个信号先平均），按笔算会虚高约 2 倍。
+ * 绝对收益好看不代表有 alpha —— 判读只看超额列。 */
+export interface PaperArenaSleeve {
+  id: string;
+  name: string;
+  hypothesis: string;
+  /** 已结算笔数；只含真实成交，封死排不进的不计入。 */
+  n: number;
+  /** 有成交的交易日数。 */
+  days: number;
+  exc_mean: number | null;
+  exc_win: number | null;
+  t_exc: number | null;
+  /** 5 个策略一起测的 BH-FDR 校正 q；q < 0.10 才算扛住多重检验。 */
+  q_exc: number | null;
+  /** 按当前离散度，还需多少个交易日才可能达到 t=2（null = 已够或无法估计）。 */
+  n_need_days: number | null;
+  funded_nav: number | null;
+  funded_ret: number | null;
+  funded_n: number;
+  funded_win: number | null;
+  positions: number;
+  /** 触板即封死（卖一为 0）的排队信号数，不计入 n。 */
+  sealed_n: number;
+  /** 未成交原因分布：`{ "仓位已满": 3, "买不起1手": 5 }`。 */
+  unfunded: Record<string, number>;
+}
+
+export interface PaperArenaPosition {
+  sleeve: string;
+  code: string;
+  name: string;
+  buy_date: string;
+  buy_price: number | null;
+  shares: number;
+  note: string;
+}
+
+export interface PaperArenaTrade {
+  sleeve: string;
+  code: string;
+  name: string;
+  sell_date: string;
+  ret_pct: number | null;
+  excess_pct: number | null;
+  reason: string;
+  funded: boolean;
+}
+
+/** `GET /api/aqsp/paper-arena` 的 `data`：短线多策略影子账户前向验证记录（只读）。
+ *
+ * `available=false` 时 `sleeves` 为空、`reason` 给出原因 —— 前端必须显示"暂无"，
+ * **不得显示 0**（0 会被读成"收益为零"，是另一件事）。 */
+export interface PaperArenaPayload {
+  schema_version: string;
+  available: boolean;
+  reason: string;
+  generated_at: string | null;
+  /** runner 超过 5 天没推新产物（周末与长假不该误报）。 */
+  stale: boolean;
+  as_of?: string | null;
+  initial_capital?: number | null;
+  total_capital?: number | null;
+  total_nav?: number | null;
+  total_ret_pct?: number | null;
+  trading_days?: number;
+  snapshot_days?: number;
+  /** 双边成本（%），默认 2.0 = 单边 1%。 */
+  cost_round_trip_pct?: number | null;
+  sleeves: PaperArenaSleeve[];
+  nav: { dates: string[]; port: (number | null)[]; bench: (number | null)[] };
+  positions: PaperArenaPosition[];
+  recent_trades: PaperArenaTrade[];
+}
+
+
 export const api = {
   performance: () => get<PerformancePayload>("/aqsp/performance"),
+  paperArena: () => get<PaperArenaPayload>("/aqsp/paper-arena"),
   aqspSnapshot: (date?: string, options?: AqspRequestOptions): Promise<AqspSnapshotView> =>
     getEnvelope<AqspSnapshotEnvelope>(
       date ? `/aqsp/snapshot?date=${encodeURIComponent(date)}` : "/aqsp/snapshot",
