@@ -92,6 +92,69 @@ export function ladderOption(ladder: readonly LadderRow[], mode: ThemeMode): ECh
   };
 }
 
+/** 影子账户净值：5 策略等权组合（实线）vs 全市场等权基准（虚线），单位 %。
+ *
+ * 为什么组合线不用红/绿：颜色一旦表达方向，读者会把"线是红的"当成"策略好"，
+ * 而这张图要看的恰恰是**两条线之间的距离**（超出基准才有 alpha）。
+ * 所以组合用主题前景色、基准用灰虚线，与 runner 侧 HTML 报告保持同一视觉语义。
+ */
+export function paperNavOption(
+  nav: { dates: readonly string[]; port: readonly (number | null)[]; bench: readonly (number | null)[] },
+  mode: ThemeMode,
+): EChartsOption {
+  const palette = chartPalette(mode);
+  const portColor = mode === "light" ? "#1f2733" : "#e6ebf4";
+  const pct = (value: unknown) => {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return "—";
+    return `${n >= 0 ? "+" : ""}${n.toFixed(2)}%`;
+  };
+  return {
+    grid: { ...BASE_GRID, left: 46, top: 30 },
+    tooltip: { trigger: "axis", valueFormatter: pct },
+    legend: { top: 0, textStyle: { color: palette.text, fontSize: 10 } },
+    xAxis: {
+      type: "category",
+      data: [...nav.dates],
+      axisLabel: { color: palette.text, fontSize: 10 },
+      axisLine: { lineStyle: { color: palette.axisLine } },
+    },
+    yAxis: {
+      type: "value",
+      axisLabel: { color: palette.text, fontSize: 10, formatter: "{value}%" },
+      splitLine: { lineStyle: { color: palette.splitLine } },
+    },
+    series: [
+      {
+        name: "组合（5 策略等权）",
+        type: "line",
+        data: [...nav.port],
+        showSymbol: nav.dates.length <= 30,
+        symbolSize: 3,
+        connectNulls: true,
+        lineStyle: { width: 2, color: portColor },
+        itemStyle: { color: portColor },
+        markLine: {
+          silent: true,
+          symbol: "none",
+          label: { show: false },
+          lineStyle: { color: palette.axisLine, type: "dashed" },
+          data: [{ yAxis: 0 }],
+        },
+      },
+      {
+        name: "全市场等权",
+        type: "line",
+        data: [...nav.bench],
+        showSymbol: false,
+        connectNulls: true,
+        lineStyle: { width: 1, type: "dashed", color: palette.text },
+        itemStyle: { color: palette.text },
+      },
+    ],
+  };
+}
+
 /** 行业涨跌幅：横向条形图。 */
 export function industryOption(rows: readonly IndustryRowView[], mode: ThemeMode): EChartsOption {
   const palette = chartPalette(mode);
