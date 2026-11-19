@@ -15,7 +15,6 @@ import importlib.util
 import json
 from pathlib import Path
 
-import pytest
 
 _REPO = Path(__file__).resolve().parent.parent
 _SCRIPT = _REPO / "scripts" / "research" / "value_gate_verdict.py"
