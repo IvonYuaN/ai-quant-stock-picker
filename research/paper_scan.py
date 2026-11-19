@@ -24,9 +24,9 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-import paper_ledger as pl
-import paper_market as pm
-from paper_strategies import STRATEGIES, by_phase, from_board_hits
+import paper_ledger as pl  # noqa: E402  (sys.path 注入同目录后才可导入)
+import paper_market as pm  # noqa: E402  (sys.path 注入同目录后才可导入)
+from paper_strategies import by_phase, from_board_hits  # noqa: E402  (sys.path 注入同目录后才可导入)
 
 CST = timezone(timedelta(hours=8))
 PHASES = ("auction", "morning", "late", "close", "board")

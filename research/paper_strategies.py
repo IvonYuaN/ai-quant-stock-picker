@@ -22,7 +22,6 @@
 """
 from __future__ import annotations
 
-from typing import Callable
 
 # 全市场流动性下限（先验：日均成交 5000 万以下、流通市值 15 亿以下的票，
 # 冲击成本与滑点会把薄边际吃光，且容易是庄股）

@@ -177,11 +177,11 @@ def ingest(led: dict, sid: str, signals: list[dict], date: str, phase: str) -> d
 def _sealed_limit_down(row: dict) -> bool:
     """一字跌停：全天一个价且就在跌停价上 ⇒ 卖不出去（打板策略真正的尾部风险）。"""
     try:
-        h, l, p = float(row["h"]), float(row["l"]), float(row["p"])
+        h, lo, p = float(row["h"]), float(row["l"]), float(row["p"])
         ld = float(row.get("ld") or 0)
     except (KeyError, TypeError, ValueError):
         return False
-    if ld <= 0 or abs(h - l) > 0.005:
+    if ld <= 0 or abs(h - lo) > 0.005:
         return False
     return p <= ld * 1.002
 

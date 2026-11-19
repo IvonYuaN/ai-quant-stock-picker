@@ -10,7 +10,6 @@
 """
 from __future__ import annotations
 
-import json
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -18,9 +17,9 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-import paper_ledger as pl
-import paper_market as pm
-from paper_strategies import oversold_pool
+import paper_ledger as pl  # noqa: E402  (sys.path 注入同目录后才可导入)
+import paper_market as pm  # noqa: E402  (sys.path 注入同目录后才可导入)
+from paper_strategies import oversold_pool  # noqa: E402  (sys.path 注入同目录后才可导入)
 
 OUT = HERE / "paper_report.html"
 CST = timezone(timedelta(hours=8))

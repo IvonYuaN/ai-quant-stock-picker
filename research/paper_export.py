@@ -27,8 +27,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-import paper_ledger as pl
-import paper_market as pm
+import paper_ledger as pl  # noqa: E402  (sys.path 注入同目录后才可导入)
+import paper_market as pm  # noqa: E402  (sys.path 注入同目录后才可导入)
 
 CST = timezone(timedelta(hours=8))
 OUT = HERE / "paper_arena_api.json"
