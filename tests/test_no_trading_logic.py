@@ -31,6 +31,9 @@ PYTHON_ROOTS = (
     PROJECT_ROOT / "backend",
     PROJECT_ROOT / "tests",
     PROJECT_ROOT / "workbench",
+    # research/ 自 2026-11-19 起含可执行 .py（短线影子账户），
+    # 研究脚本同样不得含下单逻辑，纳入扫描而不是排除。
+    PROJECT_ROOT / "research",
 )
 
 # 至少应扫到这么多 .py 文件（防止文件列表意外为空导致守卫空转）
