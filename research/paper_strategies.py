@@ -177,7 +177,7 @@ def from_board_hits(hits: list[dict], board: int) -> dict:
     分层记既能出保守判据、又能保留「如果排得进会怎样」的对照。
     """
     out = []
-    for h in hits:
+    for h in hits or []:
         if h.get("cell") != "B_放量可成交":
             continue                       # A 格一字排不进
         if int(h.get("board") or 0) != board:
