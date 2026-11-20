@@ -56,6 +56,84 @@ def _alive_mask(cv, recent: list):
     return np.isfinite(cv[recent]).any(axis=0)
 
 
+def _board_limit_for(code: str) -> float:
+    """该票涨停幅度（先验，与 `shortline_probe.board_limit` 同口径）。
+
+    ⚠️ 已知限制：ST 不细分（ST 实际 5%）。按 10% 算会让 ST 票既不触发也不会误触发
+    到离谱的程度，但严格说应当单独处理 —— 留待后续。
+    """
+    if code.startswith(("30", "31", "688", "689")):
+        return 0.20
+    return 0.10
+
+
+# 东财涨幅榜：按 f3（涨跌幅）降序，1 请求即可覆盖当日全部涨停票。
+# 字段：f2 现价 / f3 涨跌幅 / f12 代码 / f14 名称 / f15 高 / f16 低 / f17 开 / f18 昨收
+_EM_LIST_URL = (
+    "https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=%d&po=1&np=1&fltt=2&invt=2"
+    "&fid=f3&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23"
+    "&fields=f2,f3,f12,f14,f15,f16,f17,f18"
+)
+
+
+def _em_rows_to_pool(items: list) -> list:
+    """把东财涨幅榜的原始行筛成「今日涨停池」（纯函数，便于单测）。
+
+    🔴 关键：**涨幅 ≥9.8% 不等于涨停**。20cm 的票涨 10% 只是半路，必须按
+    「该票自己的涨停价」判 —— 实测 301052 果麦文化当日涨 16.82%（昨收 32.88，
+    涨停价 39.46，现价 38.41）并不在板上。按涨幅一刀切会把它当成涨停买进去。
+    """
+    out = []
+    for it in items or []:
+        code = str(it.get("f12") or "")
+        if len(code) != 6 or not code.isdigit():
+            continue
+        if not code.startswith(("60", "00", "30", "31")):   # 与库种子同口径：排科创/北交
+            continue
+        try:
+            cur = float(it.get("f2") or 0)
+            pre = float(it.get("f18") or 0)
+        except (TypeError, ValueError):
+            continue                                        # 停牌行 f2 是 "-"
+        if cur <= 0 or pre <= 0:
+            continue
+        lim = _board_limit_for(code)
+        if cur < round(pre * (1.0 + lim), 2) * 0.998:       # 未真正涨停
+            continue
+        out.append({
+            "code": code,
+            "tencent_id": ("sh" if code.startswith("6") else "sz") + code,
+            "board_lim": lim,
+            "seed": True,
+        })
+    return out
+
+
+def fetch_limit_up_pool(page_size: int = 150, timeout: float = 12.0) -> list:
+    """从东财涨幅榜取「今日涨停池」（1 请求），**不依赖本地库的最近截面**。
+
+    🔴 为什么必须有这条路径：库经常缺最新一个交易日（BaoStock 更新连续失败），
+    而「二板接力」恰恰需要知道「昨天谁涨停」。用库的近 N 截面当种子会
+    **系统性漏掉所有昨日首板** —— 实测 2026-11-20：
+      · 全市场主板涨停 28 只，种子池（近 5 截面并集）只覆盖 2 只；
+      · 当日真正的主板二板是 000838 / 002579，**两只都不在种子里**，漏失 100%；
+      · 原因：它们 11-19 涨停，而库最新截面停在 11-18，且它们在 11-12~11-18
+        没涨停过 ⇒ 进不了种子。库种子只能捞到 3 板以上的票。
+    涨幅榜按涨幅降序，取前 150 条足够覆盖当日全部涨停（当日 31 只）。
+
+    返回结构与 `build_watchlist` 一致，供 `detect_second_board` 直接消费；
+    `board` 不在此处推断（由 `fill_board_for_hits` 用 K 线链权威重算）。
+    """
+    import json
+    import urllib.request
+
+    req = urllib.request.Request(_EM_LIST_URL % page_size,
+                                 headers={"User-Agent": "Mozilla/5.0"})
+    raw = urllib.request.urlopen(req, timeout=timeout).read().decode("utf-8", "ignore")
+    items = ((json.loads(raw).get("data") or {}).get("diff")) or []
+    return _em_rows_to_pool(items)
+
+
 def build_watchlist(db: str, start: str = "20231101", include_chuangye: bool = True,
                     recent_days: int = 5) -> list:
     """昨涨停池 **种子**（主板+创业，排科创/北交；成色排序）。
@@ -400,13 +478,24 @@ def main(argv=None) -> int:
     ap.add_argument("--json", default=None, help="把本轮结果写 JSON（供推送脚本读）")
     args = ap.parse_args(argv)
 
-    # 候选种子：库「最近 N 个截面涨停并集」（缺截面容错，~20-99 只）。
-    # 关键：种子只提供「盯哪些票」，触板判定用【批量报价】(1 请求拿全)，
-    # K 线只对【已触板】的少数票拉(带当日缓存)——杜绝每轮全量拉 K 线触发 WAF。
-    seed_watch = build_watchlist(args.db) if not args.watch else \
-        [{"code": w.get("code"), "tencent_id": w.get("tencent_id"),
-          "board_lim": round(0.20 if str(w.get("code", "")).startswith(("30", "31")) else 0.10, 2)}
-         for w in json.loads(Path(args.watch).read_text(encoding="utf-8"))["list"]]
+    # 候选种子：**东财涨幅榜 = 当日真涨停池**（1 请求，权威，不依赖库最新截面）。
+    # 库「近 N 截面涨停并集」只作兜底 —— 库常缺最新一天，用它当主源会漏掉
+    # 全部「昨日首板、今日二板」的票（实测漏失 100%，详见 fetch_limit_up_pool 注释）。
+    # 触板判定仍用【批量报价】(1 请求拿全)，K 线只对【已触板】的少数票拉(带当日缓存)。
+    if args.watch:
+        seed_watch = [{"code": w.get("code"), "tencent_id": w.get("tencent_id"),
+                       "board_lim": round(0.20 if str(w.get("code", "")).startswith(("30", "31")) else 0.10, 2)}
+                      for w in json.loads(Path(args.watch).read_text(encoding="utf-8"))["list"]]
+        pool_src = "watch_file"
+    else:
+        seed_watch, pool_src = [], "em_board"
+        try:
+            seed_watch = fetch_limit_up_pool()
+        except Exception as exc:            # 东财不可用不能让整轮检测崩掉，回落库种子
+            print("[warn] 东财涨幅榜不可用（%s），回落库种子" % type(exc).__name__, flush=True)
+        if not seed_watch:
+            seed_watch = build_watchlist(args.db)
+            pool_src = "db_seed"
     seed_tids = [w["tencent_id"] for w in seed_watch if w.get("tencent_id")]
     kcache = load_kline_cache()
 
@@ -427,11 +516,12 @@ def main(argv=None) -> int:
         fill_board_for_hits(all_hits, quotes, kcache)             # 只对触板票拉 K 线算几板(缓存)
         hits = [h for h in all_hits if _dedup_key(h) not in seen]  # 增量：同 code 的 A→B 转换会放行
         ts = time.strftime("%H:%M:%S")
-        print("[%s] 第%d轮 池%d 只 / 实取%d / 触板%d / 新增%d %s" % (
-            ts, round_n, len(seed_watch), len(quotes), len(all_hits), len(hits),
+        print("[%s] 第%d轮 [%s] 池%d 只 / 实取%d / 触板%d / 新增%d %s" % (
+            ts, round_n, pool_src, len(seed_watch), len(quotes), len(all_hits), len(hits),
             ("; ".join(h["code"] + " " + h["msg"] for h in hits) if hits else "（无新增）")), flush=True)
         payload = {"ts": time.strftime("%Y-%m-%d %H:%M:%S"), "round": round_n,
-                   "pool": len(seed_watch), "all_hits": all_hits, "new_hits": hits}
+                   "pool": len(seed_watch), "pool_src": pool_src,
+                   "all_hits": all_hits, "new_hits": hits}
         if args.json:
             Path(args.json).write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
         if hits:
