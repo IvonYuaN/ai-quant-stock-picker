@@ -7,7 +7,7 @@
 - 每个策略只回答一个问题：这个假设在真实未来数据里成立吗。
 - 参数说明里凡是「先验」都写清楚来源，不假装是「已验证」。
 
-五个 sleeve（各自独立 ¥10000 虚拟账户，同一套执行/成本口径）：
+六个 sleeve（各自独立 ¥10000 虚拟账户，同一套执行/成本口径）：
 
 | id | 名称       | 假设（经济逻辑）                                      | 出手时点 | 卖出     |
 |----|-----------|------------------------------------------------------|---------|----------|
@@ -16,9 +16,16 @@
 | P3 | 超跌反抽   | 短期反转：单日暴跌=散户过度反应，次日修复                  | 10:00   | T+1 收盘 |
 | P4 | 竞价抢筹   | 集合竞价资金意图：高开+竞价放量=有资金愿在高位接             | 09:27   | T+1 收盘 |
 | P5 | 尾盘惯性   | 隔夜动量：尾盘强势收在高位，次日开盘有惯性                   | 14:45   | 次日开盘 |
+| P6 | 二板·跳空top2 | P1 的选股增强：二板里隔夜跳空最大的 2 只，溢价更集中     | 盘中触板 | T+1 收盘 |
 
-为什么是这五类：它们是 A 股短线里**逻辑互不相同**的四种驱动（情绪接力/反转/资金意图/动量），
+为什么是这些：P1~P5 是 A 股短线里**逻辑互不相同**的四种驱动（情绪接力/反转/资金意图/动量），
 而不是同一逻辑的五个参数版本 —— 参数版本会一起活或一起死，起不到分散验证的作用。
+
+P6 与它们不同性质：它是**同一个假设(情绪接力)的选股口径变体**，刻意与 P1 并存对照。
+理由不是「多试几个总能中一个」，而是「判读所需天数」——
+二板全取要 185 个交易日才看得出 t≥2，跳空 top2 只要 15 个。前向账本最贵的是时间，
+所以必须有一个能快速判死的 sleeve。它和 P1 唯一的差别是**选哪两只**，
+成交/成本/退出/仓位全部共用 ⇒ 结论可以干净地归因到「选股口径」。
 """
 from __future__ import annotations
 
@@ -161,10 +168,36 @@ def scan_late(ctx: dict) -> list[dict]:
     return out
 
 
-# ---------------- P1/P2 打板接力（信号来自 shortline_signal.py）----------------
+# ---------------- P1/P2/P6 打板接力（信号来自 shortline_signal.py）----------------
+
+def _board_candidates(hits: list[dict], board: int) -> list[dict]:
+    """B 格 + 指定板数 ⇒ 候选，并附 `gap`（隔夜跳空幅度）。
+
+    🔴 **成交口径只在这里定义一次**：P1/P2/P6 都从这个入口取候选，差别只在
+    「排序 + 截断」。若各自复制一份过滤，某天在其中一个函数里放行了 A 格或改了
+    板数判据，两个 sleeve 验的就不是同一个假设了 —— 而账本上没有指纹能发现这件事。
+
+    `gap` 缺 `pre`/`open` 时记 0（不猜）。P6 会把它排到后面，
+    而不是因为「字段缺失」被当成跳空 +∞ 挤进 top2。
+    """
+    out = []
+    for h in hits or []:
+        if h.get("cell") != "B_放量可成交":
+            continue                       # A 格一字排不进
+        if int(h.get("board") or 0) != board:
+            continue
+        pre = float(h.get("pre") or 0)
+        open_px = float(h.get("open") or 0)
+        gap = (open_px / pre - 1.0) if (pre > 0 and open_px > 0) else 0.0
+        out.append({"code": h["code"], "name": h.get("name", ""),
+                    "price": float(h.get("price") or 0), "gap": gap,
+                    "sealed": bool(h.get("sealed_now")),
+                    "note": "%d板·%s" % (board, (h.get("seal_tag") or h.get("seal") or "")[:12])})
+    return out
+
 
 def from_board_hits(hits: list[dict], board: int) -> dict:
-    """把打板检测结果转成策略信号。
+    """把打板检测结果转成策略信号（P1 全取二板 / P2 全取首板）。
 
     🔴 成交口径（最容易骗人的一步）：
     - A 格（开盘一字）⇒ 直接丢。verdict §四-C 明确「排不进」，假装买到就是骗自己。
@@ -183,20 +216,51 @@ def from_board_hits(hits: list[dict], board: int) -> dict:
     `sealed` 只表示「**我检测到它的那一刻**已经封住」，不表示「全天买不到」，
     所以它只作**分组标记**（`sealed_entry` 字段 + `sealed_n` 计数），不决定买不买。
     """
-    out = []
-    for h in hits or []:
-        if h.get("cell") != "B_放量可成交":
-            continue                       # A 格一字排不进
-        if int(h.get("board") or 0) != board:
-            continue
-        out.append({"code": h["code"], "name": h.get("name", ""),
-                    "price": float(h.get("price") or 0),
-                    "sealed": bool(h.get("sealed_now")),
-                    "note": "%d板·%s" % (board, (h.get("seal_tag") or h.get("seal") or "")[:12])})
+    out = _board_candidates(hits, board)
     # 排序：检测时还没封死的排前面（离「买到」更近，优先占仓），封死的排后面。
     # 🔴 排序只影响资金分配顺序，不影响「买不买」—— 两者都要买。
     out.sort(key=lambda s: (s["sealed"], -s["price"]))
     return {"signals": out, "sealed_codes": [s["code"] for s in out if s["sealed"]]}
+
+
+def from_board_hits_top_gap(hits: list[dict], board: int = 2, top_n: int = 2) -> dict:
+    """二板里按**隔夜跳空幅度**取前 top_n 只（P6）。
+
+    🔴 为什么按跳空排，而不是按封单量 / 价格 / 涨幅：
+    shortline 归因给出的样本效率差得很远 —— 二板全取 +0.44%/t3.87（要 185 个交易日
+    才判得动），而只取跳空最大的 top2 是 +2.73%/t13.75（15 个交易日就够）。
+    经济逻辑：跳空幅度 = 隔夜资金愿意在**更高位置**真金接货的强度。
+    它比「收盘封单量」更硬 —— 封单可以挂假（撤单成本为零），开盘价必须花钱成交。
+
+    🔴 为什么不是「挑出来的那个点」：top1 +2.95%/t10.68、top2 +2.73%/t13.75、
+    top8 +1.24%/t9.31 是一条**单调平台**，不是孤立尖峰。参数换一格结论不变，
+    才算先验成立；只有一个格子好、隔壁就塌，那叫过拟合。
+
+    tie-break 用 `code`：同一天两只跳空幅度相同是常事（都是一个涨停价开盘）。
+    若按输入顺序决定谁占仓，回放就不可复现 —— 输入顺序取决于网络返回顺序。
+    """
+    n = max(1, int(top_n or 1))
+    out = _board_candidates(hits, board)
+    out.sort(key=lambda s: (-s["gap"], s["code"]))
+    out = out[:n]
+    for s in out:
+        s["note"] = "%s·跳空%+.1f%%" % (s["note"], s["gap"] * 100)
+    return {"signals": out, "sealed_codes": [s["code"] for s in out if s["sealed"]]}
+
+
+def board_signals(spec: dict, hits: list[dict]) -> dict:
+    """按注册表里声明的口径把检测结果转成信号 —— 新增 sleeve 只改注册表，不改这里。
+
+    `board` 缺失时**报错而不是静默返回空**：静默空集合会被上游记成
+    「今天没有信号」，而账本分不清「真的没有」和「口径没配上」。
+    """
+    if "board" not in spec:
+        raise KeyError("board 阶段策略 %r 未声明 board 板数" % (spec.get("name") or spec))
+    board = int(spec["board"])
+    top_n = spec.get("top_n")
+    if top_n:
+        return from_board_hits_top_gap(hits, board=board, top_n=int(top_n))
+    return from_board_hits(hits, board)
 
 
 # ---------------- 注册表 ----------------
@@ -207,6 +271,7 @@ STRATEGIES: dict[str, dict] = {
         "hypothesis": "情绪接力：二板封住=资金认可，次日有溢价（唯一在 3y 回测过门的假设，本账本做前向验证；只记「有卖单」那一 tick 的成交）",
         "phase": "board",
         "scan": None,
+        "board": 2,
         "exit": "t1_close",
         "stop_pct": 0.05,
         "position_pct": 0.20,
@@ -217,6 +282,7 @@ STRATEGIES: dict[str, dict] = {
         "hypothesis": "同族对照：首板参与资金更杂、次日抛压更重，看板数是否真的决定溢价",
         "phase": "board",
         "scan": None,
+        "board": 1,
         "exit": "t1_close",
         "stop_pct": 0.05,
         "position_pct": 0.20,
@@ -250,6 +316,23 @@ STRATEGIES: dict[str, dict] = {
         "exit": "t1_open",
         "stop_pct": 0.0,
         "position_pct": 0.20,
+        "max_positions": 5,
+    },
+    "P6": {
+        "name": "二板·跳空top2",
+        "hypothesis": "情绪接力×隔夜强度：同为二板，隔夜跳空最大的那 2 只溢价更集中（跳空=有资金愿在更高位置真金接货，比封单量更硬）。P1 的选股变体，其余口径完全共用",
+        "phase": "board",
+        "scan": None,
+        "board": 2,
+        "top_n": 2,
+        "exit": "t1_close",
+        "stop_pct": 0.05,
+        "position_pct": 0.20,
+        # 🔴 max_positions 必须 ≥ 2×top_n，**不能设成 2**：
+        # T+1 收盘才结算，所以「昨天买的 2 只」在今天盘中仍然占着仓位。
+        # 若上限设 2，今天开盘时 slots_left 恒为 0 ⇒ P6 隔一天就永远「仓位已满」，
+        # 组合净值永远不动（信号统计照走，但账本看起来像死了）。
+        # 设 5 = 与 P1 完全一致，让唯一变量只剩「选哪两只」。
         "max_positions": 5,
     },
 }

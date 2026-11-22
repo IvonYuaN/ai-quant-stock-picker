@@ -14,7 +14,7 @@
 | 一字跌停当成卖得掉 ⇒ 打板尾部风险消失             | test_sealed_limit_down_defers_instead_of_selling |
 | 连续跌停强平不标注 ⇒ 把卖不掉当成卖掉了           | test_stuck_limit_down_is_force_closed_after_cap |
 | t 值按「笔」算 ⇒ 样本虚高、几天就「显著」          | test_t_is_clustered_by_trading_day             |
-| 封死票混进主统计 ⇒ 把买不到的收益算自己赚的        | test_sealed_trades_leave_main_stats            |
+| 封死票被踢出主统计 ⇒ 把回测过门的作业集抹掉             | test_sealed_trades_enter_main_stats            |
 | 多重检验按「已有数据」校正 ⇒ 偷偷放宽门槛          | test_fdr_penalty_uses_planned_strategy_total   |
 | 缺基准记 0 ⇒ 把「没数据」说成「与大盘持平」        | test_missing_benchmark_records_none_not_zero   |
 
@@ -23,6 +23,7 @@
 """
 from __future__ import annotations
 
+import json
 import sys
 from datetime import date, timedelta
 from pathlib import Path
@@ -422,11 +423,41 @@ def test_fdr_penalty_uses_planned_strategy_total():
     assert q2["a"] < 0.10 < q5["a"]           # 同一 t，换个 m 就换结论
 
 
-def test_overview_totals_five_sleeves(led):
-    """组合总净值 = 5 个 sleeve 之和，总收益率按 5 份本金算（不是按单账户算）。"""
+def test_overview_totals_all_sleeves(led):
+    """组合总净值 = 所有 sleeve 之和，总收益率按 sleeve 数等分本金算。
+
+    🔴 这里断言的是 `len(pl.STRATEGIES)` 而不是写死 5：
+    写死数字时，每次新增一个 sleeve（11-22 加 P6）这条就会红一次，
+    然后就容易顺手把数字改成 6 —— 那只是让测试闭嘴，并没有真的在验「求和」这个性质。
+    """
+    n = len(pl.STRATEGIES)
     ov = pl.overview(led)
 
-    assert ov["total_capital"] == pytest.approx(pl.INITIAL_CAPITAL * 5)
-    assert ov["total_nav"] == pytest.approx(pl.INITIAL_CAPITAL * 5)
+    assert {"P1", "P2", "P3", "P4", "P5", "P6"} <= set(pl.STRATEGIES)   # 防止有人误删
+    assert ov["total_capital"] == pytest.approx(pl.INITIAL_CAPITAL * n)
+    assert ov["total_nav"] == pytest.approx(pl.INITIAL_CAPITAL * n)
     assert ov["total_ret_pct"] == 0.0
-    assert len(ov["sleeves"]) == len(pl.STRATEGIES)
+    assert len(ov["sleeves"]) == n
+
+
+def test_new_sleeve_is_backfilled_into_existing_ledger():
+    """老账本里没有 P6 时，`load()` 必须把 P6 补进来且**不动**已有 sleeve 的钱。
+
+    这是「加策略不丢历史」的前提：账本是逐步长出来的，新增 sleeve 只能 setdefault，
+    绝不能重建整个账本（那会把 P1 已经记了几个月的成交抹掉）。
+    所以这里落一份**真的缺 P6** 的账本到隔离路径，再走真正的 `load()`——
+    而不是在测试里复刻一遍补齐逻辑（复刻的代码永远不会红）。
+    """
+    older = pl._blank()
+    older["sleeves"].pop("P6")
+    older["sleeves"]["P1"]["cash"] = 4321.0
+    older["sleeves"]["P1"]["ingested"] = ["002579|2026-11-20|board"]
+    pl.LEDGER.write_text(json.dumps(older, ensure_ascii=False), encoding="utf-8")
+
+    reloaded = pl.load()
+
+    p6 = reloaded["sleeves"]["P6"]
+    assert p6["cash"] == pl.INITIAL_CAPITAL
+    assert p6["rules"]["phase"] == "board"
+    assert reloaded["sleeves"]["P1"]["cash"] == 4321.0           # 老 sleeve 分文未动
+    assert reloaded["sleeves"]["P1"]["ingested"] == ["002579|2026-11-20|board"]

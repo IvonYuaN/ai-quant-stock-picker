@@ -156,7 +156,8 @@ def _nav_chart(sleeves: dict) -> str:
     if len(series) < 2:
         return "<div class='empty' style='padding:40px;text-align:center;color:#b0b5bd'>净值曲线待积累（至少 2 个交易日）</div>"
     dates = sorted(series)
-    colors = {"P1": "#d9001b", "P2": "#e8791f", "P3": "#2f5fd0", "P4": "#7b3fd4", "P5": "#0a9e5c"}
+    colors = {"P1": "#d9001b", "P2": "#e8791f", "P3": "#2f5fd0", "P4": "#7b3fd4",
+              "P5": "#0a9e5c", "P6": "#c2185b"}
     allv = [0.0]
     for i, d in enumerate(dates):
         prev = {sid: 0.0 for sid in sleeves}
@@ -342,13 +343,16 @@ def render() -> str:
 <b>为什么所有判据都是「超额」而不是「收益」</b>　策略赚的可能是大盘的钱（beta），不是本事（alpha）。
 所以每笔都减掉同期全市场等权收益，t 值也算在超额上；净值曲线里那条灰虚线就是基准。
 <b>只看绝对收益，牛市里每个策略都像神。</b><br><br>
-<b>打板只在「有卖单」那一 tick 记成交</b>　涨停封死时卖一量 = 0，挂单只是排队，根本买不到。
-所以 A 格（一字）和「B 格但此刻封死」都不进成交样本，只记成「封死买不进」计数。
-代价是每 3 分钟才采样一次，日内短暂开板可能被漏掉 —— 这套判定**偏保守**，不会像回测那样乐观。<br><br>
+<b>打板只买 B 格</b>　A 格（开盘一字）排不进队，记成观察、不进成交样本。
+B 格 =「集合竞价没顶死 + 盘中摸板」，说明确实存在可买时点，<b>照买</b>。
+检测到它的那一刻通常已经封死，但回测过门的那批本来就全是「收停板」，
+所以封死只作 <code>sealed_entry</code> 标记、单独计数，<b>不拦买入</b> ——
+拦了就等于把过门的作业集整个抹掉，账本会连着几个月 0 成交。<br><br>
 <b>一字跌停卖不掉</b>　打板最狠的亏损来自 T+1 直接一字跌停——挂单也卖不出，只能次日继续跌。
 账本对这种情况按「顺延持有」处理（最多 10 天，超了按收盘强平并标注为乐观上界），
 不做这一步，P1/P2 的收益会被系统性高估。<br><br>
-<b>五个策略一起测的代价</b>　同时跑 5 个假设，单看某个 t=2 就有约 23%% 概率是撞运气撞出来的。
+<b>多策略一起测的代价</b>　同时跑 __M_PLANNED__ 个假设，其中至少有一个「碰巧 t≥2」的概率约 __FWER__%%
+（1−0.95^__M_PLANNED__）—— 也就是说，「挑最像样的那个」很容易挑到撞运气撞出来的。
 所以最终判定不会只看单个 t 值：要么 t≥2.5，要么做 BH-FDR 多重检验校正，且要有第二段样本延续。
 <b>先看谁显著为负（判死），比看谁显著为正更可靠。</b>
 </div></div></body></html>""" % (
@@ -359,6 +363,11 @@ def render() -> str:
         sum(1 for sid in sleeves if (ov["sleeves"][sid]["q_exc"] or 1) < 0.10 and (ov["sleeves"][sid]["exc_mean"] or 0) > 0),
         "".join(rows), pool_head, pool_list,
         _nav_chart(sleeves), "".join(cards))
+    # 多重检验的 m 必须跟着 sleeve 数走，不能写死：
+    # 每加一个 sleeve，判据就更严一点，这页面的说法也要跟着变，否则会写着一个过期的门槛。
+    m_planned = len(sleeves)
+    body = (body.replace("__M_PLANNED__", str(m_planned))
+                .replace("__FWER__", "%.0f" % ((1 - 0.95 ** m_planned) * 100)))
     return head + body
 
 

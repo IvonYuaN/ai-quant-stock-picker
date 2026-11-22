@@ -6,7 +6,7 @@
   10:00  morning  早盘确认 → P3 超跌反抽（只需昨日暴跌候选，报价少）
   14:45  late     尾盘强势 → P5 尾盘惯性（全市场报价）
   15:05  close    落当日快照 → 全部 sleeve 结算 → 记净值（唯一会产生交易记录的时刻）
-  盘中   board    打板信号 → P1 二板接力 / P2 首板接力（复用 shortline_signal 的检测结果）
+  盘中   board    打板信号 → P1 二板接力 / P2 首板接力 / P6 二板·跳空top2（复用 shortline_signal 的检测结果）
 
 用法：
   python3 paper_scan.py --phase close
@@ -26,7 +26,7 @@ sys.path.insert(0, str(HERE))
 
 import paper_ledger as pl  # noqa: E402  (sys.path 注入同目录后才可导入)
 import paper_market as pm  # noqa: E402  (sys.path 注入同目录后才可导入)
-from paper_strategies import by_phase, from_board_hits  # noqa: E402  (sys.path 注入同目录后才可导入)
+from paper_strategies import board_signals, by_phase  # noqa: E402  (sys.path 注入同目录后才可导入)
 
 CST = timezone(timedelta(hours=8))
 PHASES = ("auction", "morning", "late", "close", "board")
@@ -93,7 +93,9 @@ def run_phase(phase: str, date: str | None = None, detection: dict | None = None
             return result
         hits = detection.get("all_hits", [])
         for sid, spec in by_phase("board"):
-            got = from_board_hits(hits, 2 if sid == "P1" else 1)
+            # 选股口径（全取 / 跳空 top_n）由注册表声明，这里不硬编码策略 id：
+            # 新增一个打板 sleeve 只需在 STRATEGIES 里写 `board`/`top_n`，不用改本文件。
+            got = board_signals(spec, hits)
             r = pl.ingest(led, sid, got["signals"], today, "board")
             sv = led["sleeves"][sid]
             sv["sealed_codes"] = sorted(set(sv.get("sealed_codes", [])) | set(got["sealed_codes"]))
