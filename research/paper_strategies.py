@@ -166,15 +166,22 @@ def scan_late(ctx: dict) -> list[dict]:
 def from_board_hits(hits: list[dict], board: int) -> dict:
     """把打板检测结果转成策略信号。
 
-    🔴 成交口径（最容易骗人的一步，分两层记）：
+    🔴 成交口径（最容易骗人的一步）：
     - A 格（开盘一字）⇒ 直接丢。verdict §四-C 明确「排不进」，假装买到就是骗自己。
-    - B 格（open 没顶死一字 + 盘中摸板）⇒ **照记**，但打 `sealed` 标记：
-      · `sealed=False`（触板那一刻卖一还有货）⇒ **主判样本**，这是真能买到的；
-      · `sealed=True`（触板即封死，卖一=0）⇒ 账本照记但**只作上界参考**，
-        不进主统计 —— 因为 1.5 万手封单前面排队，你实际买不到。
+    - B 格（open 没顶死一字 + 盘中摸板）⇒ **全部照记并买入**，但打 `sealed` 标记。
 
-    为什么不在入口就把 sealed 删掉：删了就永远只剩个位数样本，看不出任何东西；
-    分层记既能出保守判据、又能保留「如果排得进会怎样」的对照。
+    🔴 为什么 `sealed=True` 也必须买（11-22 修，原实现直接 shares=0 是错的）：
+    回测 B 格的定义是「**open 没顶死 + 摸板 + 收停板**」——
+    「收停板」在盘中就表现为 `sealed=True`（卖一=0、买一在涨停）。
+    也就是说，回测唯一过门的那批（B 格 +1.37%/t19.2/n23571）**全部都是 sealed=True**。
+    原实现在 ingest 层把 sealed 判成「封死排不进」直接不买，
+    等于把回测的作业集整个抹掉 ⇒ P1/P2 从起跑起 0 成交、资金 100% 闲置、
+    验的根本不是同一个假设。
+
+    真实约束靠 `cell` 就已经卡住了（A 格一字才排不进）；
+    B 格的「open 没顶死」说明集合竞价确实成交了、盘中存在可买时点。
+    `sealed` 只表示「**我检测到它的那一刻**已经封住」，不表示「全天买不到」，
+    所以它只作**分组标记**（`sealed_entry` 字段 + `sealed_n` 计数），不决定买不买。
     """
     out = []
     for h in hits or []:
@@ -186,8 +193,10 @@ def from_board_hits(hits: list[dict], board: int) -> dict:
                     "price": float(h.get("price") or 0),
                     "sealed": bool(h.get("sealed_now")),
                     "note": "%d板·%s" % (board, (h.get("seal_tag") or h.get("seal") or "")[:12])})
-    out.sort(key=lambda s: (s["sealed"], -s["price"]))   # 能买到的排前面，优先占仓
-    return {"signals": out, "blocked_sealed": [s["code"] for s in out if s["sealed"]]}
+    # 排序：检测时还没封死的排前面（离「买到」更近，优先占仓），封死的排后面。
+    # 🔴 排序只影响资金分配顺序，不影响「买不买」—— 两者都要买。
+    out.sort(key=lambda s: (s["sealed"], -s["price"]))
+    return {"signals": out, "sealed_codes": [s["code"] for s in out if s["sealed"]]}
 
 
 # ---------------- 注册表 ----------------

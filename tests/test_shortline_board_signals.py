@@ -6,11 +6,14 @@
    实测 2026-11-20 的 `000838` 就是 A 格（一字 2 板），它溢价最高（回测 +3.89%），
    但恰恰是买不到的那批。把它记成成交，账本会凭空变好。
 2. **板数必须精确匹配** —— P1 只要 2 板、P2 只要 1 板。差一板买的就是另一个策略。
-3. **`sealed`（触板即封死）要标记但不能删** —— 删了样本只剩个位数看不见东西；
-   留着又会让主统计把「买不到的收益」算成自己赚的。正确做法是分层记录。
+3. **`sealed`（检测时已封死）只标记、不删、更不能拦买入** ——
+   回测 B 格的定义是「open 没顶死 + 摸板 + **收停板**」，「收停板」在盘中就表现为
+   `sealed=True`。也就是说回测唯一过门的那批（+1.37%/t19.2/n23571）**全部是 sealed**。
+   所以在入口或 ingest 层把它判死 = 把作业集整个抹掉，P1/P2 永远 0 成交（11-20 实况）。
+   正确做法：照买，账本打 `sealed_entry` 标记，统计时单独计数以便拆保守口径。
 
-最后一条（`sealed=False` 排前面）关系到资金分配：¥1 万 × 20% 只有 5 个仓位，
-能买到的先占仓，买不到的只记统计。
+最后一条（`sealed=False` 排前面）只影响**资金分配顺序**：¥1 万 × 20% 只有 5 个仓位，
+离「买到」更近的先占仓，但封死的照样要买。
 """
 from __future__ import annotations
 
@@ -44,7 +47,7 @@ def test_a_cell_single_word_is_dropped():
     out = from_board_hits([_hit("000838", board=2, cell="A_一字排不进", sealed=True)], 2)
 
     assert out["signals"] == []
-    assert out["blocked_sealed"] == []      # A 格连「上界参考」都不进
+    assert out["sealed_codes"] == []        # A 格连上界标记都不进（cell 已排除）
 
 
 def test_only_b_cell_survives():
@@ -83,23 +86,25 @@ def test_missing_board_field_is_treated_as_zero():
 
 # ---------------- sealed 分层 ----------------
 
-def test_sealed_is_marked_but_kept():
-    """触板即封死：照记，但打 sealed 标记 ± 单独列出，供主统计排除。
+def test_b_cell_sealed_still_produces_signal():
+    """B 格「检测时已封死」照样产出信号 —— 这是回测唯一过门的作业集。
 
-    🔴 不能在入口就删掉 —— 删了样本只剩个位数，看不出任何东西。
+    🔴 回测 B 格 =「open 没顶死 + 摸板 + **收停板**」，收停板在盘中即 sealed=True。
+    在入口把它删掉 = 把 +1.37%/t19.2/n23571 那批全杀光，P1/P2 永远 0 成交。
+    sealed 只作分组标记（下游 ingest 照买，账本记 sealed_entry）。
     """
     out = from_board_hits([_hit("002086", board=2, sealed=True)], 2)
 
     assert [s["code"] for s in out["signals"]] == ["002086"]
     assert out["signals"][0]["sealed"] is True
-    assert out["blocked_sealed"] == ["002086"]
+    assert out["sealed_codes"] == ["002086"]
 
 
-def test_not_sealed_is_not_in_blocked_list():
+def test_not_sealed_is_not_in_sealed_list():
     out = from_board_hits([_hit("600001", board=2, sealed=False)], 2)
 
     assert out["signals"][0]["sealed"] is False
-    assert out["blocked_sealed"] == []
+    assert out["sealed_codes"] == []
 
 
 def test_sealed_sorts_after_buyable():
@@ -120,8 +125,8 @@ def test_sealed_sorts_after_buyable():
 # ---------------- 容错 ----------------
 
 def test_empty_and_none_input():
-    assert from_board_hits([], 2) == {"signals": [], "blocked_sealed": []}
-    assert from_board_hits(None, 2) == {"signals": [], "blocked_sealed": []}
+    assert from_board_hits([], 2) == {"signals": [], "sealed_codes": []}
+    assert from_board_hits(None, 2) == {"signals": [], "sealed_codes": []}
 
 
 def test_price_falls_back_to_zero_not_crash():

@@ -96,9 +96,9 @@ def run_phase(phase: str, date: str | None = None, detection: dict | None = None
             got = from_board_hits(hits, 2 if sid == "P1" else 1)
             r = pl.ingest(led, sid, got["signals"], today, "board")
             sv = led["sleeves"][sid]
-            sv["sealed_codes"] = sorted(set(sv.get("sealed_codes", [])) | set(got["blocked_sealed"]))
+            sv["sealed_codes"] = sorted(set(sv.get("sealed_codes", [])) | set(got["sealed_codes"]))
             result["sleeves"][sid] = {"name": spec["name"],
-                                      "blocked_sealed": len(got["blocked_sealed"]), **r}
+                                      "sealed_n": len(got["sealed_codes"]), **r}
         if not dry:
             pl.save(led)
         return result

@@ -137,12 +137,11 @@ def ingest(led: dict, sid: str, signals: list[dict], date: str, phase: str) -> d
             shares = math.floor(budget / (price * (1 + COST_ONE_WAY)) / LOT) * LOT
         funded = shares >= LOT and shares * price * (1 + COST_ONE_WAY) <= s["cash"] + 1e-6
         why = ""
-        if sig.get("sealed"):
-            # 触板即封死：1.5 万手封单前面排队，实际买不到 ⇒ 不占资金、不占仓位，
-            # 只作为「如果排得进会怎样」的对照记录（不进主统计）
-            shares, cost, funded = 0, 0.0, False
-            why = "封死排不进"
-        if not funded and not why:
+        # 🔴 `sig["sealed"]` 不参与「买不买」的判断（11-22 修）：
+        # 回测 B 格 =「open 没顶死 + 摸板 + 收停板」，「收停板」在盘中就是 sealed=True，
+        # 若在这里判死，等于把回测唯一过门的作业集全部排除，P1/P2 永远 0 成交。
+        # sealed 只落进 position 的 `sealed_entry` 字段，供事后拆「保守口径」。
+        if not funded:
             if slots_left <= 0:
                 why = "仓位已满"
             elif shares < LOT:
@@ -313,10 +312,13 @@ def sleeve_stats(s: dict) -> dict:
     样本量会虚高十几倍、几天就"显著"——那是自欺，和用回测骗自己没区别。
     所以这里先把同一天的收益平均成「当日策略收益」，再用天数做 t 检验。
     """
-    # 🔴 主判口径：触板时已封死（sealed_entry）的成交按「买不到」处理，不进主统计。
-    # 它们单独计数，作为「如果排得进」的上界参考。
-    usable = [t for t in s["trades"] if not t.get("sealed_entry")]
-    sealed_n = len(s["trades"]) - len(usable)
+    # 🔴 主判口径 = 回测 B 格口径，**含 sealed_entry**（11-22 修）。
+    # 回测 B 格 =「open 没顶死 + 摸板 + 收停板」，收停板在盘中即 sealed=True；
+    # 若在这里排除 sealed，等于把回测唯一过门的那批（+1.37%/t19.2/n23571）全杀光
+    # —— 那验的根本不是同一个假设。
+    # sealed 仍单独计数（sealed_n / sealed_trades），随时可拆「剔除封死」的保守口径。
+    usable = list(s["trades"])
+    sealed_trades = sum(1 for t in usable if t.get("sealed_entry"))
     rets = [t["ret_pct"] / 100 for t in usable]
     n = len(rets)
     funded = [t for t in usable if t["funded"]]
@@ -334,8 +336,8 @@ def sleeve_stats(s: dict) -> dict:
 
     base = {
         "n": n, "funded_n": len(funded), "funded_nav": round(nav, 2),
-        "sealed_n": len(s.get("sealed_codes", [])),   # 累计「触板即封死」的票数（唯一计）
-        "sealed_trades": sealed_n,
+        "sealed_n": len(s.get("sealed_codes", [])),   # 累计「检测时已封死」的票数（唯一计）
+        "sealed_trades": sealed_trades,               # 其中已结算、进主统计的笔数
         "funded_ret": round((nav / s["capital"] - 1) * 100, 2),
         "funded_win": round(sum(1 for t in funded if t["ret_pct"] > 0) / len(funded) * 100, 1) if funded else None,
         "unfunded": why_count,
