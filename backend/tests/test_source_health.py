@@ -23,11 +23,13 @@
 
 from __future__ import annotations
 
+from datetime import datetime, time
 from types import SimpleNamespace
 
 import pytest
 
 import astock
+import decision_context as dc
 import market
 import source_health
 
@@ -396,6 +398,23 @@ def test_sentiment_success_records_eastmoney_host(monkeypatch):
         resp = _FakeResp(payload)
         astock._note_response(astock._EM_PUSH2_HOST, resp)
         return resp
+
+    # 🔴 把「现在」冻结到**最近一个交易日的盘中**，否则本用例在周末/节假日必挂。
+    # 这条链上有两个各自取「现在」的时钟，都要冻结：
+    #   ① `astock._now_shanghai()` —— 既用来造 fake 的 f124，也作为
+    #      `valid_strategy_breadth(current=...)` 的判定基准。
+    #   ② `market.now_shanghai()` —— `market._valid_breadth()` 不传 current 时
+    #      用它，而 `_sentiment` 恰恰不传。
+    # 不冻结的后果（2026-11-22 周日实测，main 自身 CI 就这样红）：
+    #   `dc._session(now)` 回落到上周五，而 fake 的 f124 是今天 ⇒
+    #   `position_quote_issue` 判「行情过期」⇒ `market_breadth_counts()` 返回 None
+    #   ⇒ `_sentiment` 返回 {} ⇒ `got["up"]` 抛 KeyError。
+    _now = astock._now_shanghai()
+    _session_day = dc._session(_now)      # 最近交易日（周末/非交易时段自动回落）
+    assert _session_day is not None, "本地交易日历未覆盖当前年份，无法冻结时点"
+    frozen = datetime.combine(_session_day, time(10, 0), tzinfo=_now.tzinfo)
+    monkeypatch.setattr(astock, "_now_shanghai", lambda: frozen)
+    monkeypatch.setattr(market, "now_shanghai", lambda: frozen)
 
     monkeypatch.setattr(astock, "em_get", _ok)
     got = market._sentiment(emotion={"date": "2026-10-19", "zt_count": 12, "dt_count": 3})
