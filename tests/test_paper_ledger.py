@@ -135,11 +135,16 @@ def test_one_lot_budget_blocks_expensive_stock(led, sleeve):
     assert sleeve["cash"] == pytest.approx(sleeve["capital"])     # 一分钱没扣
 
 
-def test_sealed_entry_costs_nothing(led):
-    """触板即封死（卖一为 0）的票排不进去：不占资金、不占仓位，只留对照记录。
+def test_sealed_entry_still_buys_at_limit_price(led):
+    """B 格「检测时已封死」也必须成交 —— 这是回测唯一过门的作业集（11-22 口径修正）。
 
-    实盘 P2 的 002086 东方海洋就是这条（封单 9.4 亿）。若把它当正常成交，
-    等于每天白送一个「买到涨停板」的收益。
+    🔴 为什么不能判「封死排不进」：回测 B 格的定义是
+    「open 没顶死 + 摸板 + **收停板**」，「收停板」在盘中就表现为 sealed=True。
+    若在 ingest 层把它判死，等于把 +1.37%/t19.2/n23571 那批全部排除，
+    P1/P2 从起跑起 0 成交、资金 100% 闲置 —— 验的根本不是回测那个假设。
+
+    实盘对照：002579 中京电子 11-20 open 12.48 < 涨停 13.39（B 格可买），
+    09:37 封死。原实现判「封死排不进」= 白扔掉一个真实可成交样本。
     """
     s = led["sleeves"]["P2"]
     res = pl.ingest(led, "P2",
@@ -147,11 +152,11 @@ def test_sealed_entry_costs_nothing(led):
                     BUY_DAY, "board")
     pos = s["positions"][0]
 
-    assert res["bought"] == []
-    assert pos["funded"] is False and pos["shares"] == 0
-    assert pos["sealed_entry"] is True
-    assert pos["unfunded_why"] == "封死排不进"
-    assert s["cash"] == pytest.approx(s["capital"])
+    assert len(res["bought"]) == 1                    # 必须真的买
+    assert pos["funded"] is True and pos["shares"] >= pl.LOT
+    assert pos["sealed_entry"] is True                # 但仍要留标记，供事后拆保守口径
+    assert pos["unfunded_why"] == ""
+    assert s["cash"] < s["capital"]                   # 真的花了钱
 
 
 def test_max_positions_caps_concurrent_holdings(led, sleeve):
@@ -372,19 +377,23 @@ def test_t_is_clustered_by_trading_day(led, sleeve):
     assert st["t_day"] < st["t"] / 5                          # 主判必须明显更保守
 
 
-def test_sealed_trades_leave_main_stats(led, sleeve):
-    """触板即封死的成交不进主统计（买不到的收益不算自己赚的），单独计数。"""
+def test_sealed_trades_enter_main_stats(led, sleeve):
+    """sealed_entry 的成交**进**主统计，但单独计数（11-22 口径修正）。
+
+    回测 B 格本身含「收停板」⇒ 主判口径必须含 sealed，否则验的不是同一假设。
+    保留 sealed_trades / sealed_n 是为了随时能拆出「剔除封死」的保守对照。
+    """
     sleeve["trades"] = [
         _trade("2026-11-21", 8.0),
-        _trade("2026-11-21", 30.0, sealed=True),     # 排不进去的那笔
+        _trade("2026-11-21", 30.0, sealed=True),
     ]
     sleeve["sealed_codes"] = ["002086"]
 
     st = pl.sleeve_stats(sleeve)
 
-    assert st["n"] == 1
-    assert st["mean"] == pytest.approx(8.0)          # 30% 那笔没混进来
-    assert st["sealed_trades"] == 1
+    assert st["n"] == 2                              # 两笔都算
+    assert st["mean"] == pytest.approx(19.0)         # (8 + 30) / 2
+    assert st["sealed_trades"] == 1                  # 但能拆出来
     assert st["sealed_n"] == 1
 
 
