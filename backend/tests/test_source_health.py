@@ -23,11 +23,13 @@
 
 from __future__ import annotations
 
+from datetime import datetime, time
 from types import SimpleNamespace
 
 import pytest
 
 import astock
+import decision_context as dc
 import market
 import source_health
 
@@ -396,6 +398,19 @@ def test_sentiment_success_records_eastmoney_host(monkeypatch):
         resp = _FakeResp(payload)
         astock._note_response(astock._EM_PUSH2_HOST, resp)
         return resp
+
+    # 🔴 把「现在」冻结到**最近一个交易日的盘中**，否则本用例在周末/节假日必挂。
+    # `market_breadth_counts` 产出要过 `decision_context.position_quote_issue`：
+    #   session = _session(current)          # 周末回落到上一个交易日
+    #   stamp[0] != session  ⇒  「行情过期」  # stamp 来自 fake 的 f124
+    # 原用例的 f124 取的是 `_now_shanghai()` 此刻，周末 session 是周五而
+    # stamp 是周日 ⇒ 日期不等 ⇒ 判过期 ⇒ `_sentiment` 返回 {} ⇒ KeyError: 'up'。
+    # 2026-11-22（周日）实测：main 自身 CI shard 3 就红在这里，与本 PR 无关。
+    _now = astock._now_shanghai()
+    _session_day = dc._session(_now)      # 最近交易日（周末自动回落）
+    assert _session_day is not None, "本地交易日历未覆盖当前年份，无法冻结时点"
+    frozen = datetime.combine(_session_day, time(10, 0), tzinfo=_now.tzinfo)
+    monkeypatch.setattr(astock, "_now_shanghai", lambda: frozen)
 
     monkeypatch.setattr(astock, "em_get", _ok)
     got = market._sentiment(emotion={"date": "2026-10-19", "zt_count": 12, "dt_count": 3})
