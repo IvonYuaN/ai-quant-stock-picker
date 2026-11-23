@@ -1,0 +1,166 @@
+{
+  "as_of": "2026-11-06",
+  "cost_round_trip": 0.003,
+  "heights": {
+    "首板": {
+      "exec_board_touch": {
+        "n_days": 700,
+        "mean_pct": -0.938,
+        "median_pct": -0.868,
+        "win_pct": 24.7,
+        "t": -16.52
+      },
+      "exec_next_open_1night": {
+        "n_days": 699,
+        "mean_pct": -0.071,
+        "median_pct": -0.008,
+        "win_pct": 49.6,
+        "t": -0.81
+      },
+      "exec_next_open_intraday": {
+        "n_days": 700,
+        "mean_pct": -0.006,
+        "median_pct": 0.078,
+        "win_pct": 52.6,
+        "t": -0.07
+      },
+      "lookahead_reseal": {
+        "n_days": 700,
+        "mean_pct": 1.46,
+        "median_pct": 1.452,
+        "win_pct": 92.3,
+        "t": 33.54
+      },
+      "lookahead_broken": {
+        "n_days": 700,
+        "mean_pct": -5.06,
+        "median_pct": -5.053,
+        "win_pct": 0.6,
+        "t": -82.32
+      }
+    },
+    "2板": {
+      "exec_board_touch": {
+        "n_days": 699,
+        "mean_pct": -2.299,
+        "median_pct": -2.13,
+        "win_pct": 23.2,
+        "t": -20.05
+      },
+      "exec_next_open_1night": {
+        "n_days": 699,
+        "mean_pct": -0.738,
+        "median_pct": -0.748,
+        "win_pct": 40.1,
+        "t": -5.69
+      },
+      "exec_next_open_intraday": {
+        "n_days": 700,
+        "mean_pct": -0.186,
+        "median_pct": -0.13,
+        "win_pct": 47.7,
+        "t": -1.65
+      },
+      "lookahead_reseal": {
+        "n_days": 694,
+        "mean_pct": 1.909,
+        "median_pct": 1.878,
+        "win_pct": 78.0,
+        "t": 19.55
+      },
+      "lookahead_broken": {
+        "n_days": 682,
+        "mean_pct": -8.4,
+        "median_pct": -8.283,
+        "win_pct": 0.9,
+        "t": -65.87
+      }
+    },
+    "3板": {
+      "exec_board_touch": {
+        "n_days": 666,
+        "mean_pct": -3.259,
+        "median_pct": -3.172,
+        "win_pct": 29.3,
+        "t": -13.74
+      },
+      "exec_next_open_1night": {
+        "n_days": 693,
+        "mean_pct": -1.379,
+        "median_pct": -1.333,
+        "win_pct": 40.3,
+        "t": -6.27
+      },
+      "exec_next_open_intraday": {
+        "n_days": 694,
+        "mean_pct": -0.238,
+        "median_pct": -0.272,
+        "win_pct": 48.0,
+        "t": -1.24
+      },
+      "lookahead_reseal": {
+        "n_days": 582,
+        "mean_pct": 2.096,
+        "median_pct": 2.177,
+        "win_pct": 67.7,
+        "t": 11.04
+      },
+      "lookahead_broken": {
+        "n_days": 485,
+        "mean_pct": -10.985,
+        "median_pct": -10.702,
+        "win_pct": 1.9,
+        "t": -45.82
+      }
+    },
+    "4板+": {
+      "exec_board_touch": {
+        "n_days": 494,
+        "mean_pct": -2.797,
+        "median_pct": -2.206,
+        "win_pct": 37.9,
+        "t": -7.96
+      },
+      "exec_next_open_1night": {
+        "n_days": 602,
+        "mean_pct": -2.289,
+        "median_pct": -2.764,
+        "win_pct": 36.2,
+        "t": -5.76
+      },
+      "exec_next_open_intraday": {
+        "n_days": 603,
+        "mean_pct": -0.76,
+        "median_pct": -1.326,
+        "win_pct": 43.3,
+        "t": -2.24
+      },
+      "lookahead_reseal": {
+        "n_days": 392,
+        "mean_pct": 2.196,
+        "median_pct": 2.387,
+        "win_pct": 65.1,
+        "t": 8.38
+      },
+      "lookahead_broken": {
+        "n_days": 250,
+        "mean_pct": -12.378,
+        "median_pct": -11.649,
+        "win_pct": 1.2,
+        "t": -31.2
+      }
+    }
+  },
+  "fills": {
+    "touch_cells": 67565,
+    "opened_cells": 64220,
+    "reseal_cells": 40031,
+    "broken_cells": 24189
+  },
+  "reconciliation_2板": {
+    "weight_reseal": 0.6233,
+    "weighted_pct": -1.974,
+    "measured_exec_pct": -2.299,
+    "note": "加权值应≈摸板即买（差异来自按日等权 vs 按格加权）"
+  }
+}

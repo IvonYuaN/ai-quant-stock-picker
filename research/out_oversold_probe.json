@@ -1,0 +1,89 @@
+{
+  "as_of": "2026-11-06",
+  "start": "20231101",
+  "n_days_total": 731,
+  "n_setup_cells": 19510,
+  "t1_open": {
+    "cost0": {
+      "n_days": 649,
+      "mean_pct": -0.119,
+      "med_pct": -0.154,
+      "win_pct": 47.0,
+      "t_nw": -0.96
+    },
+    "cost03": {
+      "n_days": 649,
+      "mean_pct": -0.419,
+      "med_pct": -0.454,
+      "win_pct": 43.9,
+      "t_nw": -3.38
+    }
+  },
+  "t1_close": {
+    "cost0": {
+      "n_days": 649,
+      "mean_pct": -0.046,
+      "med_pct": -0.158,
+      "win_pct": 48.1,
+      "t_nw": -0.25
+    },
+    "cost03": {
+      "n_days": 649,
+      "mean_pct": -0.346,
+      "med_pct": -0.458,
+      "win_pct": 45.0,
+      "t_nw": -1.85
+    }
+  },
+  "regimes": {
+    "bear_熊": {
+      "t1_open": {
+        "n_days": 197,
+        "mean_pct": -0.502,
+        "med_pct": -0.561,
+        "win_pct": 42.1,
+        "t_nw": -2.07
+      },
+      "t1_close": {
+        "n_days": 197,
+        "mean_pct": -0.361,
+        "med_pct": -0.382,
+        "win_pct": 43.7,
+        "t_nw": -0.88
+      }
+    },
+    "bull_牛": {
+      "t1_open": {
+        "n_days": 212,
+        "mean_pct": 0.062,
+        "med_pct": -0.101,
+        "win_pct": 48.1,
+        "t_nw": 0.29
+      },
+      "t1_close": {
+        "n_days": 212,
+        "mean_pct": 0.105,
+        "med_pct": 0.014,
+        "win_pct": 50.0,
+        "t_nw": 0.35
+      }
+    },
+    "sideways_震荡": {
+      "t1_open": {
+        "n_days": 240,
+        "mean_pct": 0.034,
+        "med_pct": 0.003,
+        "win_pct": 50.0,
+        "t_nw": 0.18
+      },
+      "t1_close": {
+        "n_days": 240,
+        "mean_pct": 0.079,
+        "med_pct": -0.001,
+        "win_pct": 50.0,
+        "t_nw": 0.3
+      }
+    }
+  },
+  "note": "买价用当日开盘价近似 10:00 价，带乐观偏差，只判卖点方向"
+}

@@ -79,7 +79,7 @@ def test_registry_declares_params_and_evidence_for_every_mode():
 
 
 def test_passed_modes_tagged_passed_and_others_not():
-    """过门的是 P1/P2/P6；P3/P4/P5 仍未过门。
+    """🔴 当前状态：**一个过门的都没有**。P1/P2/P6 已撤回为「❌已否证」，P3/P4/P5 未过门。
 
     🔴 这是一份**故意的口径快照**（硬编码），不是「从注册表推导」——
     推导式断言会自己验自己、永远绿。改口径时必须回来改这里，
@@ -88,16 +88,22 @@ def test_passed_modes_tagged_passed_and_others_not():
     这条断言直接对应红线「不冒充实有 alpha」：标签写错一个，
     老大就会把前向验证中的模式当成已验证的 alpha 去用。
 
-    11-23 变更：P2 首板从「⚪对照」升为「✅过门」。依据（700 交易日）：
-      首板可成交 B 格 t1_open +1.610%/t33.71/胜94.7%（31498 格），
-      熊/牛/震荡三段 +1.380%/+1.856%/+1.594% 全部显著正（t 19~23）；
-      原「首板抛压重」的假设被证伪 —— 它是高胜率低幅度的一端，不是对照组。
+    11-23 变更（一天内两次，方向相反，记清楚）：
+      a) 上午把 P2 从「⚪对照」升为「✅过门」—— 依据是首板 B 格 t1_open +1.610%/t33.71。
+      b) 下午**全部撤回**。`research/executable_entry_probe.py` 证明 B 格的定义是
+         「收盘封死在涨停」，那个价买不到；换可成交口径后四个高度全为负：
+         首板 −0.94%/t−16.5、2板 −2.30%/t−20.1、3板 −3.26%/t−13.7、4板+ −2.80%/t−8.0。
+      ⇒ 教训：a) 升得太快，把「不可成交价上的统计显著」当成了 alpha。
+         以后任何模式升 `passed` 前，必须先答一句「按哪个价成交」，答不出就是前视。
     """
-    assert mode_card.tag_of(STRATEGIES["P1"]) == "✅过门"
-    assert mode_card.tag_of(STRATEGIES["P2"]) == "✅过门", "首板已于 11-23 过门"
-    assert mode_card.tag_of(STRATEGIES["P6"]) == "✅过门"
+    for sid in ("P1", "P2", "P6"):
+        assert mode_card.tag_of(STRATEGIES[sid]) == "❌已否证", \
+            "%s 的买点（收盘涨停价）不可成交，不得标为过门" % sid
     for sid in ("P3", "P4", "P5"):
         assert mode_card.tag_of(STRATEGIES[sid]) == "⏳未过门", sid
+    assert not [s for s, spec in STRATEGIES.items()
+                if spec.get("evidence_state") == "passed"], \
+        "当前无任何模式过门；若要升 passed，必须先证明买点可成交"
 
 
 def test_phase_card_prints_params_and_evidence_on_the_mode_head():
@@ -370,14 +376,21 @@ def test_picks_only_has_no_boilerplate():
         assert noise not in md, "废话字段 %s 还在" % noise
 
 
-def test_picks_only_marks_passed_modes_only():
-    """过门用 ✓ 标，其余用 ·，不写解释——状态要有但不能占篇幅。"""
+def test_picks_only_marks_passed_modes_only(monkeypatch):
+    """过门用 ✓ 标，其余用 ·，不写解释——状态要有但不能占篇幅。
+
+    🔴 不能拿生产状态当输入（11-23 起一个过门的都没有）：那样这条测试只会走到
+    「全是 ·」的分支，✓ 分支等于从没被覆盖过，将来真有过门模式时才发现 bug。
+    改成自己造一个 passed 状态，两边分支都验。
+    """
+    monkeypatch.setitem(STRATEGIES["P3"], "evidence_state", "passed")
     picks = {
         "P1": {"bought": [{"code": "002749", "name": "国光", "price": 9.56, "note": "2板"}]},
         "P3": {"bought": [{"code": "688199", "name": "久日", "price": 16.45, "note": "超跌"}]},
     }
     md = mode_card.render_picks_only(picks)
-    assert "P1✓" in md and "P3·" in md
+    assert "P3✓" in md, "被人为置为 passed 的模式必须打 ✓"
+    assert "P1·" in md, "已否证的模式只能打 ·，不能打 ✓"
     assert "过门" not in md and "未过门" not in md
 
 
