@@ -91,7 +91,7 @@ function ShortlineArena() {
     {navPoints >= 2 ? <EChart option={navOption} height={260} fallback={<p className="aq-detail-muted">当前环境不支持图表；下表的超额与组合收益仍可复核。</p>} /> : <p className="aq-note">净值曲线要等第二个收盘日才有形状；现在只有一个起点，画出来会是一条毫无信息的横线。</p>}
     {sleeves.length ? <div className="aq-table-wrap">
       <table className="aq-table aq-summary-table">
-        <thead><tr><th>策略</th><th className="aq-num">超额均收益</th><th className="aq-num">超额胜率</th><th className="aq-num">T（按日聚类）</th><th className="aq-num">Q（FDR·{sleeves.length} 策略）</th><th className="aq-num">统计进度</th><th className="aq-num">组合收益</th></tr></thead>
+        <thead><tr><th>策略</th><th className="aq-num">超额均收益</th><th className="aq-num">超额胜率</th><th className="aq-num">T（按日聚类）</th><th className="aq-num">Q（FDR·{sleeves.length} 策略）</th><th className="aq-num">止损影响</th><th className="aq-num">统计进度</th><th className="aq-num">组合收益</th></tr></thead>
         <tbody>{sleeves.map((row) => {
           const notes = [row.sealed_n ? `检测时已封死 ${row.sealed_n}（照买）` : "", ...Object.entries(row.unfunded).slice(0, 2).map(([key, value]) => `${key} ${value}`)].filter(Boolean).join(" · ");
           const verdict = row.n === 0 ? <Tag>未开仓</Tag> : row.q_exc != null && row.q_exc < 0.10 && (row.exc_mean ?? 0) > 0 ? <Tag tone="ok">扛住多重检验</Tag> : (row.exc_mean ?? 0) > 0 ? <Tag>未校正通过</Tag> : <Tag tone="warn">无超额</Tag>;
@@ -100,7 +100,7 @@ function ShortlineArena() {
             <td className={cn("aq-num", tone(row.exc_mean))}>{row.n === 0 ? "—" : pct(row.exc_mean)}</td>
             <td className="aq-num">{row.exc_win == null || row.n === 0 ? "—" : `${(row.exc_win * 100).toFixed(1)}%`}</td>
             <td className="aq-num">{row.t_exc == null || row.n === 0 ? "—" : row.t_exc.toFixed(2)}</td>
-            <td className="aq-num">{row.q_exc == null || row.n === 0 ? "—" : row.q_exc.toFixed(3)}</td>
+            <td className="aq-num">{row.q_exc == null || row.n === 0 ? "—" : row.q_exc.toFixed(3)}</td><td className="aq-num">{row.stop_impact == null ? "—" : <span className={row.stop_impact < 0 ? "down" : "up"}>{row.stop_impact.toFixed(2)}pp{row.stop_n ? <span className="aq-note"> · {row.stop_n}笔</span> : null}</span>}</td>
             <td className="aq-num">{row.days} 日{row.n_need_days ? ` / 需 ${row.n_need_days}` : ""}</td>
             <td className={cn("aq-num", tone(row.funded_ret))}>{row.funded_n === 0 ? "—" : pct(row.funded_ret)}</td>
           </tr>;
@@ -113,7 +113,7 @@ function ShortlineArena() {
     </> : null}
     {arena.recent_trades.length ? <>
       <p className="aq-label">最近成交（{arena.recent_trades.length}）</p>
-      <div className="aq-table-wrap"><table className="aq-table aq-summary-table"><thead><tr><th>账户</th><th>标的</th><th>卖出日</th><th className="aq-num">单笔收益</th><th className="aq-num">单笔超额</th><th>卖出原因</th></tr></thead><tbody>{arena.recent_trades.map((row, index) => <tr key={`${row.sleeve}-${row.code}-${row.sell_date}-${index}`}><td><span className="aq-code">{row.sleeve}</span></td><td>{row.name} <span className="aq-code">{row.code}</span></td><td>{row.sell_date || "—"}</td><td className={cn("aq-num", tone(row.ret_pct))}>{pct(row.ret_pct)}</td><td className={cn("aq-num", tone(row.excess_pct))}>{pct(row.excess_pct)}</td><td>{row.reason || "—"}{row.funded ? "" : "（未占仓）"}</td></tr>)}</tbody></table></div>
+      <div className="aq-table-wrap"><table className="aq-table aq-summary-table"><thead><tr><th>账户</th><th>标的</th><th>卖出日</th><th className="aq-num">单笔收益</th><th className="aq-num">单笔超额</th><th className="aq-num">若不止损</th><th>卖出原因</th></tr></thead><tbody>{arena.recent_trades.map((row, index) => <tr key={`${row.sleeve}-${row.code}-${row.sell_date}-${index}`}><td><span className="aq-code">{row.sleeve}</span></td><td>{row.name} <span className="aq-code">{row.code}</span></td><td>{row.sell_date || "—"}</td><td className={cn("aq-num", tone(row.ret_pct))}>{pct(row.ret_pct)}</td><td className={cn("aq-num", tone(row.excess_pct))}>{pct(row.excess_pct)}</td><td className={cn("aq-num", tone(row.no_stop_ret_pct))}>{pct(row.no_stop_ret_pct)}</td><td>{row.reason || "—"}{row.funded ? "" : "（未占仓）"}</td></tr>)}</tbody></table></div>
     </> : null}
     {/* 用 p 而不是 ul：`.aq-note` 是 flex 容器，套在 ul 上会把 li 压成横向乱文。 */}
     <p className="aq-note">· 所有判据都是<strong>超额</strong>：每笔先减掉「买入日 → 卖出日」的全市场等权收益，剩下的才算策略。组合收益那一列是绝对收益，只能对照着看。</p>

@@ -54,6 +54,9 @@ def build_payload() -> dict:
             "funded_n": st["funded_n"], "funded_win": st["funded_win"],
             "positions": st["positions"], "sealed_n": st.get("sealed_n", 0),
             "unfunded": st.get("unfunded") or {},
+            # 止损归因：回测无止损、账本有止损，这个差就是两口径的桥（#587）
+            "stop_n": st.get("stop_n", 0),
+            "stop_impact": st.get("stop_impact"),
         })
 
     dates = sorted({r["date"] for s in sleeves.values() for r in s["nav"]})
@@ -86,7 +89,8 @@ def build_payload() -> dict:
             trades.append({"sleeve": sid, "code": t["code"], "name": t["name"],
                            "sell_date": t["sell_date"], "ret_pct": t["ret_pct"],
                            "excess_pct": t.get("excess_pct"), "reason": t["reason"],
-                           "funded": t["funded"]})
+                           "funded": t["funded"],
+                           "no_stop_ret_pct": t.get("no_stop_ret_pct")})
 
     return {
         "schema_version": SCHEMA,

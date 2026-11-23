@@ -243,14 +243,20 @@ def render() -> str:
             qcell = "<span class='sig'>%.3f</span>" % q
         else:
             qcell = "<span class='mute'>%.3f</span>" % q
+        imp = st.get("stop_impact")
+        stopcell = ("<span class='mute'>—</span>" if imp is None else
+                    ("<span class='down'>%.2fpp</span>" % imp if imp < 0 else
+                     "<span class='up'>+%.2fpp</span>" % imp))
+        if st.get("stop_n"):
+            stopcell += "<div class='hyp' style='margin-top:6px'>%d 笔止损</div>" % st["stop_n"]
         rows.append(
             "<tr><td class='sid'>%s</td><td><div class='sname'>%s</div><div class='hyp'>%s</div></td>"
-            "<td>%s</td><td>%s</td><td>%s</td><td>%s</td>"
+            "<td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td>"
             "<td>%s<div class='hyp' style='margin-top:6px'>%s</div></td><td>%s</td></tr>" % (
                 sid, s["name"], s["hypothesis"],
                 _fmt(st["exc_mean"], "%", plus=True) if st["exc_mean"] is not None else "<span class='mute'>—</span>",
                 _fmt(st["exc_win"], "%") if st["exc_win"] is not None else "<span class='mute'>—</span>",
-                tcell, qcell, bar, eta,
+                tcell, qcell, stopcell, bar, eta,
                 _fmt(st["funded_ret"], "%", plus=True) if st["n"] else "<span class='mute'>—</span>"))
 
     # 每个 sleeve 卡片
@@ -317,7 +323,7 @@ def render() -> str:
 </div>
 
 <h2>策略横向对比</h2>
-<table><tr><th>ID</th><th>策略 / 假设</th><th>超额均收益</th><th>超额胜率</th><th>t（按日聚类）</th><th>q（FDR）</th><th>统计进度</th><th>组合收益</th></tr>
+<table><tr><th>ID</th><th>策略 / 假设</th><th>超额均收益</th><th>超额胜率</th><th>t（按日聚类）</th><th>q（FDR）</th><th>止损影响</th><th>统计进度</th><th>组合收益</th></tr>
 %s</table>
 
 <h2>下一交易日盯盘池 <span style="font-size:10px;color:#b0b5bd;letter-spacing:0">预告·尚未成交</span></h2>

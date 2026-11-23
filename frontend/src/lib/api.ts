@@ -880,6 +880,10 @@ export interface PaperArenaSleeve {
   t_exc: number | null;
   /** 同批策略一起测的 BH-FDR 校正 q（m = 策略数，不写死）；q < 0.10 才算扛住多重检验。 */
   q_exc: number | null;
+  /** 触发止损的笔数。 */
+  stop_n: number;
+  /** 止损净影响（百分点）：负数=平均砍掉的收益；未触发为 null，不是 0。 */
+  stop_impact: number | null;
   /** 按当前离散度，还需多少个交易日才可能达到 t=2（null = 已够或无法估计）。 */
   n_need_days: number | null;
   funded_nav: number | null;
@@ -912,6 +916,8 @@ export interface PaperArenaTrade {
   excess_pct: number | null;
   reason: string;
   funded: boolean;
+  /** 若不止损的收益；未触发止损为 null。 */
+  no_stop_ret_pct: number | null;
 }
 
 /** `GET /api/aqsp/paper-arena` 的 `data`：短线多策略影子账户前向验证记录（只读）。

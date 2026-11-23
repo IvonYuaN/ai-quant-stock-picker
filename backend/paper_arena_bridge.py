@@ -107,6 +107,9 @@ def payload() -> dict:
             "funded_win": _num(item.get("funded_win")),
             "positions": int(_num(item.get("positions")) or 0),
             "sealed_n": int(_num(item.get("sealed_n")) or 0),
+            # 止损归因（#587）：回测无止损、账本有止损，净影响百分点；未触发为 None
+            "stop_n": int(_num(item.get("stop_n")) or 0),
+            "stop_impact": _num(item.get("stop_impact")),
             "unfunded": item.get("unfunded") if isinstance(item.get("unfunded"), dict) else {},
         })
 
@@ -145,6 +148,7 @@ def payload() -> dict:
             "excess_pct": _num(item.get("excess_pct")),
             "reason": str(item.get("reason") or "")[:40],
             "funded": bool(item.get("funded")),
+            "no_stop_ret_pct": _num(item.get("no_stop_ret_pct")),
         })
     trades = trades[:40]
 
