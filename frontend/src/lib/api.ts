@@ -871,14 +871,14 @@ export interface PaperArenaSleeve {
   id: string;
   name: string;
   hypothesis: string;
-  /** 已结算笔数；只含真实成交，封死排不进的不计入。 */
+  /** 已结算笔数；只含真实成交（含「检测时已封死但照买」的那批，见 sealed_n）。 */
   n: number;
   /** 有成交的交易日数。 */
   days: number;
   exc_mean: number | null;
   exc_win: number | null;
   t_exc: number | null;
-  /** 5 个策略一起测的 BH-FDR 校正 q；q < 0.10 才算扛住多重检验。 */
+  /** 同批策略一起测的 BH-FDR 校正 q（m = 策略数，不写死）；q < 0.10 才算扛住多重检验。 */
   q_exc: number | null;
   /** 按当前离散度，还需多少个交易日才可能达到 t=2（null = 已够或无法估计）。 */
   n_need_days: number | null;
@@ -887,7 +887,7 @@ export interface PaperArenaSleeve {
   funded_n: number;
   funded_win: number | null;
   positions: number;
-  /** 触板即封死（卖一为 0）的排队信号数，不计入 n。 */
+  /** 累计「检测到信号时已封死」的票数（unique）。**照买**，结算后计入 n，单独计数只为事后拆保守口径。 */
   sealed_n: number;
   /** 未成交原因分布：`{ "仓位已满": 3, "买不起1手": 5 }`。 */
   unfunded: Record<string, number>;
