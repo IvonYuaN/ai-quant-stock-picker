@@ -116,15 +116,29 @@ def probe(db: str, start: str = "20231101",
     dates = close.index
     listing = sl._listing_mask(close, lookback=30)
 
-    # ---- setup：前一日 sealed 涨停 + 今日高开（与 shortline_fillable 完全一致）----
-    zt_prev = cv / np.roll(cv, 1, axis=0) - 1.0
-    zt_prev[:, 0] = np.nan
-    setup_prev_zt = zt_prev >= 0.098
+    # ---- setup：前一日 sealed 涨停 + 今日高开 ----
+    # 🔴 11-23 修 off-by-one（原写法错了两处，导致 setup 完全失效）：
+    #   旧：zt_prev = cv / np.roll(cv,1) - 1.0 ; zt_prev[:, 0] = np.nan
+    #   ① 这个式子的 t 行算的是「**当日**涨幅」（prev 只指「用前一日收盘算」）；
+    #   ② `[:, 0]` 清的是第 0 **列**（第一只股票），不是第 0 **行**；
+    #   ⇒ `setup_prev_zt` 实际要求「今日涨停」，与 B 格「今日触板收板」同义反复，
+    #     setup 形同虚设 ⇒ 所谓「B 格」是**全部连板高度混合**，不是二板。
+    #   正确语义：昨日涨停 = 截至前一日的连续涨停 ≥1（用 streak 计数，与
+    #   research/board_height_probe.py / 实盘 trailing_zt_run() 同一口径）。
+    with np.errstate(invalid="ignore", divide="ignore"):
+        zt_today = cv / np.roll(cv, 1, axis=0) - 1.0 >= 0.098
+    zt_today[0, :] = False                       # 第 0 行无前一日，无效
+    streak_prev = np.zeros_like(zt_today, dtype=np.int8)
+    _run = np.zeros(zt_today.shape[1], dtype=np.int8)
+    for _t in range(zt_today.shape[0]):
+        streak_prev[_t] = _run                   # 先记「截至前一日」
+        _run = np.where(zt_today[_t], _run + 1, 0)
+    setup_prev_zt = streak_prev >= 1             # 昨日涨停（连续≥1天）
     with np.errstate(invalid="ignore", divide="ignore"):
         gap = op / np.roll(cq, 1, axis=0) - 1.0     # 今日跳空（非复权，P6 排序键）
-    gap[:, 0] = np.nan
+    gap[0, :] = np.nan
     limit_up = np.round(np.roll(cq, 1, axis=0) * 1.10, 2)
-    limit_up[:, 0] = np.nan
+    limit_up[0, :] = np.nan
     valid = setup_prev_zt & np.isfinite(hh) & np.isfinite(limit_up) & np.isfinite(op) & np.isfinite(gap)
     near = hh >= limit_up * 0.998
     B = valid & (op < limit_up * 0.998) & near & (cq >= limit_up * 0.998)   # 放量封住（可成交）
