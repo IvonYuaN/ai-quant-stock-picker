@@ -79,14 +79,23 @@ def test_registry_declares_params_and_evidence_for_every_mode():
 
 
 def test_passed_modes_tagged_passed_and_others_not():
-    """只有 P1/P6 是过门的；P2 是对照组；P3/P4/P5 未过门。
+    """过门的是 P1/P2/P6；P3/P4/P5 仍未过门。
+
+    🔴 这是一份**故意的口径快照**（硬编码），不是「从注册表推导」——
+    推导式断言会自己验自己、永远绿。改口径时必须回来改这里，
+    这一步就是让人停下来确认「我真的有证据把它升为过门了吗」。
 
     这条断言直接对应红线「不冒充实有 alpha」：标签写错一个，
     老大就会把前向验证中的模式当成已验证的 alpha 去用。
+
+    11-23 变更：P2 首板从「⚪对照」升为「✅过门」。依据（700 交易日）：
+      首板可成交 B 格 t1_open +1.610%/t33.71/胜94.7%（31498 格），
+      熊/牛/震荡三段 +1.380%/+1.856%/+1.594% 全部显著正（t 19~23）；
+      原「首板抛压重」的假设被证伪 —— 它是高胜率低幅度的一端，不是对照组。
     """
     assert mode_card.tag_of(STRATEGIES["P1"]) == "✅过门"
+    assert mode_card.tag_of(STRATEGIES["P2"]) == "✅过门", "首板已于 11-23 过门"
     assert mode_card.tag_of(STRATEGIES["P6"]) == "✅过门"
-    assert mode_card.tag_of(STRATEGIES["P2"]) == "⚪对照"
     for sid in ("P3", "P4", "P5"):
         assert mode_card.tag_of(STRATEGIES[sid]) == "⏳未过门", sid
 
