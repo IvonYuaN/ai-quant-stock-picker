@@ -140,9 +140,12 @@ def probe(db: str, start: str = "20231101",
     D = valid & (op < limit_up * 0.998) & ~near                              # 高开未封
 
     # ---- 前向：t+1 的 open / low / close（非复权，止损判定用）----
-    nxt_op = np.full_like(op, np.nan); nxt_op[:-1] = op[1:]
-    nxt_lo = np.full_like(ll, np.nan); nxt_lo[:-1] = ll[1:]
-    nxt_cq = np.full_like(cq, np.nan); nxt_cq[:-1] = cq[1:]
+    def _shift1(a):
+        out = np.full_like(a, np.nan)
+        out[:-1] = a[1:]
+        return out
+
+    nxt_op, nxt_lo, nxt_cq = _shift1(op), _shift1(ll), _shift1(cq)
     buy = cq                                                              # 信号日收盘=涨停价
 
     # 池等权基准（t+1 qfq 收益），用于报超额
