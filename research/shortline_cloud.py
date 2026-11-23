@@ -401,6 +401,14 @@ def build_recap(det: dict) -> str:
     if not all_hits:
         L.append("（当日无触板票）")
     L.append("> 明日 watchlist = 上述涨停票次日再盯二板；只做B格·T+1收兑现")
+    # 六模式结算段：收盘复盘不能又只讲打板。
+    # 读账本当天 sell_date 的真实成交，0 结算写「未结算」不写 0% 超额。
+    try:
+        import paper_ledger as pl
+        today = datetime.now(CST).strftime("%Y-%m-%d")
+        L.append("\n" + mode_card.render_settlement_card(pl.load(), today))
+    except Exception as e:
+        print("[cloud] 结算段渲染失败: %s" % e, file=sys.stderr)
     return "\n".join(L)
 
 

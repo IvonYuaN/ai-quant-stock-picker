@@ -184,3 +184,45 @@ def render_card(board_section: str, phase_card: str, footer: str,
     if arena_line:
         segs.append(arena_line.strip())
     return "\n\n".join(segs)
+
+
+def render_settlement_card(led: dict, date: str, max_rows: int = 4) -> str:
+    """收盘复盘的六模式结算段：每个模式今天真的赚/亏了多少。
+
+    🔴 纪律：
+    - **只显示当天 `sell_date == date` 的真实成交**，不拿持仓浮盈冒充结算；
+    - 0 结算样本写「未结算」，**不显示 0% 超额** —— 首日超额恰是基准反数，
+      显示 0 就是假的（这条前端已经守了，推送卡片不能漏）；
+    - 一行一个模式，标参数/证据状态，跟盘中卡片同一套口径，不另造文案。
+
+    `led` = paper_ledger.load() 的账本 dict。
+    """
+    try:
+        from paper_strategies import STRATEGIES
+    except ImportError:  # pragma: no cover - 同目录模块，正常不会走到
+        return ""
+    blocks: list[str] = []
+    for sid in sorted(STRATEGIES):
+        trades = [t for t in (led.get("sleeves", {}).get(sid, {}).get("trades") or [])
+                  if t.get("sell_date") == date]
+        spec = STRATEGIES[sid]
+        funded = [t for t in trades if t.get("funded")]
+        # 🔴 有 trade 记录但全是未成交信号 ⇒ 实质是 0 结算。
+        # 显示「0 笔 盈亏¥+0」会让人以为真平过仓、收益恰好为 0，
+        # 而首日 0% 超额恰是基准反数 —— 直接跳过这个模式。
+        if not funded:
+            continue
+        pnl = sum(float(t.get("pnl") or 0) for t in funded)
+        rows = []
+        for t in funded[:max_rows]:
+            exc = t.get("excess_pct")
+            exc_s = "超额—" if exc is None else "超额%+.2f%%" % float(exc)
+            rows.append("  %s %s %+.2f%% %s" % (
+                t.get("code", ""), str(t.get("name") or "")[:4],
+                float(t.get("ret_pct") or 0), exc_s))
+        head = "**%s %s** %s 今日结算 %d 笔 盈亏¥%+.0f" % (
+            sid, spec.get("name", ""), tag_of(spec), len(funded), pnl)
+        blocks.extend([head] + rows)
+    if not blocks:
+        return "## 💰 六模式结算 %s\n今日无结算（首笔 T+1 收盘才平仓）" % date
+    return "\n".join(["## 💰 六模式结算 %s" % date] + blocks)

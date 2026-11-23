@@ -234,3 +234,46 @@ def test_backfill_picks_returns_empty_when_no_positions(tmp_path, monkeypatch):
                         lambda d: tmp_path / ("picks_%s.json" % d))
     assert shortline_cloud.backfill_picks_from_ledger("2026-11-23", led={"sleeves": {}}) == {}
     assert not (tmp_path / "picks_2026-11-23.json").exists()
+
+
+# ---------------- 收盘结算段 ----------------
+
+def test_settlement_card_shows_real_closed_trades_only():
+    """收盘卡片只显示当天 sell_date 的真实平仓，不拿持仓浮盈冒充结算。"""
+    led = {"sleeves": {
+        "P4": {"trades": [
+            {"code": "002685", "name": "华东重机", "sell_date": "2026-11-23",
+             "funded": True, "ret_pct": 3.56, "excess_pct": 4.01, "pnl": 56.0},
+            {"code": "000823", "name": "超声电子", "sell_date": "2026-11-22",
+             "funded": True, "ret_pct": 9.99, "excess_pct": 9.0, "pnl": 99.0},
+        ]},
+        "P1": {"trades": [
+            # 未成交的信号平仓不该算盈亏
+            {"code": "301575", "name": "艾芬达", "sell_date": "2026-11-23",
+             "funded": False, "ret_pct": 0.0, "excess_pct": None, "pnl": 0.0},
+        ]},
+    }}
+    md = mode_card.render_settlement_card(led, "2026-11-23")
+    assert "P4 竞价抢筹" in md
+    assert "华东重机 +3.56%" in md and "超额+4.01%" in md
+    assert "超声电子" not in md, "昨天平仓的不算今天"
+    assert "艾芬达" not in md, "未成交信号不该进盈亏"
+    assert "P1 二板接力" not in md, "全是未成交的模式不该显示 0 笔 0 盈亏"
+
+
+def test_settlement_card_says_not_settled_instead_of_zero_excess():
+    """0 结算样本写「未结算」——首日恒 0% 的超额恰是基准反数，显示 0 就是假数字。"""
+    md = mode_card.render_settlement_card({"sleeves": {}}, "2026-11-23")
+    assert "今日无结算" in md
+    assert "0.00%" not in md and "超额0" not in md
+
+
+def test_settlement_card_missing_excess_shows_dash_not_zero():
+    """缺基准时 excess_pct=None ⇒ 显示「超额—」，不显示 0。"""
+    led = {"sleeves": {"P3": {"trades": [
+        {"code": "688199", "name": "久日新材", "sell_date": "2026-11-23",
+         "funded": True, "ret_pct": -2.1, "excess_pct": None, "pnl": -30.0},
+    ]}}}
+    md = mode_card.render_settlement_card(led, "2026-11-23")
+    assert "超额—" in md
+    assert "超额0" not in md
