@@ -299,6 +299,19 @@ def board_signals(spec: dict, hits: list[dict]) -> dict:
 #   ⇒ 结论：**打板 lane 无可执行 alpha**。要救它必须先有「封单量/排队位置」这类
 #      能预判回封的数据，现有库里没有，因此**不靠调参去救**（禁亏损调参）。
 #
+# 🔴🔴 同日更根本的一条：**日频短线在这套数据里的生存门槛是「每笔 >0.15% 可执行超额」**。
+#   `research/turnover_cost_probe.py`（主板 3283 只 / 731 交易日 / 等权截面）实测：
+#       隔夜（收→次日开）  −0.079%/天 (t−3.3)
+#       日内（开→收）      +0.111%/天 (t+2.2)   ← T+1 禁止当日了结，赚不到
+#       全  （收→次日收）  +0.030%/天 (t+0.5)   ← 与 0 无统计差别
+#   ⇒ A 股收益几乎全在日内，隔夜净流出；而 T+1 恰好禁止你赚日内 ⇒ 只能承担负隔夜。
+#   ⇒ 日频全换手成本 0.15%/次 × 240 ≈ **36%/年**，而日均税前只有 +0.030% ⇒ 必然为负。
+#   ⇒ 所以「因子不够多」是误诊：门槛在成本，任何日频信号都必须先跨过 0.15%/笔。
+#   P5「尾盘惯性」正是**专门去买那段负隔夜**（涨得越多隔夜越负：7~10% 档 −0.91%），
+#   属方向性错误，不是参数问题 ⇒ 置 rejected，禁再调参救活。
+#   唯一残留方向（记录、不宣称成立）：**持有多日**把日内收益累积、把成本摊薄到
+#   0.15%/天数 —— 那是中线/主战场 lane，不是短线。
+#
 # 🔴 止损为什么全设 0（11-23 用 700 交易日实测后定的，不是拍脑袋）：
 #   research/stop_sensitivity_probe.py 对同一批历史信号回放止损档位，
 #   严格二板 B 格（可成交，6004 格）结果：
@@ -378,8 +391,8 @@ STRATEGIES: dict[str, dict] = {
         "phase": "morning",
         "scan": scan_oversold,
         "params": "昨跌≥0.7×跌停·今-1%~+4%·10:00买",
-        "evidence": "前向验证中·未过门",
-        "evidence_state": "unverified",
+        "evidence": "否证 两条卖点均零边际(次日开 −0.12%/t−1.0)；setup 本身无 alpha",
+        "evidence_state": "rejected",
         "exit": "t1_close",
         "stop_pct": 0.0,
         "position_pct": 0.20,
@@ -404,8 +417,8 @@ STRATEGIES: dict[str, dict] = {
         "phase": "late",
         "scan": scan_late,
         "params": "涨3~7%·量比≥1.5·换手2~15%·14:45买",
-        "evidence": "前向验证中·未过门",
-        "evidence_state": "unverified",
+        "evidence": "否证 买的是负隔夜(−0.079%/天)；可执行 −0.72%/t−25.8",
+        "evidence_state": "rejected",
         "exit": "t1_open",
         "stop_pct": 0.0,
         "position_pct": 0.20,

@@ -1,0 +1,157 @@
+{
+  "as_of": "20261106",
+  "start": "20231101",
+  "n_stocks": 3283,
+  "n_days": 731,
+  "cost_one_way": 0.00075,
+  "cost_round_trip": 0.0015,
+  "decomposition": {
+    "overnight_pre": {
+      "n_days": 701,
+      "mean_pct": -0.0788,
+      "median_pct": -0.073,
+      "win_pct": 39.7,
+      "t": -3.31
+    },
+    "overnight_post": {
+      "n_days": 701,
+      "mean_pct": -0.2288,
+      "median_pct": -0.223,
+      "win_pct": 20.0,
+      "t": -9.62
+    },
+    "intraday_pre": {
+      "n_days": 701,
+      "mean_pct": 0.1114,
+      "median_pct": 0.2091,
+      "win_pct": 58.2,
+      "t": 2.2
+    },
+    "full_pre": {
+      "n_days": 701,
+      "mean_pct": 0.0303,
+      "median_pct": 0.1104,
+      "win_pct": 54.5,
+      "t": 0.54
+    },
+    "full_post": {
+      "n_days": 701,
+      "mean_pct": -0.1197,
+      "median_pct": -0.0396,
+      "win_pct": 48.6,
+      "t": -2.13
+    }
+  },
+  "cost_hurdle": {
+    "daily_gross_pct": 0.0303,
+    "round_trip_cost_pct": 0.15,
+    "net_per_day_pct": -0.1197,
+    "cost_drag_per_year_pct": 36.0,
+    "note": "日频全换手成本拖累约 36%%/年；日均税前仅 +0.030%%"
+  },
+  "P5": {
+    "params": "涨3~7% + 量比≥1.5，收盘买 → 次日开盘卖",
+    "pre": {
+      "n_days": 701,
+      "mean_pct": -0.5726,
+      "median_pct": -0.5208,
+      "win_pct": 13.6,
+      "t": -20.41
+    },
+    "post": {
+      "n_days": 701,
+      "mean_pct": -0.7226,
+      "median_pct": -0.6708,
+      "win_pct": 8.7,
+      "t": -25.76
+    },
+    "to_next_close_post": {
+      "n_days": 701,
+      "mean_pct": -0.4738,
+      "median_pct": -0.4243,
+      "win_pct": 36.9,
+      "t": -8.05
+    }
+  },
+  "overnight_by_day_return": {
+    "-10%~-3%": {
+      "n_days": 699,
+      "mean_pct": -0.5754,
+      "median_pct": -0.5472,
+      "win_pct": 14.3,
+      "t": -11.45
+    },
+    "-3%~+0%": {
+      "n_days": 701,
+      "mean_pct": -0.0958,
+      "median_pct": -0.0723,
+      "win_pct": 35.1,
+      "t": -5.3
+    },
+    "+0%~+2%": {
+      "n_days": 701,
+      "mean_pct": -0.1246,
+      "median_pct": -0.1039,
+      "win_pct": 34.7,
+      "t": -7.38
+    },
+    "+2%~+5%": {
+      "n_days": 701,
+      "mean_pct": -0.287,
+      "median_pct": -0.2617,
+      "win_pct": 25.2,
+      "t": -12.2
+    },
+    "+5%~+7%": {
+      "n_days": 698,
+      "mean_pct": -0.3827,
+      "median_pct": -0.3304,
+      "win_pct": 30.9,
+      "t": -11.24
+    },
+    "+7%~+10%": {
+      "n_days": 605,
+      "mean_pct": -0.9144,
+      "median_pct": -0.8292,
+      "win_pct": 18.2,
+      "t": -18.3
+    }
+  },
+  "P5_volume_ratio_grid": {
+    "1.0": {
+      "n_days": 701,
+      "mean_pct": -0.457,
+      "median_pct": -0.4252,
+      "win_pct": 20.3,
+      "t": -16.15
+    },
+    "1.2": {
+      "n_days": 701,
+      "mean_pct": -0.4793,
+      "median_pct": -0.4585,
+      "win_pct": 18.7,
+      "t": -16.93
+    },
+    "1.5": {
+      "n_days": 701,
+      "mean_pct": -0.5726,
+      "median_pct": -0.5208,
+      "win_pct": 13.6,
+      "t": -20.41
+    },
+    "2.0": {
+      "n_days": 682,
+      "mean_pct": -0.8403,
+      "median_pct": -0.7807,
+      "win_pct": 11.7,
+      "t": -24.03
+    },
+    "3.0": {
+      "n_days": 30,
+      "mean_pct": -1.4046,
+      "median_pct": -1.2647,
+      "win_pct": 16.7,
+      "t": -4.44
+    }
+  }
+}
