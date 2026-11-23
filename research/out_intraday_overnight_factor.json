@@ -1,0 +1,182 @@
+{
+  "as_of": "2026-11-06",
+  "start": "20231101",
+  "hold_days": 20,
+  "n_stocks": 3283,
+  "n_days": 731,
+  "cost_round_trip_pct": 0.15,
+  "lookbacks": [
+    20,
+    60
+  ],
+  "factors": {
+    "日内累计@20d": {
+      "n_rebal": 23,
+      "decile_means_pct": [
+        0.989,
+        1.197,
+        1.151,
+        1.017,
+        1.189,
+        1.147,
+        1.124,
+        1.064,
+        0.403,
+        -0.75
+      ],
+      "top_minus_bottom_gross_pct": -1.738,
+      "top_minus_bottom_net_pct": -2.038,
+      "t_nw": -2.3,
+      "win_pct": 26.1,
+      "ic_mean": -0.0857,
+      "net_cagr_pct": -22.9
+    },
+    "隔夜累计@20d": {
+      "n_rebal": 23,
+      "decile_means_pct": [
+        -0.71,
+        0.542,
+        0.802,
+        0.885,
+        1.302,
+        1.314,
+        1.127,
+        1.568,
+        1.14,
+        0.566
+      ],
+      "top_minus_bottom_gross_pct": 1.276,
+      "top_minus_bottom_net_pct": 0.976,
+      "t_nw": 3.21,
+      "win_pct": 73.9,
+      "ic_mean": 0.0311,
+      "net_cagr_pct": 11.9
+    },
+    "动量(=I+O)@20d": {
+      "n_rebal": 23,
+      "decile_means_pct": [
+        0.537,
+        0.996,
+        1.014,
+        1.181,
+        1.358,
+        1.196,
+        1.154,
+        1.035,
+        0.235,
+        -0.172
+      ],
+      "top_minus_bottom_gross_pct": -0.709,
+      "top_minus_bottom_net_pct": -1.009,
+      "t_nw": -0.89,
+      "win_pct": 47.8,
+      "ic_mean": -0.0714,
+      "net_cagr_pct": -13.1
+    },
+    "日内相对强度(I-O)@20d": {
+      "n_rebal": 23,
+      "decile_means_pct": [
+        1.018,
+        1.238,
+        1.146,
+        1.249,
+        1.203,
+        1.027,
+        0.797,
+        1.203,
+        0.319,
+        -0.663
+      ],
+      "top_minus_bottom_gross_pct": -1.681,
+      "top_minus_bottom_net_pct": -1.981,
+      "t_nw": -3.17,
+      "win_pct": 26.1,
+      "ic_mean": -0.0758,
+      "net_cagr_pct": -21.8
+    },
+    "日内累计@60d": {
+      "n_rebal": 23,
+      "decile_means_pct": [
+        1.251,
+        1.081,
+        1.212,
+        1.353,
+        0.907,
+        1.073,
+        1.243,
+        0.779,
+        0.379,
+        -0.754
+      ],
+      "top_minus_bottom_gross_pct": -2.005,
+      "top_minus_bottom_net_pct": -2.305,
+      "t_nw": -2.01,
+      "win_pct": 43.5,
+      "ic_mean": -0.0953,
+      "net_cagr_pct": -26.4
+    },
+    "隔夜累计@60d": {
+      "n_rebal": 23,
+      "decile_means_pct": [
+        -0.476,
+        0.569,
+        0.929,
+        1.117,
+        1.015,
+        1.087,
+        1.156,
+        0.947,
+        1.613,
+        0.567
+      ],
+      "top_minus_bottom_gross_pct": 1.042,
+      "top_minus_bottom_net_pct": 0.742,
+      "t_nw": 1.29,
+      "win_pct": 69.6,
+      "ic_mean": 0.0286,
+      "net_cagr_pct": 8.4
+    },
+    "动量(=I+O)@60d": {
+      "n_rebal": 23,
+      "decile_means_pct": [
+        0.655,
+        1.002,
+        0.955,
+        1.331,
+        1.163,
+        1.145,
+        1.23,
+        0.759,
+        0.551,
+        -0.267
+      ],
+      "top_minus_bottom_gross_pct": -0.922,
+      "top_minus_bottom_net_pct": -1.222,
+      "t_nw": -0.96,
+      "win_pct": 52.2,
+      "ic_mean": -0.0763,
+      "net_cagr_pct": -16.7
+    },
+    "日内相对强度(I-O)@60d": {
+      "n_rebal": 23,
+      "decile_means_pct": [
+        1.223,
+        1.246,
+        1.189,
+        1.264,
+        1.074,
+        0.903,
+        1.104,
+        0.645,
+        0.378,
+        -0.503
+      ],
+      "top_minus_bottom_gross_pct": -1.726,
+      "top_minus_bottom_net_pct": -2.026,
+      "t_nw": -2.55,
+      "win_pct": 30.4,
+      "ic_mean": -0.0807,
+      "net_cagr_pct": -22.6
+    }
+  }
+}
