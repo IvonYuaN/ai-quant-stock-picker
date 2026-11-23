@@ -360,3 +360,29 @@ def test_top_n_sleeves_hold_at_least_two_days_of_positions():
         assert spec["max_positions"] >= 2 * top_n, \
             "%s 的 max_positions=%d 容不下「昨天的 %d 只 + 今天的 %d 只」" % (
                 sid, spec["max_positions"], top_n, top_n)
+
+
+# ---------------- 20cm 不进打板成交集 ----------------
+#
+# 长线口径决定（2026-11-23）：回测过门的 B 格 +1.37%/t19.2 来自纯主板池
+# （shortline_probe.load_main_board 只取 60/00）。创业板 20cm 的涨停幅度、
+# 止损幅度、跳空分布都不同，进账本就不是在验同一个假设。
+
+def test_20cm_hits_are_excluded_from_all_board_sleeves():
+    """主板和创业板同时触二板，只有主板进 P1/P2/P6 的成交集。"""
+    main = _hit(code="002749", board=2, price=9.56, board_lim=0.10)
+    growth = _hit(code="300829", board=2, price=31.40, board_lim=0.20)
+    hits = [main, growth]
+    for sid, got in (("P1", board_signals(STRATEGIES["P1"], hits)),
+                     ("P2", board_signals(STRATEGIES["P2"], [dict(growth, board=1)])),
+                     ("P6", board_signals(STRATEGIES["P6"], hits))):
+        codes = [s["code"] for s in got["signals"]]
+        assert "300829" not in codes, "%s 把 20cm 票记进了成交集" % sid
+    assert [s["code"] for s in board_signals(STRATEGIES["P1"], hits)["signals"]] == ["002749"]
+
+
+def test_missing_board_lim_defaults_to_main_board():
+    """历史检测快照可能没有 board_lim 字段 —— 缺省按主板 10cm，不能误杀。"""
+    h = _hit(code="600000", board=2)
+    h.pop("board_lim", None)
+    assert [s["code"] for s in board_signals(STRATEGIES["P1"], [h])["signals"]] == ["600000"]
