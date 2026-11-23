@@ -1,19 +1,24 @@
 #!/usr/bin/env python3
-"""云端一条龙：盘中检测(B格连板) → 企业微信私聊推送（runner 上跑，本地不开机也工作）。
+"""云端一条龙：盘中检测 + 多模式推荐 → 企业微信私聊推送（runner 上跑，本地不开机也工作）。
 
 流程（cron 每 3 分钟触发一次）：
   1) 跑同目录 shortline_signal.py --once → JSON（K线核实几板/昨涨停 + 腾讯实时价 + A/B格）
-  2) 取 new_hits（增量去重，防刷屏）；无新增 → 静默
-  3) 组极简 markdown（代码 名称 现价 几板 策略）→ wecom-cli aibot send 推给授权人
-  4) 交易时段守卫：周一~五 09:15~11:30 / 13:00~15:05 CST，午休/盘后静默
-  5) 15:05 用 --recap 推当日收盘复盘
+  2) 取 new_hits（增量去重，防刷屏）
+  3) 到点跑影子账户各时点（09:27 竞价 / 10:00 超跌 / 14:45 尾盘），
+     把**每个模式推荐了什么**一并推进卡片 —— 推荐与记账同源，不另造一份口径
+  4) 组 markdown → wecom-cli aibot send 推给授权人
+  5) 交易时段守卫：周一~五 09:15~11:30 / 13:00~15:05 CST，午休/盘后静默
+  6) 15:05 用 --recap 推当日收盘复盘
+
+🔴 历史坑（2026-11-23 修）：P3/P4/P5 一直在记账，但卡片只渲染打板那一段，
+   ⇒ 老大看到的推送「永远只有打板」，而账本里竞价/超跌早就买了。
+   现在时点信号落 `state/picks_<date>.json`，任何一张卡都带「今日各模式」全貌。
 
 推送走 runner 上已授权的 wecom-cli（WECOM_CLI_CONFIG_DIR 指向移植的授权目录），
 机器人「股票老狗」→ 授权人私聊，无需建群/Webhook/扫码。
-markdown 字段与本机 shortline_push.py 一致；B格可买 / A格一字观察共用同一套列。
 
 用法：
-  python3 shortline_cloud.py              # 盘中检测+推（无新增静默）
+  python3 shortline_cloud.py              # 盘中检测+推（无新增且无新模式信号时静默）
   python3 shortline_cloud.py --recap      # 收盘复盘（跳过时段守卫）
   python3 shortline_cloud.py --force      # 跳过时段守卫（手工补跑，会真实推送）
   python3 shortline_cloud.py --dry-run    # 只检测+看卡片，绝不推送（验证用，防骚扰）
@@ -31,6 +36,9 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))                 # 同目录模块（paper_* / mode_card）可直接 import
+import mode_card  # noqa: E402  (sys.path 注入后才可导入)
+
 SIGNAL_PY = HERE / "shortline_signal.py"
 WECOM_CONFIG = HERE / "personal"              # 从本机移植的 wecom-cli 授权目录
 DB = "/opt/aqsp-runner/data/astocks_raw.db"
@@ -101,34 +109,145 @@ def due_phases(hm: int, weekday: int, done: set[str]) -> list[str]:
     return [p for p, lo, hi, _label in ARENA_WINDOWS if lo <= hm <= hi and p not in done]
 
 
-def arena_due_phases() -> None:
-    """按时点跑 auction/morning/late/close，每个时点当天只跑一次。"""
+def picks_path(date: str) -> Path:
+    return STATE_DIR / ("picks_%s.json" % date)
+
+
+def record_picks(date: str, phase: str, sleeves: dict) -> dict:
+    """把本时点各模式的推荐落盘，供后续卡片复用（同一 sid 覆盖，幂等）。
+
+    🔴 为什么要落盘：打板卡片每 3 分钟一张，如果每张只写「打板」，
+    老大永远看不到 09:27 竞价、10:00 超跌推荐了什么 —— 而账本其实已经买了。
+    落一份当天的 picks，任何时刻的卡片都能带出全貌。
+    """
+    p = picks_path(date)
+    try:
+        cur = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+    except (OSError, json.JSONDecodeError):
+        cur = {}
+    for sid, r in (sleeves or {}).items():
+        cur[sid] = {"name": r.get("name", ""), "phase": phase,
+                    "at": datetime.now(CST).strftime("%H:%M"),
+                    "signals": r.get("signals", 0),
+                    "bought": r.get("bought", []),
+                    "skipped": r.get("skipped", [])}
+    try:
+        p.write_text(json.dumps(cur, ensure_ascii=False, indent=1), encoding="utf-8")
+    except OSError as e:
+        print("[arena] picks 落盘失败: %s" % e, file=sys.stderr)
+    return cur
+
+
+def today_picks(date: str | None = None) -> dict:
+    p = picks_path(date or datetime.now(CST).strftime("%Y-%m-%d"))
+    try:
+        return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def backfill_picks_from_ledger(date: str, led: dict | None = None) -> dict:
+    """从账本反推某个交易日的 picks（补齐本改动上线前的时点）。
+
+    为什么要它：`picks_<date>.json` 是今天才有的新文件。09:27 竞价、10:00 超跌
+    在改动上线前就买完了，账本里有仓、picks 文件里没有 ⇒ 当天剩下的卡片
+    「今日各模式」是空的，等于没修。账本是权威，从它反推是唯一不猜的办法。
+
+    不推断「为什么没买」以外的任何东西：`unfunded_why` 是 ingest 当时写下的原文。
+    """
+    if led is None:
+        import paper_ledger as pl
+        led = pl.load()
+    import paper_strategies as ps
+    out = {}
+    for sid, s in (led.get("sleeves") or {}).items():
+        pos = [p for p in (s.get("positions") or []) if p.get("buy_date") == date]
+        if not pos:
+            continue
+        bought = [{"code": p["code"], "name": p.get("name", ""),
+                   "price": p.get("buy_price"), "shares": p.get("shares"),
+                   "note": p.get("note", "")} for p in pos if p.get("funded")]
+        skipped = [{"code": p["code"], "why": p.get("unfunded_why", "")}
+                   for p in pos if not p.get("funded")]
+        spec = ps.STRATEGIES.get(sid) or {}
+        out[sid] = {"name": spec.get("name", sid), "phase": pos[0].get("phase", ""),
+                    "at": "backfill", "signals": len(pos),
+                    "bought": bought, "skipped": skipped}
+    if out:
+        picks_path(date).write_text(json.dumps(out, ensure_ascii=False, indent=1),
+                                    encoding="utf-8")
+    return out
+
+
+def done_phases(date: str) -> set[str]:
+    """当天已跑过的时点（以 marker 为准，跨进程/跨重启都认）。
+
+    只靠内存里的 `ran` 不够：marker 是历史事实（比如本改动上线前 09:27 已经跑过），
+    不读 marker 就会把「已经买过」的模式在卡片上写成「未到点」。
+    """
+    return {p for p, _lo, _hi, _lb in ARENA_WINDOWS
+            if (STATE_DIR / ("phase_%s_%s.done" % (date, p))).exists()}
+
+
+def pending_modes(done: set[str], picks: dict | None = None) -> list[tuple[str, str]]:
+    """还没到时点的模式 —— 卡片写「未到 14:45」，而不是装作今天没有这个模式。
+
+    `picks` 里已有的模式一律不算 pending：账本说它已经跑过了，
+    哪怕 marker 因为历史原因丢了也不能倒着写「未到点」。
+    """
+    import paper_strategies as ps
+    have = set((picks or {}).keys())
+    out = []
+    for phase, _lo, _hi, _label in ARENA_WINDOWS:
+        if phase in done or phase == "close":
+            continue
+        for sid, _spec in ps.by_phase(phase):
+            if sid in have:
+                continue
+            out.append((sid, mode_card.PHASE_CLOCK.get(phase, phase)))
+    return out
+
+
+def arena_due_phases(dry: bool = False) -> list[tuple[str, dict]]:
+    """按时点跑 auction/morning/late/close，每个时点当天只跑一次。
+
+    返回**本次真的跑出来的** [(phase, sleeves)]，交给调用方组卡片。
+    返回空列表 = 这一跳没有新模式信号 ⇒ 上层按 fail-closed 静默。
+    """
     now = datetime.now(CST)
     if now.weekday() >= 5:
-        return
+        return []
     hm = now.hour * 60 + now.minute
     today = now.strftime("%Y-%m-%d")
     STATE_DIR.mkdir(parents=True, exist_ok=True)
-    done = set()
-    for phase, _lo, _hi, _lb in ARENA_WINDOWS:
-        if (STATE_DIR / ("phase_%s_%s.done" % (today, phase))).exists():
-            done.add(phase)
+    done = done_phases(today)
+    ran: list[tuple[str, dict]] = []
+    label_of = dict((p, lb) for p, _lo, _hi, lb in ARENA_WINDOWS)
     for phase in due_phases(hm, now.weekday(), done):
-        label = dict((p, lb) for p, _lo, _hi, lb in ARENA_WINDOWS)[phase]
         marker = STATE_DIR / ("phase_%s_%s.done" % (today, phase))
         if phase == "close":
-            arena_close()
+            if not dry:
+                arena_close()
             continue
         try:
             import paper_scan
-            res = paper_scan.run_phase(phase, today)
-            marker.write_text(json.dumps(res, ensure_ascii=False)[:2000], encoding="utf-8")
+            res = paper_scan.run_phase(phase, today, dry=dry)
+            sleeves = res.get("sleeves") or {}
+            if not dry:
+                marker.write_text(json.dumps(res, ensure_ascii=False)[:2000], encoding="utf-8")
+                record_picks(today, phase, sleeves)
             brief = {sid: {"sig": r.get("signals"), "buy": len(r.get("bought", []))}
-                     for sid, r in res.get("sleeves", {}).items()}
-            print("[arena] %s(%s) %s" % (phase, label, json.dumps(brief, ensure_ascii=False)),
+                     for sid, r in sleeves.items()}
+            print("[arena] %s(%s)%s %s" % (phase, label_of[phase],
+                                           " [dry]" if dry else "",
+                                           json.dumps(brief, ensure_ascii=False)),
                   file=sys.stderr)
+            if sleeves:
+                ran.append((phase, sleeves))
         except Exception as e:
             print("[arena] %s 失败: %s" % (phase, e), file=sys.stderr)
+    return ran
+
 
 
 def arena_close(force: bool = False) -> None:
@@ -236,12 +355,25 @@ def wecom_send(md: str) -> bool:
 
 
 def _row(h: dict) -> str:
-    return "%s %s %7.2f %s板 %s" % (
-        h["code"], h.get("name", "")[:4], h["price"], h["board"], h.get("strategy", ""))
+    """一行打板信号。20cm 票显式打标：
+
+    🔴 回测过门那批（B 格 +1.37%/t19.2）用的是 `load_main_board` 的**纯主板**池，
+    实盘检测池从 11-19 起混入创业板 20cm（老大拍板纳入）。两边的止损/涨停幅度、
+    样本来源都不同，所以卡片必须把 20cm 标出来 —— 否则账本里一笔 20cm 的盈亏
+    会被当成「主板假设被验证/被证伪」，那是错误的归因。
+    """
+    lim = float(h.get("board_lim") or 0.10)
+    tag = "·20cm" if lim >= 0.15 else ""
+    return "%s %s %7.2f %s板%s %s" % (
+        h["code"], h.get("name", "")[:4], h["price"], h["board"], tag, h.get("strategy", ""))
 
 
 def build_markdown(det: dict) -> str:
-    """极简卡片：代码 名称 现价 几板 策略。new_hits 增量去重防刷屏。"""
+    """打板段（不是整张卡）：代码 名称 现价 几板 策略。new_hits 增量去重防刷屏。
+
+    口径说明与「今日各模式」尾部由 `mode_card.render_card` 统一补，
+    这里不自己写 footer —— 两张卡各写一套说明，迟早说岔。
+    """
     now = datetime.now(CST).strftime("%H:%M")
     new = det.get("new_hits", [])
     act = [h for h in new if h.get("actionable")]
@@ -251,7 +383,6 @@ def build_markdown(det: dict) -> str:
     if obs:
         L.append("⚪ 一字观察(排不进):")
         L.extend(_row(h) for h in obs)
-    L.append("> 只做B格·T+1收兑现·轻仓·炸板止损")
     return "\n".join(L)
 
 
@@ -279,7 +410,17 @@ def main(argv=None) -> int:
     ap.add_argument("--force", action="store_true", help="跳过时段守卫（手工补跑，会真实推送）")
     ap.add_argument("--dry-run", action="store_true", help="只检测+打印卡片，绝不调用推送（验证用）")
     ap.add_argument("--health", action="store_true", help="只看推送健康状态（不检测/不推送）")
+    ap.add_argument("--backfill-picks", action="store_true",
+                    help="从账本反推当日 picks 落盘（补齐本改动上线前的时点；不检测不推送）")
     args = ap.parse_args(argv)
+
+    if args.backfill_picks:
+        today = datetime.now(CST).strftime("%Y-%m-%d")
+        got = backfill_picks_from_ledger(today)
+        print("[cloud] picks 回填 %s: %s" % (
+            today, json.dumps({k: {"buy": len(v["bought"]), "sig": v["signals"]}
+                               for k, v in got.items()}, ensure_ascii=False)))
+        return 0
 
     if args.health:
         today = datetime.now(CST).strftime("%Y-%m-%d")
@@ -316,25 +457,36 @@ def main(argv=None) -> int:
     except Exception as e:
         print("[cloud] 检测失败（继续跑 arena 时点）: %s" % e, file=sys.stderr)
 
+    ran_phases: list[tuple[str, dict]] = []
     ledger_line = ""
-    if not args.dry_run:
-        if det and not args.recap:
-            arena_board(det)          # P1/P2 打板接力记账
-        if not args.recap:
-            arena_due_phases()        # P3/P4/P5 到点记账
-        ledger_line = _arena_brief()
-
-    if not det:
-        print("[cloud] 无检测结果，不推", file=sys.stderr)
-        return 0
+    if not args.recap:
+        if det and not args.dry_run:
+            arena_board(det)          # P1/P2/P6 打板接力记账
+        ran_phases = arena_due_phases(dry=args.dry_run)   # P3/P4/P5 到点记账
+    ledger_line = _arena_brief()
 
     if args.recap:
-        md = build_recap(det) + ledger_line
-    else:
-        if not det.get("new_hits"):
-            print("[cloud] 本轮无新增触板票，不推", file=sys.stderr)
+        if not det:
+            print("[cloud] 收盘复盘需要检测结果，本轮跳过", file=sys.stderr)
             return 0
-        md = build_markdown(det) + ledger_line
+        today = datetime.now(CST).strftime("%Y-%m-%d")
+        picks = today_picks(today)
+        md = build_recap(det)
+        footer = mode_card.render_daily_footer(picks, pending=pending_modes(done_phases(today), picks))
+        if footer:
+            md += "\n\n" + footer
+        md += ledger_line
+    else:
+        board_sec = build_markdown(det) if det.get("new_hits") else ""
+        phase_sec = "\n\n".join(
+            s for s in (mode_card.render_phase_card(p, sv) for p, sv in ran_phases) if s)
+        if not board_sec and not phase_sec:
+            print("[cloud] 本轮既无新增触板、也无新模式信号，不推", file=sys.stderr)
+            return 0
+        today = datetime.now(CST).strftime("%Y-%m-%d")
+        picks = today_picks(today)
+        footer = mode_card.render_daily_footer(picks, pending=pending_modes(done_phases(today), picks))
+        md = mode_card.render_card(board_sec, phase_sec, footer, ledger_line)
 
     if args.dry_run:
         print("[cloud] DRY-RUN（未推送）\n---\n%s" % md)
