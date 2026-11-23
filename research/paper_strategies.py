@@ -186,6 +186,14 @@ def _board_candidates(hits: list[dict], board: int) -> list[dict]:
             continue                       # A 格一字排不进
         if int(h.get("board") or 0) != board:
             continue
+        # 🔴 20cm（创业板/科创）不进打板 sleeve 的成交集（2026-11-23 拍板）：
+        # 3y 过门的 B 格 +1.37%/t19.2 来自 load_main_board 的**纯主板 60/00**池，
+        # 20cm 的涨停幅度、止损幅度（-10% vs -5%）、隔夜跳空分布全不一样。
+        # 让它进账本 = 拿一个没被回测验证过的假设去冒「已过门」的名，
+        # 归因时又分不开，最后把两族的盈亏混成一个 t 值 —— 这是最隐蔽的自欺。
+        # 推送里照常显示（老大 11-19 拍板纳入观察），但不记账、不下单。
+        if float(h.get("board_lim") or 0.10) >= 0.15:
+            continue
         pre = float(h.get("pre") or 0)
         open_px = float(h.get("open") or 0)
         gap = (open_px / pre - 1.0) if (pre > 0 and open_px > 0) else 0.0
