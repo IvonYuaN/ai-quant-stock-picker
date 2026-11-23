@@ -530,3 +530,45 @@ def test_same_day_t1_open_position_keeps_its_slot(led):
     _fill_sleeve(led, "P5", n=4, buy_day=SELL_DAY)
     r = pl.ingest(led, "P5", _one_sig(), SELL_DAY, "late")
     assert r["skipped"] == [{"code": "000001", "why": "仓位已满"}]
+
+
+# ---------------- 结算回放：excess_pct 必须是真数值 ----------------
+
+def test_settle_records_real_excess_not_zero_placeholder(led, monkeypatch):
+    """0 结算样本时前端显示「—」；一旦真结算，excess_pct 必须是真数值而不是 0 占位。
+
+    首日恒 0% 的超额恰好等于基准的反数 —— 若把 None 写成 0，
+    面板会显示一个「很可信的假数字」。这里用固定基准桩验证：
+    策略按真实成本口径 -21.04%、基准 -8% ⇒ 超额 = -13.04%，不是 0、也不是 None。
+    """
+    monkeypatch.setattr(pl, "_pm", _StubBench(-0.08))
+    s = led["sleeves"]["P3"]
+    s["positions"].append({
+        "code": "002724", "name": "海洋王", "buy_date": BUY_DAY, "phase": "morning",
+        "buy_price": 10.0, "shares": 200, "cost": 2006.0, "funded": True,
+        "unfunded_why": "", "sealed_entry": False, "stop_price": 9.5, "note": "",
+    })
+    snap = {p["code"]: _row(8.0) for p in s["positions"]}
+    closed = pl.settle(led, snap, SELL_DAY)
+    assert len(closed) == 1
+    assert closed[0]["excess_pct"] == pytest.approx(-13.04), \
+        "超额必须是策略减基准的真差值，不是 None/0 占位"
+
+
+def test_stop_loss_uses_worse_of_stop_and_open(led, monkeypatch):
+    """跳空低开穿过止损价 ⇒ 按开盘价（更差）落账，不能乐观地按止损价成交。"""
+    monkeypatch.setattr(pl, "_pm", None)
+    s = led["sleeves"]["P3"]
+    s["positions"].append({
+        "code": "600000", "name": "跳空票", "buy_date": BUY_DAY, "phase": "morning",
+        "buy_price": 10.0, "shares": 100, "cost": 1003.0, "funded": True,
+        "unfunded_why": "", "sealed_entry": False, "stop_price": 9.5, "note": "",
+    })
+    # 开盘 8.0 已在止损价 9.5 之下 ⇒ 实际成交价只能是 8.0
+    snap = {"600000": _row(p=8.2, o=8.0, lo=7.9)}
+    closed = pl.settle(led, snap, SELL_DAY)
+    assert len(closed) == 1
+    assert closed[0]["reason"] == "止损-5%"
+    # funded 仓位走真实账户口径：ret = pnl / cost，cost 含买入成本 1003
+    expected = (100 * 8.0 * (1 - pl.COST_ONE_WAY) - 1003) / 1003 * 100
+    assert closed[0]["ret_pct"] == pytest.approx(round(expected, 2))
