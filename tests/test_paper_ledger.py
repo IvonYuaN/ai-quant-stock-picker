@@ -64,6 +64,21 @@ def sleeve(led) -> dict:
     return led["sleeves"]["P3"]
 
 
+@pytest.fixture
+def stopped_sleeve(led) -> dict:
+    """**显式**打开 -5% 止损的 sleeve，专供止损机制测试。
+
+    ⚠️ 生产注册表里所有策略 stop_pct=0（口径对齐：过门数字都是无止损口径）。
+    所以「止损机制本身对不对」必须自己把止损打开来测 —— 若依赖生产配置，
+    口径一变这组测试就会变成**什么都没测**（不报错、不失败、还显示绿），
+    这比没有测试更糟。反过来，生产配置该不该带止损由
+    test_passed_strategies_carry_no_stop 单独守。
+    """
+    s = led["sleeves"]["P3"]
+    s["rules"]["stop_pct"] = 0.05
+    return s
+
+
 def _row(p: float, o: float | None = None, h: float | None = None,
          lo: float | None = None, ld: float | None = None) -> dict:
     """构造一条快照行（字段名与 paper_market 快照一致：p 现价 / o 开 / h 高 / l 低 / ld 跌停价）。"""
@@ -184,7 +199,7 @@ def test_settle_respects_t_plus_one(led, sleeve):
     assert sleeve["positions"] == []
 
 
-def test_stop_loss_does_not_wait_for_close(led, sleeve):
+def test_stop_loss_does_not_wait_for_close(led, stopped_sleeve):
     """最低价已击穿止损价，就必须按止损价成交，不能等收盘看它反弹回 9.6 再算。"""
     pl.ingest(led, "P3", [{"code": "600000", "price": 10.0}], BUY_DAY, "morning")
 
@@ -192,17 +207,17 @@ def test_stop_loss_does_not_wait_for_close(led, sleeve):
 
     assert closed[0]["reason"] == "止损-5%"
     assert closed[0]["ret_pct"] < 0
-    assert sleeve["trades"][0]["sell_price"] == 9.2      # 不是收盘的 9.6
+    assert stopped_sleeve["trades"][0]["sell_price"] == 9.2      # 不是收盘的 9.6
 
 
-def test_stop_loss_on_gap_down_uses_open(led, sleeve):
+def test_stop_loss_on_gap_down_uses_open(led, stopped_sleeve):
     """跳空低开到止损价下方：按开盘价卖（比止损价更差），不许按止损价假装成交。"""
     pl.ingest(led, "P3", [{"code": "600000", "price": 10.0}], BUY_DAY, "morning")
 
     closed = pl.settle(led, {"600000": _row(8.9, o=9.0, h=9.2, lo=8.8)}, SELL_DAY)
 
     assert closed[0]["reason"] == "止损-5%"
-    assert sleeve["trades"][0]["sell_price"] == 9.0      # min(止损 9.5, 开盘 9.0)
+    assert stopped_sleeve["trades"][0]["sell_price"] == 9.0      # min(止损 9.5, 开盘 9.0)
 
 
 def test_sealed_limit_down_defers_instead_of_selling(led, sleeve):
@@ -260,20 +275,22 @@ def test_missing_quote_defers_then_closes_at_cost(led, sleeve):
 def test_round_trip_cost_is_charged(led, sleeve):
     """平进平出必须亏掉往返成本，不许出现 0% 的「免费交易」。
 
-    买入 100 股 @10：成本 1010（含单边 1%）；卖出 990（再扣 1%）⇒ 净 -20 / 1010 = -1.98%。
-    注意它比朴素的 -2% 略小 —— 因为 1/1.01 与 0.99 不对称，按真实现金流算才是对的。
+    买入 100 股 @10：现金流出 1000*(1+c)；卖出回收 1000*(1-c)
+    ⇒ 净收益 = (1-c)/(1+c) - 1。注意它比朴素的 -2c 略小 —— 分母也含成本，
+    按真实现金流算才是对的。期望值从 pl.COST_ONE_WAY 推导，不硬编码费率。
     """
     pl.ingest(led, "P3", [{"code": "600000", "price": 10.0}], BUY_DAY, "morning")
 
     closed = pl.settle(led, {"600000": _row(10.0)}, SELL_DAY)
 
+    c = pl.COST_ONE_WAY
     assert closed[0]["funded"] is True
-    assert closed[0]["ret_pct"] == pytest.approx(-1.98, abs=0.01)
-    assert closed[0]["pnl"] == pytest.approx(-20.0, abs=0.5)
+    assert closed[0]["ret_pct"] == pytest.approx(((1 - c) / (1 + c) - 1) * 100, abs=0.01)
+    assert closed[0]["pnl"] == pytest.approx(1000 * (1 - c) - 1000 * (1 + c), abs=0.5)
 
 
 def test_unfunded_trade_is_statistics_only(led):
-    """买不起的票只记统计收益（朴素 2% 成本），不产生任何现金流、不动现金。"""
+    """买不起的票只记统计收益（朴素 2×单边成本），不产生任何现金流、不动现金。"""
     s = led["sleeves"]["P3"]
     pl.ingest(led, "P3", [{"code": "603931", "price": 30.5}], BUY_DAY, "morning")
 
@@ -281,7 +298,7 @@ def test_unfunded_trade_is_statistics_only(led):
 
     assert closed[0]["funded"] is False
     assert closed[0]["pnl"] == 0.0
-    assert closed[0]["ret_pct"] == pytest.approx(-2.0, abs=0.01)
+    assert closed[0]["ret_pct"] == pytest.approx(-2 * pl.COST_ONE_WAY * 100, abs=0.01)
     assert s["cash"] == pytest.approx(s["capital"])
 
 
@@ -539,23 +556,26 @@ def test_settle_records_real_excess_not_zero_placeholder(led, monkeypatch):
 
     首日恒 0% 的超额恰好等于基准的反数 —— 若把 None 写成 0，
     面板会显示一个「很可信的假数字」。这里用固定基准桩验证：
-    策略按真实成本口径 -21.04%、基准 -8% ⇒ 超额 = -13.04%，不是 0、也不是 None。
+    策略按真实现金流口径亏 20%+、基准 -8% ⇒ 超额 = 策略收益 - (-8%)，
+    既不是 0 也不是 None，且必须真的等于两者之差。
     """
     monkeypatch.setattr(pl, "_pm", _StubBench(-0.08))
     s = led["sleeves"]["P3"]
+    c = pl.COST_ONE_WAY
     s["positions"].append({
         "code": "002724", "name": "海洋王", "buy_date": BUY_DAY, "phase": "morning",
-        "buy_price": 10.0, "shares": 200, "cost": 2006.0, "funded": True,
-        "unfunded_why": "", "sealed_entry": False, "stop_price": 9.5, "note": "",
+        "buy_price": 10.0, "shares": 200, "cost": 2000 * (1 + c), "funded": True,
+        "unfunded_why": "", "sealed_entry": False, "stop_price": 0.0, "note": "",
     })
     snap = {p["code"]: _row(8.0) for p in s["positions"]}
     closed = pl.settle(led, snap, SELL_DAY)
     assert len(closed) == 1
-    assert closed[0]["excess_pct"] == pytest.approx(-13.04), \
+    expect = (200 * 8.0 * (1 - c) / (2000 * (1 + c)) - 1) * 100 - (-8.0)
+    assert closed[0]["excess_pct"] == pytest.approx(expect, abs=0.01), \
         "超额必须是策略减基准的真差值，不是 None/0 占位"
 
 
-def test_stop_loss_uses_worse_of_stop_and_open(led, monkeypatch):
+def test_stop_loss_uses_worse_of_stop_and_open(led, stopped_sleeve, monkeypatch):
     """跳空低开穿过止损价 ⇒ 按开盘价（更差）落账，不能乐观地按止损价成交。"""
     monkeypatch.setattr(pl, "_pm", None)
     s = led["sleeves"]["P3"]
@@ -576,7 +596,7 @@ def test_stop_loss_uses_worse_of_stop_and_open(led, monkeypatch):
 
 # ---------------- 止损归因（回测口径 vs 账本口径的桥） ----------------
 
-def test_stop_impact_records_counterfactual_without_touching_cash(led, monkeypatch):
+def test_stop_impact_records_counterfactual_without_touching_cash(led, stopped_sleeve, monkeypatch):
     """止损触发时记无止损对照收益，但不进 cash、不进主统计 t 值。"""
     monkeypatch.setattr(pl, "_pm", None)
     s = led["sleeves"]["P3"]
@@ -614,3 +634,87 @@ def test_no_stop_field_is_none_when_stop_not_triggered(led, monkeypatch):
     st = pl.sleeve_stats(s)
     assert st["stop_n"] == 0
     assert st["stop_impact"] is None, "没止损过写 0 会让人以为止损刚好中性"
+
+
+# ---------------- 口径对齐：成本假设 & 止损档位 ----------------
+#
+# 这两条守卫针对的都是「回测口径与账本口径不一致」这类静默错误：
+# 它不报错、不失败、测试也不红，只是让前向验证永远无法判读回测是否复现。
+
+def test_cost_assumption_matches_real_broker_fee():
+    """往返成本必须落在真实费率量级，不能被随手改回 1%/2%。
+
+    A 股真实收费：佣金 2.5bp×2 + 印花税 10bp（卖出）+ 过户费 0.2bp ≈ 15bp。
+    旧值 0.01 单边（往返 2%）没有任何费率依据，它会把 B 格 +1.362%/笔
+    记成 −0.638%，等于让账本天生注定亏 —— 任何信号都救不回来。
+    """
+    assert pl.COST_ONE_WAY <= 0.003, (
+        "COST_ONE_WAY=%r 超出真实费率量级（往返应 ≤0.3%%）；"
+        "若确要调高必须同时重跑 research/stop_sensitivity_probe.py 的成本分档" % pl.COST_ONE_WAY)
+    assert pl.COST_ONE_WAY > 0, "零成本会把每笔都记成纯毛利，同样是造假"
+
+
+def test_passed_strategies_carry_no_stop():
+    """过门策略的止损必须是 0：过门的数字本身就是无止损口径。
+
+    P1 h1 +3.06%/t8.61、B 格 +1.37%/t19.2、P6 +2.09%/t10.7 —— 全部是
+    「信号日收盘买入、次日收盘卖出、中途不看回撤」的口径。
+    账本若加 −5%，实测每笔少 0.21pp（P6 少 0.56pp，触发率 25.9%/34.5%），
+    前向就永远追不上回测，判读时只会得出「策略失效」这个错误结论。
+    """
+    import paper_strategies as ps
+    offenders = {sid: spec.get("stop_pct") for sid, spec in ps.STRATEGIES.items()
+                 if spec.get("evidence_state") == "passed" and spec.get("stop_pct")}
+    assert not offenders, (
+        "过门策略带止损 ⇒ 与过门口径不一致：%r。"
+        "要恢复止损，必须让回测也带同一止损重跑并重新过门，不许只改账本一侧" % offenders)
+
+
+def test_all_strategies_declare_stop_pct():
+    """每个策略都必须显式声明 stop_pct（含 0），防止新增策略漏配后默默无止损。"""
+    import paper_strategies as ps
+    missing = [sid for sid, spec in ps.STRATEGIES.items() if "stop_pct" not in spec]
+    assert not missing, "未声明 stop_pct：%r" % missing
+
+
+def test_load_syncs_rules_into_existing_sleeve(led):
+    """注册表改了规则，已经在磁盘上的账本必须跟着改 —— 否则「改了等于没改」。
+
+    实测场景：把 stop_pct 从 0.05 改成 0，但 load() 只 setdefault 新 sleeve，
+    旧 sleeve 的 rules 还是 0.05 ⇒ 账本继续按止损结算，而测试/注释/报告
+    都以为已经无止损。这类不一致不报错、不失败、测试也不红。
+    """
+    import paper_strategies as ps
+    led["sleeves"]["P1"]["rules"]["stop_pct"] = 0.05        # 模拟旧账本残留
+    led["sleeves"]["P1"]["rules"]["max_positions"] = 99     # 顺带验其他字段
+    pl.save(led)
+
+    got = pl.load()
+
+    assert got["sleeves"]["P1"]["rules"]["stop_pct"] == ps.STRATEGIES["P1"]["stop_pct"] == 0.0
+    assert got["sleeves"]["P1"]["rules"]["max_positions"] == ps.STRATEGIES["P1"]["max_positions"]
+    # 成本属于「历史事实」，不该被同步覆盖
+    assert got["sleeves"]["P1"]["rules"]["cost_one_way"] == pl.COST_ONE_WAY
+
+
+def test_close_uses_per_trade_cost_not_module_constant(led):
+    """旧仓位必须按它自带的费率结账，不能被新常数反算。
+
+    11-23 把 COST_ONE_WAY 从 0.01 修正到 0.0015。若 _close 读模块常数，
+    那些「按 1% 成交」的历史仓位会被悄悄改成 0.15% 的数字 —— 已发生的
+    现金流不可能因为改一行常数而变，这种「账本自动变好看」是最危险的造假。
+    """
+    s = led["sleeves"]["P3"]
+    s["positions"].append({
+        "code": "600001", "name": "旧费率票", "buy_date": BUY_DAY, "phase": "morning",
+        "buy_price": 10.0, "shares": 100, "cost": 1010.0,       # 1000*(1+1%)
+        "cost_one_way": 0.01,                                   # 这一笔当时按 1% 成交
+        "funded": True, "unfunded_why": "", "sealed_entry": False,
+        "stop_price": 0.0, "note": "",
+    })
+    closed = pl.settle(led, {"600001": _row(10.0)}, SELL_DAY)
+
+    # 按 1% 结：卖出 100*10*(1-0.01)=990，ret = 990/1010-1 = -1.98%
+    assert closed[0]["ret_pct"] == pytest.approx(-1.98, abs=0.01), \
+        "旧仓位被新成本常数反算了 —— 已发生的成交不许因改常数而变"
+    assert closed[0]["pnl"] == pytest.approx(-20.0, abs=0.5)
