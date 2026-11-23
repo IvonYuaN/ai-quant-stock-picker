@@ -14,7 +14,7 @@ import { buildDailyView } from "@/lib/daily-view";
 import { useThemeMode } from "@/lib/theme-mode";
 import { cn } from "@/lib/utils";
 
-/** 短线影子账户：5 个互不相同的策略各一个 ¥1 万纸面账户，纯前向验证。
+/** 短线影子账户：多个互不相同的策略各一个 ¥1 万纸面账户，纯前向验证。
  *
  * 与上方「研究变体」的区别（页面必须讲清楚，否则两个纸面账户会混读）：
  * - 研究变体 = 历史区间上的样本外验证；
@@ -48,7 +48,7 @@ function ShortlineArena() {
   );
 
   const title = "短线影子账户";
-  const blurb = "5 个策略各一个独立纸面账户的前向验证记录。";
+  const blurb = "每个策略一个独立纸面账户的前向验证记录。";
   const reload = () => setReloadKey((value) => value + 1);
 
   if (loading && !arena) {
@@ -78,12 +78,12 @@ function ShortlineArena() {
   return <section className="aq-section" aria-label="短线影子账户">
     <SectionHeader
       title={title}
-      description="5 个互不相同的短线策略各开一个 ¥1 万纸面账户，同一天起跑、只用真实报价成交、不回填。判据全部是相对全市场等权基准的超额；t 值按交易日聚类（同一天多个信号先平均），q 值是 5 个策略一起做的 BH-FDR 校正。与上方研究变体的区别：研究变体验证的是历史区间，这里只从起跑日往后累加。"
+      description={`${sleeves.length} 个互不相同的短线策略各开一个 ¥1 万纸面账户，同一天起跑、只用真实报价成交、不回填。判据全部是相对全市场等权基准的超额；t 值按交易日聚类（同一天多个信号先平均），q 值是 ${sleeves.length} 个策略一起做的 BH-FDR 校正。与上方研究变体的区别：研究变体验证的是历史区间，这里只从起跑日往后累加。`}
       count={`${sleeves.length} 个策略 · ${arena.trading_days ?? 0} 个交易日 · ${settled} 笔已结算`}
     />
     {arena.stale ? <StatePanel tone="warn">runner 最近一次推送是 {(arena.generated_at || "").slice(0, 10) || "多日之前"}，下面的数字停在最后一次收盘；周末与长假属正常。</StatePanel> : null}
     <div className="aq-total-grid">
-      <div className="aq-total-card"><span>组合虚拟净值</span><b className={tone(retPct)}>{pct(retPct)}</b>{settled === 0 ? <small className="aq-note">起跑首日尚未建仓，0% 只是起点</small> : benchLast == null ? null : <small className="aq-note">全市场等权 {pct(benchLast)}</small>}</div>
+      <div className="aq-total-card"><span>组合虚拟净值</span><b className={tone(retPct)}>{pct(retPct)}</b>{settled === 0 ? <small className="aq-note">{arena.positions.length ? `已有 ${arena.positions.length} 个持仓，还没到结算日（T+1 收盘才出结果）` : "尚未建仓，0% 只是起点"}</small> : benchLast == null ? null : <small className="aq-note">全市场等权 {pct(benchLast)}</small>}</div>
       <div className="aq-total-card"><span>超额（组合 − 基准）</span>{settled === 0 ? <><b>尚无成交</b><small className="aq-note">一笔都没结算时，组合与基准的差值不构成证据</small></> : <><b className={tone(edge)}>{pct(edge)}</b>{benchLast == null ? null : <small className="aq-note">基准同期 {pct(benchLast)}</small>}</>}</div>
       <div className="aq-total-card"><span>当前总净值</span><b>{money(arena.total_nav)}</b><small className="aq-note">{sleeves.length} 个账户各 {money(arena.initial_capital)} 起</small></div>
       <div className="aq-total-card"><span>扛住多重检验的策略</span>{settled === 0 ? <><b>—</b><small className="aq-note">还没有结算样本，不能说 0 个通过（也没到能判的时候）</small></> : <><b>{survived.length} / {sleeves.length}</b><small className="aq-note">q &lt; 0.10 且超额为正</small></>}</div>
@@ -91,9 +91,9 @@ function ShortlineArena() {
     {navPoints >= 2 ? <EChart option={navOption} height={260} fallback={<p className="aq-detail-muted">当前环境不支持图表；下表的超额与组合收益仍可复核。</p>} /> : <p className="aq-note">净值曲线要等第二个收盘日才有形状；现在只有一个起点，画出来会是一条毫无信息的横线。</p>}
     {sleeves.length ? <div className="aq-table-wrap">
       <table className="aq-table aq-summary-table">
-        <thead><tr><th>策略</th><th className="aq-num">超额均收益</th><th className="aq-num">超额胜率</th><th className="aq-num">T（按日聚类）</th><th className="aq-num">Q（FDR·5 策略）</th><th className="aq-num">统计进度</th><th className="aq-num">组合收益</th></tr></thead>
+        <thead><tr><th>策略</th><th className="aq-num">超额均收益</th><th className="aq-num">超额胜率</th><th className="aq-num">T（按日聚类）</th><th className="aq-num">Q（FDR·{sleeves.length} 策略）</th><th className="aq-num">统计进度</th><th className="aq-num">组合收益</th></tr></thead>
         <tbody>{sleeves.map((row) => {
-          const notes = [row.sealed_n ? `封死排不进 ${row.sealed_n}` : "", ...Object.entries(row.unfunded).slice(0, 2).map(([key, value]) => `${key} ${value}`)].filter(Boolean).join(" · ");
+          const notes = [row.sealed_n ? `检测时已封死 ${row.sealed_n}（照买）` : "", ...Object.entries(row.unfunded).slice(0, 2).map(([key, value]) => `${key} ${value}`)].filter(Boolean).join(" · ");
           const verdict = row.n === 0 ? <Tag>未开仓</Tag> : row.q_exc != null && row.q_exc < 0.10 && (row.exc_mean ?? 0) > 0 ? <Tag tone="ok">扛住多重检验</Tag> : (row.exc_mean ?? 0) > 0 ? <Tag>未校正通过</Tag> : <Tag tone="warn">无超额</Tag>;
           return <tr key={row.id}>
             <td><strong>{row.name}</strong> {verdict}<p className="aq-note">{row.hypothesis}{notes ? ` · ${notes}` : ""}</p></td>
@@ -117,9 +117,9 @@ function ShortlineArena() {
     </> : null}
     {/* 用 p 而不是 ul：`.aq-note` 是 flex 容器，套在 ul 上会把 li 压成横向乱文。 */}
     <p className="aq-note">· 所有判据都是<strong>超额</strong>：每笔先减掉「买入日 → 卖出日」的全市场等权收益，剩下的才算策略。组合收益那一列是绝对收益，只能对照着看。</p>
-    <p className="aq-note">· 触板即封死（卖一为 0）的信号记为「排不进队」，不占资金、不占仓位、不进主统计 —— 假装买到封死的板是这类回测最常见的自欺。</p>
+    <p className="aq-note">· 打板只买 B 格（集合竞价没顶死 + 盘中摸板）。A 格一字排不进，只进观察不进样本；检测到信号的那一刻通常已经封死，但回测过门的那批本来就是「收停板」，所以封死只作标记、单独计数，<strong>不拦买入</strong> —— 拦了等于把作业集整个抹掉，账本会连着几个月 0 成交。</p>
     <p className="aq-note">· 一字跌停卖不掉：顺延持有（最多 10 个交易日），不按当日收盘假装成交。</p>
-    <p className="aq-note">· 5 个策略一起测就要付多重检验的代价，单看某一个的 t=2 不算；「扛住」那一栏按 q &lt; 0.10 判定。</p>
+    <p className="aq-note">· 多策略一起测就要付多重检验的代价（m = 上面的策略数），单看某一个的 t=2 不算；「扛住」那一栏按 q &lt; 0.10 判定。</p>
     <p className="aq-note">· ¥1 万硬约束：单笔 20% 只有 ¥2000，高价股连 1 手都买不起，这类信号照记但标「买不起 1 手」。</p>
   </section>;
 }
