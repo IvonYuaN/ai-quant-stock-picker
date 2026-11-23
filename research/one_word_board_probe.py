@@ -106,15 +106,28 @@ def probe(db: str, start: str = "20231101") -> dict:
     dates = close.index
     listing = sl._listing_mask(close, lookback=30)
 
-    # ---- 与 stop_sensitivity_probe 完全一致的格子定义 ----
-    zt_prev = cv / np.roll(cv, 1, axis=0) - 1.0
-    zt_prev[:, 0] = np.nan
+    # ---- 格子定义（11-23 修 off-by-one）----
+    # 🔴 旧写法 `zt_prev = cv/roll(cv,1)-1 ; zt_prev[:,0]=nan` 错了两处：
+    #   ① 该式 t 行算的是「**当日**涨幅」，不是前一日；
+    #   ② `[:, 0]` 清的是第 0 **列**（第一只股票），不是第 0 **行**。
+    #   ⇒ `valid` 实际要求「今日涨停」，与 A/B 格的「今日触板收板」同义反复，
+    #     setup 失效 ⇒ 结果变成**全部连板高度混合**的一字板，不是二板一字板。
+    #   正确：昨日涨停 = 截至前一日的连续涨停 ≥1（与 board_height_probe / 实盘
+    #   trailing_zt_run() 同口径）。
+    with np.errstate(invalid="ignore", divide="ignore"):
+        zt_today = cv / np.roll(cv, 1, axis=0) - 1.0 >= 0.098
+    zt_today[0, :] = False
+    streak_prev = np.zeros_like(zt_today, dtype=np.int8)
+    _run = np.zeros(zt_today.shape[1], dtype=np.int8)
+    for _t in range(zt_today.shape[0]):
+        streak_prev[_t] = _run
+        _run = np.where(zt_today[_t], _run + 1, 0)
     with np.errstate(invalid="ignore", divide="ignore"):
         gap = op / np.roll(cq, 1, axis=0) - 1.0
-    gap[:, 0] = np.nan
+    gap[0, :] = np.nan
     limit_up = np.round(np.roll(cq, 1, axis=0) * 1.10, 2)
-    limit_up[:, 0] = np.nan
-    valid = (zt_prev >= 0.098) & np.isfinite(hh) & np.isfinite(limit_up) & np.isfinite(op) & np.isfinite(gap)
+    limit_up[0, :] = np.nan
+    valid = (streak_prev >= 1) & np.isfinite(hh) & np.isfinite(limit_up) & np.isfinite(op) & np.isfinite(gap)
     near = hh >= limit_up * 0.998
     A = valid & (op >= limit_up * 0.998) & (cq >= limit_up * 0.998)
     B = valid & (op < limit_up * 0.998) & near & (cq >= limit_up * 0.998)

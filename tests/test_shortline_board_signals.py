@@ -346,20 +346,34 @@ def test_board_signals_rejects_spec_without_board():
     assert "忘了写板数的策略" in str(ei.value)      # 证明是守卫报的，不是顺手 KeyError
 
 
-def test_top_n_sleeves_hold_at_least_two_days_of_positions():
-    """`max_positions` 必须 ≥ 2×top_n。
+def test_top_n_sleeves_hold_enough_slots_for_their_exit_rule():
+    """`max_positions` 必须够放「还没卖掉的仓位 + 今天要买的 top_n 只」。
 
-    T+1 收盘才结算 ⇒ 昨天买的 top_n 只，今天盘中仍然占着仓位。
-    上限若只等于 top_n，新信号每天都会撞「仓位已满」，组合净值永远不动
-    （信号统计照走，所以从报表上几乎看不出来 —— 只有「组合收益」那一列是死的）。
+    需要多少槽位**取决于卖出时点**（`_holds_slot` 的实际语义）：
+
+    - `t1_close`：次日收盘才结算 ⇒ 今天盘中，昨天买的 top_n 只**仍占着仓位**
+      ⇒ 必须 ≥ 2×top_n。若只等于 top_n，新信号每天撞「仓位已满」，
+      信号统计照走、报表上看不出异常，只有「组合收益」那一列是死的。
+    - `t1_open`：次日开盘就已兑现（`_holds_slot` 对该情形返回不占位）
+      ⇒ 今天开盘前槽位已全空，`max_positions == top_n` 就够。
+      此时若仍要求 2×top_n，等于逼着仓位上限虚高，反而允许超配。
+
+    11-23：P1/P2/P6 全部改 t1_open，P2 新增 top_n=5 ⇒ 这条断言必须按 exit 分叉，
+    否则会把「正确的配置」判红（或者更糟：为了迁就测试把上限改成 10，凭空放大风险）。
     """
     for sid, spec in STRATEGIES.items():
         top_n = spec.get("top_n")
         if not top_n:
             continue
-        assert spec["max_positions"] >= 2 * top_n, \
-            "%s 的 max_positions=%d 容不下「昨天的 %d 只 + 今天的 %d 只」" % (
-                sid, spec["max_positions"], top_n, top_n)
+        exit_rule = spec.get("exit")
+        if exit_rule == "t1_open":
+            need = top_n
+            why = "t1_open 次日开盘即兑现，开盘前槽位已空 ⇒ %d 只" % top_n
+        else:
+            need = 2 * top_n
+            why = "%s 隔夜仍占位 ⇒ 昨天的 %d 只 + 今天的 %d 只" % (exit_rule, top_n, top_n)
+        assert spec["max_positions"] >= need, \
+            "%s 的 max_positions=%d 不够：%s" % (sid, spec["max_positions"], why)
 
 
 # ---------------- 20cm 不进打板成交集 ----------------
