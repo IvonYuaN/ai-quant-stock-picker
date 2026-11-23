@@ -5,6 +5,10 @@ on:
     paths:
       - "src/**"
       - "scripts/**"
+      # research/** 是策略口径与影子账户引擎的所在地（paper_*.py / shortline_*.py）。
+      # 不加这一条，纯研究代码改动能零 CI 合进 main —— 今天 #579/#580/#583
+      # 全靠同时改了 tests/** 才被 CI 拦住，下次有人只改研究代码就会漏。
+      - "research/**"
       - "tests/**"
       - "backend/**"
       - "frontend/**"
@@ -27,6 +31,10 @@ on:
     paths:
       - "src/**"
       - "scripts/**"
+      # research/** 是策略口径与影子账户引擎的所在地（paper_*.py / shortline_*.py）。
+      # 不加这一条，纯研究代码改动能零 CI 合进 main —— 今天 #579/#580/#583
+      # 全靠同时改了 tests/** 才被 CI 拦住，下次有人只改研究代码就会漏。
+      - "research/**"
       - "tests/**"
       - "backend/**"
       - "frontend/**"
