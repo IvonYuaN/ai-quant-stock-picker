@@ -46,5 +46,5 @@ export const api_does_not_hardcode_sleeve_count = !/5 个策略/.test(api);
  * 净值图例也曾写死「组合（5 策略等权）」—— 加 P6 后仍是 5。
  * 这类文案在截图里和正常字样长得一模一样，只有读源码能抓到。
  */
-export const chart_does_not_hardcode_sleeve_count = !/5 策略等权|组合（5/.test(chartOptions);
-export const chart_names_portfolio_without_a_fixed_number = chartOptions.includes("各策略等权");
+export const chart_does_not_hardcode_sleeve_count = !chartOptions.split("\n").some((line) => /name:\s*"组合（[0-9]/.test(line));
+export const chart_names_portfolio_without_a_fixed_number = /name:\s*"组合（各策略等权）"/.test(chartOptions);
