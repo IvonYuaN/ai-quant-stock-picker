@@ -96,11 +96,11 @@ def test_passed_modes_tagged_passed_and_others_not():
       ⇒ 教训：a) 升得太快，把「不可成交价上的统计显著」当成了 alpha。
          以后任何模式升 `passed` 前，必须先答一句「按哪个价成交」，答不出就是前视。
     """
-    for sid in ("P1", "P2", "P6"):
+    for sid in ("P1", "P2", "P3", "P5", "P6"):
         assert mode_card.tag_of(STRATEGIES[sid]) == "❌已否证", \
-            "%s 的买点（收盘涨停价）不可成交，不得标为过门" % sid
-    for sid in ("P3", "P4", "P5"):
-        assert mode_card.tag_of(STRATEGIES[sid]) == "⏳未过门", sid
+            "%s 已被回测证伪/买点不可成交，不得标为过门或待验证" % sid
+    assert mode_card.tag_of(STRATEGIES["P4"]) == "⏳未过门", \
+        "P4 需要竞价额数据，现有库没有 ⇒ 只能标未过门，不能标否证（没测过 ≠ 测出为负）"
     assert not [s for s, spec in STRATEGIES.items()
                 if spec.get("evidence_state") == "passed"], \
         "当前无任何模式过门；若要升 passed，必须先证明买点可成交"
