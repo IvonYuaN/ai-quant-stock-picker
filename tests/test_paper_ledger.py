@@ -670,11 +670,65 @@ def test_passed_strategies_carry_no_stop():
         "要恢复止损，必须让回测也带同一止损重跑并重新过门，不许只改账本一侧" % offenders)
 
 
+def test_t1_open_sells_at_next_open_price_not_close(led):
+    """t1_open 必须按次日**开盘价**成交，不许用收盘价（两者差一个日内涨跌）。
+
+    P1/P2/P6 现在都是 t1_open（隔夜溢价在集合竞价兑现）。
+    开盘 10.5 / 收盘 9.8 时，卖出价必须是 10.5；
+    若错用收盘价，会把 +5% 记成 -2% —— 连方向都会反。
+    """
+    s = led["sleeves"]["P1"]
+    assert s["rules"]["exit"] == "t1_open", "P1 应为 t1_open（隔夜溢价口径）"
+    pl.ingest(led, "P1", [{"code": "600000", "name": "测试票", "price": 10.0}], BUY_DAY, "board")
+
+    closed = pl.settle(led, {"600000": _row(9.8, o=10.5, h=10.6, lo=9.7)}, SELL_DAY)
+
+    assert closed[0]["reason"] == "次日开盘兑现"
+    assert s["trades"][0]["sell_price"] == 10.5, "按收盘价成交了 —— t1_open 被当成 t1_close"
+    assert closed[0]["ret_pct"] > 0, "开盘 10.5 卖在 10.0 买入之上，必须记为正收益"
+
+
+def test_t1_open_sealed_limit_down_still_defers(led):
+    """t1_open 遇到一字跌停开盘：卖不掉，必须顺延持有而不是按开盘价假装成交。
+
+    这是把 P1/P6 改成 t1_open 之后新增的尾部风险面：集合竞价确实卖不掉。
+    宁可记「顺延」也不能记成「按跌停价卖掉了」—— 后者会掩盖真实的尾部。
+    """
+    s = led["sleeves"]["P1"]
+    pl.ingest(led, "P1", [{"code": "600000", "name": "测试票", "price": 10.0}], BUY_DAY, "board")
+    limit_down = {"p": 9.0, "o": 9.0, "h": 9.0, "l": 9.0, "ld": 9.0}
+
+    assert pl.settle(led, {"600000": limit_down}, SELL_DAY) == []
+    assert len(s["positions"]) == 1 and s["trades"] == []
+    assert s["positions"][0]["stuck_days"] == 1
+
+
 def test_all_strategies_declare_stop_pct():
     """每个策略都必须显式声明 stop_pct（含 0），防止新增策略漏配后默默无止损。"""
     import paper_strategies as ps
     missing = [sid for sid, spec in ps.STRATEGIES.items() if "stop_pct" not in spec]
     assert not missing, "未声明 stop_pct：%r" % missing
+
+
+def test_board_family_exits_at_next_open():
+    """打板家族（phase=board 的 P1/P2/P6）必须卖在**次日开盘**。
+
+    实测 700 交易日、可成交 B 格：
+        t1_close +1.362%/笔(t16.57) 胜 76.6%
+        t1_open  +1.678%/笔(t34.37) 胜 95.0%
+    P6 top2 同样 +2.088% → +2.850%。因为 B 格次日**日内**收益是 -0.136%，
+    而 (1+t1_close) = (1+t1_open)×(1+日内) 是恒等式 ⇒ 日内为负时开盘卖必然更优。
+
+    经济含义：打板赚的是**隔夜情绪溢价**，在次日集合竞价一次性兑现，开盘后就在回吐。
+    这条守卫防「觉得开盘卖太早、改回收盘」—— 那等于把到手的溢价还回去，
+    还白担一天日内波动。P3/P4 不在此列：它们买的是日内修复/延续，兑现窗口本在收盘。
+    """
+    import paper_strategies as ps
+    board_family = {sid: spec for sid, spec in ps.STRATEGIES.items()
+                    if spec.get("phase") == "board"}
+    assert board_family, "打板家族为空，这条测试就失去意义了"
+    bad = {sid: s.get("exit") for sid, s in board_family.items() if s.get("exit") != "t1_open"}
+    assert not bad, "打板家族必须 t1_open（隔夜溢价在集合竞价兑现）：%r" % bad
 
 
 def test_load_syncs_rules_into_existing_sleeve(led):
