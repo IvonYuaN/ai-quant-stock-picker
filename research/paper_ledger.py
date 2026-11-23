@@ -13,7 +13,10 @@
 - 买入：策略信号触发时的真实报价价（打板=触板价，竞价=开盘价，尾盘=14:45 价）。
 - 卖出：`t1_close` = 次一交易日收盘；`t1_open` = 次一交易日开盘。
 - 止损：`stop_pct` 触发则按止损价（跳空则按开盘价，取更差者）。
-- 成本：单边 1%（往返 2%），A 股 100 股整手。
+  🔴 11-23 起所有策略 **stop_pct=0（无止损）**：过门的回测数字本身就是无止损口径，
+  且实测 -5% 档触发率 25.9%/-3.6pp 期望，属「有下行无保护」（详见 paper_strategies.py 注释）。
+- 成本：单边 0.15%（往返 0.3%，= 佣金2.5bp×2 + 印花税10bp + 过户费 + 收盘竞价滑点余量），A 股 100 股整手。
+  每笔自带 `cost_one_way`，历史按旧假设（单边 1%）成交的笔不会被新常数反算。
 
 数据落点：research/paper_arena.json（研究侧，纯本地，不碰生产/front api）
 """
@@ -38,7 +41,15 @@ LEDGER = HERE / "paper_arena.json"
 CST = timezone(timedelta(hours=8))
 
 INITIAL_CAPITAL = 10_000.0
-COST_ONE_WAY = 0.01
+# 🔴 成本是**往返**费率，必须对得上券商真实收费：
+#   佣金 2.5bp × 2 + 印花税 10bp（仅卖出）+ 过户费 0.2bp ≈ 15bp = 0.15%
+#   ⇒ 单边 7.5bp。这里取 0.0015（单边 0.15%）留一倍余量，覆盖次日收盘集合竞价的滑点。
+# 旧值是 0.01（单边 1%、往返 2%），**没有任何费率依据**：A 股不存在 1% 的固定交易费率。
+# 它把 B 格 +1.362%/笔的真 alpha 记成 −0.638%，等于让账本天生注定亏，
+# 任何信号都救不回来（--see research/stop_sensitivity_probe.py 的成本分档）。
+# 每笔 trade 仍各自记下当时的 cost_one_way，历史可追溯，不混口径。
+COST_ONE_WAY = 0.0015
+COST_ONE_WAY_LEGACY = 0.01      # 11-23 之前落账用的旧假设，仅用于读旧数据时识别口径
 LOT = 100
 VERSION = 2
 MAX_STUCK_DAYS = 10      # 连续一字跌停卖不掉的最长顺延天数（超了按收盘强平，并标注是乐观上界）
@@ -90,6 +101,22 @@ def _migrate(old: dict) -> dict:
     return led
 
 
+def _sync_rules(s: dict, spec: dict) -> None:
+    """把注册表里的策略定义同步进**已存在**的 sleeve。
+
+    🔴 这是 11-23 抓到的静默不一致：`load()` 原来只 `setdefault` 新 sleeve，
+    已存在的 sleeve 里 `rules` 永远停在创建那天的值。于是注册表把
+    `stop_pct` 从 0.05 改成 0 之后，**跑起来的账本仍按 0.05 结算**，
+    而代码注释、测试、报告全都以为已经改了 —— 这种不一致不报错、
+    不失败、测试也不红，只能靠对账发现。
+    规则（exit/stop/仓位/时段）是「策略定义」，代码是唯一事实源，必须同步；
+    成本是「这笔交易当时按什么费率成交的」，属于历史事实，**不同步**。
+    """
+    for k in ("exit", "stop_pct", "position_pct", "max_positions", "phase"):
+        if k in spec:
+            s["rules"][k] = spec[k]
+
+
 def load() -> dict:
     if LEDGER.exists():
         try:
@@ -100,6 +127,7 @@ def load() -> dict:
             # 补齐新增 sleeve（后续加策略不丢已有数据）
             for sid, spec in STRATEGIES.items():
                 raw["sleeves"].setdefault(sid, _new_sleeve(sid, spec))
+                _sync_rules(raw["sleeves"][sid], spec)
             return raw
         return _migrate(raw)
     legacy = HERE / "paper_ledger.json"          # v1 单策略账本
@@ -185,6 +213,10 @@ def ingest(led: dict, sid: str, signals: list[dict], date: str, phase: str,
             "cost": round(cost, 2), "funded": funded, "unfunded_why": why,
             "sealed_entry": bool(sig.get("sealed")),
             "stop_price": round(price * (1 - rules["stop_pct"]), 3) if rules["stop_pct"] else 0.0,
+            # 成本按**笔**落：历史笔是按旧假设（单边1%）成交的，改常数不能反过来
+            # 重算已经发生的现金流，也不能让新笔继承旧口径。每笔自带 cost_one_way，
+            # 报告里就能看出「这一笔当时按什么费率算的」，不用猜。
+            "cost_one_way": COST_ONE_WAY,
             "note": sig.get("note", ""),
         })
         if funded:
@@ -276,10 +308,15 @@ def _close(s: dict, p: dict, sell_price: float, date: str, reason: str,
     回测过门的 +3.06%/+1.37% **没有止损逻辑**，账本却有 -5% 止损；
     两边差多少必须能算出来，否则前向验证永远对不上回测。
     这是**只读对照**：不进 cash、不改仓位、不进 t 值统计，只落一个字段供归因。
+
+    🔴 成本取 `p["cost_one_way"]`（买入时那一笔自带的费率），不是模块常数：
+    11-23 把常数从单边 1% 修正到 0.15% 之后，旧仓位仍必须按 1% 结账，
+    否则改一个常数会把「已经发生的成交」悄悄改成别的数字。
     """
-    ret = sell_price / p["buy_price"] - 1 - COST_ONE_WAY * 2
+    c = float(p.get("cost_one_way") or COST_ONE_WAY)
+    ret = sell_price / p["buy_price"] - 1 - c * 2
     if p["funded"] and p["shares"]:
-        proceeds = p["shares"] * sell_price * (1 - COST_ONE_WAY)
+        proceeds = p["shares"] * sell_price * (1 - c)
         pnl = proceeds - p["cost"]
         s["cash"] += proceeds
         ret = pnl / p["cost"] if p["cost"] else 0.0
@@ -291,9 +328,9 @@ def _close(s: dict, p: dict, sell_price: float, date: str, reason: str,
     # 其余情况就是同一笔成交，不重复落字段以免误导。
     no_stop_ret = None
     if no_stop_price and no_stop_price > 0 and reason.startswith("止损-"):
-        no_stop_ret = round((no_stop_price / p["buy_price"] - 1 - COST_ONE_WAY * 2) * 100, 2)
+        no_stop_ret = round((no_stop_price / p["buy_price"] - 1 - c * 2) * 100, 2)
         if p["funded"] and p["shares"] and p["cost"]:
-            no_stop_pnl = p["shares"] * no_stop_price * (1 - COST_ONE_WAY) - p["cost"]
+            no_stop_pnl = p["shares"] * no_stop_price * (1 - c) - p["cost"]
             no_stop_ret = round(no_stop_pnl / p["cost"] * 100, 2)
     s["trades"].append({
         "code": p["code"], "name": p["name"], "buy_date": p["buy_date"],

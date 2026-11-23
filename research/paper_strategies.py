@@ -281,6 +281,17 @@ def board_signals(spec: dict, hits: list[dict]) -> dict:
 
 # ---------------- 注册表 ----------------
 
+# 🔴 止损为什么全设 0（11-23 用 700 交易日 / 3.6 万格实测后定的，不是拍脑袋）：
+#   research/stop_sensitivity_probe.py 对同一批历史信号回放止损档位，B 格（可成交）结果：
+#     无止损 +1.362%/笔(t16.57) | -10% +1.294% | -8% +1.225% | -5% +1.148% | -3% +1.015%
+#   触发率：-5% 档有 25.9% 的笔在次日盘中破位（P6 更是 34.5%），而多数随后收盘回升。
+#   成因是 A 股 T+1 结构让「固定百分比止损」变成**有下行无保护**：
+#     · 跳空低开超过止损线 ⇒ 只能按开盘价成交，一样亏，保护不了；
+#     · 盘中砸破止损线后回升 ⇒ 砍在最低点，纯损失。
+#   更硬的理由：**过门的数字本身是无止损口径**（P1 h1 +3.06%、B 格 +1.37%、P6 +2.09%）。
+#   账本若加 -5%，前向验证与回测就不同口径 ⇒ 永远无法判读「前向是否复现回测」。
+#   ⚠️ 去掉止损 ≠ 忽略风险：风险控制靠**仓位**（单笔 20%、最多 5 笔）而不是靠砍在坑里。
+#   若将来要恢复，必须先让回测也带上同一止损重跑并重新过门，不许只改账本一侧。
 STRATEGIES: dict[str, dict] = {
     "P1": {
         "name": "二板接力",
@@ -292,10 +303,10 @@ STRATEGIES: dict[str, dict] = {
         # 老大要的是「合理的参数模式」，那就必须把每个模式的阈值和证据状态写在同一行，
         # 不然推出去的六个模式看起来一样可信，等于把未验证的混进已验证里卖。
         "params": "二板·B格(非一字)·全取·单笔≤20%仓",
-        "evidence": "过门 h1+3.06%/t8.6",
+        "evidence": "过门 全信号h1+3.06%/t8.6 · 可成交B格+1.36%/t16.6",
         "evidence_state": "passed",
         "exit": "t1_close",
-        "stop_pct": 0.05,
+        "stop_pct": 0.0,
         "position_pct": 0.20,
         "max_positions": 5,
     },
@@ -309,7 +320,7 @@ STRATEGIES: dict[str, dict] = {
         "evidence": "对照组·未过门",
         "evidence_state": "control",
         "exit": "t1_close",
-        "stop_pct": 0.05,
+        "stop_pct": 0.0,
         "position_pct": 0.20,
         "max_positions": 5,
     },
@@ -322,7 +333,7 @@ STRATEGIES: dict[str, dict] = {
         "evidence": "前向验证中·未过门",
         "evidence_state": "unverified",
         "exit": "t1_close",
-        "stop_pct": 0.05,
+        "stop_pct": 0.0,
         "position_pct": 0.20,
         "max_positions": 5,
     },
@@ -335,7 +346,7 @@ STRATEGIES: dict[str, dict] = {
         "evidence": "前向验证中·未过门",
         "evidence_state": "unverified",
         "exit": "t1_close",
-        "stop_pct": 0.05,
+        "stop_pct": 0.0,
         "position_pct": 0.20,
         "max_positions": 5,
     },
@@ -360,10 +371,10 @@ STRATEGIES: dict[str, dict] = {
         "board": 2,
         "top_n": 2,
         "params": "二板·B格·跳空最大2只",
-        "evidence": "过门 +2.73%/t13.8·15日可判",
+        "evidence": "过门 +2.09%/t10.7(可成交) · 扣0.3%后+1.79%",
         "evidence_state": "passed",
         "exit": "t1_close",
-        "stop_pct": 0.05,
+        "stop_pct": 0.0,
         "position_pct": 0.20,
         # 🔴 max_positions 必须 ≥ 2×top_n，**不能设成 2**：
         # T+1 收盘才结算，所以「昨天买的 2 只」在今天盘中仍然占着仓位。
