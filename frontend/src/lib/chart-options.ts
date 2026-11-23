@@ -92,7 +92,7 @@ export function ladderOption(ladder: readonly LadderRow[], mode: ThemeMode): ECh
   };
 }
 
-/** 影子账户净值：5 策略等权组合（实线）vs 全市场等权基准（虚线），单位 %。
+/** 影子账户净值：各策略等权组合（实线）vs 全市场等权基准（虚线），单位 %。
  *
  * 为什么组合线不用红/绿：颜色一旦表达方向，读者会把"线是红的"当成"策略好"，
  * 而这张图要看的恰恰是**两条线之间的距离**（超出基准才有 alpha）。
@@ -126,7 +126,7 @@ export function paperNavOption(
     },
     series: [
       {
-        name: "组合（5 策略等权）",
+        name: "组合（各策略等权）",
         type: "line",
         data: [...nav.port],
         showSymbol: nav.dates.length <= 30,

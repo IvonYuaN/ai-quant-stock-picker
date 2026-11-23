@@ -27,6 +27,7 @@ function sourceOf(relative: string): string {
 
 const backtest = sourceOf("src/pages/BacktestPage.tsx");
 const api = sourceOf("src/lib/api.ts");
+const chartOptions = sourceOf("src/lib/chart-options.ts");
 
 /** 🔴 「封死排不进」是 #574 之前的旧口径。现在这类信号照买，再出现就是讲反话。 */
 export const backtest_has_no_stale_sealed_wording = !backtest.includes("封死排不进");
@@ -40,3 +41,10 @@ export const backtest_does_not_hardcode_sleeve_count = !/5 个策略|5 个互不
   backtest,
 );
 export const api_does_not_hardcode_sleeve_count = !/5 个策略/.test(api);
+
+/**
+ * 净值图例也曾写死「组合（5 策略等权）」—— 加 P6 后仍是 5。
+ * 这类文案在截图里和正常字样长得一模一样，只有读源码能抓到。
+ */
+export const chart_does_not_hardcode_sleeve_count = !/5 策略等权|组合（5/.test(chartOptions);
+export const chart_names_portfolio_without_a_fixed_number = chartOptions.includes("各策略等权");
