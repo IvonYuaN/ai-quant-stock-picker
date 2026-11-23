@@ -233,3 +233,38 @@ def render_settlement_card(led: dict, date: str, max_rows: int = 4) -> str:
     if not blocks:
         return "## 💰 六模式结算 %s\n今日无结算（首笔 T+1 收盘才平仓）" % date
     return "\n".join(["## 💰 六模式结算 %s" % date] + blocks)
+
+
+def render_picks_only(picks: dict, max_per_mode: int = 3) -> str:
+    """极简推荐卡：六个模式今天各自买了什么，一行一个模式。
+
+    老大 2026-11-23 原话「通知太多废话，还是只通知打板其他策略完全没有」。
+    之前卡片只有打板票 + 一行笔数 + 两行口径 + 账本摘要 —— 其他模式的推荐
+    全被压成「P3 2笔」，点开也看不到买了谁。这里只留事实：代码 名称 价 理由。
+
+    不印口径长句、不印账本摘要、不印「炸板-5%是什么」——那些是文档不是推荐。
+    证据状态用一个字标：过门=✓，其余=·，不写解释。
+    """
+    try:
+        from paper_strategies import STRATEGIES
+    except ImportError:  # pragma: no cover
+        return ""
+    L: list[str] = []
+    for sid in sorted(STRATEGIES):
+        rec = picks.get(sid) or {}
+        bought = list(rec.get("bought") or [])
+        if not bought:
+            continue
+        spec = STRATEGIES[sid]
+        mark = "✓" if spec.get("evidence_state") == "passed" else "·"
+        items = []
+        for it in bought[:max_per_mode]:
+            note = str(it.get("note") or "")
+            items.append("%s %s %.2f %s" % (
+                it.get("code", ""), str(it.get("name") or "")[:4],
+                float(it.get("price") or 0), note))
+        more = " …+%d" % (len(bought) - max_per_mode) if len(bought) > max_per_mode else ""
+        L.append("%s%s %s" % (sid, mark, " / ".join(items) + more))
+    if not L:
+        return ""
+    return "\n".join(L)

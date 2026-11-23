@@ -93,7 +93,11 @@ def arena_board(det: dict) -> None:
         import paper_scan
         today = datetime.now(CST).strftime("%Y-%m-%d")
         res = paper_scan.run_phase("board", today, det)
-        got = {sid: len(r.get("bought", [])) for sid, r in res.get("sleeves", {}).items()}
+        sleeves = res.get("sleeves") or {}
+        got = {sid: len(r.get("bought", [])) for sid, r in sleeves.items()}
+        # 🔴 同其他时点一样落 picks：推荐卡片从 picks 渲染，
+        # 不落这里打板新票就永远不出现在「今日推荐」里（老大 11-23 点名的病根）。
+        record_picks(today, "board", sleeves)
         print("[arena] board ingest %s" % json.dumps(got, ensure_ascii=False), file=sys.stderr)
     except Exception as e:
         print("[arena] board 记账失败: %s" % e, file=sys.stderr)
@@ -485,16 +489,20 @@ def main(argv=None) -> int:
             md += "\n\n" + footer
         md += ledger_line
     else:
-        board_sec = build_markdown(det) if det.get("new_hits") else ""
-        phase_sec = "\n\n".join(
-            s for s in (mode_card.render_phase_card(p, sv) for p, sv in ran_phases) if s)
-        if not board_sec and not phase_sec:
+        if not det.get("new_hits") and not ran_phases:
             print("[cloud] 本轮既无新增触板、也无新模式信号，不推", file=sys.stderr)
             return 0
+        # 🔴 2026-11-23 老大点名：「通知太多废话，还是只通知打板其他策略完全没有」。
+        # 触发仍靠新信号，但推送内容换成**六模式今天买了什么**——
+        # 之前只有打板票 + 一行笔数 + 口径长句 + 账本摘要，其他模式全被压成「P3 2笔」。
+        # 不印口径、不印账本摘要：那些是文档不是推荐。
         today = datetime.now(CST).strftime("%Y-%m-%d")
         picks = today_picks(today)
-        footer = mode_card.render_daily_footer(picks, pending=pending_modes(done_phases(today), picks))
-        md = mode_card.render_card(board_sec, phase_sec, footer, ledger_line)
+        body = mode_card.render_picks_only(picks)
+        if not body:
+            print("[cloud] 无推荐可推", file=sys.stderr)
+            return 0
+        md = "## 今日推荐 %s\n%s" % (datetime.now(CST).strftime("%H:%M"), body)
 
     if args.dry_run:
         print("[cloud] DRY-RUN（未推送）\n---\n%s" % md)

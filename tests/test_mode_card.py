@@ -292,3 +292,53 @@ def test_settlement_card_shows_stop_counterfactual():
     md = mode_card.render_settlement_card(led, "2026-11-23")
     assert "若不止损-1.20%" in md and "若不止损-2.30%" in md
     assert "止损2笔净影响-5.13pp" in md, "两笔分别差 5.68 / 4.58pp，均值 5.13pp"
+
+
+def test_picks_only_shows_every_mode_not_just_board():
+    """老大 11-23 点名：推送只有打板，其他策略完全没有。
+
+    新卡必须把 P1~P6 今天买了什么全列出来，每个模式一行、带代码/价/理由。
+    """
+    picks = {
+        "P1": {"bought": [{"code": "002749", "name": "国光股份", "price": 9.56,
+                            "note": "2板·封单510万"}]},
+        "P3": {"bought": [{"code": "688199", "name": "久日新材", "price": 16.45,
+                            "note": "昨日-16.9% → 今-0.5%"}]},
+        "P4": {"bought": [{"code": "002685", "name": "华东重机", "price": 7.86,
+                            "note": "高开+6.2% 竞价额22946万"}]},
+    }
+    md = mode_card.render_picks_only(picks)
+    for sid, code in (("P1", "002749"), ("P3", "688199"), ("P4", "002685")):
+        assert sid in md and code in md, "%s 的推荐没推出来" % sid
+    assert "昨日-16.9%" in md and "高开+6.2%" in md, "理由必须带，不能只给代码"
+
+
+def test_picks_only_has_no_boilerplate():
+    """老大 11-23 点名「通知太多废话」：口径长句、账本摘要、笔数统计一律不出现。"""
+    picks = {"P1": {"bought": [{"code": "002749", "name": "国光股份",
+                                "price": 9.56, "note": "2板"}]}}
+    md = mode_card.render_picks_only(picks)
+    for noise in ("炸板-5%", "半个跌停", "影子账户", "今日各模式", "超t", "池", "单笔≤20%"):
+        assert noise not in md, "废话字段 %s 还在" % noise
+
+
+def test_picks_only_marks_passed_modes_only():
+    """过门用 ✓ 标，其余用 ·，不写解释——状态要有但不能占篇幅。"""
+    picks = {
+        "P1": {"bought": [{"code": "002749", "name": "国光", "price": 9.56, "note": "2板"}]},
+        "P3": {"bought": [{"code": "688199", "name": "久日", "price": 16.45, "note": "超跌"}]},
+    }
+    md = mode_card.render_picks_only(picks)
+    assert "P1✓" in md and "P3·" in md
+    assert "过门" not in md and "未过门" not in md
+
+
+def test_picks_only_ignores_unknown_sids():
+    """只遍历注册表的六个模式——picks 里混进脏 sid 不能推给老大。"""
+    picks = {
+        "P1": {"bought": [{"code": "002749", "name": "国光", "price": 9.56, "note": "2板"}]},
+        "XX": {"bought": [{"code": "999999", "name": "脏数据", "price": 1.0, "note": "不该出现"}]},
+    }
+    md = mode_card.render_picks_only(picks)
+    assert "P1" in md and "002749" in md
+    assert "XX" not in md and "999999" not in md
