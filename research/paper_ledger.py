@@ -117,10 +117,31 @@ def save(led: dict) -> None:
 
 # ---------------- 买入 ----------------
 
-def ingest(led: dict, sid: str, signals: list[dict], date: str, phase: str) -> dict:
+def _holds_slot(p: dict, rules: dict, date: str, locked: set[str]) -> bool:
+    """这个仓位在 `date` 当天**还占不占**槽位。
+
+    🔴 `t1_open` 的特殊性（11-23 修）：P5 尾盘买入、次日开盘兑现。
+    但账本只在 15:05 落账，而 P5 下一轮买入在 14:45 —— 那时昨日仓位
+    按其自身规则**早就按开盘价卖掉了**，却还挂在 `positions` 里。
+    若照数 `len(positions)`，P5 每天开盘前就恒「仓位已满」，
+    隔一天才能买一次，样本率直接砍半（判读所需时间翻倍）。
+
+    `locked` = 今天开盘卖不掉的（一字跌停 / 停牌无报价）。
+    这种情况仓位是真的还在手上，必须继续占位 —— 宁可不买，不能假装卖了。
+    """
+    if not p.get("funded"):
+        return False                    # 没买进来的信号从不占位
+    if rules["exit"] == "t1_open" and p["buy_date"] < date and p["code"] not in locked:
+        return False
+    return True
+
+
+def ingest(led: dict, sid: str, signals: list[dict], date: str, phase: str,
+           locked_codes: set[str] | None = None) -> dict:
     """把策略信号记入 sleeve：按排序依次占用资金，占不到仓的也照记（统计视角）。"""
     s = led["sleeves"][sid]
     rules = s["rules"]
+    locked = set(locked_codes or ())
     bought, skipped = [], []
     for sig in signals:
         key = "%s|%s|%s" % (sig["code"], date, phase)
@@ -130,7 +151,8 @@ def ingest(led: dict, sid: str, signals: list[dict], date: str, phase: str) -> d
         price = float(sig.get("price") or 0)
         if price <= 0:
             continue
-        slots_left = rules["max_positions"] - len([p for p in s["positions"] if p["funded"]])
+        slots_left = rules["max_positions"] - len(
+            [p for p in s["positions"] if _holds_slot(p, rules, date, locked)])
         budget = min(s["cash"], s["capital"] * rules["position_pct"])
         shares = 0
         if slots_left > 0:
