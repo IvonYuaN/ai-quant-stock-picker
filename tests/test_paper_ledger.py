@@ -461,3 +461,72 @@ def test_new_sleeve_is_backfilled_into_existing_ledger():
     assert p6["rules"]["phase"] == "board"
     assert reloaded["sleeves"]["P1"]["cash"] == 4321.0           # 老 sleeve 分文未动
     assert reloaded["sleeves"]["P1"]["ingested"] == ["002579|2026-11-20|board"]
+
+
+# ---------------- 槽位：卖出时点 vs 落账时点 ----------------
+#
+# 自欺方式：把「已经按规则兑现、但还没落账」的仓位当成还在手上 ⇒ 每天恒「仓位已满」。
+# P5 尾盘买、次日开盘卖。账本 15:05 才写 closed，而 P5 下一轮买入在 14:45 ——
+# 照数 positions 的话它隔一天才能买一次，样本率砍半、判读时间翻倍。
+
+def _fill_sleeve(led: dict, sid: str, n: int = 5, buy_day: str = BUY_DAY) -> dict:
+    """把某 sleeve 填成 n 笔已成交持仓（不扣现金：这组只验槽位判断）。"""
+    s = led["sleeves"][sid]
+    for i in range(n):
+        s["positions"].append({
+            "code": "60000%d" % i, "name": "票%d" % i, "buy_date": buy_day,
+            "phase": "late", "buy_price": 10.0, "shares": 100, "cost": 1003.0,
+            "funded": True, "unfunded_why": "", "sealed_entry": False,
+            "stop_price": 9.5, "note": "",
+        })
+    return s
+
+
+def _one_sig() -> list[dict]:
+    return [{"code": "000001", "name": "平安银行", "price": 10.0}]
+
+
+def test_t1_open_slots_are_freed_at_next_day_open(led):
+    """昨日尾盘仓位今日开盘已按开盘价兑现 ⇒ 14:45 再买时不该被它占着槽位。"""
+    _fill_sleeve(led, "P5")
+    r = pl.ingest(led, "P5", _one_sig(), SELL_DAY, "late")
+    assert len(r["bought"]) == 1, "5 个槽位全被往日 t1_open 仓位占死 ⇒ P5 隔天才买一次"
+    assert r["skipped"] == []
+
+
+def test_t1_open_locked_positions_still_hold_slots(led):
+    """一字跌停卖不掉的仓位是真还在手上，必须继续占位 —— 不能假装卖了。"""
+    _fill_sleeve(led, "P5")
+    locked = {"60000%d" % i for i in range(5)}
+    r = pl.ingest(led, "P5", _one_sig(), SELL_DAY, "late", locked_codes=locked)
+    assert r["bought"] == []
+    assert r["skipped"] == [{"code": "000001", "why": "仓位已满"}]
+
+
+def test_t1_open_partially_locked_frees_only_the_sold_ones(led):
+    """4 只卖不掉 + 1 只正常兑现 ⇒ 空出 1 个槽位，正好买 1 只。"""
+    _fill_sleeve(led, "P5")
+    locked = {"60000%d" % i for i in range(4)}
+    r = pl.ingest(led, "P5", _one_sig(), SELL_DAY, "late", locked_codes=locked)
+    assert len(r["bought"]) == 1
+
+
+def test_t1_close_positions_keep_their_slots_intraday(led):
+    """t1_close 的仓位要拿到当日收盘，盘中本来就该占位（只有 t1_open 才提前空出）。"""
+    _fill_sleeve(led, "P3")
+    r = pl.ingest(led, "P3", _one_sig(), SELL_DAY, "morning")
+    assert r["bought"] == []
+    assert r["skipped"] == [{"code": "000001", "why": "仓位已满"}]
+
+
+def test_same_day_t1_open_position_keeps_its_slot(led):
+    """当日买入的仓位当天不能卖（T+1），必须占位。"""
+    s = led["sleeves"]["P5"]
+    s["positions"].append({
+        "code": "600009", "name": "今日买入", "buy_date": SELL_DAY, "phase": "late",
+        "buy_price": 10.0, "shares": 100, "cost": 1003.0, "funded": True,
+        "unfunded_why": "", "sealed_entry": False, "stop_price": 0.0, "note": "",
+    })
+    _fill_sleeve(led, "P5", n=4, buy_day=SELL_DAY)
+    r = pl.ingest(led, "P5", _one_sig(), SELL_DAY, "late")
+    assert r["skipped"] == [{"code": "000001", "why": "仓位已满"}]

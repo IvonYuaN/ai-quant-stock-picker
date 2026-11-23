@@ -56,6 +56,32 @@ def _candidates_for(sid: str, yest_rows: dict, phase: str) -> list[str]:
     return list(yest_rows.keys())
 
 
+def _still_held(sleeve: dict, spec: dict, quotes: dict, today: str) -> set[str]:
+    """`t1_open` 仓位里「今天开盘没能卖掉」的那几只 —— 它们仍然真占着槽位。
+
+    - 现价贴跌停（一字跌停）：卖不出去，仓位还在手上；
+    - **无报价**（停牌/退市）：按占位处理。宁可不买，也不能假设已经卖出 ——
+      把卖不掉当成卖掉了，正是打板策略最容易骗自己的地方。
+
+    只对 `t1_open` 有意义：`t1_close` 的仓位要拿到当日收盘，盘中本来就该占位。
+    """
+    if str(spec.get("exit")) != "t1_open":
+        return set()
+    out: set[str] = set()
+    for p in sleeve.get("positions") or []:
+        if not p.get("funded") or str(p.get("buy_date")) >= today:
+            continue
+        q = quotes.get(str(p.get("code")))
+        if not q:
+            out.add(str(p["code"]))
+            continue
+        ld = float(q.get("limit_down") or 0)
+        px = float(q.get("price") or 0)
+        if ld > 0 and px > 0 and px <= ld * 1.002:
+            out.add(str(p["code"]))
+    return out
+
+
 def run_phase(phase: str, date: str | None = None, detection: dict | None = None,
               dry: bool = False, allow_stale: bool = False) -> dict:
     today = date or _today()
@@ -132,7 +158,8 @@ def run_phase(phase: str, date: str | None = None, detection: dict | None = None
         if scan is None:
             continue
         sigs = scan(ctx)
-        r = pl.ingest(led, sid, sigs, today, phase)
+        held = _still_held(led["sleeves"][sid], spec, quotes, today)
+        r = pl.ingest(led, sid, sigs, today, phase, locked_codes=held)
         result["sleeves"][sid] = {"name": spec["name"], **r}
     if not dry:
         pl.save(led)
