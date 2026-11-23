@@ -214,6 +214,45 @@ def test_morning_payload_renders_two_distinct_modes_in_one_card():
 
 # ---------------- picks 回填（本改动上线前的时点） ----------------
 
+# ---------------- picks 累积（同一天多轮不能互相覆盖） ----------------
+
+def test_record_picks_accumulates_bought_instead_of_overwriting(tmp_path, monkeypatch):
+    """同一天多轮 `record_picks`：后续轮次的空 bought **不能**把早上买的抹掉。
+
+    打板 phase 每 3 分钟一轮。09:35 买满 5 只之后，后面每一轮的 `bought` 都是空列表。
+    若直接覆盖，14:12 的卡片就只剩 P3/P4 —— 账本买了、卡片没字，
+    而且不报错、不失败、测试也不红。这和「只推打板、其他模式完全没有」是同一类 bug 的镜像。
+    """
+    import shortline_cloud
+    monkeypatch.setattr(shortline_cloud, "picks_path",
+                        lambda d: tmp_path / ("picks_%s.json" % d))
+    d = "2026-11-23"
+
+    shortline_cloud.record_picks(d, "board", {"P1": {
+        "name": "二板接力", "signals": 3,
+        "bought": [{"code": "600001", "name": "A", "price": 10.0, "note": ""},
+                   {"code": "600002", "name": "B", "price": 11.0, "note": ""}],
+        "skipped": []}})
+    first_at = shortline_cloud.today_picks(d)["P1"]["at"]
+
+    # 后续轮次：吃满仓，没有新买入
+    got = shortline_cloud.record_picks(d, "board", {"P1": {
+        "name": "二板接力", "signals": 0, "bought": [], "skipped": []}})
+    assert [b["code"] for b in got["P1"]["bought"]] == ["600001", "600002"], \
+        "后续轮次的空 bought 把早上的买入抹掉了"
+    assert got["P1"]["signals"] == 3, "signals 应当累加，不是被最后一轮的 0 覆盖"
+    assert got["P1"]["at"] == first_at, "at 应保留首次推荐时间"
+
+    # 第三轮又买了新的，且有一只重复：按 code 去重累积
+    got = shortline_cloud.record_picks(d, "board", {"P1": {
+        "name": "二板接力", "signals": 1,
+        "bought": [{"code": "600002", "name": "B", "price": 11.0, "note": ""},
+                   {"code": "600003", "name": "C", "price": 12.0, "note": ""}],
+        "skipped": []}})
+    assert [b["code"] for b in got["P1"]["bought"]] == ["600001", "600002", "600003"], \
+        "应按 code 去重累积，不是简单相加也不是覆盖"
+
+
 def test_backfill_picks_reconstructs_today_from_ledger(tmp_path, monkeypatch):
     """账本是权威：09:27/10:00 在改动上线前就买完了，没有 picks 文件也得能显示出来。"""
     import shortline_cloud

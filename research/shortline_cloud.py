@@ -118,23 +118,45 @@ def picks_path(date: str) -> Path:
 
 
 def record_picks(date: str, phase: str, sleeves: dict) -> dict:
-    """把本时点各模式的推荐落盘，供后续卡片复用（同一 sid 覆盖，幂等）。
+    """把本时点各模式的推荐落盘，供后续卡片复用。
 
     🔴 为什么要落盘：打板卡片每 3 分钟一张，如果每张只写「打板」，
     老大永远看不到 09:27 竞价、10:00 超跌推荐了什么 —— 而账本其实已经买了。
     落一份当天的 picks，任何时刻的卡片都能带出全貌。
+
+    🔴 `bought` 必须**累积**，不能覆盖（11-23 修）：打板 phase 每 3 分钟一轮，
+    早上 09:35 买满 5 只之后，后续每一轮的 `bought` 都是空列表。
+    原来直接 `cur[sid] = {... "bought": []}` ⇒ 把早上的买入记录抹掉，
+    于是 14:12 的卡片只剩 P3/P4 —— 和「只推打板、其他模式完全没有」是
+    同一类 bug 的镜像版：账本买了，卡片没字，且不报错、不失败、测试也不红。
+
+    合并规则：按 `code` 去重累积（同一天同一只票只列一次）；
+    `at` 保留**首次**推荐时间（推荐时点应是它第一次出现）；
+    `signals` 累加（当天总共冒出多少信号）；`skipped` 用最新一轮（原因更近）。
     """
     p = picks_path(date)
     try:
         cur = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
     except (OSError, json.JSONDecodeError):
         cur = {}
+    now_hm = datetime.now(CST).strftime("%H:%M")
     for sid, r in (sleeves or {}).items():
-        cur[sid] = {"name": r.get("name", ""), "phase": phase,
-                    "at": datetime.now(CST).strftime("%H:%M"),
-                    "signals": r.get("signals", 0),
-                    "bought": r.get("bought", []),
-                    "skipped": r.get("skipped", [])}
+        prev = cur.get(sid) or {}
+        merged = list(prev.get("bought") or [])
+        seen = {str(b.get("code")) for b in merged}
+        for b in (r.get("bought") or []):
+            c = str(b.get("code"))
+            if c not in seen:
+                merged.append(b)
+                seen.add(c)
+        cur[sid] = {
+            "name": r.get("name") or prev.get("name", ""),
+            "phase": phase,
+            "at": prev.get("at") or now_hm,
+            "signals": int(prev.get("signals") or 0) + int(r.get("signals") or 0),
+            "bought": merged,
+            "skipped": list(r.get("skipped") or []),
+        }
     try:
         p.write_text(json.dumps(cur, ensure_ascii=False, indent=1), encoding="utf-8")
     except OSError as e:
