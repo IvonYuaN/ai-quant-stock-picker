@@ -317,7 +317,7 @@ STRATEGIES: dict[str, dict] = {
         # 老大要的是「合理的参数模式」，那就必须把每个模式的阈值和证据状态写在同一行，
         # 不然推出去的六个模式看起来一样可信，等于把未验证的混进已验证里卖。
         "params": "二板·B格(非一字)·全取·单笔≤20%仓",
-        "evidence": "过门 全信号h1+3.06%/t8.6 · 可成交B格+1.68%/t34.4(开盘卖·胜95%)",
+        "evidence": "过门 严格二板·开盘卖 +2.09%/t19.4/胜80.7%(4220格)",
         "evidence_state": "passed",
         "exit": "t1_open",
         "stop_pct": 0.0,
@@ -399,7 +399,7 @@ STRATEGIES: dict[str, dict] = {
         "board": 2,
         "top_n": 2,
         "params": "二板·B格·跳空最大2只",
-        "evidence": "过门 +2.85%/t19.6(开盘卖·可成交) · 扣0.3%后+2.55%",
+        "evidence": "过门 二板·跳空top2·开盘卖 +2.40%/t16.5/胜72.6%",
         "evidence_state": "passed",
         "exit": "t1_open",
         "stop_pct": 0.0,
