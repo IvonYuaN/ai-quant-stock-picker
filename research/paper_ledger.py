@@ -261,13 +261,22 @@ def settle(led: dict, snap_rows: dict, date: str) -> list[dict]:
             if price <= 0:
                 remain.append(p)
                 continue
-            done.append(_close(s, p, price, date, reason))
+            # 对照价 = 不停损时的常规退出价（T+1 收盘 c）。一字跌停/停牌没有对照，留空。
+            done.append(_close(s, p, price, date, reason, no_stop_price=c))
         s["positions"] = remain
         closed.extend([{"sleeve": sid, **c} for c in done])
     return closed
 
 
-def _close(s: dict, p: dict, sell_price: float, date: str, reason: str) -> dict:
+def _close(s: dict, p: dict, sell_price: float, date: str, reason: str,
+           no_stop_price: float | None = None) -> dict:
+    """平仓并记账。
+
+    🔴 `no_stop_price` = 同一天「不触发止损、按常规退出价」的对照价（2026-11-23 加）。
+    回测过门的 +3.06%/+1.37% **没有止损逻辑**，账本却有 -5% 止损；
+    两边差多少必须能算出来，否则前向验证永远对不上回测。
+    这是**只读对照**：不进 cash、不改仓位、不进 t 值统计，只落一个字段供归因。
+    """
     ret = sell_price / p["buy_price"] - 1 - COST_ONE_WAY * 2
     if p["funded"] and p["shares"]:
         proceeds = p["shares"] * sell_price * (1 - COST_ONE_WAY)
@@ -278,6 +287,14 @@ def _close(s: dict, p: dict, sell_price: float, date: str, reason: str) -> dict:
         pnl = 0.0
     b = _bench(p["buy_date"], date)
     excess = round((ret - b) * 100, 2) if b is not None else None
+    # 无止损对照：只在真触发止损时算（reason 以「止损-」开头），
+    # 其余情况就是同一笔成交，不重复落字段以免误导。
+    no_stop_ret = None
+    if no_stop_price and no_stop_price > 0 and reason.startswith("止损-"):
+        no_stop_ret = round((no_stop_price / p["buy_price"] - 1 - COST_ONE_WAY * 2) * 100, 2)
+        if p["funded"] and p["shares"] and p["cost"]:
+            no_stop_pnl = p["shares"] * no_stop_price * (1 - COST_ONE_WAY) - p["cost"]
+            no_stop_ret = round(no_stop_pnl / p["cost"] * 100, 2)
     s["trades"].append({
         "code": p["code"], "name": p["name"], "buy_date": p["buy_date"],
         "buy_price": p["buy_price"], "sell_date": date, "sell_price": round(sell_price, 3),
@@ -287,10 +304,11 @@ def _close(s: dict, p: dict, sell_price: float, date: str, reason: str) -> dict:
         "pnl": round(pnl, 2), "reason": reason, "exit": s["rules"]["exit"],
         "note": p.get("note", ""), "unfunded_why": p.get("unfunded_why", ""),
         "stuck_days": p.get("stuck_days", 0), "sealed_entry": p.get("sealed_entry", False),
+        "no_stop_ret_pct": no_stop_ret,
     })
     return {"code": p["code"], "name": p["name"], "ret_pct": round(ret * 100, 2),
             "excess_pct": excess, "pnl": round(pnl, 2), "reason": reason,
-            "funded": p["funded"]}
+            "funded": p["funded"], "no_stop_ret_pct": no_stop_ret}
 
 
 # ---------------- 净值 ----------------
@@ -324,6 +342,18 @@ def _tstat(vals: list[float]) -> tuple[float | None, float, int]:
     std = math.sqrt(var)
     t = mean / (std / math.sqrt(n)) if std > 1e-4 else None
     return t, std, n
+
+
+def _stop_impact(trades: list[dict]) -> float | None:
+    """止损的净影响（百分点）：Σ(带止损收益 − 无止损收益) / 触发笔数。
+
+    负数 = 止损平均砍掉了多少收益。回测过门的 +3.06%/+1.37% 没有止损逻辑，
+    这个数就是把回测口径换成账本口径时必须扣掉的部分。
+    没有触发过止损时返回 None（不是 0 —— 0 会让人以为止损"刚好中性"）。
+    """
+    diffs = [float(t["ret_pct"]) - float(t["no_stop_ret_pct"])
+             for t in trades if t.get("no_stop_ret_pct") is not None]
+    return round(sum(diffs) / len(diffs), 2) if diffs else None
 
 
 def sleeve_stats(s: dict) -> dict:
@@ -363,6 +393,10 @@ def sleeve_stats(s: dict) -> dict:
         "funded_ret": round((nav / s["capital"] - 1) * 100, 2),
         "funded_win": round(sum(1 for t in funded if t["ret_pct"] > 0) / len(funded) * 100, 1) if funded else None,
         "unfunded": why_count,
+        # 止损归因：带止损 vs 无止损的收益差。正数=止损帮了忙，负数=止损砍掉了本可拿到的收益。
+        # 回测过门口径没有止损，这个差就是「账本 vs 回测」的系统性偏差来源之一。
+        "stop_n": sum(1 for t in usable if t.get("no_stop_ret_pct") is not None),
+        "stop_impact": _stop_impact(usable),
     }
     if n == 0:
         return {**base, "mean": None, "std": None, "t": None, "win": None, "n_need": None,

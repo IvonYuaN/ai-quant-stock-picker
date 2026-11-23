@@ -217,11 +217,18 @@ def render_settlement_card(led: dict, date: str, max_rows: int = 4) -> str:
         for t in funded[:max_rows]:
             exc = t.get("excess_pct")
             exc_s = "超额—" if exc is None else "超额%+.2f%%" % float(exc)
-            rows.append("  %s %s %+.2f%% %s" % (
+            ns = t.get("no_stop_ret_pct")
+            ns_s = "" if ns is None else " 若不止损%+.2f%%" % float(ns)
+            rows.append("  %s %s %+.2f%% %s%s" % (
                 t.get("code", ""), str(t.get("name") or "")[:4],
-                float(t.get("ret_pct") or 0), exc_s))
+                float(t.get("ret_pct") or 0), exc_s, ns_s))
         head = "**%s %s** %s 今日结算 %d 笔 盈亏¥%+.0f" % (
             sid, spec.get("name", ""), tag_of(spec), len(funded), pnl)
+        stop_n = sum(1 for t in trades if t.get("no_stop_ret_pct") is not None)
+        if stop_n:
+            diffs = [float(t["ret_pct"]) - float(t["no_stop_ret_pct"])
+                     for t in trades if t.get("no_stop_ret_pct") is not None]
+            head += " 止损%d笔净影响%+.2fpp" % (stop_n, sum(diffs) / len(diffs))
         blocks.extend([head] + rows)
     if not blocks:
         return "## 💰 六模式结算 %s\n今日无结算（首笔 T+1 收盘才平仓）" % date

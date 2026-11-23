@@ -277,3 +277,18 @@ def test_settlement_card_missing_excess_shows_dash_not_zero():
     md = mode_card.render_settlement_card(led, "2026-11-23")
     assert "超额—" in md
     assert "超额0" not in md
+
+
+def test_settlement_card_shows_stop_counterfactual():
+    """结算卡必须显示「若不止损」——回测没有止损，账本有，差多少要看得见。"""
+    led = {"sleeves": {"P1": {"trades": [
+        {"code": "002749", "name": "国光股份", "sell_date": "2026-11-23",
+         "funded": True, "ret_pct": -6.88, "excess_pct": None, "pnl": -133.0,
+         "no_stop_ret_pct": -1.2},
+        {"code": "002199", "name": "东晶电子", "sell_date": "2026-11-23",
+         "funded": True, "ret_pct": -6.88, "excess_pct": None, "pnl": -72.0,
+         "no_stop_ret_pct": -2.3},
+    ]}}}
+    md = mode_card.render_settlement_card(led, "2026-11-23")
+    assert "若不止损-1.20%" in md and "若不止损-2.30%" in md
+    assert "止损2笔净影响-5.13pp" in md, "两笔分别差 5.68 / 4.58pp，均值 5.13pp"

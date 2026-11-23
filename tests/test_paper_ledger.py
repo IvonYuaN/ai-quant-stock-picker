@@ -572,3 +572,45 @@ def test_stop_loss_uses_worse_of_stop_and_open(led, monkeypatch):
     # funded 仓位走真实账户口径：ret = pnl / cost，cost 含买入成本 1003
     expected = (100 * 8.0 * (1 - pl.COST_ONE_WAY) - 1003) / 1003 * 100
     assert closed[0]["ret_pct"] == pytest.approx(round(expected, 2))
+
+
+# ---------------- 止损归因（回测口径 vs 账本口径的桥） ----------------
+
+def test_stop_impact_records_counterfactual_without_touching_cash(led, monkeypatch):
+    """止损触发时记无止损对照收益，但不进 cash、不进主统计 t 值。"""
+    monkeypatch.setattr(pl, "_pm", None)
+    s = led["sleeves"]["P3"]
+    s["positions"].append({
+        "code": "600000", "name": "跳空票", "buy_date": BUY_DAY, "phase": "morning",
+        "buy_price": 10.0, "shares": 100, "cost": 1003.0, "funded": True,
+        "unfunded_why": "", "sealed_entry": False, "stop_price": 9.5, "note": "",
+    })
+    # 开盘 8.0 触发止损，收盘 9.8（若不止损本可小赚）
+    snap = {"600000": _row(p=9.8, o=8.0, lo=7.9)}
+    cash_before = s["cash"]
+    closed = pl.settle(led, snap, SELL_DAY)
+    assert closed[0]["reason"] == "止损-5%"
+    assert closed[0]["no_stop_ret_pct"] is not None
+    assert closed[0]["no_stop_ret_pct"] > closed[0]["ret_pct"], "不止损应更好"
+    # 现金只按真实止损价入账，不按对照价
+    assert s["cash"] == pytest.approx(cash_before + 100 * 8.0 * (1 - pl.COST_ONE_WAY))
+    st = pl.sleeve_stats(s)
+    assert st["stop_n"] == 1
+    assert st["stop_impact"] == pytest.approx(
+        closed[0]["ret_pct"] - closed[0]["no_stop_ret_pct"])
+
+
+def test_no_stop_field_is_none_when_stop_not_triggered(led, monkeypatch):
+    """没触发止损的成交不该有对照字段，stop_impact 必须是 None 不是 0。"""
+    monkeypatch.setattr(pl, "_pm", None)
+    s = led["sleeves"]["P3"]
+    s["positions"].append({
+        "code": "600001", "name": "正常票", "buy_date": BUY_DAY, "phase": "morning",
+        "buy_price": 10.0, "shares": 100, "cost": 1003.0, "funded": True,
+        "unfunded_why": "", "sealed_entry": False, "stop_price": 9.5, "note": "",
+    })
+    pl.settle(led, {"600001": _row(p=10.5, o=10.1, lo=10.0)}, SELL_DAY)
+    assert s["trades"][0]["no_stop_ret_pct"] is None
+    st = pl.sleeve_stats(s)
+    assert st["stop_n"] == 0
+    assert st["stop_impact"] is None, "没止损过写 0 会让人以为止损刚好中性"
