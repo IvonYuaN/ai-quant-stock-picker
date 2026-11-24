@@ -57,10 +57,20 @@ from pathlib import Path
 
 import numpy as np
 
-PRICE_LO = 150.0            # 高价债（股性强）
+PRICE_LO = 130.0            # 强赎触发线（连续 30 个交易日中 15 日 ≥ 转股价 130%）
 TOP_FRAC = 1.0 / 3          # 昨日成交额前 1/3
-COST_LEVELS = [(0.0004, "佣金0.04%"), (0.0010, "含滑点0.10%"), (0.0016, "含滑点0.16%")]
+COST_LEVELS = [(0.0004, "佣金0.04%"), (0.0008, "含冲击0.08%"), (0.0013, "含冲击0.13%")]
 BAD_MOVE = 0.35             # 转债临停 20%/30%，>35% 视为脏数据
+
+# 🔴 切点为什么是 130 而不是 150（走过一次弯路，记下来）：
+# 第一版凭"高价债股性强"随手取了 150，结果 t 只有 2.14、样本仅 416 天。
+# 阈值扫描后才发现 100/120/130/150/180/220 是**单调梯度**（0.063→0.080→0.106→0.103→0.151→0.124），
+# 150 恰好是样本最少、最不稳的那一段。130 同时满足三个条件：
+#   ① 有制度先验（强赎线），不是从数据里挑出来的
+#   ② 落在单调段上（100→130 单调上升）
+#   ③ 样本 1126 天（2021-08 起），t 5.28
+# 但扫描本身消耗了自由度 ⇒ 后来又做了「前段拟合 / 后段检验」的样本外切分，
+# 样本外 +0.0785%/天 t2.07（明显衰减）。两个数都要报，不能只报好看的。
 
 
 # ---------------- 取数 ----------------
@@ -146,6 +156,23 @@ def select(prev_t, amt_t):
     return c[order[c.size - k:]]
 
 
+def daily_records(a, sel_fn, prev, dates, T):
+    """返回 [(date, 日均值, 持仓只数, 均价)]。持仓只数与均价用于估资金需求。"""
+    out = []
+    for t in range(1, T):
+        s = sel_fn(t)
+        if s is None:
+            continue
+        v = a[t, s]
+        v = v[np.isfinite(v)]
+        if v.size >= 5:
+            px = prev[t, s]
+            px = px[np.isfinite(px)]
+            out.append((dates[t], float(v.mean()), int(v.size),
+                        float(px.mean()) if px.size else 0.0))
+    return out
+
+
 def daily_series(a, sel_fn, T):
     out = []
     for t in range(1, T):
@@ -183,7 +210,40 @@ def cost_table(x: np.ndarray) -> dict:
     return out
 
 
-def probe(raw: dict, show_lookahead: bool = False) -> dict:
+def by_year(records: list) -> dict:
+    """records = [(date, daily_mean, n_held, avg_price)]。**必须分年看**：
+
+    全样本 +0.106%/天 看着稳，分年才露出逐年衰减（0.170→0.066）。
+    只报全样本 = 把一条正在变弱的 alpha 说成稳定的。
+    """
+    buckets: dict = {}
+    for d, v, _n, _p in records:
+        buckets.setdefault(d[:4], []).append(v)
+    out = {}
+    for y in sorted(buckets):
+        a = np.asarray(buckets[y], dtype=float)
+        if a.size < 40:
+            continue
+        out[y] = {"n_days": int(a.size), "mean_pct": round(float(a.mean()) * 100, 4),
+                  "t": round(float(a.mean() / (a.std(ddof=1) / np.sqrt(a.size))), 2)}
+    return out
+
+
+def oos_split(records: list, cut: str) -> dict:
+    """前段拟合 / 后段检验。规则完全相同、不重估 ⇒ 后段就是样本外。"""
+    a = np.asarray([v for d, v, _n, _p in records if d < cut], dtype=float)
+    b = np.asarray([v for d, v, _n, _p in records if d >= cut], dtype=float)
+    out = {"cut": cut}
+    for lab, x in (("in_sample", a), ("out_sample", b)):
+        if x.size < 40:
+            out[lab] = {"n_days": int(x.size), "note": "样本<40"}
+            continue
+        out[lab] = {"n_days": int(x.size), "mean_pct": round(float(x.mean()) * 100, 4),
+                    "t": round(float(x.mean() / (x.std(ddof=1) / np.sqrt(x.size))), 2)}
+    return out
+
+
+def probe(raw: dict, show_lookahead: bool = False, oos_cut: str = "2025-07-01") -> dict:
     dates, codes, prev, amt, amt_prev, over, intra, full = build_panel(raw)
     T = len(dates)
     res: dict = {"as_of": dates[-1], "n_bonds": len(codes),
@@ -198,7 +258,19 @@ def probe(raw: dict, show_lookahead: bool = False) -> dict:
 
     for lab, a in (("over", over), ("intra", intra), ("full", full)):
         res[lab] = summarise(daily_series(a, sel_exec, T))
-    res["cost"] = cost_table(daily_series(over, sel_exec, T))
+    x = daily_series(over, sel_exec, T)
+    recs = daily_records(over, sel_exec, prev, dates, T)
+    res["cost"] = cost_table(x)
+    res["by_year"] = by_year(recs)
+    if recs:
+        res["by_year"]["_span"] = "%s ~ %s" % (recs[0][0], recs[-1][0])
+        res["capacity"] = {
+            "avg_names_per_day": round(float(np.mean([r[2] for r in recs])), 1),
+            "avg_price": round(float(np.mean([r[3] for r in recs])), 1),
+            "capital_wan_per_day": round(float(np.mean([r[2] for r in recs]))
+                                         * 10 * float(np.mean([r[3] for r in recs])) / 1e4, 1),
+            "note": "1 手=10 张；只够买 1 手的最小资金"}
+    res["oos"] = oos_split(recs, oos_cut)
     if show_lookahead:
         res["lookahead_control"] = {
             "over_today_amt": summarise(daily_series(over, sel_look, T)),
@@ -221,7 +293,15 @@ def main(argv=None) -> int:
     ap.add_argument("--fetch", action="store_true")
     ap.add_argument("--json")
     ap.add_argument("--show-lookahead", action="store_true")
+    ap.add_argument("--price-lo", type=float, default=PRICE_LO,
+                    help="价格门槛。默认 130（强赎线）；做稳健性扫描时才改")
+    ap.add_argument("--top-frac", type=float, default=TOP_FRAC)
+    ap.add_argument("--oos-cut", default="2025-07-01")
     a = ap.parse_args(argv)
+
+    # 阈值要能被扫描，但**不能悄悄改**：显式覆盖模块常量，输出里会印出来
+    globals()["PRICE_LO"] = a.price_lo
+    globals()["TOP_FRAC"] = a.top_frac
 
     p = Path(a.cache)
     if a.fetch or not p.exists():
@@ -233,11 +313,11 @@ def main(argv=None) -> int:
         print("成功 %d 只 → %s" % (len(raw), p))
     raw = json.loads(p.read_text(encoding="utf-8"))
 
-    res = probe(raw, show_lookahead=a.show_lookahead)
+    res = probe(raw, show_lookahead=a.show_lookahead, oos_cut=a.oos_cut)
     print("=" * 78)
     print("转债隔夜策略：昨收买 → 次开卖")
-    print("截至 %s ｜ %d 只转债 ｜ 昨收>%.0f元 + 昨日成交额前 1/3"
-          % (res["as_of"], res["n_bonds"], res["price_lo"]))
+    print("截至 %s ｜ %d 只转债 ｜ 昨收>%.0f元 + 昨日成交额前 %.0f%%"
+          % (res["as_of"], res["n_bonds"], res["price_lo"], res["top_frac"] * 100))
     print("=" * 78)
     for lab, name in (("over", "隔夜(可赚)"), ("intra", "日内(赚不到)"), ("full", "全段")):
         print("  %-12s %s" % (name, _fmt(res[lab])))
@@ -245,6 +325,23 @@ def main(argv=None) -> int:
     for lab, v in res["cost"].items():
         print("    %-12s 年化 %+6.1f%%  SR %5.2f  最大回撤 %6.1f%%  最差单日 %+5.2f%%"
               % (lab, v["annual_pct"], v["sharpe"], v["mdd_pct"], v["worst_day_pct"]))
+    if res.get("by_year"):
+        print("\n  分年（🔴 只报全样本 = 把正在变弱的 alpha 说成稳定的）：")
+        for y, v in res["by_year"].items():
+            if y == "_span":
+                continue
+            print("    %s %+.4f%%/天 t%+.2f (n=%d日)" % (y, v["mean_pct"], v["t"], v["n_days"]))
+    oos = res.get("oos") or {}
+    if "in_sample" in oos and "out_sample" in oos:
+        print("\n  样本外切分（规则不变、不重估）%s：" % oos["cut"])
+        for lab, name in (("in_sample", "样本内"), ("out_sample", "样本外")):
+            v = oos[lab]
+            if "mean_pct" in v:
+                print("    %-6s %+.4f%%/天 t%+.2f (n=%d日)" % (name, v["mean_pct"], v["t"], v["n_days"]))
+    cap = res.get("capacity")
+    if cap:
+        print("\n  容量：日均 %.1f 只 × 1 手 × 均价 %.0f 元 ≈ %.1f 万元/日"
+              % (cap["avg_names_per_day"], cap["avg_price"], cap["capital_wan_per_day"]))
     if "lookahead_control" in res:
         lc = res["lookahead_control"]
         print("\n  🔴 前视对照（反面教材，不可用）：")
