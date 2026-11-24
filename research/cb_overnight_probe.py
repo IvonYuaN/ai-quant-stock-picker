@@ -303,14 +303,21 @@ def quantile_buckets(a, x, dates, T, sel_fn, n=3) -> dict:
 
 
 def affordable(a, prev, dates, T, sel_fn, capital: float, lot: int = 10,
-               order: str = "price", cap_per_name: float | None = None) -> dict:
+               order: str = "price", cap_per_name: float | None = None,
+               amt=None) -> dict:
     """¥capital 实买：入选池里贪心买到买不起为止。
 
     order="price"       低价优先（旧设想：最大化分散度）
     order="price_desc"  高价优先（价格单调 ⇒ 买贵的那档）
-    order="amount"      按入选顺序（= 成交额升序，cb_pick 现行做法）
+    order="amount_asc"  成交额升序
+    order="amount_desc" **成交额降序 —— `cb_pick.budget_pick` 的真实行为**
+                        （最活跃的先买、吃光现金，于是"最活跃那只会占满仓位"）
     cap_per_name        单只上限。设了它，「高价优先」才不会把全部钱压在一只 941 元的债上；
                         经验取 capital/3 ⇒ 保证至少 3 只，正好对上「前 1/3 池、日均 6 只」的量级。
+
+    🔴 **"成交额序"到底哪个方向，必须写清楚**：`select()` 返回的是**升序**（argsort 取尾），
+    而 `cb_pick` 显示/买入前会再按成交额**降序**排。我第一版把升序标成"cb_pick 现行"，
+    是个口径错误 —— 两种顺序买出来的组合完全不同（降序会被最活跃的那只吃满）。
 
     🔴 这是**能执行的组合**；`daily_series` 的等权均值是**拿不到的组合**。
     两者之差 = 资金约束的真实代价，必须一起报。
@@ -332,6 +339,12 @@ def affordable(a, prev, dates, T, sel_fn, capital: float, lot: int = 10,
             idx = np.argsort(px)
         elif order == "price_desc":
             idx = np.argsort(-px)
+        elif order in ("amount_asc", "amount_desc"):
+            if amt is None:
+                raise ValueError("order=%s 需要传入 amt 矩阵" % order)
+            av = amt[t, s][ok]
+            av = np.where(np.isfinite(av), av, -np.inf)   # 缺成交额 ⇒ 排到最后
+            idx = np.argsort(av) if order == "amount_asc" else np.argsort(-av)
         else:
             idx = np.arange(px.size)
         cash, held = float(capital), []
@@ -381,6 +394,26 @@ def market_attrib(series: np.ndarray, mkt: np.ndarray) -> dict:
             "n_days": int(series.size)}
 
 
+def segment_attrib(recs: list, mkt: dict, cut: str) -> dict:
+    """按 `cut` 把样本切成两段，各自做 α/β 归因。
+
+    🔴 为什么必须分段：**样本外原始收益的 t 值过门，不等于 α 过门**。
+    组合 β 会漂（转债实测 1.97 → 3.59），市场隔夜本身强弱也会变 ⇒
+    原始收益的显著性可以是「借来的」。判据只能是「样本外的 α 和它的 t」。
+
+    实测（cut=2025-07-01，高价优先组合）：
+        样本内 α +0.0402%/天 t+1.94 ｜ β 1.97
+        样本外 α −0.0013%/天 t−0.03 ｜ β 3.59   ← 原始 +0.1619%/天 全是 3.59×0.0454
+    """
+    out = {}
+    for seg, keep in (("in", lambda d: d < cut), ("out", lambda d: d >= cut)):
+        ps = [(r[1], mkt[r[0]]) for r in recs if r[0] in mkt and keep(r[0])]
+        if len(ps) >= 30:
+            out[seg] = market_attrib(np.asarray([p[0] for p in ps], dtype=float),
+                                     np.asarray([p[1] for p in ps], dtype=float))
+    return out
+
+
 def probe(raw: dict, show_lookahead: bool = False, oos_cut: str = "2025-07-01",
           capital: float = 10_000.0) -> dict:
     dates, codes, prev, amt, amt_prev, over, intra, full = build_panel(raw)
@@ -425,11 +458,12 @@ def probe(raw: dict, show_lookahead: bool = False, oos_cut: str = "2025-07-01",
     res["market"] = dict(summarise(np.asarray(list(mkt.values()), dtype=float)),
                          by_year=by_year([(d, v, 0, 0.0) for d, v in mkt.items()]))
     modes = (("low_first", "price", None),
-             ("current_cb_pick", "amount", None),
+             ("amount_asc", "amount_asc", None),
+             ("amount_desc", "amount_desc", None),
              ("high_cap3", "price_desc", capital / 3.0))
     for lab, order, capn in modes:
         aff = affordable(over, prev, dates, T, sel_exec, capital, order=order,
-                         cap_per_name=capn)
+                         cap_per_name=capn, amt=amt_prev)
         recs_a = aff["records"]
         if not recs_a:
             continue
@@ -446,6 +480,9 @@ def probe(raw: dict, show_lookahead: bool = False, oos_cut: str = "2025-07-01",
         if len(pairs) >= 30:
             s["attrib"] = market_attrib(np.asarray([p[0] for p in pairs], dtype=float),
                                         np.asarray([p[1] for p in pairs], dtype=float))
+        seg = segment_attrib(recs_a, mkt, oos_cut)
+        for k, v2 in seg.items():
+            s["attrib_" + k] = v2
         if capn:
             s["cap_per_name"] = round(capn, 0)
         res["capital"][lab] = s
@@ -548,9 +585,9 @@ def main(argv=None) -> int:
     if "low_first" in c:
         print("\n  🔴 ¥%d 实买（1 手 = 10 张）：" % c["capital"])
         print("    等权全部（拿不到的组合） %s" % _fmt(res["over"]))
-        names = {"low_first": "低价优先", "current_cb_pick": "按成交额序",
-                 "high_cap3": "高价优先·单只≤1/3"}
-        for lab in ("low_first", "current_cb_pick", "high_cap3"):
+        names = {"low_first": "低价优先", "amount_asc": "成交额升序",
+                 "amount_desc": "成交额降序·cb_pick现行", "high_cap3": "高价优先·单只≤1/3"}
+        for lab in ("low_first", "amount_asc", "amount_desc", "high_cap3"):
             v = c.get(lab)
             if not v:
                 continue
@@ -576,6 +613,11 @@ def main(argv=None) -> int:
         if at:
             print("    🔴 β 归因（市场 = 全池等权隔夜 %+.4f%%/天）：α %+.4f%%/天 t%+.2f ｜ β %.2f"
                   % (at["mkt_mean_pct"], at["alpha_pct"], at["t_alpha"], at["beta"]))
+        for seg, nm in (("in", "样本内"), ("out", "样本外")):
+            a2 = (v or {}).get("attrib_" + seg)
+            if a2:
+                print("       %s α %+.4f%%/天 t%+.2f ｜ β %.2f ｜ 市场 %+.4f%%"
+                      % (nm, a2["alpha_pct"], a2["t_alpha"], a2["beta"], a2["mkt_mean_pct"]))
         o = (v or {}).get("oos") or {}
         if "out_sample" in o:
             print("    🔴 高价优先样本外切分 %s（规则在样本内看出单调后固定，不重估）：" % o["cut"])
