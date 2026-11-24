@@ -376,12 +376,12 @@ def test_picks_only_has_no_boilerplate():
         assert noise not in md, "废话字段 %s 还在" % noise
 
 
-def test_picks_only_marks_passed_modes_only(monkeypatch):
-    """过门用 ✓ 标，其余用 ·，不写解释——状态要有但不能占篇幅。
+def test_picks_only_shows_mode_name_and_verdict(monkeypatch):
+    """每行必须带「模式名 + 判决」——老大 11-24：「P1P2P3P4P5P6 我都不知道什么逻辑」。
 
-    🔴 不能拿生产状态当输入（11-23 起一个过门的都没有）：那样这条测试只会走到
-    「全是 ·」的分支，✓ 分支等于从没被覆盖过，将来真有过门模式时才发现 bug。
-    改成自己造一个 passed 状态，两边分支都验。
+    🔴 原来这条测试守的是反的东西：它断言「过门」二字不能出现、状态压成 `P1·`。
+    结果六个模式全是一个点，老大看不出哪个已经判死 —— 测试是绿的，交付是废的。
+    现在守三件事：①每行有模式名 ②每行有判决词 ③已否证垫底。
     """
     monkeypatch.setitem(STRATEGIES["P3"], "evidence_state", "passed")
     picks = {
@@ -389,9 +389,24 @@ def test_picks_only_marks_passed_modes_only(monkeypatch):
         "P3": {"bought": [{"code": "688199", "name": "久日", "price": 16.45, "note": "超跌"}]},
     }
     md = mode_card.render_picks_only(picks)
-    assert "P3✓" in md, "被人为置为 passed 的模式必须打 ✓"
-    assert "P1·" in md, "已否证的模式只能打 ·，不能打 ✓"
-    assert "过门" not in md and "未过门" not in md
+    lines = [ln for ln in md.splitlines() if ln.strip()]
+    for ln in lines:
+        assert ("过门" in ln) or ("否证" in ln), "这一行没写判决，老大看不出死活: %s" % ln
+    assert "二板接力" in md and "超跌反抽" in md, "模式名必须印出来，否则 P1 是什么没人知道"
+    assert lines[0].startswith("P3"), "已否证的必须垫底，过门的排最前"
+    assert "P1 二板接力 ❌已否证" in md
+
+
+def test_picks_only_sorts_rejected_last():
+    """全是已否证时也必须全部带判决词，不能退回成一排裸点。"""
+    picks = {
+        "P1": {"bought": [{"code": "002749", "name": "国光", "price": 9.56, "note": "2板"}]},
+        "P4": {"bought": [{"code": "600814", "name": "解百", "price": 7.30, "note": "高开"}]},
+    }
+    md = mode_card.render_picks_only(picks)
+    assert md.count("已否证") == 1, "P1 必须是已否证"
+    assert "未过门" in md, "P4 是未过门，不能与已否证混为一谈"
+    assert md.splitlines()[0].startswith("P4 "), "未过门应排在已否证之前"
 
 
 def test_picks_only_ignores_unknown_sids():
