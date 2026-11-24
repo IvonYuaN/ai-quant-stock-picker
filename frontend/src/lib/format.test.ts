@@ -29,6 +29,9 @@ export const formatContract = {
   negativeClassIsDown: changeClass(-1) === "aq-tone-down",
   zeroClassIsEmpty: changeClass(0) === "",
   nullClassIsEmpty: changeClass(null) === "",
+  undefinedClassIsEmpty: changeClass(undefined) === "",
+  nanClassIsEmpty: changeClass(Number.NaN) === "",
+  infinityClassIsEmpty: changeClass(Number.POSITIVE_INFINITY) === "",
 
   /* ---- 证据时间（#317 W3）：数据时间 ≠ 取数时刻 ---- */
   evidenceTimeKeepsDateAndMinute: formatEvidenceTime("2026-10-19T10:58:06+08:00") === "10-19 10:58",

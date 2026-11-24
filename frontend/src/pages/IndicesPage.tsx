@@ -7,7 +7,7 @@ import { TrendingUp } from "lucide-react";
 import { LoadingState, SectionHeader, StatePanel } from "@/components/ui/primitives";
 import { api, type GlobalIndex, type IndexQuote } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { formatEvidenceTime } from "@/lib/format";
+import { changeClass, formatEvidenceTime } from "@/lib/format";
 
 export function IndicesPage() {
   const [indices, setIndices] = useState<IndexQuote[] | null>(null);
@@ -99,7 +99,9 @@ export function IndicesPage() {
                     <td>{row.region}</td>
                     <td><strong>{row.name}</strong></td>
                     <td className="aq-num">{row.price === null ? "—" : row.price.toFixed(2)}</td>
-                    <td className={cn("aq-num", (row.change_pct ?? 0) >= 0 ? "aq-tone-up" : "aq-tone-down")}>
+                    {/* 涨跌幅缺失显示「—」，样式也必须为空：不能拿 ?? 0 把它染成「涨」。
+                        统一走 changeClass(null)→""（A股口径 涨红跌绿，见 format.ts）。 */}
+                    <td className={cn("aq-num", changeClass(row.change_pct))}>
                       {row.change_pct === null ? "—" : `${row.change_pct >= 0 ? "+" : ""}${row.change_pct.toFixed(2)}%`}
                     </td>
                     <td>{row.as_of ? formatEvidenceTime(row.as_of) : "—"}</td>
