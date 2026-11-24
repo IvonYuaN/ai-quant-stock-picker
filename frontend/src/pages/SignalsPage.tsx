@@ -7,6 +7,7 @@ import { Radio } from "lucide-react";
 import { LoadingState, SectionHeader, Tag } from "@/components/ui/primitives";
 import { api, type PerformancePayload } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { changeClass } from "@/lib/format";
 
 /** 超额百分数（后端已是百分数，例如 3.0 表示 +3%）→ 带符号展示；缺失给「—」。 */
 function fmtPct(value: number | null | undefined): string {
@@ -225,10 +226,12 @@ export function SignalsPage() {
                   <tr key={`${pick.signal_date}-${pick.symbol}`}>
                     <td>{pick.signal_date}</td>
                     <td><strong>{pick.name}</strong> <span className="aq-code">{pick.symbol}</span></td>
-                    <td className={cn("aq-num", (pick.return_pct ?? 0) >= 0 ? "aq-tone-up" : "aq-tone-down")}>
+                    {/* 未结算信号 return_pct/excess 为 null（后端明说不冒充已出结果）。
+                        文本显示「—」时样式必须为空，不能 ?? 0 染成盈利红。 */}
+                    <td className={cn("aq-num", changeClass(pick.return_pct))}>
                       {pick.return_pct === null ? "—" : `${pick.return_pct >= 0 ? "+" : ""}${pick.return_pct.toFixed(2)}%`}
                     </td>
-                    <td className={cn("aq-num", (pick.excess_return_pct ?? 0) >= 0 ? "aq-tone-up" : "aq-tone-down")}>
+                    <td className={cn("aq-num", changeClass(pick.excess_return_pct))}>
                       {pick.excess_return_pct === null ? "—" : `${pick.excess_return_pct >= 0 ? "+" : ""}${pick.excess_return_pct.toFixed(2)}%`}
                     </td>
                     <td><Tag tone={pick.win ? "ok" : "warn"}>{pick.win ? "命中" : "未命中"}</Tag></td>
