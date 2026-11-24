@@ -70,6 +70,25 @@ def pick(t: int, cl, amt, codes):
     return out
 
 
+def realized(sel, op_row, codes):
+    """参考日选出的票，用**卖出日开盘价**算毛收益。返回 (收益列表, 缺开盘价的代码)。
+
+    🔴 缺数据的票必须**单独返回**、不能静默跳过：这批票往往不是随机缺失
+    （新债、停牌、取数失败），在它们身上算不出收益就等于把它们从分母里抹掉，
+    是最经典的高估路径。调用方有义务把这个数字印出来。
+    """
+    idx = {c: j for j, c in enumerate(codes)}
+    rets, missing = [], []
+    for code, px, _amt in sel:
+        j = idx[code]
+        o = op_row[j]
+        if not np.isfinite(o) or o <= 0:
+            missing.append(code)
+            continue
+        rets.append(o / px - 1.0)
+    return rets, missing
+
+
 def replay(dates, codes, op, cl, amt, n: int) -> dict:
     """回放最近 n 个「有次日开盘价」的交易日。"""
     rows = []
@@ -81,14 +100,7 @@ def replay(dates, codes, op, cl, amt, n: int) -> dict:
         sel = pick(t - 1, cl, amt, codes)
         if sel is None:
             continue
-        rets, skip = [], []
-        for code, px, _amt in sel:
-            j = codes.index(code)
-            o = op[t, j]
-            if not np.isfinite(o) or o <= 0:
-                skip.append(code)
-                continue
-            rets.append(o / px - 1.0)
+        rets, skip = realized(sel, op[t], codes)
         if not rets:
             continue
         rows.append({"buy_date": dates[t - 1], "sell_date": dates[t],
@@ -101,6 +113,27 @@ def replay(dates, codes, op, cl, amt, n: int) -> dict:
     return {"rows": rows, "n": len(rows)}
 
 
+def merge_cache(old: dict, new: dict) -> dict:
+    """把新拉到的日线并进旧缓存（按日期去重，新值覆盖旧值）。
+
+    🔴 为什么要 merge 而不是直接覆盖：`fetch_daily` 一次只请求 640 根，
+    而腾讯单次上限 320，实际只能拿到 2 年多。**直接覆盖会把 6 年历史砍成 2.4 年**
+    —— 我自己就这么踩过一次：`--fetch` 一跑，1126 天的样本变 591 天，
+    t 值从 5.28 掉到 3.16，而这是数据变短，不是 alpha 变弱。
+    合并的另一个好处是只补最新那根，历史一根不动。
+    """
+    out = {c: list(rows) for c, rows in old.items()}
+    for c, rows in new.items():
+        if c not in out:
+            out[c] = list(rows)
+            continue
+        by_date = {r[0]: r for r in out[c]}
+        for r in rows:
+            by_date[r[0]] = r
+        out[c] = [by_date[d] for d in sorted(by_date)]
+    return out
+
+
 def fetch_cache(cache: Path, names_path: Path) -> None:
     """复用 `cb_overnight_probe.py` 里已验证的取数（东财 delay 域 + 腾讯日线）。
 
@@ -109,13 +142,35 @@ def fetch_cache(cache: Path, names_path: Path) -> None:
     """
     import cb_overnight_probe as probe          # 同目录，运行时才导入（测试不触网）
 
-    lst = probe.fetch_list()
+    lst = None
+    try:
+        lst = probe.fetch_list()
+    except Exception as e:
+        # 东财 clist 偶发 502（已知问题）。名单本身几乎不变，没必要为一次限流
+        # 把整条取数链断掉 —— 有旧名单就用旧名单，只重拉日线。
+        # 🔴 但**必须有旧名单**：拿不到名单就真的失败，不许静默产出空池。
+        if names_path.exists():
+            lst = json.loads(names_path.read_text(encoding="utf-8"))
+            print("名单接口失败（%s），沿用旧名单 %d 只" % (str(e)[:60], len(lst)))
+    if not lst:
+        print("取名单失败且无旧名单可沿用，放弃", file=sys.stderr)
+        raise SystemExit(2)
     print("转债列表 %d 只，开始拉日线…" % len(lst))
     raw = probe.fetch_daily(lst.keys())
+    # 🔴 合并，不是覆盖：`fetch_daily` 只拿得到 2 年多，覆盖会把长历史砍掉。
+    old = {}
+    if cache.exists():
+        try:
+            old = json.loads(cache.read_text(encoding="utf-8"))
+        except ValueError:
+            old = {}                      # 缓存损坏就当没有，别为旧文件放弃本次取数
+    merged = merge_cache(old, raw)
     cache.parent.mkdir(parents=True, exist_ok=True)
-    cache.write_text(json.dumps(raw), encoding="utf-8")
+    cache.write_text(json.dumps(merged), encoding="utf-8")
     names_path.write_text(json.dumps(lst, ensure_ascii=False), encoding="utf-8")
-    print("成功 %d 只 → %s（名称表 → %s）" % (len(raw), cache, names_path))
+    print("成功 %d 只（并入后 %d 只，历史最深 %d 根）→ %s（名称表 → %s）"
+          % (len(raw), len(merged), max((len(v) for v in merged.values()), default=0),
+             cache, names_path))
 
 
 def _fmt_list(sel, names) -> str:
@@ -163,14 +218,17 @@ def main(argv=None) -> int:
         print("  候选 %d 只，需资金约 %.1f 万元（每只 1 手）："
               % (len(sel), sum(p for _, p, _ in sel) * 10 / 1e4))
         print("  " + _fmt_list(sel, names))
-        rets = []
-        for code, px, _ in sel:
-            j = codes.index(code)
-            if np.isfinite(op[trade, j]) and op[trade, j] > 0:
-                rets.append(op[trade, j] / px - 1.0)
+        rets, missing = realized(sel, op[trade], codes)
         if rets:
             print("  ⇒ 今日实际兑现：均值 %+.3f%%（毛），最差 %+.2f%%，最好 %+.2f%%"
                   % (np.mean(rets) * 100, np.min(rets) * 100, np.max(rets) * 100))
+            if missing:
+                # 🔴 不能让「19 只候选」和「均值」之间静默缩水：
+                # 缺数据的票往往不是随机缺失（新债、停牌、取数失败），
+                # 在它们身上算不出收益就等于把它们从分母里抹掉。
+                print("  ⚠️ 只有 %d/%d 只有开盘价，%d 只缺数据未计入均值（%s）"
+                      % (len(rets), len(sel), len(missing),
+                         "/".join(missing[:5]) + ("…" if len(missing) > 5 else "")))
 
     if a.replay:
         r = replay(dates, codes, op, cl, amt, a.replay)
