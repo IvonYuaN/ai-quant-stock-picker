@@ -246,20 +246,29 @@ def render_picks_only(picks: dict, max_per_mode: int = 3) -> str:
     全被压成「P3 2笔」，点开也看不到买了谁。这里只留事实：代码 名称 价 理由。
 
     不印口径长句、不印账本摘要、不印「炸板-5%是什么」——那些是文档不是推荐。
-    证据状态用一个字标：过门=✓，其余=·，不写解释。
+
+    🔴🔴 11-24 更正（老大原话「P1 P2 P3 P4 P5 P6 我都不知道什么逻辑」）：
+    原来这里把状态压成「过门=✓，其余=·」，六个模式**全是一个点**——
+    判决做了，卡片上不写，等于没做。老大看到的是一排 `P1· P2· P5·`，
+    既不知道 P1 是什么，也不知道哪个已经判死了。
+
+    现在每行必须带**模式名 + 判决**（`P1 二板接力 ❌已否证 ｜ …`）：
+    推送本身就是说明书，不需要他去翻代码或翻文档。
+    已否证的排在最后 —— 他看到的头几行，应当是他还能寄望的东西。
     """
     try:
         from paper_strategies import STRATEGIES
     except ImportError:  # pragma: no cover
         return ""
-    L: list[str] = []
+    # 已否证必须垫底；同状态内按 sid 排，保证回放可复现
+    order = {"passed": 0, "unverified": 1, "control": 2, "rejected": 3}
+    rows: list[tuple[int, str, str]] = []
     for sid in sorted(STRATEGIES):
         rec = picks.get(sid) or {}
         bought = list(rec.get("bought") or [])
         if not bought:
             continue
         spec = STRATEGIES[sid]
-        mark = "✓" if spec.get("evidence_state") == "passed" else "·"
         items = []
         for it in bought[:max_per_mode]:
             note = str(it.get("note") or "")
@@ -267,7 +276,10 @@ def render_picks_only(picks: dict, max_per_mode: int = 3) -> str:
                 it.get("code", ""), str(it.get("name") or "")[:4],
                 float(it.get("price") or 0), note))
         more = " …+%d" % (len(bought) - max_per_mode) if len(bought) > max_per_mode else ""
-        L.append("%s%s %s" % (sid, mark, " / ".join(items) + more))
-    if not L:
+        head = "%s %s %s" % (sid, spec.get("name", ""), tag_of(spec))
+        rows.append((order.get(spec.get("evidence_state", ""), 1), head,
+                     " / ".join(items) + more))
+    if not rows:
         return ""
-    return "\n".join(L)
+    rows.sort(key=lambda r: (r[0], r[1]))
+    return "\n".join("%s ｜ %s" % (head, body) for _, head, body in rows)
