@@ -201,9 +201,19 @@ def daily_series(a, sel_fn, T):
 def summarise(x: np.ndarray) -> dict:
     if x.size < 30:
         return {"n_days": int(x.size), "note": "样本<30"}
-    t = x.mean() / (x.std(ddof=1) / np.sqrt(x.size))
+    sd = float(x.std(ddof=1))
+    # 常数序列 sd=0 ⇒ t 是 0/0。这里落成 0.0（"没有证据"），而不是 inf/nan：
+    # nan 会污染 JSON（NaN 不是合法 JSON），inf 会被当成"极显著"。
+    t = x.mean() / (sd / np.sqrt(x.size)) if sd > 0 else 0.0
+    xs = np.sort(x)
+    k = max(1, int(x.size * 0.01))
+    # 🔴 均值/中位比是最快的验伪器：比值大 = 收益靠少数极端日撑着。
+    # 中位更接近「日常体感」，均值更接近「如果那些极端日还会再来」。
     return {"n_days": int(x.size), "mean_pct": round(float(x.mean()) * 100, 4),
             "median_pct": round(float(np.median(x)) * 100, 4),
+            "trim1_pct": round(float(xs[k:x.size - k].mean()) * 100, 4),
+            "best_pct": round(float(xs[-1]) * 100, 2),
+            "worst_pct": round(float(xs[0]) * 100, 2),
             "win_pct": round(float((x > 0).mean()) * 100, 1), "t": round(float(t), 2)}
 
 
@@ -255,7 +265,124 @@ def oos_split(records: list, cut: str) -> dict:
     return out
 
 
-def probe(raw: dict, show_lookahead: bool = False, oos_cut: str = "2025-07-01") -> dict:
+def quantile_buckets(a, x, dates, T, sel_fn, n=3) -> dict:
+    """入选池内按横截面因子 `x` 分 n 档，看各档隔夜收益。
+
+    🔴 为什么必须看这个：¥10000 账户买不起高价债（1 手 = 10 张，均价 224 元/张 = 2240 元），
+    能买的天然偏低价。若高价档收益明显更高，那「资金约束」就不只是少买几只，
+    而是**系统性地买错了那一档** —— 回测报的「等权全部」是一个拿不到的组合。
+
+    🔴 同一函数要能喂不同因子（昨收价、昨日涨幅…），否则「价格有单调梯度」这句话
+    永远无法排除「价格只是动量的影子」。归因不做，就是在给一个没名字的 beta 起名字。
+    """
+    buckets = [[] for _ in range(n)]
+    for t in range(1, T):
+        s = sel_fn(t)
+        if s is None:
+            continue
+        v, f = a[t, s], x[t, s]
+        ok = np.isfinite(v) & np.isfinite(f)
+        if ok.sum() < n * 3:            # 每档至少 3 只，否则分位没意义
+            continue
+        v, f = v[ok], f[ok]
+        order = np.argsort(f)
+        for k in range(n):
+            part = order[k * order.size // n:(k + 1) * order.size // n]
+            if part.size:
+                buckets[k].append((dates[t], float(v[part].mean()), int(part.size),
+                                   float(np.median(f[part]))))
+    out = {}
+    for k in range(n):
+        recs = buckets[k]
+        d = dict(summarise(np.asarray([r[1] for r in recs], dtype=float)),
+                 median_val=round(float(np.mean([r[3] for r in recs])), 3) if recs else 0)
+        d["by_year"] = by_year(recs)
+        d["records"] = recs
+        out["Q%d" % (k + 1)] = d
+    return out
+
+
+def affordable(a, prev, dates, T, sel_fn, capital: float, lot: int = 10,
+               order: str = "price", cap_per_name: float | None = None) -> dict:
+    """¥capital 实买：入选池里贪心买到买不起为止。
+
+    order="price"       低价优先（旧设想：最大化分散度）
+    order="price_desc"  高价优先（价格单调 ⇒ 买贵的那档）
+    order="amount"      按入选顺序（= 成交额升序，cb_pick 现行做法）
+    cap_per_name        单只上限。设了它，「高价优先」才不会把全部钱压在一只 941 元的债上；
+                        经验取 capital/3 ⇒ 保证至少 3 只，正好对上「前 1/3 池、日均 6 只」的量级。
+
+    🔴 这是**能执行的组合**；`daily_series` 的等权均值是**拿不到的组合**。
+    两者之差 = 资金约束的真实代价，必须一起报。
+
+    🔴 交易日集合必须与 `daily_series` 对齐（同样要求池内 ≥5 只有效），
+    否则两边 n 不同（1253 vs 1126），数字根本没可比性 —— 我第一版就踩了这个。
+    """
+    recs, thin = [], []
+    for t in range(1, T):
+        s = sel_fn(t)
+        if s is None:
+            continue
+        px, v = prev[t, s], a[t, s]
+        ok = np.isfinite(px) & np.isfinite(v) & (px > 0)
+        if ok.sum() < 5:                # 与 daily_series 同一门槛
+            continue
+        px, v = px[ok], v[ok]
+        if order == "price":
+            idx = np.argsort(px)
+        elif order == "price_desc":
+            idx = np.argsort(-px)
+        else:
+            idx = np.arange(px.size)
+        cash, held = float(capital), []
+        for j in idx:
+            cost = float(px[j]) * lot
+            if cost > cash or (cap_per_name and cost > cap_per_name):
+                continue
+            cash -= cost
+            held.append(float(v[j]))
+        if len(held) < 2:               # 只买到 1 只 = 单票赌博，不进统计，但要留痕
+            thin.append(dates[t])
+            continue
+        recs.append((dates[t], float(np.mean(held)), len(held), float(capital - cash)))
+    return {"records": recs, "thin_days": thin}
+
+
+def market_daily(a, dates, T) -> dict:
+    """全池等权隔夜 = 市场隔夜。用作 β 归因的基准（不筛价、不筛量）。"""
+    out = {}
+    for t in range(1, T):
+        v = a[t]
+        v = v[np.isfinite(v)]
+        if v.size >= 20:
+            out[dates[t]] = float(v.mean())
+    return out
+
+
+def market_attrib(series: np.ndarray, mkt: np.ndarray) -> dict:
+    """把日收益拆成 α + β×市场隔夜。
+
+    🔴 为什么必须做：高价转债 = 正股强 = 转股溢价率低 = 跟涨跟跌 ⇒ **β 天然更高**。
+    若高价档的超额全部来自 β，那它就不是 alpha，是「用 1.5 倍杠杆买市场隔夜」，
+    而杠杆可以免费加，不需要这个策略。
+    """
+    if series.size < 30 or mkt.size != series.size:
+        return {"note": "样本<30 或 对齐失败"}
+    X = np.column_stack([np.ones(mkt.size), mkt])
+    coef, *_ = np.linalg.lstsq(X, series, rcond=None)
+    resid = series - X @ coef
+    dof = max(1, mkt.size - 2)
+    s2 = float(resid @ resid) / dof
+    cov = s2 * np.linalg.inv(X.T @ X)
+    return {"alpha_pct": round(float(coef[0]) * 100, 4),
+            "beta": round(float(coef[1]), 2),
+            "t_alpha": round(float(coef[0] / np.sqrt(cov[0, 0])), 2),
+            "mkt_mean_pct": round(float(mkt.mean()) * 100, 4),
+            "n_days": int(series.size)}
+
+
+def probe(raw: dict, show_lookahead: bool = False, oos_cut: str = "2025-07-01",
+          capital: float = 10_000.0) -> dict:
     dates, codes, prev, amt, amt_prev, over, intra, full = build_panel(raw)
     T = len(dates)
     res: dict = {"as_of": dates[-1], "n_bonds": len(codes),
@@ -283,6 +410,46 @@ def probe(raw: dict, show_lookahead: bool = False, oos_cut: str = "2025-07-01") 
                                          * 10 * float(np.mean([r[3] for r in recs])) / 1e4, 1),
             "note": "1 手=10 张；只够买 1 手的最小资金"}
     res["oos"] = oos_split(recs, oos_cut)
+
+    # ---- 资金约束：¥capital 究竟买到什么 ----
+    res["price_buckets"] = quantile_buckets(over, prev, dates, T, sel_exec)
+    # 昨日涨幅：full[t-1] = cl[t-1]/cl[t-2]-1，决策时点 t 已知
+    mom = np.vstack([np.full((1, prev.shape[1]), np.nan), full[:-1]])
+    res["momentum_buckets"] = quantile_buckets(over, mom, dates, T, sel_exec)
+    for d in list(res["price_buckets"].values()) + list(res["momentum_buckets"].values()):
+        d.pop("records", None)          # 日序列不进 JSON，太占地方
+    res["capital"] = {"capital": capital, "lot": 10}
+    mkt = market_daily(over, dates, T)
+    # 🔴 这是整条路的地板：全池等权隔夜 = 转债市场的隔夜漂移。
+    # 所有「选票」出来的超额，都要先减掉 β×这一行才算 alpha。
+    res["market"] = dict(summarise(np.asarray(list(mkt.values()), dtype=float)),
+                         by_year=by_year([(d, v, 0, 0.0) for d, v in mkt.items()]))
+    modes = (("low_first", "price", None),
+             ("current_cb_pick", "amount", None),
+             ("high_cap3", "price_desc", capital / 3.0))
+    for lab, order, capn in modes:
+        aff = affordable(over, prev, dates, T, sel_exec, capital, order=order,
+                         cap_per_name=capn)
+        recs_a = aff["records"]
+        if not recs_a:
+            continue
+        s = summarise(np.asarray([r[1] for r in recs_a], dtype=float))
+        s["avg_names"] = round(float(np.mean([r[2] for r in recs_a])), 1)
+        s["avg_spent"] = round(float(np.mean([r[3] for r in recs_a])), 0)
+        s["thin_days"] = len(aff["thin_days"])
+        s["thin_by_year"] = {y: sum(1 for d in aff["thin_days"] if d[:4] == y)
+                             for y in sorted({d[:4] for d in aff["thin_days"]})}
+        s["by_year"] = by_year(recs_a)
+        s["oos"] = oos_split(recs_a, oos_cut)
+        s["cost"] = cost_table(np.asarray([r[1] for r in recs_a], dtype=float))
+        pairs = [(r[1], mkt[r[0]]) for r in recs_a if r[0] in mkt]
+        if len(pairs) >= 30:
+            s["attrib"] = market_attrib(np.asarray([p[0] for p in pairs], dtype=float),
+                                        np.asarray([p[1] for p in pairs], dtype=float))
+        if capn:
+            s["cap_per_name"] = round(capn, 0)
+        res["capital"][lab] = s
+
     if show_lookahead:
         res["lookahead_control"] = {
             "over_today_amt": summarise(daily_series(over, sel_look, T)),
@@ -309,6 +476,8 @@ def main(argv=None) -> int:
                     help="价格门槛。默认 130（强赎线）；做稳健性扫描时才改")
     ap.add_argument("--top-frac", type=float, default=TOP_FRAC)
     ap.add_argument("--oos-cut", default="2025-07-01")
+    ap.add_argument("--capital", type=float, default=10_000.0,
+                    help="实买资金。默认 ¥10000（影子账户量级）")
     a = ap.parse_args(argv)
 
     # 阈值要能被扫描，但**不能悄悄改**：显式覆盖模块常量，输出里会印出来
@@ -325,7 +494,8 @@ def main(argv=None) -> int:
         print("成功 %d 只 → %s" % (len(raw), p))
     raw = json.loads(p.read_text(encoding="utf-8"))
 
-    res = probe(raw, show_lookahead=a.show_lookahead, oos_cut=a.oos_cut)
+    res = probe(raw, show_lookahead=a.show_lookahead, oos_cut=a.oos_cut,
+                capital=a.capital)
     print("=" * 78)
     print("转债隔夜策略：昨收买 → 次开卖")
     print("截至 %s ｜ %d 只转债 ｜ 昨收>%.0f元 + 昨日成交额前 %.0f%%"
@@ -354,6 +524,66 @@ def main(argv=None) -> int:
     if cap:
         print("\n  容量：日均 %.1f 只 × 1 手 × 均价 %.0f 元 ≈ %.1f 万元/日"
               % (cap["avg_names_per_day"], cap["avg_price"], cap["capital_wan_per_day"]))
+    mk = res.get("market") or {}
+    if mk:
+        print("\n  🔴 地板：全池等权隔夜（%d 只全买，β=1）%s" % (res["n_bonds"], _fmt(mk)))
+        ys = [(y, b["mean_pct"]) for y, b in (mk.get("by_year") or {}).items()
+              if y != "_span"]
+        print("    分年：%s" % " ".join("%s %+.4f%%" % (y, m) for y, m in ys))
+    pb = res.get("price_buckets") or {}
+    if pb:
+        print("\n  入选池内按昨收价分档（🔴 检验「买不起高价债」是不是方向性吃亏）：")
+        for q, v in pb.items():
+            ys = [(y, b["mean_pct"]) for y, b in (v.get("by_year") or {}).items()
+                  if y != "_span"]
+            tail = " ".join("%s %+.3f" % (y, m) for y, m in ys[-2:])
+            print("    %-3s 中位 %3.0f 元  %s  ｜近两年 %s"
+                  % (q, v.get("median_val", 0), _fmt(v), tail))
+    mb = res.get("momentum_buckets") or {}
+    if mb:
+        print("\n  入选池内按昨日涨幅分档（🔴 价格若只是动量的影子，这里也该单调）：")
+        for q, v in mb.items():
+            print("    %-3s 中位 %+.2f%%  %s" % (q, v.get("median_val", 0) * 100, _fmt(v)))
+    c = res.get("capital") or {}
+    if "low_first" in c:
+        print("\n  🔴 ¥%d 实买（1 手 = 10 张）：" % c["capital"])
+        print("    等权全部（拿不到的组合） %s" % _fmt(res["over"]))
+        names = {"low_first": "低价优先", "current_cb_pick": "按成交额序",
+                 "high_cap3": "高价优先·单只≤1/3"}
+        for lab in ("low_first", "current_cb_pick", "high_cap3"):
+            v = c.get(lab)
+            if not v:
+                continue
+            print("    实买·%-10s 均%+.4f%% 中%+.4f%% 截尾%+.4f%% t%+.2f 胜%4.1f%%"
+                  " ｜ 日均 %.1f 只 花 ¥%.0f ｜ 薄 %d 天"
+                  % (names[lab], v["mean_pct"], v["median_pct"], v["trim1_pct"], v["t"],
+                     v["win_pct"], v["avg_names"], v["avg_spent"], v["thin_days"]))
+        v = c.get("high_cap3") or c.get("low_first")
+        if v and v.get("by_year"):
+            print("    实买·%s 分年：" % names.get("high_cap3" if c.get("high_cap3") else "low_first"),
+                  end="")
+            print(" ".join("%s %+.3f%%" % (y, b["mean_pct"])
+                           for y, b in v["by_year"].items() if y != "_span"))
+            if v.get("thin_by_year"):
+                print("    　└ 只买得起≤1只按年：%s" % v["thin_by_year"])
+        v = c.get("high_cap3")
+        if v and v.get("cost"):
+            print("    🔴 高价优先·成本敏感性（按均值口径；中位口径见上，别只看均值）：")
+            for lab, w in v["cost"].items():
+                print("      %-12s 年化 %+6.1f%%  SR %5.2f  最大回撤 %6.1f%%  最差单日 %+5.2f%%"
+                      % (lab, w["annual_pct"], w["sharpe"], w["mdd_pct"], w["worst_day_pct"]))
+        at = (v or {}).get("attrib")
+        if at:
+            print("    🔴 β 归因（市场 = 全池等权隔夜 %+.4f%%/天）：α %+.4f%%/天 t%+.2f ｜ β %.2f"
+                  % (at["mkt_mean_pct"], at["alpha_pct"], at["t_alpha"], at["beta"]))
+        o = (v or {}).get("oos") or {}
+        if "out_sample" in o:
+            print("    🔴 高价优先样本外切分 %s（规则在样本内看出单调后固定，不重估）：" % o["cut"])
+            for lab, name in (("in_sample", "样本内"), ("out_sample", "样本外")):
+                w = o[lab]
+                if "mean_pct" in w:
+                    print("      %-6s %+.4f%%/天 t%+.2f (n=%d日)"
+                          % (name, w["mean_pct"], w["t"], w["n_days"]))
     if "lookahead_control" in res:
         lc = res["lookahead_control"]
         print("\n  🔴 前视对照（反面教材，不可用）：")
