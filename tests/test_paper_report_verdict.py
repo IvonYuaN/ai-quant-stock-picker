@@ -73,3 +73,58 @@ def test_report_table_shows_verdict_column(tmp_path, monkeypatch):
     assert html.count("⏳未过门") == 1
     # 假设文字仍然保留（判决不替代假设，两者都要）
     assert "情绪接力" in html
+
+
+# ---------------- 否证敞口 ----------------
+#
+# 🔴 报告以前只有两样东西：每行的判决、底下的总额度。**两者不交叉**，
+# 于是有一个事实从来没被印出来过 —— 钱有多少压在已否证的策略上。
+# 这一组守的就是那个交叉。
+
+def _ov(**kw):
+    """构造 overview 的最小子集：只要 sleeves[sid].exposure。"""
+    base = {sid: {"exposure": 0.0} for sid in ("P1", "P2", "P3", "P4", "P5", "P6")}
+    for sid, e in kw.items():
+        base[sid]["exposure"] = float(e)
+    return {"sleeves": base}
+
+
+def test_rejected_exposure_is_value_weighted_not_count_weighted():
+    """83% 的假设被否 ≠ 83% 的钱在否证策略上。
+
+    六个 sleeve 名义各一万，但有四个空仓 ⇒ 真实敞口只落在 P1/P2/P4 上。
+    按「6 个里 5 个被否」会报 83%，按钱算是 (P1+P2)/(P1+P2+P4)。
+    """
+    rx = pr.rejected_exposure(_ov(P1=27497.0, P2=0.0, P3=0.0, P4=13947.0, P5=0.0, P6=0.0))
+    assert rx["total"] == 41444.0
+    assert rx["rejected"] == 27497.0
+    assert rx["rejected_pct"] == 66.3          # 不是 83.3
+    assert rx["sids"] == ["P1"]
+
+
+def test_passed_sleeve_is_not_counted_as_rejected():
+    """P4 是 unverified（未过门），不能混进「已否证」—— 否则这个数会虚高。"""
+    rx = pr.rejected_exposure(_ov(P4=5000.0))
+    assert rx["rejected"] == 0.0
+    assert rx["rejected_pct"] == 0.0
+    assert rx["sids"] == []
+
+
+def test_empty_book_says_nothing_instead_of_zero_percent():
+    """空仓时不印「0 分钱挂在否证策略上」这种没信息量的话，直接不印。"""
+    assert pr._rejected_html(_ov()) == ""
+
+
+def test_rejected_banner_names_every_rejected_sleeve():
+    """横幅必须点名是哪几个 sleeve —— 只说「66%」读者没法去撤。"""
+    html = pr._rejected_html(_ov(P1=27497.0, P6=3947.0, P4=10000.0))
+    assert "66.3%" not in html          # 这个组合是 76.0%，防止照抄上一个用例
+    assert "75.9%" in html
+    assert "P1" in html and "P6" in html
+    assert "P4" not in html.split("（")[1].split("）")[0]   # 括号里只列被否证的
+
+
+def test_rejected_banner_is_not_a_no_op_when_nothing_is_rejected():
+    """全部干净时也要有一行 —— 否则「横幅不出现」会被误读成「这条逻辑没跑」。"""
+    html = pr._rejected_html(_ov(P4=8000.0))
+    assert "没有一分钱" in html
