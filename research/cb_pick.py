@@ -6,9 +6,16 @@
 
 ## 规则（与探针完全一致，不另设参数）
 
-1. 昨日收盘价 > 130 元（强赎线，制度先验）
+1. 昨日收盘价 > 130 元
 2. 昨日成交额排在合格池前 1/3
 3. 昨日收盘买入，今日开盘卖出
+
+🔴 **关于 130 元这个门槛的准确说法**：制度上的强赎触发看的是「正股价格 ≥ 转股价的 130%
+（连续 30 个交易日中 15 日）」，**不是转债价格 130 元**。130 元是市场惯例里「进入强赎风险区」
+的价格带 —— 转债价格由转股价值 + 溢价率决定，正股涨到强赎线时转债通常已在 130 元以上。
+所以它是**经验等价物，不是制度条款**。之所以选它，是因为阈值扫描显示 100~220 元全正、
+单调，而 130 恰好①落在单调段 ②样本最长 ③有明确的产业解释（强赎博弈），
+不是从数据里挑出来的孤立尖峰。
 
 ## 为什么单独做一个文件
 
@@ -18,23 +25,26 @@
 ## 🔴 已知偏差（必须随清单一起来）
 
 - **幸存者偏差**：池子是今日在市转债，已强赎/到期的不在样本里
-- **方向真实但在衰减**：样本外（cut 2025-07）t 仅 2.07，未过 2.5 门槛
-- **本质是微观结构收割**：全段收益为负（−0.096%/天），赚的是「收盘压低、开盘回归」那一段
+- **方向真实但在衰减**：样本外（cut 2025-07）t 2.27，未过 2.5 门槛
+- **本质是微观结构收割**：全段收益为负（−0.094%/天），赚的是「收盘压低、开盘回归」那一段
 - 因此**不上真钱**，只做零成本纸面跟踪
 
 用法：
-    python research/cb_pick.py --cache research/cb_daily.json --names research/cb_names.json
-    python research/cb_pick.py --cache ... --replay 20     # 回放最近 20 个交易日
+    python research/cb_pick.py                     # 今日清单 + 上一批兑现
+    python research/cb_pick.py --fetch             # 先重拉行情（收盘后跑）
+    python research/cb_pick.py --replay 20         # 再加最近 20 个交易日的回放
 """
 from __future__ import annotations
 
 import argparse
 import json
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import numpy as np
 
+CST = timezone(timedelta(hours=8))
 PRICE_LO = 130.0
 TOP_FRAC = 1.0 / 3
 MIN_NAMES = 9              # 合格池少于 9 只 ⇒ 前 1/3 不足 3 只，当天不做
@@ -181,6 +191,39 @@ def _fmt_list(sel, names) -> str:
     return " / ".join(parts)
 
 
+def anchor(dates, cl) -> int:
+    """最后一个**有收盘价**的交易日 —— 那天收盘就是「今日清单」的买入时点。
+
+    🔴 原来取的是「最后一个有**开盘价**的日期，再减一」，于是 15:05 收盘后跑，
+    给出的仍然是「昨天该买什么、今天兑现多少」。对一个每日清单来说这是致命的：
+    老大照着看，永远看不到「今天收盘该买哪几只」。
+    """
+    t = len(dates) - 1
+    while t > 0 and not np.isfinite(cl[t]).any():
+        t -= 1
+    return t
+
+
+def today_cst() -> str:
+    return datetime.now(CST).strftime("%Y-%m-%d")
+
+
+def now_hm() -> int:
+    d = datetime.now(CST)
+    return d.hour * 60 + d.minute
+
+
+def session_closed(hm: int) -> bool:
+    """A 股 15:00 收盘。`hm` = 当天第几分钟。
+
+    🔴 为什么要判这个：腾讯日线在**盘中**也会给出一根「今天」的 K 线，
+    但它的 close 是**当前最新价**、volume 是**开盘至今的累计量**，不是收盘价。
+    不判就会把 13:23 的实时价当成「今日收盘买入价」写进清单 —— 而这份清单
+    唯一的价值就是「收盘价买」。收盘前跑只能算预览。
+    """
+    return hm >= 15 * 60
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--cache", default="research/cb_daily.json")
@@ -198,37 +241,55 @@ def main(argv=None) -> int:
     if names_path.exists():
         names = json.loads(names_path.read_text(encoding="utf-8"))
     dates, codes, op, cl, amt = build(raw)
-
-    # 参考日 = 最后一个「有完整收盘+成交额、且次日开盘价已出现」的交易日的前一日
-    # 简化：cursor = 最后一个有开盘价的日期；候选按它的前一日算
-    last = len(dates) - 1
-    while last > 0 and not np.isfinite(op[last]).any():
-        last -= 1
-    ref, trade = last - 1, last
+    ref = anchor(dates, cl)
+    today = today_cst()
 
     print("=" * 74)
-    print("转债隔夜 · 每日候选（昨收>%.0f元 + 昨日成交额前 %.0f%%）"
-          % (PRICE_LO, TOP_FRAC * 100))
+    print("转债隔夜 · 每日清单（收盘买 → 次日开盘卖）")
+    print("规则：昨收 >%.0f 元 + 昨日成交额前 %.0f%%" % (PRICE_LO, TOP_FRAC * 100))
     print("=" * 74)
+
+    # ---------------- 一、今日清单 ----------------
     sel = pick(ref, cl, amt, codes)
+    # 盘中跑：腾讯日线的「今天」那根是实时价 + 不完整成交量，不是收盘价
+    preview = (dates[ref] == today) and not session_closed(now_hm())
+    print("\n【今日清单】%s %s买入 → 次日开盘卖出"
+          % (dates[ref], "📌预览（尚未收盘，按实时价）" if preview else "收盘"))
+    if preview:
+        print("  🔴 现在 %02d:%02d 还没收盘：下面按**盘中实时价**算，成交量也不完整，"
+              % divmod(now_hm(), 60))
+        print("     只能当预览。15:00 后请重跑 --fetch 取定盘价 —— 收盘价才是可成交价。")
+    if dates[ref] != today:
+        # 缓存不是今天的：收盘后没重拉，或者今天不是交易日。两种都必须说清，
+        # 否则照着一个三天前的清单去买，是最典型的「看起来在跟踪、其实在空转」。
+        print("  ⚠️ 缓存最新只到 %s（今天 %s）；若今天已收盘，请先 --fetch" % (dates[ref], today))
     if sel is None:
-        print("  %s 合格池不足 %d 只，当天不做" % (dates[ref], MIN_NAMES))
+        print("  合格池不足 %d 只 ⇒ 当天不做（不硬选几只凑单）" % MIN_NAMES)
     else:
-        print("  参考日 %s 收盘买入，%s 开盘卖出" % (dates[ref], dates[trade]))
-        print("  候选 %d 只，需资金约 %.1f 万元（每只 1 手）："
+        print("  候选 %d 只，需资金约 %.1f 万元（每只 1 手 = 10 张）"
               % (len(sel), sum(p for _, p, _ in sel) * 10 / 1e4))
         print("  " + _fmt_list(sel, names))
-        rets, missing = realized(sel, op[trade], codes)
-        if rets:
-            print("  ⇒ 今日实际兑现：均值 %+.3f%%（毛），最差 %+.2f%%，最好 %+.2f%%"
-                  % (np.mean(rets) * 100, np.min(rets) * 100, np.max(rets) * 100))
-            if missing:
-                # 🔴 不能让「19 只候选」和「均值」之间静默缩水：
-                # 缺数据的票往往不是随机缺失（新债、停牌、取数失败），
-                # 在它们身上算不出收益就等于把它们从分母里抹掉。
-                print("  ⚠️ 只有 %d/%d 只有开盘价，%d 只缺数据未计入均值（%s）"
-                      % (len(rets), len(sel), len(missing),
-                         "/".join(missing[:5]) + ("…" if len(missing) > 5 else "")))
+
+    # ---------------- 二、上一批兑现 ----------------
+    if ref > 0:
+        prev = pick(ref - 1, cl, amt, codes)
+        print("\n【上一批兑现】%s 买 → %s 开盘卖" % (dates[ref - 1], dates[ref]))
+        if prev is None:
+            print("  当日合格池不足 %d 只，没有建仓" % MIN_NAMES)
+        else:
+            rets, missing = realized(prev, op[ref], codes)
+            if not rets:
+                print("  选 %d 只，但一只都没有开盘价 ⇒ 无法算兑现" % len(prev))
+            else:
+                print("  均值 %+.3f%%（毛），最差 %+.2f%%，最好 %+.2f%%"
+                      % (np.mean(rets) * 100, np.min(rets) * 100, np.max(rets) * 100))
+                if missing:
+                    # 🔴 不能让「19 只候选」和「均值」之间静默缩水：
+                    # 缺数据的票往往不是随机缺失（新债、停牌、取数失败），
+                    # 在它们身上算不出收益就等于把它们从分母里抹掉。
+                    print("  ⚠️ 只有 %d/%d 只有开盘价，%d 只缺数据未计入均值（%s）"
+                          % (len(rets), len(prev), len(missing),
+                             "/".join(missing[:5]) + ("…" if len(missing) > 5 else "")))
 
     if a.replay:
         r = replay(dates, codes, op, cl, amt, a.replay)
@@ -249,10 +310,10 @@ def main(argv=None) -> int:
             print("  扣 0.04%% 佣金后累计 %+.2f%%"
                   % ((np.cumprod(1 + g - 0.0004)[-1] - 1) * 100))
 
-    print("\n  🔴 偏差：幸存者偏差未排除；样本外 t2.07 未过门；全段收益为负 ⇒ 只做纸面跟踪，不上真钱。")
+    print("\n  🔴 偏差：幸存者偏差未排除；样本外 t2.27 未过门；全段收益为负 ⇒ 只做纸面跟踪，不上真钱。")
     if a.json:
         Path(a.json).write_text(json.dumps(
-            {"ref_date": dates[ref], "trade_date": dates[trade],
+            {"ref_date": dates[ref], "sell_date": "次日开盘",
              "picks": [{"code": c, "name": names.get(c, ""), "prev_close": p, "amt_yi": v}
                        for c, p, v in (sel or [])]},
             ensure_ascii=False, indent=1), encoding="utf-8")
