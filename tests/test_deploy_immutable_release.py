@@ -561,3 +561,60 @@ cleanup 0
 """ % (SCRIPT, stage2)
     r2 = subprocess.run(["bash", "-c", bash2], capture_output=True, text=True)
     assert "DELETED" in r2.stdout, r2.stdout + r2.stderr
+
+
+def _failing_curl_shim(tmp: Path) -> Path:
+    """curl 恒失败（模拟公网子检查失败），其余命令不受影响。"""
+    bindir = tmp / "bin-failcurl"
+    bindir.mkdir(exist_ok=True)
+    curl = bindir / "curl"
+    curl.write_text("#!/bin/sh\nexit 22\n")
+    curl.chmod(0o755)
+    return bindir
+
+
+def _success_python_shim(tmp: Path) -> Path:
+    """python 恒成功（snapshot/headless 检查假装通过），隔离出「只有 curl 失败」的场景。"""
+    bindir = tmp / "bin-okpython"
+    bindir.mkdir(exist_ok=True)
+    py = bindir / "py"
+    py.write_text("#!/bin/sh\nexit 0\n")
+    py.chmod(0o755)
+    return bindir
+
+
+@requires_script
+def test_public_route_curl_failure_propagates(tmp_path):
+    """#499: curl 子检查失败必须让 check_public_routes 返回非 0，不能被后续成功命令吞掉。
+
+    旧实现在 `if ! check_public_routes` 上下文里 errexit 被关闭，curl 失败后继续往下，
+    最后一条 headless 成功 ⇒ 函数整体返回 0 ⇒ 部署打印 "verified"。这里把
+    curl 设成失败、python 设成成功，精确复现这个「最后一条成功掩盖前面失败」的形状。
+    """
+    curl_bin = _failing_curl_shim(tmp_path)
+    py_bin = _success_python_shim(tmp_path)
+    env = dict(os.environ)
+    env["PATH"] = f"{curl_bin}{os.pathsep}{py_bin}{os.pathsep}{env.get('PATH', '')}"
+    bash = """
+export AQSP_DEPLOY_LIB=1
+source "%s"
+export CHECK_URL="https://example.invalid"
+export TARGET="prod"
+export SKIP_PUBLIC_CHECK="false"
+export EXPECTED_VARIANT_END="2026-11-24"
+export AQSP_RUNTIME_PYTHON="%s/py"
+RELEASE_DIR="%s"
+# 关键：用 `if ! fn` 调用，和部署主流程一致——这会让 bash 关闭函数内的 errexit。
+if ! check_public_routes; then
+    echo PROPAGATED_FAILURE
+else
+    echo SWALLOWED_RETURNED_ZERO
+fi
+""" % (SCRIPT, py_bin, tmp_path)
+    r = subprocess.run(["bash", "-c", bash], capture_output=True, text=True, env=env)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "PROPAGATED_FAILURE" in r.stdout, (
+        "curl 失败被后续成功命令吞掉：check_public_routes 返回 0 会误导部署打印 verified\n"
+        + r.stdout + r.stderr
+    )
+    assert "public route check failed" in (r.stdout + r.stderr), r.stdout + r.stderr
