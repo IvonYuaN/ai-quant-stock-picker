@@ -309,3 +309,83 @@ def test_merge_cache_adds_brand_new_bonds():
     m = cp.merge_cache({"111012": [["2026-11-24", 1.0, 1.0, 1.0]]},
                        {"123270": [["2026-11-24", 2.0, 2.0, 1.0]]})
     assert set(m) == {"111012", "123270"}
+
+
+def test_anchor_uses_last_close_not_last_open():
+    """清单锚点是「最后一个有**收盘价**的交易日」，不是「有开盘价的日子减一」。
+
+    盘中跑的时候，最后一天已经有开盘价（甚至已有最新价）但还没收盘。
+    旧写法 `last = 最后一个有开盘价的日子; ref = last - 1` 在收盘后跑，
+    给出的仍然是「昨天买什么」，**永远看不到今天该买哪几只**。
+    """
+    cl = np.full((3, 3), 140.0)
+    cl[2, :] = np.nan                  # 第三天还没收盘
+    assert cp.anchor(["d0", "d1", "d2"], cl) == 1
+
+    cl[2, :] = 141.0                   # 收盘了
+    assert cp.anchor(["d0", "d1", "d2"], cl) == 2
+
+
+def test_main_shows_today_list_then_previous_batch(tmp_path, capsys):
+    """端到端：清单必须按「今天收盘买」给，兑现单独一块。
+
+    构造上让两天选出**完全不同**的四只：d1 成交额 1..12，d2 反过来。
+    锚点若正确（d2），今日清单里是 0..3 号；错成 d1 则会是 11..8 号。
+    """
+    codes = _codes(12)
+    raw = {}
+    for i, c in enumerate(codes):
+        raw[c] = [["2026-11-23", 140.0, 140.0, float(i + 1)],
+                  ["2026-11-24", 140.0 + i + 1.0, 140.0, float(12 - i)]]
+    cache = tmp_path / "cb.json"
+    cache.write_text(json.dumps(raw), encoding="utf-8")
+
+    rc = cp.main(["--cache", str(cache), "--names", str(tmp_path / "none.json")])
+    out = capsys.readouterr().out
+    assert rc == 0
+    head, tail = out.split("【上一批兑现】")
+    assert "【今日清单】2026-11-24" in head
+    assert codes[0] in head, "今日清单没有按最新收盘价选票"
+    assert codes[11] not in head, "今日清单用了前一天的数据（锚点错成 last-1）"
+    assert "2026-11-23 买 → 2026-11-24 开盘卖" in tail
+    # 兑现必须按「d1 选出的那 4 只（成交额最大的 8/9/10/11 号）」算：
+    # 它们的次日涨幅 9%~12%，均值 10.5/140 = +7.500%。
+    # 若错用了今日清单那 4 只（0~3 号），均值会是 2.5/140 = +1.786%。
+    assert "+7.500%" in tail, "兑现用错了批次"
+
+
+def test_session_closed_boundary():
+    """15:00 是分界：14:59 还没收盘，15:00 收盘。"""
+    assert cp.session_closed(14 * 60 + 59) is False
+    assert cp.session_closed(15 * 60) is True
+    assert cp.session_closed(15 * 60 + 5) is True
+
+
+def test_main_marks_intraday_run_as_preview(tmp_path, capsys, monkeypatch):
+    """盘中跑必须标成「预览」，不能把实时价说成收盘价。
+
+    腾讯日线在盘中也会给出一根「今天」的 K 线，close 是当前最新价、
+    volume 是开盘至今的累计量。不判就会把 13:23 的价格当成「今日收盘买入价」，
+    而这份清单唯一的价值就是「收盘价买」。
+    """
+    codes = _codes(12)
+    raw = {c: [["2026-11-23", 140.0, 140.0, float(i + 1)],
+               ["2026-11-24", 141.0, 141.0, float(12 - i)]]
+           for i, c in enumerate(codes)}
+    cache = tmp_path / "cb.json"
+    cache.write_text(json.dumps(raw), encoding="utf-8")
+
+    # 把「今天」钉到 2026-11-24，时钟拨到 13:23
+    monkeypatch.setattr(cp, "today_cst", lambda: "2026-11-24")
+    monkeypatch.setattr(cp, "now_hm", lambda: 13 * 60 + 23)
+    cp.main(["--cache", str(cache), "--names", str(tmp_path / "none.json")])
+    out = capsys.readouterr().out
+    assert "📌预览（尚未收盘，按实时价）" in out
+    assert "还没收盘" in out
+
+    # 收盘后（15:05）同一份数据就不该再有预览标记
+    monkeypatch.setattr(cp, "now_hm", lambda: 15 * 60 + 5)
+    cp.main(["--cache", str(cache), "--names", str(tmp_path / "none.json")])
+    out2 = capsys.readouterr().out
+    assert "预览" not in out2
+    assert "【今日清单】2026-11-24 收盘买入" in out2
