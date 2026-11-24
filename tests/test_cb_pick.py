@@ -237,7 +237,7 @@ def test_main_warns_when_some_candidates_have_no_open_price(tmp_path, capsys):
     rc = cp.main(["--cache", str(cache), "--names", str(tmp_path / "none.json")])
     out = capsys.readouterr().out
     assert rc == 0
-    assert "候选 4 只" in out
+    assert "规则选 4 只" in out
     assert "只有 3/4 只有开盘价" in out, "缺开盘价的票被静默跳过了"
     assert codes[11] in out
 
@@ -389,3 +389,78 @@ def test_main_marks_intraday_run_as_preview(tmp_path, capsys, monkeypatch):
     out2 = capsys.readouterr().out
     assert "预览" not in out2
     assert "【今日清单】2026-11-24 收盘买入" in out2
+
+
+def test_budget_pick_buys_in_amount_order_until_cash_runs_out():
+    """¥10000 实买：按成交额降序买满为止，买不起的明确列出来。
+
+    这是「理想化」最具体的一处：规则选的是「合格池前 1/3 全部等权」，回测按
+    **等权全部持有**算收益；而 ¥10000 只买得起 4~5 只。两者不是同一个组合，
+    只报等权收益而不报实买收益，就是把不可执行的组合当成结论。
+    """
+    sel = [("A", 900.0, 9.0), ("B", 300.0, 8.0), ("C", 200.0, 7.0), ("D", 100.0, 6.0)]
+    bought, cash, skipped = cp.budget_pick(sel, 10_000.0)
+    # 一手 = 10 张：A 9000 → 剩 1000；B 3000 / C 2000 买不起跳过；D 1000 刚好买得起
+    assert [c for c, _, _ in bought] == ["A", "D"]
+    assert cash == 0.0
+    assert [c for c, _, _ in skipped] == ["B", "C"], "买不起的必须列出来，不能静默丢掉"
+
+    bought2, cash2, skipped2 = cp.budget_pick(sel[:3], 10_000.0)
+    assert [c for c, _, _ in bought2] == ["A"]
+    assert skipped2  # 现金不够就是不够，不许四舍五入硬买
+
+
+def test_budget_pick_never_overspends():
+    """永远不许超支：花掉的钱 + 剩余现金 == 本金。"""
+    sel = [("A", 137.7, 5.0), ("B", 221.3, 4.0), ("C", 96.5, 3.0), ("D", 45.0, 2.0)]
+    for cap in (10_000.0, 5_000.0, 2_000.0, 100.0):
+        bought, cash, _ = cp.budget_pick(sel, cap)
+        spent = sum(p for _, p, _ in bought) * cp.LOT_VALUE
+        assert abs(spent + cash - cap) < 1e-9, cap
+
+
+def test_replay_reports_both_weights_and_they_differ(tmp_path):
+    """回放必须同时给「等权全部持有」和「¥capital 实买」两个口径。
+
+    构造：12 只候选，价格从 50 到 600（一手 500~6000 元）。¥10000 只买得起
+    最贵的一只或最便宜的几只，与等权 4 只完全不同 ⇒ 两个数必须不一样，
+    并且实买只数要小于规则只数。
+    """
+    codes = _codes(12)
+    dates = ["2026-11-20", "2026-11-23"]
+    n = len(codes)
+    closes = np.array([140.0 + 40.0 * i for i in range(n)])    # 140..580，全部过 130 门槛
+    cl = np.vstack([closes, closes])
+    op = np.vstack([closes, closes * (1 + 0.01 * np.arange(1, n + 1))])
+    amt = np.zeros((2, n))
+    amt[0, :] = np.arange(1.0, n + 1.0)                        # 越贵成交额越大
+    amt[1, :] = 1.0
+
+    r = cp.replay(dates, codes, op, cl, amt, 1, capital=10_000.0)
+    row = r["rows"][0]
+    assert row["n_pick"] == 4
+    assert row["n_bought"] < row["n_pick"], "¥10000 竟然买得起全部 4 只？"
+    assert row["gross_pct"] is not None and row["gross_cap_pct"] is not None
+    assert abs(row["gross_pct"] - row["gross_cap_pct"]) > 1e-6, "两个口径不该同值"
+
+
+def test_main_warns_when_capital_buys_only_one_name(tmp_path, capsys):
+    """只买得起 1~2 只时必须警告「高集中度赌博」。
+
+    真实案例：2026-11-23 成交额第一的是 884 元的福新转债，一手 8840 元 ⇒
+    ¥10000 买完只剩 ¥1160，第二只一只都买不起。规则设计的「前 1/3 等权」
+    在这里退化成单票押注 —— 不警告就等于默认它能代表策略。
+    """
+    codes = _codes(12)
+    raw = {}
+    for i, c in enumerate(codes):
+        px = 880.0 if i == 11 else 140.0 + i          # 11 号超贵且成交额最大
+        raw[c] = [["2026-11-20", px, px, float(i + 1)],
+                  ["2026-11-23", px, px, 1.0]]
+    cache = tmp_path / "cb.json"
+    cache.write_text(json.dumps(raw), encoding="utf-8")
+
+    cp.main(["--cache", str(cache), "--names", str(tmp_path / "none.json")])
+    out = capsys.readouterr().out
+    assert "只买得起 1 只" in out
+    assert "高集中度赌博" in out
