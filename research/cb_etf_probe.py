@@ -27,7 +27,17 @@
 
     511380   2023 +0.0435 → 2024 +0.0552 → 2025 +0.0294 → 2026 +0.0170(t0.72)
 
-往返佣金 0.02% ⇒ **2026 已经转负**。ETF 是能真的下单的东西，它归零就等于路到头了。
+## 🔴 最后一刀：最低佣金是固定金额，小资金上它比 alpha 大得多
+
+券商佣金 = `max(成交额×费率, 最低5元)`。在 **¥10000** 上：
+
+    5 元 = 单边 0.05% = 往返 **0.10%**  （是「万分之一」的 10 倍）
+
+隔夜只有 +0.0356%/天 ⇒ 每天净 **−0.0644%**，**年化 −14.3%（t−4.42）**。
+
+**临界资金 = 5 / 0.0001 = ¥50000**，低于它费率再低都按 5 元收。
+所以「免5 账户 ⇒ SR 0.59」「不免5 ⇒ 年化 −14.3%」必须分开说 ——
+**对 ¥10000 这个真实规模，这条路是负期望，不是「勉强」也不是「先跟踪」**。
 
 ## 已知偏差
 
@@ -51,7 +61,20 @@ import numpy as np
 
 ETFS = (("sh511380", "可转债ETF博时"), ("sh511180", "上证可转债ETF"))
 BAD_MOVE = 0.12                            # ETF 日内 >12% 视为脏数据（转债指数不会）
-COST_LEVELS = [(0.0002, "往返0.02%(万1)"), (0.0005, "往返0.05%(万2.5)")]
+COST_LEVELS = [(0.0002, "往返0.02%(免5·万1)"), (0.0005, "往返0.05%(万2.5)"),
+               (0.0010, "往返0.10%(5元最低)")]
+
+
+def min_fee_round_trip(capital: float, rate: float = 0.0001,
+                       min_fee: float = 5.0) -> float:
+    """给定资金规模下的**往返**费率。
+
+    🔴 券商佣金是 `max(成交额×费率, 最低5元)`。在 ¥10000 上，5 元 = 单边 0.05%、
+    往返 **0.10%** —— 是「万分之一」的 10 倍。**固定成本对小资金是致命的**，
+    不能拿「万分之几」当成本去算一个 ¥10000 的组合。
+    临界资金 = 5 / 0.0001 = **5 万元**，低于它一律按 5 元算。
+    """
+    return 2.0 * max(capital * rate, min_fee) / capital
 
 
 def fetch_etf(sym: str, n: int = 800) -> list:
@@ -137,6 +160,8 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--json")
     ap.add_argument("--n", type=int, default=800)
+    ap.add_argument("--capital", type=float, default=10_000.0,
+                    help="实际资金。用于算「最低5元」的固定成本占比")
     a = ap.parse_args(argv)
 
     out = {}
@@ -167,8 +192,17 @@ def main(argv=None) -> int:
             print("    %s %+.4f%%/天 t%+.2f (n=%d)" % (y, v["mean_pct"], v["t"], v["n_days"]))
         print("  扣往返佣金后（🔴 这才是判据）：")
         for lab, v in res["net"].items():
-            print("    %-16s 年化 %+6.1f%%  SR %5.2f  t%+.2f"
+            print("    %-20s 年化 %+6.1f%%  SR %5.2f  t%+.2f"
                   % (lab, v["annual_pct"], v["sharpe"], v["t"]))
+        rt = min_fee_round_trip(a.capital)
+        over = res["over"]
+        if "mean_pct" in over:
+            net = over["mean_pct"] / 100 - rt
+            print("    🔴 ¥%.0f 规模下真实往返成本 = **%.3f%%**（5元最低佣金）"
+                  " ⇒ 每天净 %+.4f%%，年化 %+.1f%%"
+                  % (a.capital, rt * 100, net * 100, ((1 + net) ** 240 - 1) * 100))
+            print("       临界资金：¥%.0f（低于它一律按 5 元收，费率再低也没用）"
+                  % (5.0 / 0.0001))
     print()
     if a.json:
         Path(a.json).write_text(json.dumps(out, ensure_ascii=False, indent=1),
