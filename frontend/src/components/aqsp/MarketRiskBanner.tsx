@@ -11,7 +11,7 @@ import { useEffect, useState } from "react";
 
 import { ToneCallout } from "@/components/ui/primitives";
 import { api, type MarketRisk } from "@/lib/api";
-import { formatSignedPct } from "@/lib/format";
+import { formatRate, formatSignedRatio } from "@/lib/format";
 
 const LEVEL_LABEL: Record<string, string> = {
   low: "低",
@@ -41,11 +41,12 @@ export function MarketRiskBanner() {
 
   const level = risk.level;
   const tone = level === "low" ? "ok" : "warn";
+  // 字段缺失必须显示「—」：先 ?? 0 再格式化会把「没数据」伪装成「零风险」。
   const detail = [
-    `20 日 ${formatSignedPct((risk.trend_20 ?? 0) * 100)}`,
-    `60 日 ${formatSignedPct((risk.trend_60 ?? 0) * 100)}`,
-    `广度 ${Math.round((risk.breadth ?? 0) * 100)}%`,
-    `距一年高点 ${formatSignedPct((risk.drawdown_252 ?? 0) * 100)}`,
+    `20 日 ${formatSignedRatio(risk.trend_20)}`,
+    `60 日 ${formatSignedRatio(risk.trend_60)}`,
+    `广度 ${formatRate(risk.breadth)}`,
+    `距一年高点 ${formatSignedRatio(risk.drawdown_252)}`,
   ].join("｜");
 
   return (
