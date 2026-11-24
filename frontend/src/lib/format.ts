@@ -22,6 +22,13 @@ export function formatRate(value: number | null | undefined): string {
   return `${(value * 100).toFixed(1)}%`;
 }
 
+/** 比率（0~1）→ 带符号百分比，保留 2 位。缺数返回「—」，绝不先兜 0 再格式化。 */
+export function formatSignedRatio(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "—";
+  const pct = value * 100;
+  return `${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%`;
+}
+
 /** 金额，千分位 + 2 位小数 + 元。 */
 export function formatMoney(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return "未提供";
