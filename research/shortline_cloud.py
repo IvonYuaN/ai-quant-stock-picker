@@ -69,6 +69,19 @@ ARENA_WINDOWS = (
 )
 
 
+def _sleeve_tag(st: dict) -> str:
+    """sleeve 摘要里的「样本」两三个字（纯函数）。
+
+    🔴 `n` 是**已结算**笔数，也就是 t 检验的样本量。打板 sleeve 是 T+1，
+    买入当天结算不了，于是出现「P1 0笔」却明明持着 7 只票的场面 ——
+    老大看到这一行只会以为打板什么都没干。持仓数必须一起印。
+    """
+    tag = "%d笔" % st.get("n", 0)
+    if st.get("positions"):
+        tag += "(%d持)" % st["positions"]
+    return tag
+
+
 def _arena_brief() -> str:
     """推送卡片里的影子账户摘要（各 sleeve 样本/净值 + 真实敞口构成）。"""
     try:
@@ -80,7 +93,7 @@ def _arena_brief() -> str:
             if st["n"] == 0 and st["positions"] == 0:
                 continue
             t = "超t%.1f" % st["t_exc"] if st["t_exc"] is not None else "超t-"
-            parts.append("%s %d笔 %s" % (sid, st["n"], t))
+            parts.append("%s %s %s" % (sid, _sleeve_tag(st), t))
         tail = " ｜ ".join(parts) if parts else "尚无信号"
         line = "\n> 影子账户 ¥%.0f(%+.2f%%) %s" % (
             ov["total_nav"], ov["total_ret_pct"], tail)
