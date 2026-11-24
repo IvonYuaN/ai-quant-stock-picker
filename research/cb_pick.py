@@ -113,6 +113,27 @@ def replay(dates, codes, op, cl, amt, n: int) -> dict:
     return {"rows": rows, "n": len(rows)}
 
 
+def merge_cache(old: dict, new: dict) -> dict:
+    """把新拉到的日线并进旧缓存（按日期去重，新值覆盖旧值）。
+
+    🔴 为什么要 merge 而不是直接覆盖：`fetch_daily` 一次只请求 640 根，
+    而腾讯单次上限 320，实际只能拿到 2 年多。**直接覆盖会把 6 年历史砍成 2.4 年**
+    —— 我自己就这么踩过一次：`--fetch` 一跑，1126 天的样本变 591 天，
+    t 值从 5.28 掉到 3.16，而这是数据变短，不是 alpha 变弱。
+    合并的另一个好处是只补最新那根，历史一根不动。
+    """
+    out = {c: list(rows) for c, rows in old.items()}
+    for c, rows in new.items():
+        if c not in out:
+            out[c] = list(rows)
+            continue
+        by_date = {r[0]: r for r in out[c]}
+        for r in rows:
+            by_date[r[0]] = r
+        out[c] = [by_date[d] for d in sorted(by_date)]
+    return out
+
+
 def fetch_cache(cache: Path, names_path: Path) -> None:
     """复用 `cb_overnight_probe.py` 里已验证的取数（东财 delay 域 + 腾讯日线）。
 
@@ -136,10 +157,20 @@ def fetch_cache(cache: Path, names_path: Path) -> None:
         raise SystemExit(2)
     print("转债列表 %d 只，开始拉日线…" % len(lst))
     raw = probe.fetch_daily(lst.keys())
+    # 🔴 合并，不是覆盖：`fetch_daily` 只拿得到 2 年多，覆盖会把长历史砍掉。
+    old = {}
+    if cache.exists():
+        try:
+            old = json.loads(cache.read_text(encoding="utf-8"))
+        except ValueError:
+            old = {}                      # 缓存损坏就当没有，别为旧文件放弃本次取数
+    merged = merge_cache(old, raw)
     cache.parent.mkdir(parents=True, exist_ok=True)
-    cache.write_text(json.dumps(raw), encoding="utf-8")
+    cache.write_text(json.dumps(merged), encoding="utf-8")
     names_path.write_text(json.dumps(lst, ensure_ascii=False), encoding="utf-8")
-    print("成功 %d 只 → %s（名称表 → %s）" % (len(raw), cache, names_path))
+    print("成功 %d 只（并入后 %d 只，历史最深 %d 根）→ %s（名称表 → %s）"
+          % (len(raw), len(merged), max((len(v) for v in merged.values()), default=0),
+             cache, names_path))
 
 
 def _fmt_list(sel, names) -> str:
