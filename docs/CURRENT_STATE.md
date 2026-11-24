@@ -1,6 +1,6 @@
 # AQSP 项目现状（Current State）
 
-> **单一事实来源。** 最后核对：2026-09-22（基线 `origin/main` @ `ab6f5fef` / #173）。
+> **单一事实来源。** 最后核对：2026-11-24（基线 `origin/main` @ `d660a31f` / #620；本日修正了默认路径与本地分支的过时记录）。历史核对：2026-09-22（`ab6f5fef` / #173）。
 > 本项目由**多个 agent 并行开发**，历史上积累了互相矛盾的阶段文档与任务清单。本文用于回答「**现在到底是什么样**」。
 > 维护规则：本文只写「当前是什么」；历史/过程材料一律下沉 `docs/archive/`，不在此堆叠。
 
@@ -104,10 +104,17 @@
   - `research_absorption.md` / `open_source_quant_research.md` 由 `docs/open_source_research.md` 与 `docs/secret-and-upload-policy.md` 引用，已改为现状说明。同批失效的还有 `docs/research_pipeline.md`、`docs/source_level_absorption.md`、`docs/research_absorption.json`、`data/open_source_research.jsonl`，以及 `scripts/collect_open_source_research.py` / `absorb_research_findings.py` / `validate_research_registries.py` —— 整套旧「开源采集 → 吸收」流水线已被 `docs/research/repo_radar.md` + `scripts/collect_research_registry.py` 取代。
   - ⚠️ 其余引用点集中在 `outputs/`（已被 `.gitignore`，不在仓库跟踪内），按「历史产物不改造」处理，**未改动**。
 
-**⚠️ 疑似过期但不得擅动（被代码当默认路径）**
-- `docs/walkforward-2026-05.md`：`src/aqsp/cli.py` 的 `aqsp walkforward --report` **默认值**。改默认值是代码变更，须单独 PR。
-- `scripts/diagnose_momentum.py` 的 `--output` 默认 `docs/momentum-direction-2026-05-28.md`，而该文件已归档到 `docs/archive/process/`；脚本未改（属代码变更）。
-- `src/aqsp/research/summary.py` 的 `absorption_path` 默认 `docs/research_absorption.json`（该文件已移除）；同上，须单独 PR 处理。
+**代码里的默认路径（2026-11-24 逐项复核，别再当成待修缺口）**
+
+| 代码位置 | 默认路径 | 真实状态 | 结论 |
+|---|---|---|---|
+| `src/aqsp/cli.py:854` `aqsp walkforward --report` | `docs/walkforward-2026-05.md` | **文件仍存在**，git 有历史 | ✅ 不是缺口，勿动 |
+| `scripts/diagnose_momentum.py:244` `--output` | `docs/momentum-direction-2026-05-28.md` | 已归档到 `docs/archive/process/` | ⚠️ 唯一真过期项；改动价值低，未动 |
+| `src/aqsp/research/summary.py:147` `absorption_path` | `docs/research_absorption.json` | 文件不存在，但代码 `if absorption_file.exists() else []` **显式处理缺失**，`tests/test_research_summary.py:70,98` 专门覆盖 | ✅ 可选输入设计，勿改成必填 |
+
+> 🔴 11-24 教训：Explore agent 和本文件旧版把这三项全列成"须单独 PR 的缺口"，实际只有 1 项弱真。
+> 判断默认路径是否过期，**必须同时验三件事**：文件是否真不存在 + 代码读到缺失时是否显式处理 + 是否有测试覆盖。
+> 「默认值指向不存在的文件」本身不等于 bug —— 可选输入是合法设计。
 
 **孤儿 / 死代码（2026-09-22 后端只读审计发现，证据见本机 `outputs/后端审计_2026-09-22.md`，未入库）**
 
@@ -118,7 +125,14 @@
 - ⏸️ **保留** 12 个仅测试引用、生产不可达的模块：`risk/unified_risk.py`（619 行三层风控，**生产无调用**，别把它当成"风控三层已生效"）、`risk/stop_loss.py`、`strategies/adaptive_evolution.py`、`briefing/renderer.py` 等。这些是**能力未接线**，不是死代码，留待后续接线 PR 处置，本次一律不删。
 
 **本地分支**
-- 35 个本地分支**全部未并入 `origin/main`**（多数对应仍开着的 PR，如 `fix/vibe-acl-covers-all-read-paths`）。**不可批量删除**；仅能逐个核对 PR 状态后清理。
+- 历史积累的 `codex/*` 分支多数对应已关闭/已 squash 的 PR，**不可按 `--merged` 批量删**（全 squash 合并不留祖先链）。逐个以 PR `merged_at` + 内容在 `origin/main` 的对应为准。
+- 2026-11-24 已清理 4 条：`feat/filter-verdict-cli`、`codex/tickflow-personal-operating-system`（功能全在 main，删）、`codex/strategy-watch-workflow`（含未入库的 tickflow roadmap 文档，保留）、`feature/holder-concentration-factor`（#541 负结果实验唯一 git 历史，保留）。另有 `codex/*` 历史分支未动。
+
+**数据诚实性（2026-11-24，PR #616–#619）**
+- 前端缺数兜底已系统治理一轮：`buildEmotion`（fail-closed）、海外指数涨跌幅染色、未结算信号收益染色、市场风险条缺数——统一复用 `changeClass` / `formatSignedRatio`，缺数一律显式「—」或整块 unavailable，不渲染成 0/假方向。
+- 🔴 `frontend/src/data/sectors.json` 有 17 个 `verified:false` 空 nodes 骨架，但**前端无任何代码 import**（2026-11-24 grep 0 命中）——残留数据，不是活跃展示面，勿当缺口改。
+- 后端降级多数已有 `available=false` + reason（`backend/app.py:2345/2507/2958` 等），机制健康；薄弱点历史上在前端，已治理一轮。
+- 验证方法：grep `?? 0` 展示面 → 三重验证（类型可空 + 后端契约 + 活跃展示）→ 复用现成 helper → 反向验证（临时破坏实现看测试红不红）→ 独立 PR。已靠此拦下 9+ 伪缺口。
 
 **`outputs/`（阶段产物）**
 - 属本地工作区产物，`outputs/` 已被 `.gitignore`；不在仓库历史中，按需本地清理即可。
