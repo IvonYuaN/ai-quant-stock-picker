@@ -279,14 +279,23 @@ function buildBreadth(overview: MarketOverview | null | undefined): BreadthView 
 
 function buildEmotion(emotion: ShortTermEmotion | null | undefined): EmotionView | null {
   if (!emotion || !emotion.date) return null;
+  // 🔴 与 buildBreadth 对称的 fail-closed：count 类字段必须是非负安全整数。
+  // 后端取数失败返回 {}；若只有 date 残留（旧缓存/部分载荷），?? 0 会把
+  // 「涨停0家·跌停0家·最高0板」当成事实渲染 —— 那在强势日是假话。
+  // 任一 count 缺失/非法 ⇒ 整块 unavailable，让页面显示「未取得」而不是全 0。
+  const counts = [
+    emotion.zt_count, emotion.dt_count, emotion.zb_count,
+    emotion.max_boards, emotion.lianban_count, emotion.yzt_count,
+  ];
+  if (!counts.every((v) => typeof v === "number" && Number.isSafeInteger(v) && v >= 0)) return null;
   return {
     date: emotion.date,
-    ztCount: emotion.zt_count ?? 0,
-    dtCount: emotion.dt_count ?? 0,
-    zbCount: emotion.zb_count ?? 0,
-    maxBoards: emotion.max_boards ?? 0,
-    lianbanCount: emotion.lianban_count ?? 0,
-    yztCount: emotion.yzt_count ?? 0,
+    ztCount: emotion.zt_count,
+    dtCount: emotion.dt_count,
+    zbCount: emotion.zb_count,
+    maxBoards: emotion.max_boards,
+    lianbanCount: emotion.lianban_count,
+    yztCount: emotion.yzt_count,
     ladder: asArray<LadderRow>(emotion.ladder).map((tier) => ({
       boards: tier.boards,
       count: tier.count,
