@@ -70,6 +70,25 @@ def pick(t: int, cl, amt, codes):
     return out
 
 
+def realized(sel, op_row, codes):
+    """参考日选出的票，用**卖出日开盘价**算毛收益。返回 (收益列表, 缺开盘价的代码)。
+
+    🔴 缺数据的票必须**单独返回**、不能静默跳过：这批票往往不是随机缺失
+    （新债、停牌、取数失败），在它们身上算不出收益就等于把它们从分母里抹掉，
+    是最经典的高估路径。调用方有义务把这个数字印出来。
+    """
+    idx = {c: j for j, c in enumerate(codes)}
+    rets, missing = [], []
+    for code, px, _amt in sel:
+        j = idx[code]
+        o = op_row[j]
+        if not np.isfinite(o) or o <= 0:
+            missing.append(code)
+            continue
+        rets.append(o / px - 1.0)
+    return rets, missing
+
+
 def replay(dates, codes, op, cl, amt, n: int) -> dict:
     """回放最近 n 个「有次日开盘价」的交易日。"""
     rows = []
@@ -81,14 +100,7 @@ def replay(dates, codes, op, cl, amt, n: int) -> dict:
         sel = pick(t - 1, cl, amt, codes)
         if sel is None:
             continue
-        rets, skip = [], []
-        for code, px, _amt in sel:
-            j = codes.index(code)
-            o = op[t, j]
-            if not np.isfinite(o) or o <= 0:
-                skip.append(code)
-                continue
-            rets.append(o / px - 1.0)
+        rets, skip = realized(sel, op[t], codes)
         if not rets:
             continue
         rows.append({"buy_date": dates[t - 1], "sell_date": dates[t],
@@ -163,14 +175,17 @@ def main(argv=None) -> int:
         print("  候选 %d 只，需资金约 %.1f 万元（每只 1 手）："
               % (len(sel), sum(p for _, p, _ in sel) * 10 / 1e4))
         print("  " + _fmt_list(sel, names))
-        rets = []
-        for code, px, _ in sel:
-            j = codes.index(code)
-            if np.isfinite(op[trade, j]) and op[trade, j] > 0:
-                rets.append(op[trade, j] / px - 1.0)
+        rets, missing = realized(sel, op[trade], codes)
         if rets:
             print("  ⇒ 今日实际兑现：均值 %+.3f%%（毛），最差 %+.2f%%，最好 %+.2f%%"
                   % (np.mean(rets) * 100, np.min(rets) * 100, np.max(rets) * 100))
+            if missing:
+                # 🔴 不能让「19 只候选」和「均值」之间静默缩水：
+                # 缺数据的票往往不是随机缺失（新债、停牌、取数失败），
+                # 在它们身上算不出收益就等于把它们从分母里抹掉。
+                print("  ⚠️ 只有 %d/%d 只有开盘价，%d 只缺数据未计入均值（%s）"
+                      % (len(rets), len(sel), len(missing),
+                         "/".join(missing[:5]) + ("…" if len(missing) > 5 else "")))
 
     if a.replay:
         r = replay(dates, codes, op, cl, amt, a.replay)
