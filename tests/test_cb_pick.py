@@ -26,6 +26,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 # `cb_pick` 用 spec 加载，不会把 research/ 放进 sys.path；但 `_sym` 那条测试要
@@ -256,3 +257,32 @@ def test_symbol_prefix_routes_shenzhen_bonds_to_sz():
         assert probe._sym(code) == "sz" + code, code
     for code in ("110059", "111012", "113643", "118058", "132014"):
         assert probe._sym(code) == "sh" + code, code
+
+
+def test_fetch_cache_falls_back_to_existing_names_on_list_failure(tmp_path, monkeypatch, capsys):
+    """名单接口偶发 502 时，只要还有旧名单就继续拉日线。
+
+    东财 clist 的 502 是已知问题；名单几乎不变，为一次限流断掉整条取数链不值得。
+    """
+    import cb_overnight_probe as probe
+
+    names = tmp_path / "names.json"
+    names.write_text(json.dumps({"111012": "福新转债"}), encoding="utf-8")
+    monkeypatch.setattr(probe, "fetch_list", lambda: (_ for _ in ()).throw(OSError("502")))
+    monkeypatch.setattr(probe, "fetch_daily",
+                        lambda codes, n=640: {"111012": [["2026-11-20", 1, 2, 3]]})
+    cache = tmp_path / "cb.json"
+    cp.fetch_cache(cache, names)
+    assert json.loads(cache.read_text(encoding="utf-8")) == {"111012": [["2026-11-20", 1, 2, 3]]}
+    assert "沿用旧名单 1 只" in capsys.readouterr().out
+
+
+def test_fetch_cache_fails_loudly_without_any_name_list(tmp_path, monkeypatch):
+    """连旧名单都没有就必须失败退出 —— 不许静默产出一个空池当结果。"""
+    import cb_overnight_probe as probe
+
+    monkeypatch.setattr(probe, "fetch_list", lambda: (_ for _ in ()).throw(OSError("502")))
+    with pytest.raises(SystemExit) as ei:
+        cp.fetch_cache(tmp_path / "cb.json", tmp_path / "names.json")
+    assert ei.value.code == 2
+    assert not (tmp_path / "cb.json").exists()
