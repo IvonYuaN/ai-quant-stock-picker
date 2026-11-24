@@ -173,6 +173,31 @@ export const marketViewContract = {
     emotion: { ...emotionFixture, date: "" },
   }).emotion === null,
   emotionLianbanIsMapped: full.emotion?.lianbanStocks[0].code === "300750",
+  // 🔴 取数失败/部分载荷不得被 ?? 0 兜成「涨停0家·最高0板」——必须整块 unavailable。
+  // 与 buildBreadth 的 fail-closed 对称：count 类字段必须是非负安全整数。
+  emotionIsNullOnMissingCounts: [
+    { zt_count: undefined }, { dt_count: undefined }, { zb_count: undefined },
+    { max_boards: undefined }, { lianban_count: undefined }, { yzt_count: undefined },
+  ].every((patch) => buildMarketView({
+    emotion: { ...emotionFixture, ...patch } as unknown as ShortTermEmotion,
+  }).emotion === null),
+  emotionIsNullOnInvalidCounts: [
+    { zt_count: "88" }, { dt_count: -1 }, { zb_count: 1.5 },
+    { max_boards: NaN }, { lianban_count: Infinity }, { yzt_count: true },
+  ].every((patch) => buildMarketView({
+    emotion: { ...emotionFixture, ...patch } as unknown as ShortTermEmotion,
+  }).emotion === null),
+  // 空对象（后端 `get_short_term_emotion()` 失败返回 {}）即使带了 date 也不能当有效情绪
+  emotionIsNullOnEmptyPayloadWithDate: buildMarketView({
+    emotion: { date: "2026-09-11" } as unknown as ShortTermEmotion,
+  }).emotion === null,
+  emotionRatesMayBeNull: buildMarketView({
+    emotion: { ...emotionFixture, seal_rate: null, break_rate: null, promotion_rate: null },
+  }).emotion?.sealRate === null,
+  // 整块 unavailable 必须传导到 availability，页面才会显示「未取得」而不是空白
+  emotionFailClosedMarksSectionUnavailable: sectionAvailability(buildMarketView({
+    emotion: { date: "2026-09-11" } as unknown as ShortTermEmotion,
+  })).emotion === false,
 
   /* ---- 成交额榜与行业榜 ---- */
   turnoverIsMapped: full.turnover.length === 1 && full.turnover[0].amount === 42e8,
