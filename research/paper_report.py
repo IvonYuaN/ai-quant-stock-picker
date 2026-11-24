@@ -48,6 +48,47 @@ def _verdict_html(sid: str) -> str:
             "<div class='hyp' style='margin-top:4px'>%s</div>" % (cls, tag, why))
 
 
+def rejected_exposure(ov: dict, specs=None) -> dict:
+    """当前敞口里有多少钱挂在**已被否证**的策略上 —— 纯函数。
+
+    🔴 为什么必须单独算：这张表以前只有两样东西 —— 每行一个判决、底下一句总额度。
+    两者**不交叉**，于是就有一个从来没被印出来的事实：六个 sleeve 名义上各 ¥10000、
+    看起来是「六个独立假设各押一万」，实际上其中五个已经 `rejected`，
+    钱压在上面不是分散，是**同时在赌五个已知负期望的东西**。
+
+    这个数必须由持仓反算（成本法），不能用「6 个里 5 个被否 ⇒ 83%」——
+    那算的是假设个数占比，不是风险敞口占比。两个数经常差很远（#601 实测 66.3% vs 50%）。
+    """
+    total = 0.0
+    bad = 0.0
+    sids: list[str] = []
+    for sid, st in (ov.get("sleeves") or {}).items():
+        e = float(st.get("exposure") or 0.0)
+        total += e
+        if e > 0 and verdict_of(sid, specs)[0] == "rejected":
+            bad += e
+            sids.append(sid)
+    return {"total": round(total, 2), "rejected": round(bad, 2),
+            "rejected_pct": round(bad / total * 100, 1) if total > 0 else 0.0,
+            "sids": sorted(sids)}
+
+
+def _rejected_html(ov: dict) -> str:
+    rx = rejected_exposure(ov)
+    if rx["total"] <= 0:
+        return ""
+    if rx["rejected"] <= 0:
+        return ("<div class='rej'>当前敞口 <b>¥%s</b>，没有一分钱挂在已被否证的策略上。"
+                "</div>" % "{:,.0f}".format(rx["total"]))
+    return ("<div class='rej'>当前总敞口 <b>¥%s</b>，其中 <b>¥%s（%.1f%%）</b>"
+            "挂在<b>已被否证</b>的策略上（%s）。"
+            "<span class='mute'>这不是「六个假设各押一万」的分散，"
+            "是同时在赌 %d 个已经知道是负期望的东西 —— 撤不撤是资金分配决策，"
+            "但这一行必须每天被看见。</span></div>"
+            % ("{:,.0f}".format(rx["total"]), "{:,.0f}".format(rx["rejected"]),
+               rx["rejected_pct"], " / ".join(rx["sids"]), len(rx["sids"])))
+
+
 OUT = HERE / "paper_report.html"
 CST = timezone(timedelta(hours=8))
 
@@ -63,6 +104,9 @@ h1{font-size:26px;letter-spacing:-.5px;font-weight:800;white-space:nowrap}
 .top .meta{flex:none;text-align:right;font-size:12px;color:#6b7280;font-variant-numeric:tabular-nums;white-space:nowrap;line-height:1.7}
 .claim{background:#111318;color:#fff;padding:16px 20px;border-radius:2px;font-size:13px;line-height:1.7;margin-bottom:24px}
 .claim b{color:#ffd166}
+.rej{background:#fff5f5;border-left:3px solid #d9001b;padding:12px 16px;font-size:13px;line-height:1.7;margin-bottom:20px}
+.rej b{color:#d9001b}
+.rej .mute{color:#8b929e;font-weight:400}
 .kpis{display:grid;grid-template-columns:1.6fr 1fr 1fr 1fr;gap:1px;background:#e3e5e9;border:1px solid #e3e5e9;margin-bottom:28px}
 .kpi{background:#fff;padding:18px 20px}
 .kpi .k{font-size:11px;color:#6b7280;letter-spacing:.08em;text-transform:uppercase}
@@ -339,6 +383,7 @@ def render() -> str:
 <div class="sub">真实信号 + 真实价格 + 虚拟资金 ｜ 前向验证，无回测成分</div></div>
 <div class="meta">起算 %s<br>生成 %s<br>虚拟本金 ¥%s（%d 个策略各 ¥10000）</div></div>
 %s
+__REJBLOCK__
 
 <div class="claim"><b>诚实声明</b>　这不是真下单，也无法保证赚钱。账本记的是「若严格按规则执行，今天会怎样」。<br>
 每个策略的阈值是<b>先验设定、一次定死、永不因亏损调参</b>——调了就变成回测过拟合，账本也就不再有前向验证的意义。<br>
@@ -406,7 +451,8 @@ B 格 =「集合竞价没顶死 + 盘中摸板」，说明确实存在可买时�
     # 多重检验的 m 必须跟着 sleeve 数走，不能写死：
     # 每加一个 sleeve，判据就更严一点，这页面的说法也要跟着变，否则会写着一个过期的门槛。
     m_planned = len(sleeves)
-    body = (body.replace("__M_PLANNED__", str(m_planned))
+    body = (body.replace("__REJBLOCK__", _rejected_html(ov))
+                .replace("__M_PLANNED__", str(m_planned))
                 .replace("__FWER__", "%.0f" % ((1 - 0.95 ** m_planned) * 100)))
     return head + body
 
