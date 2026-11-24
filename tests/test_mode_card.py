@@ -111,7 +111,7 @@ def test_phase_card_prints_params_and_evidence_on_the_mode_head():
     md = mode_card.render_phase_card("auction", AUCTION_20261123)
     assert "P4 竞价抢筹" in md
     assert "高开2~7%" in md and "竞价额≥昨成交额2%" in md, "参数没印出来"
-    assert "前向验证中·未过门" in md and "✅过门" not in md, \
+    assert "高开这一半已测" in md and "✅过门" not in md, \
         "竞价抢筹未过门，卡片不能出现 ✅过门 标签"
 
 

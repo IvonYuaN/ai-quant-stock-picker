@@ -411,7 +411,7 @@ STRATEGIES: dict[str, dict] = {
         "phase": "auction",
         "scan": scan_auction,
         "params": "高开2~7%·竞价额≥昨成交额2%",
-        "evidence": "前向验证中·未过门",
+        "evidence": "高开这一半已测：超额 −0.33%/t−5.69(700日)；仅剩『竞价放量』未测，无历史数据",
         "evidence_state": "unverified",
         "exit": "t1_close",
         "stop_pct": 0.0,
