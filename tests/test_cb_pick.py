@@ -21,12 +21,17 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
+# `cb_pick` 用 spec 加载，不会把 research/ 放进 sys.path；但 `_sym` 那条测试要
+# 直接 import 探针模块（`cb_pick --fetch` 运行时也是同目录导入）。
+if str(ROOT / "research") not in sys.path:
+    sys.path.insert(0, str(ROOT / "research"))
 
 
 def _load():
@@ -194,3 +199,60 @@ def test_amount_is_volume_times_close():
     assert dates == ["2026-11-20", "2026-11-23"]
     assert cl[0, 0] == 150.0 and op[1, 0] == 151.0
     assert amt[0, 0] == 150.0 * 2_000_000.0
+
+
+def test_missing_open_price_is_reported_not_silently_dropped():
+    """缺开盘价的票必须**单独返回**，不能让均值在缩水的分母上算。
+
+    真实场景：19 只候选里只有 10 只有开盘价（新债未上市/停牌/取数失败），
+    均值 +3.83% 是这 10 只的均值。如果这 9 只被静默跳过，卡片上「候选 19 只」
+    与「均值 +3.83%」并列，读的人会以为 19 只都赚了 3.83% —— 最经典的高估路径。
+    """
+    codes = _codes(3)
+    sel = [(codes[0], 100.0, 1.0), (codes[1], 100.0, 1.0), (codes[2], 100.0, 1.0)]
+    op_row = np.array([110.0, np.nan, 0.0])       # 只有第一只有开盘价
+    rets, missing = cp.realized(sel, op_row, codes)
+    assert len(rets) == 1 and abs(rets[0] - 0.10) < 1e-9
+    assert missing == [codes[1], codes[2]], "缺开盘价的票没有被点名"
+
+
+def test_main_warns_when_some_candidates_have_no_open_price(tmp_path, capsys):
+    """端到端：缺开盘价时，stdout 必须出现「只有 N/M 只有开盘价」。
+
+    上一版这条只测了 `realized()` 的返回值，把打印那行删掉测试照样全绿 ——
+    又是「断言守错了层」。这里直接跑 `main()` 看输出。
+    """
+    codes = _codes(12)
+    cache = tmp_path / "cb.json"
+    raw = {}
+    for i, c in enumerate(codes):
+        raw[c] = [["2026-11-20", 140.0, 140.0, float(i + 1)],          # 成交额 1..12
+                  ["2026-11-23", 140.0, 140.0, 1.0]]
+    # 次日开盘：成交额最大的那只（100011，会被选中）故意缺开盘价
+    for i, c in enumerate(codes):
+        raw[c][1][1] = float("nan") if i == 11 else 141.0
+    cache.write_text(json.dumps(raw), encoding="utf-8")
+
+    rc = cp.main(["--cache", str(cache), "--names", str(tmp_path / "none.json")])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "候选 4 只" in out
+    assert "只有 3/4 只有开盘价" in out, "缺开盘价的票被静默跳过了"
+    assert codes[11] in out
+
+
+def test_symbol_prefix_routes_shenzhen_bonds_to_sz():
+    """深市转债（123/127/128）必须走 sz 前缀。
+
+    🔴 原来写成 `"sh" if code[0] in "16" else "sz"`，把所有 1 开头的都判成沪市。
+    深市转债占全池 51%（162/315）。用 sh 前缀请求，腾讯**照样返回历史、
+    逐行与 sz 完全相同**，只是永远少最后一根 K 线 —— 于是最新一天深市整批缺席：
+    既选不进候选池，也从不进入「今日兑现」的均值。历史统计不受影响，
+    所以做统计时完全看不出来，只有逐日清单会错。
+    """
+    import cb_overnight_probe as probe
+
+    for code in ("123255", "127096", "128136"):
+        assert probe._sym(code) == "sz" + code, code
+    for code in ("110059", "111012", "113643", "118058", "132014"):
+        assert probe._sym(code) == "sh" + code, code
