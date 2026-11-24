@@ -27,6 +27,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -380,6 +381,69 @@ def wecom_send(md: str) -> bool:
     return ok
 
 
+# ---------------- 推送去重（跨进程） ----------------
+# 🔴 2026-11-24 老大点名「一直在推送重复的内容」。
+# 根因**不是**渲染错，是去重只在**单次进程内**有效：cron 每 3 分钟起一个新进程，
+# `det["new_hits"]` 每轮从零重算 ⇒ 同一批票永远被判成「新增」，同一张卡片反复推。
+# 实测 09:45 / 09:48 / 09:51 / 09:54 四张卡片正文逐字相同，只有时间戳在变。
+# 修法：把「今天已推过的代码」+「上一张卡片指纹」落盘，跨进程判重。
+PUSH_STATE = STATE_DIR          # 与 picks_<date>.json 同目录，收工一眼看全
+
+
+def card_fingerprint(md: str) -> str:
+    """卡片指纹：**剥掉首行时间戳**后取 sha256。
+
+    时间戳（`## 今日推荐 09:45`）每轮必变，算进指纹里就永远不同 ⇒ 去重必然失效。
+    只剥首行，不剥正文里的 `##` 小标题，免得把真正的结构差异一起抹平。
+    """
+    lines = md.splitlines()
+    if lines and re.match(r"^##\s.*\d{1,2}:\d{2}", lines[0]):
+        lines = lines[1:]
+    return hashlib.sha256("\n".join(lines).strip().encode("utf-8")).hexdigest()
+
+
+def push_state_path(date: str) -> Path:
+    return PUSH_STATE / ("push_%s.json" % date)
+
+
+def load_push_state(date: str) -> dict:
+    p = push_state_path(date)
+    try:
+        return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def save_push_state(date: str, st: dict) -> None:
+    try:
+        PUSH_STATE.mkdir(parents=True, exist_ok=True)
+        push_state_path(date).write_text(
+            json.dumps(st, ensure_ascii=False, indent=1), encoding="utf-8")
+    except OSError as e:
+        # 落盘失败只影响去重，不能因此不推真信号
+        print("[cloud] 推送状态落盘失败（不影响本轮）: %s" % e, file=sys.stderr)
+
+
+def decide_push(state: dict, kind: str, md: str, codes, force: bool = False):
+    """返回 (是否推送, 原因)。**纯函数**：只读 state，由调用方落盘。
+
+    判据顺序（先强后弱）：
+      1. force ⇒ 推（手工补跑）
+      2. 出现**今天还没推过的代码** ⇒ 推（真·新增信息）
+      3. 卡片指纹与上次不同 ⇒ 推（内容确实变了）
+      4. 否则 ⇒ 不推 —— 这就是刷屏的来源
+    """
+    if force:
+        return True, "force"
+    seen = set(state.get("codes") or [])
+    fresh = [c for c in codes if c and c not in seen]
+    if fresh:
+        return True, "新增 %d 只" % len(fresh)
+    if card_fingerprint(md) != (state.get("hashes") or {}).get(kind):
+        return True, "内容变化"
+    return False, "内容与上次相同"
+
+
 def _row(h: dict) -> str:
     """一行打板信号。20cm 票显式打标：
 
@@ -530,8 +594,28 @@ def main(argv=None) -> int:
         print("[cloud] DRY-RUN（未推送）\n---\n%s" % md)
         return 0
 
+    # 🔴 跨进程去重（11-24 修刷屏，详见 decide_push 上方注释）
+    day = datetime.now(CST).strftime("%Y-%m-%d")
+    kind = "recap" if args.recap else "intraday"
+    codes = [str(it.get("code")) for rec in (picks or {}).values()
+             for it in (rec.get("bought") or [])]
+    state = load_push_state(day)
+    go, why = decide_push(state, kind, md, codes, force=args.force)
+    if not go:
+        state["n_skipped"] = int(state.get("n_skipped") or 0) + 1
+        save_push_state(day, state)
+        print("[cloud] 跳过推送：%s（今日累计跳过 %d 次）" % (why, state["n_skipped"]),
+              file=sys.stderr)
+        return 0
+
     ok = wecom_send(md)
-    print("[cloud] push %s\n---\n%s" % ("OK" if ok else "FAIL", md))
+    print("[cloud] push %s（%s）\n---\n%s" % ("OK" if ok else "FAIL", why, md))
+    if ok:
+        state["codes"] = sorted(set(state.get("codes") or []) | {c for c in codes if c})
+        state.setdefault("hashes", {})[kind] = card_fingerprint(md)
+        state["last_push_at"] = datetime.now(CST).strftime("%H:%M")
+        state["n_skipped"] = 0
+        save_push_state(day, state)
     return 0 if ok else 1
 
 
