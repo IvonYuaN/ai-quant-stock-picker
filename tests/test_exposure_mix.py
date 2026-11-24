@@ -131,3 +131,17 @@ def test_exposure_line_only_counts_board_sleeves():
     assert "000530:P1/P6" in line
     # 空仓时整行不出现，避免在无持仓的日子里印一行「敞口 ¥0」
     assert sc._exposure_line({"total": 0, "board_pct": 0, "dups": {}}) == ""
+
+
+def test_sleeve_tag_shows_holdings_next_to_settled_count():
+    """「P1 0笔」但持着 7 只票 —— 这一行会让人以为打板什么都没干。
+
+    `n` 是已结算笔数（t 检验样本量），打板是 T+1，买入当天结算不了。
+    所以持仓数必须和结算笔数一起印。
+    """
+    import shortline_cloud as sc
+
+    assert sc._sleeve_tag({"n": 0, "positions": 7}) == "0笔(7持)"
+    assert sc._sleeve_tag({"n": 4, "positions": 0}) == "4笔"
+    assert sc._sleeve_tag({"n": 4, "positions": 2}) == "4笔(2持)"
+    assert sc._sleeve_tag({"n": 0, "positions": 0}) == "0笔"
