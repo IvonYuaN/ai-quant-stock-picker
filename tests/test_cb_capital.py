@@ -176,3 +176,82 @@ def test_attrib_does_not_turn_beta_into_alpha():
     at = pr.market_attrib(series, mkt)
     assert abs(at["alpha_pct"]) < 0.02
     assert abs(at["t_alpha"]) < 3
+
+
+def test_amount_order_uses_amount_not_price():
+    """「成交额序」必须按 amt 排，不能按价格排 —— 两者经常反相关。
+
+    构造：便宜的那只成交额最小、贵的那只成交额最大。
+    - 升序 ⇒ 先买便宜的
+    - 降序 ⇒ 先买贵的（`cb_pick.budget_pick` 的真实行为：最活跃的先买）
+    资金只够 1 只时，两种顺序买到的票完全不同。
+    """
+    T, N = 6, 6                              # ≥5 只才算合格日（与 daily_series 同门槛）
+    px = [140.0, 400.0, 141.0, 401.0, 142.0, 402.0]
+    amt = [1.0, 9.0, 2.0, 8.0, 3.0, 7.0]     # 贵的成交额大 ⇒ 升/降序买到的票完全不同
+    prev = np.tile(np.asarray(px), (T, 1))
+    over = np.zeros((T, N))
+    prev, over, dates, T_, _ = _panel(prev, over)
+    am = np.tile(np.asarray(amt), (T, 1))
+
+    desc = pr.affordable(over, prev, dates, T, _all_n(N), 4200.0,
+                         order="amount_desc", amt=am)
+    asc = pr.affordable(over, prev, dates, T, _all_n(N), 4200.0,
+                        order="amount_asc", amt=am)
+    # 降序先遇 400 元（成交额 9）⇒ 一手 4000 买下，剩 200 买不起别的 ⇒ 只 1 只 ⇒ thin
+    assert len(desc["thin_days"]) == T - 1
+    # 升序先遇 140 元（成交额 1）⇒ 1400 + 1410 = 2810，再买 4000 不够 ⇒ 2 只
+    assert all(r[2] == 2 for r in asc["records"])
+
+
+def test_amount_order_requires_amt_matrix():
+    """没给 amt 却要求按成交额排 ⇒ 直接报错，不许静默退化成别的顺序。"""
+    T, N = 6, 5
+    prev = np.full((T, N), 150.0)
+    over = np.full((T, N), 0.001)
+    prev, over, dates, T_, _ = _panel(prev, over)
+    with pytest.raises(ValueError):
+        pr.affordable(over, prev, dates, T, _all_n(N), 10_000.0, order="amount_desc")
+
+
+def test_segment_attrib_does_not_lend_the_beta():
+    """样本外「原始收益 t 值过门」不等于「α 过门」—— 这一组守的就是别把 β 借来当成绩。
+
+    构造：样本内 α=0.05%/天、β=1.5；样本外 α 恰好 0、β=3.0。
+    全样本归因会得到一个「平均后的」α 看着还行；分段才露出样本外是零。
+    """
+    rng = np.random.default_rng(21)
+    days = (["2025-0%d-15" % m for m in (1, 2, 3, 4, 5, 6)] +
+            ["2026-0%d-15" % m for m in (1, 2, 3, 4, 5, 6)])
+    mkt, recs = {}, []
+    for i in range(120):
+        d = days[i % len(days)] + "-%03d" % i        # 唯一日期
+        m = rng.normal(0.0005, 0.004)
+        mkt[d] = float(m)
+        alpha, beta = (0.0005, 1.5) if d < "2025-07-01" else (0.0, 3.0)
+        recs.append((d, alpha + beta * m + rng.normal(0, 0.0003), 5, 200.0))
+
+    seg = pr.segment_attrib(recs, mkt, "2025-07-01")
+    assert set(seg) == {"in", "out"}
+    assert seg["in"]["alpha_pct"] == pytest.approx(0.05, abs=0.02)
+    assert seg["out"]["alpha_pct"] == pytest.approx(0.0, abs=0.02)
+    assert seg["in"]["beta"] == pytest.approx(1.5, abs=0.2)
+    assert seg["out"]["beta"] == pytest.approx(3.0, abs=0.2)
+    # 样本外 β 明显更高 —— 这正是「原始收益显著性靠借」的机制
+    assert seg["out"]["beta"] > seg["in"]["beta"]
+
+
+def test_segment_attrib_skips_a_too_short_segment():
+    """切完只剩几天的段直接不要，不许拿 10 天的 α 报 t 值。"""
+    rng = np.random.default_rng(22)
+    mkt, recs = {}, []
+    # 切点前 35 天（够 30）、切点后只有 5 天（不够）⇒ out 段必须被丢掉。
+    # 若把门槛从 30 放宽到 1，这 5 天就会被当成「样本外」报出 α 和 t —— 那才是错的。
+    days = ["2025-01-%03d" % i for i in range(1, 36)] + \
+           ["2025-05-%03d" % i for i in range(1, 6)]
+    for d in days:
+        m = float(rng.normal(0, 0.004))
+        mkt[d] = m
+        recs.append((d, 0.0005 + m, 5, 200.0))
+    seg = pr.segment_attrib(recs, mkt, "2025-04-01")
+    assert "in" in seg and "out" not in seg
