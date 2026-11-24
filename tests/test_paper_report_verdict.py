@@ -128,3 +128,39 @@ def test_rejected_banner_is_not_a_no_op_when_nothing_is_rejected():
     """全部干净时也要有一行 —— 否则「横幅不出现」会被误读成「这条逻辑没跑」。"""
     html = pr._rejected_html(_ov(P4=8000.0))
     assert "没有一分钱" in html
+
+
+def test_composition_splits_by_state_not_just_rejected():
+    """敞口必须按状态拆全 —— 只报「否证 80.5%」会让读者以为剩下 19.5% 是好的。
+
+    而真实剩下的那个（P4）是 `unverified`，它已测的那一半是 −0.33%/t−5.69。
+    **「不是坏消息」不等于「是好消息」**，两者必须分开印。
+    """
+    comp = pr.exposure_by_verdict(_ov(P1=27497.0, P4=8423.0, P6=3947.0))
+    by = comp["by_state"]
+    assert set(by) == {"rejected", "unverified"}
+    assert by["rejected"]["value"] == 31444.0
+    assert by["unverified"]["value"] == 8423.0
+    assert abs(by["rejected"]["pct"] + by["unverified"]["pct"] - 100.0) < 0.2
+
+
+def test_banner_names_the_unverified_remainder():
+    """剩下一部分必须带状态名出现，否则横幅留了个「剩下应该是好的」的口子。"""
+    html = pr._rejected_html(_ov(P1=27497.0, P4=8423.0, P6=3947.0))
+    assert "其余" in html
+    assert "未过门" in html and "P4" in html
+
+
+def test_zero_exposure_state_is_not_listed():
+    """空仓的 sleeve 不进构成 —— 否则「未过门 0.0%（P2/P3/P5）」这种噪声会稀释重点。"""
+    comp = pr.exposure_by_verdict(_ov(P1=1000.0))
+    assert list(comp["by_state"]) == ["rejected"]
+    assert comp["by_state"]["rejected"]["pct"] == 100.0
+
+
+def test_passed_state_is_rendered_differently_from_unverified():
+    """真过门了要显示「已过门」—— 这个函数将来要能反映好消息，不能只认否证。"""
+    specs = {"P1": {"evidence_state": "passed", "evidence": "x"}}
+    comp = pr.exposure_by_verdict(_ov(P1=1000.0), specs=specs)
+    assert "passed" in comp["by_state"]
+    assert pr._STATE_WORD["passed"] == "已过门"
