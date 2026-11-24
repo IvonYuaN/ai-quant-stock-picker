@@ -632,8 +632,14 @@ check_public_routes() {
         return 0
     }
     case "$CHECK_URL" in https://*) ;; *) fail "public check URL must be https://: $CHECK_URL" ;; esac
+    # 🔴 #499：本函数在 `if ! check_public_routes` 的上下文里被调用 ⇒ bash 关闭
+    # errexit，任一子命令失败都不会中断，最后一条 headless 成功就让整体返回 0，
+    # 于是 curl/snapshot 失败被吞掉、末尾仍打印 "verified"。每个子检查显式传播失败。
     for path in / /daily-review /variants /api/health /api/aqsp/snapshot; do
-        curl -fsS --max-time 12 "${CHECK_URL%/}${path}" >/dev/null
+        curl -fsS --max-time 12 "${CHECK_URL%/}${path}" >/dev/null || {
+            log "public route check failed: ${path}"
+            return 1
+        }
     done
     if [ -z "$EXPECTED_VARIANT_END" ]; then
         EXPECTED_VARIANT_END="$(PYTHONPATH="$RELEASE_DIR/src" "$PYTHON_BIN" - <<'PY'
@@ -641,7 +647,10 @@ from aqsp.core.time import latest_completed_trading_day
 
 print(latest_completed_trading_day().isoformat())
 PY
-)"
+)" || {
+            log "expected_variant_end resolution failed"
+            return 1
+        }
     fi
     "$PYTHON_BIN" - "${CHECK_URL%/}/api/aqsp/snapshot" "$RELEASE_DIR/src" "$EXPECTED_VARIANT_END" <<'PY'
 import json
@@ -713,25 +722,21 @@ print(
     f"messages={len(data.get('messages') or [])}",
 )
 PY
-    PYTHONPATH="$RELEASE_DIR/src${PYTHONPATH:+:$PYTHONPATH}" \
-    AQSP_HEADLESS_LOCK="$HEADLESS_LOCK_FILE" "$PYTHON_BIN" "$RELEASE_DIR/scripts/headless_dashboard_check.py" \
-        --url "$CHECK_URL" \
-        --mode raw \
-        --headless-lock "$HEADLESS_LOCK_FILE" \
-        --health-url "${CHECK_URL%/}/api/health"
-    PYTHONPATH="$RELEASE_DIR/src${PYTHONPATH:+:$PYTHONPATH}" \
-    AQSP_HEADLESS_LOCK="$HEADLESS_LOCK_FILE" "$PYTHON_BIN" "$RELEASE_DIR/scripts/headless_dashboard_check.py" \
-        --url "${CHECK_URL%/}/variants" \
-        --mode raw \
-        --headless-lock "$HEADLESS_LOCK_FILE" \
-        --health-url "${CHECK_URL%/}/api/health"
-    for legacy_path in /paper-research /intel; do
+    if [ $? -ne 0 ]; then
+        log "snapshot contract check failed"
+        return 1
+    fi
+    local headless_url
+    for headless_url in "$CHECK_URL" "${CHECK_URL%/}/variants" "${CHECK_URL%/}/paper-research" "${CHECK_URL%/}/intel"; do
         PYTHONPATH="$RELEASE_DIR/src${PYTHONPATH:+:$PYTHONPATH}" \
         AQSP_HEADLESS_LOCK="$HEADLESS_LOCK_FILE" "$PYTHON_BIN" "$RELEASE_DIR/scripts/headless_dashboard_check.py" \
-            --url "${CHECK_URL%/}${legacy_path}" \
+            --url "$headless_url" \
             --mode raw \
             --headless-lock "$HEADLESS_LOCK_FILE" \
-            --health-url "${CHECK_URL%/}/api/health"
+            --health-url "${CHECK_URL%/}/api/health" || {
+            log "public headless check failed: $headless_url"
+            return 1
+        }
     done
 }
 
