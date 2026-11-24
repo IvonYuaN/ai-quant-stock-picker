@@ -286,3 +286,26 @@ def test_fetch_cache_fails_loudly_without_any_name_list(tmp_path, monkeypatch):
         cp.fetch_cache(tmp_path / "cb.json", tmp_path / "names.json")
     assert ei.value.code == 2
     assert not (tmp_path / "cb.json").exists()
+
+
+def test_merge_cache_keeps_long_history_and_patches_the_tail():
+    """`--fetch` 必须是合并，不能覆盖。
+
+    `fetch_daily` 一次只拿得到 2 年多（腾讯单次上限 320）。直接覆盖会把 6 年历史
+    砍成 2.4 年 —— 我自己踩过：1126 天的样本变 591 天，t 从 5.28 掉到 3.16，
+    看起来像 alpha 衰减，其实是数据变短了。
+    """
+    old = {"123255": [["2021-08-02", 1.0, 1.0, 1.0], ["2026-11-23", 2.0, 2.0, 1.0]]}
+    new = {"123255": [["2026-11-23", 9.0, 9.0, 1.0],   # 同一根，新值应覆盖
+                      ["2026-11-24", 3.0, 3.0, 1.0]]}
+    m = cp.merge_cache(old, new)
+    assert [r[0] for r in m["123255"]] == ["2021-08-02", "2026-11-23", "2026-11-24"]
+    assert m["123255"][1] == ["2026-11-23", 9.0, 9.0, 1.0], "同日期没有用新值覆盖"
+    assert m["123255"][0] == ["2021-08-02", 1.0, 1.0, 1.0], "老历史被砍掉了"
+
+
+def test_merge_cache_adds_brand_new_bonds():
+    """新债不在旧缓存里，要原样并入，不能因为「旧里没有」就丢掉。"""
+    m = cp.merge_cache({"111012": [["2026-11-24", 1.0, 1.0, 1.0]]},
+                       {"123270": [["2026-11-24", 2.0, 2.0, 1.0]]})
+    assert set(m) == {"111012", "123270"}
