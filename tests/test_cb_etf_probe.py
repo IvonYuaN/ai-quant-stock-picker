@@ -65,7 +65,7 @@ def test_net_after_cost_is_round_trip():
     rng = np.random.default_rng(2)
     x = rng.normal(0.0006, 0.002, 500)
     net = ep.net_after_cost(x)
-    lab = "往返0.02%(万1)"
+    lab = "往返0.02%(免5·万1)"
     assert lab in net
     assert net[lab]["mean_pct"] == pytest.approx((x.mean() - 0.0002) * 100, abs=1e-3)
     assert net[lab]["annual_pct"] == pytest.approx(((1 + x.mean() - 0.0002) ** 240 - 1) * 100,
@@ -95,3 +95,27 @@ def test_probe_output_is_json_safe():
     json.dumps(res, allow_nan=False)
     assert res["n_days"] == n - 1
     assert res["span"].startswith("2026-01-02")
+
+
+def test_min_fee_dominates_at_small_capital():
+    """¥10000 上「5 元最低」= 往返 0.10%，是万分之一的 10 倍。
+
+    这条守的是整轮最关键的一刀：如果拿「万分之一」当 ¥10000 的成本，
+    ETF 看起来还剩 SR 0.59；按真实的最低佣金算是**年化 −14.3%**。
+    固定成本 vs 比例成本，在小资金上完全是两件事。
+    """
+    assert ep.min_fee_round_trip(10_000.0) == pytest.approx(0.0010)     # 2×5/10000
+    assert ep.min_fee_round_trip(50_000.0) == pytest.approx(0.0002)     # 临界点：2×5/50000
+    assert ep.min_fee_round_trip(500_000.0) == pytest.approx(0.0002)    # 过了临界按费率：2×万1
+    # 资金越大越便宜，且单调不增
+    caps = [5_000.0, 20_000.0, 100_000.0, 1_000_000.0]
+    rts = [ep.min_fee_round_trip(c) for c in caps]
+    assert rts == sorted(rts, reverse=True)
+
+
+def test_net_after_cost_includes_the_min_fee_level():
+    """成本档里必须有「5元最低」这一档 —— 否则表里最差那栏是缺的。"""
+    rng = np.random.default_rng(4)
+    net = ep.net_after_cost(rng.normal(0.0005, 0.002, 400))
+    assert "往返0.10%(5元最低)" in net
+    assert net["往返0.10%(5元最低)"]["annual_pct"] < net["往返0.02%(免5·万1)"]["annual_pct"]
