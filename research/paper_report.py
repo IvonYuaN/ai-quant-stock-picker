@@ -39,6 +39,9 @@ def verdict_of(sid: str, specs=None) -> tuple[str, str, str]:
 
 # 判决色沿用页面已有的 .down/.up/.mute，不新增 CSS
 _STATE_CLS = {"rejected": "down", "passed": "up"}
+# 敞口构成里用的短词。与 EVIDENCE_TAG 同义但去掉图标，免得一行里堆四个 emoji。
+_STATE_WORD = {"passed": "已过门", "unverified": "未过门",
+               "control": "对照", "rejected": "已否证"}
 
 
 def _verdict_html(sid: str) -> str:
@@ -48,45 +51,63 @@ def _verdict_html(sid: str) -> str:
             "<div class='hyp' style='margin-top:4px'>%s</div>" % (cls, tag, why))
 
 
-def rejected_exposure(ov: dict, specs=None) -> dict:
-    """当前敞口里有多少钱挂在**已被否证**的策略上 —— 纯函数。
+def exposure_by_verdict(ov: dict, specs=None) -> dict:
+    """当前敞口按**判决状态**拆开 —— 纯函数。
 
-    🔴 为什么必须单独算：这张表以前只有两样东西 —— 每行一个判决、底下一句总额度。
-    两者**不交叉**，于是就有一个从来没被印出来的事实：六个 sleeve 名义上各 ¥10000、
-    看起来是「六个独立假设各押一万」，实际上其中五个已经 `rejected`，
-    钱压在上面不是分散，是**同时在赌五个已知负期望的东西**。
+    🔴 为什么必须按状态拆全，而不是只报「已否证占 80.5%」：
+    只报否证比例，读者会默认「剩下那 19.5% 是好的」。实际剩下的那个（P4）是
+    `unverified`，而且它已测的那一半是 −0.33%/t−5.69。**「不是坏消息」≠「是好消息」**，
+    这两个必须分开印。
 
-    这个数必须由持仓反算（成本法），不能用「6 个里 5 个被否 ⇒ 83%」——
-    那算的是假设个数占比，不是风险敞口占比。两个数经常差很远（#601 实测 66.3% vs 50%）。
+    🔴 也必须按**钱**算而不是按**个数**算：六个 sleeve 名义各 ¥10000 看起来是「六个
+    独立假设各押一万」，但空仓的时候钱并不在那儿。按「6 个里 5 个被否 ⇒ 83.3%」算的是
+    假设个数占比，不是风险敞口占比 —— #601 实测 66.3% vs 50%，差得很远。
     """
     total = 0.0
-    bad = 0.0
-    sids: list[str] = []
+    acc: dict[str, dict] = {}
     for sid, st in (ov.get("sleeves") or {}).items():
         e = float(st.get("exposure") or 0.0)
         total += e
-        if e > 0 and verdict_of(sid, specs)[0] == "rejected":
-            bad += e
-            sids.append(sid)
-    return {"total": round(total, 2), "rejected": round(bad, 2),
-            "rejected_pct": round(bad / total * 100, 1) if total > 0 else 0.0,
-            "sids": sorted(sids)}
+        if e <= 0:
+            continue
+        state = verdict_of(sid, specs)[0]
+        a = acc.setdefault(state, {"value": 0.0, "sids": []})
+        a["value"] += e
+        a["sids"].append(sid)
+    for a in acc.values():
+        a["value"] = round(a["value"], 2)
+        a["pct"] = round(a["value"] / total * 100, 1) if total > 0 else 0.0
+        a["sids"] = sorted(a["sids"])
+    return {"total": round(total, 2), "by_state": acc}
+
+
+def rejected_exposure(ov: dict, specs=None) -> dict:
+    """兼容薄包装：只要「已否证」那部分。新代码请用 `exposure_by_verdict`。"""
+    comp = exposure_by_verdict(ov, specs)
+    r = comp["by_state"].get("rejected") or {"value": 0.0, "pct": 0.0, "sids": []}
+    return {"total": comp["total"], "rejected": r["value"],
+            "rejected_pct": r["pct"], "sids": list(r["sids"])}
 
 
 def _rejected_html(ov: dict) -> str:
-    rx = rejected_exposure(ov)
-    if rx["total"] <= 0:
+    comp = exposure_by_verdict(ov)
+    if comp["total"] <= 0:
         return ""
-    if rx["rejected"] <= 0:
-        return ("<div class='rej'>当前敞口 <b>¥%s</b>，没有一分钱挂在已被否证的策略上。"
-                "</div>" % "{:,.0f}".format(rx["total"]))
+    by = comp["by_state"]
+    bad = by.get("rejected") or {"value": 0.0, "pct": 0.0, "sids": []}
+    rest = [("%s %.1f%%（%s）" % (_STATE_WORD.get(s, s), a["pct"], " / ".join(a["sids"])))
+            for s, a in sorted(by.items(), key=lambda kv: -kv[1]["value"]) if s != "rejected"]
+    rest_txt = ("；其余 " + "、".join(rest)) if rest else ""
+    if bad["value"] <= 0:
+        return ("<div class='rej'>当前总敞口 <b>¥%s</b>，没有一分钱挂在已被否证的策略上%s。"
+                "</div>" % ("{:,.0f}".format(comp["total"]), rest_txt))
     return ("<div class='rej'>当前总敞口 <b>¥%s</b>，其中 <b>¥%s（%.1f%%）</b>"
-            "挂在<b>已被否证</b>的策略上（%s）。"
+            "挂在<b>已被否证</b>的策略上（%s）%s。"
             "<span class='mute'>这不是「六个假设各押一万」的分散，"
             "是同时在赌 %d 个已经知道是负期望的东西 —— 撤不撤是资金分配决策，"
             "但这一行必须每天被看见。</span></div>"
-            % ("{:,.0f}".format(rx["total"]), "{:,.0f}".format(rx["rejected"]),
-               rx["rejected_pct"], " / ".join(rx["sids"]), len(rx["sids"])))
+            % ("{:,.0f}".format(comp["total"]), "{:,.0f}".format(bad["value"]),
+               bad["pct"], " / ".join(bad["sids"]), rest_txt, len(bad["sids"])))
 
 
 OUT = HERE / "paper_report.html"
