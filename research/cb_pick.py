@@ -48,6 +48,8 @@ CST = timezone(timedelta(hours=8))
 PRICE_LO = 130.0
 TOP_FRAC = 1.0 / 3
 MIN_NAMES = 9              # 合格池少于 9 只 ⇒ 前 1/3 不足 3 只，当天不做
+LOT_VALUE = 10             # 转债 1 手 = 10 张
+CAPITAL = 10_000.0         # 一个 sleeve 的钱（与股票账本一致，不另设一套）
 
 
 def build(raw: dict):
@@ -99,8 +101,45 @@ def realized(sel, op_row, codes):
     return rets, missing
 
 
-def replay(dates, codes, op, cl, amt, n: int) -> dict:
-    """回放最近 n 个「有次日开盘价」的交易日。"""
+def budget_pick(sel, capital: float = CAPITAL) -> tuple[list, float, list]:
+    """按成交额降序依次买 1 手（10 张），买满为止。返回 (买到, 剩余现金, 没买到)。
+
+    🔴 为什么必须算这个：规则选出来的是「合格池前 1/3」的**全部**票，回测里它们是
+    **等权全部持有**。可是 ¥10000 只能买 4~5 只 —— 买到的和等权持有的**不是同一个组合**。
+    只报「+0.109%/天」而不报「¥10000 实买之后还剩多少」，就是把不可执行的组合当成结论。
+
+    规则细节（必须写死，否则每次跑出来的组合都不一样）：**按成交额降序**逐只尝试，
+    买得起就买 1 手、买不起**跳过继续往下**（不是「买到第一只买不起的就停」，
+    也不是「只取前 k 只」）—— 这才是人拿到清单会做的事。
+    """
+    bought, cash, skipped = [], float(capital), []
+    for row in sel:
+        cost = float(row[1]) * LOT_VALUE
+        if cost <= cash:
+            bought.append(row)
+            cash -= cost
+        else:
+            skipped.append(row)
+    return bought, cash, skipped
+
+
+def metrics(rets) -> dict:
+    """一组毛收益 → {均值%, 最差%, 最好%}。空列表返回 None 值，不造 0。"""
+    if not rets:
+        return {"mean_pct": None, "worst_pct": None, "best_pct": None}
+    return {"mean_pct": round(float(np.mean(rets)) * 100, 4),
+            "worst_pct": round(float(np.min(rets)) * 100, 2),
+            "best_pct": round(float(np.max(rets)) * 100, 2)}
+
+
+def replay(dates, codes, op, cl, amt, n: int, capital: float = CAPITAL) -> dict:
+    """回放最近 n 个「有次日开盘价」的交易日。
+
+    每行同时给两个口径：
+      · `gross_pct`     = **等权全部持有**（回测口径，选几只买几只，不管钱）
+      · `gross_cap_pct` = **¥capital 实买**（成交额降序买满为止），配 `n_bought`
+    两者的差 = 「策略的统计口径」与「一个 ¥10000 账户真能做到的」之间的差。
+    """
     rows = []
     for t in range(len(dates) - 1, 0, -1):
         if len(rows) >= n:
@@ -113,14 +152,19 @@ def replay(dates, codes, op, cl, amt, n: int) -> dict:
         rets, skip = realized(sel, op[t], codes)
         if not rets:
             continue
+        bought, cash, _skipped = budget_pick(sel, capital)
+        brets, _bmiss = realized(bought, op[t], codes) if bought else ([], [])
+        mv = metrics(rets)
+        bv = metrics(brets)
         rows.append({"buy_date": dates[t - 1], "sell_date": dates[t],
                      "n_pick": len(sel), "n_filled": len(rets), "n_skip": len(skip),
-                     "gross_pct": round(float(np.mean(rets)) * 100, 4),
-                     "worst_pct": round(float(np.min(rets)) * 100, 2),
-                     "best_pct": round(float(np.max(rets)) * 100, 2),
-                     "capital_wan": round(sum(px for _, px, _ in sel) * 10 / 1e4, 1)})
+                     "gross_pct": mv["mean_pct"],
+                     "worst_pct": mv["worst_pct"], "best_pct": mv["best_pct"],
+                     "n_bought": len(bought), "cash_left": round(cash, 0),
+                     "gross_cap_pct": bv["mean_pct"],
+                     "capital_wan": round(sum(px for _, px, _ in bought) * LOT_VALUE / 1e4, 2)})
     rows.reverse()
-    return {"rows": rows, "n": len(rows)}
+    return {"rows": rows, "n": len(rows), "capital": capital}
 
 
 def merge_cache(old: dict, new: dict) -> dict:
@@ -230,6 +274,8 @@ def main(argv=None) -> int:
     ap.add_argument("--names", default="research/cb_names.json")
     ap.add_argument("--fetch", action="store_true", help="强制重拉行情（否则缓存缺失时才拉）")
     ap.add_argument("--replay", type=int, default=0, help="回放最近 N 个交易日")
+    ap.add_argument("--capital", type=float, default=CAPITAL,
+                    help="一个账户的钱（默认 ¥10000，与股票账本 sleeve 一致）")
     ap.add_argument("--json")
     a = ap.parse_args(argv)
 
@@ -266,9 +312,24 @@ def main(argv=None) -> int:
     if sel is None:
         print("  合格池不足 %d 只 ⇒ 当天不做（不硬选几只凑单）" % MIN_NAMES)
     else:
-        print("  候选 %d 只，需资金约 %.1f 万元（每只 1 手 = 10 张）"
-              % (len(sel), sum(p for _, p, _ in sel) * 10 / 1e4))
-        print("  " + _fmt_list(sel, names))
+        bought, cash, skipped = budget_pick(sel, a.capital)
+        print("  规则选 %d 只（合格池前 1/3 等权），全部买满需 %.1f 万元"
+              % (len(sel), sum(p for _, p, _ in sel) * LOT_VALUE / 1e4))
+        print("  ⇒ ¥%.0f 实买 %d 只（成交额降序、买满为止），花掉 ¥%.0f，剩现金 ¥%.0f，"
+              "买不起 %d 只"
+              % (a.capital, len(bought), sum(p for _, p, _ in bought) * LOT_VALUE,
+                 cash, len(skipped)))
+        if skipped:
+            print("  ⚠️ 回测口径是「%d 只等权全部持有」；¥%.0f 只能买 %d 只 ⇒ "
+                  "**两者不是同一个组合**，收益不能直接套用" % (len(sel), a.capital, len(bought)))
+        if len(bought) < 3:
+            # 真实发生的：成交额最大的是 884 元的福新转债，一手 8840 元 ⇒ ¥10000 只买得起 1 只。
+            # 「成交额降序」和「资金有限」撞在一起时，高价妖债会把整个仓位吃成单票赌博。
+            print("  🔴 只买得起 %d 只 ⇒ 单票权重 %.0f%%，这不是策略设计的组合，是高集中度赌博"
+                  % (len(bought),
+                     (max((p for _, p, _ in bought), default=0) * LOT_VALUE
+                      / a.capital) * 100))
+        print("  " + _fmt_list(bought, names))
 
     # ---------------- 二、上一批兑现 ----------------
     if ref > 0:
@@ -281,8 +342,15 @@ def main(argv=None) -> int:
             if not rets:
                 print("  选 %d 只，但一只都没有开盘价 ⇒ 无法算兑现" % len(prev))
             else:
-                print("  均值 %+.3f%%（毛），最差 %+.2f%%，最好 %+.2f%%"
-                      % (np.mean(rets) * 100, np.min(rets) * 100, np.max(rets) * 100))
+                pv = metrics(rets)
+                pbought, _pcash, _pskip = budget_pick(prev, a.capital)
+                brets, _bmiss = realized(pbought, op[ref], codes) if pbought else ([], [])
+                bv = metrics(brets)
+                print("  等权全部持有（%d 只）：均值 %+.3f%%，最差 %+.2f%%，最好 %+.2f%%"
+                      % (len(rets), pv["mean_pct"], pv["worst_pct"], pv["best_pct"]))
+                if brets:
+                    print("  ¥%.0f 实买（%d 只）：均值 %+.3f%%" % (
+                        a.capital, len(brets), bv["mean_pct"]))
                 if missing:
                     # 🔴 不能让「19 只候选」和「均值」之间静默缩水：
                     # 缺数据的票往往不是随机缺失（新债、停牌、取数失败），
@@ -292,23 +360,34 @@ def main(argv=None) -> int:
                              "/".join(missing[:5]) + ("…" if len(missing) > 5 else "")))
 
     if a.replay:
-        r = replay(dates, codes, op, cl, amt, a.replay)
+        r = replay(dates, codes, op, cl, amt, a.replay, a.capital)
         print("\n" + "=" * 74)
         print("纸面账本 · 最近 %d 个交易日（每只 1 手，等权）" % r["n"])
         print("=" * 74)
-        print("  %-12s %-12s %5s %5s %9s %9s %8s" %
-              ("买入日", "卖出日", "选", "成交", "毛收益", "最差单只", "资金万"))
+        print("  %-11s %5s %5s %9s %8s %6s %9s" %
+              ("买入日", "选", "成交", "等权收益", "最差单只", "实买", "¥实买收益"))
         for row in r["rows"]:
-            print("  %-12s %-12s %5d %5d %+8.3f%% %+8.2f%% %8.1f" % (
-                row["buy_date"], row["sell_date"], row["n_pick"], row["n_filled"],
-                row["gross_pct"], row["worst_pct"], row["capital_wan"]))
+            print("  %-11s %5d %5d %+8.3f%% %+7.2f%% %6d %+8.3f%%" % (
+                row["buy_date"], row["n_pick"], row["n_filled"],
+                row["gross_pct"], row["worst_pct"], row["n_bought"],
+                row["gross_cap_pct"] if row["gross_cap_pct"] is not None else float("nan")))
         g = np.asarray([row["gross_pct"] for row in r["rows"]], dtype=float) / 100
+        gc = np.asarray([row["gross_cap_pct"] if row["gross_cap_pct"] is not None else 0.0
+                         for row in r["rows"]], dtype=float) / 100
         if g.size >= 5:
             eq = np.cumprod(1 + g)
+            eqc = np.cumprod(1 + gc)
             print("\n  区间毛收益累计 %+.2f%%（%.1f 个交易日），胜率 %.0f%%"
                   % ((eq[-1] - 1) * 100, g.size, (g > 0).mean() * 100))
             print("  扣 0.04%% 佣金后累计 %+.2f%%"
                   % ((np.cumprod(1 + g - 0.0004)[-1] - 1) * 100))
+            print("  ⇒ ¥%.0f 实买口径累计 %+.2f%%（扣佣金 %+.2f%%），日均买 %.1f 只"
+                  % (a.capital, (eqc[-1] - 1) * 100,
+                     (np.cumprod(1 + gc - 0.0004)[-1] - 1) * 100,
+                     float(np.mean([row["n_bought"] for row in r["rows"]]))))
+            if abs((eqc[-1] - 1) - (eq[-1] - 1)) > 0.0005:
+                print("     ⚠️ 两个口径差 %.2fpp —— 回测的「等权全部持有」不是 ¥%.0f 能执行的组合"
+                      % (((eqc[-1] - 1) - (eq[-1] - 1)) * 100, a.capital))
 
     print("\n  🔴 偏差：幸存者偏差未排除；样本外 t2.27 未过门；全段收益为负 ⇒ 只做纸面跟踪，不上真钱。")
     if a.json:
