@@ -121,7 +121,19 @@ def fetch_cache(cache: Path, names_path: Path) -> None:
     """
     import cb_overnight_probe as probe          # 同目录，运行时才导入（测试不触网）
 
-    lst = probe.fetch_list()
+    lst = None
+    try:
+        lst = probe.fetch_list()
+    except Exception as e:
+        # 东财 clist 偶发 502（已知问题）。名单本身几乎不变，没必要为一次限流
+        # 把整条取数链断掉 —— 有旧名单就用旧名单，只重拉日线。
+        # 🔴 但**必须有旧名单**：拿不到名单就真的失败，不许静默产出空池。
+        if names_path.exists():
+            lst = json.loads(names_path.read_text(encoding="utf-8"))
+            print("名单接口失败（%s），沿用旧名单 %d 只" % (str(e)[:60], len(lst)))
+    if not lst:
+        print("取名单失败且无旧名单可沿用，放弃", file=sys.stderr)
+        raise SystemExit(2)
     print("转债列表 %d 只，开始拉日线…" % len(lst))
     raw = probe.fetch_daily(lst.keys())
     cache.parent.mkdir(parents=True, exist_ok=True)
