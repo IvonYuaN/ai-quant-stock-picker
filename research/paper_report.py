@@ -19,7 +19,34 @@ sys.path.insert(0, str(HERE))
 
 import paper_ledger as pl  # noqa: E402  (sys.path 注入同目录后才可导入)
 import paper_market as pm  # noqa: E402  (sys.path 注入同目录后才可导入)
-from paper_strategies import oversold_pool  # noqa: E402  (sys.path 注入同目录后才可导入)
+from paper_strategies import STRATEGIES, oversold_pool  # noqa: E402  (sys.path 注入同目录后才可导入)
+from mode_card import EVIDENCE_TAG  # noqa: E402  (判决词只有一份，不在这里另造一套)
+
+
+def verdict_of(sid: str, specs=None) -> tuple[str, str, str]:
+    """(判决状态, 判决词, 证据一句话) —— 纯函数。
+
+    🔴 为什么要单独抽出来：这张表原来只印 `hypothesis`，**不印判决**。
+    于是 P1 那一行读到的是「唯一在 3y 回测过门的假设」，而全部数字列都是 `—`
+    （前向样本还没攒够）—— 一份把已否证策略写成「唯一过门」的报告，
+    比没有报告更糟。判决是策略的属性，不是账本的属性（账本里没存 evidence）。
+    """
+    spec = (STRATEGIES if specs is None else specs).get(sid) or {}
+    state = spec.get("evidence_state", "") or "unverified"
+    tag = EVIDENCE_TAG.get(state, "⏳未过门")
+    return state, tag, spec.get("evidence", "") or "（未声明证据）"
+
+
+# 判决色沿用页面已有的 .down/.up/.mute，不新增 CSS
+_STATE_CLS = {"rejected": "down", "passed": "up"}
+
+
+def _verdict_html(sid: str) -> str:
+    state, tag, why = verdict_of(sid)
+    cls = _STATE_CLS.get(state, "mute")
+    return ("<div class='%s' style='font-weight:600'>%s</div>"
+            "<div class='hyp' style='margin-top:4px'>%s</div>" % (cls, tag, why))
+
 
 OUT = HERE / "paper_report.html"
 CST = timezone(timedelta(hours=8))
@@ -251,9 +278,11 @@ def render() -> str:
             stopcell += "<div class='hyp' style='margin-top:6px'>%d 笔止损</div>" % st["stop_n"]
         rows.append(
             "<tr><td class='sid'>%s</td><td><div class='sname'>%s</div><div class='hyp'>%s</div></td>"
+            "<td>%s</td>"
             "<td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td>"
             "<td>%s<div class='hyp' style='margin-top:6px'>%s</div></td><td>%s</td></tr>" % (
                 sid, s["name"], s["hypothesis"],
+                _verdict_html(sid),
                 _fmt(st["exc_mean"], "%", plus=True) if st["exc_mean"] is not None else "<span class='mute'>—</span>",
                 _fmt(st["exc_win"], "%") if st["exc_win"] is not None else "<span class='mute'>—</span>",
                 tcell, qcell, stopcell, bar, eta,
@@ -323,7 +352,7 @@ def render() -> str:
 </div>
 
 <h2>策略横向对比</h2>
-<table><tr><th>ID</th><th>策略 / 假设</th><th>超额均收益</th><th>超额胜率</th><th>t（按日聚类）</th><th>q（FDR）</th><th>止损影响</th><th>统计进度</th><th>组合收益</th></tr>
+<table><tr><th>ID</th><th>策略 / 假设</th><th>判决（已做的证据）</th><th>超额均收益</th><th>超额胜率</th><th>t（按日聚类）</th><th>q（FDR）</th><th>止损影响</th><th>统计进度</th><th>组合收益</th></tr>
 %s</table>
 
 <h2>下一交易日盯盘池 <span style="font-size:10px;color:#b0b5bd;letter-spacing:0">预告·尚未成交</span></h2>
