@@ -70,7 +70,7 @@ ARENA_WINDOWS = (
 
 
 def _arena_brief() -> str:
-    """推送卡片里的影子账户一行摘要（各 sleeve 样本/净值）。"""
+    """推送卡片里的影子账户摘要（各 sleeve 样本/净值 + 真实敞口构成）。"""
     try:
         import paper_ledger as pl
         ov = pl.overview(pl.load())
@@ -82,10 +82,35 @@ def _arena_brief() -> str:
             t = "超t%.1f" % st["t_exc"] if st["t_exc"] is not None else "超t-"
             parts.append("%s %d笔 %s" % (sid, st["n"], t))
         tail = " ｜ ".join(parts) if parts else "尚无信号"
-        return "\n> 影子账户 ¥%.0f(%+.2f%%) %s" % (
+        line = "\n> 影子账户 ¥%.0f(%+.2f%%) %s" % (
             ov["total_nav"], ov["total_ret_pct"], tail)
+        return line + _exposure_line(ov.get("mix") or {})
     except Exception as e:
         return "\n> 影子账户摘要失败: %s" % str(e)[:80]
+
+
+def _exposure_line(mix: dict) -> str:
+    """敞口构成一行（纯函数，便于单测）。
+
+    🔴 为什么必须印在卡片上：`max_positions` 只管「今天买几个」，不管总敞口，
+    所以名义 6 个 sleeve 里 3 个打板（50%），实际持仓市值是 66%+。
+    这个数每天变化、且只有把持仓摊开才算得出来 —— 不印出来就只能靠人肉核对，
+    等于「分析做了但决策者看不到」。重复持仓同理：P1/P6 同日常常买完全相同的票。
+    """
+    total = float(mix.get("total") or 0.0)
+    if total <= 0:
+        return ""
+    txt = "\n> 敞口 ¥%.0f，打板占 %.0f%%（P1+P2+P6）" % (total, float(mix.get("board_pct") or 0))
+    dups = mix.get("dups") or {}
+    if dups:
+        head = sorted(dups.items(), key=lambda kv: (-len(kv[1]), kv[0]))[:3]
+        txt += " ｜ 重复 %d 只（%s）" % (
+            len(dups), " ".join("%s:%s" % (c, "/".join(ss)) for c, ss in head))
+    doubled = mix.get("doubled") or {}
+    if doubled:
+        c, ss = sorted(doubled.items())[0]
+        txt += " ｜ 单袖双份 %d 只（%s@%s）" % (len(doubled), c, "/".join(ss))
+    return txt
 
 
 def arena_board(det: dict) -> None:

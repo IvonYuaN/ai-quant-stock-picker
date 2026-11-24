@@ -515,13 +515,69 @@ def fdr_qvalues(ts: dict, m_total: int | None = None) -> dict:
     return q
 
 
+# 🔴 「打板」= 必须以「盘中触板」为入场条件的 sleeve。
+# 老大 11-24 原话：「我看到主流还是打板」。名义上 3/6=50%，
+# 但实际持仓市值是 66.3% —— 因为打板 sleeve 只要有信号就把现金打光，
+# 而 P3/P4/P5 有合格票的日子远少于每天。
+# `max_positions` 只管「今天买几个」，**不管总敞口**，所以名义权重根本不等于风险权重。
+BOARD_SIDS = ("P1", "P2", "P6")
+
+
+def exposure_mix(rows: dict, board_sids=BOARD_SIDS) -> dict:
+    """当前持仓的敞口构成 —— 纯函数，输入 `overview()['sleeves']`。
+
+    回答两个只有把持仓摊开才看得见的问题：
+      1. 钱到底压在哪一类策略上（名义权重 ≠ 风险权重）
+      2. 有没有「同一个 sleeve 组合押同一只票」（P1/P6 同日常常买完全相同的票，
+         那不是两个独立假设，是一笔押两次）
+    """
+    total = 0.0
+    board = 0.0
+    holder: dict[str, list[str]] = {}
+    doubled: dict[str, list[str]] = {}
+    for sid in sorted(rows):
+        r = rows[sid]
+        e = float(r.get("exposure") or 0.0)
+        held = [str(c) for c in (r.get("codes") or [])]
+        # 同一 sleeve 内同一只票持两笔：不是「跨 sleeve 撞票」，但确实是单票风险加倍。
+        # 单独记成 doubled，别让它把 dups 搞成 "P4/P4" 这种看不懂的标签。
+        for c in set(held):
+            if held.count(c) > 1:
+                doubled.setdefault(c, []).append(sid)
+        if e <= 0:
+            continue
+        total += e
+        if sid in board_sids:
+            board += e
+        for c in dict.fromkeys(held):
+            holder.setdefault(c, []).append(sid)
+    dups = {c: ss for c, ss in holder.items() if len(ss) > 1}
+    return {"total": round(total, 2), "board": round(board, 2),
+            "board_pct": round(board / total * 100, 1) if total > 0 else 0.0,
+            "dups": dups, "doubled": doubled, "n_names": len(holder)}
+
+
+def sleeve_exposure(held: list[dict]) -> dict:
+    """单个 sleeve 的当前敞口（纯函数）。`held` = 已成交的持仓列表。
+
+    🔴 按**买入成本**算，不按最新价：账本里没有逐日盯市，用成本至少口径一致、
+    可复现；差异只在当日盈亏，不影响「哪类策略占大头」这个判断。
+    老账本（11-23 迁移前）的持仓可能没有 `cost` 字段 —— 按 0 算，**绝不抛异常**：
+    这一行是每天推给老大的摘要，为它整张卡片崩掉是不划算的。
+    """
+    return {"positions": len(held),
+            "exposure": round(sum(float(p.get("cost") or 0.0) for p in held), 2),
+            "codes": [p.get("code", "") for p in held]}
+
+
 def overview(led: dict) -> dict:
     rows = {}
     for sid, s in led["sleeves"].items():
         st = sleeve_stats(s)
+        held = [p for p in s["positions"] if p["funded"]]
         st.update({"name": s["name"], "hypothesis": s["hypothesis"],
-                   "positions": len([p for p in s["positions"] if p["funded"]]),
                    "cash": round(s["cash"], 2)})
+        st.update(sleeve_exposure(held))
         rows[sid] = st
     q = fdr_qvalues({sid: r["t_exc"] for sid, r in rows.items()}, m_total=len(rows))
     for sid, r in rows.items():
@@ -529,7 +585,8 @@ def overview(led: dict) -> dict:
     total_nav = sum(r["funded_nav"] for r in rows.values())
     total_cap = sum(led["sleeves"][sid]["capital"] for sid in rows)
     return {"sleeves": rows, "total_capital": total_cap, "total_nav": round(total_nav, 2),
-            "total_ret_pct": round((total_nav / total_cap - 1) * 100, 2) if total_cap else 0.0}
+            "total_ret_pct": round((total_nav / total_cap - 1) * 100, 2) if total_cap else 0.0,
+            "mix": exposure_mix(rows)}
 
 
 def main(argv=None) -> int:
