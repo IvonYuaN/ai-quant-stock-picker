@@ -1,0 +1,206 @@
+#!/usr/bin/env python3
+"""转债隔夜：每日候选清单 + 纸面账本。
+
+`cb_overnight_probe.py` 回答「这个方向成不成立」，本文件回答「今天该买哪几只、
+按规则机械做过去 20 天长什么样」。
+
+## 规则（与探针完全一致，不另设参数）
+
+1. 昨日收盘价 > 130 元（强赎线，制度先验）
+2. 昨日成交额排在合格池前 1/3
+3. 昨日收盘买入，今日开盘卖出
+
+## 为什么单独做一个文件
+
+探针只出统计量，看不出「机械执行是什么体验」：每天买几只、需要多少钱、
+有没有买不到的日子。而老大要的是能用的东西，不是又一组 t 值。
+
+## 🔴 已知偏差（必须随清单一起来）
+
+- **幸存者偏差**：池子是今日在市转债，已强赎/到期的不在样本里
+- **方向真实但在衰减**：样本外（cut 2025-07）t 仅 2.07，未过 2.5 门槛
+- **本质是微观结构收割**：全段收益为负（−0.096%/天），赚的是「收盘压低、开盘回归」那一段
+- 因此**不上真钱**，只做零成本纸面跟踪
+
+用法：
+    python research/cb_pick.py --cache research/cb_daily.json --names research/cb_names.json
+    python research/cb_pick.py --cache ... --replay 20     # 回放最近 20 个交易日
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+import numpy as np
+
+PRICE_LO = 130.0
+TOP_FRAC = 1.0 / 3
+MIN_NAMES = 9              # 合格池少于 9 只 ⇒ 前 1/3 不足 3 只，当天不做
+
+
+def build(raw: dict):
+    dates = sorted({r[0] for v in raw.values() for r in v})
+    di = {d: i for i, d in enumerate(dates)}
+    codes = sorted(raw)
+    T, N = len(dates), len(codes)
+    op = np.full((T, N), np.nan)
+    cl = np.full((T, N), np.nan)
+    amt = np.full((T, N), np.nan)
+    for j, c in enumerate(codes):
+        for r in raw[c]:
+            t = di[r[0]]
+            op[t, j], cl[t, j] = r[1], r[2]
+            amt[t, j] = r[3] * r[2]
+    return dates, codes, op, cl, amt
+
+
+def pick(t: int, cl, amt, codes):
+    """在参考日 t 收盘时点选票。返回 [(code, 昨收, 昨日成交额亿)]，按成交额降序。"""
+    ok = np.isfinite(cl[t]) & (cl[t] > PRICE_LO) & np.isfinite(amt[t]) & (amt[t] > 0)
+    idx = np.where(ok)[0]
+    if idx.size < MIN_NAMES:
+        return None
+    order = np.argsort(amt[t, idx])
+    k = max(1, int(idx.size * TOP_FRAC))
+    sel = idx[order[idx.size - k:]]
+    out = [(codes[j], float(cl[t, j]), float(amt[t, j]) / 1e8) for j in sel]
+    out.sort(key=lambda r: -r[2])
+    return out
+
+
+def replay(dates, codes, op, cl, amt, n: int) -> dict:
+    """回放最近 n 个「有次日开盘价」的交易日。"""
+    rows = []
+    for t in range(len(dates) - 1, 0, -1):
+        if len(rows) >= n:
+            break
+        if not np.isfinite(op[t]).any():
+            continue                    # 今天还在盘中/无开盘价，跳过
+        sel = pick(t - 1, cl, amt, codes)
+        if sel is None:
+            continue
+        rets, skip = [], []
+        for code, px, _amt in sel:
+            j = codes.index(code)
+            o = op[t, j]
+            if not np.isfinite(o) or o <= 0:
+                skip.append(code)
+                continue
+            rets.append(o / px - 1.0)
+        if not rets:
+            continue
+        rows.append({"buy_date": dates[t - 1], "sell_date": dates[t],
+                     "n_pick": len(sel), "n_filled": len(rets), "n_skip": len(skip),
+                     "gross_pct": round(float(np.mean(rets)) * 100, 4),
+                     "worst_pct": round(float(np.min(rets)) * 100, 2),
+                     "best_pct": round(float(np.max(rets)) * 100, 2),
+                     "capital_wan": round(sum(px for _, px, _ in sel) * 10 / 1e4, 1)})
+    rows.reverse()
+    return {"rows": rows, "n": len(rows)}
+
+
+def fetch_cache(cache: Path, names_path: Path) -> None:
+    """复用 `cb_overnight_probe.py` 里已验证的取数（东财 delay 域 + 腾讯日线）。
+
+    不在这里重写一份：取数是最容易悄悄错的地方（东财 clist 单页上限 100、
+    腾讯 volume 单位、push2 主域 502 要用 delay 域），两份代码就是两个 bug 面。
+    """
+    import cb_overnight_probe as probe          # 同目录，运行时才导入（测试不触网）
+
+    lst = probe.fetch_list()
+    print("转债列表 %d 只，开始拉日线…" % len(lst))
+    raw = probe.fetch_daily(lst.keys())
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    cache.write_text(json.dumps(raw), encoding="utf-8")
+    names_path.write_text(json.dumps(lst, ensure_ascii=False), encoding="utf-8")
+    print("成功 %d 只 → %s（名称表 → %s）" % (len(raw), cache, names_path))
+
+
+def _fmt_list(sel, names) -> str:
+    parts = []
+    for code, px, amt in sel:
+        nm = (names or {}).get(code) or ""
+        parts.append("%s %s %.2f (%.1f亿)" % (code, nm[:4], px, amt))
+    return " / ".join(parts)
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--cache", default="research/cb_daily.json")
+    ap.add_argument("--names", default="research/cb_names.json")
+    ap.add_argument("--fetch", action="store_true", help="强制重拉行情（否则缓存缺失时才拉）")
+    ap.add_argument("--replay", type=int, default=0, help="回放最近 N 个交易日")
+    ap.add_argument("--json")
+    a = ap.parse_args(argv)
+
+    cache, names_path = Path(a.cache), Path(a.names)
+    if a.fetch or not cache.exists():
+        fetch_cache(cache, names_path)
+    raw = json.loads(cache.read_text(encoding="utf-8"))
+    names = {}
+    if names_path.exists():
+        names = json.loads(names_path.read_text(encoding="utf-8"))
+    dates, codes, op, cl, amt = build(raw)
+
+    # 参考日 = 最后一个「有完整收盘+成交额、且次日开盘价已出现」的交易日的前一日
+    # 简化：cursor = 最后一个有开盘价的日期；候选按它的前一日算
+    last = len(dates) - 1
+    while last > 0 and not np.isfinite(op[last]).any():
+        last -= 1
+    ref, trade = last - 1, last
+
+    print("=" * 74)
+    print("转债隔夜 · 每日候选（昨收>%.0f元 + 昨日成交额前 %.0f%%）"
+          % (PRICE_LO, TOP_FRAC * 100))
+    print("=" * 74)
+    sel = pick(ref, cl, amt, codes)
+    if sel is None:
+        print("  %s 合格池不足 %d 只，当天不做" % (dates[ref], MIN_NAMES))
+    else:
+        print("  参考日 %s 收盘买入，%s 开盘卖出" % (dates[ref], dates[trade]))
+        print("  候选 %d 只，需资金约 %.1f 万元（每只 1 手）："
+              % (len(sel), sum(p for _, p, _ in sel) * 10 / 1e4))
+        print("  " + _fmt_list(sel, names))
+        rets = []
+        for code, px, _ in sel:
+            j = codes.index(code)
+            if np.isfinite(op[trade, j]) and op[trade, j] > 0:
+                rets.append(op[trade, j] / px - 1.0)
+        if rets:
+            print("  ⇒ 今日实际兑现：均值 %+.3f%%（毛），最差 %+.2f%%，最好 %+.2f%%"
+                  % (np.mean(rets) * 100, np.min(rets) * 100, np.max(rets) * 100))
+
+    if a.replay:
+        r = replay(dates, codes, op, cl, amt, a.replay)
+        print("\n" + "=" * 74)
+        print("纸面账本 · 最近 %d 个交易日（每只 1 手，等权）" % r["n"])
+        print("=" * 74)
+        print("  %-12s %-12s %5s %5s %9s %9s %8s" %
+              ("买入日", "卖出日", "选", "成交", "毛收益", "最差单只", "资金万"))
+        for row in r["rows"]:
+            print("  %-12s %-12s %5d %5d %+8.3f%% %+8.2f%% %8.1f" % (
+                row["buy_date"], row["sell_date"], row["n_pick"], row["n_filled"],
+                row["gross_pct"], row["worst_pct"], row["capital_wan"]))
+        g = np.asarray([row["gross_pct"] for row in r["rows"]], dtype=float) / 100
+        if g.size >= 5:
+            eq = np.cumprod(1 + g)
+            print("\n  区间毛收益累计 %+.2f%%（%.1f 个交易日），胜率 %.0f%%"
+                  % ((eq[-1] - 1) * 100, g.size, (g > 0).mean() * 100))
+            print("  扣 0.04%% 佣金后累计 %+.2f%%"
+                  % ((np.cumprod(1 + g - 0.0004)[-1] - 1) * 100))
+
+    print("\n  🔴 偏差：幸存者偏差未排除；样本外 t2.07 未过门；全段收益为负 ⇒ 只做纸面跟踪，不上真钱。")
+    if a.json:
+        Path(a.json).write_text(json.dumps(
+            {"ref_date": dates[ref], "trade_date": dates[trade],
+             "picks": [{"code": c, "name": names.get(c, ""), "prev_close": p, "amt_yi": v}
+                       for c, p, v in (sel or [])]},
+            ensure_ascii=False, indent=1), encoding="utf-8")
+        print("  写出 %s" % a.json)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
