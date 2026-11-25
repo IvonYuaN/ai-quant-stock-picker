@@ -2957,6 +2957,10 @@ IC/t 同号且双 |t|≥2 达标判定 + 连续达标日数 + `revisit_family` �
 - **proposal-only**：纯只读展示，产物/端点/前端均**绝不写回打分/排序/下单、不自动改参数**。
 - **fail-soft**：双窗产物缺失（尚未启用/未回流）/ 读失败 / 字段残缺 ⇒ `available=false`、
   `latest=null`，端点仍 200，绝不 500（区别于单窗 ic-history，双窗是新增监控面，缺了不拖主链路）。
+- **降级必带 `reason`**：`available=false` 时 `reason` 区分「尚未回流 / 读失败 / 陈旧 /
+  源库冻死」四种情况——本端点是换族决策的监控面，不说是哪一种等于没有监控面。
+  健康时 `reason` 为空串。`stale` 只在「确认陈旧」时为 true；读失败时它仍是 false，
+  **不代表产物新鲜**（此时以 `reason` 为准）。
 """,
 )
 def ic_dual_verdict_endpoint():
@@ -2996,14 +3000,23 @@ def ic_dual_verdict_endpoint():
         available = False
         stale = False
         streak_n = 5
+        # 🔴 降级必须带原因（2026-11-25）：本端点的定位是「换族决策的监控面」，
+        # 一个只会说 available=false 却不说是「没回流 / 读坏了 / 陈旧 / 源库冻死」的监控面
+        # 等于没有监控面 —— 这几种情况的处置动作完全不同。
+        reason = ""
         if path.exists():
             try:
                 latest = _json.loads(path.read_text(encoding="utf-8"))
                 available = bool(latest.get("factors"))
                 streak_n = int(latest.get("streak_n", 5))
+                if not available:
+                    reason = "双窗判决产物已回流但 factors 为空（探针尚未产出有效判决）"
             except Exception:  # 读失败/字段残缺 ⇒ 降级空，不 500
                 latest = None
                 available = False
+                reason = "双窗判决产物读取失败或字段残缺（JSON 解析 / 结构异常）"
+        else:
+            reason = "双窗判决产物尚未回流（pit_cache/factor_ic/dual_window_latest.json 不存在）"
 
         # 新鲜度护栏（双保险）：
         #  (1) run_at/generated_at 龄 > DUAL_MAX_AGE_HOURS（默认36h）⇒ 陈旧（runner 双窗连败）；
@@ -3017,6 +3030,10 @@ def ic_dual_verdict_endpoint():
             if age_hours is not None and age_hours > max_age_hours:
                 available = False
                 stale = True
+                reason = (
+                    f"双窗判决产物已陈旧：run_at 龄 {age_hours:.1f}h 超过上限 {max_age_hours:g}h"
+                    "（runner 双窗可能连败）"
+                )
 
             # 第(2)道：数据自身最新日（as_of_b）滞后 ⇒ 源库冻死
             if not stale:
@@ -3031,12 +3048,18 @@ def ic_dual_verdict_endpoint():
                         if as_of_b < threshold:
                             available = False
                             stale = True
+                            reason = (
+                                f"源库数据冻死：产物 as_of_b={as_of_b.isoformat()} 落后超过"
+                                f" {max_lag_td} 个交易日（下限 {threshold.isoformat()}）"
+                            )
                     except Exception:  # 交易日历异常 ⇒ 不压制（fail-safe）
                         pass
 
         return {
             "data": {
                 "available": available,
+                # 健康时为空串（不是 None）：调用方无需区分「字段缺失」与「没降级」。
+                "reason": reason,
                 "latest": latest,
                 "streak_n": streak_n,
                 "stale": stale,
@@ -3045,7 +3068,18 @@ def ic_dual_verdict_endpoint():
     except HTTPException:
         raise
     except Exception:  # noqa: BLE001  读失败/字段残缺 ⇒ fail-soft，绝不 500
-        return {"data": {"available": False, "latest": None, "streak_n": 5, "stale": False}}
+        # 这里 stale 只能给 False：我们连产物都没读到，**不知道**它是否陈旧，
+        # 但 False 在语义上是「确认不陈旧」。故用 reason 明确写出「读取异常」，
+        # 让消费方优先看 available/reason 而不是把 stale=False 当作新鲜证明。
+        return {
+            "data": {
+                "available": False,
+                "reason": "读取双窗判决产物时发生异常（fail-soft，端点仍 200；stale=False 不代表产物新鲜）",
+                "latest": None,
+                "streak_n": 5,
+                "stale": False,
+            }
+        }
 
 
 @app.get(

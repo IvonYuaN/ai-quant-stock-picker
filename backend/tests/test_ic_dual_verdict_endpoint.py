@@ -200,6 +200,139 @@ def test_ic_dual_verdict_no_timestamp_not_suppressed(
     assert data["stale"] is False
 
 
+# ── 降级必须带 reason（2026-11-25 补）：四种「没有数」必须能区分 ──
+#
+# 本端点的定位是「换族决策的监控面」。一个只会说 available=false 却不说是
+# 「尚未回流 / 读坏了 / 陈旧 / 源库冻死」的监控面等于没有监控面 —— 四者的处置动作完全不同
+# （等回流 / 查文件与代码 / 查 runner 是否连败 / 查源库是否还在更新）。
+
+def test_reason_absent_artifact_says_not_yet_回流(monkeypatch, tmp_path) -> None:
+    """产物文件不存在 ⇒ reason 必须说「尚未回流」并点名文件路径。"""
+    monkeypatch.setattr(cr, "_factor_ic_runtime_root", lambda: str(tmp_path))
+
+    data = _client().get(ROUTE).json()["data"]
+    assert data["available"] is False
+    assert "尚未回流" in data["reason"]
+    assert "dual_window_latest.json" in data["reason"]
+
+
+def test_reason_corrupt_artifact_says_read_failure_not_missing(monkeypatch, tmp_path) -> None:
+    """损坏 JSON ⇒ 「读取失败」；不能与「尚未回流」混为一谈。"""
+    target = tmp_path / "pit_cache" / "factor_ic"
+    target.mkdir(parents=True)
+    (target / "dual_window_latest.json").write_text("{ not valid json", encoding="utf-8")
+    monkeypatch.setattr(cr, "_factor_ic_runtime_root", lambda: str(tmp_path))
+
+    data = _client().get(ROUTE).json()["data"]
+    assert data["available"] is False
+    assert "读取失败" in data["reason"]
+    assert "尚未回流" not in data["reason"]
+
+
+def test_reason_empty_factors_distinct_from_missing(monkeypatch, tmp_path) -> None:
+    """产物在、factors 为空 ⇒ 「factors 为空」，既不等于缺失也不等于读失败。"""
+    _write_latest(tmp_path, {"as_of_b": "2099-01-01", "streak_n": 3, "factors": []})
+    monkeypatch.setattr(cr, "_factor_ic_runtime_root", lambda: str(tmp_path))
+
+    data = _client().get(ROUTE).json()["data"]
+    assert data["available"] is False
+    assert "factors 为空" in data["reason"]
+    assert "尚未回流" not in data["reason"]
+    assert "读取失败" not in data["reason"]
+
+
+def test_reason_stale_by_age_names_the_hours(monkeypatch, tmp_path) -> None:
+    """按龄判陈旧 ⇒ reason 带具体龄与上限（可据此判断是「差一点」还是「差一天」）。"""
+    _write_latest(
+        tmp_path,
+        {
+            "run_at": _hours_ago_iso(48),
+            "as_of_b": "2099-01-01",
+            "streak_n": 5,
+            "factors": [{"name": "momentum", "hit": False, "t_a": -0.3, "t_b": -2.1}],
+        },
+    )
+    monkeypatch.setattr(cr, "_factor_ic_runtime_root", lambda: str(tmp_path))
+
+    data = _client().get(ROUTE).json()["data"]
+    assert data["available"] is False
+    assert data["stale"] is True
+    assert "已陈旧" in data["reason"]
+    assert "36" in data["reason"]  # 默认上限小时数写进文案
+
+
+def test_reason_frozen_source_names_as_of_b(monkeypatch, tmp_path) -> None:
+    """按数据最新日判陈旧 ⇒ reason 点名 as_of_b（才能一眼看出源库停在哪天）。"""
+    _write_latest(
+        tmp_path,
+        {
+            "run_at": _hours_ago_iso(2),
+            "as_of_b": "2000-01-01",
+            "streak_n": 5,
+            "factors": [{"name": "momentum", "hit": False, "t_a": -0.3, "t_b": -2.1}],
+        },
+    )
+    monkeypatch.setattr(cr, "_factor_ic_runtime_root", lambda: str(tmp_path))
+
+    data = _client().get(ROUTE).json()["data"]
+    assert data["available"] is False
+    assert data["stale"] is True
+    assert "冻死" in data["reason"]
+    assert "2000-01-01" in data["reason"]
+
+
+def test_reason_is_empty_string_when_healthy(monkeypatch, tmp_path) -> None:
+    """健康时 reason 是空串而不是 None：调用方无需区分「字段缺失」与「没降级」。"""
+    _write_latest(
+        tmp_path,
+        {
+            "run_at": _hours_ago_iso(2),
+            "as_of_b": "2099-01-01",
+            "streak_n": 5,
+            "factors": [{"name": "htf", "hit": True, "t_a": 2.4, "t_b": 2.6}],
+        },
+    )
+    monkeypatch.setattr(cr, "_factor_ic_runtime_root", lambda: str(tmp_path))
+
+    data = _client().get(ROUTE).json()["data"]
+    assert data["available"] is True
+    assert data["reason"] == ""
+    assert data["stale"] is False
+
+
+def test_every_unavailable_response_carries_reason(monkeypatch, tmp_path) -> None:
+    """遍历四种降级路径：只要 available=False，reason 就必须非空。
+
+    这是防复发的主断言 —— 将来新增一条降级分支却忘了写 reason，这条会红。
+    """
+    seen: list[str] = []
+
+    def probe(payload: dict | None) -> str:
+        if payload is not None:
+            _write_latest(tmp_path, payload)
+        monkeypatch.setattr(cr, "_factor_ic_runtime_root", lambda: str(tmp_path))
+        data = _client().get(ROUTE).json()["data"]
+        if data["available"] is False:
+            seen.append(data["reason"])
+        return data["reason"]
+
+    # ① 缺失
+    probe(None)
+    # ② factors 为空
+    probe({"as_of_b": "2099-01-01", "streak_n": 5, "factors": []})
+    # ③ 按龄陈旧
+    probe({"run_at": _hours_ago_iso(48), "as_of_b": "2099-01-01", "streak_n": 5,
+           "factors": [{"name": "m", "hit": False}]})
+    # ④ 源库冻死
+    probe({"run_at": _hours_ago_iso(2), "as_of_b": "2000-01-01", "streak_n": 5,
+           "factors": [{"name": "m", "hit": False}]})
+
+    assert len(seen) == 4, f"应命中四条降级路径，实际 {len(seen)}"
+    assert all(reason.strip() for reason in seen), f"存在空 reason：{seen}"
+    # 四种说法必须互不相同（能据此判断该做什么）
+    assert len(set(seen)) == 4, f"降级原因不可区分：{seen}"
+
+
 # ── 数据最新日护栏（data_as_of：堵「run_at 新鲜 + 数据冻死」静默窗口） ──
 
 def test_ic_dual_verdict_stale_as_of_b_is_suppressed(
