@@ -6,6 +6,7 @@ import { Database } from "lucide-react";
 import { HeroState, LoadingState, SectionHeader, Tag } from "@/components/ui/primitives";
 import { api, type HealthPayload } from "@/lib/api";
 import { useWorkspaceSnapshot } from "@/components/aqsp/useAqspSnapshot";
+import { SnapshotRefreshWarning } from "@/components/aqsp/SnapshotRefreshWarning";
 import { buildDailyView } from "@/lib/daily-view";
 import { formatAqspTime } from "@/components/aqsp/useAqspSnapshot";
 
@@ -56,6 +57,13 @@ export function DataPage() {
           <p className="aq-page-sub">来源健康、漏斗覆盖与快照时点。</p>
         </div>
       </header>
+
+      <SnapshotRefreshWarning
+        error={error}
+        hasData={Boolean(data)}
+        switching={switching}
+        generatedAt={data?.generated_at ?? ""}
+      />
 
       <section className="aq-section" aria-label="来源健康">
         <SectionHeader

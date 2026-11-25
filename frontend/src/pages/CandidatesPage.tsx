@@ -9,6 +9,7 @@ import { HeroState, LoadingState } from "@/components/ui/primitives";
 import { CandidateSection } from "@/components/aqsp/sections/CandidateSection";
 import { CandidateDrawer } from "@/components/aqsp/CandidateDrawer";
 import { useWorkspaceSnapshot } from "@/components/aqsp/useAqspSnapshot";
+import { SnapshotRefreshWarning } from "@/components/aqsp/SnapshotRefreshWarning";
 import { buildDailyView } from "@/lib/daily-view";
 import { MarketRiskBanner } from "@/components/aqsp/MarketRiskBanner";
 
@@ -50,6 +51,13 @@ export function CandidatesPage() {
           </p>
         </div>
       </header>
+
+      <SnapshotRefreshWarning
+        error={error}
+        hasData={Boolean(data)}
+        switching={switching}
+        generatedAt={data?.generated_at ?? ""}
+      />
 
       {/* 候选名单必须配市场风险上下文：同一天里"选什么"和"该不该重仓"是两个问题。 */}
       <MarketRiskBanner />

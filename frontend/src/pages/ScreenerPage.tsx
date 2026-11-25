@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { ListFilter, ShieldCheck } from "lucide-react";
 import { HeroState, LoadingState, SectionHeader } from "@/components/ui/primitives";
 import { useWorkspaceSnapshot } from "@/components/aqsp/useAqspSnapshot";
+import { SnapshotRefreshWarning } from "@/components/aqsp/SnapshotRefreshWarning";
 import { buildDailyView } from "@/lib/daily-view";
 import { strategyCounts } from "@/lib/candidate-view";
 import { statusLabel } from "@/lib/display-labels";
@@ -143,6 +144,13 @@ export function ScreenerPage() {
           <p className="aq-page-sub">当前候选命中了哪些策略假设。</p>
         </div>
       </header>
+
+      <SnapshotRefreshWarning
+        error={error}
+        hasData={Boolean(data)}
+        switching={switching}
+        generatedAt={data?.generated_at ?? ""}
+      />
 
       <section className="aq-section" aria-label="策略命中分布">
         <SectionHeader

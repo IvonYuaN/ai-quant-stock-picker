@@ -8,6 +8,7 @@ import { DecisionPanel } from "@/components/aqsp/DecisionPanel";
 import { MessageSection } from "@/components/aqsp/sections/MessageSection";
 import { DiscussionSection } from "@/components/aqsp/sections/DiscussionSection";
 import { useWorkspaceSnapshot } from "@/components/aqsp/useAqspSnapshot";
+import { SnapshotRefreshWarning } from "@/components/aqsp/SnapshotRefreshWarning";
 import { buildDailyView } from "@/lib/daily-view";
 import { formatAqspTime } from "@/components/aqsp/useAqspSnapshot";
 
@@ -48,6 +49,13 @@ export function EvidencePage() {
           </p>
         </div>
       </header>
+
+      <SnapshotRefreshWarning
+        error={error}
+        hasData={Boolean(data)}
+        switching={switching}
+        generatedAt={data?.generated_at ?? ""}
+      />
 
       <section className="aq-section" aria-label="口径与冻结参数">
         <SectionHeader
