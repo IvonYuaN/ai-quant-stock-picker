@@ -67,6 +67,53 @@ export function ReportsPage() {
     }
   }
 
+  /** 重新读一次列表（删除结果未知时用来核对真实状态）。 */
+  async function refreshList() {
+    try {
+      setItems(await api.myReports());
+      setError("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "读取研报失败");
+    }
+  }
+
+  /**
+   * 下载。
+   *
+   * 🔴 必须接住失败：`downloadReport` 在非 2xx 时 `throw`（`api.ts:97`）。
+   * 原来是把裸 promise 直接挂在 onClick 上（`void` + 调用，无 catch）——失败时
+   * **什么都不发生**：没有文件、没有提示、控制台之外看不出来。用户只会反复点。
+   */
+  async function download(item: MyReport) {
+    try {
+      await downloadReport(item.id, item.name);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "下载失败";
+      setError(message);
+      toast.error(message);
+    }
+  }
+
+  /**
+   * 删除。
+   *
+   * 🔴 失败时**不能**只弹一句「删除失败」就把这一行留在列表里：请求失败有两种可能——
+   * ① 没到达服务端（文件还在）；② 服务端已删但响应丢了（文件没了）。我们分不清。
+   * 留在列表里会让用户重复点击，而第二次点会得到 404。所以失败后重新读一次列表，
+   * 并明说「结果未知，已重新读取核对」——把不确定性交给用户看，而不是替他猜。
+   */
+  async function remove(item: MyReport) {
+    try {
+      await api.deleteReport(item.id);
+      setItems((prev) => prev.filter((row) => row.id !== item.id));
+      toast(`已删除 ${item.name}`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "删除失败";
+      toast.error(`${message} · 删除结果未知，已重新读取列表核对`);
+      await refreshList();
+    }
+  }
+
   return (
     <div className="aq-page">
       <header className="aq-page-head">
@@ -132,7 +179,7 @@ export function ReportsPage() {
                       <button
                         type="button"
                         className="aq-btn aq-btn-icon"
-                        onClick={() => void downloadReport(item.id, item.name)}
+                        onClick={() => void download(item)}
                         title="下载"
                       >
                         <Download aria-hidden="true" />
@@ -140,12 +187,7 @@ export function ReportsPage() {
                       <button
                         type="button"
                         className="aq-btn aq-btn-danger aq-btn-icon"
-                        onClick={() => {
-                          void api.deleteReport(item.id).then(() => {
-                            setItems((prev) => prev.filter((row) => row.id !== item.id));
-                            toast(`已删除 ${item.name}`);
-                          });
-                        }}
+                        onClick={() => void remove(item)}
                         title="删除"
                       >
                         <Trash2 aria-hidden="true" />
