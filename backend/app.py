@@ -519,7 +519,12 @@ def watchlist_removal(body: WatchlistRemovalIn) -> dict:
     """,
 )
 def portfolio_get():
-    """持仓 + 实时盈亏（浮动盈亏红涨绿跌）。"""
+    """持仓 + 实时盈亏（浮动盈亏红涨绿跌）。
+
+    `closed[].pnl` / `closed[].pnl_pct` 在**成本未知**时为 `null`（补录历史成交、
+    账本里没有对应持仓），不是 0 —— 0 会被读成「没赚没亏」。这类成交不计入
+    `realized_pnl`，笔数另见 `realized_pnl_unknown_count`。
+    """
     try:
         return {"data": pf.get_portfolio()}
     except pf.PortfolioCorrupt:

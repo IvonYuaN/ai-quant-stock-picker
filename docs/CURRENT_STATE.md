@@ -128,7 +128,7 @@
 - 历史积累的 `codex/*` 分支多数对应已关闭/已 squash 的 PR，**不可按 `--merged` 批量删**（全 squash 合并不留祖先链）。逐个以 PR `merged_at` + 内容在 `origin/main` 的对应为准。
 - 2026-11-24 已清理 4 条：`feat/filter-verdict-cli`、`codex/tickflow-personal-operating-system`（功能全在 main，删）、`codex/strategy-watch-workflow`（含未入库的 tickflow roadmap 文档，保留）、`feature/holder-concentration-factor`（#541 负结果实验唯一 git 历史，保留）。另有 `codex/*` 历史分支未动。
 
-**数据诚实性（2026-11-24 起，PR #616–#640 共 24 个）**
+**数据诚实性（2026-11-24 起，PR #616–#642 共 25 个）**
 
 验收口径：任何展示面在「取数失败 / 该日确实为空 / 有数据」三态下必须可区分；
 **刷新失败不得静默沿用旧值**；后端说不可用时必须把它的 `reason` 透出来。
@@ -175,6 +175,12 @@
   原判定 `(row.exc_mean ?? 0) > 0` 落到最后分支 → 标签写「无超额」（确定的否定），
   同一行的数字列却显示「—」。新增 `paper-arena-view.ts` 六态 `sleeveVerdict`
   + `unknownExcessCount` 在汇总卡披露「另有 N 个策略超额未知，未计入」。
+- `#642` 成本未知的平仓成交被写成「0 元成本 / 0% 收益」（issue #641）：`_apply_close`
+  在 `cost == 0`（legacy 补录、账本无对应持仓）时算 `pnl = price * shares`、
+  `pnl_pct = 0.0`，`realized_pnl` 又把这些伪造值一起加总 ⇒ **已实现盈亏量级错误**。
+  写入侧改 `None`；读取侧 `_with_known_cost` 纠正老账本（零迁移）；`realized_pnl`
+  只累加有据成交 + `realized_pnl_unknown_count`；前端 `normalizeClosed` 改
+  `asNullableNumber`（`asNumber` 会把 null 折回 0）、成本价 0 显示「—」。
 
 防复发守卫：
 - `frontend/src/lib/data-honesty-pages.test.ts`——页面层源码守卫（含接线断言：
@@ -220,11 +226,13 @@
 已靠「可达性验证」拦下 9+ 伪缺口。
 
 🔴 已知未修（已登记 issue #641，勿重复审计）：
-- `backend/portfolio.py:_apply_close` 在「成本未知」（`cost == 0`，只有 legacy
+- ~~`backend/portfolio.py:_apply_close` 在「成本未知」（`cost == 0`，只有 legacy
   「补历史成交、无持仓记录」路径会走到）时，仍写入 `pnl = (price - 0) * shares`
-  与 `pnl_pct = 0.0` ⇒ 平仓记录显示「收益率 0%」且 `realized_pnl` 被抬高整笔成交额。
-  真相是「成本未知」，应写 `None` 并在 `realized_pnl` 里排除 + 披露笔数。
-  属于**持久化账本 schema 变更**，与展示层修复分开做。
+  与 `pnl_pct = 0.0` ⇒ 平仓记录显示「收益率 0%」且 `realized_pnl` 被抬高整笔成交额。~~
+  **已修（PR #642）**：写入侧 `pnl`/`pnl_pct` 在 `cost <= 0` 时写 `None`；读取侧
+  `_with_known_cost` 把老账本里已写坏的记录一并纠正（不需要数据迁移）；
+  `realized_pnl` 只累加有据成交，另出 `realized_pnl_unknown_count`；
+  前端 `normalizeClosed` 改用 `asNullableNumber`（`asNumber` 会把 null 折回 0，白改）。
 
 **`outputs/`（阶段产物）**
 - 属本地工作区产物，`outputs/` 已被 `.gitignore`；不在仓库历史中，按需本地清理即可。

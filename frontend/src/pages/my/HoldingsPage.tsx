@@ -134,7 +134,7 @@ export function HoldingsPage({ renderRiskSettings }: { renderRiskSettings?: (cod
           <div className="aq-total-card"><span>持仓成本</span><b className="aq-num">{formatMoney(totals.cost)}</b></div>
           <div className="aq-total-card"><span>浮动盈亏</span><b className={cn("aq-num", changeClass(totals.pnl))}>{formatMoney(totals.pnl)}</b></div>
           <div className="aq-total-card"><span>浮动收益率</span><b className={cn("aq-num", changeClass(totals.pnl_pct))}>{formatSignedPct(totals.pnl_pct)}</b></div>
-          <div className="aq-total-card"><span>已实现盈亏</span><b className={cn("aq-num", changeClass(data.realized_pnl))}>{formatMoney(data.realized_pnl)}</b></div>
+          <div className="aq-total-card"><span>已实现盈亏</span><b className={cn("aq-num", changeClass(data.realized_pnl))}>{formatMoney(data.realized_pnl)}</b>{data.realized_pnl_unknown_count ? <small className="aq-note">另有 {data.realized_pnl_unknown_count} 笔成本未知，未计入</small> : null}</div>
         </div> : null}
         <div className="aq-holdings-status" role="status">
           <strong className={alertError ? "aq-tone-warn" : alertsLoading ? undefined : alertedStocks ? "aq-tone-warn" : "aq-tone-ok"}>{alertError ? "风险状态待确认" : alertsLoading ? "正在核对风险" : alertedStocks ? `${alertedStocks} 只持仓待复核` : "暂无开放提醒"}</strong>
@@ -152,7 +152,7 @@ export function HoldingsPage({ renderRiskSettings }: { renderRiskSettings?: (cod
         <div className="aq-table-wrap"><table className="aq-table"><thead><tr><th>卖出日</th><th>代码 / 名称</th><th className="aq-num">成交价</th><th className="aq-num">成本价</th><th className="aq-num">股数</th><th className="aq-num">已实现盈亏</th><th className="aq-num">收益率</th><th /></tr></thead><tbody>
           {data.closed.map((row, index) => <tr key={`${row.code}-${row.date}-${index}`}>
             <td className="aq-num">{row.date}</td><td><strong>{row.name}</strong><div className="aq-code">{row.code}</div>{row.position_id ? <Link className="aq-note" to={positionPlanHref(row.position_id) ?? "/my/holdings"}>查看历史计划</Link> : null}</td>
-            <td className="aq-num">{row.price.toFixed(2)}</td><td className="aq-num">{row.cost.toFixed(4)}</td><td className="aq-num">{row.shares}</td>
+            <td className="aq-num">{row.price.toFixed(2)}</td><td className="aq-num">{row.cost > 0 ? row.cost.toFixed(4) : "—"}</td><td className="aq-num">{row.shares}</td>
             <td className={cn("aq-num", changeClass(row.pnl))}>{formatMoney(row.pnl)}</td><td className={cn("aq-num", changeClass(row.pnl_pct))}>{formatSignedPct(row.pnl_pct)}</td>
             <td><button type="button" className="aq-btn aq-btn-danger aq-btn-icon" title="删除这条成交记录" aria-label={`删除 ${row.code} ${row.date} 成交记录`} disabled={busy} onClick={() => void run(() => api.removeClosed(index), "已删除该条记录")}><Trash2 aria-hidden="true" /></button></td>
           </tr>)}

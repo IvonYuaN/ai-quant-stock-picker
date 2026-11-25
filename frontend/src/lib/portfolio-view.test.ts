@@ -99,3 +99,52 @@ export const portfolioViewContract = {
   partialTotalsAreCompleted:
     normalizePortfolio({ totals: { market_value: 999 }, holdings: [] }).totals.market_value === 999,
 };
+
+/**
+ * M24：成本未知的平仓成交不得被折成「0 元盈亏 / 0% 收益」。
+ *
+ * 后端 `_apply_close` 过去在 `cost == 0`（补录历史成交、账本里没有对应持仓）时
+ * 写 `pnl = price * shares`、`pnl_pct = 0.0`。现在写 `None`，并且读取时纠正老账本。
+ * 前端这一层必须**原样保留 null** —— 用 `asNumber` 会把它折回 0，等于把
+ * 「算不出盈亏」重新显示成「没赚没亏」，后端改了也白改。
+ */
+const costUnknown = normalizePortfolio({
+  holdings: [],
+  closed: [
+    { code: "600000", name: "无成本依据", date: "2026-10-20", price: 12, shares: 100, cost: 0, pnl: null, pnl_pct: null },
+    { code: "600001", name: "有据", date: "2026-10-21", price: 12, shares: 100, cost: 10, pnl: 200, pnl_pct: 20 },
+  ],
+  realized_pnl: 200,
+  realized_pnl_unknown_count: 1,
+});
+
+export const portfolioCostUnknownContract = {
+  // 🔴 关键：null 必须活下来，不能被 asNumber 折成 0
+  unknownPnlStaysNull: costUnknown.closed[0].pnl === null,
+  unknownPnlPctStaysNull: costUnknown.closed[0].pnl_pct === null,
+  // 对照组：有成本依据的行不受影响
+  knownPnlIsKept: costUnknown.closed[1].pnl === 200,
+  knownPnlPctIsKept: costUnknown.closed[1].pnl_pct === 20,
+  // 汇总与披露
+  realizedPnlKept: costUnknown.realized_pnl === 200,
+  unknownCountKept: costUnknown.realized_pnl_unknown_count === 1,
+
+  // 后端没给汇总时的本地兜底：只加有据的，null 不能当 0 混进求和
+  localSumSkipsUnknown:
+    normalizePortfolio({
+      closed: [
+        { code: "600000", date: "2026-10-20", price: 12, shares: 100, cost: 0, pnl: null, pnl_pct: null },
+        { code: "600001", date: "2026-10-21", price: 12, shares: 100, cost: 10, pnl: 200, pnl_pct: 20 },
+      ],
+    }).realized_pnl === 200,
+  // 本地兜底也要数出未知笔数，否则卡片不会披露
+  localUnknownCount:
+    normalizePortfolio({
+      closed: [{ code: "600000", date: "2026-10-20", price: 12, shares: 100, cost: 0, pnl: null, pnl_pct: null }],
+    }).realized_pnl_unknown_count === 1,
+  // 全部有据时披露数为 0（不该凭空冒出提示）
+  noUnknownWhenAllKnown:
+    normalizePortfolio({
+      closed: [{ code: "600001", date: "2026-10-21", price: 12, shares: 100, cost: 10, pnl: 200, pnl_pct: 20 }],
+    }).realized_pnl_unknown_count === 0,
+};

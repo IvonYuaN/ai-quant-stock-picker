@@ -410,13 +410,16 @@ export interface PositionAlertRules {
 export interface ClosedPosition {
   position_id?: string | null;
   code: string; name: string; date: string; price: number; shares: number; cost: number;
-  pnl: number; pnl_pct: number;
+  /** 成本未知（补录历史成交、账本里没有对应持仓）时为 null —— 不是 0，也不是「没赚没亏」。 */
+  pnl: number | null; pnl_pct: number | null;
 }
 export interface PortfolioData {
   holdings: Holding[];
   totals: { market_value: number; cost: number; pnl: number; pnl_pct: number };
   closed: ClosedPosition[];
+  /** 只累加有成本依据的成交；成本未知的另计在 `realized_pnl_unknown_count`。 */
   realized_pnl: number;
+  realized_pnl_unknown_count?: number;
   updated: string; last_refresh: string | null;
 }
 
