@@ -235,3 +235,18 @@ export const signalsHasNoBlanketNoRecordsClaim = !signalsPageSource.includes(
   ">还没有策略级信号记录。<",
 );
 export const signalsSaysUnsettledWhenRecordsExist = signalsPageSource.includes('"未结算"');
+
+/**
+ * M26（监控页失败后仍显示「正在读取」，2026-11-25）。
+ *
+ * 原写法 `{error ? …}{!followups ? <LoadingState/> : null}`：请求失败时
+ * `followups` 仍是 `null`，于是「读取失败」和「正在读取跟进状态…」同时出现，
+ * 而且永远转圈 —— 与 M10（IndicesPage）同一类，只是没走 `settleSection`。
+ *
+ * 行为断言在 safe.test.ts（readState：失败优先于正在读），这里守接线。
+ */
+const monitor = pageSource("src/pages/MonitorPage.tsx");
+export const monitorUsesReadState = monitor.includes("readState(followups, error)");
+// 加载态必须由 readState 的三态决定，不能再出现「只看值是否为 null」的裸判断
+export const monitorHasNoUngatedLoading = !/\{!followups \? <LoadingState/.test(monitor);
+export const monitorSaysFailureIsNotNoFollowups = monitor.includes("这不代表没有需要跟进的方案");

@@ -63,3 +63,18 @@ export function settleSection<T>(
     message: `${label}读取失败：${reason || "未知原因"}。这一块是空的，不代表今天没有数据。`,
   };
 }
+
+/**
+ * 单段取数的三态判定：**失败优先于「正在读」**。
+ *
+ * 约定同 `SectionResult`：`null` 表示还在读。但请求失败后调用方通常不会把 value
+ * 置成非 null，于是页面若仍用 `!value` 判加载态，就会**同时**渲染
+ * 「读取失败」和「正在读取…」，而且永远转圈 —— 用户以为还在读，其实早就失败了。
+ *
+ * `MonitorPage` 原来正是这个写法（`{error ? …}{!followups ? <LoadingState/> : null}`）。
+ * 把优先级写进一个函数，页面就不必各自记得先判 error。
+ */
+export function readState<T>(value: T | null, error: string): "loading" | "failed" | "ready" {
+  if (error) return "failed";
+  return value === null ? "loading" : "ready";
+}

@@ -2,7 +2,7 @@
 //
 // 这些函数是所有"外部数据 → 界面"的必经之路，出错的表现是整页白屏，
 // 所以边界必须钉死。
-import { asArray, asNullableNumber, asNumber, asRecord, asString, settleSection } from "./safe";
+import { asArray, asNullableNumber, asNumber, asRecord, asString, readState, settleSection } from "./safe";
 
 /**
  * `settleSection` 的三态契约。
@@ -81,4 +81,20 @@ export const safeContract = {
   sectionEmptyReasonFallsBackToUnknown:
     failedWithNothing.state === "failed" && failedWithNothing.message.includes("未知原因"),
   sectionFailureIsDistinctFromEmpty: readyEmpty.state === "ready" && failedWithError.state === "failed",
+};
+
+/**
+ * M26：失败必须优先于「正在读」。
+ *
+ * 请求失败后调用方通常不会把 value 置成非 null，页面若仍用 `!value` 判加载态，
+ * 就会同时渲染「读取失败」和「正在读取…」，并永远转圈。
+ */
+export const readStateContract = {
+  nullWithoutErrorIsLoading: readState<number[]>(null, "") === "loading",
+  valueWithoutErrorIsReady: readState<number[]>([], "") === "ready",
+  errorWithoutValueIsFailed: readState<number[]>(null, "boom") === "failed",
+  // 🔴 关键：既有值又有错误时，失败优先 —— 否则会拿旧值当「已就绪」
+  errorBeatsValue: readState<number[]>([1], "boom") === "failed",
+  // 空数组是「读到了，就是空的」，不是「还在读」
+  emptyArrayIsReady: readState<number[]>([], "") !== "loading",
 };
