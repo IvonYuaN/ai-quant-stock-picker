@@ -128,7 +128,7 @@
 - 历史积累的 `codex/*` 分支多数对应已关闭/已 squash 的 PR，**不可按 `--merged` 批量删**（全 squash 合并不留祖先链）。逐个以 PR `merged_at` + 内容在 `origin/main` 的对应为准。
 - 2026-11-24 已清理 4 条：`feat/filter-verdict-cli`、`codex/tickflow-personal-operating-system`（功能全在 main，删）、`codex/strategy-watch-workflow`（含未入库的 tickflow roadmap 文档，保留）、`feature/holder-concentration-factor`（#541 负结果实验唯一 git 历史，保留）。另有 `codex/*` 历史分支未动。
 
-**数据诚实性（2026-11-24 起，PR #616–#650 共 33 个）**
+**数据诚实性（2026-11-24 起，PR #616–#651 共 34 个）**
 
 验收口径：任何展示面在「取数失败 / 该日确实为空 / 有数据」三态下必须可区分；
 **刷新失败不得静默沿用旧值**；后端说不可用时必须把它的 `reason` 透出来。
@@ -243,6 +243,17 @@
   干净 payload **原样返回同一对象**（先做一次廉价探测，零复制零分配）。
   同 PR 修 `_events_jsonable` 的两个隐含假设：原实现只遍历**顶层 key** 且只认 NaN
   （不认 ±inf），能用纯粹是因为当前 5 个事件 dataclass 恰好扁平 —— 巧合不是契约。
+- `#651` **涨跌配色口径分叉**：9 处页面手写 `x >= 0 ? "aq-tone-up" : "aq-tone-down"`，
+  两个确定的错：① **`0` 被染成「涨」** —— `format.ts::changeClass` 的约定是「0 为中性」，
+  `+0.00%` 染红等于把「没有变化」说成「上涨」；② **`null` 被染成「涨」** ——
+  JS 里 `null >= 0 === true`，而 `#648`/`#650` 之后后端把「没取到」落成 `null` 是常态，
+  于是同一行**数字列写「—」、颜色却报涨**，比不显示更糟：它给了一个不存在的方向。
+  `BacktestPage` 更是同一文件里两种口径并存（局部 `tone()` 对 0 中性，第 205 行手写对 0 判涨）。
+  统一走 `changeClass`（顺带把重复的符号拼接换成 `formatSignedPct`，删掉 `BacktestPage` 的重复实现）；
+  新增**全仓 `.tsx` 扫描**守卫 `noPageHandRollsDirectionTone` —— 这个三元表达式没有任何
+  合法用法（唯一正确实现在 `changeClass` 内部且是 `value > 0`，不被该正则命中），
+  另配 `directionToneSitesUseChangeClass` 正向断言（防「整列删掉」蒙混）与
+  `directionToneScanCoversFiles`（防路径走错导致的零命中假绿）。
 
 防复发守卫：
 - `frontend/src/lib/data-honesty-pages.test.ts`——页面层源码守卫（含接线断言：

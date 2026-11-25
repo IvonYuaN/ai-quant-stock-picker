@@ -328,10 +328,10 @@ export function InfoStreamPage() {
                           <span className="aq-tone-up">{concept.up_count}</span> /{" "}
                           <span className="aq-tone-down">{concept.down_count}</span>
                         </td>
-                        <td className={cn("aq-num", concept.main_net_inflow >= 0 ? "aq-tone-up" : "aq-tone-down")}>
+                        <td className={cn("aq-num", changeClass(concept.main_net_inflow))}>
                           {formatYi(concept.main_net_inflow)}
                         </td>
-                        <td className={cn("aq-num", concept.main_net_ratio >= 0 ? "aq-tone-up" : "aq-tone-down")}>
+                        <td className={cn("aq-num", changeClass(concept.main_net_ratio))}>
                           {formatSignedPct(concept.main_net_ratio)}
                         </td>
                       </tr>

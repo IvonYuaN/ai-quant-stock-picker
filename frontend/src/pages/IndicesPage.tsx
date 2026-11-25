@@ -12,7 +12,7 @@ import { TrendingUp } from "lucide-react";
 import { LoadingState, SectionHeader, StatePanel } from "@/components/ui/primitives";
 import { api, type GlobalIndex, type IndexQuote } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { changeClass, formatEvidenceTime } from "@/lib/format";
+import { changeClass, formatEvidenceTime, formatSignedPct } from "@/lib/format";
 import { settleSection, type SectionResult } from "@/lib/safe";
 
 export function IndicesPage() {
@@ -70,10 +70,10 @@ export function IndicesPage() {
                   <tr key={row.name}>
                     <td><strong>{row.name}</strong></td>
                     <td className="aq-num">{row.price.toFixed(2)}</td>
-                    <td className={cn("aq-num", row.change_pct >= 0 ? "aq-tone-up" : "aq-tone-down")}>
-                      {row.change_pct >= 0 ? "+" : ""}{row.change_pct.toFixed(2)}%
+                    <td className={cn("aq-num", changeClass(row.change_pct))}>
+                      {formatSignedPct(row.change_pct)}
                     </td>
-                    <td className={cn("aq-num", row.change_amt >= 0 ? "aq-tone-up" : "aq-tone-down")}>
+                    <td className={cn("aq-num", changeClass(row.change_amt))}>
                       {row.change_amt >= 0 ? "+" : ""}{row.change_amt.toFixed(2)}
                     </td>
                     <td>{row.as_of ? formatEvidenceTime(row.as_of) : "—"}</td>

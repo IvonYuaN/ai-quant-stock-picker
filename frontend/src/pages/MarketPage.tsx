@@ -101,7 +101,7 @@ function SectorFlowBlock({ view }: { view: MarketView }) {
     <div className="aq-flow-row" key={name}>
       <span className="aq-flow-name">{name}</span>
       <span className={cn("aq-num", changeClass(pct))}>{formatSignedPct(pct)}</span>
-      <span className={cn("aq-num", net >= 0 ? "aq-tone-up" : "aq-tone-down")}>{formatYi(net)}</span>
+      <span className={cn("aq-num", changeClass(net))}>{formatYi(net)}</span>
     </div>
   );
   return (

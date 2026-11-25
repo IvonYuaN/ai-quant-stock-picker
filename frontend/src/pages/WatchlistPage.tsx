@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Star } from "lucide-react";
 import { EmptyState, LoadingState, SectionHeader, Tag } from "@/components/ui/primitives";
 import { api, type Quote } from "@/lib/api";
+import { changeClass, formatSignedPct } from "@/lib/format";
 import { loadWatch, saveWatch, WATCHLIST_CHANGED_EVENT } from "@/lib/watchlist";
 import { cn } from "@/lib/utils";
 
@@ -95,8 +96,8 @@ export function WatchlistPage() {
                     <tr key={code}>
                       <td><strong>{quote?.name || code}</strong> <span className="aq-code">{code}</span></td>
                       <td className="aq-num">{quote ? quote.price.toFixed(2) : "—"}</td>
-                      <td className={cn("aq-num", quote && (quote.change_pct >= 0 ? "aq-tone-up" : "aq-tone-down"))}>
-                        {quote ? `${quote.change_pct >= 0 ? "+" : ""}${quote.change_pct.toFixed(2)}%` : "—"}
+                      <td className={cn("aq-num", changeClass(quote?.change_pct))}>
+                        {quote ? formatSignedPct(quote.change_pct) : "—"}
                       </td>
                       <td className="aq-num">{quote ? quote.last_close.toFixed(2) : "—"}</td>
                       <td>{quote ? <Tag tone="ok">有行情</Tag> : <Tag tone="warn">缺材料</Tag>}</td>

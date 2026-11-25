@@ -13,7 +13,7 @@
 //   - 只针对已确认可空的字段（api.ts 里 number | null），不泛化到别的字段。
 //   - 断言「不含危险模式」+「含正确 helper」两条，缺一不可——只断言不含会把
 //     整行删掉也算通过，只断言含 helper 会挡不住某人同时留一个手写的旧分支。
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 
 function pageSource(relative: string): string {
   const roots = [process.cwd(), `${process.cwd()}/frontend`];
@@ -287,3 +287,68 @@ export const closingPanelHasNoHardcodedBadge = !closingPanel.includes(">暂无�
 const marketPage = pageSource("src/pages/MarketPage.tsx");
 export const marketPageDoesNotFoldPctToZero = !/\bpct\s*\?\?\s*0/.test(marketPage);
 export const marketPagePctIsNullable = marketPage.includes("pct: number | null");
+
+/**
+ * M33（涨跌配色口径统一，2026-11-25）：`x >= 0 ? "aq-tone-up" : "aq-tone-down"`。
+ *
+ * 这条三元表达式有两个确定的错：
+ * 1. **`0` 被染成「涨」** —— `format.ts::changeClass` 的注释写得很清楚「0 为中性」，
+ *    而 `+0.00%` 染红等于把「没有变化」说成「上涨」；
+ * 2. **`null` 被染成「涨」** —— JS 里 `null >= 0 === true`。后端把「没取到」落成
+ *    `null`（`#648`/`#650` 之后这是常态），于是同一行**数字列写「—」、颜色却报涨**，
+ *    比不显示更糟：它给了一个不存在的方向。
+ *
+ * 全仓口径只有一处实现：`format.ts::changeClass`（`null` / `NaN` / `0` 一律不着色）。
+ * 所以这条断言做**全仓扫描**而不是窄口径 —— 这个三元表达式没有任何合法用法，
+ * 唯一正确的写法在 `changeClass` 内部，且它是 `value > 0 ?`（`>` 不是 `>=`），
+ * 不会被本正则命中。
+ *
+ * 反向验证：把任一页面的 `changeClass(x)` 改回 `x >= 0 ? … : …`，本断言转红。
+ */
+function sourceRoot(): string {
+  const roots = [process.cwd(), `${process.cwd()}/frontend`];
+  for (const root of roots) {
+    try {
+      readFileSync(`${root}/src/lib/format.ts`, "utf-8");
+      return root;
+    } catch {
+      // 换根再试
+    }
+  }
+  throw new Error("找不到前端源码根目录");
+}
+
+function walkTsx(dir: string): string[] {
+  const out: string[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = `${dir}/${entry.name}`;
+    if (entry.isDirectory()) out.push(...walkTsx(full));
+    else if (entry.name.endsWith(".tsx")) out.push(full);
+  }
+  return out;
+}
+
+const HAND_ROLLED_DIRECTION_TONE = />=\s*0\s*\?\s*"aq-tone-up"\s*:\s*"aq-tone-down"/;
+const root = sourceRoot();
+const handRolledToneFiles = walkTsx(`${root}/src`)
+  .filter((file) => HAND_ROLLED_DIRECTION_TONE.test(readFileSync(file, "utf-8")))
+  .map((file) => file.slice(root.length + 1));
+
+/** 扫描面必须非空 —— 否则「零命中」可能只是路径没走对（假绿）。 */
+export const directionToneScanCoversFiles = walkTsx(`${root}/src`).length > 20;
+export const noPageHandRollsDirectionTone = handRolledToneFiles.length === 0;
+
+/**
+ * 正向：这 6 个页面/组件必须真的调用 `changeClass`。
+ *
+ * 只断言「不含手写三元」是不够的 —— 把整列删掉也能通过。两条一起才拦得住
+ * 「删了旧分支但也没接上 helper」。
+ */
+export const directionToneSitesUseChangeClass = [
+  "src/pages/IndicesPage.tsx",
+  "src/pages/MarketPage.tsx",
+  "src/pages/WatchlistPage.tsx",
+  "src/pages/BacktestPage.tsx",
+  "src/pages/SignalsPage.tsx",
+  "src/pages/InfoStreamPage.tsx",
+].every((file) => pageSource(file).includes("changeClass("));

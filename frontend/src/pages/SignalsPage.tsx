@@ -8,7 +8,7 @@ import { LoadingState, SectionHeader, Tag } from "@/components/ui/primitives";
 import { api, type PerformancePayload } from "@/lib/api";
 import { strategyEmptyNotice } from "@/lib/performance-view";
 import { cn } from "@/lib/utils";
-import { changeClass } from "@/lib/format";
+import { changeClass, formatSignedPct } from "@/lib/format";
 
 /** 超额百分数（后端已是百分数，例如 3.0 表示 +3%）→ 带符号展示；缺失给「—」。 */
 function fmtPct(value: number | null | undefined): string {
@@ -163,8 +163,8 @@ export function SignalsPage() {
                     <td className="aq-num">
                       {row.displayable ? `${(row.hit_rate * 100).toFixed(1)}%` : "积累中"}
                     </td>
-                    <td className={cn("aq-num", row.avg_return_pct >= 0 ? "aq-tone-up" : "aq-tone-down")}>
-                      {row.avg_return_pct >= 0 ? "+" : ""}{row.avg_return_pct.toFixed(2)}%
+                    <td className={cn("aq-num", changeClass(row.avg_return_pct))}>
+                      {formatSignedPct(row.avg_return_pct)}
                     </td>
                     <td className="aq-num">{(row.weight_base * row.weight_confidence).toFixed(2)}</td>
                   </tr>
@@ -191,8 +191,8 @@ export function SignalsPage() {
                     <td><strong>{alert.strategy}</strong></td>
                     <td><Tag tone={alert.severity === "high" ? "warn" : "neutral"}>{alert.severity}</Tag></td>
                     <td className="aq-num">{(alert.recent_win_rate * 100).toFixed(1)}%</td>
-                    <td className={cn("aq-num", alert.recent_avg_return_pct >= 0 ? "aq-tone-up" : "aq-tone-down")}>
-                      {alert.recent_avg_return_pct >= 0 ? "+" : ""}{alert.recent_avg_return_pct.toFixed(2)}%
+                    <td className={cn("aq-num", changeClass(alert.recent_avg_return_pct))}>
+                      {formatSignedPct(alert.recent_avg_return_pct)}
                     </td>
                     <td>{alert.recommendation}</td>
                   </tr>
