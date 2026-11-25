@@ -96,3 +96,31 @@ const today = pageSource("src/components/aqsp/TodayWorkspace.tsx");
 export const todayUsesTopCandidateScore = today.includes("topCandidateScore(view.candidates)");
 export const todayHasNoScoreNullToZero = !SCORE_NULL_TO_ZERO.test(today);
 export const todaySaysScoreMissingWhenUnknown = today.includes("最高分未取得");
+
+/**
+ * M14（刷新失败静默沿用旧值，2026-11-25）：所有消费工作区快照的模块页都必须挂提示条。
+ *
+ * Provider 每 60s 轮询且刻意不清空 data（避免整页闪烁），所以刷新失败时页面会继续渲染
+ * 上一次成功的快照。页面若不提示，用户看不出那批数字是几分钟前还是几小时前的 ——
+ * 这正是「不得沿用旧值」里的后一半。行为断言在 refresh-warning.test.ts，这里守接线。
+ *
+ * 候选遍历型守卫：先断言候选非空，否则 `every` 在空数组上恒真（假绿）。
+ */
+const REFRESH_WARNING_PAGES = [
+  "CandidatesPage",
+  "DataPage",
+  "EvidencePage",
+  "FactorsPage",
+  "BacktestPage",
+  "ScreenerPage",
+] as const;
+const refreshWarningSources = REFRESH_WARNING_PAGES.map((name) => pageSource(`src/pages/${name}.tsx`));
+export const refreshWarningPageCandidatesNonEmpty = refreshWarningSources.length === REFRESH_WARNING_PAGES.length && REFRESH_WARNING_PAGES.length >= 6;
+export const everyModulePageMountsRefreshWarning = refreshWarningSources.every((source) =>
+  source.includes("<SnapshotRefreshWarning"),
+);
+export const todayWorkspaceAlsoMountsRefreshWarning = today.includes("<SnapshotRefreshWarning");
+// 反向：不许页面自己再写一份内联提示（两份文案必然漂移）
+export const noPageInlinesRefreshWarning = refreshWarningSources.every(
+  (source) => !source.includes("刷新失败，保留上次成功数据"),
+);
