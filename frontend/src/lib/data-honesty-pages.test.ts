@@ -203,3 +203,21 @@ export const researchUsesComputedEmptyDetail = research.includes("detail={calend
 export const researchHasNoBlanketEventsCaveat = !research.includes(
   "当前事件缓存尚未提供记录，缺少数据不代表没有风险事件。",
 );
+
+/**
+ * M23（影子账户把「超额未知」渲染成「无超额」，2026-11-25）。
+ *
+ * `PaperArenaSleeve.exc_mean` 是 `number | null`：`research/paper_ledger.py` 在
+ * 「有结算笔数、但这些笔没有基准超额」时留 `None`。原判定
+ * `(row.exc_mean ?? 0) > 0` 落到最后一个分支渲染成「无超额」—— 同一行的数字列
+ * 走的是 `pct(row.exc_mean)`，显示「—」。同一批数据，一处说未知、一处下否定结论。
+ *
+ * 行为断言在 paper-arena-view.test.ts（sleeveVerdict 六态 + null/0 对照），
+ * 这里只守页面真的用了它、且没把 `?? 0` 写回去。
+ */
+const backtest = pageSource("src/pages/BacktestPage.tsx");
+const EXCESS_NULL_TO_ZERO = /exc_mean\s*\?\?\s*0/;
+export const backtestUsesSleeveVerdict = backtest.includes("sleeveVerdict(row)");
+export const backtestHasNoExcessNullToZero = !EXCESS_NULL_TO_ZERO.test(backtest);
+export const backtestDisclosesUnknownExcess =
+  backtest.includes("unknownExcessCount(sleeves)") && backtest.includes("个策略超额未知，未计入");

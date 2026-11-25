@@ -12,6 +12,7 @@ import { SnapshotRefreshWarning } from "@/components/aqsp/SnapshotRefreshWarning
 import { api, type PaperArenaPayload } from "@/lib/api";
 import { paperNavOption } from "@/lib/chart-options";
 import { buildDailyView } from "@/lib/daily-view";
+import { sleeveVerdict, unknownExcessCount } from "@/lib/paper-arena-view";
 import { useThemeMode } from "@/lib/theme-mode";
 import { cn } from "@/lib/utils";
 
@@ -66,7 +67,9 @@ function ShortlineArena() {
   // 已结算笔数合计：为 0 时任何"超额"都不是证据（首日组合恒为 0%，超额恰好等于基准的反数，
   // 直接展示会让人以为策略抗跌赚钱 —— 这正是这类记录最容易自欺的地方）。
   const settled = sleeves.reduce((sum, row) => sum + row.n, 0);
-  const survived = sleeves.filter((row) => (row.q_exc ?? 1) < 0.10 && (row.exc_mean ?? 0) > 0);
+  // 「扛住多重检验」是**肯定**结论，超额未知不能计入；未知个数单独披露（见下方卡片）。
+  const survived = sleeves.filter((row) => sleeveVerdict(row).kind === "survived");
+  const unknownExcess = unknownExcessCount(sleeves);
   const navPoints = arena.nav.dates.length;
   const benchLast = arena.nav.bench.length ? arena.nav.bench[arena.nav.bench.length - 1] : null;
   const retPct = arena.total_ret_pct;
@@ -87,7 +90,7 @@ function ShortlineArena() {
       <div className="aq-total-card"><span>组合虚拟净值</span><b className={tone(retPct)}>{pct(retPct)}</b>{settled === 0 ? <small className="aq-note">{arena.positions.length ? `已有 ${arena.positions.length} 个持仓，还没到结算日（T+1 收盘才出结果）` : "尚未建仓，0% 只是起点"}</small> : benchLast == null ? null : <small className="aq-note">全市场等权 {pct(benchLast)}</small>}</div>
       <div className="aq-total-card"><span>超额（组合 − 基准）</span>{settled === 0 ? <><b>尚无成交</b><small className="aq-note">一笔都没结算时，组合与基准的差值不构成证据</small></> : <><b className={tone(edge)}>{pct(edge)}</b>{benchLast == null ? null : <small className="aq-note">基准同期 {pct(benchLast)}</small>}</>}</div>
       <div className="aq-total-card"><span>当前总净值</span><b>{money(arena.total_nav)}</b><small className="aq-note">{sleeves.length} 个账户各 {money(arena.initial_capital)} 起</small></div>
-      <div className="aq-total-card"><span>扛住多重检验的策略</span>{settled === 0 ? <><b>—</b><small className="aq-note">还没有结算样本，不能说 0 个通过（也没到能判的时候）</small></> : <><b>{survived.length} / {sleeves.length}</b><small className="aq-note">q &lt; 0.10 且超额为正</small></>}</div>
+      <div className="aq-total-card"><span>扛住多重检验的策略</span>{settled === 0 ? <><b>—</b><small className="aq-note">还没有结算样本，不能说 0 个通过（也没到能判的时候）</small></> : <><b>{survived.length} / {sleeves.length}</b><small className="aq-note">q &lt; 0.10 且超额为正{unknownExcess ? `；另有 ${unknownExcess} 个策略超额未知，未计入` : ""}</small></>}</div>
     </div>
     {navPoints >= 2 ? <EChart option={navOption} height={260} fallback={<p className="aq-detail-muted">当前环境不支持图表；下表的超额与组合收益仍可复核。</p>} /> : <p className="aq-note">净值曲线要等第二个收盘日才有形状；现在只有一个起点，画出来会是一条毫无信息的横线。</p>}
     {sleeves.length ? <div className="aq-table-wrap">
@@ -95,9 +98,9 @@ function ShortlineArena() {
         <thead><tr><th>策略</th><th className="aq-num">超额均收益</th><th className="aq-num">超额胜率</th><th className="aq-num">T（按日聚类）</th><th className="aq-num">Q（FDR·{sleeves.length} 策略）</th><th className="aq-num">止损影响</th><th className="aq-num">统计进度</th><th className="aq-num">组合收益</th></tr></thead>
         <tbody>{sleeves.map((row) => {
           const notes = [row.sealed_n ? `检测时已封死 ${row.sealed_n}（照买）` : "", ...Object.entries(row.unfunded).slice(0, 2).map(([key, value]) => `${key} ${value}`)].filter(Boolean).join(" · ");
-          const verdict = row.n === 0 ? <Tag>未开仓</Tag> : row.q_exc != null && row.q_exc < 0.10 && (row.exc_mean ?? 0) > 0 ? <Tag tone="ok">扛住多重检验</Tag> : (row.exc_mean ?? 0) > 0 ? <Tag>未校正通过</Tag> : <Tag tone="warn">无超额</Tag>;
+          const verdict = sleeveVerdict(row);
           return <tr key={row.id}>
-            <td><strong>{row.name}</strong> {verdict}<p className="aq-note">{row.hypothesis}{notes ? ` · ${notes}` : ""}</p></td>
+            <td><strong>{row.name}</strong> <Tag tone={verdict.tone} title={verdict.kind === "unknown" ? verdict.detail : undefined}>{verdict.label}</Tag><p className="aq-note">{row.hypothesis}{notes ? ` · ${notes}` : ""}</p></td>
             <td className={cn("aq-num", tone(row.exc_mean))}>{row.n === 0 ? "—" : pct(row.exc_mean)}</td>
             <td className="aq-num">{row.exc_win == null || row.n === 0 ? "—" : `${(row.exc_win * 100).toFixed(1)}%`}</td>
             <td className="aq-num">{row.t_exc == null || row.n === 0 ? "—" : row.t_exc.toFixed(2)}</td>
