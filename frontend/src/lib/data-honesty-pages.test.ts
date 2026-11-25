@@ -223,6 +223,18 @@ export const backtestDisclosesUnknownExcess =
   backtest.includes("unknownExcessCount(sleeves)") && backtest.includes("个策略超额未知，未计入");
 
 /**
+ * M26（影子账户净值没标数据截止日，2026-11-25）。
+ *
+ * `paper_arena_bridge` 已透 `as_of`，`PaperArenaPayload` 也声明了，但页面原来
+ * 一次都没渲染 —— `stale` 阈值 5 天，中间 1~4 天用户看到净值却不知道是哪天的。
+ * 周末/长假不该误报过期，所以不做「早于今天」的判断，只把日期印出来由人判断；
+ * 日期缺失也不能显示成空的，要明说「无法判断这些数字是哪天的」。
+ */
+export const backtestShowsArenaAsOf = backtest.includes("arena.as_of");
+export const backtestLabelsDataDate = backtest.includes("数据截至");
+export const backtestNamesMissingAsOf = backtest.includes("无法判断这些数字是哪天的");
+
+/**
  * M25（「台账有信号但还没结算」被写成「没有信号记录」，2026-11-25）。
  *
  * 后端 `performance_payload()` 的 `settled.empty` 分支返回 `strategies: []`，

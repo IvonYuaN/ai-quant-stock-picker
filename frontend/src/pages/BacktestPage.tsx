@@ -80,6 +80,10 @@ function ShortlineArena() {
   const edge = retPct != null && benchLast != null ? retPct - benchLast : null;
   const money = (value: number | null | undefined) => (value == null || !Number.isFinite(value) ? "—" : `¥${Math.round(value).toLocaleString("zh-CN")}`);
   const pct = (value: number | null | undefined, digits = 2) => (value == null || !Number.isFinite(value) ? "—" : `${value >= 0 ? "+" : ""}${value.toFixed(digits)}%`);
+  // 🔴 后端 `paper_arena_bridge` 已透传 `as_of`（数据截止交易日），前端类型也声明了，
+  // 但页面原来一次都没显示 —— `stale` 要等 5 天才提示，中间 1~4 天用户看到净值
+  // 却不知道是哪天的。缺日期时也不写「—」了事，要明说无法判断时点。
+  const asOf = arena.as_of?.trim() || "";
 
   return <section className="aq-section" aria-label="短线影子账户">
     <SectionHeader
@@ -91,7 +95,7 @@ function ShortlineArena() {
     <div className="aq-total-grid">
       <div className="aq-total-card"><span>组合虚拟净值</span><b className={changeClass(retPct)}>{pct(retPct)}</b>{settled === 0 ? <small className="aq-note">{arena.positions.length ? `已有 ${arena.positions.length} 个持仓，还没到结算日（T+1 收盘才出结果）` : "尚未建仓，0% 只是起点"}</small> : benchLast == null ? null : <small className="aq-note">全市场等权 {pct(benchLast)}</small>}</div>
       <div className="aq-total-card"><span>超额（组合 − 基准）</span>{settled === 0 ? <><b>尚无成交</b><small className="aq-note">一笔都没结算时，组合与基准的差值不构成证据</small></> : <><b className={changeClass(edge)}>{pct(edge)}</b>{benchLast == null ? null : <small className="aq-note">基准同期 {pct(benchLast)}</small>}</>}</div>
-      <div className="aq-total-card"><span>当前总净值</span><b>{money(arena.total_nav)}</b><small className="aq-note">{sleeves.length} 个账户各 {money(arena.initial_capital)} 起</small></div>
+      <div className="aq-total-card"><span>当前总净值</span><b>{money(arena.total_nav)}</b><small className="aq-note">数据截至 {asOf || "未取得"}{asOf ? "" : "（无法判断这些数字是哪天的）"} · {sleeves.length} 个账户各 {money(arena.initial_capital)} 起</small></div>
       <div className="aq-total-card"><span>账本口径超额显著</span>{settled === 0 ? <><b>—</b><small className="aq-note">还没有结算样本，不能说 0 个（也没到能判的时候）</small></> : <><b>{survived.length} / {sleeves.length}</b><small className="aq-note">q &lt; 0.10 且超额为正；不代表策略过门{unknownExcess ? `，另有 ${unknownExcess} 个策略超额未知，未计入` : ""}</small></>}</div>
     </div>
     {navPoints >= 2 ? <EChart option={navOption} height={260} fallback={<p className="aq-detail-muted">当前环境不支持图表；下表的超额与组合收益仍可复核。</p>} /> : <p className="aq-note">净值曲线要等第二个收盘日才有形状；现在只有一个起点，画出来会是一条毫无信息的横线。</p>}
