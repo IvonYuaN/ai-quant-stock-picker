@@ -30,6 +30,7 @@ function pageSource(relative: string): string {
 const indices = pageSource("src/pages/IndicesPage.tsx");
 const signals = pageSource("src/pages/SignalsPage.tsx");
 const risk = pageSource("src/components/aqsp/MarketRiskBanner.tsx");
+const market = pageSource("src/pages/MarketPage.tsx");
 
 /**
  * 可空字段被 `?? 0` 兜底 = 把「没数据」渲染成「有方向/零风险」。
@@ -52,3 +53,16 @@ export const signalsUsesChangeClassForReturn = signals.includes("changeClass(pic
 export const signalsUsesChangeClassForExcess = signals.includes("changeClass(pick.excess_return_pct)");
 export const riskUsesFormatSignedRatio = risk.includes("formatSignedRatio(risk.trend_20)");
 export const riskUsesFormatRate = risk.includes("formatRate(risk.breadth)");
+
+/**
+ * M1（buildEmotion fail-closed）在页面层的落点：EmotionBlock 必须在 emotion 为
+ * null 时整块不渲染。若把 view.emotion ?? 兜成对象，页面会显示「涨停 0 家 /
+ * 最高 0 板」的假数据，M1 白做——这条反向验证过（加 ?? 后转红）。
+ *
+ * earlyReturn 这条是第二道保险：直接删早退会被 TS 空值检查先拦（所有 e.xxx
+ * 报 possibly null），但若有人同时放宽 EmotionView 类型让字段可空，TS 就不拦了。
+ * 那时这条文本断言才起作用，故无法用简单的"删早退"反向验证它。
+ */
+const EMOTION_NULL_FALLBACK = /view\.emotion\s*\?\?|view\.emotion\s*\|\|/;
+export const marketEmotionEarlyReturnsOnNull = /if\s*\(!e\)\s*return\s*null/.test(market);
+export const marketEmotionHasNoNullFallback = !EMOTION_NULL_FALLBACK.test(market);
