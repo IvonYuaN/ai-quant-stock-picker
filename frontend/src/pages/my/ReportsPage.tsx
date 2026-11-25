@@ -173,7 +173,7 @@ export function ReportsPage() {
                 <tr key={item.id}>
                   <td>{item.name}</td>
                   <td className="aq-num">{sizeLabel(item.size)}</td>
-                  <td className="aq-num">{new Date(item.ts * 1000).toLocaleString("zh-CN")}</td>
+                  <td className="aq-num">{new Date(item.ts * 1000).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })}</td>
                   <td className="aq-num">
                     <div className="aq-row-actions">
                       <button
