@@ -44,6 +44,31 @@ def tag_of(spec: dict) -> str:
     return EVIDENCE_TAG.get(spec.get("evidence_state", ""), "⏳未过门")
 
 
+# ---------------- 推送闸门：只推「有用」的 ----------------
+#
+# 🔴 2026-11-25 老大原话（附截图）：
+#   「这种通知全都都是失效的完全没必要出现 还影响视觉 我只需要有用的」
+# 截图里那条「今日推荐」四个模式全是 `⏳未过门` / `❌已否证`，每个后面还跟着
+# 两到三只票。对老大来说这不是信息，是**负资产**：他得先读一行判决、再决定
+# 忽略后面那几只票，净收益为负；更糟的是扫一眼只记住「今天推了 4 个模式」。
+#
+# 所以推荐类出口（盘中卡片 / 今日推荐 / 结算 / 尾数统计）**硬闸在 passed**：
+# 没证据的东西一律不出现。这不是「少推」，是「不拿未验证的当推荐卖」——
+# 与模块头那句红线同一条：不冒充实有 alpha。
+PUSHABLE_STATES = ("passed",)
+
+
+def is_pushable(sid: str) -> bool:
+    """该模式是否允许出现在**推荐类**推送里（`passed` 才允许）。
+
+    🔴 注意这是**出口闸门**，不是判决逻辑：`STRATEGIES[sid]["evidence_state"]`
+    仍由 `paper_strategies` 定义，这里只决定「要不要让老大看到它的选股」。
+    未过门 / 已否证 / 对照 三种状态一律不推 —— 包括「未过门」：
+    没测过的东西推出去，等于让老大替我承担验证成本。
+    """
+    return (STRATEGIES.get(sid) or {}).get("evidence_state") in PUSHABLE_STATES
+
+
 def mode_head(sid: str, spec: dict) -> str:
     """一个模式的标题行：名称 + 参数 + 证据状态，三件事缺一不可。"""
     return "**%s %s** %s ｜ %s ｜ %s" % (
@@ -127,9 +152,13 @@ def render_phase_card(phase: str, sleeves: dict, when: str = "") -> str:
         {sid: {"name", "signals", "bought": [...], "skipped": [...]}}
     只渲染**真的产出了信号或成交**的模式：全部为空时返回空串，
     让调用方按 fail-closed 静默，而不是推一张「今天啥也没有」的空卡。
+
+    🔴 另加一道 `is_pushable` 闸：未过门/已否证的模式即使买了票也不推（见 PUSHABLE_STATES）。
     """
     rows: list[str] = []
     for sid in sorted(sleeves):
+        if not is_pushable(sid):
+            continue
         spec = STRATEGIES.get(sid) or {}
         rec = sleeves[sid] or {}
         if not rec.get("bought") and not rec.get("signals"):
@@ -146,13 +175,20 @@ def render_daily_footer(picks: dict, pending: list[tuple[str, str]] | None = Non
 
     `picks` = {sid: {"bought": [...], "signals": n}}（当天累计，取自 picks_<date>.json）
     `pending` = [(sid, "14:45")]，还没到时点的模式，写「未到点」而不是装作没有。
+
+    🔴 同样只统计可推模式：一行「P1 0笔 / P4 2笔」里混着已否证模式，
+    等于把判决结果又当成绩汇报了一遍。全不可推时返回空串。
     """
     parts = []
     for sid in sorted(picks):
+        if not is_pushable(sid):
+            continue
         rec = picks[sid] or {}
         n = len(rec.get("bought") or [])
         parts.append("%s %d笔" % (sid, n))
     for sid, clock in (pending or []):
+        if not is_pushable(sid):
+            continue
         parts.append("%s 未到%s" % (sid, clock))
     if not parts:
         return ""
@@ -206,6 +242,8 @@ def render_settlement_card(led: dict, date: str, max_rows: int = 4) -> str:
         return ""
     blocks: list[str] = []
     for sid in sorted(STRATEGIES):
+        if not is_pushable(sid):
+            continue
         trades = [t for t in (led.get("sleeves", {}).get(sid, {}).get("trades") or [])
                   if t.get("sell_date") == date]
         spec = STRATEGIES[sid]
@@ -234,12 +272,15 @@ def render_settlement_card(led: dict, date: str, max_rows: int = 4) -> str:
             head += " 止损%d笔净影响%+.2fpp" % (stop_n, sum(diffs) / len(diffs))
         blocks.extend([head] + rows)
     if not blocks:
-        return "## 💰 六模式结算 %s\n今日无结算（首笔 T+1 收盘才平仓）" % date
+        # 🔴 全不可推时返回空串：结算卡的价值是「过门策略今天真赚了多少」，
+        # 一个过门模式都没有时，「今日无结算」这行字对老大毫无信息量 ——
+        # 它跟「系统没跑」「没成交」三种情况长得一模一样。
+        return ""
     return "\n".join(["## 💰 六模式结算 %s" % date] + blocks)
 
 
 def render_picks_only(picks: dict, max_per_mode: int = 3) -> str:
-    """极简推荐卡：六个模式今天各自买了什么，一行一个模式。
+    """极简推荐卡：**只列过门模式**今天买了什么，一行一个模式。
 
     老大 2026-11-23 原话「通知太多废话，还是只通知打板其他策略完全没有」。
     之前卡片只有打板票 + 一行笔数 + 两行口径 + 账本摘要 —— 其他模式的推荐
@@ -247,23 +288,24 @@ def render_picks_only(picks: dict, max_per_mode: int = 3) -> str:
 
     不印口径长句、不印账本摘要、不印「炸板-5%是什么」——那些是文档不是推荐。
 
-    🔴🔴 11-24 更正（老大原话「P1 P2 P3 P4 P5 P6 我都不知道什么逻辑」）：
-    原来这里把状态压成「过门=✓，其余=·」，六个模式**全是一个点**——
-    判决做了，卡片上不写，等于没做。老大看到的是一排 `P1· P2· P5·`，
-    既不知道 P1 是什么，也不知道哪个已经判死了。
+    11-24 加的「每行带模式名 + 判决词」保留（`P3 超跌反抽 ✅过门 ｜ …`）：
+    老大要能一眼看出这是哪个模式。
 
-    现在每行必须带**模式名 + 判决**（`P1 二板接力 ❌已否证 ｜ …`）：
-    推送本身就是说明书，不需要他去翻代码或翻文档。
-    已否证的排在最后 —— 他看到的头几行，应当是他还能寄望的东西。
+    🔴🔴 11-25 反转（老大原话「这种通知全都都是失效的完全没必要出现
+    还影响视觉 我只需要有用的」，附了一张四个模式全标 `⏳未过门`/`❌已否证` 的截图）：
+    11-24 的结论「判决做了就要印出来」只解决了**可读性**，没解决**该不该推**。
+    一张卡片上四条推荐、三条已否证，读起来的净效果是「今天有四个模式在选股」——
+    与事实（一个过门的都没有）相反。所以这里从「标注状态」升级为**按状态拦截**：
+    只有 `passed` 的模式才出现在卡片上；一个都没有时返回空串，调用方静默不推。
     """
     try:
         from paper_strategies import STRATEGIES
     except ImportError:  # pragma: no cover
         return ""
-    # 已否证必须垫底；同状态内按 sid 排，保证回放可复现
-    order = {"passed": 0, "unverified": 1, "control": 2, "rejected": 3}
-    rows: list[tuple[int, str, str]] = []
+    rows: list[str] = []
     for sid in sorted(STRATEGIES):
+        if not is_pushable(sid):
+            continue
         rec = picks.get(sid) or {}
         bought = list(rec.get("bought") or [])
         if not bought:
@@ -277,9 +319,7 @@ def render_picks_only(picks: dict, max_per_mode: int = 3) -> str:
                 float(it.get("price") or 0), note))
         more = " …+%d" % (len(bought) - max_per_mode) if len(bought) > max_per_mode else ""
         head = "%s %s %s" % (sid, spec.get("name", ""), tag_of(spec))
-        rows.append((order.get(spec.get("evidence_state", ""), 1), head,
-                     " / ".join(items) + more))
+        rows.append("%s ｜ %s" % (head, " / ".join(items) + more))
     if not rows:
         return ""
-    rows.sort(key=lambda r: (r[0], r[1]))
-    return "\n".join("%s ｜ %s" % (head, body) for _, head, body in rows)
+    return "\n".join(rows)
