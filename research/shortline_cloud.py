@@ -748,14 +748,17 @@ def main(argv=None) -> int:
         if h.get("fail_count"):
             print("⚠️ 今日推送失败 %d 次，最近错误：%s" % (
                 h["fail_count"], h.get("last_error") or "（未记录）"))
-        # cron 是否真在跑（区分"无信号"vs"系统没运行"）
-        log = HERE / "cron.log"
-        if log.exists():
-            lines = [ln for ln in log.read_text(encoding="utf-8", errors="ignore").splitlines()
-                     if today in ln]
-            print("\n今日 cron 触发 %d 次；最近: %s" % (len(lines), lines[-1] if lines else "无"))
-        else:
-            print("\ncron.log 不存在")
+        # 🔴 2026-11-25：原来这里数「含今日日期的日志行」冒充 cron 触发次数 ——
+        # 卡片正文（`## 打板收盘复盘 2026-11-25`）也含日期，而大量 `[cloud] …静默`
+        # 行根本不带日期 ⇒ 数出来既不是触发数也不是下界，是个假数字。
+        # 真正的活动证据就在健康文件里：三个计数每次出口都会记，精确且口径一致。
+        ok, fail, skip = (int(h.get(k) or 0) for k in ("ok_count", "fail_count", "skip_count"))
+        last = h.get("last_attempt") or h.get("last_skip") or "无"
+        print("\n今日推送出口 %d 次（成功 %d / 失败 %d / 静默 %d）；最近: %s"
+              % (ok + fail + skip, ok, fail, skip, last))
+        # cron.log 只用来确认文件存在 —— 不再拿行数冒充触发次数。
+        if not (HERE / "cron.log").exists():
+            print("⚠️ cron.log 不存在：无法核对 cron 是否真的在跑")
         return 0
 
     if not (args.force or args.recap or args.dry_run):

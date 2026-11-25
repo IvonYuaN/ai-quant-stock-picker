@@ -142,3 +142,28 @@ def test_main_records_no_pushable_when_all_modes_are_unproven(health, monkeypatc
     h = json.loads(health.read_text(encoding="utf-8"))
     assert h["skip_reasons"] == {"no_pushable": 1}
     assert h["fail_count"] == 0, "闸门静默被算成了推送失败"
+
+
+def test_health_reports_exact_exit_counts_not_log_line_count(health, monkeypatch, capsys, tmp_path):
+    """`--health` 原来把「含今日日期的日志行」当 cron 触发次数 —— 那是假数字。
+
+    卡片正文（`## 打板收盘复盘 2026-11-25`）含日期，而大量 `[cloud] …静默` 行
+    根本不带日期 ⇒ 数出来既不是触发数也不是下界，无法拿来证明「系统还在跑」。
+    改用健康文件里每次出口都记的三个精确计数。
+    """
+    monkeypatch.setattr(sc, "HERE", tmp_path)
+    today = sc.datetime.now(sc.CST).strftime("%Y-%m-%d")
+    # 100 行里 40 行含日期 —— 旧实现会报「cron 触发 40 次」，纯属幻觉。
+    (tmp_path / "cron.log").write_text(
+        "## 打板收盘复盘 %s\n" % today * 40 + "[cloud] 本轮无新增触板票，不推\n" * 60,
+        encoding="utf-8")
+    health.write_text(json.dumps({"date": today, "ok_count": 2, "fail_count": 1,
+                                  "skip_count": 7, "skip_reasons": {},
+                                  "last_attempt": "15:10", "last_skip": "15:03"}),
+                      encoding="utf-8")
+
+    assert sc.main(["--health"]) == 0
+    out = capsys.readouterr().out
+
+    assert "今日推送出口 10 次（成功 2 / 失败 1 / 静默 7）" in out, out
+    assert "cron 触发" not in out, "别再拿日志行数冒充触发次数：%s" % out
