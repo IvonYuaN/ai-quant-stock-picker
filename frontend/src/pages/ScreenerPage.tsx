@@ -12,11 +12,13 @@ import { statusLabel } from "@/lib/display-labels";
 import { api, type FilterVerdict, type FilterVerdictRow, type MarketRisk } from "@/lib/api";
 import { formatRate, formatSignedRatio } from "@/lib/format";
 import { marketRiskStatus, marketRiskStatusText } from "@/lib/market-risk-status";
+import { filterVerdictFallback } from "@/lib/filter-verdict-status";
 
 // 「筛选器判读」快照（固化自 research/pit_factors/筛选器定位_决策.md，2026-11-16 锁定）。
 // 定位 = 选股筛选工具：不承诺正超额，只要求「可行/稳健」。
 // 动态链路：优先读 /api/aqsp/filter-verdict（runner 重算探针写出的 pit_cache 工件，低频更新）；
 // 端点缺失/失败时回退本常量作兜底快照，并在界面上标注 as-of。
+const FILTER_VERDICT_SNAPSHOT_AS_OF = "2026-11-16";
 const FILTER_VERDICT = {
   viable: true,
   baseline: "双反向 2f · mom_20 + pv_corr_20 均反向 · top10 生产池",
@@ -60,12 +62,18 @@ export function ScreenerPage() {
   // 02 节「筛选器判读」判决工件：读 /api/aqsp/filter-verdict（runner 重算探针才更新的低频研究结论）。
   // 与所选日期无关 ⇒ 无条件调用（hooks 规则：放所有条件 return 前）。端点缺失/失败不阻塞 02 主体，
   // 渲染时按 available 回退硬编码 FILTER_VERDICT 快照（见下方 `verdict` 选择）。
+  // 🔴 失败原因必须记下来：原来 `.catch(() => {})` 把「读取失败」和「工件未就绪」混成一句，
+  // 用户会去查 runner，而真正坏的是后端/网络（M13）。
   const [filterVerdict, setFilterVerdict] = useState<FilterVerdict | null>(null);
+  const [filterVerdictError, setFilterVerdictError] = useState("");
   useEffect(() => {
     let active = true;
     api.filterVerdict()
-      .then((v) => { if (active) setFilterVerdict(v); })
-      .catch(() => { /* fail-soft：端点/网络异常视为未取到，渲染时回退快照 */ });
+      .then((v) => { if (active) { setFilterVerdict(v); setFilterVerdictError(""); } })
+      .catch((reason: unknown) => {
+        if (!active) return;
+        setFilterVerdictError(reason instanceof Error ? reason.message : "读取 runner 工件失败");
+      });
     return () => { active = false; };
   }, []);
 
@@ -118,7 +126,7 @@ export function ScreenerPage() {
         criterion: FILTER_VERDICT.criterion,
         dynamicNote: FILTER_VERDICT.dynamicNote,
         evidence: ev,
-        asOf: "as-of 2026-11-16 固化快照（runner 工件未就绪，回退内嵌值）",
+        asOf: filterVerdictFallback(filterVerdict, filterVerdictError, FILTER_VERDICT_SNAPSHOT_AS_OF).label,
         evidenceStrength: "INCONCLUSIVE_LEGACY_SNAPSHOT",
         sourceLabel: "内嵌快照",
       };
