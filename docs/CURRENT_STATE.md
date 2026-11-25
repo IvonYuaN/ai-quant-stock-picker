@@ -128,7 +128,7 @@
 - 历史积累的 `codex/*` 分支多数对应已关闭/已 squash 的 PR，**不可按 `--merged` 批量删**（全 squash 合并不留祖先链）。逐个以 PR `merged_at` + 内容在 `origin/main` 的对应为准。
 - 2026-11-24 已清理 4 条：`feat/filter-verdict-cli`、`codex/tickflow-personal-operating-system`（功能全在 main，删）、`codex/strategy-watch-workflow`（含未入库的 tickflow roadmap 文档，保留）、`feature/holder-concentration-factor`（#541 负结果实验唯一 git 历史，保留）。另有 `codex/*` 历史分支未动。
 
-**数据诚实性（2026-11-24 起，PR #616–#651 共 34 个）**
+**数据诚实性（2026-11-24 起，PR #616–#652 共 35 个）**
 
 验收口径：任何展示面在「取数失败 / 该日确实为空 / 有数据」三态下必须可区分；
 **刷新失败不得静默沿用旧值**；后端说不可用时必须把它的 `reason` 透出来。
@@ -254,6 +254,20 @@
   合法用法（唯一正确实现在 `changeClass` 内部且是 `value > 0`，不被该正则命中），
   另配 `directionToneSitesUseChangeClass` 正向断言（防「整列删掉」蒙混）与
   `directionToneScanCoversFiles`（防路径走错导致的零命中假绿）。
+- `#652` **金额单位错配：4.71 亿被渲染成「0.0 亿」，柱状图每根柱子零宽**。两个源的
+  金额单位都不是元，而前端一律按元算（`api.ts` 的 `SectorFlow.net` 注释就写着「元」，
+  `chart-options.ts` 是 `row.net / 1e8` + 轴标签「净额(亿)」，两页都走 `formatYi()`）：
+  同花顺行业资金流的流入/流出/净额是**亿元**（实测 2026-11-25 农产品加工 `-4.71`、
+  养殖业 `-2.77`），东财概念板块 f62 是元但 `ConceptBoardItem` 存**万元**
+  （`concept_board.py` ÷1e4，收评 `board_fund` 段按万元读同一份 CSV，那条契约不动）。
+  于是列表把 4.71 亿净流出写成「-0.0 亿」（看着像资金持平）、图表 `4.71/1e8 = 0.00`
+  让**每根柱子宽度为 0** —— 一个看起来合理的错答案比空白更糟。
+  修法在**出口一次性换成元**（`market._YI_TO_YUAN` / `_flow_yuan`、
+  `info_stream` 的 `main_net_inflow` ×1e4），前端一行不动：它本来就是按元写的，
+  是后端违反了自家契约。守卫写两条量级断言（`net / 1e8` 必须还原源里的亿元值、
+  `formatYi` 口径必须是「2.7 亿」），外加「换算不改排序 / 不把未知洗成 0 /
+  净占比是百分数不能跟着乘」。⚠️ 教训：**单位是契约的一部分，跨层共用同一个
+  `formatYi` 时，谁的单位错了都不会报错，只会安静地给出一个像真的错数。**
 
 防复发守卫：
 - `frontend/src/lib/data-honesty-pages.test.ts`——页面层源码守卫（含接线断言：
@@ -302,6 +316,10 @@
   （`float | None` 化的爆炸半径覆盖 `Quote` 全部消费点，没有可达性证据不动）。
   同理 `market.py:391` 的 `round((astock._numf(p.get("p")) or 0) / 1000, 2)`——
   `_numf` 只把非 `int/float` 归 `None`，push2ex 是 JSON（JSON 没有 NaN）⇒ 走不到 NaN。
+- `src/aqsp/data/concept_board.py::_to_float` 把 `None`/`""`/非数折成 `0.0`——
+  **实测 2026-11-25 东财 bkzj 全 554 个概念板块，f3/f62/f184/f104/f105 全部是数值**，
+  没有 `None`、没有字符串占位 ⇒ 折 0 的路径在真实数据上未观测到，不改。
+  （它的兄弟问题「金额单位」是真缺口，已由 #652 修。）
 - `CandidateSection.tsx:669` 的 `index.history_window ?? 0`——`aqsp_bridge.py:928`
   恒写 `len(dates)`（int），且 `types/aqsp.ts:284` 声明为非空 `number`，不可达。
 - `performance-view.ts:168` 的 `asRecord(record.status_counts) ?? {}`——`statusCounts`
