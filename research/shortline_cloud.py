@@ -507,7 +507,11 @@ def build_markdown(det: dict) -> str:
     act = [h for h in new if h.get("actionable")]
     obs = [h for h in new if not h.get("actionable")]
     L = ["## 打板盘中 %s 池%d只" % (now, det.get("pool", 0))]
-    L.append("✅ 新增可买: " + ("\n" + "\n".join(_row(h) for h in act) if act else "无"))
+    # 🔴 11-25：「可买」是假陈述。B 格的定义是**收盘封死在涨停**，
+    # 按那个价成交就是前视（`executable_entry_probe` 换成可成交口径后
+    # 四个高度全为负：首板 −0.94%/t−16.5 … 4板+ −2.80%/t−8.0）。
+    # 卡片只说事实：今天新触板的票，不说「能买」。
+    L.append("✅ 新增触板: " + ("\n" + "\n".join(_row(h) for h in act) if act else "无"))
     if obs:
         L.append("⚪ 一字观察(排不进):")
         L.extend(_row(h) for h in obs)
@@ -519,9 +523,10 @@ def build_recap(det: dict) -> str:
     b = [h for h in all_hits if h.get("actionable")]
     a = [h for h in all_hits if not h.get("actionable")]
     L = ["## 打板收盘复盘 %s" % datetime.now(CST).strftime("%Y-%m-%d")]
-    L.append("封二板 B格(可买) %d 只 / 一字 A格(排不进) %d 只" % (len(b), len(a)))
+    L.append("封二板 B格(收盘封死·当日买不到) %d 只 / 一字 A格(排不进) %d 只"
+             % (len(b), len(a)))
     if b:
-        L.append("✅ B格:")
+        L.append("⚪ B格(收盘封死):")
         L.extend(_row(h) for h in b)
     if a:
         L.append("⚪ A格:")

@@ -99,7 +99,7 @@ def _hit(code: str, board: int, actionable: bool, price: float = 10.0) -> dict:
 
 
 def test_markdown_separates_buyable_and_observe():
-    """B 格（可买）与 A 格（一字排不进）必须分两栏，不能混在一起推。"""
+    """B 格（收盘封死）与 A 格（一字排不进）必须分两栏，不能混在一起推。"""
     det = {"pool": 31, "new_hits": [
         _hit("002579", 2, True),
         _hit("000838", 2, False),
@@ -107,7 +107,7 @@ def test_markdown_separates_buyable_and_observe():
 
     md = sc.build_markdown(det)
 
-    assert "新增可买" in md and "002579" in md
+    assert "新增触板" in md and "002579" in md
     assert "一字观察" in md and "000838" in md
 
 
@@ -130,7 +130,7 @@ def test_recap_counts_both_cells():
 
     md = sc.build_recap(det)
 
-    assert "B格(可买) 2 只" in md
+    assert "B格(收盘封死·当日买不到) 2 只" in md
     assert "A格(排不进) 1 只" in md
 
 
@@ -196,3 +196,17 @@ def test_health_survives_corrupt_file(tmp_path, monkeypatch):
 
     h = json.loads(sc.HEALTH_FILE.read_text(encoding="utf-8"))
     assert h["ok_count"] == 1
+
+
+def test_board_cards_never_claim_a_closed_limit_up_is_buyable():
+    """🔴 卡片不许说「可买」。
+
+    B 格的定义是「收盘封死在涨停」，按那个价成交就是前视 —— 这正是 P1/P2/P6
+    被否证的原因（可成交口径下四个高度全为负）。把「收盘封死」写成「可买」，
+    等于把已否证的假设又当成机会推给老大。
+    """
+    recap = sc.build_recap({"all_hits": [_hit("A", 2, True), _hit("B", 1, False)]})
+    markdown = sc.build_markdown({"pool": 31, "new_hits": [_hit("002579", 2, True)]})
+    for md in (recap, markdown):
+        assert "可买" not in md, "出现了「可买」：\n%s" % md
+    assert "当日买不到" in recap, "必须显式说明 B 格当日买不到"
