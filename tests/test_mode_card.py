@@ -499,3 +499,28 @@ def test_gate_blocks_every_non_passed_state(monkeypatch):
         assert mode_card.render_picks_only(picks) == "", state
     monkeypatch.setitem(STRATEGIES["P3"], "evidence_state", "passed")
     assert "688199" in mode_card.render_picks_only(picks), "过门就该推，闸门不是永久关闭"
+
+
+# ---------------- 「为什么没有推荐」也要有正证据 ----------------
+
+def test_gate_line_explains_silence_when_nothing_passes(monkeypatch):
+    """0 个模式过门时必须说清「为什么没有推荐」。
+
+    🔴 `is_pushable` 闸门让盘中静默成为常态，但**静默本身不带正证据** ——
+    老大分不清「今天没有可信推荐」和「推送链路坏了」。健康文件里的
+    `skip_reasons` 是给我排查用的，不是给他看的。
+    """
+    for sid in STRATEGIES:
+        monkeypatch.setitem(STRATEGIES[sid], "evidence_state", "rejected")
+
+    line = mode_card.render_gate_line()
+
+    assert "0/%d" % len(STRATEGIES) in line, "要说清过门数/总数：%s" % line
+    assert "不发推荐" in line, "要点明是闸门行为，不是故障：%s" % line
+
+
+def test_gate_line_is_silent_when_a_mode_passes(monkeypatch):
+    """反向：有推荐时不解释「为什么没有」—— 那一行只在静默时才有意义。"""
+    monkeypatch.setitem(STRATEGIES["P3"], "evidence_state", "passed")
+
+    assert mode_card.render_gate_line() == ""

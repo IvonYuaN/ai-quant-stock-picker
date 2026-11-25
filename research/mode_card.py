@@ -69,6 +69,25 @@ def is_pushable(sid: str) -> bool:
     return (STRATEGIES.get(sid) or {}).get("evidence_state") in PUSHABLE_STATES
 
 
+def render_gate_line() -> str:
+    """「今天为什么没有推荐」—— 一行，只在**没有任何模式过门**时出现。
+
+    🔴 2026-11-25（#662 的轻量落点）：`is_pushable` 闸门让盘中静默成为常态
+    （当前 0/6 过门 ⇒ 盘中「今日推荐」永远为空），但**静默本身不带正证据** ——
+    老大分不清「今天没有可信推荐」和「推送链路坏了」。健康文件里写了
+    `skip_reasons`，可那是给我排查用的，不是给他看的。
+
+    口径：
+    - 有模式过门 ⇒ 返回空串（有推荐时不需要解释「为什么没有」）。
+    - 全部不过门 ⇒ 说清总数与过门数，并点明「不发推荐」是**闸门行为**，不是故障。
+    """
+    total = len(STRATEGIES)
+    passed = sum(1 for sid in STRATEGIES if is_pushable(sid))
+    if passed:
+        return ""
+    return "> 模式过门 %d/%d：其余未过门/已否证，盘中不发推荐" % (passed, total)
+
+
 def mode_head(sid: str, spec: dict) -> str:
     """一个模式的标题行：名称 + 参数 + 证据状态，三件事缺一不可。"""
     return "**%s %s** %s ｜ %s ｜ %s" % (

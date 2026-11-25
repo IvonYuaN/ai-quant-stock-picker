@@ -398,3 +398,25 @@ def test_exposure_label_follows_board_sids(monkeypatch):
 
     assert "（P1+P7）" in line, "标签必须跟着常量走：%s" % line
     assert "P2" not in line and "P6" not in line
+
+
+def test_recap_explains_why_there_is_no_recommendation(monkeypatch):
+    """复盘卡是老大当天唯一会收到的推送 —— 它必须解释盘中为什么没推荐。
+
+    否则「闸门拦住了」和「链路坏了」长得一模一样，明天他会来问「怎么没通知了」。
+    """
+    for sid in sc.mode_card.STRATEGIES:
+        monkeypatch.setitem(sc.mode_card.STRATEGIES[sid], "evidence_state", "rejected")
+
+    md = sc.build_recap({"all_hits": [_recap_hit()]})
+
+    assert "模式过门 0/" in md and "盘中不发推荐" in md, "缺少静默原因：\n%s" % md
+
+
+def test_recap_has_no_gate_line_when_something_passes(monkeypatch):
+    """反向：有模式过门时不出现这一行（有推荐就不必解释「为什么没有」）。"""
+    monkeypatch.setitem(sc.mode_card.STRATEGIES["P3"], "evidence_state", "passed")
+
+    md = sc.build_recap({"all_hits": [_recap_hit()]})
+
+    assert "模式过门" not in md, "有推荐时不该出现静默解释：\n%s" % md
