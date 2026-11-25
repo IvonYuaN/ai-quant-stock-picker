@@ -74,3 +74,22 @@ export function sleeveVerdict(row: Pick<PaperArenaSleeve, "n" | "exc_mean" | "q_
 export function unknownExcessCount(rows: readonly Pick<PaperArenaSleeve, "n" | "exc_mean">[]): number {
   return rows.filter((row) => (finite(row.n) ?? 0) > 0 && finite(row.exc_mean) === null).length;
 }
+
+/**
+ * 数据截止日距今天是否过旧（给页面独立防线用）。
+ *
+ * 🔴 2026-11-25（#684）：prod 后端报 `stale=false`，但 `as_of=2026-11-20` ——
+ * 产物实际停在 5 天前。前端原来完全信任后端的 `stale`，于是一张 5 天前的
+ * 净值被当成今天的摆在页面上。
+ *
+ * 前端必须自己判一次：后端说 stale 也好、不说也好，`as_of` 老了就要显式警告。
+ * 用交易日粗判（自然日 ≥ 5 即视为旧，覆盖周末 + 一天缓冲）；长假可能误报，
+ * 所以这是**提示**而非「数据无效」的断言 —— 文案要说清「可能已过期，请核对」。
+ */
+export function isAsOfStale(asOf: string | null | undefined, today: string, maxDays = 5): boolean {
+  if (!asOf || !/^\d{4}-\d{2}-\d{2}/.test(asOf)) return false;  // 日期都没有 ⇒ 由「未取得」显式态负责
+  const a = Date.parse(asOf.slice(0, 10) + "T00:00:00Z");
+  const b = Date.parse(today + "T00:00:00Z");
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return false;
+  return (b - a) / 86_400_000 >= maxDays;
+}
