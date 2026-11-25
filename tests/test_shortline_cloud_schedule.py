@@ -420,3 +420,55 @@ def test_recap_has_no_gate_line_when_something_passes(monkeypatch):
     md = sc.build_recap({"all_hits": [_recap_hit()]})
 
     assert "模式过门" not in md, "有推荐时不该出现静默解释：\n%s" % md
+
+
+# ---------------- 结算失败 ≠ 今天的净值 ----------------
+
+def test_arena_brief_marks_stale_nav_when_close_failed(monkeypatch):
+    """今日结算失败时，净值必须显式标成「上次结果」。
+
+    GOAL 的红线：「刷新失败不得静默沿用旧值」。卡片标题是今天，净值却可能是
+    几天前的 —— 摆在一起而不说明，就是拿旧数字冒充今天。
+    """
+    _fake_ledger(monkeypatch, {"P1": {"n": 5, "positions": 6, "t_exc": None}})
+
+    fresh = sc._arena_brief(stale=False)
+    stale = sc._arena_brief(stale=True)
+
+    assert "今日结算失败" not in fresh, "正常结算不该吓唬人：%s" % fresh
+    assert "净值为上次结果" in stale, "结算失败必须标出来：%s" % stale
+    assert "60556" in stale, "标 stale 是加说明，不是把数字抹掉"
+
+
+def test_arena_close_returns_false_when_settlement_fails(tmp_path, monkeypatch):
+    """`arena_close()` 内部吞异常，必须把失败当返回值交出去，不能只 print。"""
+    class _BadScan:
+        @staticmethod
+        def run_phase(*_a, **_kw):
+            raise RuntimeError("boom")
+
+    monkeypatch.setitem(sys.modules, "paper_scan", _BadScan)
+    monkeypatch.setattr(sc, "STATE_DIR", tmp_path)
+
+    assert sc.arena_close(force=True) is False
+    assert not list(tmp_path.glob("*.done")), "结算失败不能落成功 marker"
+
+
+def test_arena_close_returns_true_when_already_settled(tmp_path, monkeypatch):
+    """反向：今日已有成功 marker 就返回 True，别把正常状态误标成 stale。"""
+    today = sc.datetime.now(sc.CST).strftime("%Y-%m-%d")
+    (tmp_path / ("phase_%s_close.done" % today)).write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(sc, "STATE_DIR", tmp_path)
+
+    assert sc.arena_close() is True
+
+
+def test_main_wires_close_result_into_brief():
+    """源码守卫：`main()` 必须把 `arena_close()` 的结果透给 `_arena_brief()`。
+
+    🔴 为什么用源码断言：上面两条单测只守函数本身，`main()` 里漏接的话
+    线上照样静默沿用旧值，而所有单测全绿 —— 这正是最危险的一类缺口。
+    """
+    src = (Path(sc.__file__)).read_text(encoding="utf-8")
+    assert "close_ok = arena_close()" in src, "main 没拿到结算结果"
+    assert "_arena_brief(stale=not close_ok)" in src, "结算结果没送到卡片上"
