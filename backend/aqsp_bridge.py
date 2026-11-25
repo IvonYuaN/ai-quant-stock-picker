@@ -532,9 +532,15 @@ def _attach_debates(
         return snapshot
     candidates_by_symbol = {item.symbol: item for item in snapshot.candidates}
     debates_by_symbol = {item.symbol: item for item in snapshot.debates}
+    # `records` 按追加顺序（旧→新）排列，所以逆序遍历 = 从最新往前找。
+    # 🔴 必须「每个 symbol 只认第一条通过的记录」：原来只做 `debates_by_symbol[symbol] = debate`
+    # 而无条件覆盖，逆序遍历反而让**最早**那条合法记录最后写入并胜出 —— append-only 的
+    # 同交易日多轮讨论会被回填成 09:15 的旧结论，看起来像「补充的讨论没生效」。
+    # 校验失败（不完整 / 解析失败 / 越界）**不占用**该 symbol，允许继续回退到更早的合法记录。
+    claimed: set[str] = set()
     for record in reversed(records):
         symbol = str(record.get("symbol", "") or "").strip()
-        if symbol not in candidates_by_symbol:
+        if symbol not in candidates_by_symbol or symbol in claimed:
             continue
         if not _runtime_debate_is_complete(record):
             continue
@@ -545,6 +551,7 @@ def _attach_debates(
         except (AQSPBridgeError, TypeError, ValueError):
             continue
         debates_by_symbol[symbol] = debate
+        claimed.add(symbol)
     if not debates_by_symbol:
         return snapshot
     # Preserve candidate order so a newly backfilled discussion fills the same
