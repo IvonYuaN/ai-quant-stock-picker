@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import sys
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -17,16 +18,34 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 import paper_arena_bridge as pb  # noqa: E402
+from aqsp.core.time import now_shanghai  # noqa: E402
 
 
 def _write(path: Path, payload: dict) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
 
+def _stamp(days_ago: int = 0) -> str:
+    """`generated_at` 的 ISO 时间戳，**相对当前时间**。
+
+    🔴 2026-11-25 这里原来写死 `2026-11-20T15:12:00+08:00`，而
+    `paper_arena_bridge.STALE_AFTER_DAYS = 5` —— 到了 11-25 当天，这个 fixture
+    自己就过期了，`test_good_payload_passes_through_verbatim` 断言
+    `stale is False` 直接变红。**跟被测代码一点关系都没有**，纯粹是墙钟时间把
+    测试搞红，而且红的是 `verify (shard 0)`，看起来像刚提交的改动坏了。
+
+    这条测试要守的是「桥接原样带出数字」，不该随日期失效。所以时间戳一律相对算；
+    要测「过期」就显式传 `days_ago`，让「多旧算旧」这件事变成一个可见的入参。
+    """
+    return (now_shanghai() - timedelta(days=days_ago)).isoformat(timespec="seconds")
+
+
 def _good(**over) -> dict:
     base = {
         "schema_version": "v1",
-        "generated_at": "2026-11-20T15:12:00+08:00",
+        # 产物生成时间 = 新鲜度依据，必须相对当前时间；`as_of`/nav 是**数据日期**，
+        # 保持固定即可（桥接不校验两者一致，真实产物里它们本来就可以不同）。
+        "generated_at": _stamp(),
         "as_of": "2026-11-20",
         "initial_capital": 10000,
         "total_capital": 50000,
@@ -97,6 +116,22 @@ def test_good_payload_passes_through_verbatim(arena):
     assert row["n_need_days"] == 12
     assert out["nav"]["port"][-1] == 0.62
     assert out["positions"][0]["code"] == "600001"
+
+
+def test_old_generated_at_is_marked_stale_not_unavailable(arena):
+    """过期只标 `stale`，不把 `available` 打成 False —— 这是两件事。
+
+    阈值用 `pb.STALE_AFTER_DAYS` 构造，不写死天数：常量改了，这条要跟着知道。
+    ⚠️ 不要测「正好等于阈值」的边界 —— `_stamp()` 截到秒，微秒差会把
+    `> timedelta(days=N)` 判成 True，测试会变成一条靠运气过的线。
+    """
+    _write(arena, _good(generated_at=_stamp(pb.STALE_AFTER_DAYS + 1)))
+
+    out = pb.payload()
+
+    assert out["available"] is True, "过期不等于不可用：数字仍然是真实的，只是旧了"
+    assert out["stale"] is True, "超过 STALE_AFTER_DAYS 必须标过期"
+    assert out["sleeves"][0]["exc_mean"] == 0.85, "标过期不能顺手把数字抹掉"
 
 
 def test_null_stats_stay_null_not_zero(arena):
