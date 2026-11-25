@@ -117,6 +117,8 @@ def test_events_endpoint_serves_events(tmp_path, monkeypatch):
     data = resp.json()["data"]
     assert data["symbol"] == "600000"
     assert data["as_of"] == _TODAY.isoformat()
+    assert data["available"] is True, "读到缓存就该标 available=true"
+    assert data["reason"] == ""
     assert data["unlock_horizon_days"] == 30
     assert data["longhubang_lookback_days"] == 5
     assert data["has_unlock_data"] is True
@@ -209,10 +211,34 @@ def test_events_endpoint_failsoft_when_cache_missing(tmp_path, monkeypatch):
     assert resp.status_code == 200
     data = resp.json()["data"]
     assert data["symbol"] == "600000"
+    assert data["available"] is True, "缺缓存不是读失败：端点本身读成功了"
     assert data["has_unlock_data"] is False
     assert data["has_longhubang_data"] is False
     assert data["upcoming_unlocks"] == []
     assert data["recent_longhubang"] == []
+
+
+@pytest.mark.skipif(
+    not _ROUTE_AVAILABLE,
+    reason=f"backend.app 导入失败（{_APP}），可选依赖缺失，跳过路由集成测试",
+)
+def test_events_endpoint_reports_reason_when_it_actually_fails(tmp_path, monkeypatch):
+    """真读失败必须带 available=false + 原因，否则前端只能误诊成「缓存没生成」。"""
+    monkeypatch.setenv("AQSP_RUNTIME_DATA_ROOT", str(tmp_path))
+    from aqsp.features.event_calendar import EventCalendar
+
+    def boom(**_kwargs):
+        raise RuntimeError("缓存目录不可读")
+
+    monkeypatch.setattr(EventCalendar, "from_cache", staticmethod(boom))
+
+    resp = _client().get("/api/events?code=600000")
+    assert resp.status_code == 200, "fail-soft 策略不变：仍回 200"
+    data = resp.json()["data"]
+    assert data["available"] is False
+    assert "RuntimeError" in data["reason"], f"原因要能定位真因：{data['reason']!r}"
+    assert "缓存目录不可读" in data["reason"]
+    assert data["upcoming_unlocks"] == []
 
 
 @pytest.mark.skipif(

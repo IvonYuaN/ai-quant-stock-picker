@@ -2,6 +2,7 @@
 //
 // 覆盖：severity→徽标/标签映射、净额→方向文案与红涨绿跌配色、解禁排序、空/缺失输入安全。
 import {
+  eventsAvailability,
   netAmountView,
   severityBadgeClass,
   severityLabel,
@@ -54,4 +55,23 @@ export const eventViewContract = {
   // 解禁比例文案
   ratioTextFormatted: unlockRatioText(0.0521) === "占总股本 5.21%",
   ratioTextNullSafe: unlockRatioText(null) === "占比未披露",
+
+  // 「事件面读失败」与「确实没有事件」必须可区分（后端 fail-soft 时 has_*_data 全是 false，
+  // 光看它们只能误诊成「缓存没生成」）。
+  availabilityReadyWhenHealthy: eventsAvailability({ available: true, reason: "" }).state === "ready",
+  availabilityReadyWhenFlagMissing: eventsAvailability({}).state === "ready",
+  availabilityReadyWhenNoData: eventsAvailability(null).state === "ready",
+  availabilityFailedOnFlagFalse: eventsAvailability({ available: false, reason: "RuntimeError: 缓存目录不可读" }).state === "failed",
+  availabilityKeepsBackendReason: (() => {
+    const view = eventsAvailability({ available: false, reason: "RuntimeError: 缓存目录不可读" });
+    return view.state === "failed" && view.text.includes("RuntimeError: 缓存目录不可读");
+  })(),
+  availabilityExplainsEmptyIsNotTruth: (() => {
+    const view = eventsAvailability({ available: false, reason: "RuntimeError: x" });
+    return view.state === "failed" && view.text.includes("不是今天的真实状态");
+  })(),
+  availabilitySaysSoWhenReasonBlank: (() => {
+    const view = eventsAvailability({ available: false, reason: "   " });
+    return view.state === "failed" && view.text.includes("没有说明原因");
+  })(),
 };

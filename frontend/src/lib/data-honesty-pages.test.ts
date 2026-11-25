@@ -145,3 +145,32 @@ export const reportsWrapsActionsInHandlers =
   reports.includes("async function download(") && reports.includes("async function remove(");
 // 删除失败时不能只弹一句话：结果未知，必须重新读列表核对（否则用户重复点 → 404）
 export const reportsDeleteFailureRereadsList = reports.includes("删除结果未知，已重新读取列表核对");
+
+/**
+ * M20（事件面读失败被误诊成「缓存没生成」+ 空态/加载态残留，2026-11-25）。
+ *
+ * 后端 `GET /api/events` 是 fail-soft 的：任何异常都回 200 + 空结构。原来空结构里
+ * 只有 `has_*_data: false`，前端于是渲染「当前事件缓存尚未提供记录」—— 把
+ * 「aqsp 未装 / 缓存损坏 / 运行时异常」统统说成「缓存还没生成」，误诊比不诊断更糟。
+ * 现在后端带 `available:false` + `reason`，`eventsAvailability()` 翻成显式状态，
+ * 页面据此不再说「暂无事件数据」、计数也不再报 0。
+ */
+const research = pageSource("src/pages/StockResearchPage.tsx");
+export const researchUsesEventsAvailability =
+  research.includes("eventsAvailability") && research.includes("calendarAvailability");
+// 反向：失败态下不许继续渲染「暂无事件数据」空态，也不许把计数报成 0
+export const researchGatesEmptyStateOnAvailability = research.includes(
+  'calendarAvailability.state !== "failed"',
+);
+export const researchCountsUnknownWhenFailed = research.includes('"数量未知"');
+
+/**
+ * 同一类残留：读取失败后仍显示「暂无…」或「正在读取…」。
+ * 两处都在错误提示旁边自相矛盾（上面说读取失败，下面说没有 / 还在读）。
+ */
+const observations = pageSource("src/components/aqsp/CandidateObservationList.tsx");
+export const observationEmptyStateDistinguishesError =
+  observations.includes("观察条件读取失败，数量未知");
+
+const alertInbox = pageSource("src/components/aqsp/AlertInbox.tsx");
+export const alertHeaderDistinguishesError = alertInbox.includes("提醒数量未知");

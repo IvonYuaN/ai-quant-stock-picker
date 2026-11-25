@@ -26,6 +26,7 @@ import {
   type CatalystEvent,
 } from "@/lib/catalyst-client";
 import {
+  eventsAvailability,
   netAmountView,
   severityBadgeClass,
   severityLabel,
@@ -137,6 +138,7 @@ export function StockResearchPage() {
   const matchedResource = resourceCode === code;
   const currentQuote = matchedResource ? quote : null;
   const currentCalendar = matchedResource ? eventCalendar : null;
+  const calendarAvailability = eventsAvailability(currentCalendar);
   const events = matchedResource && catalyst ? filterEventsForSymbol(catalyst.events, code) : [];
   const upcomingUnlocks = currentCalendar ? sortUnlocksByDaysUntil(currentCalendar.upcoming_unlocks ?? []) : [];
   const recentLonghubang = currentCalendar?.recent_longhubang ?? [];
@@ -266,15 +268,23 @@ export function StockResearchPage() {
           description="当前事件缓存：解禁 / 龙虎榜 / 停复牌 / 业绩预告 / 分红。缺少记录不代表没有风险。"
           icon={CalendarClock}
           count={
-            upcomingUnlocks.length +
-            recentLonghubang.length +
-            suspendResumes.length +
-            recentEarnings.length +
-            upcomingDividends.length
+            calendarAvailability.state === "failed"
+              ? "数量未知"
+              : upcomingUnlocks.length +
+                recentLonghubang.length +
+                suspendResumes.length +
+                recentEarnings.length +
+                upcomingDividends.length
           }
         />
         {eventsError ? <StatePanel tone="warn" action={<button type="button" className="aq-btn" onClick={() => setReload((value) => value + 1)}>重试事件</button>}>{eventsError}，事件面降级。</StatePanel> : null}
+        {!eventsError && calendarAvailability.state === "failed" ? (
+          <StatePanel tone="warn" action={<button type="button" className="aq-btn" onClick={() => setReload((value) => value + 1)}>重试事件</button>}>
+            {calendarAvailability.text}
+          </StatePanel>
+        ) : null}
         {!eventsError &&
+        calendarAvailability.state !== "failed" &&
         !loading &&
         upcomingUnlocks.length === 0 &&
         recentLonghubang.length === 0 &&
