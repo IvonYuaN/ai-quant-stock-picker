@@ -313,3 +313,42 @@ export const marketViewContract = {
     }).globalUpdated === "2026-10-17T04:00:00+08:00",
   globalUpdatedEmptyWhenSourceSilent: buildMarketView({ global: globalFixture }).globalUpdated === "",
 };
+
+/* ==========================================================================
+ * 板块资金流的可空字段（`pct`）
+ *
+ * 后端在 akshare 单元格缺失时给 `null`（不是 0）——「没取到」与「持平 0.00%」
+ * 是两个结论。这里守：null 一路原样传到视图层，不被折回 0；且该行仍算「有数据」，
+ * 因为「这一列没取到」不等于「这个板块没数据」。
+ * ========================================================================== */
+
+function viewWithSectors(sectors: MarketOverview["sectors"]) {
+  return buildMarketView({ overview: { ...overviewFixture, sectors } });
+}
+
+export const sectorPctNullContract = {
+  // 🔴 关键：null 不能被折回 0（折回 0 就是把「没取到」显示成「持平」）
+  nullPctStaysNull: viewWithSectors([
+    { name: "电池", pct: null, net: 12.5e8, inflow: null, outflow: null, firms: 62 },
+  ]).sectorsTop[0].pct === null,
+  nullPctIsNotZero: viewWithSectors([
+    { name: "电池", pct: null, net: 12.5e8, inflow: null, outflow: null, firms: 62 },
+  ]).sectorsTop[0].pct !== 0,
+  realZeroPctStaysZero: viewWithSectors([
+    { name: "电池", pct: 0, net: 12.5e8, inflow: 1, outflow: 1, firms: 62 },
+  ]).sectorsTop[0].pct === 0,
+  // 一行里只有一个字段缺失，不代表整段没数据
+  nullPctRowStillCountsAsAvailable: sectionAvailability(
+    viewWithSectors([
+      { name: "电池", pct: null, net: 12.5e8, inflow: null, outflow: null, firms: 62 },
+    ]),
+  ).sectors === true,
+  // 前端**不重排**：头尾直接取后端给的降序序列（排序在后端做，那里才知道净额是否可用）
+  sectorsKeepBackendOrder: (() => {
+    const view = viewWithSectors([
+      { name: "大额", pct: null, net: 9e8, inflow: null, outflow: null, firms: 1 },
+      { name: "小额", pct: null, net: 1e8, inflow: null, outflow: null, firms: 1 },
+    ]);
+    return view.sectorsTop[0].name === "大额" && view.sectorsBottom[0].name === "小额";
+  })(),
+};

@@ -189,7 +189,18 @@ export interface MarketSentiment {
   active: string; breadth: string; speculation: string; date: string;
 }
 export interface SectorFlow {
-  name: string; pct: number; net: number; inflow: number; outflow: number; firms: number;
+  name: string;
+  /**
+   * 涨跌幅（%）。**可空**：akshare 的资金流表里单元格缺失时后端给 `null`，
+   * 不是 0 —— 「没取到」与「持平 0.00%」是两个结论。
+   * （`formatSignedPct` / `changeClass` 都接受 `null`，会渲染成「—」且不着色。）
+   */
+  pct: number | null;
+  /** 主力净额（元）。不可用的行**整行不进榜**，所以这里恒为有限数。 */
+  net: number;
+  inflow: number | null;
+  outflow: number | null;
+  firms: number;
 }
 /**
  * 市场级风险快照（`GET /api/market-risk`）。

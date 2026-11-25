@@ -271,3 +271,19 @@ export const closingPanelUsesAllSectionsGapNotice = closingPanel.includes(
 );
 // 徽标文案也不许写死成「暂无数据」——那一句正是四态合流的地方。
 export const closingPanelHasNoHardcodedBadge = !closingPanel.includes(">暂无数据</Badge>");
+
+/**
+ * M30（板块资金流把「没取到」渲染成「持平 0.00%」，2026-11-25）。
+ *
+ * 后端 `_sectors()` 原来每列都写 `round(float(row.get(col, 0) or 0), 2)`：
+ * - `float(nan or 0)` **兜不住 NaN**（NaN 是真值）⇒ payload 里出现 NaN ⇒
+ *   starlette 的 `allow_nan=False` 直接抛错 ⇒ 整个 `/api/market/overview` 500；
+ * - 整列缺失时把「这一列没了」渲染成「全板块 0.00%」。
+ *
+ * 现在后端把不可用的单元格落成 `null`，前端必须原样传给 `formatSignedPct`
+ * （它把 null 渲染成「—」）。**页面里补 `?? 0` 会把修复抵消掉**，这里守住。
+ * 行为断言在 market-view.test.ts 的 `sectorPctNullContract`。
+ */
+const marketPage = pageSource("src/pages/MarketPage.tsx");
+export const marketPageDoesNotFoldPctToZero = !/\bpct\s*\?\?\s*0/.test(marketPage);
+export const marketPagePctIsNullable = marketPage.includes("pct: number | null");
