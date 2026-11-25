@@ -571,10 +571,9 @@ def build_markdown(det: dict) -> str:
     act = [h for h in new if h.get("actionable")]
     obs = [h for h in new if not h.get("actionable")]
     L = ["## 打板盘中 %s 池%d只" % (now, det.get("pool", 0))]
-    # 🔴 11-25：「可买」是假陈述。B 格的定义是**收盘封死在涨停**，
-    # 按那个价成交就是前视（`executable_entry_probe` 换成可成交口径后
-    # 四个高度全为负：首板 −0.94%/t−16.5 … 4板+ −2.80%/t−8.0）。
-    # 卡片只说事实：今天新触板的票，不说「能买」。
+    # 🔴 11-25：「可买」有歧义（会被读成「该买」），改成「新增触板」只描述事实。
+    # 注意**不能反过来说「买不到」**：B 格 = 开盘没顶死 + 盘中摸板 ⇒ 盘中确实能排队买进；
+    # 被否证的原因是按可成交口径收益为负，不是买不到。
     L.append("✅ 新增触板: " + ("\n" + "\n".join(_row(h) for h in act) if act else "无"))
     if obs:
         L.append("⚪ 一字观察(排不进):")
@@ -587,10 +586,10 @@ def build_recap(det: dict) -> str:
     b = [h for h in all_hits if h.get("actionable")]
     a = [h for h in all_hits if not h.get("actionable")]
     L = ["## 打板收盘复盘 %s" % datetime.now(CST).strftime("%Y-%m-%d")]
-    L.append("封二板 B格(收盘封死·当日买不到) %d 只 / 一字 A格(排不进) %d 只"
+    L.append("封二板 B格(盘中可排进) %d 只 / 一字 A格(排不进) %d 只"
              % (len(b), len(a)))
     if b:
-        L.append("⚪ B格(收盘封死):")
+        L.append("⚪ B格(盘中可排进):")
         L.extend(_row(h) for h in b)
     if a:
         L.append("⚪ A格:")
@@ -598,9 +597,10 @@ def build_recap(det: dict) -> str:
     if not all_hits:
         L.append("（当日无触板票）")
     # 🔴 11-25：这句原来是**行动建议**（「明日 watchlist = 上述涨停票次日再盯二板；
-    # 只做B格·T+1收兑现」），而 P1/P2/P6 已全部否证 —— 按可成交口径四个高度全为负
-    # （首板 −0.94%/t−16.5 … 4板+ −2.80%/t−8.0，见 test_mode_card 的口径快照）。
-    # 复盘段保留「当日触板」这个事实，但不再把否证策略写成明日计划。
+    # 只做B格·T+1收兑现」），而 P1/P2/P6 已全部否证 —— 按真正可成交的「摸板即买」
+    # 口径算四个高度全为负（首板 −0.94%/t−16.5 … 4板+ −2.80%/t−8.0，
+    # 见 `executable_entry_probe.py`）。复盘段保留「当日触板」这个事实，
+    # 但不再把否证策略写成明日计划。
     L.append("> 上述为当日触板事实；二板接力已否证，不作次日买入依据")
     # 六模式结算段：收盘复盘不能又只讲打板。
     # 读账本当天 sell_date 的真实成交，0 结算写「未结算」不写 0% 超额。
