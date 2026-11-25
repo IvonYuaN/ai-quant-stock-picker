@@ -224,6 +224,10 @@
 - 后端 fail-soft 的 builder 若要区分「为什么没数据」，用 **keyword-only `diagnostics`
   out-param**（`build_*_section(..., diagnostics=dict)`），**不要改返回值类型** ——
   返回值被上游渲染与上百处测试当 `str` 消费，改类型会牵连一整片；out-param 不传即零副作用。
+- 前端契约断言在 CI 里跑**两遍不同时区**（`TZ=UTC` + `TZ=Asia/Shanghai`，见 `ci.yml`
+  的 `Frontend contracts (UTC)` / `(Asia/Shanghai)`）：时区类断言**每个环境只能覆盖一半** ——
+  `#645` 就是「本机 CST 全绿、只有 UTC 才转红」，反方向（写死北京时区、只在东八区成立）
+  同样存在。job 级 `TZ: UTC` 是显式钉住，不依赖 runner 镜像的默认值。
 
 🔴 已核实**不是**缺口（勿重复排查）：
 - `frontend/src/data/sectors.json` 的 17 个 `verified:false` 空骨架——前端零 import。

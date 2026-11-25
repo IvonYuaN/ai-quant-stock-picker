@@ -64,6 +64,12 @@ jobs:
       matrix:
         shard: [0, 1, 2, 3]
     name: verify (shard ${{ matrix.shard }})
+    # 🔴 显式钉住时区：GitHub runner 目前默认就是 UTC，但那只是镜像的默认值、不是契约。
+    # 时点类断言必须在「非东八区」下求值才有意义 —— 后端禁裸 `datetime.now()`（必须走
+    # `now_shanghai()`），前端日期格式化必须固定 `timeZone: "Asia/Shanghai"`，而 runner
+    # 本身就是 UTC。不写死的话，镜像哪天改成别的时区，这批断言会静默变成恒真。
+    env:
+      TZ: UTC
     steps:
       - uses: actions/checkout@v5
         with:
@@ -99,8 +105,20 @@ jobs:
       # 契约断言必须进 CI：这些 *.test.ts 曾只被 tsc 做类型检查、布尔表达式从未求值，
       # 看着像测试实际不验证任何东西，项目 IA 漂移就是这样漏过去的。放在 build 之后
       # 复用已装好的 node_modules。
-      - name: Frontend contracts
+      #
+      # 🔴 两遍不同时区，缺一不可：
+      # - `UTC`：抓「拿本地时区当北京时间」的那一类（#645 就是这么漏的 —— 本机
+      #   TZ=Asia/Shanghai 下测试全绿，只有 UTC 下才转红）；
+      # - `Asia/Shanghai`：抓反方向 —— 把「北京时区」写死在断言里、在真实东八区用户
+      #   那边才成立的用例。
+      # 两个环境各自只能覆盖一半，所以必须都跑。
+      - name: Frontend contracts (UTC)
         run: npm test --prefix frontend
+
+      - name: Frontend contracts (Asia/Shanghai)
+        run: npm test --prefix frontend
+        env:
+          TZ: Asia/Shanghai
 
       - name: Check AQSP deployment bundle
         run: |
