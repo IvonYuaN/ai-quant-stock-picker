@@ -11,7 +11,7 @@ import { Badge } from "@/components/ui/primitives";
 import { MarkdownView } from "@/components/ui/Markdown";
 import { cn } from "@/lib/utils";
 import { api, type ClosingReviewPayload } from "@/lib/api";
-import { buildClosingSections, type ClosingSectionView } from "@/lib/closing-view";
+import { buildClosingSections, allSectionsGapNotice, sectionGapCopy, type ClosingSectionView } from "@/lib/closing-view";
 
 const SECTION_ICON: Record<string, typeof Activity> = {
   factor_ic: Activity,
@@ -45,6 +45,9 @@ function SectionCard({
 }) {
   const Icon = SECTION_ICON[section.key] ?? Activity;
   const empty = !section.available;
+  // 🔴 「为什么没有」必须分档：未生成 / 读取失败 / 产物残缺 / 无内容 的下一步动作完全不同。
+  // 原来这里一律写「盘后预载未落盘或数据源缺缓存」，把读失败也说成了「还没生成」。
+  const gap = sectionGapCopy(section.state, section.reason);
   return (
     <article className={cn("aq-closing-card", empty && "aq-closing-card-empty")}>
       <button
@@ -58,11 +61,7 @@ function SectionCard({
           0{index + 1}
         </span>
         <span className="aq-closing-title">{section.title}</span>
-        {empty ? (
-          <Badge tone="neutral">暂无数据</Badge>
-        ) : (
-          <Badge tone="ok">有数据</Badge>
-        )}
+        <Badge tone={gap.tone}>{gap.badge}</Badge>
         <ChevronDown
           className={cn("aq-closing-chevron", !collapsed && "aq-closing-chevron-open")}
           aria-hidden="true"
@@ -73,9 +72,7 @@ function SectionCard({
           <MarkdownView content={section.body} />
         </div>
       ) : null}
-      {!collapsed && empty ? (
-        <p className="aq-closing-empty-hint">该段当前无可用数据（盘后预载未落盘或数据源缺缓存）。</p>
-      ) : null}
+      {!collapsed && empty ? <p className="aq-closing-empty-hint">{gap.hint}</p> : null}
     </article>
   );
 }
@@ -168,7 +165,7 @@ export function ClosingReviewPanel() {
           })}
         </div>
       ) : (
-        <p className="aq-closing-empty-hint">今日收评 6 段暂无可用数据（盘后预载未落盘或数据源缺缓存）。</p>
+        <p className="aq-closing-empty-hint">{allSectionsGapNotice(ordered)}</p>
       )}
     </section>
   );

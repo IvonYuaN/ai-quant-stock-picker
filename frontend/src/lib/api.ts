@@ -859,6 +859,19 @@ export interface ClosingReviewSection {
   markdown: string;
   /** false = 该段缺数据/读失败（fail-soft），前端置灰折叠。 */
   available: boolean;
+  /**
+   * 为什么没有数据。**失败 ≠ 没落盘 ≠ 没内容**，三者处置动作不同：
+   * - `missing`：产物文件不存在（调度未回流，等预载跑完即可）
+   * - `unreadable`：文件在但读/解析失败（故障，要看权限/磁盘/产物本身）
+   * - `malformed`：表头/结构残缺（产物坏了，要重新生成）
+   * - `empty`：读到了但没有可用行（确实没内容）
+   * - `ok`：有数据
+   *
+   * 老后端没有这个字段 ⇒ 前端落 `unknown`，**不猜成 missing**。
+   */
+  state?: string;
+  /** 非 `ok` 时解释原因；`ok` 时为空串。 */
+  reason?: string;
 }
 
 /** `GET /api/aqsp/closing-review` 的 `data`：收评日报 6 段市场级聚合。 */

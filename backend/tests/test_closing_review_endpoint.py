@@ -53,8 +53,14 @@ def test_closing_review_returns_six_sections_in_stable_order(
     }
 
     # 逐个 patch 6 个 builder 为「有数据」版本
-    def _stub(key: str) -> Callable[[], str]:
-        def _builder() -> str:
+    # 🔴 必须接住 `diagnostics` 这个 out-param：端点是 `builder(diagnostics=diag)`
+    # 调用的，桩函数吞掉 kwargs 就等于假装自己是真 builder。
+    def _stub(key: str) -> Callable[..., str]:
+        def _builder(**kwargs: object) -> str:
+            diag = kwargs.get("diagnostics")
+            if isinstance(diag, dict):
+                diag["state"] = cr.SECTION_OK
+                diag["reason"] = ""
             return f"## {titles[key]}（test）\n证据行"
 
         return _builder
@@ -70,6 +76,8 @@ def test_closing_review_returns_six_sections_in_stable_order(
     assert keys == EXPECTED_KEYS
     for s in data["sections"]:
         assert s["available"] is True
+        assert s["state"] == cr.SECTION_OK
+        assert s["reason"] == ""
         assert s["markdown"].startswith("## ")
     assert data["as_of"]  # ISO 时间戳（北京时区）
 
@@ -89,13 +97,21 @@ def test_closing_review_fail_soft_when_a_section_is_empty(
     for s in data["sections"]:
         assert s["markdown"] == ""
         assert s["available"] is False
+        # 「文件不存在」不是「读失败」：状态必须是 missing（调度未回流），
+        # 而且必须带上产物路径，否则用户不知道该去查哪个文件。
+        assert s["state"] == cr.SECTION_MISSING
+        assert "未落盘" in s["reason"]
 
 
 def test_closing_review_fail_soft_when_builder_raises(
     monkeypatch: "pytest.MonkeyPatch",
 ) -> None:
     """某段 builder 抛异常 ⇒ 端点捕获，该段落空，仍 200，绝不 500。"""
-    monkeypatch.setattr(cr, "build_news_section", lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+    # 桩必须接住 `diagnostics`：不接受它的话抛的会是 TypeError（参数不匹配），
+    # 那验证的就不是「builder 自身抛错」这条路径了。
+    monkeypatch.setattr(
+        cr, "build_news_section", lambda **kwargs: (_ for _ in ()).throw(RuntimeError("boom"))
+    )
 
     response = _make_client().get(ROUTE)
     assert response.status_code == 200
@@ -103,6 +119,9 @@ def test_closing_review_fail_soft_when_builder_raises(
     news = next(s for s in data["sections"] if s["key"] == "news")
     assert news["markdown"] == ""
     assert news["available"] is False
+    # 抛异常 ≠ 没落盘：状态必须是 unreadable，且异常文本要透出来（原来连异常对象都丢了）。
+    assert news["state"] == cr.SECTION_UNREADABLE
+    assert "boom" in news["reason"]
 
 
 def test_closing_review_endpoint_is_read_only() -> None:

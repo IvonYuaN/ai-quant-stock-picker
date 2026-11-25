@@ -48,6 +48,36 @@ def _stop_distance_pct(stop_loss: float, signal_close: float) -> float:
     return abs(stop_loss / signal_close - 1) * 100
 
 
+# ---------------------------------------------------------------------------
+# 收评段「有没有数据」的显式状态（fail-soft 的诚实化）
+#
+# 🔴 失败 ≠ 没落盘 ≠ 没内容。三者在页面上必须能分辨。原来这 6 个 builder 在
+# 「文件不存在 / 读失败 / 表头残缺 / 没有可用行」四种情况下**一律 return ""**，
+# 端点再把它折成 ``available: false``，前端只能猜一句「盘后预载未落盘或数据源缺缓存」
+# —— 于是「读失败」被写成「还没生成」，把用户引去等下一次调度，而真正的原因是
+# 文件坏了 / 权限不对 / 磁盘满。误诊比不诊断更糟。
+# ---------------------------------------------------------------------------
+SECTION_OK = "ok"                  # 读到了，且有内容
+SECTION_MISSING = "missing"        # 产物文件不存在（调度未回流，属正常空窗）
+SECTION_UNREADABLE = "unreadable"  # 文件在，但读/解析失败（真故障）
+SECTION_MALFORMED = "malformed"    # 读到了，但表头/结构残缺（产物坏了）
+SECTION_EMPTY = "empty"            # 结构完好，但没有可用行（确实没内容）
+
+
+def _note_section(
+    diagnostics: dict[str, str] | None, state: str, reason: str
+) -> None:
+    """把「这一段为什么没数据」写进调用方传入的 dict；不传则完全无副作用。
+
+    刻意用 out-param 而不是改返回值：这 6 个 builder 的返回值是 markdown 正文，
+    被日报渲染与上百处测试当 ``str`` 消费，改返回类型会牵连一整片。
+    """
+    if diagnostics is None:
+        return
+    diagnostics["state"] = state
+    diagnostics["reason"] = reason
+
+
 @dataclass(frozen=True)
 class TradeReview:
     """纸面验证复盘"""
@@ -1527,6 +1557,8 @@ def _factor_ic_runtime_root() -> str:
 
 def build_factor_ic_section(
     json_path: str | Path | None = None,
+    *,
+    diagnostics: dict[str, str] | None = None,
 ) -> str:
     """因子 IC 健康段（只读）：读 runner 滚动诊断回流的 factor_ic_latest.json。
 
@@ -1549,13 +1581,20 @@ def build_factor_ic_section(
         )
     path = Path(json_path)
     if not path.exists():
+        _note_section(diagnostics, SECTION_MISSING, f"产物未落盘：{path}")
         return ""
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
+    except Exception as exc:
+        _note_section(
+            diagnostics,
+            SECTION_UNREADABLE,
+            f"产物读取失败：{type(exc).__name__}: {exc}",
+        )
         return ""
     factors = data.get("factors")
     if not isinstance(factors, dict) or not factors:
+        _note_section(diagnostics, SECTION_EMPTY, "产物读到了，但里面没有 factors 段")
         return ""
 
     def _fmt(x: object, nd: int = 4) -> str:
@@ -1615,6 +1654,7 @@ def build_factor_ic_section(
         )
     lines.append("")
     lines.append("⚠️ 只读健康度：因子失效/反向提示仅作研究参考，不改变打分/排序/下单。")
+    _note_section(diagnostics, SECTION_OK, "")
     return "\n".join(lines)
 
 
@@ -1624,6 +1664,7 @@ def build_board_fund_section(
     top_out: int = 3,
     *,
     stale_hours: int = 48,
+    diagnostics: dict[str, str] | None = None,
 ) -> str:
     """板块资金面段（只读）：读 ``pit_cache/concept_board.csv``（东财概念板块主力资金）。
 
@@ -1650,6 +1691,7 @@ def build_board_fund_section(
         )
     path = Path(csv_path)
     if not path.exists():
+        _note_section(diagnostics, SECTION_MISSING, f"产物未落盘：{path}")
         return ""
 
     rows: list[dict[str, str]] = []
@@ -1658,9 +1700,15 @@ def build_board_fund_section(
             reader = csv.DictReader(fh)
             required = {"board_code", "board_name", "main_net_inflow"}
             if not required.issubset(set(reader.fieldnames or [])):
+                _note_section(diagnostics, SECTION_MALFORMED, "产物表头残缺（缺 board_code / board_name / main_net_inflow 之一）")
                 return ""
             rows = list(reader)
-    except Exception:
+    except Exception as exc:
+        _note_section(
+            diagnostics,
+            SECTION_UNREADABLE,
+            f"产物读取失败：{type(exc).__name__}: {exc}",
+        )
         return ""
 
     def _f(v: object) -> float | None:
@@ -1691,6 +1739,7 @@ def build_board_fund_section(
             }
         )
     if not parsed:
+        _note_section(diagnostics, SECTION_EMPTY, "产物读到了，但没有一行可用（代码 / 名称 / 净流入缺一即剔除）")
         return ""
 
     up_boards = sum(1 for p in parsed if p["chg"] > 0)  # type: ignore[operator]
@@ -1749,6 +1798,7 @@ def build_board_fund_section(
 
     lines.append("")
     lines.append("⚠️ 只读资金面：板块主力资金仅作市场环境参考，不改变打分/排序/下单。")
+    _note_section(diagnostics, SECTION_OK, "")
     return "\n".join(lines)
 
 
@@ -1757,6 +1807,7 @@ def build_longhubang_section(
     top_n: int = 8,
     *,
     stale_hours: int = 72,
+    diagnostics: dict[str, str] | None = None,
 ) -> str:
     """龙虎榜关注段（只读）：读 ``pit_cache/longhubang.csv``（东财龙虎榜）。
 
@@ -1783,6 +1834,7 @@ def build_longhubang_section(
         )
     path = Path(csv_path)
     if not path.exists():
+        _note_section(diagnostics, SECTION_MISSING, f"产物未落盘：{path}")
         return ""
 
     rows: list[dict[str, str]] = []
@@ -1791,9 +1843,15 @@ def build_longhubang_section(
             reader = csv.DictReader(fh)
             required = {"symbol", "name", "net_amount"}
             if not required.issubset(set(reader.fieldnames or [])):
+                _note_section(diagnostics, SECTION_MALFORMED, "产物表头残缺（缺 symbol / name / net_amount 之一）")
                 return ""
             rows = list(reader)
-    except Exception:
+    except Exception as exc:
+        _note_section(
+            diagnostics,
+            SECTION_UNREADABLE,
+            f"产物读取失败：{type(exc).__name__}: {exc}",
+        )
         return ""
 
     def _f(v: object) -> float | None:
@@ -1849,6 +1907,7 @@ def build_longhubang_section(
             rec["main"] = True
 
     if not agg:
+        _note_section(diagnostics, SECTION_EMPTY, "产物读到了，但没有可聚合的龙虎榜明细")
         return ""
 
     items = list(agg.values())
@@ -1909,6 +1968,7 @@ def build_longhubang_section(
 
     lines.append("")
     lines.append("⚠️ 只读参考：龙虎榜活跃度仅作市场环境参考，不改变打分/排序/下单。")
+    _note_section(diagnostics, SECTION_OK, "")
     return "\n".join(lines)
 
 
@@ -1917,6 +1977,7 @@ def build_news_section(
     top_n: int = 10,
     *,
     stale_hours: int = 48,
+    diagnostics: dict[str, str] | None = None,
 ) -> str:
     """财经快讯段（只读）：读 ``pit_cache/cls_news.csv``（财联社快讯）。
 
@@ -1942,6 +2003,7 @@ def build_news_section(
         )
     path = Path(csv_path)
     if not path.exists():
+        _note_section(diagnostics, SECTION_MISSING, f"产物未落盘：{path}")
         return ""
 
     rows: list[dict[str, str]] = []
@@ -1950,9 +2012,15 @@ def build_news_section(
             reader = csv.DictReader(fh)
             required = {"title", "ctime"}
             if not required.issubset(set(reader.fieldnames or [])):
+                _note_section(diagnostics, SECTION_MALFORMED, "产物表头残缺（缺 title / ctime 之一）")
                 return ""
             rows = list(reader)
-    except Exception:
+    except Exception as exc:
+        _note_section(
+            diagnostics,
+            SECTION_UNREADABLE,
+            f"产物读取失败：{type(exc).__name__}: {exc}",
+        )
         return ""
 
     def _clean_subjects(raw: object) -> str:
@@ -1985,6 +2053,7 @@ def build_news_section(
             }
         )
     if not parsed:
+        _note_section(diagnostics, SECTION_EMPTY, "产物读到了，但没有标题与时间都完整的快讯")
         return ""
 
     # 近到远排序（ctime 为 ISO 串，字典序即时间序）
@@ -2041,6 +2110,7 @@ def build_news_section(
 
     lines.append("")
     lines.append("⚠️ 只读参考：财经快讯仅作市场环境参考，不改变打分/排序/下单。")
+    _note_section(diagnostics, SECTION_OK, "")
     return "\n".join(lines)
 
 
@@ -2085,6 +2155,7 @@ def build_announcements_section(
     *,
     stale_hours: int = 72,
     recent_days: int = 7,
+    diagnostics: dict[str, str] | None = None,
 ) -> str:
     """重大公告动态段（只读）：读 ``pit_cache/announcements.csv``（公告标题）。
 
@@ -2113,6 +2184,7 @@ def build_announcements_section(
         )
     path = Path(csv_path)
     if not path.exists():
+        _note_section(diagnostics, SECTION_MISSING, f"产物未落盘：{path}")
         return ""
 
     rows: list[dict[str, str]] = []
@@ -2121,9 +2193,15 @@ def build_announcements_section(
             reader = csv.DictReader(fh)
             required = {"symbol", "name", "notice_date", "text"}
             if not required.issubset(set(reader.fieldnames or [])):
+                _note_section(diagnostics, SECTION_MALFORMED, "产物表头残缺（缺 symbol / name / notice_date / text 之一）")
                 return ""
             rows = list(reader)
-    except Exception:
+    except Exception as exc:
+        _note_section(
+            diagnostics,
+            SECTION_UNREADABLE,
+            f"产物读取失败：{type(exc).__name__}: {exc}",
+        )
         return ""
 
     cutoff = (now_shanghai() - timedelta(days=recent_days)).date()
@@ -2151,6 +2229,7 @@ def build_announcements_section(
             }
         )
     if not parsed:
+        _note_section(diagnostics, SECTION_EMPTY, "产物读到了，但没有落在窗口内的公告")
         return ""
 
     # 分类计数（按关注度顺序）
@@ -2213,6 +2292,7 @@ def build_announcements_section(
 
     lines.append("")
     lines.append("⚠️ 只读参考：重大公告仅作事件风险环境参考，不改变打分/排序/下单。")
+    _note_section(diagnostics, SECTION_OK, "")
     return "\n".join(lines)
 
 
@@ -2262,6 +2342,7 @@ def build_holder_concentration_section(
     top_n: int = 8,
     *,
     stale_hours: int = 72,
+    diagnostics: dict[str, str] | None = None,
 ) -> str:
     """筹码集中度异动段（只读）：读 ``pit_cache/holder_count.csv``（股东户数）。
 
@@ -2288,6 +2369,7 @@ def build_holder_concentration_section(
         )
     path = Path(csv_path)
     if not path.exists():
+        _note_section(diagnostics, SECTION_MISSING, f"产物未落盘：{path}")
         return ""
 
     rows: list[dict[str, str]] = []
@@ -2296,9 +2378,15 @@ def build_holder_concentration_section(
             reader = csv.DictReader(fh)
             required = {"symbol", "quarter", "holder_count"}
             if not required.issubset(set(reader.fieldnames or [])):
+                _note_section(diagnostics, SECTION_MALFORMED, "产物表头残缺（缺 symbol / quarter / holder_count 之一）")
                 return ""
             rows = list(reader)
-    except Exception:
+    except Exception as exc:
+        _note_section(
+            diagnostics,
+            SECTION_UNREADABLE,
+            f"产物读取失败：{type(exc).__name__}: {exc}",
+        )
         return ""
 
     # symbol -> {quarter: count}；name 取最新一期
@@ -2315,6 +2403,7 @@ def build_holder_concentration_section(
         if name:
             names.setdefault(symbol, name)
     if not by_symbol:
+        _note_section(diagnostics, SECTION_EMPTY, "产物读到了，但没有符号 / 季度 / 户数都完整的记录")
         return ""
 
     # 最新季度 = 数据集最大季度；只统计最新记录落在该季的票（剔除停更/退市）
@@ -2343,6 +2432,7 @@ def build_holder_concentration_section(
             }
         )
     if not computed:
+        _note_section(diagnostics, SECTION_EMPTY, "产物读到了，但最新季度没有可比对的前一期")
         return ""
 
     concentrated = [c for c in computed if c["pct"] < 0]
@@ -2395,6 +2485,7 @@ def build_holder_concentration_section(
 
     lines.append("")
     lines.append("⚠️ 只读参考：筹码集中度仅作市场环境参考，不改变打分/排序/下单。")
+    _note_section(diagnostics, SECTION_OK, "")
     return "\n".join(lines)
 
 

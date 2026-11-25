@@ -250,3 +250,24 @@ export const monitorUsesReadState = monitor.includes("readState(followups, error
 // 加载态必须由 readState 的三态决定，不能再出现「只看值是否为 null」的裸判断
 export const monitorHasNoUngatedLoading = !/\{!followups \? <LoadingState/.test(monitor);
 export const monitorSaysFailureIsNotNoFollowups = monitor.includes("这不代表没有需要跟进的方案");
+
+/**
+ * M28（收评 6 段把「读失败」写成「还没生成」，2026-11-25）。
+ *
+ * 后端 6 个 builder 在「文件不存在 / 读失败 / 表头残缺 / 没可用行」四种情况下一律
+ * `return ""`，端点折成 `available: false`，面板只能猜一句
+ * 「该段当前无可用数据（盘后预载未落盘或数据源缺缓存）」—— 把故障说成等待。
+ *
+ * 行为断言在 closing-view.test.ts（sectionGapCopy / allSectionsGapNotice），这里守接线：
+ * 面板必须按状态码取文案，不能再内联那句合并猜测。
+ */
+const closingPanel = pageSource("src/components/aqsp/ClosingReviewPanel.tsx");
+export const closingPanelUsesSectionGapCopy = closingPanel.includes("sectionGapCopy(section.state");
+export const closingPanelHasNoBlanketEmptyHint = !closingPanel.includes(
+  "该段当前无可用数据（盘后预载未落盘或数据源缺缓存）",
+);
+export const closingPanelUsesAllSectionsGapNotice = closingPanel.includes(
+  "allSectionsGapNotice(ordered)",
+);
+// 徽标文案也不许写死成「暂无数据」——那一句正是四态合流的地方。
+export const closingPanelHasNoHardcodedBadge = !closingPanel.includes(">暂无数据</Badge>");
