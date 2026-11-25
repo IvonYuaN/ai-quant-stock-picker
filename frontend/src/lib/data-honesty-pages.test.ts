@@ -187,3 +187,19 @@ export const signalsHasNoObservationZeroFallback = !/overall\?\.observations\s*\
 export const signalsSaysUnknownWhenOverallMissing = signalsPageSource.includes("条数未知");
 export const signalsHasNoIndependentDaysZeroFallback =
   !/independent_signal_days\s*\?\?\s*0/.test(signalsPageSource);
+
+/**
+ * M22（事件面「缺缓存」与「没事件」在页面上是同一句话，2026-11-25）。
+ *
+ * 后端 `EventCalendar.has_*_data()` 的 docstring 写明：调用方**只能在该标志为
+ * True 时**才允许把「查不到」解读成「没有」。前端此前完全没消费这组字段 ——
+ * 于是「哪一面没预加载」和「该股确实没有这类事件」都渲染成同一句
+ * 「当前事件缓存尚未提供记录」，既说不清是哪一面，也把预加载问题说成事实。
+ */
+export const researchUsesEventsFaceGaps =
+  research.includes("eventsFaceGaps") && research.includes("calendarFaceGaps");
+export const researchUsesComputedEmptyDetail = research.includes("detail={calendarEmptyDetail}");
+// 反向：不许再写回那句「一律说缓存没提供」的固定文案
+export const researchHasNoBlanketEventsCaveat = !research.includes(
+  "当前事件缓存尚未提供记录，缺少数据不代表没有风险事件。",
+);

@@ -27,6 +27,8 @@ import {
 } from "@/lib/catalyst-client";
 import {
   eventsAvailability,
+  eventsEmptyDetail,
+  eventsFaceGaps,
   netAmountView,
   severityBadgeClass,
   severityLabel,
@@ -139,6 +141,8 @@ export function StockResearchPage() {
   const currentQuote = matchedResource ? quote : null;
   const currentCalendar = matchedResource ? eventCalendar : null;
   const calendarAvailability = eventsAvailability(currentCalendar);
+  const calendarFaceGaps = eventsFaceGaps(currentCalendar);
+  const calendarEmptyDetail = eventsEmptyDetail(currentCalendar);
   const events = matchedResource && catalyst ? filterEventsForSymbol(catalyst.events, code) : [];
   const upcomingUnlocks = currentCalendar ? sortUnlocksByDaysUntil(currentCalendar.upcoming_unlocks ?? []) : [];
   const recentLonghubang = currentCalendar?.recent_longhubang ?? [];
@@ -283,6 +287,12 @@ export function StockResearchPage() {
             {calendarAvailability.text}
           </StatePanel>
         ) : null}
+        {!eventsError && calendarAvailability.state !== "failed" && calendarFaceGaps.length > 0 ? (
+          <p className="aq-note" role="status">
+            {calendarFaceGaps.map((gap) => gap.label).join(" / ")} 这 {calendarFaceGaps.length} 个面
+            <strong> 缓存未装载</strong>：这几面查不到记录不等于该股没有这类事件。
+          </p>
+        ) : null}
         {!eventsError &&
         calendarAvailability.state !== "failed" &&
         !loading &&
@@ -291,7 +301,7 @@ export function StockResearchPage() {
         suspendResumes.length === 0 &&
         recentEarnings.length === 0 &&
         upcomingDividends.length === 0 ? (
-          <EmptyState title="暂无事件数据" detail="当前事件缓存尚未提供记录，缺少数据不代表没有风险事件。" />
+          <EmptyState title="暂无事件数据" detail={calendarEmptyDetail} />
         ) : null}
         {upcomingUnlocks.length > 0 ? (
           <>
