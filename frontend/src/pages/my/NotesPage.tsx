@@ -99,7 +99,7 @@ export function NotesPage() {
                   <Badge tone="neutral">{note.kind}</Badge>
                 </div>
                 <div className="aq-note-actions">
-                  <span className="aq-time">{new Date(note.ts).toLocaleString("zh-CN")}</span>
+                  <span className="aq-time">{new Date(note.ts).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })}</span>
                   <button
                     type="button"
                     className="aq-btn aq-btn-danger aq-btn-icon"

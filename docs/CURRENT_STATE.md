@@ -128,7 +128,7 @@
 - 历史积累的 `codex/*` 分支多数对应已关闭/已 squash 的 PR，**不可按 `--merged` 批量删**（全 squash 合并不留祖先链）。逐个以 PR `merged_at` + 内容在 `origin/main` 的对应为准。
 - 2026-11-24 已清理 4 条：`feat/filter-verdict-cli`、`codex/tickflow-personal-operating-system`（功能全在 main，删）、`codex/strategy-watch-workflow`（含未入库的 tickflow roadmap 文档，保留）、`feature/holder-concentration-factor`（#541 负结果实验唯一 git 历史，保留）。另有 `codex/*` 历史分支未动。
 
-**数据诚实性（2026-11-24 起，PR #616–#644 共 27 个）**
+**数据诚实性（2026-11-24 起，PR #616–#645 共 28 个）**
 
 验收口径：任何展示面在「取数失败 / 该日确实为空 / 有数据」三态下必须可区分；
 **刷新失败不得静默沿用旧值**；后端说不可用时必须把它的 `reason` 透出来。
@@ -192,6 +192,15 @@
   —— 失败时 `followups` 仍是 `null`，两句同时出现且永远转圈（与 M10 同类，只是没走
   `settleSection`）。新增 `safe.ts::readState()` 把「失败优先于正在读」写进函数；
   失败态补「这不代表没有需要跟进的方案」+ 重试按钮。
+- `#645` 共享的时点格式化**没固定时区**：`formatAqspTime`（`useAqspSnapshot.tsx:142`）
+  的 `toLocaleString("zh-CN", {...})` 少了 `timeZone`，走**浏览器本地时区** ⇒ 同一份快照
+  在 UTC 机器（runner 就是 UTC）上显示的时刻差 8 小时，而这类时点正是「这份数据是什么
+  时候的」的唯一依据（刷新提示 / 快照生成 / 候选冻结 / 研究任务记录，6 个调用点共用）。
+  同 PR 补 `ReportsPage`（研报时间）与 `NotesPage`（笔记时间）两处。
+  实现下沉到 `lib/format.ts`（纯函数，契约测试可直接求值），旧路径改 `export { … }`
+  保持 6 个调用点不变。
+  ⚠️ **反向验证的时区陷阱**：去掉 `timeZone` 后在本机（`TZ=Asia/Shanghai`）测试**全绿**，
+  只有 `TZ=UTC npm test` 才转红 —— 时区类断言必须在 UTC 下复跑。
 
 防复发守卫：
 - `frontend/src/lib/data-honesty-pages.test.ts`——页面层源码守卫（含接线断言：
@@ -231,10 +240,13 @@
 - `OperationRecorder.tsx:102` 的 `holding?.cost ?? 0`——`portfolio._apply_close:396`
   在持仓存在时**用 `holding["cost"]` 覆盖**客户端传的 cost，所以那个 0 到不了账本；
   只有「补历史成交、本就没有持仓记录」的 legacy 路径会用到它（该路径另见下方已知问题）。
+- `BacktestPage.tsx:77` 的 `Math.round(value).toLocaleString("zh-CN")` 没带 `timeZone`
+  —— 那是**金额**（number，非日期），`timeZone` 对它无意义；带时区的日期格式化在
+  `#645` 已全部补齐（全仓仅剩这一处无 `timeZone` 的 `toLocaleString`，即本项）。
 
 方法：grep `?? 0` 展示面 → 三重验证（类型可空 + 后端契约 + **可达性**）→ 复用现成 helper →
 反向验证（临时破坏实现看测试红不红，破坏方式须「语义坏但类型合法」）→ 独立 PR。
-已靠「可达性验证」拦下 9+ 伪缺口。
+已靠「可达性验证」拦下上列十余项伪缺口（每一项都追到了后端契约或消费端）。
 
 🔴 已知未修（已登记 issue #641，勿重复审计）：
 - ~~`backend/portfolio.py:_apply_close` 在「成本未知」（`cost == 0`，只有 legacy

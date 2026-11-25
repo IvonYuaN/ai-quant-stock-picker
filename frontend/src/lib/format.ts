@@ -66,3 +66,27 @@ export function formatEvidenceTime(value: string | null | undefined): string {
   const match = value.match(/(\d{2}-\d{2})[T ](\d{2}:\d{2})/);
   return match ? `${match[1]} ${match[2]}` : value;
 }
+
+/**
+ * 快照/产物的生成时刻 → `MM-DD HH:MM`（**北京时间**）。
+ *
+ * 🔴 必须固定 `timeZone: "Asia/Shanghai"`。不写时区会用**浏览器本地时区**，
+ * 同一份快照在 UTC 机器上显示的时刻会差 8 小时 —— 而这类时点正是
+ * 「这份数据是什么时候的」的唯一依据（刷新提示、快照生成、候选冻结、研究任务记录）。
+ *
+ * 这与后端「禁裸 `datetime.now()`、必须走 `now_shanghai()`」是同一条规则的前端对应项：
+ * runner 就是 UTC，开发机也未必在东八区。同仓已有两处固定了时区
+ * （`CandidateSection` 的冻结时刻、`HoldingsWatchlist` 的报价时刻），这里补齐共享的那一个。
+ */
+export function formatAqspTime(value: string): string {
+  if (!value) return "—";
+  const timestamp = Date.parse(value);
+  if (Number.isNaN(timestamp)) return value;
+  return new Date(timestamp).toLocaleString("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}

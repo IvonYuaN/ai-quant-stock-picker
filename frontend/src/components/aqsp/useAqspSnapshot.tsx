@@ -139,14 +139,7 @@ export function useAqspSnapshot(): AqspSnapshotState {
   return useWorkspaceSnapshot();
 }
 
-export function formatAqspTime(value: string): string {
-  if (!value) return "—";
-  const timestamp = Date.parse(value);
-  if (Number.isNaN(timestamp)) return value;
-  return new Date(timestamp).toLocaleString("zh-CN", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
+// 时点格式化的实现在 `lib/format.ts`（纯函数，可被契约测试直接求值）。
+// 这里保留同名导出，历史调用点（MessageSection / SnapshotRefreshWarning /
+// TodayWorkspace / ResearchValidationContext / DataPage / EvidencePage）无需改动。
+export { formatAqspTime } from "@/lib/format";
