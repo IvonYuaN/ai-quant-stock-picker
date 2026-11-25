@@ -355,6 +355,11 @@
   .aq-dot-empty {
     background: hsl(var(--muted-foreground));
   }
+  /* 读取失败：必须是"有问题"的颜色，不能与"暂无数据"的灰点同色 */
+  .aq-dot-error {
+    background: hsl(var(--destructive));
+    box-shadow: 0 0 0 3px hsl(var(--destructive) / 0.12);
+  }
   @keyframes aq-pulse {
     50% {
       opacity: 0.35;
