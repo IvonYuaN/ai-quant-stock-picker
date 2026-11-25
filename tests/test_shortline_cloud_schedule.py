@@ -210,3 +210,22 @@ def test_board_cards_never_claim_a_closed_limit_up_is_buyable():
     for md in (recap, markdown):
         assert "可买" not in md, "出现了「可买」：\n%s" % md
     assert "当日买不到" in recap, "必须显式说明 B 格当日买不到"
+
+
+def test_no_source_claims_a_closed_limit_up_is_buyable():
+    """守卫：全仓不许把 B 格说成「可买」—— 它是收盘封死，那个价买不到。
+
+    🔴 为什么用源码扫描而不是渲染断言：文案生成在 `shortline_signal` 内部
+    （`放量N板·B格可买·…` 那段），要覆盖它得构造整个检测流程；而**卡片模板改了
+    不代表数据里的 strategy 改了** —— `#655` 第一版就漏了这一处，
+    收盘复盘 dry-run 出来才发现每行末尾还写着「B格可买」。
+
+    模式无歧义：没有任何合法用法需要用这个词形容 B 格。
+    """
+    root = Path(__file__).resolve().parents[1]
+    files = [p for p in (root / "research").rglob("*.py")
+             if "converge-backup" not in str(p) and "_bak" not in str(p)]
+    assert len(files) > 20, "扫描范围异常（零命中会假绿）：只有 %d 个文件" % len(files)
+    offenders = [p.name for p in files
+                 if "B格可买" in p.read_text(encoding="utf-8", errors="ignore")]
+    assert not offenders, "仍在说 B 格可买：%s" % offenders

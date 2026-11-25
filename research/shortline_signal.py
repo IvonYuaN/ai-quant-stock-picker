@@ -393,7 +393,9 @@ def fill_board_for_hits(hits: list, quote_map: dict, kcache: dict) -> None:
             h["kline_src"] = src
             if h.get("actionable"):
                 stop = int(round(h.get("board_lim", 0.10) * 50))
-                strat = "放量%d板·B格可买·%s T+1兑现·炸板-%d%%" % (
+                # 🔴 不能说 B 格「可买」：B 格的定义是**收盘封死在涨停**，
+                # 按那个价成交就是前视（可成交口径下四个高度全为负，见 #655）。
+                strat = "放量%d板·B格收盘封死·%s T+1兑现·炸板-%d%%" % (
                     board, h.get("seal_tag", ""), stop)
             else:
                 strat = "一字%d板·A格排不进·%s(观察)" % (board, h.get("seal_tag", ""))
@@ -448,7 +450,7 @@ def detect_second_board(watch: list, quotes: dict) -> list:
             strategy = f"一字{board_now}板·A格排不进·{seal_tag}(观察)"
         else:
             stop = int(round(lim * 50))
-            strategy = f"放量{board_now}板·B格可买·{seal_tag} T+1兑现·炸板-{stop}%"
+            strategy = f"放量{board_now}板·B格收盘封死·{seal_tag} T+1兑现·炸板-{stop}%"
         hits.append({
             "code": w["code"], "name": q["name"], "tencent_id": w["tencent_id"],
             "price": q["cur"], "pre": q["pre"], "open": q["open"], "limit_up": limit_up,
