@@ -112,17 +112,50 @@ def _maybe_migrate_to_tenant() -> None:
         pass
 
 
+class PortfolioCorrupt(RuntimeError):
+    """持仓账本存在但读不出来（JSON 损坏 / 顶层结构异常）。
+
+    **绝不能降级成「空持仓」**：`get_portfolio()` 回填名称时会 `_load()` 再
+    `_save()` —— 一次普通的行情刷新就能把空账本原子改名覆盖掉真实仓位，用户的
+    持仓记录永久消失，而且全程没有任何报错。这里必须 fail-closed。
+    """
+
+
 def _load() -> dict:
     _maybe_migrate_to_tenant()
+    path = _pf_file()
     try:
-        with open(_pf_file(), encoding="utf-8") as f:
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except FileNotFoundError:
         return {"holdings": [], "last_refresh": None}
+    except (OSError, json.JSONDecodeError, UnicodeError) as exc:
+        raise PortfolioCorrupt(
+            f"持仓账本读取失败（{type(exc).__name__}: {exc}）。"
+            "这是文件损坏或不可读，**不代表你没有持仓**；"
+            f"为避免覆盖真实仓位，本次不做任何写入。请检查 {path}："
+            f"确认放弃这份账本时把它改名（如 mv {path} {path}.corrupt）后重试，"
+            "系统会重建空账本。"
+        ) from exc
+    if not isinstance(data, dict):
+        raise PortfolioCorrupt(
+            f"持仓账本结构异常（{path} 顶层不是对象）。"
+            "**不代表你没有持仓**；为避免覆盖真实仓位，本次不做任何写入。"
+        )
+    holdings = data.get("holdings")
+    if holdings is None:
+        data["holdings"] = []  # 老账本可能没有该键，补空数组避免下游 KeyError
+    elif not isinstance(holdings, list):
+        raise PortfolioCorrupt(
+            f"持仓账本结构异常（{path} 的 holdings 不是数组）。"
+            "**不代表你没有持仓**；为避免覆盖真实仓位，本次不做任何写入。"
+        )
+    return data
 
 
 def _save(d: dict) -> None:
-    # 先写临时文件再原子改名：并发读若撞上写中途的半截 JSON，会被 _load 静默当成空持仓
+    # 先写临时文件再原子改名：并发读不会撞上写中途的半截 JSON。
+    # 真损坏（磁盘错误 / 手工改坏）由 _load 抛 PortfolioCorrupt，绝不当空账本覆盖。
     os.makedirs(_tenant_dir(), exist_ok=True)
     tmp = _pf_file() + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
