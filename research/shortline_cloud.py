@@ -616,8 +616,12 @@ def _recap_row(h: dict) -> str:
     卡片自称「当日触板事实」，却每行都挂一条已否证的执行指令，读者只会记住后半句。
 
     ⇒ 复盘行只留可核验的盘口事实：代码 / 名称 / 现价 / 几板 / 是否一字 / 封单。
-    盘中推荐卡仍用 `_row()`（带策略口径）—— 那里策略就是推荐内容本身，
-    且已被 `mode_card.is_pushable` 限到 `passed`，不冲突。
+
+    为什么不直接改 `_row()`：`_row()` 现在只被 `build_markdown()` 用，而
+    `build_markdown()` **已经不在推送路径上了**（盘中出口是
+    `mode_card.render_picks_only`，自带 `is_pushable` 闸门），只剩手工排查会调它。
+    改 `_row()` 的语义会让那张排查卡跟着变，排查时看到的和线上不一致 ——
+    所以复盘行另起一个函数，两个口径各自独立。
     """
     lim = float(h.get("board_lim") or 0.10)
     tag = "·20cm" if lim >= 0.15 else ""

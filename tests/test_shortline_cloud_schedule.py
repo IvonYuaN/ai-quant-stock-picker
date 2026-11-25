@@ -339,13 +339,15 @@ def test_recap_rows_carry_facts_not_rejected_strategy_plan():
 
 
 def test_markdown_rows_still_carry_strategy_plan():
-    """反向：盘中推荐卡的策略口径**不能**跟着删 —— 那里策略就是推荐内容本身。
+    """反向：`_row()` 的语义**不能**跟着改 —— 别为了复盘把两个口径并成一个。
 
-    盘中止口已被 `mode_card.is_pushable` 限到 `passed`，不冲突。
+    `build_markdown()` 已不在推送路径（盘中出口是 `mode_card.render_picks_only`，
+    自带 `is_pushable` 闸门），但仍是手工排查会调的卡片，它的策略口径是有意保留的。
+    这条守的就是「改复盘行时别顺手把 `_row()` 也改了」。
     """
     md = sc.build_markdown({"pool": 31, "new_hits": [_recap_hit()]})
 
-    assert "T+1兑现" in md, "盘中推荐必须带执行口径：\n%s" % md
+    assert "T+1兑现" in md, "`_row()` 的策略口径被误删了：\n%s" % md
 
 
 def test_recap_row_keeps_oneword_marker_for_a_cell():
