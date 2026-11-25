@@ -128,7 +128,7 @@
 - 历史积累的 `codex/*` 分支多数对应已关闭/已 squash 的 PR，**不可按 `--merged` 批量删**（全 squash 合并不留祖先链）。逐个以 PR `merged_at` + 内容在 `origin/main` 的对应为准。
 - 2026-11-24 已清理 4 条：`feat/filter-verdict-cli`、`codex/tickflow-personal-operating-system`（功能全在 main，删）、`codex/strategy-watch-workflow`（含未入库的 tickflow roadmap 文档，保留）、`feature/holder-concentration-factor`（#541 负结果实验唯一 git 历史，保留）。另有 `codex/*` 历史分支未动。
 
-**数据诚实性（2026-11-24 起，PR #616–#649 共 32 个）**
+**数据诚实性（2026-11-24 起，PR #616–#650 共 33 个）**
 
 验收口径：任何展示面在「取数失败 / 该日确实为空 / 有数据」三态下必须可区分；
 **刷新失败不得静默沿用旧值**；后端说不可用时必须把它的 `reason` 透出来。
@@ -232,6 +232,17 @@
   流出榜只收 `net < 0`，`net === 0` 两边都不进），顺带修正语义。
   ⚠️ 原 `marketViewContract.sectorsTopTakesHead` 断言「3 行全进流入榜」，而 fixture 里
   净额 −9.8 亿的「地产」就在其中 —— **该断言本身在编码这个 bug**，已改为只收 `net > 0`。
+- `#650` **响应边界兜底**：`#648` 只修了 `market._sectors()` 一处，但「一个 NaN 打挂
+  整个端点」这条路径在后端 93 个端点里每一个都重新开着 —— 任何新写的
+  `round(float(x), 2)` 都能把它打开（`float(v or 0)` 兜不住 NaN，NaN 是真值）。
+  新增 `backend/json_safe.py`：`scrub_non_finite()` 深递归把非有限浮点映射成 `null`
+  （= 未知，前端已有 `null → 「—」` 如实呈现），`SafeJSONResponse` 挂
+  `FastAPI(default_response_class=...)` 一处接线覆盖全部「返回 dict」的端点。
+  **这是兜底网不是免修许可证**：命中一律记 warning 带字段路径（`data.sectors[1].pct`），
+  逐点的 `_flow_num` / `asNullableNumber` 仍要写（它们能给「为什么没有」的语义）。
+  干净 payload **原样返回同一对象**（先做一次廉价探测，零复制零分配）。
+  同 PR 修 `_events_jsonable` 的两个隐含假设：原实现只遍历**顶层 key** 且只认 NaN
+  （不认 ±inf），能用纯粹是因为当前 5 个事件 dataclass 恰好扁平 —— 巧合不是契约。
 
 防复发守卫：
 - `frontend/src/lib/data-honesty-pages.test.ts`——页面层源码守卫（含接线断言：
@@ -246,6 +257,10 @@
 - 后端 fail-soft 的 builder 若要区分「为什么没数据」，用 **keyword-only `diagnostics`
   out-param**（`build_*_section(..., diagnostics=dict)`），**不要改返回值类型** ——
   返回值被上游渲染与上百处测试当 `str` 消费，改类型会牵连一整片；out-param 不传即零副作用。
+- 后端响应边界有**非有限浮点兜底**（`backend/json_safe.py` 的 `SafeJSONResponse`，
+  挂在 `FastAPI(default_response_class=...)`）：NaN / ±inf → `null` + warning 带字段路径。
+  它保证「一个坏单元格不会让整页 500」，但**不代表逐点可以不写守卫** ——
+  逐点守卫给的是「为什么没有」的语义，兜底层只能给 `null`。新增端点不需要为它做任何事。
 - 前端契约断言在 CI 里跑**两遍不同时区**（`TZ=UTC` + `TZ=Asia/Shanghai`，见 `ci.yml`
   的 `Frontend contracts (UTC)` / `(Asia/Shanghai)`）：时区类断言**每个环境只能覆盖一半** ——
   `#645` 就是「本机 CST 全绿、只有 UTC 才转红」，反方向（写死北京时区、只在东八区成立）
@@ -268,6 +283,14 @@
   另存 `.corrupt` 保留现场后再返回空。
 - `catalyst-sector-view.ts:22` 的 `warnings?.length || 0`——消费端写的是
   `{warningCount ? <span>…</span> : null}`，0 时**不渲染任何东西**，不会显示「0 项告警」。
+- `StockDetailDrawer.tsx:155` / `StockResearchPage.tsx:246` 的 `quote.turnover_pct.toFixed(2)`
+  ——后端 `astock._parse_gtimg` 的 `num(i)` 恒返回 `float`（`float(vals[i]) if vals[i] else 0.0`，
+  `ValueError`/`IndexError` 都兜成 `0.0`），所以 `.toFixed()` 不会抛。
+  ⚠️ 实测 8 只票（含亏损股 `pe` 为负值）腾讯行情**没有**空串字段，`turnover_pct`/`pe_ttm`/
+  `pb`/`vol_ratio` 全部有值 ⇒ 该 `num()` 把「缺失折成 0.0」的语义在真实数据上**未观测到**
+  （`float | None` 化的爆炸半径覆盖 `Quote` 全部消费点，没有可达性证据不动）。
+  同理 `market.py:391` 的 `round((astock._numf(p.get("p")) or 0) / 1000, 2)`——
+  `_numf` 只把非 `int/float` 归 `None`，push2ex 是 JSON（JSON 没有 NaN）⇒ 走不到 NaN。
 - `CandidateSection.tsx:669` 的 `index.history_window ?? 0`——`aqsp_bridge.py:928`
   恒写 `len(dates)`（int），且 `types/aqsp.ts:284` 声明为非空 `number`，不可达。
 - `performance-view.ts:168` 的 `asRecord(record.status_counts) ?? {}`——`statusCounts`
