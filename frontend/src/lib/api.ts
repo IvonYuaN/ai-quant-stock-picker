@@ -196,8 +196,15 @@ export interface SectorFlow {
    * （`formatSignedPct` / `changeClass` 都接受 `null`，会渲染成「—」且不着色。）
    */
   pct: number | null;
-  /** 主力净额（元）。不可用的行**整行不进榜**，所以这里恒为有限数。 */
+  /**
+   * 主力净额。**单位：元**。不可用的行**整行不进榜**，所以这里恒为有限数。
+   *
+   * 🔴 源（同花顺行业资金流）给的是**亿元**，后端在出口换成元（`market._YI_TO_YUAN`）。
+   * 所以这里按元处理：`formatYi(net)` 除以 1e8、`chart-options.ts` 的 `row.net / 1e8`。
+   * 若哪天发现「净额 4.71 亿」显示成「0.0 亿」、柱状图全是零宽柱，先查这一层换算。
+   */
   net: number;
+  /** 流入 / 流出资金，**单位：元**（同上，源为亿元）。 */
   inflow: number | null;
   outflow: number | null;
   firms: number;

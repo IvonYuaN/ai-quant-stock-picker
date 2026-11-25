@@ -302,7 +302,13 @@ export interface InfoStreamConcept {
   up_count: number;
   down_count: number;
   change_pct: number;
+  /**
+   * 主力净流入。**单位：元**（后端在出口把源的「万元」换算过来，见
+   * `backend/info_stream.py::_fetch_concepts`）。所以渲染走 `formatYi()`
+   * —— 那是「金额（元）→ 亿」。别再自己除以 1e4。
+   */
   main_net_inflow: number;
+  /** 主力净占比（百分数，7.75 表示 7.75%）。 */
   main_net_ratio: number;
   /** 归属的交易叙事；未映射为 null（未映射 ≠ 噪声，噪声已在后端剔除） */
   narrative: string | null;
