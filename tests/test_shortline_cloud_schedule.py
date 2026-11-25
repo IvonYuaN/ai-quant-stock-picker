@@ -130,7 +130,7 @@ def test_recap_counts_both_cells():
 
     md = sc.build_recap(det)
 
-    assert "B格(收盘封死·当日买不到) 2 只" in md
+    assert "B格(盘中可排进) 2 只" in md
     assert "A格(排不进) 1 只" in md
 
 
@@ -198,34 +198,47 @@ def test_health_survives_corrupt_file(tmp_path, monkeypatch):
     assert h["ok_count"] == 1
 
 
-def test_board_cards_never_claim_a_closed_limit_up_is_buyable():
-    """🔴 卡片不许说「可买」。
+def test_board_cards_state_fill_feasibility_not_a_buy_recommendation():
+    """卡片要**分开说**两件事：成交可行性（B 格盘中能排进）与策略有效性（已否证）。
 
-    B 格的定义是「收盘封死在涨停」，按那个价成交就是前视 —— 这正是 P1/P2/P6
-    被否证的原因（可成交口径下四个高度全为负）。把「收盘封死」写成「可买」，
-    等于把已否证的假设又当成机会推给老大。
+    🔴 11-25 这里改错过一次，记下来：当时以为「B 格 = 收盘封死 ⇒ 买不到」，
+    把卡片写成「B格(收盘封死·当日买不到)」。**这是错的**，两个层被混了：
+      - **回测** B 格 = `收盘 ≥ 涨停 × 0.998`（日线只能这么判）⇒ 收盘价确实买不到，
+        这正是回测收益属于语义前视的原因（`executable_entry_probe.py`）；
+      - **实盘检测** B 格 = `open 没顶死 + 摸板`（实时报价能判）⇒ 集合竞价确实成交了、
+        盘中存在可买时点（`paper_strategies.py` 的 B 格说明）。
+    实盘卡片显示的是实盘检测结果，所以「盘中可排进」是事实，「买不到」反而是假陈述。
+    而策略被否证的原因是**按可成交的「摸板即买」口径算收益为负**（首板 −0.94%/t−16.5），
+    不是买不到 —— 把否证原因写成「买不到」是另一种不诚实。
+
+    所以守三件事：① 不出现有歧义的「可买」（会被读成「该买」）；
+    ② 不出现「买不到」（错）；③ 复盘必须同时给出判决，否则等于在推已否证的策略。
     """
     recap = sc.build_recap({"all_hits": [_hit("A", 2, True), _hit("B", 1, False)]})
     markdown = sc.build_markdown({"pool": 31, "new_hits": [_hit("002579", 2, True)]})
     for md in (recap, markdown):
-        assert "可买" not in md, "出现了「可买」：\n%s" % md
-    assert "当日买不到" in recap, "必须显式说明 B 格当日买不到"
+        assert "可买" not in md, "「可买」有歧义（会被读成「该买」）：\n%s" % md
+        assert "买不到" not in md, "B 格盘中可排进，「买不到」是假陈述：\n%s" % md
+    assert "盘中可排进" in recap, "必须描述成交可行性"
+    assert "已否证" in recap, "复盘必须同时给出判决"
 
 
-def test_no_source_claims_a_closed_limit_up_is_buyable():
-    """守卫：全仓不许把 B 格说成「可买」—— 它是收盘封死，那个价买不到。
+def test_no_source_uses_the_wrong_bcell_wording():
+    """守卫：全仓不许出现两种错误措辞 —— `B格可买`（歧义）与 `B格收盘封死`（错）。
 
     🔴 为什么用源码扫描而不是渲染断言：文案生成在 `shortline_signal` 内部
-    （`放量N板·B格可买·…` 那段），要覆盖它得构造整个检测流程；而**卡片模板改了
-    不代表数据里的 strategy 改了** —— `#655` 第一版就漏了这一处，
-    收盘复盘 dry-run 出来才发现每行末尾还写着「B格可买」。
+    （`放量N板·…` 那段），要覆盖它得构造整个检测流程；而**卡片模板改了
+    不代表数据里的 strategy 改了** —— `#655` 第一版就漏了这里，
+    收盘复盘 dry-run 出来才发现每行末尾还是旧文案。
 
-    模式无歧义：没有任何合法用法需要用这个词形容 B 格。
+    ⚠️ 这两个词都**没有合法用法**：实盘 B 格 = 开盘没顶死 + 盘中摸板（可排进），
+    「收盘封死」是**回测**用日线近似出来的口径，不能拿来描述实盘卡片。
     """
     root = Path(__file__).resolve().parents[1]
     files = [p for p in (root / "research").rglob("*.py")
              if "converge-backup" not in str(p) and "_bak" not in str(p)]
     assert len(files) > 20, "扫描范围异常（零命中会假绿）：只有 %d 个文件" % len(files)
-    offenders = [p.name for p in files
-                 if "B格可买" in p.read_text(encoding="utf-8", errors="ignore")]
-    assert not offenders, "仍在说 B 格可买：%s" % offenders
+    for bad in ("B格可买", "B格收盘封死"):
+        offenders = [p.name for p in files
+                     if bad in p.read_text(encoding="utf-8", errors="ignore")]
+        assert not offenders, "仍在用 %r：%s" % (bad, offenders)

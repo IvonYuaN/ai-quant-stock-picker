@@ -393,9 +393,14 @@ def fill_board_for_hits(hits: list, quote_map: dict, kcache: dict) -> None:
             h["kline_src"] = src
             if h.get("actionable"):
                 stop = int(round(h.get("board_lim", 0.10) * 50))
-                # 🔴 不能说 B 格「可买」：B 格的定义是**收盘封死在涨停**，
-                # 按那个价成交就是前视（可成交口径下四个高度全为负，见 #655）。
-                strat = "放量%d板·B格收盘封死·%s T+1兑现·炸板-%d%%" % (
+                # 🔴 「可买」这个词有歧义（会被读成「该买」），但**更不能反过来说「买不到」**：
+                # B 格 =「open 没顶死 + 摸板 + 收停板」⇒ 集合竞价确实成交了、盘中存在可买时点；
+                # `sealed=True` 只表示「检测到的那一刻已封住」，不是全天买不到
+                # （见 `paper_strategies.py` 的 B 格说明）。
+                # 策略被否证是另一件事：按**真正可成交的「摸板即买」口径**算，
+                # 首板 −0.94%/t−16.5、2板 −2.30%/t−20.1（`executable_entry_probe.py`）。
+                # ⇒ 文案只描述成交可行性（可排进），判决交给卡片的「已否证」标签。
+                strat = "放量%d板·B格盘中可排进·%s T+1兑现·炸板-%d%%" % (
                     board, h.get("seal_tag", ""), stop)
             else:
                 strat = "一字%d板·A格排不进·%s(观察)" % (board, h.get("seal_tag", ""))
@@ -450,7 +455,7 @@ def detect_second_board(watch: list, quotes: dict) -> list:
             strategy = f"一字{board_now}板·A格排不进·{seal_tag}(观察)"
         else:
             stop = int(round(lim * 50))
-            strategy = f"放量{board_now}板·B格收盘封死·{seal_tag} T+1兑现·炸板-{stop}%"
+            strategy = f"放量{board_now}板·B格盘中可排进·{seal_tag} T+1兑现·炸板-{stop}%"
         hits.append({
             "code": w["code"], "name": q["name"], "tencent_id": w["tencent_id"],
             "price": q["cur"], "pre": q["pre"], "open": q["open"], "limit_up": limit_up,

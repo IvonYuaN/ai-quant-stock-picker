@@ -204,9 +204,9 @@ def test_board_row_marks_20cm_so_attribution_cannot_be_confused():
     import shortline_cloud
 
     main_board = {"code": "002006", "name": "精工科技", "price": 21.70, "board": 1,
-                  "board_lim": 0.10, "strategy": "放量1板·B格收盘封死·封单25342万 T+1兑现·炸板-5%"}
+                  "board_lim": 0.10, "strategy": "放量1板·B格盘中可排进·封单25342万 T+1兑现·炸板-5%"}
     growth = {"code": "300829", "name": "金丹科技", "price": 31.40, "board": 1,
-              "board_lim": 0.20, "strategy": "放量1板·B格收盘封死·封单18398万 T+1兑现·炸板-10%"}
+              "board_lim": 0.20, "strategy": "放量1板·B格盘中可排进·封单18398万 T+1兑现·炸板-10%"}
     assert "20cm" not in shortline_cloud._row(main_board), "主板票不该带 20cm 标"
     assert "·20cm" in shortline_cloud._row(growth)
     assert "炸板-10%" in shortline_cloud._row(growth), "20cm 的止损幅度是 10%，不是 5%"
