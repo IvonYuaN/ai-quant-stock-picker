@@ -310,15 +310,44 @@ function buildEmotion(emotion: ShortTermEmotion | null | undefined): EmotionView
   };
 }
 
+/** 资金轮动每侧最多展示几个板块。 */
+export const SECTOR_FLOW_HEAD = 6;
+
+/**
+ * 资金轮动头尾：**按净额符号分区，不是按位置切片**。
+ *
+ * 🔴 原写法是 `sectors.slice(0, 6)` / `sectors.slice(-6).reverse()`。后端按净额降序
+ * 返回，行数 ≥ 12 时没问题；一旦**少于 12 行**（后端会把净额不可用的行整行剔除，
+ * 数据源部分降级时行数就会变少），两个切片会重叠 —— 同一个**正净额**的板块同时
+ * 出现在「资金净流入前列」和「资金净流出前列」，等于把一个流入的板块标成流出。
+ *
+ * 按符号分区顺带修正了语义：净流入前列只收 `net > 0`，净流出前列只收 `net < 0`；
+ * `net === 0` 两边都不进（它既不是流入也不是流出）。正常交易日两侧都有几十个板块，
+ * 行为与原来完全一致。
+ */
+export function sectorFlowHeadTail(rows: readonly SectorFlowRow[]): {
+  top: SectorFlowRow[];
+  bottom: SectorFlowRow[];
+} {
+  // rows 已是净额降序：正数在前（越前越大），负数在后（越后越负）。
+  const inflow = rows.filter((row) => row.net > 0);
+  const outflow = rows.filter((row) => row.net < 0);
+  return {
+    top: inflow.slice(0, SECTOR_FLOW_HEAD),
+    bottom: outflow.slice(-SECTOR_FLOW_HEAD).reverse(),
+  };
+}
+
 export function buildMarketView(input: MarketInput): MarketView {
   const sectors = asArray<SectorFlow>(input.overview?.sectors).map(toSectorRow);
+  // 资金轮动看头尾：净流入前列与净流出前列（按符号分区，见 sectorFlowHeadTail）
+  const { top: sectorsTop, bottom: sectorsBottom } = sectorFlowHeadTail(sectors);
   return {
     indices: asArray<IndexQuote>(input.indices).map(toIndexRow),
     global: asArray<GlobalIndex>(input.global).map(toGlobalRow),
     breadth: buildBreadth(input.overview),
-    // 资金轮动看头尾：净流入前列与净流出前列
-    sectorsTop: sectors.slice(0, 6),
-    sectorsBottom: sectors.slice(-6).reverse(),
+    sectorsTop,
+    sectorsBottom,
     emotion: buildEmotion(input.emotion),
     turnover: asArray<TurnoverStock>(input.turnover).map(toTurnoverRow),
     turnoverUpdated: input.turnoverUpdated ?? "",
