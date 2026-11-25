@@ -128,7 +128,7 @@
 - 历史积累的 `codex/*` 分支多数对应已关闭/已 squash 的 PR，**不可按 `--merged` 批量删**（全 squash 合并不留祖先链）。逐个以 PR `merged_at` + 内容在 `origin/main` 的对应为准。
 - 2026-11-24 已清理 4 条：`feat/filter-verdict-cli`、`codex/tickflow-personal-operating-system`（功能全在 main，删）、`codex/strategy-watch-workflow`（含未入库的 tickflow roadmap 文档，保留）、`feature/holder-concentration-factor`（#541 负结果实验唯一 git 历史，保留）。另有 `codex/*` 历史分支未动。
 
-**数据诚实性（2026-11-24 起，PR #616–#636 共 21 个）**
+**数据诚实性（2026-11-24 起，PR #616–#640 共 24 个）**
 
 验收口径：任何展示面在「取数失败 / 该日确实为空 / 有数据」三态下必须可区分；
 **刷新失败不得静默沿用旧值**；后端说不可用时必须把它的 `reason` 透出来。
@@ -165,6 +165,16 @@
 - `#636` 事件面**读失败**被误诊成「缓存没生成」：`/api/events` fail-soft 回 200 + 空结构，
   而空结构只有 `has_*_data:false`。新增 `available`/`reason` + `eventsAvailability()`；
   缺缓存仍标 `available:true`（端点读成功了）。同 PR 修两处「失败后仍说暂无/正在读取」。
+- `#637` 信号页把「没拿到」渲染成 0：`data.overall?.observations ?? 0` 在台账尚未可用时
+  把标题写成「0 条」，而页面下方写着「台账尚未可用」。改「条数未知」+ `?? "—"` 同口径。
+- `#638` 事件面「缺缓存」与「没事件」共用一句话：前端此前完全没消费 `has_*_data`，
+  于是「哪一面没预加载」和「该股确实没有这类事件」渲染成同一句。新增
+  `eventsFaceGaps()` 具名缺面 + `eventsEmptyDetail()` 按缺面数分档。
+- `#640` 影子账户把「超额未知」渲染成「无超额」：`exc_mean` 可空
+  （`paper_ledger.py` 在「有结算笔数但这些笔没有基准超额」时留 `None`），
+  原判定 `(row.exc_mean ?? 0) > 0` 落到最后分支 → 标签写「无超额」（确定的否定），
+  同一行的数字列却显示「—」。新增 `paper-arena-view.ts` 六态 `sleeveVerdict`
+  + `unknownExcessCount` 在汇总卡披露「另有 N 个策略超额未知，未计入」。
 
 防复发守卫：
 - `frontend/src/lib/data-honesty-pages.test.ts`——页面层源码守卫（含接线断言：
@@ -191,10 +201,30 @@
   非零必抛；且该层不直接面向展示。
 - `backend/alert_events.py` / `backend/watchlist.py` 的损坏处理——**已是对的范式**：
   另存 `.corrupt` 保留现场后再返回空。
+- `catalyst-sector-view.ts:22` 的 `warnings?.length || 0`——消费端写的是
+  `{warningCount ? <span>…</span> : null}`，0 时**不渲染任何东西**，不会显示「0 项告警」。
+- `CandidateSection.tsx:669` 的 `index.history_window ?? 0`——`aqsp_bridge.py:928`
+  恒写 `len(dates)`（int），且 `types/aqsp.ts:284` 声明为非空 `number`，不可达。
+- `performance-view.ts:168` 的 `asRecord(record.status_counts) ?? {}`——`statusCounts`
+  **全仓无任何消费方**（只在 :72 定义、:168 计算），是死字段，不构成展示面。
+- `DiscussionSection.tsx:203` 的 `disagreement_points?.length ?? 0`——`aqsp_bridge.py:1766`
+  用 `_list_like(item.get(..., []))` 恒产出 tuple，序列化时也在字段列表内，不会缺键。
+- `paper_arena_bridge.py:166` 的 `trading_days … or 0`——`research/paper_export.py:102`
+  恒写 `trading_days`，只有本仓以外的老产物才会缺这个键。
+- `OperationRecorder.tsx:102` 的 `holding?.cost ?? 0`——`portfolio._apply_close:396`
+  在持仓存在时**用 `holding["cost"]` 覆盖**客户端传的 cost，所以那个 0 到不了账本；
+  只有「补历史成交、本就没有持仓记录」的 legacy 路径会用到它（该路径另见下方已知问题）。
 
 方法：grep `?? 0` 展示面 → 三重验证（类型可空 + 后端契约 + **可达性**）→ 复用现成 helper →
 反向验证（临时破坏实现看测试红不红，破坏方式须「语义坏但类型合法」）→ 独立 PR。
 已靠「可达性验证」拦下 9+ 伪缺口。
+
+🔴 已知未修（已登记 issue #641，勿重复审计）：
+- `backend/portfolio.py:_apply_close` 在「成本未知」（`cost == 0`，只有 legacy
+  「补历史成交、无持仓记录」路径会走到）时，仍写入 `pnl = (price - 0) * shares`
+  与 `pnl_pct = 0.0` ⇒ 平仓记录显示「收益率 0%」且 `realized_pnl` 被抬高整笔成交额。
+  真相是「成本未知」，应写 `None` 并在 `realized_pnl` 里排除 + 披露笔数。
+  属于**持久化账本 schema 变更**，与展示层修复分开做。
 
 **`outputs/`（阶段产物）**
 - 属本地工作区产物，`outputs/` 已被 `.gitignore`；不在仓库历史中，按需本地清理即可。
