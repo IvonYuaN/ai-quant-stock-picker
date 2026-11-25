@@ -18,6 +18,8 @@ const negativeRow: Sleeve = { n: 7, exc_mean: -0.3, q_exc: 0.05 };
 
 const unknownVerdict = sleeveVerdict(missingExcess);
 const noEdgeVerdict = sleeveVerdict(zeroExcess);
+const survivedVerdict = sleeveVerdict(survivedRow);
+const uncorrectedVerdict = sleeveVerdict(uncorrectedRow);
 
 export const paperArenaViewContract = {
   // 一笔都没结算：未开仓，既不是通过也不是无超额
@@ -41,14 +43,20 @@ export const paperArenaViewContract = {
   infiniteExcessIsUnknown:
     sleeveVerdict({ n: 3, exc_mean: Number.POSITIVE_INFINITY, q_exc: null }).kind === "unknown",
 
-  // 正向路径不能被改坏
+  // 🔴 正向路径只保留 kind（下游计数用），**不能恢复成绿色判决词**。
+  // 账本按「封死也照买」记账，P1/P6 在这里 q=0 显著，却被推送闸门判 rejected。
   survivedIsSurvived: sleeveVerdict(survivedRow).kind === "survived",
-  survivedToneIsOk: sleeveVerdict(survivedRow).tone === "ok",
+  survivedToneIsNeutral: sleeveVerdict(survivedRow).tone === "neutral",
+  survivedLabelIsNotVerdict: sleeveVerdict(survivedRow).label !== "扛住多重检验",
+  survivedLabelIsStatOnly: sleeveVerdict(survivedRow).label === "超额显著",
+  survivedHasScopeDetail: "detail" in survivedVerdict && survivedVerdict.detail.includes("不等于策略过门"),
   uncorrectedIsUncorrected: sleeveVerdict(uncorrectedRow).kind === "uncorrected",
+  uncorrectedLabelIsNotPass: sleeveVerdict(uncorrectedRow).label !== "未校正通过",
+  uncorrectedHasScopeDetail: "detail" in uncorrectedVerdict && uncorrectedVerdict.detail.includes("不等于策略过门"),
   negativeIsNoEdge: sleeveVerdict(negativeRow).kind === "no-edge",
   negativeToneIsWarn: sleeveVerdict(negativeRow).tone === "warn",
 
-  // q 缺失但超额为正：不能算「扛住多重检验」
+  // q 缺失但超额为正：不能算「超额显著」
   missingQIsNotSurvived: sleeveVerdict({ n: 5, exc_mean: 2.0, q_exc: null }).kind !== "survived",
 
   // 汇总披露：只数「有结算笔数且超额未知」的，未开仓的不算
