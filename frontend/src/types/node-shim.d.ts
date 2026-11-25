@@ -9,6 +9,11 @@
 
 declare module "node:fs" {
   export function readFileSync(path: string, encoding: "utf-8"): string;
+  /** 只为「全仓扫描 .tsx 手写配色」那条守卫用（`data-honesty-pages.test.ts`）。 */
+  export function readdirSync(
+    path: string,
+    options: { withFileTypes: true },
+  ): { name: string; isDirectory(): boolean }[];
 }
 
 declare const process: { cwd(): string };
