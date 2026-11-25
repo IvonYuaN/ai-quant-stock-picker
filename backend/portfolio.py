@@ -411,7 +411,11 @@ def _apply_close(
             data["risk_rules"] = [r for r in data.get("risk_rules", []) if r["symbol"] != code]
         elif updated_lots:
             holding["opened_at"] = updated_lots[0].get("opened_at")
-    pnl = (price - cost) * shares
+    # 成本未知（补录历史成交、账本里没有对应持仓）时 `cost` 是调用方给的 0 ——
+    # 那不是「零成本」，是「没有成本依据」。此时算不出盈亏，必须写 None，
+    # 否则 `pnl = price * shares` 会把整笔成交额记成利润、`pnl_pct` 会写成「0%」。
+    cost_known = cost > 0
+    pnl = (price - cost) * shares if cost_known else None
     name = (holding.get("name") if holding else None) or code
     data["closed"].append(
         {
@@ -421,8 +425,8 @@ def _apply_close(
             "price": price,
             "shares": shares,
             "cost": cost,
-            "pnl": round(pnl, 2),
-            "pnl_pct": round((price - cost) / cost * 100, 2) if cost else 0.0,
+            "pnl": round(pnl, 2) if pnl is not None else None,
+            "pnl_pct": round((price - cost) / cost * 100, 2) if cost_known else None,
             "operation_id": operation_id,
             "position_id": holding.get("position_id") if holding else None,
             "position_closed": bool(holding and holding["shares"] <= 0),
@@ -479,6 +483,27 @@ def remove_closed(index: int) -> dict:
             visible[index]["history_hidden"] = True
             _save(d)
     return get_portfolio()
+
+
+def _with_known_cost(row: dict) -> dict:
+    """把「成本未知」的平仓记录读成未知，而不是沿用历史上的假 0。
+
+    `_apply_close` 早先把 `cost == 0`（补录历史成交、账本里没有对应持仓）当成
+    「成本 0」来算：`pnl = price * shares`、`pnl_pct = 0.0`。那是**未知**被写成了
+    一个确定值 —— 平仓列表会显示「收益率 0.00%」，已实现盈亏还会被抬高整笔成交额。
+
+    这里在**读取时**统一纠正，所以老账本不需要迁移：只要 `cost <= 0` 就没有成本依据，
+    `pnl` / `pnl_pct` 一律回成 `None`。`cost` 本身保持原值，留给前端显示。
+    """
+    try:
+        cost = float(row.get("cost") or 0)
+    except (TypeError, ValueError):
+        cost = 0.0
+    if cost > 0:
+        return row
+    if row.get("pnl") is None and row.get("pnl_pct") is None:
+        return row
+    return {**row, "pnl": None, "pnl_pct": None}
 
 
 def get_portfolio() -> dict:
@@ -541,7 +566,10 @@ def get_portfolio() -> dict:
                     holding["name"] = name
             _save(latest)
     total_pnl = tmv - tcost
-    closed = [row for row in d.get("closed", []) if not row.get("history_hidden")]
+    closed = [_with_known_cost(row) for row in d.get("closed", []) if not row.get("history_hidden")]
+    # 成本未知的成交算不出已实现盈亏：只累加有据的，并单独披露被排除的笔数。
+    # 原来 `sum(c.get("pnl", 0) ...)` 会把 legacy 记录里那个伪造的 `price*shares` 一起加进来。
+    known_pnl = [row["pnl"] for row in closed if isinstance(row.get("pnl"), (int, float))]
     return {
         "holdings": rows,
         "totals": {
@@ -551,7 +579,8 @@ def get_portfolio() -> dict:
             "pnl_pct": round(total_pnl / tcost * 100, 2) if tcost else 0.0,
         },
         "closed": closed,
-        "realized_pnl": round(sum(c.get("pnl", 0) for c in closed), 2),
+        "realized_pnl": round(sum(known_pnl), 2),
+        "realized_pnl_unknown_count": len(closed) - len(known_pnl),
         "updated": _now(),
         "last_refresh": d.get("last_refresh"),
     }

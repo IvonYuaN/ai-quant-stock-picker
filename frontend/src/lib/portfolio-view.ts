@@ -66,8 +66,10 @@ function normalizeClosed(raw: unknown): ClosedPosition {
     price: asNumber(record.price),
     shares: asNumber(record.shares),
     cost: asNumber(record.cost),
-    pnl: asNumber(record.pnl),
-    pnl_pct: asNumber(record.pnl_pct),
+    // 成本未知时后端给 null：必须原样保留，`asNumber` 会把它折回 0 —— 那就是
+    // 把「算不出盈亏」显示成「没赚没亏」。老账本里伪造的 0.0 也由后端读取时纠正。
+    pnl: asNullableNumber(record.pnl),
+    pnl_pct: asNullableNumber(record.pnl_pct),
   };
 }
 
@@ -87,8 +89,14 @@ export function normalizePortfolio(raw: unknown): PortfolioData {
     holdings,
     totals: { market_value: marketValue, cost, pnl, pnl_pct: pnlPct },
     closed,
+    // 后端没给汇总时用明细自己算 —— 但只加有成本依据的：`row.pnl` 为 null 表示
+    // 「成本未知、算不出盈亏」，把它当 0 加进去等于默认这些成交没赚没亏。
     realized_pnl:
-      asNullableNumber(record.realized_pnl) ?? closed.reduce((sum, row) => sum + row.pnl, 0),
+      asNullableNumber(record.realized_pnl) ??
+      closed.reduce((sum, row) => sum + (row.pnl ?? 0), 0),
+    realized_pnl_unknown_count:
+      asNullableNumber(record.realized_pnl_unknown_count) ??
+      closed.filter((row) => row.pnl === null).length,
     updated: asString(record.updated),
     last_refresh: typeof record.last_refresh === "string" ? record.last_refresh : null,
   };
