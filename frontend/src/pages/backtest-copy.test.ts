@@ -43,6 +43,23 @@ export const backtest_does_not_hardcode_sleeve_count = !/5 个策略|5 个互不
 export const api_does_not_hardcode_sleeve_count = !/5 个策略/.test(api);
 
 /**
+ * 🔴 2026-11-25 第三类「页面照常渲染、语义全错」：统计标签冒充策略判决。
+ *
+ * 账本按「检测时已封死也照买」记账，封死那一下的收盘价买不到 —— 那批超额
+ * 含语义前视。真实数据 P1 q=0.00/exc=+2.03、P6 q=0.00/exc=+2.93，页面原来
+ * 给它们绿色「扛住多重检验」+ KPI「扛住多重检验的策略 2/6」，
+ * 而推送闸门 `mode_card.is_pushable` 判 **0/6 过门**（五个 rejected、一个 unverified）。
+ * 两边直接相反，老大看 Web 会以为策略通过了、却收不到推荐。
+ *
+ * 这是一个维度的统计显著性被当成另一个维度的结论。
+ * 页面必须：① 不把绿标/「通过」这类判决词给统计量；② 明说不代表过门。
+ */
+export const backtest_does_not_call_stats_a_verdict = !/扛住多重检验|未校正通过|个策略扛住/.test(backtest);
+
+/** 正向：口径边界必须印在页面上，不能只写在 helper 的注释里。 */
+export const backtest_states_stats_is_not_a_gate = backtest.includes("不代表策略过门");
+
+/**
  * 净值图例也曾写死「组合（5 策略等权）」—— 加 P6 后仍是 5。
  * 这类文案在截图里和正常字样长得一模一样，只有读源码能抓到。
  */
