@@ -87,7 +87,12 @@ def _fetch_concepts(
                 "up_count": item.up_count,
                 "down_count": item.down_count,
                 "change_pct": item.change_pct,
-                "main_net_inflow": item.main_net_inflow,
+                # 🔴 单位换算：`ConceptBoardItem.main_net_inflow` 是**万元**
+                # （`concept_board.py` 把东财 f62 的「元」除以 1e4；收评 `board_fund`
+                # 段也按万元读同一份 CSV，那条契约不动）。而接口出口的约定是**元** ——
+                # 前端 `InfoStreamPage` 用 `formatYi()`（金额（元）→ 亿）渲染这一列。
+                # 不换算的话 2.71 亿元的净流入会显示成「0.0 亿」，看着像「资金持平」。
+                "main_net_inflow": round(item.main_net_inflow * 1e4, 2),
                 "main_net_ratio": item.main_net_ratio,
                 "narrative": narrative_for(item.board_name),
             }

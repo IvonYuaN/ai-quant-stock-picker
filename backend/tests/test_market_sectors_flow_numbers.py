@@ -66,9 +66,9 @@ def test_nan_cells_become_none_not_zero(monkeypatch: pytest.MonkeyPatch) -> None
     assert len(sectors) == 1
     assert sectors[0]["pct"] is None
     assert sectors[0]["inflow"] is None
-    # 有值的照旧，且保留 2 位
-    assert sectors[0]["outflow"] == 5.0
-    assert sectors[0]["net"] == 100.0
+    # 有值的照旧（源是亿元，出口换成元：×1e8），且保留 2 位
+    assert sectors[0]["outflow"] == 5.0 * 1e8
+    assert sectors[0]["net"] == 100.0 * 1e8
 
 
 def test_infinite_cell_is_unknown(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -203,10 +203,11 @@ def test_normal_rows_keep_values_and_descending_order(
     )
     sectors = market._sectors()
     assert [item["name"] for item in sectors] == ["大额", "小额"]
-    assert sectors[0]["net"] == 100.0
+    # 净额 99.999 亿 → 元：`round(99.999 * 1e8, 2)`
+    assert sectors[0]["net"] == round(99.999 * 1e8, 2)
     assert sectors[1]["pct"] == 1.23
-    assert sectors[1]["inflow"] == 1.0
-    assert sectors[1]["outflow"] == 2.0
+    assert sectors[1]["inflow"] == round(1.005 * 1e8, 2)
+    assert sectors[1]["outflow"] == round(2.004 * 1e8, 2)
     assert _unhealthy_sources() == []
 
 

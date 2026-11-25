@@ -160,6 +160,24 @@ def _flow_round2(value: object) -> float | None:
     return None if number is None else round(number, 2)
 
 
+# 🔴 同花顺「行业资金流」的金额列（流入资金 / 流出资金 / 净额）单位是**亿元**，
+# 实测 2026-11-25：农产品加工 净额 = -4.71、养殖业 = -2.77（若当作元，那是 -4 块钱，
+# 显然不可能）。而接口契约（`frontend/src/lib/api.ts` 的 `SectorFlow.net`）写的是**元**，
+# 前端也按元算：`formatYi(net)` 除以 1e8、`chart-options.ts` 的 `row.net / 1e8`。
+#
+# 混用的后果不是「数字略偏」，而是**整块渲染成假的**：
+#   - 列表里 4.71 亿的净流出 → `formatYi` → 「-0.0 亿」（看着像「资金基本持平」）；
+#   - 柱状图 `4.71 / 1e8` → `0.00`，**每根柱子宽度为 0**，坐标轴还写着「净额(亿)」。
+# 一个看起来合理的错答案比空白更糟，所以在**边界上一次性换成元**，前端不动。
+_YI_TO_YUAN = 1e8
+
+
+def _flow_yuan(value: object) -> float | None:
+    """亿元单元格 → 元；不可用仍是 `None`。见上方 `_YI_TO_YUAN` 的说明。"""
+    number = _flow_num(value)
+    return None if number is None else round(number * _YI_TO_YUAN, 2)
+
+
 def _flow_text(value: object) -> str:
     """单元格 → 去空白字符串；`None` / NaN / inf 一律当空串。
 
@@ -303,9 +321,10 @@ def _sectors() -> list[dict]:
             {
                 "name": name,
                 "pct": _flow_round2(row.get("行业-涨跌幅")),
-                "net": round(net, 2),
-                "inflow": _flow_round2(row.get("流入资金")),
-                "outflow": _flow_round2(row.get("流出资金")),
+                # 金额列在源里是**亿元**，出口统一换成元（见 `_YI_TO_YUAN`）。
+                "net": round(net * _YI_TO_YUAN, 2),
+                "inflow": _flow_yuan(row.get("流入资金")),
+                "outflow": _flow_yuan(row.get("流出资金")),
                 "firms": _num(row.get("公司家数")),
             }
         )
