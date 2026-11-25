@@ -111,7 +111,7 @@ def _arena_brief(stale: bool = False) -> str:
             parts.append("%s %s %s" % (sid, _sleeve_tag(st), t))
         line = "\n> 影子账户 ¥%.0f(%+.2f%%)" % (ov["total_nav"], ov["total_ret_pct"])
         if stale:
-            line += "（今日结算失败，净值为上次结果）"
+            line += "（今日结算失败，净值/敞口为上次结果）"
         if parts:
             line += " " + " ｜ ".join(parts)
         return line + _exposure_line(ov.get("mix") or {})

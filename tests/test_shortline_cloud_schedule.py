@@ -425,7 +425,7 @@ def test_recap_has_no_gate_line_when_something_passes(monkeypatch):
 # ---------------- 结算失败 ≠ 今天的净值 ----------------
 
 def test_arena_brief_marks_stale_nav_when_close_failed(monkeypatch):
-    """今日结算失败时，净值必须显式标成「上次结果」。
+    """今日结算失败时，净值与敞口都要显式标成「上次结果」。
 
     GOAL 的红线：「刷新失败不得静默沿用旧值」。卡片标题是今天，净值却可能是
     几天前的 —— 摆在一起而不说明，就是拿旧数字冒充今天。
@@ -436,7 +436,7 @@ def test_arena_brief_marks_stale_nav_when_close_failed(monkeypatch):
     stale = sc._arena_brief(stale=True)
 
     assert "今日结算失败" not in fresh, "正常结算不该吓唬人：%s" % fresh
-    assert "净值为上次结果" in stale, "结算失败必须标出来：%s" % stale
+    assert "净值/敞口为上次结果" in stale, "结算失败必须标出来：%s" % stale
     assert "60556" in stale, "标 stale 是加说明，不是把数字抹掉"
 
 
