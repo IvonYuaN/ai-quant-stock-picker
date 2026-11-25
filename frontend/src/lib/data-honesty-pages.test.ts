@@ -124,3 +124,24 @@ export const todayWorkspaceAlsoMountsRefreshWarning = today.includes("<SnapshotR
 export const noPageInlinesRefreshWarning = refreshWarningSources.every(
   (source) => !source.includes("刷新失败，保留上次成功数据"),
 );
+
+/**
+ * M17（研报页用户动作静默失败，2026-11-25）：下载/删除失败必须给提示。
+ *
+ * `downloadReport` 在非 2xx 时 `throw`（`api.ts:97`），`api.deleteReport` 同理。
+ * 原来写成 `onClick={() => void downloadReport(item.id, item.name)}` 与
+ * `void api.deleteReport(item.id).then(...)` —— 两者都没有 `.catch`：
+ * 失败时页面上**什么都不发生**（没文件、没提示），用户只会反复点。
+ *
+ * 现在两个动作各自走带 try/catch 的具名 handler，JSX 里只调 handler。
+ * 这条守卫盯的就是「别再把裸 promise 直接挂到 onClick 上」。
+ */
+const reports = pageSource("src/pages/my/ReportsPage.tsx");
+const BARE_DOWNLOAD = /void downloadReport\(/;
+const BARE_DELETE = /void api\.deleteReport\([^)]*\)\s*\.then\(/;
+export const reportsHasNoBareDownloadCall = !BARE_DOWNLOAD.test(reports);
+export const reportsHasNoBareDeleteChain = !BARE_DELETE.test(reports);
+export const reportsWrapsActionsInHandlers =
+  reports.includes("async function download(") && reports.includes("async function remove(");
+// 删除失败时不能只弹一句话：结果未知，必须重新读列表核对（否则用户重复点 → 404）
+export const reportsDeleteFailureRereadsList = reports.includes("删除结果未知，已重新读取列表核对");
