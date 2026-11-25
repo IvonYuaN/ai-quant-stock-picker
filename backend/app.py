@@ -43,6 +43,7 @@ import chat as chat_layer
 import cli_runtime
 import info_stream
 import gstock
+import json_safe
 import metrics
 import newsradar
 import portfolio as pf
@@ -62,6 +63,11 @@ from candidate_observation_api import router as candidate_observation_router
 app = FastAPI(
     title="AQSP API",
     version="0.1.3",
+    # 🔴 响应边界的非有限浮点兜底：NaN / ±inf → null。
+    # starlette 的 `JSONResponse.render` 是 `json.dumps(..., allow_nan=False)`，
+    # payload 里一个 NaN 就让**整个端点** 500 —— 一个板块的涨跌幅缺失不该让整页打不开。
+    # 见 `json_safe.py`：这是兜底网不是免修许可证，命中一律记 warning 带字段路径。
+    default_response_class=json_safe.SafeJSONResponse,
     description="""
 # AQSP —— A 股量化选股 API
 
@@ -1338,11 +1344,14 @@ def _events_jsonable(event_map: dict) -> dict:
 
     starlette JSONResponse 用 ``allow_nan=False`` 序列化，NaN 会直接抛 ValueError
     把整个响应打挂 —— 这里把非有限浮点收敛成 ``null``，语义是「未披露」。
+
+    🔴 原实现只遍历**顶层 key** 且只认 NaN（不认 ±inf），它能用纯粹是因为今天这 5 个
+    事件 dataclass 恰好都是扁平的 —— 那是巧合不是契约。现在改为复用
+    `json_safe.scrub_non_finite` 的深递归实现：嵌套 dict/list、±inf 一并收敛，
+    且返回新对象（不再就地改写传入的 asdict 结果）。
     """
-    for key, value in event_map.items():
-        if isinstance(value, float) and value != value:
-            event_map[key] = None
-    return event_map
+    cleaned, _ = json_safe.scrub_non_finite(event_map)
+    return cleaned
 
 
 @app.get(
