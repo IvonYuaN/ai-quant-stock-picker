@@ -576,7 +576,11 @@ class ReportIn(BaseModel):
     description="获取用户上传的研报列表，包含研报 ID、文件名、行业标签等信息",
 )
 def myreports_list():
-    return {"data": mr.list_reports()}
+    try:
+        return {"data": mr.list_reports()}
+    except mr.IndexUnreadable as e:
+        # 索引坏了 ≠ 没有研报：必须报错，不能回空数组让界面显示「暂无研报」
+        raise HTTPException(500, str(e)) from e
 
 
 @app.post(
@@ -597,6 +601,8 @@ def myreports_upload(r: ReportIn):
         return {"data": mr.save_report(r.name, r.content_b64)}
     except mr.ReportError as e:
         raise HTTPException(400, str(e)) from e
+    except mr.IndexUnreadable as e:
+        raise HTTPException(500, str(e)) from e
 
 
 @app.get(
@@ -607,7 +613,11 @@ def myreports_upload(r: ReportIn):
 )
 def myreports_file(rid: str):
     """下载/预览某份研报原文件。"""
-    hit = mr.report_path(rid)
+    try:
+        hit = mr.report_path(rid)
+    except mr.IndexUnreadable as e:
+        # 索引读不出来时不能回 404「研报不存在」——那是把故障说成文件真没有
+        raise HTTPException(500, str(e)) from e
     if not hit:
         raise HTTPException(404, "研报不存在")
     path, name = hit
@@ -621,7 +631,16 @@ def myreports_file(rid: str):
     description="删除指定 ID 的研报",
 )
 def myreports_delete(rid: str):
-    return {"data": {"ok": mr.delete_report(rid)}}
+    try:
+        ok = mr.delete_report(rid)
+    except mr.IndexUnreadable as e:
+        raise HTTPException(500, str(e)) from e
+    except OSError as exc:
+        # 文件删不掉（权限 / 只读挂载 / 被占用）：索引未改动，可重试
+        raise HTTPException(
+            500, f"研报文件删除失败（索引未改动，可重试）：{exc}"
+        ) from exc
+    return {"data": {"ok": ok}}
 
 
 class CloseIn(BaseModel):
