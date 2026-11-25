@@ -1,6 +1,6 @@
 # AQSP 项目现状（Current State）
 
-> **单一事实来源。** 最后核对：2026-11-25（基线 `origin/main` @ `1e529770` / #669；本日新增数据诚实性 #650–#669）。历史核对：2026-11-24（`d660a31f` / #620）、2026-09-22（`ab6f5fef` / #173）。
+> **单一事实来源。** 最后核对：2026-11-25（基线 `origin/main` @ `663edcb2` / #671；本日新增数据诚实性 #650–#671）。历史核对：2026-11-24（`d660a31f` / #620）、2026-09-22（`ab6f5fef` / #173）。
 > 本项目由**多个 agent 并行开发**，历史上积累了互相矛盾的阶段文档与任务清单。本文用于回答「**现在到底是什么样**」。
 > 维护规则：本文只写「当前是什么」；历史/过程材料一律下沉 `docs/archive/`，不在此堆叠。
 
@@ -128,7 +128,7 @@
 - 历史积累的 `codex/*` 分支多数对应已关闭/已 squash 的 PR，**不可按 `--merged` 批量删**（全 squash 合并不留祖先链）。逐个以 PR `merged_at` + 内容在 `origin/main` 的对应为准。
 - 2026-11-24 已清理 4 条：`feat/filter-verdict-cli`、`codex/tickflow-personal-operating-system`（功能全在 main，删）、`codex/strategy-watch-workflow`（含未入库的 tickflow roadmap 文档，保留）、`feature/holder-concentration-factor`（#541 负结果实验唯一 git 历史，保留）。另有 `codex/*` 历史分支未动。
 
-**数据诚实性（2026-11-24 起，PR #616–#669 共 49 个）**
+**数据诚实性（2026-11-24 起，PR #616–#671 共 50 个）**
 
 验收口径：任何展示面在「取数失败 / 该日确实为空 / 有数据」三态下必须可区分；
 **刷新失败不得静默沿用旧值**；后端说不可用时必须把它的 `reason` 透出来。
@@ -405,6 +405,17 @@
   2026-11-25 runner 真机 dry-run 复核：17 行，事实字段一个不少。
   runner 同步 `_bak/20261125h/`：mode_card `ff786258`→`d54c6fb2`、
   shortline_cloud `7077db39`→`d7e902d0`。
+- `#671` **结算失败把旧净值当今天的印出去**：`arena_close()` 内部 `except` 只 `print`
+  就吞异常，调用方无从得知；`main()` 照常组卡，`_arena_brief()` 照常读账本 ⇒
+  「今日结算失败、净值是几天前的」被印在**日期为今天**的卡片上。违反 GOAL 明写的
+  「刷新失败不得静默沿用旧值」。三处接线：`arena_close() -> bool`（marker 只在成功后写）、
+  `_arena_brief(stale=False)` 在净值后印 `（今日结算失败，净值/敞口为上次结果）`
+  （加说明、不抹数字；`mix` 与净值同源，所以免责同时覆盖敞口）、
+  `main()` 透成 `_arena_brief(stale=not close_ok)`。
+  ⚠️ `test_main_wires_close_result_into_brief` 是**源码守卫**：单测只守函数本身，
+  main 漏接的话线上照样静默沿用旧值，而单测全绿。反向验证 3 次逐条转红。
+  runner 同步 `_bak/20261125i/`，shortline_cloud `d7e902d0`→`37a2f70b`；
+  真机 dry-run 复核正常路径**不误报** stale。
 
 ⚠️ **待议（生产不可达，未改）**：`research/paper_report.py:452` 的说明文案仍写
 「打板只买 B 格……说明确实存在可买时点，**照买**」—— 与 `#654`/`#658` 同一条问题
