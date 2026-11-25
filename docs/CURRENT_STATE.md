@@ -444,8 +444,8 @@
   反向验证 2 次逐条转红。⚠️ 纯前端，**prod 部署需仓主授权**。
 - **2026-11-25 16:52 前端上线**：#675/#677 的 `frontend/dist` 已发布到 prod
   （`aqsp-server` → `/opt/aqsp-releases/aqsp-scheduler-current/frontend/dist`），
-  仅替换前端产物、不动后端、不切 release 软链。备份 `dist.bak.20261125`、
-  回滚点 `dist.old` 均在位。线上验证：nginx `-t` 通过、`https://lh.ifidy.cn/` 200、
+  仅替换前端产物、不动后端、不切 release 软链。prod 上留 `dist.rollback.20261125`
+  与 `dist.old` 两个回滚点。线上验证：nginx `-t` 通过、`https://lh.ifidy.cn/` 200、
   新版 chunk `BacktestPage-BSN2IgjU.js` 直连 200 且含「账本口径超额显著 /
   不代表策略过门 / 数据截至」，旧判决词「扛住多重检验」零残留。
 - `#679` **`#666` 的防复发守卫**：`build_markdown()` / `_row()` 没有闸门且仍是
