@@ -125,7 +125,16 @@ def _exposure_line(mix: dict) -> str:
     total = float(mix.get("total") or 0.0)
     if total <= 0:
         return ""
-    txt = "\n> 敞口 ¥%.0f，打板占 %.0f%%（P1+P2+P6）" % (total, float(mix.get("board_pct") or 0))
+    # 🔴 2026-11-25：这里原来硬编码「（P1+P2+P6）」。打板袖的**权威定义**在
+    # `paper_ledger.BOARD_SIDS`（`board_pct` 就是按它算的）—— 标签写死一份，
+    # 常量改了标签就开始撒谎，而且没人会想到去改卡片里的一句话。
+    # 现在从常量派生：口径只有一处。
+    import paper_ledger as pl
+    # 常量取不到就不印括号 —— 不拿一个写死的标签顶上去（那又回到硬编码）。
+    board_label = "+".join(getattr(pl, "BOARD_SIDS", ()) or ())
+    txt = "\n> 敞口 ¥%.0f，打板占 %.0f%%%s" % (
+        total, float(mix.get("board_pct") or 0),
+        "（%s）" % board_label if board_label else "")
     dups = mix.get("dups") or {}
     if dups:
         head = sorted(dups.items(), key=lambda kv: (-len(kv[1]), kv[0]))[:3]
@@ -598,6 +607,33 @@ def build_markdown(det: dict) -> str:
 MAX_RECAP_ROWS = 8
 
 
+def _recap_row(h: dict) -> str:
+    """复盘行：只印**当日触板事实**，不印策略的执行口径。
+
+    🔴 2026-11-25（老大原话「失效的通知完全没必要出现 还影响视觉 我只需要有用的」）：
+    复盘行原来直接复用 `_row()`，行尾带着 `T+1兑现·炸板-5%` —— 那是 P1/P2/P6
+    的**执行计划**，而这三个模式已全部否证（按可成交的「摸板即买」口径收益为负）。
+    卡片自称「当日触板事实」，却每行都挂一条已否证的执行指令，读者只会记住后半句。
+
+    ⇒ 复盘行只留可核验的盘口事实：代码 / 名称 / 现价 / 几板 / 是否一字 / 封单。
+    盘中推荐卡仍用 `_row()`（带策略口径）—— 那里策略就是推荐内容本身，
+    且已被 `mode_card.is_pushable` 限到 `passed`，不冲突。
+    """
+    lim = float(h.get("board_lim") or 0.10)
+    tag = "·20cm" if lim >= 0.15 else ""
+    # 一字与否是盘口事实（开盘就顶死），不属于策略判断，A 格行必须保留。
+    word = " 一字" if not h.get("actionable") else ""
+    # 封单同样只印事实：`seal_tag` 缺失时用金额兜底，两者都缺就**不印这一列**。
+    # ⚠️ 别把这条和 `seal_level` 的「封单0」搞混：后者是 bid1_vol=0 的**真实判断**
+    # （真的没有封单），所以照印；这里管的是「这次没取到」，那就不该编一个 0 出来。
+    seal = str(h.get("seal_tag") or "").strip()
+    if not seal and h.get("seal_amt_wan") is not None:
+        seal = "封单%.0f万" % float(h["seal_amt_wan"])
+    return "%s %s %7.2f %s板%s%s%s" % (
+        h["code"], h.get("name", "")[:4], h["price"], h["board"], tag, word,
+        (" " + seal) if seal else "")
+
+
 def _recap_rows(hits: list, max_rows: int = MAX_RECAP_ROWS) -> list[str]:
     """一栏触板票：按封单金额降序取前 N，其余折成「还有 N 只」。
 
@@ -610,7 +646,7 @@ def _recap_rows(hits: list, max_rows: int = MAX_RECAP_ROWS) -> list[str]:
     小封单的票次日溢价本来就存疑，放在「还有 N 只」里不损失判断依据。
     """
     ordered = sorted(hits, key=lambda h: -(float(h.get("seal_amt_wan") or 0)))
-    rows = [_row(h) for h in ordered[:max_rows]]
+    rows = [_recap_row(h) for h in ordered[:max_rows]]
     if len(ordered) > max_rows:
         rows.append("　 …还有 %d 只（按封单降序取前 %d）"
                     % (len(ordered) - max_rows, max_rows))
@@ -622,7 +658,10 @@ def build_recap(det: dict) -> str:
     b = [h for h in all_hits if h.get("actionable")]
     a = [h for h in all_hits if not h.get("actionable")]
     L = ["## 打板收盘复盘 %s" % datetime.now(CST).strftime("%Y-%m-%d")]
-    L.append("封二板 B格(盘中可排进) %d 只 / 一字 A格(排不进) %d 只"
+    # 🔴 2026-11-25：原写「封二板 B格…」，但行里既有 1 板也有 5 板（`board_now` =
+    # 库内连板数 + 今日再封），标题与数据自相矛盾；而卡片自己的免责句写的是
+    # 「当日触板事实」—— 标题改用同一个词，读者才不会以为这是一张「二板名单」。
+    L.append("今日触板 B格(盘中可排进) %d 只 / 一字 A格(排不进) %d 只"
              % (len(b), len(a)))
     if b:
         L.append("⚪ B格(盘中可排进):")
