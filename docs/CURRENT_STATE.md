@@ -128,7 +128,7 @@
 - 历史积累的 `codex/*` 分支多数对应已关闭/已 squash 的 PR，**不可按 `--merged` 批量删**（全 squash 合并不留祖先链）。逐个以 PR `merged_at` + 内容在 `origin/main` 的对应为准。
 - 2026-11-24 已清理 4 条：`feat/filter-verdict-cli`、`codex/tickflow-personal-operating-system`（功能全在 main，删）、`codex/strategy-watch-workflow`（含未入库的 tickflow roadmap 文档，保留）、`feature/holder-concentration-factor`（#541 负结果实验唯一 git 历史，保留）。另有 `codex/*` 历史分支未动。
 
-**数据诚实性（2026-11-24 起，PR #616–#648 共 31 个）**
+**数据诚实性（2026-11-24 起，PR #616–#649 共 32 个）**
 
 验收口径：任何展示面在「取数失败 / 该日确实为空 / 有数据」三态下必须可区分；
 **刷新失败不得静默沿用旧值**；后端说不可用时必须把它的 `reason` 透出来。
@@ -224,6 +224,14 @@
   有行却一行都用不上 ⇒ 记 `source_health` 错误说明是源侧结构问题。
   前端 `SectorFlow.pct` / `SectorFlowRow.pct` 改 `number | null`，交给已有的
   `formatSignedPct`（null → 「—」）与 `changeClass`（null → 不着色），**页面禁 `pct ?? 0`**。
+- `#649` 板块资金「净流入前列 / 净流出前列」**按位置切片会重叠**：原写法
+  `sectors.slice(0,6)` / `sectors.slice(-6).reverse()`，行数 ≥12 时没问题；一旦少于
+  12 行，同一板块会同时出现在两个榜里 —— 一个**正净额**的板块被标成「资金净流出」。
+  `#648` 起后端会把净额不可用的行整行剔除，数据源部分降级时行数就会变少，这条路径
+  因此变得可达。改 `sectorFlowHeadTail()` **按净额符号分区**（流入榜只收 `net > 0`、
+  流出榜只收 `net < 0`，`net === 0` 两边都不进），顺带修正语义。
+  ⚠️ 原 `marketViewContract.sectorsTopTakesHead` 断言「3 行全进流入榜」，而 fixture 里
+  净额 −9.8 亿的「地产」就在其中 —— **该断言本身在编码这个 bug**，已改为只收 `net > 0`。
 
 防复发守卫：
 - `frontend/src/lib/data-honesty-pages.test.ts`——页面层源码守卫（含接线断言：

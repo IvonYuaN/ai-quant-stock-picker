@@ -5,7 +5,7 @@
 //   2. 涨跌比在分母为 0 时返回 null，不能伪装成 0
 //   3. 行业涨跌幅可能是 "-" 占位串，必须归一成 null 而不是 NaN
 import type { GlobalIndex, IndexQuote, IndustryData, MarketOverview, ShortTermEmotion, TurnoverStock } from "./api";
-import { buildMarketView, marketStripSummary, sectionAvailability, type MarketInput } from "./market-view";
+import { buildMarketView, marketStripSummary, sectionAvailability, sectorFlowHeadTail, type MarketInput } from "./market-view";
 
 const indicesFixture = [
   { name: "上证指数", price: 3210.5, change_pct: 0.82, change_amt: 26.1 },
@@ -161,9 +161,15 @@ export const marketViewContract = {
   breadthKeepsIndependentSourceTimeAndCoverage: full.breadth?.asOf === overviewFixture.sentiment.as_of &&
     full.breadth.total === 4910 && full.breadth.source === overviewFixture.sentiment.source,
 
-  /* ---- 板块资金：头尾各取前列 ---- */
-  sectorsTopTakesHead: full.sectorsTop.length === 3 && full.sectorsTop[0].name === "电池",
+  /* ---- 板块资金：头尾按净额符号分区 ----
+   * 🔴 原来的期望是 `sectorsTop.length === 3`（三行全进流入榜），但那把
+   * **净额 −9.8 亿的「地产」也算进了「资金净流入前列」** —— 断言本身在编码 bug。
+   * 现在只收 `net > 0`：电池 12.5e8 / 银行 2.1e8 进流入榜，地产 −9.8e8 进流出榜。
+   */
+  sectorsTopTakesHead: full.sectorsTop.length === 2 && full.sectorsTop[0].name === "电池",
+  sectorsTopExcludesNegativeNet: full.sectorsTop.every((row) => row.net > 0),
   sectorsBottomIsReversed: full.sectorsBottom[0].name === "地产",
+  sectorsBottomExcludesPositiveNet: full.sectorsBottom.every((row) => row.net < 0),
 
   /* ---- 短线情绪 ---- */
   emotionIsMapped: full.emotion !== null && full.emotion.ztCount === 88,
@@ -343,12 +349,78 @@ export const sectorPctNullContract = {
       { name: "电池", pct: null, net: 12.5e8, inflow: null, outflow: null, firms: 62 },
     ]),
   ).sectors === true,
-  // 前端**不重排**：头尾直接取后端给的降序序列（排序在后端做，那里才知道净额是否可用）
+  // 前端**不重排**：头尾各自保持后端给的降序（排序在后端做，那里才知道净额是否可用）
   sectorsKeepBackendOrder: (() => {
     const view = viewWithSectors([
       { name: "大额", pct: null, net: 9e8, inflow: null, outflow: null, firms: 1 },
-      { name: "小额", pct: null, net: 1e8, inflow: null, outflow: null, firms: 1 },
+      { name: "小额", pct: null, net: -1e8, inflow: null, outflow: null, firms: 1 },
     ]);
     return view.sectorsTop[0].name === "大额" && view.sectorsBottom[0].name === "小额";
+  })(),
+};
+
+/* ==========================================================================
+ * 资金轮动头尾：**按净额符号分区，不按位置切片**
+ *
+ * 原写法 `slice(0,6)` / `slice(-6).reverse()` 在行数 < 12 时会让同一板块同时出现在
+ * 「净流入前列」和「净流出前列」—— 一个正净额的板块被标成资金流出。
+ * 后端会把净额不可用的行整行剔除（#648），数据源部分降级时行数就会少于 12。
+ * ========================================================================== */
+
+function flowRows(netValues: number[]) {
+  return netValues.map((net, index) => ({
+    name: `板块${index}`,
+    pct: null,
+    net,
+    inflow: null,
+    outflow: null,
+    firms: 1,
+  }));
+}
+
+export const sectorFlowHeadTailContract = {
+  // 🔴 核心：任何板块都不能同时出现在两个榜里
+  noOverlapWhenFewerThanTwelve: (() => {
+    const { top, bottom } = sectorFlowHeadTail(flowRows([9, 7, 5, 3, 1, -1, -3, -5, -7, -9]));
+    const names = new Set(top.map((r) => r.name));
+    return bottom.every((r) => !names.has(r.name));
+  })(),
+  // 正净额的板块绝不出现在「净流出前列」
+  inflowNeverInOutflow: (() => {
+    const { bottom } = sectorFlowHeadTail(flowRows([9, 7, 5, 3, 1, -1, -3]));
+    return bottom.every((row) => row.net < 0);
+  })(),
+  outflowNeverInInflow: (() => {
+    const { top } = sectorFlowHeadTail(flowRows([9, 7, 5, 3, 1, -1, -3]));
+    return top.every((row) => row.net > 0);
+  })(),
+  // net === 0 既不是流入也不是流出：两边都不进（不是「流入 0 亿」）
+  zeroNetIsInNeitherList: (() => {
+    const { top, bottom } = sectorFlowHeadTail(flowRows([5, 0, -5]));
+    return !top.some((r) => r.net === 0) && !bottom.some((r) => r.net === 0);
+  })(),
+  // 正常交易日（两侧都够 6 个）行为与原来一致
+  normalDayTakesSixEach: (() => {
+    const nets = [20, 18, 16, 14, 12, 10, 8, 6, -2, -4, -6, -8, -10, -12, -14, -16];
+    const { top, bottom } = sectorFlowHeadTail(flowRows(nets));
+    return top.length === 6 && bottom.length === 6;
+  })(),
+  // 降序：流入榜从大到小，流出榜从最负到较不负
+  inflowDescending: (() => {
+    const { top } = sectorFlowHeadTail(flowRows([20, 18, 16, 14, 12, 10, 8]));
+    return top.every((row, i) => i === 0 || top[i - 1].net >= row.net);
+  })(),
+  outflowMostNegativeFirst: (() => {
+    const { bottom } = sectorFlowHeadTail(flowRows([-2, -4, -6, -8]));
+    return bottom.every((row, i) => i === 0 || bottom[i - 1].net <= row.net);
+  })(),
+  // 只有流入时，流出榜为空而不是重复一遍流入
+  onlyInflowLeavesBottomEmpty: (() => {
+    const { top, bottom } = sectorFlowHeadTail(flowRows([5, 3, 1]));
+    return top.length === 3 && bottom.length === 0;
+  })(),
+  emptyInputGivesEmptyBoth: (() => {
+    const { top, bottom } = sectorFlowHeadTail([]);
+    return top.length === 0 && bottom.length === 0;
   })(),
 };
