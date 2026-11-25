@@ -472,3 +472,20 @@ def test_main_wires_close_result_into_brief():
     src = (Path(sc.__file__)).read_text(encoding="utf-8")
     assert "close_ok = arena_close()" in src, "main 没拿到结算结果"
     assert "_arena_brief(stale=not close_ok)" in src, "结算结果没送到卡片上"
+
+
+def test_push_path_never_uses_ungated_build_markdown():
+    """源码守卫：盘中出口必须走带闸门的 `render_picks_only`，不能是 `build_markdown`。
+
+    🔴 #666：`build_markdown()` / `_row()` **没有 `is_pushable` 闸门** —— 它渲染的
+    `strategy` 里带 `T+1兑现·炸板-X%`，全是 P1/P2/P6 已否证模式的执行口径。
+    谁把它接回推送路径，就会重演 #654 之前的状态：把否证策略当推荐推出去。
+
+    🔴 为什么用源码断言而不是行为断言：`build_markdown` 现在是**活函数**
+    （手工排查会调），不能删；行为断言只能证明「今天的 main 没接它」，
+    不能阻止明天有人改回去。锁源码接线才能防复发。
+    """
+    src = Path(sc.__file__).read_text(encoding="utf-8")
+    body = src[src.index("def main("):]  # 只看 main，不看定义/注释里的同名字符串
+    assert "body = mode_card.render_picks_only(picks)" in body, "盘中出口必须是带闸门的 render_picks_only"
+    assert "build_markdown(" not in body, "把无闸门的 build_markdown 接回推送路径了（#666）"
