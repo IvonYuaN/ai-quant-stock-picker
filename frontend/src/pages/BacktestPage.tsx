@@ -13,9 +13,10 @@ import { changeClass } from "@/lib/format";
 import { api, type PaperArenaPayload } from "@/lib/api";
 import { paperNavOption } from "@/lib/chart-options";
 import { buildDailyView } from "@/lib/daily-view";
-import { sleeveVerdict, unknownExcessCount } from "@/lib/paper-arena-view";
+import { isAsOfStale, sleeveVerdict, unknownExcessCount } from "@/lib/paper-arena-view";
 import { useThemeMode } from "@/lib/theme-mode";
 import { cn } from "@/lib/utils";
+import { shanghaiDate } from "@/lib/operation";
 
 /** 短线影子账户：多个互不相同的策略各一个 ¥1 万纸面账户，纯前向验证。
  *
@@ -84,6 +85,9 @@ function ShortlineArena() {
   // 但页面原来一次都没显示 —— `stale` 要等 5 天才提示，中间 1~4 天用户看到净值
   // 却不知道是哪天的。缺日期时也不写「—」了事，要明说无法判断时点。
   const asOf = arena.as_of?.trim() || "";
+  // 🔴 前端独立防线（#684）：后端可能报 stale=false 但 as_of 已是几天前。
+  // 用页面渲染当天的上海日期粗判，过旧就额外警告，文案说「可能已过期」而非断言无效。
+  const asOfLooksStale = isAsOfStale(asOf, shanghaiDate());
 
   return <section className="aq-section" aria-label="短线影子账户">
     <SectionHeader
@@ -92,6 +96,7 @@ function ShortlineArena() {
       count={`${sleeves.length} 个策略 · ${arena.trading_days ?? 0} 个交易日 · ${settled} 笔已结算`}
     />
     {arena.stale ? <StatePanel tone="warn">runner 最近一次推送是 {(arena.generated_at || "").slice(0, 10) || "多日之前"}，下面的数字停在最后一次收盘；周末与长假属正常。</StatePanel> : null}
+    {!arena.stale && asOfLooksStale ? <StatePanel tone="warn">数据截止 {asOf}，距今已多日；后端未标记过期，但这些数字可能不是最新的，请核对 runner 是否已刷新。周末与长假属正常。</StatePanel> : null}
     <div className="aq-total-grid">
       <div className="aq-total-card"><span>组合虚拟净值</span><b className={changeClass(retPct)}>{pct(retPct)}</b>{settled === 0 ? <small className="aq-note">{arena.positions.length ? `已有 ${arena.positions.length} 个持仓，还没到结算日（T+1 收盘才出结果）` : "尚未建仓，0% 只是起点"}</small> : benchLast == null ? null : <small className="aq-note">全市场等权 {pct(benchLast)}</small>}</div>
       <div className="aq-total-card"><span>超额（组合 − 基准）</span>{settled === 0 ? <><b>尚无成交</b><small className="aq-note">一笔都没结算时，组合与基准的差值不构成证据</small></> : <><b className={changeClass(edge)}>{pct(edge)}</b>{benchLast == null ? null : <small className="aq-note">基准同期 {pct(benchLast)}</small>}</>}</div>

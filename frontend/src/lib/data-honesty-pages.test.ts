@@ -233,6 +233,9 @@ export const backtestDisclosesUnknownExcess =
 export const backtestShowsArenaAsOf = backtest.includes("arena.as_of");
 export const backtestLabelsDataDate = backtest.includes("数据截至");
 export const backtestNamesMissingAsOf = backtest.includes("无法判断这些数字是哪天的");
+/** #684：后端 stall 误报时页面仍要独立警告（不能只信 arena.stale）。 */
+export const backtestHasIndependentStaleGuard =
+  backtest.includes("isAsOfStale(asOf") && backtest.includes("可能不是最新的");
 
 /**
  * M25（「台账有信号但还没结算」被写成「没有信号记录」，2026-11-25）。

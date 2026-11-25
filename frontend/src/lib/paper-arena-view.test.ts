@@ -5,7 +5,7 @@
 // 留成 `None`，这时原实现 `(row.exc_mean ?? 0) > 0` 会把该策略标成「无超额」——
 // 一个确定的否定结论，而同一行的数字列显示的是「—」。
 import type { PaperArenaSleeve } from "./api";
-import { sleeveVerdict, unknownExcessCount } from "./paper-arena-view";
+import { isAsOfStale, sleeveVerdict, unknownExcessCount } from "./paper-arena-view";
 
 type Sleeve = Pick<PaperArenaSleeve, "n" | "exc_mean" | "q_exc">;
 
@@ -64,4 +64,18 @@ export const paperArenaViewContract = {
   unknownCountExcludesUnopened: unknownExcessCount([unopened, survivedRow]) === 0,
   unknownCountExcludesRealZero: unknownExcessCount([zeroExcess, negativeRow]) === 0,
   unknownCountCountsAll: unknownExcessCount([missingExcess, unopened, zeroExcess, missingExcess]) === 2,
+};
+
+/** #684 前端独立陈旧防线：后端 stale=false 也不能掩盖旧的 as_of。 */
+export const asOfStaleContract = {
+  // prod 真实场景：as_of=2026-11-20、今天 2026-11-25 ⇒ 必须判旧
+  prodStaleCase: isAsOfStale("2026-11-20", "2026-11-25"),
+  // 当天/隔天正常
+  freshSameDay: !isAsOfStale("2026-11-25", "2026-11-25"),
+  freshOneDay: !isAsOfStale("2026-11-24", "2026-11-25"),
+  // 4 天自然日（周末 + 周一）不误报
+  weekendNotStale: !isAsOfStale("2026-11-21", "2026-11-25"),
+  // 没有日期不判旧（由「未取得」显式态负责）
+  missingNotStale: !isAsOfStale(null, "2026-11-25"),
+  badFormatNotStale: !isAsOfStale("not-a-date", "2026-11-25"),
 };
