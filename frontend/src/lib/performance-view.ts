@@ -178,6 +178,31 @@ export function normalizePerformance(raw: unknown): PerformanceView {
 }
 
 /**
+ * 策略表为空时的措辞与计数：**「台账有信号但还没结算」≠「没有信号记录」**。
+ *
+ * `performance_bridge.py` 在「台账读到了、也有记录，但没有任何 validated 行」时
+ * 返回 `strategies: []`。页面原来一律写「还没有策略级信号记录」，把「还没结算」
+ * 说成了「没有记录」—— 而 `status_counts` 明明有数，标题还显示 0。
+ *
+ * 两个态必须分开：`total > 0` ⇒ 有信号、缺结算；`total === 0` ⇒ 真的没有记录。
+ */
+export function strategyEmptyNotice(
+  statusCounts: readonly (readonly [string, number])[],
+): { total: number; text: string } {
+  const total = statusCounts.reduce(
+    (sum, [, value]) => sum + (typeof value === "number" && Number.isFinite(value) ? value : 0),
+    0,
+  );
+  if (total > 0) {
+    return {
+      total,
+      text: `台账里有 ${total} 条信号，但还没有已结算结果；命中率与超额要等结算后才算得出。`,
+    };
+  }
+  return { total: 0, text: "还没有策略级信号记录。" };
+}
+
+/**
  * 停滞提示。
  *
  * 这一条的存在理由：**"正在积累"和"已经停止更新"必须能区分开**。

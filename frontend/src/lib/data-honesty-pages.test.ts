@@ -221,3 +221,17 @@ export const backtestUsesSleeveVerdict = backtest.includes("sleeveVerdict(row)")
 export const backtestHasNoExcessNullToZero = !EXCESS_NULL_TO_ZERO.test(backtest);
 export const backtestDisclosesUnknownExcess =
   backtest.includes("unknownExcessCount(sleeves)") && backtest.includes("个策略超额未知，未计入");
+
+/**
+ * M25（「台账有信号但还没结算」被写成「没有信号记录」，2026-11-25）。
+ *
+ * 后端 `performance_payload()` 的 `settled.empty` 分支返回 `strategies: []`，
+ * 但台账里其实有记录（`status_counts` 有数）。页面原来一律写
+ * 「还没有策略级信号记录。」并把 count 渲染成 `0` —— 两处都是确定的否定，
+ * 而真相是「有信号、缺结算」。行为断言在 performance-view.test.ts，这里守接线。
+ */
+export const signalsUsesStrategyEmptyNotice = signalsPageSource.includes("strategyEmptyNotice(");
+export const signalsHasNoBlanketNoRecordsClaim = !signalsPageSource.includes(
+  ">还没有策略级信号记录。<",
+);
+export const signalsSaysUnsettledWhenRecordsExist = signalsPageSource.includes('"未结算"');
