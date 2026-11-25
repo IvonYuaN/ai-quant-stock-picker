@@ -8,6 +8,7 @@ import type { EChartsOption } from "echarts";
 import type { IndustryRowView, LadderRow, SectorFlowRow } from "./market-view";
 import type { ThemeMode } from "./theme-mode";
 import { factorLabel } from "./display-labels";
+import { formatYi } from "./format";
 
 export const UP_COLOR = "#e5484d"; // 红：流入 / 上涨 / 盈利
 export const DOWN_COLOR = "#30a46c"; // 绿：流出 / 下跌 / 亏损
@@ -34,7 +35,10 @@ export function sectorFlowOption(rows: readonly SectorFlowRow[], mode: ThemeMode
     grid: { ...BASE_GRID, left: 4 },
     tooltip: {
       trigger: "axis",
-      valueFormatter: (value) => `${Number(value).toFixed(2)} 亿`,
+      // 🔴 单位自适应：`toFixed(2)` 会把 288 万的净流出写成「0.00 亿」，
+      // 而同一根柱子还涂着流出色 —— 和 `formatYi` 是同一套口径（#653）。
+      // 这里的 value 已经是「亿」，乘回 1e8 交给 `formatYi` 分档。
+      valueFormatter: (value) => formatYi(Number(value) * 1e8),
     },
     xAxis: {
       type: "value",
