@@ -4,10 +4,28 @@
 // 散在各处会出现"同一个数字在不同页精度/颜色不一样"。
 import type { Tone } from "./daily-view";
 
-/** 金额（元）→ 亿，保留 1 位。 */
+/**
+ * 金额（元）→ **按量级自适应**的单位：亿 / 万 / 元。
+ *
+ * 🔴 为什么不固定成「亿」：`toFixed(1)` 会把非零的小额抹成「0.0 亿」，
+ * 而这一列旁边还有红绿配色 —— 颜色说「流出」、数字说「0.0 亿（资金持平）」，
+ * 同一行两个相反结论。实测（2026-11-25 东财 bkzj 554 个概念板块）有 19 个板块
+ * 的主力净额在 0 < |x| < 1000 万元，例如「天津自贸区 -288.3 万」会渲染成
+ * 「-0.0 亿」—— 负号 + 零，本身就是一句自相矛盾的话。
+ *
+ * 分档：`|v| ≥ 1 亿` → 亿（1 位）；`|v| ≥ 1 万` → 万（0 位）；否则 → 元。
+ * **恰好 0 仍给「0.0 亿」**：0 是真零，说「0.0 亿」不失真（这一条保住了既有口径）。
+ *
+ * 名字里的 `Yi` 是历史名，实际单位由量级决定；表头写「成交额 / 净额 / 流通市值」
+ * 不带单位后缀，靠这里自述。
+ */
 export function formatYi(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return "—";
-  return `${(value / 1e8).toFixed(1)} 亿`;
+  if (value === 0) return "0.0 亿";
+  const magnitude = Math.abs(value);
+  if (magnitude >= 1e8) return `${(value / 1e8).toFixed(1)} 亿`;
+  if (magnitude >= 1e4) return `${(value / 1e4).toFixed(0)} 万`;
+  return `${value.toFixed(0)} 元`;
 }
 
 /** 带符号百分比，保留 2 位。 */

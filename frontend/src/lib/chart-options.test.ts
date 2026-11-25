@@ -46,6 +46,8 @@ const industries = [
 ];
 
 const sectorChart = sectorFlowOption(sectors, "dark");
+const sectorTooltip = (sectorChart.tooltip as unknown as { valueFormatter?: (value: number) => string })
+  .valueFormatter;
 const ladderChart = ladderOption(ladder, "dark");
 const industryChart = industryOption(industries, "dark");
 // 影子账户净值：基准第二天故意给 null —— 缺快照那天必须留空，
@@ -68,6 +70,8 @@ export const chartOptionsContract = {
   sectorOutflowIsGreen: firstSeries(sectorChart).data[2].itemStyle?.color === DOWN_COLOR,
   sectorValuesInYi: firstSeries(sectorChart).data[0].value === 12.5,
   sectorToleratesEmpty: firstSeries(sectorFlowOption([], "dark")).data.length === 0,
+  // 提示框单位自适应（#653）：288 万的净流出不能写成「0.00 亿」。
+  sectorTooltipIsUnitAware: sectorTooltip?.(12.5) === "12.5 亿" && sectorTooltip?.(0.02917) === "292 万",
 
   /* ---- 连板梯队 ---- */
   ladderCategoriesUseChinese: (xAxis(ladderChart).data ?? []).join("|") === "2 板|3 板|5 板+",

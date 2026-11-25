@@ -1,12 +1,37 @@
 // 数值格式化与 A 股涨跌配色的契约断言（由 npm test 真正执行）。
 import { changeClass, changeTone, formatAqspTime, formatEvidenceTime, formatMoney, formatRate, formatSignedPct, formatSignedRatio, formatYi } from "./format";
 
+/** 非零金额探针（元）：小额 / 边界 / 亿级，正负都有。 */
+const YI_PROBES = [
+  1, -1, 4_500, -4_500, 10_000, -10_000,
+  2_917_000, -2_883_000, 99_000_000, -99_000_000,
+  1e8, -1e8, 1.5e8, -4.71e8,
+];
+
 export const formatContract = {
   /* ---- 亿：成交额 / 市值 ---- */
   yiConvertsFromYuan: formatYi(1.5e8) === "1.5 亿",
   yiHandlesZero: formatYi(0) === "0.0 亿",
   yiRejectsNull: formatYi(null) === "—",
   yiRejectsNaN: formatYi(Number.NaN) === "—",
+  // 量级自适应（#653）：固定 `toFixed(1)` 会把非零小额抹成「0.0 亿」，
+  // 而同一行还有红绿配色 —— 颜色说「流出」、数字说「持平」，自相矛盾。
+  yiSmallAmountIsWan: formatYi(2_917_000) === "292 万",
+  yiSmallOutflowKeepsMinus: formatYi(-2_883_000) === "-288 万",
+  yiTinyAmountIsYuan: formatYi(-4_500) === "-4500 元",
+  yiJustUnderYiIsWan: formatYi(99_000_000) === "9900 万",
+  yiAtYiBoundary: formatYi(100_000_000) === "1.0 亿",
+  yiNegativeYiBoundary: formatYi(-100_000_000) === "-1.0 亿",
+
+  /* ---- 亿的横切守卫：非零金额不许渲染成「0」 ---- */
+  /**
+   * 🔴 探针覆盖真实分布（东财 bkzj 554 个概念板块里有 19 个主力净额在
+   * 0 < |x| < 1000 万元），既含小额也含边界值。
+   * 断言「非零输入 → 输出不以 0 开头」，比逐个写死期望值更难被绕过。
+   */
+  yiNeverRoundsNonZeroToZero: YI_PROBES.every((v) => !/^-?0(\.0+)?\s/.test(formatYi(v))),
+  yiKeepsSignForEveryMagnitude: YI_PROBES.filter((v) => v < 0).every((v) => formatYi(v).startsWith("-")),
+  yiEveryProbeIsNonZero: YI_PROBES.every((v) => v !== 0),
 
   /* ---- 百分比 ---- */
   signedPctAddsPlus: formatSignedPct(2.5) === "+2.50%",
