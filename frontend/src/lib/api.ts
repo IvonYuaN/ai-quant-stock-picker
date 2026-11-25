@@ -334,6 +334,9 @@ export interface DividendPlanEvent {
 /** 事件日历（pit_cache 只读）。缺缓存 ≠ 没事件，用 has_*_data 区分。 */
 export interface EventCalendarData {
   symbol: string; as_of: string;
+  /** false = 后端整体降级（读失败）；此时 has_*_data 全是 false，不能当「缓存没生成」。 */
+  available?: boolean;
+  reason?: string;
   unlock_horizon_days: number; longhubang_lookback_days: number;
   has_unlock_data: boolean; has_longhubang_data: boolean;
   has_suspend_resume_data?: boolean;

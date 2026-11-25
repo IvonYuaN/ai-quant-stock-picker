@@ -1291,10 +1291,17 @@ def catalyst():
 
 
 def _events_empty_payload(symbol: str) -> dict:
-    """事件日历的 fail-soft 空结构（与正常响应字段一一对应）。"""
+    """事件日历的 fail-soft 空结构（与正常响应字段一一对应）。
+
+    ⚠️ 这里返回的是「**读失败**」的空结构，不是「今天确实没有事件」。
+    必须带 ``available=False`` + ``reason``，否则前端只能看到一堆
+    ``has_*_data=False``，会把「事件面整体读不出来」误诊成「缓存还没生成」。
+    """
     return {
         "symbol": symbol,
         "as_of": "",
+        "available": False,
+        "reason": "事件面读取失败",
         "unlock_horizon_days": 30,
         "longhubang_lookback_days": 5,
         "has_unlock_data": False,
@@ -1369,6 +1376,8 @@ def events(code: str = Query(..., description="6位股票代码")):
             "data": {
                 "symbol": code,
                 "as_of": as_of,
+                "available": True,
+                "reason": "",
                 "unlock_horizon_days": cal.unlock_horizon_days,
                 "longhubang_lookback_days": cal.longhubang_lookback_days,
                 "has_unlock_data": cal.has_unlock_data(),
@@ -1398,8 +1407,11 @@ def events(code: str = Query(..., description="6位股票代码")):
                 ],
             }
         }
-    except Exception:  # noqa: BLE001 — 事件面缺数据不报错，降级为空结构
-        return {"data": _events_empty_payload(code)}
+    except Exception as exc:  # noqa: BLE001 — 事件面缺数据不报错，降级为空结构
+        # 降级但必须可辨识：把真实原因带出去，别让前端把「读失败」当「缓存没生成」
+        payload = _events_empty_payload(code)
+        payload["reason"] = f"事件面读取失败（{type(exc).__name__}: {exc}）"
+        return {"data": payload}
 
 
 @app.get(
