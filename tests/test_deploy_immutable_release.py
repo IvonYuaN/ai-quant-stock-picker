@@ -597,12 +597,12 @@ def test_public_route_curl_failure_propagates(tmp_path):
     env["PATH"] = f"{curl_bin}{os.pathsep}{py_bin}{os.pathsep}{env.get('PATH', '')}"
     bash = """
 export AQSP_DEPLOY_LIB=1
+export AQSP_RUNTIME_PYTHON="%s/py"
 source "%s"
 export CHECK_URL="https://example.invalid"
 export TARGET="prod"
 export SKIP_PUBLIC_CHECK="false"
 export EXPECTED_VARIANT_END="2026-11-24"
-export AQSP_RUNTIME_PYTHON="%s/py"
 RELEASE_DIR="%s"
 # 关键：用 `if ! fn` 调用，和部署主流程一致——这会让 bash 关闭函数内的 errexit。
 if ! check_public_routes; then
@@ -610,7 +610,7 @@ if ! check_public_routes; then
 else
     echo SWALLOWED_RETURNED_ZERO
 fi
-""" % (SCRIPT, py_bin, tmp_path)
+""" % (py_bin, SCRIPT, tmp_path)
     r = subprocess.run(["bash", "-c", bash], capture_output=True, text=True, env=env)
     assert r.returncode == 0, r.stdout + r.stderr
     assert "PROPAGATED_FAILURE" in r.stdout, (
@@ -618,3 +618,121 @@ fi
         + r.stdout + r.stderr
     )
     assert "public route check failed" in (r.stdout + r.stderr), r.stdout + r.stderr
+
+
+def _success_curl_shim(tmp: Path) -> Path:
+    """curl 恒成功，隔离出「只有 python 阶段失败」的场景。"""
+    bindir = tmp / "bin-okcurl"
+    bindir.mkdir(exist_ok=True)
+    curl = bindir / "curl"
+    curl.write_text("#!/bin/sh\nexit 0\n")
+    curl.chmod(0o755)
+    return bindir
+
+
+def _python_shim_failing_on(tmp: Path, marker: str) -> Path:
+    """python shim：命令行含 marker 时返回非 0，否则成功。
+
+    用于精确触发某个子检查阶段失败：
+    - marker="api/aqsp/snapshot"  → snapshot 契约检查
+    - marker="headless_dashboard_check.py" → 无头页面检查
+    """
+    # bindir 名不能含 marker：shim 路径会作为 $0 出现在命令行，
+    # 若路径含 marker，$0 就会被 for 循环匹配到，导致 snapshot 阶段误失败。
+    bindir = tmp / f"bin-pyfail-{len(tmp.name)}-{len(marker)}"
+    bindir.mkdir(exist_ok=True)
+    py = bindir / "py"
+    # 用 grep 判断参数；heredoc 走 stdin，命令行参数含 URL/脚本名，足够区分。
+    py.write_text(
+        "#!/bin/sh\n"
+        f'for arg in "$@"; do\n'
+        f'  case "$arg" in *{marker}*) echo SHIM_FAIL:$arg >&2; exit 9 ;; esac\n'
+        "done\n"
+        "exit 0\n"
+    )
+    py.chmod(0o755)
+    return bindir
+
+
+def _python_shim_failing_on_call(tmp: Path, call_index: int) -> Path:
+    """python shim：第 N 次调用返回非 0（用于 expected_end 解析阶段，参数无特征）。"""
+    bindir = tmp / f"bin-pyfailcall-{call_index}"
+    bindir.mkdir(exist_ok=True)
+    py = bindir / "py"
+    counter = bindir / ".count"
+    py.write_text(
+        "#!/bin/sh\n"
+        f'c=0; [ -f "{counter}" ] && c=$(cat "{counter}")\n'
+        f'c=$((c+1)); echo "$c" > "{counter}"\n'
+        f'[ "$c" -eq {call_index} ] && exit 9\n'
+        "exit 0\n"
+    )
+    py.chmod(0o755)
+    return bindir
+
+
+def _run_public_check(env: dict, py_bin: Path, tmp_path: Path):
+    """按部署主流程的 `if ! fn` 方式调用，返回 CompletedProcess。"""
+    bash = """
+export AQSP_DEPLOY_LIB=1
+export AQSP_RUNTIME_PYTHON="%s/py"
+source "%s"
+export CHECK_URL="https://example.invalid"
+export TARGET="prod"
+export SKIP_PUBLIC_CHECK="false"
+export EXPECTED_VARIANT_END="2026-11-24"
+RELEASE_DIR="%s"
+if ! check_public_routes; then
+    echo PROPAGATED_FAILURE
+else
+    echo SWALLOWED_RETURNED_ZERO
+fi
+""" % (py_bin, SCRIPT, tmp_path)
+    return subprocess.run(["bash", "-c", bash], capture_output=True, text=True, env=env)
+
+
+@requires_script
+@pytest.mark.parametrize(
+    "marker, expect_log, case",
+    [
+        ("api/aqsp/snapshot", "snapshot contract check failed", "snapshot"),
+        ("headless_dashboard_check.py", "public headless check failed", "headless"),
+    ],
+)
+def test_public_route_python_subchecks_propagate(tmp_path, marker, expect_log, case):
+    """#499: snapshot 契约 / headless 子检查失败也必须传播，不能被后续成功命令吞掉。"""
+    curl_bin = _success_curl_shim(tmp_path)
+    py_bin = _python_shim_failing_on(tmp_path, marker)
+    env = dict(os.environ)
+    env["PATH"] = f"{curl_bin}{os.pathsep}{py_bin}{os.pathsep}{env.get('PATH', '')}"
+    r = _run_public_check(env, py_bin, tmp_path)
+    out = r.stdout + r.stderr
+    assert r.returncode == 0, out
+    assert "PROPAGATED_FAILURE" in r.stdout, f"{case}: 失败被吞掉\n{out}"
+    assert expect_log in out, f"{case}: 缺少失败日志\n{out}"
+
+
+@requires_script
+def test_public_route_expected_end_failure_propagates(tmp_path):
+    """#499: expected_variant_end 解析失败必须传播（第 1 次 python 调用失败）。"""
+    # 让 EXPECTED_VARIANT_END 为空，才会走解析分支；第 1 次 python 调用即解析。
+    curl_bin = _success_curl_shim(tmp_path)
+    py_bin = _python_shim_failing_on_call(tmp_path, 1)
+    env = dict(os.environ)
+    env["PATH"] = f"{curl_bin}{os.pathsep}{py_bin}{os.pathsep}{env.get('PATH', '')}"
+    bash = """
+export AQSP_DEPLOY_LIB=1
+export AQSP_RUNTIME_PYTHON="%s/py"
+source "%s"
+export CHECK_URL="https://example.invalid"
+export TARGET="prod"
+export SKIP_PUBLIC_CHECK="false"
+export EXPECTED_VARIANT_END=""
+RELEASE_DIR="%s"
+if ! check_public_routes; then echo PROPAGATED_FAILURE; else echo SWALLOWED_RETURNED_ZERO; fi
+""" % (py_bin, SCRIPT, tmp_path)
+    r = subprocess.run(["bash", "-c", bash], capture_output=True, text=True, env=env)
+    out = r.stdout + r.stderr
+    assert r.returncode == 0, out
+    assert "PROPAGATED_FAILURE" in r.stdout, f"解析失败被吞掉\n{out}"
+    assert "expected_variant_end resolution failed" in out, out
