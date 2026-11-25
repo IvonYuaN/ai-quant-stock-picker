@@ -581,6 +581,30 @@ def build_markdown(det: dict) -> str:
     return "\n".join(L)
 
 
+# 复盘卡每栏最多列几只。与 `mode_card.MAX_ROWS` 同一个理由：
+# 企业微信 markdown 一屏约 20 行，超了要滑屏才看得完，等于没推。
+MAX_RECAP_ROWS = 8
+
+
+def _recap_rows(hits: list, max_rows: int = MAX_RECAP_ROWS) -> list[str]:
+    """一栏触板票：按封单金额降序取前 N，其余折成「还有 N 只」。
+
+    🔴 为什么必须截断：`mode_card.MAX_ROWS` 的注释早就写明「一屏大概 20 行，
+    超了老大要滑屏才看得完，等于没推」。而复盘卡原来把 B 格**全列** ——
+    2026-11-25 实测当天 B 格 **20 只** + A 格 5 只，一条消息 30 行，
+    正好踩在同一个坑上（盘中卡片守了，复盘卡漏了）。
+
+    按封单降序：封单厚度才是「排不排得进 / 封得牢不牢」的关键信息，
+    小封单的票次日溢价本来就存疑，放在「还有 N 只」里不损失判断依据。
+    """
+    ordered = sorted(hits, key=lambda h: -(float(h.get("seal_amt_wan") or 0)))
+    rows = [_row(h) for h in ordered[:max_rows]]
+    if len(ordered) > max_rows:
+        rows.append("　 …还有 %d 只（按封单降序取前 %d）"
+                    % (len(ordered) - max_rows, max_rows))
+    return rows
+
+
 def build_recap(det: dict) -> str:
     all_hits = det.get("all_hits", [])
     b = [h for h in all_hits if h.get("actionable")]
@@ -590,10 +614,10 @@ def build_recap(det: dict) -> str:
              % (len(b), len(a)))
     if b:
         L.append("⚪ B格(盘中可排进):")
-        L.extend(_row(h) for h in b)
+        L.extend(_recap_rows(b))
     if a:
         L.append("⚪ A格:")
-        L.extend(_row(h) for h in a)
+        L.extend(_recap_rows(a))
     if not all_hits:
         L.append("（当日无触板票）")
     # 🔴 11-25：这句原来是**行动建议**（「明日 watchlist = 上述涨停票次日再盯二板；

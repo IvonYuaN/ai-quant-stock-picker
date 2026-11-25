@@ -242,3 +242,26 @@ def test_no_source_uses_the_wrong_bcell_wording():
         offenders = [p.name for p in files
                      if bad in p.read_text(encoding="utf-8", errors="ignore")]
         assert not offenders, "仍在用 %r：%s" % (bad, offenders)
+
+
+def test_recap_truncates_long_board_lists():
+    """20 只票不能全列 —— 一屏约 20 行，超了等于没推。
+
+    2026-11-25 实测当天 B 格 20 只 + A 格 5 只 = 一条 30 行的消息。
+    盘中卡片早就守了 `mode_card.MAX_ROWS`，复盘卡漏了同一个约束。
+    """
+    det = {"all_hits": [_hit("60%04d" % i, 2, True) for i in range(20)]}
+    md = sc.build_recap(det)
+    listed = [ln for ln in md.splitlines() if ln[:6].isdigit()]
+    assert len(listed) == sc.MAX_RECAP_ROWS, "列了 %d 只，上限是 %d" % (
+        len(listed), sc.MAX_RECAP_ROWS)
+    assert "还有 12 只" in md, "截断必须说明还有多少，不能静默丢弃"
+    assert "按封单降序取前 8" in md, "要说清截断口径"
+
+
+def test_recap_orders_rows_by_seal_amount():
+    """封单厚的排前面 —— 它才是「排不排得进 / 封得牢不牢」的判断依据。"""
+    hits = [dict(_hit("600001", 2, True), seal_amt_wan=100.0),
+            dict(_hit("600002", 2, True), seal_amt_wan=9000.0)]
+    md = sc.build_recap({"all_hits": hits})
+    assert md.index("600002") < md.index("600001")
