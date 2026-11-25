@@ -369,25 +369,89 @@ def _sh(cmd: list, env: dict | None = None, timeout: int = 60) -> tuple[int, str
 
 HEALTH_FILE = HERE / "push_health.json"   # 推送健康状态（只写本地，区分"无信号"vs"推送失败"）
 
+# 静默原因码（**固定枚举**）。只允许这些值进 push_health.json ——
+# 自由文本会把这份 JSON 撑成第二份日志，而且没法按类计数。
+#
+# 🔴 2026-11-25：`#654` 让推荐类推送只推已过门模式之后，「今天 0 次推送」
+# 变成常态（当前 0 个模式过门）。而原来的 push_health.json 只有
+# `ok_count`/`fail_count` —— 「非盘中」「无新信号」「有成交但模式都不过门」
+# 三种情况全是 `ok_count:0, fail_count:0`，**完全不可区分**。
+# 老大问「怎么不推了」时，我自己都得去翻 stderr 日志猜。
+SKIP_CODES = {
+    "no_signal": "本轮无新触板、也无新模式信号",
+    "no_fill": "今日无成交",
+    "no_pushable": "有成交，但模式全部未过门/已否证",
+    "duplicate": "内容与上次推送相同",
+    "other": "未归类",
+}
 
-def _record_health(ok: bool, reason: str = "") -> None:
-    """记录每次推送尝试结果。连续失败说明授权/通道坏了；无推送尝试=今天没信号。"""
+
+def _load_health() -> dict:
+    """读当日健康状态；跨天自动重置。
+
+    🔴 跨天重置必须**保留结构、清空计数**（原来直接赋一个新 dict，新增字段
+    会被漏掉 —— `skip_reasons` 就是这么丢的）。
+    """
     try:
         h = json.loads(HEALTH_FILE.read_text(encoding="utf-8")) if HEALTH_FILE.exists() else {}
     except (OSError, json.JSONDecodeError):
         h = {}
     today = datetime.now(CST).strftime("%Y-%m-%d")
-    if h.get("date") != today:                 # 跨天重置当日计数
-        h = {"date": today, "ok_count": 0, "fail_count": 0}
+    if h.get("date") != today:
+        h = {"date": today}
+    h.setdefault("ok_count", 0)
+    h.setdefault("fail_count", 0)
+    h.setdefault("skip_count", 0)
+    h.setdefault("skip_reasons", {})
+    return h
+
+
+def _save_health(h: dict) -> None:
+    HEALTH_FILE.write_text(json.dumps(h, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _record_health(ok: bool, reason: str = "") -> None:
+    """记录每次推送尝试结果。连续失败说明授权/通道坏了；无推送尝试=今天没信号。"""
+    h = _load_health()
     h["last_attempt"] = datetime.now(CST).strftime("%Y-%m-%d %H:%M:%S")
     if ok:
-        h["ok_count"] = h.get("ok_count", 0) + 1
+        h["ok_count"] = int(h.get("ok_count") or 0) + 1
         h["last_ok"] = h["last_attempt"]
         h["last_error"] = ""
     else:
-        h["fail_count"] = h.get("fail_count", 0) + 1
+        h["fail_count"] = int(h.get("fail_count") or 0) + 1
         h["last_error"] = reason[:200]
-    HEALTH_FILE.write_text(json.dumps(h, ensure_ascii=False, indent=2), encoding="utf-8")
+    _save_health(h)
+
+
+def _record_skip(code: str) -> None:
+    """记一次「刻意不推」及其原因。
+
+    🔴 与「推送失败」严格分开：失败说明通道坏了、要人去修；静默说明系统正常、
+    只是没有值得推的东西。混在一起会让 `fail_count` 失去意义 ——
+    一天上百次静默会变成「上百次推送失败」，然后这个数字就没人看了。
+    """
+    if code not in SKIP_CODES:
+        print("[cloud] 未知静默原因码 %r，按 other 记" % code, file=sys.stderr)
+        code = "other"
+    h = _load_health()
+    h["skip_count"] = int(h.get("skip_count") or 0) + 1
+    reasons = dict(h.get("skip_reasons") or {})
+    reasons[code] = int(reasons.get(code) or 0) + 1
+    h["skip_reasons"] = reasons
+    h["last_skip"] = datetime.now(CST).strftime("%Y-%m-%d %H:%M:%S")
+    h["last_skip_reason"] = SKIP_CODES[code]
+    _save_health(h)
+
+
+def _silence_reason(picks: dict) -> str:
+    """推荐卡为空时，区分「今天真没成交」与「成交了但模式都不过门」。
+
+    🔴 两者对老大是同一件事（没收到推送），对排查是完全不同的事：
+    前者说明信号端/成交端没动，后者说明系统正常跑、只是没有过门的策略。
+    """
+    n_fill = sum(len((r or {}).get("bought") or []) for r in (picks or {}).values())
+    return "no_pushable" if n_fill else "no_fill"
 
 
 def wecom_send(md: str) -> bool:
@@ -577,6 +641,16 @@ def main(argv=None) -> int:
             print(HEALTH_FILE.read_text(encoding="utf-8"))
         else:
             print("推送记录：今日无")
+        # 🔴 「今天 0 次推送」本身不是结论 —— 必须说清是哪种静默。
+        h = _load_health()
+        if h.get("skip_reasons"):
+            print("\n今日静默 %d 次：%s" % (
+                h.get("skip_count") or 0,
+                " / ".join("%s %d" % (SKIP_CODES.get(k, k), v)
+                           for k, v in sorted(h["skip_reasons"].items()))))
+        if h.get("fail_count"):
+            print("⚠️ 今日推送失败 %d 次，最近错误：%s" % (
+                h["fail_count"], h.get("last_error") or "（未记录）"))
         # cron 是否真在跑（区分"无信号"vs"系统没运行"）
         log = HERE / "cron.log"
         if log.exists():
@@ -627,6 +701,7 @@ def main(argv=None) -> int:
         md += ledger_line
     else:
         if not det.get("new_hits") and not ran_phases:
+            _record_skip("no_signal")
             print("[cloud] 本轮既无新增触板、也无新模式信号，不推", file=sys.stderr)
             return 0
         # 🔴 2026-11-23 老大点名：「通知太多废话，还是只通知打板其他策略完全没有」。
@@ -640,6 +715,8 @@ def main(argv=None) -> int:
             # 🔴 11-25：卡片只推过门模式（mode_card.PUSHABLE_STATES）。
             # 「不推」必须留下正证据，区分两种情况 —— 否则老大问「怎么没通知了」时，
             # 我自己都分不清是没信号、没成交、还是模式全不过门。
+            code = _silence_reason(picks)
+            _record_skip(code)
             n_fill = sum(len((r or {}).get("bought") or []) for r in picks.values())
             n_ok = sum(1 for s in mode_card.STRATEGIES if mode_card.is_pushable(s))
             if n_fill:
@@ -665,6 +742,7 @@ def main(argv=None) -> int:
     if not go:
         state["n_skipped"] = int(state.get("n_skipped") or 0) + 1
         save_push_state(day, state)
+        _record_skip("duplicate")
         print("[cloud] 跳过推送：%s（今日累计跳过 %d 次）" % (why, state["n_skipped"]),
               file=sys.stderr)
         return 0
