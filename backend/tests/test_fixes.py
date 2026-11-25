@@ -111,11 +111,19 @@ def test_portfolio_add_validation(tmp_pf):
     )
 
 
-def test_portfolio_corrupt_file_returns_empty(tmp_pf):
-    (tmp_pf / "portfolio.json").write_text("{broken json", encoding="utf-8")
+def test_portfolio_corrupt_file_is_reported_not_empty(tmp_pf):
+    """损坏 ≠ 空持仓（旧契约是错的，别改回去）。
+
+    旧行为：`_load()` 把 `JSONDecodeError` 和 `FileNotFoundError` 一起吞成空账本 ⇒
+    界面显示「没有持仓」，而且 `get_portfolio()` 回填名称时会 `_load()` 再
+    `_save()`，一次刷新就把空账本覆盖上去，真实仓位永久丢失。现在必须 500 并说明。
+    """
+    ledger = tmp_pf / "portfolio.json"
+    ledger.write_text("{broken json", encoding="utf-8")
     r = client.get("/api/portfolio")
-    assert r.status_code == 200
-    assert r.json()["data"]["holdings"] == []
+    assert r.status_code == 500, "损坏账本不能回 200 + holdings:[]"
+    assert "不代表你没有持仓" in r.json()["detail"]
+    assert ledger.read_text(encoding="utf-8") == "{broken json", "不得覆盖损坏账本"
 
 
 # ── issue #13：加仓合并成本保留 4 位小数（ETF/基金成本常见 3-4 位） ──
