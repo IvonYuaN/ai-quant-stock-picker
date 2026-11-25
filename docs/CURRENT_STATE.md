@@ -128,7 +128,7 @@
 - 历史积累的 `codex/*` 分支多数对应已关闭/已 squash 的 PR，**不可按 `--merged` 批量删**（全 squash 合并不留祖先链）。逐个以 PR `merged_at` + 内容在 `origin/main` 的对应为准。
 - 2026-11-24 已清理 4 条：`feat/filter-verdict-cli`、`codex/tickflow-personal-operating-system`（功能全在 main，删）、`codex/strategy-watch-workflow`（含未入库的 tickflow roadmap 文档，保留）、`feature/holder-concentration-factor`（#541 负结果实验唯一 git 历史，保留）。另有 `codex/*` 历史分支未动。
 
-**数据诚实性（2026-11-24 起，PR #616–#645 共 28 个）**
+**数据诚实性（2026-11-24 起，PR #616–#646 共 29 个）**
 
 验收口径：任何展示面在「取数失败 / 该日确实为空 / 有数据」三态下必须可区分；
 **刷新失败不得静默沿用旧值**；后端说不可用时必须把它的 `reason` 透出来。
@@ -201,6 +201,15 @@
   保持 6 个调用点不变。
   ⚠️ **反向验证的时区陷阱**：去掉 `timeZone` 后在本机（`TZ=Asia/Shanghai`）测试**全绿**，
   只有 `TZ=UTC npm test` 才转红 —— 时区类断言必须在 UTC 下复跑。
+- `#646` 收评 6 段把「读失败」写成「还没生成」：6 个 `build_*_section` 在
+  **文件不存在 / 读失败 / 表头残缺 / 读到了但没可用行**四种情况下一律 `return ""`，
+  端点再折成 `available: false`，面板只能猜一句「盘后预载未落盘或数据源缺缓存」
+  —— 误诊比不诊断更糟，它把「文件坏了 / 权限不对 / 磁盘满」引向了「等下一次调度」。
+  builder 加 keyword-only out-param `diagnostics`（不传则零副作用，返回值仍是 `str`，
+  上百处调用与测试不受影响）落 `SECTION_OK/MISSING/UNREADABLE/MALFORMED/EMPTY`；
+  端点透出 `state`+`reason`，非 `ok` 必有原因；前端 `sectionGapCopy()` 按五态取徽标与
+  说明（未生成 / 读取失败 / 产物残缺 / 无内容 / 状态未知），`allSectionsGapNotice()`
+  汇总时优先点名故障。老后端没有 `state` ⇒ `unknown`，**不猜成 `missing`**。
 
 防复发守卫：
 - `frontend/src/lib/data-honesty-pages.test.ts`——页面层源码守卫（含接线断言：
@@ -210,7 +219,11 @@
   （`settleSection` / `topCandidateScore` / `marketRiskStatus` / `filterVerdictFallback` /
   `shouldShowRefreshWarning` / `sidebarDataStatus` / `eventsAvailability`），比在 JSX 里堆 `??` 可测得多。
 - 后端降级路径**必须带可辨识 `reason`**，且要有「遍历所有降级分支断言无空 reason」的测试
-  （`test_ic_dual_verdict_endpoint.py::test_every_unavailable_response_carries_reason`）。
+  （`test_ic_dual_verdict_endpoint.py::test_every_unavailable_response_carries_reason`、
+  `test_closing_review_section_state.py::test_every_non_ok_state_carries_a_reason`）。
+- 后端 fail-soft 的 builder 若要区分「为什么没数据」，用 **keyword-only `diagnostics`
+  out-param**（`build_*_section(..., diagnostics=dict)`），**不要改返回值类型** ——
+  返回值被上游渲染与上百处测试当 `str` 消费，改类型会牵连一整片；out-param 不传即零副作用。
 
 🔴 已核实**不是**缺口（勿重复排查）：
 - `frontend/src/data/sectors.json` 的 17 个 `verified:false` 空骨架——前端零 import。

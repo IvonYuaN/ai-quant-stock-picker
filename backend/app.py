@@ -3141,6 +3141,9 @@ def ic_dual_verdict_endpoint():
 - **红线**：只读展示，各段 builder 绝不写回打分/排序/下单。
 - **fail-soft**：任一段缺数据/读失败/表头残缺 ⇒ 该段 `available=false`、`markdown` 空，
   整端点仍 200，绝不 500。
+- **段状态可分辨**：每段另带 `state` ∈ {`ok`, `missing`, `unreadable`, `malformed`,
+  `empty`} 与 `reason`。**失败（`unreadable`）≠ 没落盘（`missing`）≠ 没内容
+  （`empty`）**，三者对用户的处置动作不同，不能共用一句「暂无数据」。
 - **口径**：市场级（全市场 pit_cache），区别于 `/api/events` 等单票级端点；
   前端据此做收评日报卡片流。
 """,
@@ -3175,11 +3178,32 @@ def aqsp_closing_review_endpoint():
     ]
     sections = []
     for key, title, builder in spec:
+        # 🔴 每段都要说清「为什么没数据」：失败 ≠ 没落盘 ≠ 没内容。
+        # 原来这里 `except Exception: md = ""` 连异常对象都不留，于是「读失败」
+        # 与「调度还没回流」在响应里完全一样，前端只能猜一句「盘后预载未落盘
+        # 或数据源缺缓存」—— 把故障写成「还没生成」，用户会去等下一次调度。
+        diag: dict[str, str] = {}
         try:
-            md = builder() or ""
-        except Exception:  # noqa: BLE001 — 单段失败不拖垮整端点（fail-soft）
+            md = builder(diagnostics=diag) or ""
+        except Exception as exc:  # noqa: BLE001 — 单段失败不拖垮整端点（fail-soft）
             md = ""
+            diag = {
+                "state": "unreadable",
+                "reason": f"段构建异常：{type(exc).__name__}: {exc}",
+            }
+        state = diag.get("state") or ("ok" if md.strip() else "empty")
+        reason = diag.get("reason") or ""
+        if state != "ok" and not reason:
+            # 兜底：非 ok 必须带原因，否则等于又给了一句「不知道」。
+            reason = "该段没有返回数据，且未说明原因"
         sections.append(
-            {"key": key, "title": title, "markdown": md, "available": bool(md.strip())}
+            {
+                "key": key,
+                "title": title,
+                "markdown": md,
+                "available": bool(md.strip()),
+                "state": state,
+                "reason": reason,
+            }
         )
     return {"data": {"as_of": as_of, "sections": sections}}
