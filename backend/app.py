@@ -113,6 +113,13 @@ A 股数据层 HTTP 接口，提供行情、财务、资讯、持仓管理及量
     ],
 )
 
+
+@app.exception_handler(pf.PortfolioCorrupt)
+def _portfolio_corrupt_handler(request: Request, exc: pf.PortfolioCorrupt) -> JSONResponse:
+    """持仓账本损坏统一回 500 并带上原文——绝不能让任何端点把它渲染成「0 持仓」。"""
+    return JSONResponse(status_code=500, content={"detail": str(exc)})
+
+
 # 每半小时后台刷新持仓数据（仅本地/私有模式：单用户，tenant 恒为 local）。
 # 公网/鉴权模式（设了 VR_API_KEY）下多用户各自有独立租户目录，全局调度器无法
 # 靶向单个用户，关掉它，改由前端「手动刷新」按需重算盈亏。
@@ -515,6 +522,8 @@ def portfolio_get():
     """持仓 + 实时盈亏（浮动盈亏红涨绿跌）。"""
     try:
         return {"data": pf.get_portfolio()}
+    except pf.PortfolioCorrupt:
+        raise  # 交给统一处理器：账本损坏 ≠ 读取异常，更 ≠ 0 持仓
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"持仓读取异常：{e}") from e
 
@@ -818,6 +827,8 @@ def portfolio_refresh():
     """手动刷新：立即重拉行情算盈亏。"""
     try:
         return {"data": pf.get_portfolio()}
+    except pf.PortfolioCorrupt:
+        raise  # 同上：账本损坏必须显式报出来
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"刷新失败：{e}") from e
 
