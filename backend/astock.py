@@ -1107,6 +1107,33 @@ def stock_fund_flow_120d(code: str) -> list[dict]:
     return rows
 
 
+def _billboard_wan(v) -> float | None:
+    """东财龙虎榜金额（元）→ 万元；缺失/非数/非有限一律 `None`（= 未披露）。
+
+    🔴 实测 2026-11-24：可转债 `123283` 的 `TURNOVERRATE` 是 `None`（东财对部分标的
+    不给该列）。原写法 `(v or 0)` 会把它写成「换手率 0.00%」—— 上了龙虎榜的票
+    换手率不可能是 0，那是把「未披露」渲染成「没有」。
+    """
+    num = _numf(v)
+    if num is None:
+        return None
+    num = float(num)
+    if not math.isfinite(num):
+        return None
+    return round(num / 10000, 1)
+
+
+def _billboard_pct(v) -> float | None:
+    """东财百分比列 → `float | None`（同上：缺失就是 `None`，不折 0）。"""
+    num = _numf(v)
+    if num is None:
+        return None
+    num = float(num)
+    if not math.isfinite(num):
+        return None
+    return round(num, 2)
+
+
 def dragon_tiger_board(
     code: str, trade_date: str | None = None, look_back: int = 30
 ) -> dict:
@@ -1128,8 +1155,9 @@ def dragon_tiger_board(
             {
                 "date": str(r.get("TRADE_DATE", ""))[:10],
                 "reason": r.get("EXPLANATION", ""),
-                "net_buy": round((r.get("BILLBOARD_NET_AMT") or 0) / 10000, 1),  # 万元
-                "turnover": round(float(r.get("TURNOVERRATE") or 0), 2),
+                # 万元；`None` = 东财未给该列，不是「净买 0」
+                "net_buy": _billboard_wan(r.get("BILLBOARD_NET_AMT")),
+                "turnover": _billboard_pct(r.get("TURNOVERRATE")),
             }
         )
 
