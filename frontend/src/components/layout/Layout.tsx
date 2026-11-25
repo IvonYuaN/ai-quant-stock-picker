@@ -3,6 +3,7 @@ import { Link, Outlet, useLocation } from "react-router-dom";
 import { Download, LineChart, Moon, PanelLeftClose, PanelLeftOpen, Search, Sun, Upload, BellRing, Ellipsis, SquarePen, X } from "lucide-react";
 import { Toaster, toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { sidebarDataStatus } from "@/lib/data-status";
 import { NAV_LINES, PRIMARY_LINE, type NavItem } from "@/lib/ia";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import { useAlertOpenCount } from "@/hooks/useAlertOpenCount";
@@ -75,8 +76,9 @@ function WorkspaceLayout() {
   const researchDate = new URLSearchParams(search).get("date");
   const navHref = (path: string) => researchDate ? `${path}?date=${encodeURIComponent(researchDate)}` : path;
   const { dark, toggle } = useDarkMode();
-  const { data, loading } = useAqspSnapshot();
+  const { data, loading, error } = useAqspSnapshot();
   const { openCount: openAlerts, refetch: refetchAlerts } = useAlertOpenCount();
+  const status = sidebarDataStatus({ loading, hasData: Boolean(data), error });
   const [collapsed, setCollapsed] = useState(
     () => readLocalPreference("aqsp-sidebar") === "collapsed",
   );
@@ -265,14 +267,11 @@ function WorkspaceLayout() {
               {dark ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
               {!collapsed ? <span>{dark ? "亮色" : "暗色"}</span> : null}
             </button>
-            <span className="aq-data-status" title="AQSP 数据状态">
-              <span
-                className={cn(
-                  "aq-dot",
-                  loading ? "aq-dot-loading" : data ? "aq-dot-ready" : "aq-dot-empty",
-                )}
-              />
-              {!collapsed ? <span>{loading ? "读取中" : data ? "数据已接入" : "暂无数据"}</span> : null}
+            {/* 四态：读取中 / 读取失败 / 数据已接入 / 暂无数据。失败不得说成「暂无数据」——
+                这是全站唯一的全局健康指示点，把故障说成没数据等于把提示变成噪音。 */}
+            <span className="aq-data-status" title={`AQSP 数据状态：${status.label}`}>
+              <span className={status.dotClass} aria-hidden="true" />
+              {!collapsed ? <span role={status.tone === "error" ? "alert" : undefined}>{status.label}</span> : null}
             </span>
           </div>
 

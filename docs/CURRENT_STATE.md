@@ -128,11 +128,49 @@
 - 历史积累的 `codex/*` 分支多数对应已关闭/已 squash 的 PR，**不可按 `--merged` 批量删**（全 squash 合并不留祖先链）。逐个以 PR `merged_at` + 内容在 `origin/main` 的对应为准。
 - 2026-11-24 已清理 4 条：`feat/filter-verdict-cli`、`codex/tickflow-personal-operating-system`（功能全在 main，删）、`codex/strategy-watch-workflow`（含未入库的 tickflow roadmap 文档，保留）、`feature/holder-concentration-factor`（#541 负结果实验唯一 git 历史，保留）。另有 `codex/*` 历史分支未动。
 
-**数据诚实性（2026-11-24，PR #616–#619）**
-- 前端缺数兜底已系统治理一轮：`buildEmotion`（fail-closed）、海外指数涨跌幅染色、未结算信号收益染色、市场风险条缺数——统一复用 `changeClass` / `formatSignedRatio`，缺数一律显式「—」或整块 unavailable，不渲染成 0/假方向。
-- 🔴 `frontend/src/data/sectors.json` 有 17 个 `verified:false` 空 nodes 骨架，但**前端无任何代码 import**（2026-11-24 grep 0 命中）——残留数据，不是活跃展示面，勿当缺口改。
-- 后端降级多数已有 `available=false` + reason（`backend/app.py:2345/2507/2958` 等），机制健康；薄弱点历史上在前端，已治理一轮。
-- 验证方法：grep `?? 0` 展示面 → 三重验证（类型可空 + 后端契约 + 活跃展示）→ 复用现成 helper → 反向验证（临时破坏实现看测试红不红）→ 独立 PR。已靠此拦下 9+ 伪缺口。
+**数据诚实性（2026-11-24 起，PR #616–#631 共 14 个）**
+
+验收口径：任何展示面在「取数失败 / 该日确实为空 / 有数据」三态下必须可区分；
+**刷新失败不得静默沿用旧值**；后端说不可用时必须把它的 `reason` 透出来。
+
+已治理（按 PR 顺序）：
+- `#616` `buildEmotion` fail-closed：6 个 count 任一缺失/非法 ⇒ 整块 unavailable，不渲染「涨停 0 家」。
+- `#617` 海外指数涨跌幅缺数 → `changeClass(null)` 留空样式 + 「—」，不染成「涨」。
+- `#618` 未结算信号收益缺数 → 同上，不显示成盈利。
+- `#619` 市场风险条缺数 → 新增 `formatSignedRatio`，不显示成「零风险」。
+- `#627` 指数页两段取数**各自结算**（`safe.ts:settleSection`）：原来只有「两段都失败」才报错，
+  单段失败会停在「正在读取…」永远转圈且吞掉原因。同 PR 修 KPI「最高 0.0 分」
+  （`daily-view.ts:topCandidateScore`，全缺分返回 `null` → 「最高分未取得」）。
+- `#628` 策略页市场面四态（`market-risk-status.ts`）：原来把「正在读 / 请求失败 /
+  后端 `available:false`」折成一句「暂无数据」，丢掉了后端给的
+  「样本不足（需 ≥65 个交易日且 ≥300 只票）」。同 PR 统一 `趋势20/广度/回撤252`
+  走 `formatSignedRatio`/`formatRate`（与 M4 同口径）。
+- `#629` 筛选器判读三态（`filter-verdict-status.ts`）：`.catch(() => {})` 把「读取失败」
+  误诊成「runner 工件未就绪」——误诊比不诊断更糟，会把用户引去查 runner。
+- `#630` 六页刷新失败提示（`refresh-warning.ts` + `SnapshotRefreshWarning`）：
+  provider 每 60s 轮询且刻意不清空 data，页面原来只处理 `error && !data`，
+  刷新失败时静默沿用旧快照。
+- `#631` 后端 `ic-dual-verdict` 降级补 `reason`：四种「没有数」（未回流 / 读失败 /
+  按龄陈旧 / 源库冻死）原来完全不可区分，且读失败时 `stale=False` 是假陈述。
+
+防复发守卫：
+- `frontend/src/lib/data-honesty-pages.test.ts`——页面层源码守卫（含接线断言：
+  6 页必须挂 `SnapshotRefreshWarning`、不许页面内联重复文案、候选清单非空前置）。
+- 三态/四态一律建模成 lib 层 discriminated union 再让页面消费，断言写在这些纯函数上
+  （`settleSection` / `topCandidateScore` / `marketRiskStatus` / `filterVerdictFallback` /
+  `shouldShowRefreshWarning` / `sidebarDataStatus`），比在 JSX 里堆 `??` 可测得多。
+
+🔴 已核实**不是**缺口（勿重复排查）：
+- `frontend/src/data/sectors.json` 的 17 个 `verified:false` 空骨架——前端零 import。
+- `chart-options.ts` 的 `?? 0`——在 `.filter(changePct != null)` 之后的 TS 收窄。
+- `PositionActionPlan` 的 `scenario.realized_pnl?.toFixed()`——`position_action_plan.py:143`
+  限定 `choice ∈ {reduce, t_watch}`，`realized_pnl` 只在 `reduce` 有值，`t_watch` 已被三元短路 ⇒ 不可达。
+- `AlertEvent.pnl_pct` 的 `asNumber` 兜 0——后端 `SellReminder.pnl_pct` 必填 float，不可达。
+- `buildBreadth` 的 `s.flat ?? 0` / `industryTotal ?? 0`——前一行已严格校验 / 仅用于「是否加后缀」。
+
+方法：grep `?? 0` 展示面 → 三重验证（类型可空 + 后端契约 + **可达性**）→ 复用现成 helper →
+反向验证（临时破坏实现看测试红不红，破坏方式须「语义坏但类型合法」）→ 独立 PR。
+已靠「可达性验证」拦下 9+ 伪缺口。
 
 **`outputs/`（阶段产物）**
 - 属本地工作区产物，`outputs/` 已被 `.gitignore`；不在仓库历史中，按需本地清理即可。
