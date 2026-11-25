@@ -12,6 +12,7 @@ import { MarketRiskBanner } from "@/components/aqsp/MarketRiskBanner";
 import { cn } from "@/lib/utils";
 import {
   buildDailyView,
+  topCandidateScore,
   type DailyView,
 } from "@/lib/daily-view";
 import { formatResearchDate } from "@/lib/research-view";
@@ -208,9 +209,11 @@ function PersistentBlock({ view }: { view: DailyView }) {
 
 /** 顶部 KPI 数据块：候选 / 门禁 / 研究链 / 覆盖 / 消息，一眼可读。 */
 function KpiRow({ view }: { view: DailyView }) {
-  const top = view.candidates.reduce((max, row) => Math.max(max, row.score ?? 0), 0);
+  // 🔴 不能把缺分先兜成 0 再取 max：候选行缺分时那会渲染成「最高 0.0 分」，
+  // 而候选表里同一行显示的是「—」。取不到就明说取不到。
+  const top = topCandidateScore(view.candidates);
   const tiles: Array<{ label: string; value: string; sub?: string; tone?: "ok" | "warn" | "neutral" }> = [
-    { label: "候选", value: String(view.candidates.length), sub: view.candidates.length ? `最高 ${top.toFixed(1)} 分` : "今日无标的", tone: view.candidates.length ? "ok" : "neutral" },
+    { label: "候选", value: String(view.candidates.length), sub: view.candidates.length ? (top === null ? "最高分未取得" : `最高 ${top.toFixed(1)} 分`) : "今日无标的", tone: view.candidates.length ? "ok" : "neutral" },
     // 门禁 / 研究链：这里只给状态词，展开的原因放在结论区，避免同一句话出现两遍。
     { label: "门禁", value: view.gate.label, tone: view.gate.tone },
     { label: "研究链", value: view.chain.label, tone: view.chain.tone },

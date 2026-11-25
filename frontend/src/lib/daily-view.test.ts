@@ -13,6 +13,7 @@ import {
   resolveTodaySection,
   symbolNames,
   TODAY_SECTION_IDS,
+  topCandidateScore,
 } from "./daily-view";
 
 export const dailyViewFixture = {
@@ -282,4 +283,17 @@ export const dailyViewContract = {
   symbolNamesJoinsCodeAndName:
     symbolNames(["300750"], [{ symbol: "300750", display_name: "300750 300750 宁德时代" }]) ===
     "300750 宁德时代",
+
+  /* ---- topCandidateScore：缺分不兜 0（与候选表 scoreText 的「—」口径一致）---- */
+  topScorePicksMaximum: topCandidateScore([{ score: 61.2 }, { score: 88.5 }, { score: 70 }]) === 88.5,
+  topScoreOfSingle: topCandidateScore([{ score: 42 }]) === 42,
+  topScoreEmptyIsNull: topCandidateScore([]) === null,
+  // 关键：全部缺分时必须 null，不能是 0 —— 否则 KPI 卡会写「最高 0.0 分」
+  topScoreAllMissingIsNull:
+    topCandidateScore([{ score: Number.NaN }, { score: undefined as unknown as number }]) === null,
+  topScoreIgnoresMissingRows:
+    topCandidateScore([{ score: Number.NaN }, { score: 55 }]) === 55,
+  // 真的 0 分是有效分数，必须与「缺分」区分开
+  topScoreKeepsRealZero: topCandidateScore([{ score: 0 }]) === 0,
+  topScoreInfinityIgnored: topCandidateScore([{ score: Number.POSITIVE_INFINITY }, { score: 3 }]) === 3,
 };

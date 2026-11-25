@@ -66,3 +66,33 @@ export const riskUsesFormatRate = risk.includes("formatRate(risk.breadth)");
 const EMOTION_NULL_FALLBACK = /view\.emotion\s*\?\?|view\.emotion\s*\|\|/;
 export const marketEmotionEarlyReturnsOnNull = /if\s*\(!e\)\s*return\s*null/.test(market);
 export const marketEmotionHasNoNullFallback = !EMOTION_NULL_FALLBACK.test(market);
+
+/**
+ * M10（IndicesPage 分段失败态，2026-11-25）：一段取数失败不得让页面永远停在「正在读取」。
+ *
+ * 原实现 `if (a.status === "rejected" && b.status === "rejected") setError(...)`：
+ * 单段失败时该段 state 停在 null ⇒ 渲染成 LoadingState 转圈到天荒地老，原因还被吞。
+ * 现在每段走 `settleSection`，失败段立刻出 StatePanel。
+ *
+ * 反向验证过：把 `settleSection(a, ...)` 改回 `if (a.status === "fulfilled") setIndices(a.value ?? [])`，
+ * 下面两条断言同时转红。行为断言在 safe.test.ts（settleSection 三态），这里只守页面接线。
+ */
+const BOTH_MUST_FAIL = /status\s*===\s*"rejected"\s*&&\s*b\.status\s*===\s*"rejected"/;
+export const indicesSettlesEachSectionIndependently =
+  indices.includes("settleSection(a,") && indices.includes("settleSection(b,");
+export const indicesHasNoBothMustFailGuard = !BOTH_MUST_FAIL.test(indices);
+export const indicesRendersFailedSectionNotLoading =
+  indices.includes('indices?.state === "failed"') && indices.includes('global?.state === "failed"');
+
+/**
+ * M11（KPI 最高分，2026-11-25）：候选行缺分时不得渲染「最高 0.0 分」。
+ *
+ * 原实现 `view.candidates.reduce((max, row) => Math.max(max, row.score ?? 0), 0)`：
+ * 缺分被兜成 0 后取 max，KPI 写「最高 0.0 分」，而候选表同一行写「—」——同一批数据两处相反。
+ * 行为断言在 daily-view.test.ts（topCandidateScore），这里只守组件真的用了它。
+ */
+const SCORE_NULL_TO_ZERO = /score\s*\?\?\s*0/;
+const today = pageSource("src/components/aqsp/TodayWorkspace.tsx");
+export const todayUsesTopCandidateScore = today.includes("topCandidateScore(view.candidates)");
+export const todayHasNoScoreNullToZero = !SCORE_NULL_TO_ZERO.test(today);
+export const todaySaysScoreMissingWhenUnknown = today.includes("最高分未取得");

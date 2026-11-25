@@ -239,6 +239,23 @@ export function symbolNames(
 }
 
 /**
+ * 候选最高分；**没有任何一行给出有限分数时返回 null**，绝不兜成 0。
+ *
+ * 为什么必须返回 null：KPI 卡片原来写 `reduce((max, row) => Math.max(max, row.score ?? 0), 0)`，
+ * 当候选行缺 score（后端部分载荷）时整块显示「最高 0.0 分」——而同一批候选在候选表里
+ * 逐行显示的是「—」。同一个数字在两处给出相反说法，且 0.0 分是编出来的。
+ * 与 `CandidateRow.scoreText` 的 `Number.isFinite` 口径保持一致。
+ */
+export function topCandidateScore(rows: readonly Pick<CandidateRow, "score">[]): number | null {
+  let top: number | null = null;
+  for (const row of rows) {
+    if (!Number.isFinite(row.score)) continue;
+    if (top === null || row.score > top) top = row.score;
+  }
+  return top;
+}
+
+/**
  * 门禁状态的唯一判定入口。
  * 先走 research-view 的 gatePresentation 得到分支，再只在这里做一次文案映射。
  */
