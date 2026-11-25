@@ -128,7 +128,7 @@
 - 历史积累的 `codex/*` 分支多数对应已关闭/已 squash 的 PR，**不可按 `--merged` 批量删**（全 squash 合并不留祖先链）。逐个以 PR `merged_at` + 内容在 `origin/main` 的对应为准。
 - 2026-11-24 已清理 4 条：`feat/filter-verdict-cli`、`codex/tickflow-personal-operating-system`（功能全在 main，删）、`codex/strategy-watch-workflow`（含未入库的 tickflow roadmap 文档，保留）、`feature/holder-concentration-factor`（#541 负结果实验唯一 git 历史，保留）。另有 `codex/*` 历史分支未动。
 
-**数据诚实性（2026-11-24 起，PR #616–#631 共 14 个）**
+**数据诚实性（2026-11-24 起，PR #616–#636 共 21 个）**
 
 验收口径：任何展示面在「取数失败 / 该日确实为空 / 有数据」三态下必须可区分；
 **刷新失败不得静默沿用旧值**；后端说不可用时必须把它的 `reason` 透出来。
@@ -152,13 +152,29 @@
   刷新失败时静默沿用旧快照。
 - `#631` 后端 `ic-dual-verdict` 降级补 `reason`：四种「没有数」（未回流 / 读失败 /
   按龄陈旧 / 源库冻死）原来完全不可区分，且读失败时 `stale=False` 是假陈述。
+- `#633` 研报页下载/删除失败「什么都不发生」（无 `.catch` 的裸 promise）：改具名 handler +
+  删除失败重新读列表核对。
+- `#634` 研报**索引**损坏被当成「没有研报」：`_load_index` 把 `JSONDecodeError` 与
+  「文件不存在」一起吞成 `[]`，下一次上传会把空列表写回索引 ⇒ 旧研报全部失联。
+  新增 `IndexUnreadable`（→500，文案含「不代表没有研报」）；`save_report` 改为
+  先读索引再落盘；`delete_report` 删不掉时**不动索引**并抛错。
+- `#635` 持仓**账本**损坏被当成「0 持仓」：`portfolio._load` 同样吞 `JSONDecodeError`，
+  而 `get_portfolio()` 回填名称时会 `_load()`+`_save()` ⇒ **一次普通行情刷新**就把空账本
+  覆盖掉真实仓位（数据丢失级）。新增 `PortfolioCorrupt` fail-closed + 全局 500 处理器；
+  刻意不自动改名（自动改名会让下一次读取变静默空账本）。
+- `#636` 事件面**读失败**被误诊成「缓存没生成」：`/api/events` fail-soft 回 200 + 空结构，
+  而空结构只有 `has_*_data:false`。新增 `available`/`reason` + `eventsAvailability()`；
+  缺缓存仍标 `available:true`（端点读成功了）。同 PR 修两处「失败后仍说暂无/正在读取」。
 
 防复发守卫：
 - `frontend/src/lib/data-honesty-pages.test.ts`——页面层源码守卫（含接线断言：
-  6 页必须挂 `SnapshotRefreshWarning`、不许页面内联重复文案、候选清单非空前置）。
+  6 页必须挂 `SnapshotRefreshWarning`、不许页面内联重复文案、候选清单非空前置、
+  事件面空态必须被 `failed` 门槛拦住）。
 - 三态/四态一律建模成 lib 层 discriminated union 再让页面消费，断言写在这些纯函数上
   （`settleSection` / `topCandidateScore` / `marketRiskStatus` / `filterVerdictFallback` /
-  `shouldShowRefreshWarning` / `sidebarDataStatus`），比在 JSX 里堆 `??` 可测得多。
+  `shouldShowRefreshWarning` / `sidebarDataStatus` / `eventsAvailability`），比在 JSX 里堆 `??` 可测得多。
+- 后端降级路径**必须带可辨识 `reason`**，且要有「遍历所有降级分支断言无空 reason」的测试
+  （`test_ic_dual_verdict_endpoint.py::test_every_unavailable_response_carries_reason`）。
 
 🔴 已核实**不是**缺口（勿重复排查）：
 - `frontend/src/data/sectors.json` 的 17 个 `verified:false` 空骨架——前端零 import。
@@ -167,6 +183,14 @@
   限定 `choice ∈ {reduce, t_watch}`，`realized_pnl` 只在 `reduce` 有值，`t_watch` 已被三元短路 ⇒ 不可达。
 - `AlertEvent.pnl_pct` 的 `asNumber` 兜 0——后端 `SellReminder.pnl_pct` 必填 float，不可达。
 - `buildBreadth` 的 `s.flat ?? 0` / `industryTotal ?? 0`——前一行已严格校验 / 仅用于「是否加后缀」。
+- `backend/astock.py:individual_info` 双源全失败返回 `{}`——`/api/info` 前端零调用（不可达）。
+- `backend/astock.py:kline` 备源失败返回 `[]`——`/api/kline` 前端零调用（不可达）。
+- `backend/market.py:_write_cache` / `_refresh_in_background` 静默失败——缓存写失败只会导致
+  下次重算；SWR 旧值语义由下游时间戳承担，属有意设计。
+- `backend/cli_runtime.py:_pump` 读线程异常后放 EOF 哨兵——随后 `proc.wait` 会拿到退出码，
+  非零必抛；且该层不直接面向展示。
+- `backend/alert_events.py` / `backend/watchlist.py` 的损坏处理——**已是对的范式**：
+  另存 `.corrupt` 保留现场后再返回空。
 
 方法：grep `?? 0` 展示面 → 三重验证（类型可空 + 后端契约 + **可达性**）→ 复用现成 helper →
 反向验证（临时破坏实现看测试红不红，破坏方式须「语义坏但类型合法」）→ 独立 PR。

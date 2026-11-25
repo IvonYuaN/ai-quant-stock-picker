@@ -174,3 +174,16 @@ export const observationEmptyStateDistinguishesError =
 
 const alertInbox = pageSource("src/components/aqsp/AlertInbox.tsx");
 export const alertHeaderDistinguishesError = alertInbox.includes("提醒数量未知");
+
+/**
+ * M21（信号页把「没拿到」渲染成 0，2026-11-25）。
+ *
+ * `overall: {...} | null` 在 `available:false` 与「零已结算」两种情况下都是 null；
+ * 原写法 `data.overall?.observations ?? 0` 会在台账**尚未可用**时把标题写成「0 条」——
+ * 而页面下方明明写着「台账尚未可用」。同页其他字段用的是 `?? "—"`，这里跟齐口径。
+ */
+const signalsPageSource = pageSource("src/pages/SignalsPage.tsx");
+export const signalsHasNoObservationZeroFallback = !/overall\?\.observations\s*\?\?\s*0/.test(signalsPageSource);
+export const signalsSaysUnknownWhenOverallMissing = signalsPageSource.includes("条数未知");
+export const signalsHasNoIndependentDaysZeroFallback =
+  !/independent_signal_days\s*\?\?\s*0/.test(signalsPageSource);

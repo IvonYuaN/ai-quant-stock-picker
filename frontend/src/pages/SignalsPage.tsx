@@ -67,7 +67,7 @@ export function SignalsPage() {
           <p className="aq-eyebrow"><Radio aria-hidden="true" /> AQSP · 研究模块</p>
           <div className="aq-title-row">
             <h1>信号</h1>
-            <strong>{data.overall?.observations ?? 0} 条</strong>
+            <strong>{data.overall ? `${data.overall.observations} 条` : "条数未知"}</strong>
           </div>
           <p className="aq-page-sub">策略信号的台账：何时发生、命中与否、各策略跑到多少独立信号日。</p>
         </div>
@@ -94,7 +94,7 @@ export function SignalsPage() {
         <div className="aq-fact-grid">
           <p><b>最新信号日</b><span>{freshness?.latest_signal_date || "未记录"}</span></p>
           <p><b>停滞交易日</b><span>{freshness?.trading_days_since_latest ?? "—"} 天{freshness?.stale ? "（已超阈值）" : ""}</span></p>
-          <p><b>独立信号日</b><span>{cold?.independent_signal_days ?? 0} / 门槛 {cold?.min_independent_signal_days ?? "—"}</span></p>
+          <p><b>独立信号日</b><span>{cold?.independent_signal_days ?? "—"} / 门槛 {cold?.min_independent_signal_days ?? "—"}</span></p>
           <p><b>台账生成</b><span>{data.generated_at || "未记录"}</span></p>
         </div>
         {freshness?.stale ? (
