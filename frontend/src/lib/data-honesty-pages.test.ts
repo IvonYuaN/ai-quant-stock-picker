@@ -31,8 +31,16 @@ const indices = pageSource("src/pages/IndicesPage.tsx");
 const signals = pageSource("src/pages/SignalsPage.tsx");
 const risk = pageSource("src/components/aqsp/MarketRiskBanner.tsx");
 
-/** 可空字段被 `?? 0` 兜底后进颜色/数值表达式 = 把「没数据」渲染成「有方向」。 */
-const NULL_TO_ZERO = /\(\s*(?:row|pick|risk|emotion)\.(?:change_pct|return_pct|excess_return_pct|trend_20|trend_60|breadth|drawdown_252)\s*\?\?\s*0/;
+/**
+ * 可空字段被 `?? 0` 兜底 = 把「没数据」渲染成「有方向/零风险」。
+ *
+ * 🔴 不要求左括号或特定变量名（2026-11-25 加固）：初版正则写成
+ * `\( (row|pick|risk|emotion)\.field \?\? 0`，反向验证发现可被轻易绕过——
+ * 保留原 helper 行不动、在别处加一行无括号的 `pick.return_pct ?? 0 >= 0`，
+ * 两条断言全绿（假安全感）。现在只认「字段名 + ?? 0」本身；这三个页面里
+ * 可空字段的合法用法只有传给 helper，没有别的 `field ?? 0`，不会误伤。
+ */
+const NULL_TO_ZERO = /\.(?:change_pct|return_pct|excess_return_pct|trend_20|trend_60|breadth|drawdown_252)\s*\?\?\s*0/;
 
 export const indicesHasNoNullToZeroTone = !NULL_TO_ZERO.test(indices);
 export const signalsHasNoNullToZeroTone = !NULL_TO_ZERO.test(signals);
