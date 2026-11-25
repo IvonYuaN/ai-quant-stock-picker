@@ -118,7 +118,9 @@ def test_skip_codes_are_a_fixed_enum():
 def _stub_main(monkeypatch):
     monkeypatch.setattr(sc, "arena_board", lambda det: None)
     monkeypatch.setattr(sc, "arena_due_phases", lambda dry=False: [])
-    monkeypatch.setattr(sc, "_arena_brief", lambda: "")
+    # `main()` 现在会把今日结算结果透成 `stale=` —— stub 必须接住这个参数，
+    # 否则测试会因 TypeError 假红（不是被测逻辑的问题，是替身过期）。
+    monkeypatch.setattr(sc, "_arena_brief", lambda stale=False: "")
 
 
 def test_main_records_no_signal_when_nothing_happened(health, monkeypatch):

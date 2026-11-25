@@ -82,7 +82,7 @@ def _sleeve_tag(st: dict) -> str:
     return tag
 
 
-def _arena_brief() -> str:
+def _arena_brief(stale: bool = False) -> str:
     """推送卡片里的影子账户摘要（净值 + **可推模式**的样本 + 真实敞口构成）。
 
     🔴 2026-11-25（老大「我只需要有用的」）：原来这里逐条列六个模式的笔数，
@@ -93,6 +93,9 @@ def _arena_brief() -> str:
     - 全部不可推时**不写「尚无信号」**：那是假陈述（明明有 388 笔成交），
       只是「有成交但模式都不过门」。空就留空。
     - 净值和敞口构成照旧保留：那是真实风险，不是模式成绩。
+    - 🔴 `stale=True`（今日收盘结算失败）时，净值必须显式标注「上次结果」 ——
+      GOAL 的红线是「刷新失败不得静默沿用旧值」。卡片日期是今天，净值却可能是
+      上次的，两件事摆在一起而不说明，就是在拿旧数字冒充今天。
     """
     try:
         import paper_ledger as pl
@@ -107,6 +110,8 @@ def _arena_brief() -> str:
             t = "超t%.1f" % st["t_exc"] if st["t_exc"] is not None else "超t-"
             parts.append("%s %s %s" % (sid, _sleeve_tag(st), t))
         line = "\n> 影子账户 ¥%.0f(%+.2f%%)" % (ov["total_nav"], ov["total_ret_pct"])
+        if stale:
+            line += "（今日结算失败，净值/敞口为上次结果）"
         if parts:
             line += " " + " ｜ ".join(parts)
         return line + _exposure_line(ov.get("mix") or {})
@@ -336,13 +341,18 @@ def arena_due_phases(dry: bool = False) -> list[tuple[str, dict]]:
 
 
 
-def arena_close(force: bool = False) -> None:
-    """收盘：落快照 → 全部 sleeve 结算 → 记净值 → 刷新报告。幂等，靠 marker 去重。"""
+def arena_close(force: bool = False) -> bool:
+    """收盘：落快照 → 全部 sleeve 结算 → 记净值 → 刷新报告。幂等，靠 marker 去重。
+
+    返回**本次账本是否可用**：`True` = 今日已结算（或此前已成功结算过）；
+    `False` = 结算抛异常 ⇒ 账本还是上次的结果。调用方必须把它透到卡片上 ——
+    否则「刷新失败」会静默沿用旧净值，而在 15:00 的卡上看起来就是今天的数。
+    """
     today = datetime.now(CST).strftime("%Y-%m-%d")
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     marker = STATE_DIR / ("phase_%s_close.done" % today)
     if marker.exists() and not force:
-        return
+        return True
     try:
         import paper_scan
         res = paper_scan.run_phase("close", today)
@@ -355,8 +365,10 @@ def arena_close(force: bool = False) -> None:
                           encoding="utf-8")
         refresh_report()
         refresh_export()
+        return True
     except Exception as e:
         print("[arena] close 失败: %s" % e, file=sys.stderr)
+        return False
 
 
 def refresh_report() -> None:
@@ -755,9 +767,12 @@ def main(argv=None) -> int:
             print("[cloud] 非盘中 %s，静默" % now.strftime("%Y-%m-%d %H:%M"), file=sys.stderr)
             return 0
 
-    # 收盘复盘：先结算影子账户（快照+平仓+净值），再组卡片
+    # 收盘复盘：先结算影子账户（快照+平仓+净值），再组卡片。
+    # 🔴 `arena_close()` 失败时**必须**把账本标成 stale —— 它内部吞掉异常，
+    # 不返回值的话卡片会照常印出旧净值，看起来就是今天的（GOAL：刷新失败不得静默沿用旧值）。
+    close_ok = True
     if args.recap and not args.dry_run:
-        arena_close()
+        close_ok = arena_close()
 
     det = {}
     try:
@@ -771,7 +786,7 @@ def main(argv=None) -> int:
         if det and not args.dry_run:
             arena_board(det)          # P1/P2/P6 打板接力记账
         ran_phases = arena_due_phases(dry=args.dry_run)   # P3/P4/P5 到点记账
-    ledger_line = _arena_brief()
+    ledger_line = _arena_brief(stale=not close_ok)
 
     if args.recap:
         if not det:
