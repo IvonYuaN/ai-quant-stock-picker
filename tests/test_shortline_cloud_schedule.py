@@ -265,3 +265,43 @@ def test_recap_orders_rows_by_seal_amount():
             dict(_hit("600002", 2, True), seal_amt_wan=9000.0)]
     md = sc.build_recap({"all_hits": hits})
     assert md.index("600002") < md.index("600001")
+
+
+# ---------------- 影子账户摘要（只列可推模式） ----------------
+
+def _fake_ledger(monkeypatch, sleeves: dict):
+    class _FakePL:
+        @staticmethod
+        def load():
+            return {"sleeves": {}}
+
+        @staticmethod
+        def overview(_led):
+            return {"total_nav": 60556.0, "total_ret_pct": 0.93,
+                    "sleeves": sleeves, "mix": {}}
+
+    monkeypatch.setitem(sys.modules, "paper_ledger", _FakePL)
+
+
+def test_arena_brief_drops_unproven_sleeve_rows(monkeypatch):
+    """🔴 六个模式全不可推时，别把它们的笔数当成绩汇报。
+
+    `P1 5笔(6持) 超t-` 既不是推荐、也不构成判断依据（t 值还缺失）；
+    真正有用的是净值与敞口构成。
+    """
+    _fake_ledger(monkeypatch, {
+        "P1": {"n": 5, "positions": 6, "t_exc": None},
+        "P3": {"n": 174, "positions": 1, "t_exc": 2.6},
+    })
+    line = sc._arena_brief()
+    assert "60556" in line and "+0.93%" in line, "净值要保留"
+    assert "P1" not in line and "P3" not in line, "未过门/已否证模式的笔数不该出现"
+    assert "尚无信号" not in line, "有 388 笔成交却说「尚无信号」是假陈述"
+
+
+def test_arena_brief_keeps_pushable_sleeve_rows(monkeypatch):
+    """过门之后仍然要列 —— 闸门是「只推有用的」，不是「什么都不推」。"""
+    monkeypatch.setitem(sc.mode_card.STRATEGIES["P3"], "evidence_state", "passed")
+    _fake_ledger(monkeypatch, {"P3": {"n": 174, "positions": 1, "t_exc": 2.6}})
+    line = sc._arena_brief()
+    assert "P3 174笔(1持)" in line and "超t2.6" in line

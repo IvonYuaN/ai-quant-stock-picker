@@ -83,20 +83,32 @@ def _sleeve_tag(st: dict) -> str:
 
 
 def _arena_brief() -> str:
-    """推送卡片里的影子账户摘要（各 sleeve 样本/净值 + 真实敞口构成）。"""
+    """推送卡片里的影子账户摘要（净值 + **可推模式**的样本 + 真实敞口构成）。
+
+    🔴 2026-11-25（老大「我只需要有用的」）：原来这里逐条列六个模式的笔数，
+    而六个模式全是 `⏳未过门` / `❌已否证` —— `P1 5笔(6持) 超t-` 既不是推荐，
+    也不构成任何判断依据（t 值还缺失）。与 #654 同一道闸：只列可推模式。
+
+    两个细节：
+    - 全部不可推时**不写「尚无信号」**：那是假陈述（明明有 388 笔成交），
+      只是「有成交但模式都不过门」。空就留空。
+    - 净值和敞口构成照旧保留：那是真实风险，不是模式成绩。
+    """
     try:
         import paper_ledger as pl
         ov = pl.overview(pl.load())
         parts = []
         for sid in sorted(ov["sleeves"]):
+            if not mode_card.is_pushable(sid):
+                continue
             st = ov["sleeves"][sid]
             if st["n"] == 0 and st["positions"] == 0:
                 continue
             t = "超t%.1f" % st["t_exc"] if st["t_exc"] is not None else "超t-"
             parts.append("%s %s %s" % (sid, _sleeve_tag(st), t))
-        tail = " ｜ ".join(parts) if parts else "尚无信号"
-        line = "\n> 影子账户 ¥%.0f(%+.2f%%) %s" % (
-            ov["total_nav"], ov["total_ret_pct"], tail)
+        line = "\n> 影子账户 ¥%.0f(%+.2f%%)" % (ov["total_nav"], ov["total_ret_pct"])
+        if parts:
+            line += " " + " ｜ ".join(parts)
         return line + _exposure_line(ov.get("mix") or {})
     except Exception as e:
         return "\n> 影子账户摘要失败: %s" % str(e)[:80]
