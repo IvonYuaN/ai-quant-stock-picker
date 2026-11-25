@@ -305,3 +305,96 @@ def test_arena_brief_keeps_pushable_sleeve_rows(monkeypatch):
     _fake_ledger(monkeypatch, {"P3": {"n": 174, "positions": 1, "t_exc": 2.6}})
     line = sc._arena_brief()
     assert "P3 174笔(1持)" in line and "超t2.6" in line
+
+
+# ---------------- 复盘卡：只印事实，不印已否证策略的执行口径 ----------------
+
+def _recap_hit(code="002242", board=3, actionable=True, **extra) -> dict:
+    """一条带真实字段的触板 hit（含 `seal_tag` / `seal_amt_wan`）。"""
+    hit = {"code": code, "name": "九阳股份", "price": 38.56, "board": board,
+           "board_lim": 0.10, "actionable": actionable,
+           "strategy": "放量%d板·B格盘中可排进·封单6646万 T+1兑现·炸板-5%%" % board,
+           "seal_tag": "封单6646万", "seal_amt_wan": 6646.0}
+    hit.update(extra)
+    return hit
+
+
+def test_recap_rows_carry_facts_not_rejected_strategy_plan():
+    """🔴 复盘卡自称「当日触板事实」，就不能每行挂一条已否证的执行指令。
+
+    2026-11-25 真实卡片（B 格 7 只）每行都是
+    `…·B格盘中可排进·封单6646万 T+1兑现·炸板-5%`，而 P1/P2/P6 已全部否证。
+    老大原话：「失效的通知完全没必要出现 还影响视觉 我只需要有用的」。
+    前半段是事实、后半段是已否证策略的执行计划，读者只会记住后半句。
+    """
+    hit = _recap_hit()
+    row = sc._recap_row(hit)
+
+    assert "T+1兑现" not in row and "炸板" not in row, "复盘行不该带已否证策略的执行口径：%s" % row
+    assert "封单6646万" in row, "封单是盘口事实，必须保留"
+    assert "38.56" in row and "3板" in row and "002242" in row
+
+    md = sc.build_recap({"all_hits": [hit]})
+    assert "T+1兑现" not in md, "整张复盘卡都不该出现执行口径：\n%s" % md
+
+
+def test_markdown_rows_still_carry_strategy_plan():
+    """反向：`_row()` 的语义**不能**跟着改 —— 别为了复盘把两个口径并成一个。
+
+    `build_markdown()` 已不在推送路径（盘中出口是 `mode_card.render_picks_only`，
+    自带 `is_pushable` 闸门），但仍是手工排查会调的卡片，它的策略口径是有意保留的。
+    这条守的就是「改复盘行时别顺手把 `_row()` 也改了」。
+    """
+    md = sc.build_markdown({"pool": 31, "new_hits": [_recap_hit()]})
+
+    assert "T+1兑现" in md, "`_row()` 的策略口径被误删了：\n%s" % md
+
+
+def test_recap_row_keeps_oneword_marker_for_a_cell():
+    """A 格「一字」是盘口事实（开盘就顶死），复盘行必须保留。
+
+    但 `A格排不进` / `(观察)` 是策略标注，不是事实列，跟执行口径一起去掉。
+    """
+    row = sc._recap_row(_recap_hit(code="603960", board=4, actionable=False,
+                                  strategy="一字4板·A格排不进·封单1458万(观察)",
+                                  seal_tag="封单1458万", seal_amt_wan=1458.0))
+
+    assert "一字" in row, "开盘顶死一字是事实：%s" % row
+    assert "A格排不进" not in row and "观察" not in row, "策略标注不属于事实列：%s" % row
+    assert "封单1458万" in row
+
+
+def test_recap_row_omits_seal_column_when_unknown():
+    """封单**没取到**就不印这一列，不能编一个 0 出来。
+
+    ⚠️ 与 `seal_level` 的「封单0」不是一回事：那是 bid1_vol=0 的真实判断
+    （真的没有封单，照印）。把「没取到」渲染成「封单0」= 把未知说成事实。
+    """
+    row = sc._recap_row({"code": "600000", "name": "测试", "price": 10.0,
+                         "board": 2, "actionable": True})
+
+    assert "封单" not in row, "没有封单证据时不该编一个：%s" % row
+    assert "600000" in row and "2板" in row
+
+
+def test_recap_header_uses_the_same_word_as_its_disclaimer():
+    """标题不能和数据打架：原写「封二板」，行里却既有 1 板也有 5 板。"""
+    md = sc.build_recap({"all_hits": [_recap_hit(board=1), _recap_hit(code="002579", board=5)]})
+
+    assert "封二板" not in md, "行里既有 1 板又有 5 板，标题不能说「封二板」：\n%s" % md
+    assert "今日触板" in md and "当日触板事实" in md, "标题与免责句要用同一个词"
+
+
+def test_exposure_label_follows_board_sids(monkeypatch):
+    """敞口标签从 `paper_ledger.BOARD_SIDS` 派生，不再硬编码「P1+P2+P6」。
+
+    `board_pct` 本身就是按 `BOARD_SIDS` 算的 —— 标签写死一份，常量一改
+    标签就开始撒谎，而且没人会想到去改卡片里的一句话。
+    """
+    import paper_ledger as pl
+
+    monkeypatch.setattr(pl, "BOARD_SIDS", ("P1", "P7"))
+    line = sc._exposure_line({"total": 24538.0, "board_pct": 82.0})
+
+    assert "（P1+P7）" in line, "标签必须跟着常量走：%s" % line
+    assert "P2" not in line and "P6" not in line
