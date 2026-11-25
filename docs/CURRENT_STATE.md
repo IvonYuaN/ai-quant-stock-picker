@@ -128,7 +128,7 @@
 - 历史积累的 `codex/*` 分支多数对应已关闭/已 squash 的 PR，**不可按 `--merged` 批量删**（全 squash 合并不留祖先链）。逐个以 PR `merged_at` + 内容在 `origin/main` 的对应为准。
 - 2026-11-24 已清理 4 条：`feat/filter-verdict-cli`、`codex/tickflow-personal-operating-system`（功能全在 main，删）、`codex/strategy-watch-workflow`（含未入库的 tickflow roadmap 文档，保留）、`feature/holder-concentration-factor`（#541 负结果实验唯一 git 历史，保留）。另有 `codex/*` 历史分支未动。
 
-**数据诚实性（2026-11-24 起，PR #616–#646 共 29 个）**
+**数据诚实性（2026-11-24 起，PR #616–#648 共 31 个）**
 
 验收口径：任何展示面在「取数失败 / 该日确实为空 / 有数据」三态下必须可区分；
 **刷新失败不得静默沿用旧值**；后端说不可用时必须把它的 `reason` 透出来。
@@ -210,6 +210,20 @@
   端点透出 `state`+`reason`，非 `ok` 必有原因；前端 `sectionGapCopy()` 按五态取徽标与
   说明（未生成 / 读取失败 / 产物残缺 / 无内容 / 状态未知），`allSectionsGapNotice()`
   汇总时优先点名故障。老后端没有 `state` ⇒ `unknown`，**不猜成 `missing`**。
+- `#647`（CI，非展示面）前端契约断言**跑两遍时区**：`TZ=UTC` + `TZ=Asia/Shanghai`。
+  `#645` 的坑是「本机 CST 全绿、只有 UTC 才红」，而 CI 原来靠 `ubuntu-latest` 默认
+  UTC 才碰巧有效（镜像默认值 ≠ 契约）。两个方向各只能覆盖一半，必须都跑。
+- `#648` 板块资金流把「没取到」渲染成「持平 0.00%」，且**一个坏单元格能把整页打成 500**：
+  `_sectors()` 原来每列都写 `round(float(row.get(col, 0) or 0), 2)` ——
+  ① `float(nan or 0)` **兜不住 NaN**（NaN 是真值）⇒ payload 里出现 NaN ⇒ starlette 的
+  `JSONResponse.render` 是 `json.dumps(..., allow_nan=False)` ⇒ `ValueError` ⇒
+  整个 `/api/market/overview` 500；② 整列缺失时「这一列没了」被渲染成「全板块 0.00%」；
+  ③ `str(nan)` 得到字面量 `"nan"`，缺名字的板块会以「nan」上榜。
+  改为 `_flow_num`/`_flow_round2`（NaN/inf/非数一律 `None`）+ `_flow_text`（NaN→空串）；
+  `net` 不可用的行**整行不进榜**（它是排序键，编 0 会冒充「资金持平」）；
+  有行却一行都用不上 ⇒ 记 `source_health` 错误说明是源侧结构问题。
+  前端 `SectorFlow.pct` / `SectorFlowRow.pct` 改 `number | null`，交给已有的
+  `formatSignedPct`（null → 「—」）与 `changeClass`（null → 不着色），**页面禁 `pct ?? 0`**。
 
 防复发守卫：
 - `frontend/src/lib/data-honesty-pages.test.ts`——页面层源码守卫（含接线断言：
@@ -260,6 +274,9 @@
 - `BacktestPage.tsx:77` 的 `Math.round(value).toLocaleString("zh-CN")` 没带 `timeZone`
   —— 那是**金额**（number，非日期），`timeZone` 对它无意义；带时区的日期格式化在
   `#645` 已全部补齐（全仓仅剩这一处无 `timeZone` 的 `toLocaleString`，即本项）。
+- `SectorFlow.firms` 的 `_num()` 缺值兜 0——`firms` **全仓无消费方**
+  （只在 `market-view.ts` 的 `toSectorRow` 透传一次，没有任何渲染/判断读它），
+  不构成展示面。同结构里真正被展示的 `pct` 已在 `#648` 改成可空。
 
 方法：grep `?? 0` 展示面 → 三重验证（类型可空 + 后端契约 + **可达性**）→ 复用现成 helper →
 反向验证（临时破坏实现看测试红不红，破坏方式须「语义坏但类型合法」）→ 独立 PR。

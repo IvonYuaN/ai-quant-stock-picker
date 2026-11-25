@@ -95,7 +95,9 @@ function SectorFlowBlock({ view }: { view: MarketView }) {
   if (sectorsTop.length === 0 && sectorsBottom.length === 0) return null;
   const all = [...sectorsBottom].reverse().concat(sectorsTop); // 由低到高，纵向条形更好读
   const option = useMemo(() => sectorFlowOption(all, mode), [all.length, mode]);
-  const row = (name: string, net: number, pct: number) => (
+  // pct 可空（后端在单元格缺失时给 null）：`formatSignedPct` → 「—」、`changeClass` → 不着色。
+  // 不要在这里补 `?? 0`，那会把「没取到」显示成「持平 0.00%」。
+  const row = (name: string, net: number, pct: number | null) => (
     <div className="aq-flow-row" key={name}>
       <span className="aq-flow-name">{name}</span>
       <span className={cn("aq-num", changeClass(pct))}>{formatSignedPct(pct)}</span>

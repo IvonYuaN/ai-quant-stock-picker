@@ -455,5 +455,10 @@ def test_sectors_success_records_ok(monkeypatch):
 
     monkeypatch.setattr(astock, "_akshare", lambda: _fake_akshare(fund_flow=_ok))
     got = market._sectors()
-    assert [item["name"] for item in got] == ["电池", "银行"]
+    # 🔴 期望顺序 = **净额降序**（银行 2.1e8 > 电池 1.25e8）。
+    # 原来这里断言的是 ["电池", "银行"]（插入顺序），但那只是因为桩里的
+    # `sort_values` 是 no-op 返回 self —— 真实 pandas 是 `ascending=False`，
+    # 生产顺序本来就是降序。`_sectors` 现在自己排（不再依赖 DataFrame 的
+    # `sort_values`，免得缺「净额」列时抛 KeyError），顺序与生产一致。
+    assert [item["name"] for item in got] == ["银行", "电池"]
     assert source_health.snapshot()[0]["healthy"] is True

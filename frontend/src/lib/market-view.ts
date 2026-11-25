@@ -40,7 +40,9 @@ export interface GlobalIndexRow {
 
 export interface SectorFlowRow {
   name: string;
-  pct: number;
+  /** 可空：后端在单元格缺失时给 `null`（不是 0）。渲染走 `formatSignedPct` → 「—」。 */
+  pct: number | null;
+  /** 恒为有限数：净额不可用的行已在后端整行剔除（它是排序键，编 0 会冒充「持平」）。 */
   net: number;
   firms: number;
 }

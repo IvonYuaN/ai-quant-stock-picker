@@ -133,6 +133,46 @@ def _num(v) -> int:
         return 0
 
 
+def _flow_num(value: object) -> float | None:
+    """akshare 资金流表的数值单元格 → `float | None`（**不可用一律 None，不编 0**）。
+
+    🔴 必须显式拒绝 NaN / inf，不能用 `float(v or 0)` 兜：**NaN 是真值**，
+    `nan or 0` 仍然是 `nan`，`round(nan, 2)` 还是 `nan`，于是 payload 里出现 NaN；
+    而 starlette 的 `JSONResponse.render` 是 `json.dumps(..., allow_nan=False)`
+    ⇒ 抛 `ValueError: Out of range float values are not JSON compliant` ⇒
+    **整个 `/api/market/overview` 500**。一个板块的涨跌幅缺失不该让整页打不开。
+
+    `None` 在前端会被 `formatSignedPct` / `formatYi` / `changeClass` 渲染成「—」
+    或无色（三者都接受 `null`），所以缺值走「显式未知」而不是「0.00%」。
+    """
+    try:
+        number = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    if number != number or number in (float("inf"), float("-inf")):
+        return None
+    return number
+
+
+def _flow_round2(value: object) -> float | None:
+    """同 `_flow_num`，保留 2 位小数；不可用时仍是 `None`（不是 0.0）。"""
+    number = _flow_num(value)
+    return None if number is None else round(number, 2)
+
+
+def _flow_text(value: object) -> str:
+    """单元格 → 去空白字符串；`None` / NaN / inf 一律当空串。
+
+    🔴 不能直接 `str(value)`：pandas 的缺失值是 `float('nan')`，`str(nan)` 得到
+    字面量 `"nan"` —— 缺名字的板块会以「nan」这个名字上榜。
+    """
+    if value is None:
+        return ""
+    if isinstance(value, float) and (value != value or value in (float("inf"), float("-inf"))):
+        return ""
+    return str(value).strip()
+
+
 # 本模块的 akshare 源（板块资金流）的**上游主机**（`akshare.xxx` 只是包装，
 # 真正打的是这个域）。接进台账的理由：这个源失败时返回的是**空载荷**而不是抛
 # 异常 —— `/api/market/overview` 照样回 200，前端显示「未返回」，从外部分不出
@@ -226,26 +266,61 @@ def _sentiment(emotion: dict | None = None) -> dict:
 
 
 def _sectors() -> list[dict]:
-    """行业资金流（按净额降序）。不含领涨股等个股字段。"""
+    """行业资金流（按净额降序）。不含领涨股等个股字段。
+
+    🔴 四处「不编数据」：
+    1. **单行 NaN / inf** 走 `None`（显式未知），不走 0 —— `float(v or 0)` 兜不住
+       NaN（NaN 是真值），payload 里出现 NaN 会让 starlette 的 `allow_nan=False`
+       直接抛错 ⇒ **整个 `/api/market/overview` 500**。
+    2. `net` 不可用的行**整行不进榜**：它是排序键，编个 0 会排到中间冒充「资金持平」。
+    3. **名字缺失**的行跳过。`str(nan)` 会得到字面量 `"nan"`，不能让它冒充板块名。
+    4. **有行却一行都用不上**（缺列 / 整列坏值）⇒ 记 `source_health` 错误，让页面能
+       说清「是源侧结构问题」，而不是静默返回空数组被渲染成「今天没数据」。
+
+    列名检测刻意**不依赖 `.columns`**（按行取键），因为这里只需要回答「这些行能不能用」，
+    而这个判断对 pandas DataFrame 之外的实现（测试桩、别的返回类型）同样成立。
+    """
     try:
         f = astock._akshare().stock_fund_flow_industry(symbol="即时")
-        f = f.sort_values("净额", ascending=False)
     except Exception as exc:
         source_health.record_error(_AK_FUND_FLOW_HOST, exc)
         return []
-    source_health.record_ok(_AK_FUND_FLOW_HOST)
-    out = []
+
+    out: list[dict] = []
+    saw_row = False
+    unusable_keys: set[str] = set()
     for _, row in f.iterrows():
+        saw_row = True
+        name = _flow_text(row.get("行业"))
+        net = _flow_num(row.get("净额"))
+        if not name:
+            unusable_keys.add("行业")
+        if net is None:
+            unusable_keys.add("净额")
+        if not name or net is None:
+            continue
         out.append(
             {
-                "name": str(row["行业"]),
-                "pct": round(float(row.get("行业-涨跌幅", 0) or 0), 2),
-                "net": round(float(row.get("净额", 0) or 0), 2),
-                "inflow": round(float(row.get("流入资金", 0) or 0), 2),
-                "outflow": round(float(row.get("流出资金", 0) or 0), 2),
+                "name": name,
+                "pct": _flow_round2(row.get("行业-涨跌幅")),
+                "net": round(net, 2),
+                "inflow": _flow_round2(row.get("流入资金")),
+                "outflow": _flow_round2(row.get("流出资金")),
                 "firms": _num(row.get("公司家数")),
             }
         )
+
+    if saw_row and not out:
+        source_health.record_error(
+            _AK_FUND_FLOW_HOST,
+            RuntimeError(
+                f"行业资金流没有可用行（缺列或整列坏值：{sorted(unusable_keys) or ['未知']}）"
+            ),
+        )
+        return []
+    # 单行坏值被跳过不算源故障：行级缺失由前端显示「—」承担，不升级成整源不可达。
+    source_health.record_ok(_AK_FUND_FLOW_HOST)
+    out.sort(key=lambda item: item["net"], reverse=True)
     return out
 
 
