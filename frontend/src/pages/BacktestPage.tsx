@@ -8,6 +8,7 @@ import { BarChart3 } from "lucide-react";
 import { EmptyState, HeroState, LoadingState, SectionHeader, StatePanel, Tag, ToneCallout } from "@/components/ui/primitives";
 import { EChart } from "@/components/ui/EChart";
 import { useWorkspaceSnapshot } from "@/components/aqsp/useAqspSnapshot";
+import { SnapshotRefreshWarning } from "@/components/aqsp/SnapshotRefreshWarning";
 import { api, type PaperArenaPayload } from "@/lib/api";
 import { paperNavOption } from "@/lib/chart-options";
 import { buildDailyView } from "@/lib/daily-view";
@@ -154,6 +155,13 @@ export function BacktestPage() {
           <p className="aq-page-sub">研究变体的收益、成交与阻断原因。</p>
         </div>
       </header>
+
+      <SnapshotRefreshWarning
+        error={error}
+        hasData={Boolean(data)}
+        switching={switching}
+        generatedAt={data?.generated_at ?? ""}
+      />
 
       {gate ? (
         <ToneCallout

@@ -18,6 +18,7 @@ import {
 import { formatResearchDate } from "@/lib/research-view";
 import { scheduleHashTargetScroll } from "@/lib/hash-navigation";
 import { formatAqspTime, isAqspSnapshotStale, useWorkspaceSnapshot } from "./useAqspSnapshot";
+import { SnapshotRefreshWarning } from "./SnapshotRefreshWarning";
 import { ReviewExportButton } from "./ReviewExportButton";
 import { CandidateSummary } from "./CandidateSummary";
 import { CandidateDrawer } from "./CandidateDrawer";
@@ -280,12 +281,13 @@ export function TodayWorkspace() {
       {/* 今日研究第一屏先回答「今天能不能动」，再谈「选什么」。 */}
       <MarketRiskBanner />
 
-      {error && data && !switching ? (
-        <div className="aq-refresh-warning" role="alert">
-          <strong>刷新失败，保留上次成功数据</strong>
-          <span>{error} · 上次更新 {formatAqspTime(data.generated_at)}</span>
-        </div>
-      ) : null}
+      {/* 刷新失败但仍有上次成功数据：文案与判定统一在 @/lib/refresh-warning，六个模块页共用。 */}
+      <SnapshotRefreshWarning
+        error={error}
+        hasData={Boolean(data)}
+        switching={switching}
+        generatedAt={data?.generated_at ?? ""}
+      />
 
       {switching && error ? (
         <HeroState tone="warn" title={`无法读取 ${selectedDate} 的研究记录`} detail={`${error}。保留日期选择，重试或切换其他日期。`} action={<button type="button" className="aq-btn aq-btn-primary" onClick={refresh}><RefreshCw aria-hidden="true" />重试该日期</button>} />

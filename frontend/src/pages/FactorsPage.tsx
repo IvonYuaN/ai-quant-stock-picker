@@ -5,6 +5,7 @@
 import { TableProperties } from "lucide-react";
 import { HeroState, LoadingState, SectionHeader } from "@/components/ui/primitives";
 import { useWorkspaceSnapshot } from "@/components/aqsp/useAqspSnapshot";
+import { SnapshotRefreshWarning } from "@/components/aqsp/SnapshotRefreshWarning";
 import { buildDailyView } from "@/lib/daily-view";
 
 export function FactorsPage() {
@@ -42,6 +43,13 @@ export function FactorsPage() {
           <p className="aq-page-sub">评分因子、取值与覆盖情况。</p>
         </div>
       </header>
+
+      <SnapshotRefreshWarning
+        error={error}
+        hasData={Boolean(data)}
+        switching={switching}
+        generatedAt={data?.generated_at ?? ""}
+      />
 
       <section className="aq-section" aria-label="因子覆盖">
         <SectionHeader
