@@ -106,25 +106,38 @@ def test_passed_modes_tagged_passed_and_others_not():
         "当前无任何模式过门；若要升 passed，必须先证明买点可成交"
 
 
-def test_phase_card_prints_params_and_evidence_on_the_mode_head():
-    """卡片必须能在同一条推送里看出「这个模式用什么参数、证据到哪一步」。"""
+def test_phase_card_skips_unverified_modes_entirely():
+    """🔴 11-25 老大（附截图）：「这种通知全都都是失效的完全没必要出现 我只需要有用的」。
+
+    竞价抢筹（P4）当天真买了 2 只，但它是 `⏳未过门` —— 整张卡都不该出现。
+    「标注了状态」不等于「可以不推」：四行里三行写着否证，读起来的净效果
+    是「今天有四个模式在选股」，与事实（一个过门的都没有）相反。
+    """
+    assert mode_card.render_phase_card("auction", AUCTION_20261123) == ""
+    assert "002685" not in mode_card.render_phase_card("auction", AUCTION_20261123)
+
+
+def test_phase_card_prints_params_and_evidence_on_the_mode_head(monkeypatch):
+    """过门之后，卡片必须能在同一条推送里看出「用什么参数、证据到哪一步」。"""
+    monkeypatch.setitem(STRATEGIES["P4"], "evidence_state", "passed")
     md = mode_card.render_phase_card("auction", AUCTION_20261123)
     assert "P4 竞价抢筹" in md
     assert "高开2~7%" in md and "竞价额≥昨成交额2%" in md, "参数没印出来"
-    assert "高开这一半已测" in md and "✅过门" not in md, \
-        "竞价抢筹未过门，卡片不能出现 ✅过门 标签"
+    assert "高开这一半已测" in md and "✅过门" in md, "过门的模式必须印 ✅过门"
 
 
-def test_phase_card_renders_the_fills_that_actually_happened():
-    """今天真买的两只必须出现在卡片上 —— 这就是老大没看到的那两条推荐。"""
+def test_phase_card_renders_the_fills_that_actually_happened(monkeypatch):
+    """过门模式下，真买的两只必须出现在卡片上 —— 不能只有标题没有票。"""
+    monkeypatch.setitem(STRATEGIES["P4"], "evidence_state", "passed")
     md = mode_card.render_phase_card("auction", AUCTION_20261123)
     assert "002685" in md and "华东重机" in md and "7.86" in md
     assert "000823" in md and "超声电子" in md
     assert "高开+6.2%" in md, "推荐理由（note）必须原样带出，不能被改写"
 
 
-def test_phase_card_reports_unfilled_instead_of_dropping_them():
+def test_phase_card_reports_unfilled_instead_of_dropping_them(monkeypatch):
     """有信号、一股没买成 ≠ 没信号。必须显式写「有 N 个信号，全部未成交」。"""
+    monkeypatch.setitem(STRATEGIES["P5"], "evidence_state", "passed")
     no_fill = {"P5": {"name": "尾盘惯性", "signals": 3, "bought": [],
                       "skipped": [{"code": "600001", "why": "仓位已满"},
                                   {"code": "600002", "why": "单笔¥2000买不起1手(价88.0)"}]}}
@@ -148,22 +161,28 @@ def test_skip_summary_groups_and_orders_reasons():
     assert mode_card.skip_summary([]) == ""
 
 
-def test_long_fill_list_is_truncated_with_remainder_count():
+def test_long_fill_list_is_truncated_with_remainder_count(monkeypatch):
     """超过 4 行要截断并写「还有 N 只」，否则一条消息刷一屏等于没推。"""
+    monkeypatch.setitem(STRATEGIES["P4"], "evidence_state", "passed")
     rec = {"name": "竞价抢筹", "signals": 6,
            "bought": [{"code": "60000%d" % i, "name": "票%d" % i, "price": 10.0}
                       for i in range(6)], "skipped": []}
     md = mode_card.render_phase_card("auction", {"P4": rec})
-    assert md.count("✅") == mode_card.MAX_ROWS
+    # 只数「票行」：标题现在带 `✅过门`，用裸 "✅" 计数会把它算进去
+    assert md.count("✅ 6000") == mode_card.MAX_ROWS
     assert "还有 2 只成交" in md
 
 
-def test_footer_shows_daily_counts_and_pending_slots():
-    """打板卡片的尾巴要让老大一眼看到「今天其他模式买了什么、哪些还没到点」。"""
-    picks = {"P4": {"bought": [{}, {}]}, "P3": {"bought": [{}]}}
+def test_footer_shows_daily_counts_and_pending_slots(monkeypatch):
+    """尾巴只统计可推模式 —— 混进已否证的「P1 3笔」等于把判决又当成绩汇报一遍。"""
+    for sid in ("P3", "P4", "P5"):
+        monkeypatch.setitem(STRATEGIES[sid], "evidence_state", "passed")
+    picks = {"P4": {"bought": [{}, {}]}, "P3": {"bought": [{}]},
+             "P1": {"bought": [{}, {}, {}]}}
     footer = mode_card.render_daily_footer(picks, pending=[("P5", "14:45")])
     assert "P4 2笔" in footer and "P3 1笔" in footer
     assert "P5 未到14:45" in footer
+    assert "P1" not in footer, "已否证模式的笔数不该出现在尾巴里"
     assert mode_card.render_daily_footer({}, pending=[]) == ""
 
 
@@ -208,8 +227,10 @@ def test_render_card_works_with_only_one_section():
     assert mode_card.render_card("", "", "> 今日各模式: P4 2笔", "") == ""
 
 
-def test_morning_payload_renders_two_distinct_modes_in_one_card():
+def test_morning_payload_renders_two_distinct_modes_in_one_card(monkeypatch):
     """同一张卡里两个模式各自成块，标题不串味（P3 的参数不能挂到 P4 下面）。"""
+    monkeypatch.setitem(STRATEGIES["P3"], "evidence_state", "passed")
+    monkeypatch.setitem(STRATEGIES["P4"], "evidence_state", "passed")
     merged = dict(AUCTION_20261123, **MORNING_20261123)
     md = mode_card.render_phase_card("morning", merged)
     p3_at, p4_at = md.index("P3 超跌反抽"), md.index("P4 竞价抢筹")
@@ -292,8 +313,10 @@ def test_backfill_picks_returns_empty_when_no_positions(tmp_path, monkeypatch):
 
 # ---------------- 收盘结算段 ----------------
 
-def test_settlement_card_shows_real_closed_trades_only():
+def test_settlement_card_shows_real_closed_trades_only(monkeypatch):
     """收盘卡片只显示当天 sell_date 的真实平仓，不拿持仓浮盈冒充结算。"""
+    monkeypatch.setitem(STRATEGIES["P4"], "evidence_state", "passed")
+    monkeypatch.setitem(STRATEGIES["P1"], "evidence_state", "passed")
     led = {"sleeves": {
         "P4": {"trades": [
             {"code": "002685", "name": "华东重机", "sell_date": "2026-11-23",
@@ -315,15 +338,29 @@ def test_settlement_card_shows_real_closed_trades_only():
     assert "P1 二板接力" not in md, "全是未成交的模式不该显示 0 笔 0 盈亏"
 
 
-def test_settlement_card_says_not_settled_instead_of_zero_excess():
-    """0 结算样本写「未结算」——首日恒 0% 的超额恰是基准反数，显示 0 就是假数字。"""
-    md = mode_card.render_settlement_card({"sleeves": {}}, "2026-11-23")
-    assert "今日无结算" in md
-    assert "0.00%" not in md and "超额0" not in md
+def test_settlement_card_omits_zero_sample_instead_of_showing_zero_excess(monkeypatch):
+    """没有真实平仓就整段不出现 —— 更不会出现 0% 超额（首日 0% 恰是基准反数）。
+
+    🔴 11-25 改口径：原来这里写「今日无结算（首笔 T+1 收盘才平仓）」。
+    但那句话和「系统没跑」「今天没成交」长得一模一样，而它出现的场合
+    （一个过门模式都没有）恰恰是最不该占一行的场合。
+    """
+    monkeypatch.setitem(STRATEGIES["P3"], "evidence_state", "passed")
+    cases = (
+        {"sleeves": {}},
+        {"sleeves": {"P3": {"trades": []}}},
+        {"sleeves": {"P1": {"trades": [
+            {"code": "002749", "funded": True, "sell_date": "2026-11-23", "pnl": 1.0}]}}},
+    )
+    for led in cases:
+        md = mode_card.render_settlement_card(led, "2026-11-23")
+        assert md == "", led
+        assert "0.00%" not in md and "超额0" not in md
 
 
-def test_settlement_card_missing_excess_shows_dash_not_zero():
+def test_settlement_card_missing_excess_shows_dash_not_zero(monkeypatch):
     """缺基准时 excess_pct=None ⇒ 显示「超额—」，不显示 0。"""
+    monkeypatch.setitem(STRATEGIES["P3"], "evidence_state", "passed")
     led = {"sleeves": {"P3": {"trades": [
         {"code": "688199", "name": "久日新材", "sell_date": "2026-11-23",
          "funded": True, "ret_pct": -2.1, "excess_pct": None, "pnl": -30.0},
@@ -333,8 +370,9 @@ def test_settlement_card_missing_excess_shows_dash_not_zero():
     assert "超额0" not in md
 
 
-def test_settlement_card_shows_stop_counterfactual():
+def test_settlement_card_shows_stop_counterfactual(monkeypatch):
     """结算卡必须显示「若不止损」——回测没有止损，账本有，差多少要看得见。"""
+    monkeypatch.setitem(STRATEGIES["P1"], "evidence_state", "passed")
     led = {"sleeves": {"P1": {"trades": [
         {"code": "002749", "name": "国光股份", "sell_date": "2026-11-23",
          "funded": True, "ret_pct": -6.88, "excess_pct": None, "pnl": -133.0,
@@ -348,11 +386,10 @@ def test_settlement_card_shows_stop_counterfactual():
     assert "止损2笔净影响-5.13pp" in md, "两笔分别差 5.68 / 4.58pp，均值 5.13pp"
 
 
-def test_picks_only_shows_every_mode_not_just_board():
-    """老大 11-23 点名：推送只有打板，其他策略完全没有。
-
-    新卡必须把 P1~P6 今天买了什么全列出来，每个模式一行、带代码/价/理由。
-    """
+def test_picks_only_lists_every_pushable_mode(monkeypatch):
+    """可推的模式都要列出来（11-23 老大点名「只推打板」的那个缺口）。"""
+    for sid in ("P1", "P3", "P4"):
+        monkeypatch.setitem(STRATEGIES[sid], "evidence_state", "passed")
     picks = {
         "P1": {"bought": [{"code": "002749", "name": "国光股份", "price": 9.56,
                             "note": "2板·封单510万"}]},
@@ -367,8 +404,9 @@ def test_picks_only_shows_every_mode_not_just_board():
     assert "昨日-16.9%" in md and "高开+6.2%" in md, "理由必须带，不能只给代码"
 
 
-def test_picks_only_has_no_boilerplate():
+def test_picks_only_has_no_boilerplate(monkeypatch):
     """老大 11-23 点名「通知太多废话」：口径长句、账本摘要、笔数统计一律不出现。"""
+    monkeypatch.setitem(STRATEGIES["P1"], "evidence_state", "passed")
     picks = {"P1": {"bought": [{"code": "002749", "name": "国光股份",
                                 "price": 9.56, "note": "2板"}]}}
     md = mode_card.render_picks_only(picks)
@@ -379,9 +417,9 @@ def test_picks_only_has_no_boilerplate():
 def test_picks_only_shows_mode_name_and_verdict(monkeypatch):
     """每行必须带「模式名 + 判决」——老大 11-24：「P1P2P3P4P5P6 我都不知道什么逻辑」。
 
-    🔴 原来这条测试守的是反的东西：它断言「过门」二字不能出现、状态压成 `P1·`。
-    结果六个模式全是一个点，老大看不出哪个已经判死 —— 测试是绿的，交付是废的。
-    现在守三件事：①每行有模式名 ②每行有判决词 ③已否证垫底。
+    🔴 11-25 起只剩过门模式，卡片上的判决词**必然**是「✅过门」；
+    未过门/已否证的整行不出现（见 test_picks_only_drops_rejected_entirely）。
+    模式名仍然要印：`P3` 单独一个编号，老大看不出它是什么逻辑。
     """
     monkeypatch.setitem(STRATEGIES["P3"], "evidence_state", "passed")
     picks = {
@@ -390,27 +428,30 @@ def test_picks_only_shows_mode_name_and_verdict(monkeypatch):
     }
     md = mode_card.render_picks_only(picks)
     lines = [ln for ln in md.splitlines() if ln.strip()]
-    for ln in lines:
-        assert ("过门" in ln) or ("否证" in ln), "这一行没写判决，老大看不出死活: %s" % ln
-    assert "二板接力" in md and "超跌反抽" in md, "模式名必须印出来，否则 P1 是什么没人知道"
-    assert lines[0].startswith("P3"), "已否证的必须垫底，过门的排最前"
-    assert "P1 二板接力 ❌已否证" in md
+    assert len(lines) == 1, "只有 P3 过门，卡片上就该只有一行：%r" % md
+    assert lines[0].startswith("P3 超跌反抽 ✅过门"), lines[0]
+    assert "002749" not in md and "P1" not in md, "已否证的推荐整行不出现"
 
 
-def test_picks_only_sorts_rejected_last():
-    """全是已否证时也必须全部带判决词，不能退回成一排裸点。"""
+def test_picks_only_drops_rejected_entirely():
+    """🔴 11-25 老大原话「全都都是失效的完全没必要出现 还影响视觉」。
+
+    旧契约是「已否证垫底但仍显示」；新契约是**整行不出现**。
+    垫底只解决了排序，解决不了「今天推了四条」的错觉。
+    """
     picks = {
         "P1": {"bought": [{"code": "002749", "name": "国光", "price": 9.56, "note": "2板"}]},
         "P4": {"bought": [{"code": "600814", "name": "解百", "price": 7.30, "note": "高开"}]},
     }
     md = mode_card.render_picks_only(picks)
-    assert md.count("已否证") == 1, "P1 必须是已否证"
-    assert "未过门" in md, "P4 是未过门，不能与已否证混为一谈"
-    assert md.splitlines()[0].startswith("P4 "), "未过门应排在已否证之前"
+    assert md == ""
+    assert "已否证" not in md and "未过门" not in md
+    assert "002749" not in md and "600814" not in md
 
 
-def test_picks_only_ignores_unknown_sids():
+def test_picks_only_ignores_unknown_sids(monkeypatch):
     """只遍历注册表的六个模式——picks 里混进脏 sid 不能推给老大。"""
+    monkeypatch.setitem(STRATEGIES["P1"], "evidence_state", "passed")
     picks = {
         "P1": {"bought": [{"code": "002749", "name": "国光", "price": 9.56, "note": "2板"}]},
         "XX": {"bought": [{"code": "999999", "name": "脏数据", "price": 1.0, "note": "不该出现"}]},
@@ -418,3 +459,43 @@ def test_picks_only_ignores_unknown_sids():
     md = mode_card.render_picks_only(picks)
     assert "P1" in md and "002749" in md
     assert "XX" not in md and "999999" not in md
+
+
+# ---------------- 推送闸门（11-25） ----------------
+
+def test_no_mode_is_pushable_today():
+    """🔴 当前注册表 0 个过门 ⇒ 四个推荐出口**全部返回空串**。
+
+    这条直接对应老大 11-25 的截图：那条「今日推荐」不该出现。
+    硬编码「0 个过门」而不是从注册表推导 —— 推导式断言会自己验自己、永远绿。
+    """
+    assert not [sid for sid in STRATEGIES if mode_card.is_pushable(sid)]
+
+    picks = {sid: {"bought": [{"code": "600000", "name": "浦发", "price": 8.0, "note": "x"}]}
+             for sid in STRATEGIES}
+    assert mode_card.render_picks_only(picks) == ""
+
+    sleeves = {sid: {"signals": 1, "skipped": [],
+                     "bought": [{"code": "600000", "name": "浦发", "price": 8.0}]}
+               for sid in STRATEGIES}
+    assert mode_card.render_phase_card("auction", sleeves) == ""
+    assert mode_card.render_daily_footer(picks, pending=[(s, "14:45") for s in STRATEGIES]) == ""
+
+    led = {"sleeves": {sid: {"trades": [
+        {"code": "600000", "funded": True, "sell_date": "2026-11-25", "pnl": 1.0}]}
+        for sid in STRATEGIES}}
+    assert mode_card.render_settlement_card(led, "2026-11-25") == ""
+
+
+def test_gate_blocks_every_non_passed_state(monkeypatch):
+    """三种非过门状态逐一验证被拦 —— 不是只拦 `rejected`。
+
+    `control`（负向对照）同样不能推：它是用来证明「不加条件会更差」的，
+    推给老大等于让他按对照组下单。
+    """
+    picks = {"P3": {"bought": [{"code": "688199", "name": "久日", "price": 16.45, "note": "超跌"}]}}
+    for state in ("unverified", "rejected", "control"):
+        monkeypatch.setitem(STRATEGIES["P3"], "evidence_state", state)
+        assert mode_card.render_picks_only(picks) == "", state
+    monkeypatch.setitem(STRATEGIES["P3"], "evidence_state", "passed")
+    assert "688199" in mode_card.render_picks_only(picks), "过门就该推，闸门不是永久关闭"

@@ -528,13 +528,21 @@ def build_recap(det: dict) -> str:
         L.extend(_row(h) for h in a)
     if not all_hits:
         L.append("（当日无触板票）")
-    L.append("> 明日 watchlist = 上述涨停票次日再盯二板；只做B格·T+1收兑现")
+    # 🔴 11-25：这句原来是**行动建议**（「明日 watchlist = 上述涨停票次日再盯二板；
+    # 只做B格·T+1收兑现」），而 P1/P2/P6 已全部否证 —— 按可成交口径四个高度全为负
+    # （首板 −0.94%/t−16.5 … 4板+ −2.80%/t−8.0，见 test_mode_card 的口径快照）。
+    # 复盘段保留「当日触板」这个事实，但不再把否证策略写成明日计划。
+    L.append("> 上述为当日触板事实；二板接力已否证，不作次日买入依据")
     # 六模式结算段：收盘复盘不能又只讲打板。
     # 读账本当天 sell_date 的真实成交，0 结算写「未结算」不写 0% 超额。
     try:
         import paper_ledger as pl
         today = datetime.now(CST).strftime("%Y-%m-%d")
-        L.append("\n" + mode_card.render_settlement_card(pl.load(), today))
+        # 🔴 结算段可能返回空串（一个可推模式都没有，见 mode_card.is_pushable）——
+        # 判空再 append，否则会在卡片末尾留一行空行。
+        seg = mode_card.render_settlement_card(pl.load(), today)
+        if seg:
+            L.append("\n" + seg)
     except Exception as e:
         print("[cloud] 结算段渲染失败: %s" % e, file=sys.stderr)
     return "\n".join(L)
@@ -624,7 +632,17 @@ def main(argv=None) -> int:
         picks = today_picks(today)
         body = mode_card.render_picks_only(picks)
         if not body:
-            print("[cloud] 无推荐可推", file=sys.stderr)
+            # 🔴 11-25：卡片只推过门模式（mode_card.PUSHABLE_STATES）。
+            # 「不推」必须留下正证据，区分两种情况 —— 否则老大问「怎么没通知了」时，
+            # 我自己都分不清是没信号、没成交、还是模式全不过门。
+            n_fill = sum(len((r or {}).get("bought") or []) for r in picks.values())
+            n_ok = sum(1 for s in mode_card.STRATEGIES if mode_card.is_pushable(s))
+            if n_fill:
+                print("[cloud] %d 笔成交全落在未过门/已否证模式上，按「只推过门」静默"
+                      "（过门 %d/%d）" % (n_fill, n_ok, len(mode_card.STRATEGIES)),
+                      file=sys.stderr)
+            else:
+                print("[cloud] 今日无成交，静默", file=sys.stderr)
             return 0
         md = "## 今日推荐 %s\n%s" % (datetime.now(CST).strftime("%H:%M"), body)
 
