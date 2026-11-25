@@ -377,9 +377,20 @@ def performance_payload() -> dict[str, Any]:
         status_counts[key] = status_counts.get(key, 0) + 1
 
     if settled.empty:
+        # 台账**读到了、也有记录**，只是还没有已结算（validated）的信号。
+        # 这里刻意不复用 `_unavailable()` 的占位字段：那是「读不到台账」的语义，
+        # 直接沿用会让页面写「最新信号日 未记录」—— 而 signal_date 就在 rows 里，
+        # 属于把已知的信息报成未知。
         return {
             **_unavailable("台账中还没有已结算（validated）的信号。"),
             "available": True,
+            # `reason` 只解释「为什么不可用」；available=True 时必须为空，
+            # 否则下游任何「reason 非空即异常」的判断都会误报。
+            "reason": "",
+            "freshness": _freshness(rows, path),
+            # 0 是**确定的零**（确实没有已结算），不是「算不出来」。
+            # `_overall()` 对空集返回 None，那是「无法计算」；两者不能共用一个值。
+            "overall": {"observations": 0, "win_count": 0, "hit_rate": 0.0, "displayable": False},
             "status_counts": status_counts,
         }
 

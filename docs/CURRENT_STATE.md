@@ -128,7 +128,7 @@
 - 历史积累的 `codex/*` 分支多数对应已关闭/已 squash 的 PR，**不可按 `--merged` 批量删**（全 squash 合并不留祖先链）。逐个以 PR `merged_at` + 内容在 `origin/main` 的对应为准。
 - 2026-11-24 已清理 4 条：`feat/filter-verdict-cli`、`codex/tickflow-personal-operating-system`（功能全在 main，删）、`codex/strategy-watch-workflow`（含未入库的 tickflow roadmap 文档，保留）、`feature/holder-concentration-factor`（#541 负结果实验唯一 git 历史，保留）。另有 `codex/*` 历史分支未动。
 
-**数据诚实性（2026-11-24 起，PR #616–#642 共 25 个）**
+**数据诚实性（2026-11-24 起，PR #616–#643 共 26 个）**
 
 验收口径：任何展示面在「取数失败 / 该日确实为空 / 有数据」三态下必须可区分；
 **刷新失败不得静默沿用旧值**；后端说不可用时必须把它的 `reason` 透出来。
@@ -181,6 +181,13 @@
   写入侧改 `None`；读取侧 `_with_known_cost` 纠正老账本（零迁移）；`realized_pnl`
   只累加有据成交 + `realized_pnl_unknown_count`；前端 `normalizeClosed` 改
   `asNullableNumber`（`asNumber` 会把 null 折回 0）、成本价 0 显示「—」。
+- `#643` 「台账有信号但还没结算」被写成「没有信号记录」：`performance_payload()`
+  的 `settled.empty` 分支把 `_unavailable()` 整包铺开、只改 `available`，于是
+  `freshness` 仍是占位（`latest_signal_date: ""` ⇒ 页面写「最新信号日 未记录」，
+  而 `signal_date` 就在 `rows` 里）、`overall` 仍是 `None`（⇒「条数未知」，
+  而 0 条是**确定的零**）、`reason` 仍带「还没有已结算的信号」（available=True
+  却带着不可用原因）。改为真实 `_freshness(rows, path)` + `overall` 零值 +
+  `reason: ""`；前端新增 `strategyEmptyNotice()` 区分「有信号缺结算」与「没有记录」。
 
 防复发守卫：
 - `frontend/src/lib/data-honesty-pages.test.ts`——页面层源码守卫（含接线断言：

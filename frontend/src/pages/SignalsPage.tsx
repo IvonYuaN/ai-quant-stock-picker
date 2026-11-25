@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { Radio } from "lucide-react";
 import { LoadingState, SectionHeader, Tag } from "@/components/ui/primitives";
 import { api, type PerformancePayload } from "@/lib/api";
+import { strategyEmptyNotice } from "@/lib/performance-view";
 import { cn } from "@/lib/utils";
 import { changeClass } from "@/lib/format";
 
@@ -59,6 +60,8 @@ export function SignalsPage() {
   const cold = data.cold_start;
   const picks = data.recent_picks ?? [];
   const excess = data.excess;
+  // 「台账有信号但没结算」与「没有信号记录」是两个态，不能共用一句话。
+  const strategyGap = strategyEmptyNotice(Object.entries(data.status_counts ?? {}));
 
   return (
     <div className="aq-page aq-module-page">
@@ -136,7 +139,7 @@ export function SignalsPage() {
           number="03 · 策略"
           title="各策略的信号表现"
           description="独立信号日不足门槛时不展示命中率（冷启动期）；平均收益只作观测，不作主指标。"
-          count={data.strategies?.length}
+          count={data.strategies?.length ? data.strategies.length : strategyGap.total > 0 ? "未结算" : "无记录"}
         />
         {data.strategies?.length ? (
           <div className="aq-table-wrap">
@@ -169,7 +172,7 @@ export function SignalsPage() {
               </tbody>
             </table>
           </div>
-        ) : <p className="aq-note">还没有策略级信号记录。</p>}
+        ) : <p className="aq-note">{strategyGap.text}</p>}
         {data.decay_alerts?.length ? (
           <div className="aq-table-wrap">
             <table className="aq-table aq-summary-table">

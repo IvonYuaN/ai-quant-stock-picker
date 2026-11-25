@@ -12,6 +12,7 @@ import {
   severityTone,
   sortRecentPicks,
   stalenessMessage,
+  strategyEmptyNotice,
 } from "./performance-view";
 
 const warm = {
@@ -231,4 +232,24 @@ export const performanceViewContract = {
   missingOverallNoHitRate: normalizePerformance({ available: true }).overallHitRate === null,
   unavailableShowsReason:
     performanceHeadline(normalizePerformance({ available: false, reason: "未找到台账文件" })).includes("未找到台账文件"),
+};
+
+/**
+ * M25：策略表为空时的措辞。
+ *
+ * `performance_bridge.py` 在「台账读到了、也有记录，但没有任何 validated 行」时
+ * 返回 `strategies: []`。页面原来一律写「还没有策略级信号记录」，把「还没结算」
+ * 说成了「没有记录」—— 而 `status_counts` 明明有数，标题还显示 0。
+ */
+export const strategyEmptyNoticeContract = {
+  // 有信号、只是没结算：不能说「没有记录」
+  unsettledMentionsCount: strategyEmptyNotice([["pending", 2], ["closed", 1]]).total === 3,
+  unsettledTextSaysUnsettled: strategyEmptyNotice([["pending", 2]]).text.includes("还没有已结算结果"),
+  unsettledTextIsNotNoRecords: !strategyEmptyNotice([["pending", 2]]).text.includes("还没有策略级信号记录"),
+  // 对照组：真的没有记录
+  emptySaysNoRecords: strategyEmptyNotice([]).text === "还没有策略级信号记录。",
+  emptyTotalIsZero: strategyEmptyNotice([]).total === 0,
+  // 非数字/非法计数不能把总数算歪
+  ignoresNonFinite: strategyEmptyNotice([["pending", Number.NaN]]).total === 0,
+  sumsMultipleStatuses: strategyEmptyNotice([["pending", 4], ["closed", 6]]).total === 10,
 };
