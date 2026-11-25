@@ -33,6 +33,63 @@ export function eventsAvailability(
   };
 }
 
+/**
+ * 哪些事件面「缓存未装载」—— **≠ 该股没有这类事件**。
+ *
+ * 后端 `EventCalendar.has_*_data()` 的 docstring 写明：调用方**只能在该标志为
+ * True 时**才允许把「查不到」解读成「没有」。前端此前完全没有消费这组字段，
+ * 于是「缺缓存」和「没事件」在页面上是同一句「当前事件缓存尚未提供记录」——
+ * 既没说清是哪一面缺，也把预加载问题说成了该股的事件事实。
+ *
+ * 只把**显式 false** 当作缺缓存：老后端 payload 没有这些键（undefined）时
+ * 不下结论，避免反过来把「有数据」误报成「缺缓存」。
+ */
+export type EventsFaceGap = { key: string; label: string };
+
+export function eventsFaceGaps(
+  data: Partial<Pick<
+    EventCalendarData,
+    | "available"
+    | "has_unlock_data"
+    | "has_longhubang_data"
+    | "has_suspend_resume_data"
+    | "has_earnings_forecast_data"
+    | "has_dividend_plan_data"
+  >> | null,
+): EventsFaceGap[] {
+  if (!data || data.available === false) return []; // 整体读失败由 eventsAvailability 负责
+  const gaps: EventsFaceGap[] = [];
+  if (data.has_unlock_data === false) gaps.push({ key: "unlock", label: "解禁" });
+  if (data.has_longhubang_data === false) gaps.push({ key: "longhubang", label: "龙虎榜" });
+  if (data.has_suspend_resume_data === false) gaps.push({ key: "suspend_resume", label: "停复牌" });
+  if (data.has_earnings_forecast_data === false) gaps.push({ key: "earnings_forecast", label: "业绩预告" });
+  if (data.has_dividend_plan_data === false) gaps.push({ key: "dividend_plan", label: "分红" });
+  return gaps;
+}
+
+/** 空态说明：必须区分「已装载的面确实没记录」与「这些面根本没装载」。 */
+export function eventsEmptyDetail(
+  data: Partial<Pick<
+    EventCalendarData,
+    | "available"
+    | "has_unlock_data"
+    | "has_longhubang_data"
+    | "has_suspend_resume_data"
+    | "has_earnings_forecast_data"
+    | "has_dividend_plan_data"
+  >> | null,
+): string {
+  const gaps = eventsFaceGaps(data);
+  const total = 5;
+  if (gaps.length === 0) {
+    return "已装载的事件面都没有该股记录；这是「确实没有」，不是「没取到」。";
+  }
+  if (gaps.length >= total) {
+    return "事件缓存尚未装载任何面（预加载未落盘）；缺少数据不代表没有风险事件。";
+  }
+  return `已装载的事件面没有该股记录；但 ${gaps.map((gap) => gap.label).join(" / ")} 这 ${gaps.length} 个面缓存未装载，不能据此认为该股没有这类事件。`;
+}
+
 /** severity → 中文标签。未知档位归「微」，不编造语义。 */
 export function severityLabel(severity: string): string {
   if (severity === "high") return "高";

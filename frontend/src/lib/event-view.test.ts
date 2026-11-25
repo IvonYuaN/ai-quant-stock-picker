@@ -3,6 +3,8 @@
 // 覆盖：severity→徽标/标签映射、净额→方向文案与红涨绿跌配色、解禁排序、空/缺失输入安全。
 import {
   eventsAvailability,
+  eventsEmptyDetail,
+  eventsFaceGaps,
   netAmountView,
   severityBadgeClass,
   severityLabel,
@@ -74,4 +76,58 @@ export const eventViewContract = {
     const view = eventsAvailability({ available: false, reason: "   " });
     return view.state === "failed" && view.text.includes("没有说明原因");
   })(),
+
+  // 「缓存未装载」必须与「该股没有这类事件」区分（后端 has_*_data 的契约）。
+  faceGapsAllLoaded: eventsFaceGaps({
+    available: true,
+    has_unlock_data: true,
+    has_longhubang_data: true,
+    has_suspend_resume_data: true,
+    has_earnings_forecast_data: true,
+    has_dividend_plan_data: true,
+  }).length === 0,
+  faceGapsListsMissingFaces: (() => {
+    const gaps = eventsFaceGaps({
+      available: true,
+      has_unlock_data: true,
+      has_longhubang_data: false,
+      has_suspend_resume_data: false,
+      has_earnings_forecast_data: true,
+      has_dividend_plan_data: true,
+    });
+    return gaps.length === 2 && gaps.map((gap) => gap.label).join("/") === "龙虎榜/停复牌";
+  })(),
+  // 老后端没有这些键（undefined）时不下结论，别反过来误报「缺缓存」
+  faceGapsUndefinedIsNotGap: eventsFaceGaps({ available: true }).length === 0,
+  // 整体读失败由 eventsAvailability 负责，这里不再重复报「缺缓存」
+  faceGapsEmptyWhenUnavailable: eventsFaceGaps({ available: false, has_unlock_data: false }).length === 0,
+  faceGapsEmptyWhenNull: eventsFaceGaps(null).length === 0,
+
+  emptyDetailSaysReallyEmptyWhenAllLoaded: eventsEmptyDetail({
+    available: true,
+    has_unlock_data: true,
+    has_longhubang_data: true,
+    has_suspend_resume_data: true,
+    has_earnings_forecast_data: true,
+    has_dividend_plan_data: true,
+  }).includes("确实没有"),
+  emptyDetailNamesMissingFaces: (() => {
+    const text = eventsEmptyDetail({
+      available: true,
+      has_unlock_data: true,
+      has_longhubang_data: true,
+      has_suspend_resume_data: true,
+      has_earnings_forecast_data: true,
+      has_dividend_plan_data: false,
+    });
+    return text.includes("分红") && text.includes("缓存未装载") && text.includes("不能据此认为");
+  })(),
+  emptyDetailAllMissingSaysPreload: eventsEmptyDetail({
+    available: true,
+    has_unlock_data: false,
+    has_longhubang_data: false,
+    has_suspend_resume_data: false,
+    has_earnings_forecast_data: false,
+    has_dividend_plan_data: false,
+  }).includes("预加载未落盘"),
 };
