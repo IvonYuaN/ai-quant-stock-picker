@@ -10,6 +10,8 @@ import { buildDailyView } from "@/lib/daily-view";
 import { strategyCounts } from "@/lib/candidate-view";
 import { statusLabel } from "@/lib/display-labels";
 import { api, type FilterVerdict, type FilterVerdictRow, type MarketRisk } from "@/lib/api";
+import { formatRate, formatSignedRatio } from "@/lib/format";
+import { marketRiskStatus, marketRiskStatusText } from "@/lib/market-risk-status";
 
 // 「筛选器判读」快照（固化自 research/pit_factors/筛选器定位_决策.md，2026-11-16 锁定）。
 // 定位 = 选股筛选工具：不承诺正超额，只要求「可行/稳健」。
@@ -84,6 +86,9 @@ export function ScreenerPage() {
 
   const riskLevel = marketRisk?.available ? marketRisk.level : undefined;
   const riskContext = marketRisk?.available ? marketRisk : null;
+  // 三态：正在读取 / 请求失败 / 后端明确不可用（带原因）。原来三者都渲染「暂无数据」，
+  // 把后端 `reason`（"样本不足（需 ≥65 个交易日且 ≥300 只票）"）这条可行动信息丢掉了。
+  const riskStatus = marketRiskStatus(marketRisk, marketRiskError ?? "");
 
   // 02 节统一渲染模型：端点 available 则用 runner 工件（低频更新），否则回退硬编码快照。
   // evidence 归一为 FilterVerdictRow[]（快照常量元素是 as const 字面量，逐字段重建成普通对象），
@@ -211,15 +216,15 @@ export function ScreenerPage() {
                   <span className="aq-chip">
                     {RISK_LEVEL_LABEL[riskLevel ?? ""] ?? "未知"}
                   </span>
-                  {" "}趋势20 {riskContext.trend_20 != null ? `${(riskContext.trend_20 * 100).toFixed(1)}%` : "—"}
-                  {" · "}广度 {riskContext.breadth != null ? `${Math.round(riskContext.breadth * 100)}%` : "—"}
-                  {" · "}回撤252 {riskContext.drawdown_252 != null ? `${(riskContext.drawdown_252 * 100).toFixed(1)}%` : "—"}
+                  {" "}趋势20 {formatSignedRatio(riskContext.trend_20)}
+                  {" · "}广度 {formatRate(riskContext.breadth)}
+                  {" · "}回撤252 {formatSignedRatio(riskContext.drawdown_252)}
                 </td>
               </tr>
             ) : (
               <tr>
                 <td><strong>当前市场面</strong></td>
-                <td className="aq-note">{marketRiskError ?? "暂无数据"}</td>
+                <td className="aq-note">{marketRiskStatusText(riskStatus)}</td>
               </tr>
             )}
           </tbody>
