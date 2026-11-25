@@ -8,6 +8,7 @@
 
 import base64
 
+import pytest
 from fastapi.testclient import TestClient
 
 import app as app_module
@@ -61,6 +62,78 @@ def test_report_data_uri_without_comma_400():
 
 def test_report_missing_file_404():
     assert client.get("/api/myreports/file/does-not-exist").status_code == 404
+
+
+# ---- 研报索引损坏 / 删除失败：必须与「确实没有」区分（数据诚实性） ----
+
+
+@pytest.fixture()
+def reports_dir(tmp_path, monkeypatch):
+    """把研报根目录指到 tmp，避免污染真实的 ~/.vibe-research。"""
+    root = tmp_path / "myreports"
+    root.mkdir()
+    monkeypatch.setattr(mr, "_REPORTS_ROOT", root)
+    monkeypatch.setattr(mr, "_DATA_DIR", tmp_path)
+    monkeypatch.setattr(mr, "_MIGRATED_TENANTS", set())
+    return root
+
+
+def test_missing_index_file_is_really_empty(reports_dir):
+    """对照组：索引文件不存在 = 确实没有研报 ⇒ 200 + 空数组。"""
+    r = client.get("/api/myreports")
+    assert r.status_code == 200
+    assert r.json()["data"] == []
+
+
+def test_corrupt_index_is_not_reported_as_empty_list(reports_dir):
+    (reports_dir / "index.json").write_text("{not json", "utf-8")
+    r = client.get("/api/myreports")
+    assert r.status_code == 500, "索引损坏必须报错，不能回空数组让界面显示「暂无研报」"
+    assert "不代表没有研报" in r.json()["detail"]
+
+
+def test_non_list_index_is_not_reported_as_empty_list(reports_dir):
+    (reports_dir / "index.json").write_text('{"a": 1}', "utf-8")
+    r = client.get("/api/myreports")
+    assert r.status_code == 500
+    assert "结构异常" in r.json()["detail"]
+
+
+def test_upload_refuses_to_overwrite_corrupt_index(reports_dir):
+    """索引坏了还照传，会把旧索引覆盖成「只有新文件」——旧研报全部失联。"""
+    (reports_dir / "index.json").write_text("{not json", "utf-8")
+    before = sorted(p.name for p in reports_dir.iterdir())
+    r = client.post("/api/myreports", json={"name": "a.pdf", "content_b64": _B64})
+    assert r.status_code == 500
+    assert (reports_dir / "index.json").read_text("utf-8") == "{not json"
+    assert sorted(p.name for p in reports_dir.iterdir()) == before, "不能落下无法索引的孤儿文件"
+
+
+def test_file_download_does_not_404_on_corrupt_index(reports_dir):
+    """索引读不出来时不能说成「研报不存在」——那是把故障说成文件真没有。"""
+    (reports_dir / "index.json").write_text("{not json", "utf-8")
+    r = client.get("/api/myreports/file/whatever")
+    assert r.status_code == 500
+    assert "不代表没有研报" in r.json()["detail"]
+
+
+def test_delete_keeps_index_when_file_cannot_be_removed(reports_dir):
+    """文件删不掉时必须保留索引条目并报错，否则条目变成既删不掉也下载不到的孤儿。"""
+    meta = client.post(
+        "/api/myreports", json={"name": "b.pdf", "content_b64": _B64}
+    ).json()["data"]
+    rid = meta["id"]
+    fp = reports_dir / f"{rid}.pdf"
+    fp.unlink()
+    fp.mkdir()  # unlink 同名目录 ⇒ IsADirectoryError（OSError 子类）
+
+    r = client.delete(f"/api/myreports/{rid}")
+    assert r.status_code == 500, "文件删不掉时不能回 ok:true 报「已删除」"
+    assert "索引未改动" in r.json()["detail"]
+
+    ids = [row["id"] for row in client.get("/api/myreports").json()["data"]]
+    assert rid in ids, "删失败不能摘索引"
+    assert fp.exists()
 
 
 # ---- SSRF 守卫 ----

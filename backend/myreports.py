@@ -185,6 +185,15 @@ class ReportError(ValueError):
     """上传/校验类错误（对应 HTTP 400/413）。"""
 
 
+class IndexUnreadable(RuntimeError):
+    """索引文件存在但读不出来（损坏 / 无权限 / 顶层结构异常）。
+
+    必须与「确实没有研报」区分：把它当空列表会让界面显示「暂无研报」，更糟的是
+    下一次上传会把空列表**写回索引** —— 磁盘上的旧研报从此全部失联（索引里没有
+    ⇒ 既下载不到也删不掉，只能手工翻目录）。对应 HTTP 500，不是 404。
+    """
+
+
 def _maybe_migrate_to_tenant() -> None:
     """非 local 租户首次访问时，若自身为空且本地 legacy 研报存在，复制过来
     （让「从单用户升级到多用户」的老数据无缝落到主人自己的租户桶）。"""
@@ -207,14 +216,26 @@ def _ensure_dir() -> None:
 
 
 def _load_index() -> list[dict]:
+    """读索引。**文件不存在**才是「没有研报」；存在却读不出来一律抛
+    ``IndexUnreadable``，绝不降级成空列表（否则上传会把旧索引覆盖成空）。"""
     _maybe_migrate_to_tenant()
-    if not _index().exists():
+    path = _index()
+    if not path.exists():
         return []
     try:
-        data = json.loads(_index().read_text("utf-8"))
-        return data if isinstance(data, list) else []
-    except (json.JSONDecodeError, OSError):
-        return []
+        data = json.loads(path.read_text("utf-8"))
+    except (json.JSONDecodeError, OSError, UnicodeError) as exc:
+        raise IndexUnreadable(
+            f"研报索引读取失败（{type(exc).__name__}: {exc}）。"
+            "这是索引文件损坏或不可读，不代表没有研报；"
+            f"请检查 {path}（改名后即可重建索引，磁盘上的原文件不会丢）。"
+        ) from exc
+    if not isinstance(data, list):
+        raise IndexUnreadable(
+            f"研报索引结构异常（顶层应为数组，实际 {type(data).__name__}）："
+            "不代表没有研报，请检查索引文件。"
+        )
+    return data
 
 
 def _save_index(items: list[dict]) -> None:
@@ -273,7 +294,6 @@ def save_report(name: str, content_b64: str) -> dict:
 
     _ensure_dir()
     rid = uuid.uuid4().hex
-    (_reports_dir() / f"{rid}{ext}").write_bytes(blob)
     meta = {
         "id": rid,
         "name": fname,
@@ -283,7 +303,9 @@ def save_report(name: str, content_b64: str) -> dict:
         "ts": int(time.time() * 1000),
     }
     with _LOCK:
+        # 先读索引再落盘：索引损坏时直接抛 IndexUnreadable，不留下无法索引的孤儿文件。
         items = _load_index()
+        (_reports_dir() / f"{rid}{ext}").write_bytes(blob)
         items.append(meta)
         _save_index(items)
     return meta
@@ -299,16 +321,19 @@ def report_path(rid: str) -> tuple[Path, str] | None:
 
 
 def delete_report(rid: str) -> bool:
-    """删文件 + 移除索引条目。删成功（或本就不在）返回是否命中。"""
+    """删文件 + 移除索引条目。
+
+    返回 ``False`` 只表示「索引里没有这个 id」。文件删不掉（权限 / 只读挂载 /
+    被占用）时**索引保持原样并直接抛 OSError** —— 以前这里吞掉异常后照摘索引、
+    照样返回 True，界面会报「已删除」，文件却留在盘上：索引已无此条 ⇒ 既下载
+    不到也删不掉，只能手工翻目录。
+    """
     with _LOCK:
         items = _load_index()
         hit = next((r for r in items if r.get("id") == rid), None)
         if hit is None:
             return False
         fp = _reports_dir() / f"{rid}{hit.get('ext', '')}"
-        try:
-            fp.unlink(missing_ok=True)
-        except OSError:
-            pass
+        fp.unlink(missing_ok=True)  # 失败就抛，索引保持原样
         _save_index([r for r in items if r.get("id") != rid])
     return True
