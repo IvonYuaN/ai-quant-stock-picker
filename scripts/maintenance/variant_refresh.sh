@@ -8,14 +8,6 @@ PROJECT_ROOT="${AQSP_PROJECT_ROOT:-/opt/aqsp}"
 RUNTIME_ROOT="${AQSP_RUNTIME_ROOT:-$PROJECT_ROOT}"
 RUNTIME_DATA_ROOT="${AQSP_RUNTIME_DATA_ROOT:-${RUNTIME_ROOT}/data}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-RUNTIME_PYTHON_HELPER="${PROJECT_ROOT}/scripts/runtime_python.sh"
-if [ ! -f "$RUNTIME_PYTHON_HELPER" ]; then
-    RUNTIME_PYTHON_HELPER="${SCRIPT_DIR}/runtime_python.sh"
-fi
-# shellcheck disable=SC1090
-source "$RUNTIME_PYTHON_HELPER"
-PYTHON_BIN="$(aqsp_runtime_python "$PROJECT_ROOT")"
-export PYTHONPATH="${PROJECT_ROOT}/src:${PROJECT_ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
 LOG_DIR="${AQSP_VARIANT_LOG_DIR:-${RUNTIME_DATA_ROOT}/logs/variants}"
 LOG_FILE="${LOG_DIR}/variant-refresh-$(date +%Y-%m-%d).log"
 
@@ -23,6 +15,24 @@ log() {
     mkdir -p "$LOG_DIR"
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
 }
+
+# 启动阶段也必须可追溯：解释器解析/校验失败发生在第一次业务 log 之前时，
+# 否则交易日只会看到「没有日志」，无法区分未启动与脚本故障。
+RUNTIME_PYTHON_HELPER="${PROJECT_ROOT}/scripts/runtime_python.sh"
+if [ ! -f "$RUNTIME_PYTHON_HELPER" ]; then
+    RUNTIME_PYTHON_HELPER="${SCRIPT_DIR}/runtime_python.sh"
+fi
+if [ ! -f "$RUNTIME_PYTHON_HELPER" ]; then
+    log "[ERROR] 缺少运行时 Python 解析器: ${RUNTIME_PYTHON_HELPER}"
+    exit 1
+fi
+# shellcheck disable=SC1090
+if ! source "$RUNTIME_PYTHON_HELPER"; then
+    log "[ERROR] 加载运行时 Python 解析器失败: ${RUNTIME_PYTHON_HELPER}"
+    exit 1
+fi
+PYTHON_BIN="$(aqsp_runtime_python "$PROJECT_ROOT")"
+export PYTHONPATH="${PROJECT_ROOT}/src:${PROJECT_ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
 
 is_truthy() {
     [[ "${1:-}" =~ ^(1|true|yes|on)$ ]]
@@ -36,6 +46,7 @@ resolve_path() {
 }
 
 if ! aqsp_require_runtime_python "$PYTHON_BIN"; then
+    log "[ERROR] 拒绝运行变体刷新：运行时 Python 不存在或不可执行: ${PYTHON_BIN}"
     exit 1
 fi
 
