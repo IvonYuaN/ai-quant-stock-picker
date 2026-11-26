@@ -1,4 +1,6 @@
+import os
 import sqlite3
+import subprocess
 from datetime import date
 from pathlib import Path
 
@@ -102,6 +104,35 @@ def test_target_snapshot_persists_prices_with_decimal_precision(tmp_path: Path) 
         ).fetchone()
     assert inserted_symbols == ["600000"]
     assert row == (12.31, 12.66, 12.22, 12.58, 12580.5)
+
+
+def test_variant_refresh_logs_runtime_python_failure_before_exit(tmp_path: Path) -> None:
+    script = Path(__file__).parents[1] / "scripts" / "variant_refresh.sh"
+    log_dir = tmp_path / "logs"
+    env = os.environ.copy()
+    env.update(
+        {
+            "AQSP_PROJECT_ROOT": str(tmp_path),
+            "AQSP_RUNTIME_ROOT": str(tmp_path),
+            "AQSP_VARIANT_LOG_DIR": str(log_dir),
+            "AQSP_PYTHON": str(tmp_path / "missing-python"),
+        }
+    )
+
+    result = subprocess.run(
+        ["bash", str(script)],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    # The shell expands the date in the real path; inspect the single emitted file
+    # without depending on the host timezone used by pytest.
+    files = list(log_dir.glob("variant-refresh-*.log"))
+    assert result.returncode == 1
+    assert len(files) == 1
+    assert "运行时 Python 不存在或不可执行" in files[0].read_text(encoding="utf-8")
 
 
 def test_variant_refresh_rejects_runtime_import_failure() -> None:
