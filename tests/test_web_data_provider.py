@@ -170,6 +170,142 @@ def test_dashboard_data_provider_home_status_distinguishes_live_watch_and_blocke
     assert blocked.tone == "blocked"
 
 
+def test_dashboard_data_provider_home_status_blocks_when_global_gate_is_blocked(
+    monkeypatch, tmp_path: Path
+) -> None:
+    snapshot_path = tmp_path / "home_dashboard_snapshot.json"
+    snapshot_path.write_text(
+        json.dumps(
+            {
+                "selected_date": "2026-07-13",
+                "recommendation_gate": {
+                    "recommendation_allowed": False,
+                    "status": "blocked",
+                    "reasons": ["walkforward_not_ready"],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    provider = DashboardDataProvider(
+        ledger_path=str(tmp_path / "ledger.jsonl"),
+        recommendation_gate_path=str(snapshot_path),
+    )
+    overview = DashboardDateOverview(
+        signal_date="2026-07-13",
+        task_count=1,
+        actionable_total=2,
+        watch_total=0,
+        blocked_total=0,
+        top_task_label="盘中观察",
+        top_headline="实时候选已落盘",
+        blocker_headline="",
+        focus_headline="先看实时候选",
+        workflow_summary="",
+        archive_summary="",
+    )
+    runtime = SimpleNamespace(
+        effective_source="sina",
+        requested_source="online_first",
+        data_latest_trade_date="2026-07-13",
+        lag_days="0",
+        cooldown_until="",
+        gate_blocker_line="",
+    )
+    monkeypatch.setattr(provider, "runtime_overview", lambda _date: runtime)
+
+    status = provider.home_status("2026-07-13", overview=overview)
+
+    assert status.label == "阻塞"
+    assert status.tone == "blocked"
+
+
+def test_dashboard_data_provider_home_status_keeps_recommendation_when_global_gate_ready(
+    monkeypatch, tmp_path: Path
+) -> None:
+    snapshot_path = tmp_path / "home_dashboard_snapshot.json"
+    snapshot_path.write_text(
+        json.dumps(
+            {
+                "selected_date": "2026-07-13",
+                "recommendation_gate": {
+                    "recommendation_allowed": True,
+                    "status": "allowed",
+                    "reasons": [],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    provider = DashboardDataProvider(
+        ledger_path=str(tmp_path / "ledger.jsonl"),
+        recommendation_gate_path=str(snapshot_path),
+    )
+    overview = DashboardDateOverview(
+        signal_date="2026-07-13",
+        task_count=1,
+        actionable_total=2,
+        watch_total=0,
+        blocked_total=0,
+        top_task_label="盘中观察",
+        top_headline="实时候选已落盘",
+        blocker_headline="",
+        focus_headline="先看实时候选",
+        workflow_summary="",
+        archive_summary="",
+    )
+    runtime = SimpleNamespace(
+        effective_source="sina",
+        requested_source="online_first",
+        data_latest_trade_date="2026-07-13",
+        lag_days="0",
+        cooldown_until="",
+        gate_blocker_line="",
+    )
+    monkeypatch.setattr(provider, "runtime_overview", lambda _date: runtime)
+
+    status = provider.home_status("2026-07-13", overview=overview)
+
+    assert status.label == "实时推荐"
+    assert status.tone == "focus"
+
+
+def test_dashboard_data_provider_home_status_blocks_when_live_source_is_stale(
+    monkeypatch, tmp_path: Path
+) -> None:
+    provider = DashboardDataProvider(
+        ledger_path=str(tmp_path / "ledger.jsonl"),
+        recommendation_gate_path=str(tmp_path / "missing-snapshot.json"),
+    )
+    overview = DashboardDateOverview(
+        signal_date="2026-07-13",
+        task_count=1,
+        actionable_total=1,
+        watch_total=0,
+        blocked_total=0,
+        top_task_label="盘中观察",
+        top_headline="实时候选已落盘",
+        blocker_headline="",
+        focus_headline="先看实时候选",
+        workflow_summary="",
+        archive_summary="",
+    )
+    runtime = SimpleNamespace(
+        effective_source="historical_cache",
+        requested_source="online_first",
+        data_latest_trade_date="2026-07-13",
+        lag_days="0",
+        cooldown_until="",
+        gate_blocker_line="",
+    )
+    monkeypatch.setattr(provider, "runtime_overview", lambda _date: runtime)
+
+    status = provider.home_status("2026-07-13", overview=overview)
+
+    assert status.label == "阻塞"
+    assert status.tone == "blocked"
+
+
 def test_dashboard_data_provider_ignores_cooldown_on_release_date(
     tmp_path: Path,
 ) -> None:

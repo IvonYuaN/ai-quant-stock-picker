@@ -792,6 +792,54 @@ class MonitorChecker:
                 message=f"变体刷新仍未完成: {status}",
                 details=details,
             )
+        # completed 状态必须和实际发布的 variant_results 绑定。仅刷新 status
+        # 文件会让旧产物被新时间戳掩盖，页面随后继续展示过期选股结果。
+        artifact_raw = str(params.get("artifact_path", "")).strip()
+        if artifact_raw:
+            artifact_path = Path(artifact_raw)
+            if not artifact_path.is_absolute():
+                artifact_path = runtime_root / artifact_path
+            details["artifact_path"] = str(artifact_path)
+            expected_end = str(payload.get("end_date") or "").strip()
+            if not expected_end:
+                return MonitorResult(
+                    name="variant_refresh_runtime",
+                    triggered=True,
+                    severity="critical",
+                    message="变体刷新已完成但缺少产物截至日证据",
+                    details=details,
+                )
+            if not artifact_path.exists():
+                return MonitorResult(
+                    name="variant_refresh_runtime",
+                    triggered=True,
+                    severity="critical",
+                    message="变体刷新状态已完成但实际产物缺失",
+                    details=details,
+                )
+            try:
+                artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                return MonitorResult(
+                    name="variant_refresh_runtime",
+                    triggered=True,
+                    severity="critical",
+                    message=f"变体刷新实际产物无法读取: {exc}",
+                    details=details,
+                )
+            artifact_end = artifact.get("end_date") if isinstance(artifact, dict) else None
+            details["artifact_end_date"] = artifact_end
+            if artifact_end != expected_end:
+                return MonitorResult(
+                    name="variant_refresh_runtime",
+                    triggered=True,
+                    severity="critical",
+                    message=(
+                        "变体刷新状态与实际产物截至日不一致："
+                        f"status={expected_end} artifact={artifact_end or 'missing'}"
+                    ),
+                    details=details,
+                )
         return MonitorResult(
             name="variant_refresh_runtime",
             triggered=False,

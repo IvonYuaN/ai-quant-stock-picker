@@ -412,6 +412,39 @@ class TestMonitorChecker:
         assert result.details["status"] == "completed"
         assert result.details["trading_lag_days"] == 0
 
+    def test_monitor_variant_refresh_runtime_blocks_status_artifact_date_mismatch(
+        self, sample_config: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        checker = MonitorChecker(config_path=str(sample_config))
+        status_path = tmp_path / "variant_refresh_status.json"
+        artifact_path = tmp_path / "variant_results.json"
+        status_path.write_text(
+            json.dumps(
+                {
+                    "generated_at": "2026-07-24T22:00:00+08:00",
+                    "status": "completed",
+                    "end_date": "2026-07-24",
+                }
+            ),
+            encoding="utf-8",
+        )
+        artifact_path.write_text(json.dumps({"end_date": "2026-07-23"}), encoding="utf-8")
+        monkeypatch.setattr(
+            "aqsp.monitor.checker.today_shanghai", lambda: date(2026, 7, 24)
+        )
+
+        result = checker._check_variant_refresh_runtime(
+            {
+                "status_path": str(status_path),
+                "artifact_path": str(artifact_path),
+                "max_staleness_trading_days": 1,
+            }
+        )
+
+        assert result.triggered is True
+        assert "不一致" in result.message
+        assert result.details["artifact_end_date"] == "2026-07-23"
+
     def test_monitor_variant_refresh_runtime_distinguishes_skipped_lock(
         self, sample_config: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

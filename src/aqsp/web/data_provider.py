@@ -2776,8 +2776,12 @@ class DashboardDataProvider:
         stale_source = not source_missing and not source_supports_workload(
             source, "live_short"
         )
+        global_gate_blocked = self._recommendation_gate_blocked_for_date(selected_date)
         blocked = bool(
-            date_overview.blocked_total or runtime.gate_blocker_line or stale_source
+            date_overview.blocked_total
+            or runtime.gate_blocker_line
+            or stale_source
+            or global_gate_blocked
         )
         if blocked:
             label = "阻塞"
@@ -5725,7 +5729,12 @@ class DashboardDataProvider:
     ) -> bool:
         """Apply the current snapshot gate to current-day ledger rows only."""
         signal_date = str(row.get("signal_date") or row.get("trade_date") or "").strip()[:10]
-        if not signal_date:
+        return self._recommendation_gate_blocked_for_date(signal_date)
+
+    def _recommendation_gate_blocked_for_date(self, signal_date: str) -> bool:
+        """Return whether the matching current-day global gate explicitly blocks."""
+        selected_date = signal_date.strip()[:10]
+        if not selected_date:
             return False
         try:
             payload = json.loads(
@@ -5735,9 +5744,9 @@ class DashboardDataProvider:
             return False
         if not isinstance(payload, dict):
             return False
-        selected_date = str(payload.get("selected_date") or "").strip()[:10]
+        snapshot_date = str(payload.get("selected_date") or "").strip()[:10]
         gate = payload.get("recommendation_gate")
-        if not selected_date or selected_date != signal_date or not isinstance(gate, dict):
+        if snapshot_date != selected_date or not isinstance(gate, dict):
             return False
         return gate.get("recommendation_allowed") is not True
 
