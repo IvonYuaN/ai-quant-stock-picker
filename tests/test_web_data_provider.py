@@ -52,6 +52,69 @@ def test_dashboard_research_recommendation_remains_actionable_during_protection(
     assert provider._action_label(row) == "实时推荐"
 
 
+def test_dashboard_research_recommendation_is_downgraded_by_current_global_gate(
+    tmp_path: Path,
+) -> None:
+    snapshot_path = tmp_path / "home_dashboard_snapshot.json"
+    snapshot_path.write_text(
+        json.dumps(
+            {
+                "selected_date": "2026-07-13",
+                "recommendation_gate": {
+                    "recommendation_allowed": False,
+                    "status": "blocked",
+                    "reasons": ["walkforward_not_ready"],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    provider = DashboardDataProvider(
+        ledger_path=str(tmp_path / "ledger.jsonl"),
+        paper_ledger_path=str(tmp_path / "paper.jsonl"),
+        logs_path=str(tmp_path / "logs"),
+        reports_dir=str(tmp_path / "reports"),
+        recommendation_gate_path=str(snapshot_path),
+    )
+    row = {
+        "symbol": "000001",
+        "signal_date": "2026-07-13",
+        "rating": "buy_candidate",
+        "research_recommendation": True,
+    }
+
+    assert provider._action_label(row) == "观察"
+    assert provider._is_actionable(row, task_id="intraday") is False
+
+
+def test_dashboard_research_recommendation_keeps_historical_row_readable(
+    tmp_path: Path,
+) -> None:
+    snapshot_path = tmp_path / "home_dashboard_snapshot.json"
+    snapshot_path.write_text(
+        json.dumps(
+            {
+                "selected_date": "2026-07-13",
+                "recommendation_gate": {"recommendation_allowed": False},
+            }
+        ),
+        encoding="utf-8",
+    )
+    provider = DashboardDataProvider(
+        ledger_path=str(tmp_path / "ledger.jsonl"),
+        recommendation_gate_path=str(snapshot_path),
+    )
+    row = {
+        "symbol": "000001",
+        "signal_date": "2026-07-12",
+        "rating": "buy_candidate",
+        "research_recommendation": True,
+    }
+
+    assert provider._action_label(row) == "实时推荐"
+    assert provider._is_actionable(row) is True
+
+
 def test_dashboard_data_provider_home_status_distinguishes_live_watch_and_blocked(
     monkeypatch, tmp_path: Path
 ) -> None:

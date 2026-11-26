@@ -974,6 +974,7 @@ class DashboardDataProvider:
         bt_logs_dir: str = "",
         intraday_ledger_path: str = "",
         intraday_latest_path: str = "",
+        recommendation_gate_path: str = "",
     ) -> None:
         resolved_ledger = (
             ledger_path.strip()
@@ -1008,6 +1009,11 @@ class DashboardDataProvider:
             or os.getenv("AQSP_INTRADAY_OUTPUT_CSV", "").strip()
             or "reports/intraday_latest.csv"
         )
+        resolved_recommendation_gate = (
+            recommendation_gate_path.strip()
+            or os.getenv("AQSP_HOME_SNAPSHOT_PATH", "").strip()
+            or "data/runtime/home_dashboard_snapshot.json"
+        )
 
         self.ledger_path = Path(resolved_ledger)
         self.paper_ledger_path = Path(resolved_paper_ledger)
@@ -1017,6 +1023,7 @@ class DashboardDataProvider:
         self.debate_results_path = Path(resolved_debate_results)
         self.intraday_ledger_path = Path(resolved_intraday_ledger)
         self.intraday_latest_path = Path(resolved_intraday_latest)
+        self.recommendation_gate_path = Path(resolved_recommendation_gate)
         self.logger = TradeLogger(str(self.logs_path))
         self._runtime_cache: dict[str, dict[object, Any]] = {}
         self._runtime_cache_source_signature = self._source_signature()
@@ -5639,6 +5646,8 @@ class DashboardDataProvider:
         action = str(row.get("portfolio_action", "") or "").strip()
         rating = str(row.get("rating", "") or "").strip()
         if bool(row.get("research_recommendation", False)):
+            if self._row_is_blocked_by_global_recommendation_gate(row):
+                return "观察"
             return "实时推荐"
         if action and action != "keep":
             return normalize_research_tone(portfolio_action_label(action))
@@ -5697,6 +5706,8 @@ class DashboardDataProvider:
         if self._is_blocked(row):
             return False
         if bool(row.get("research_recommendation", False)):
+            if self._row_is_blocked_by_global_recommendation_gate(row):
+                return False
             return is_tradable_rating(row.get("rating"))
         action = str(row.get("portfolio_action", "") or "").strip()
         if action == "observation_only" or bool(row.get("observation_only", False)):
@@ -5708,6 +5719,27 @@ class DashboardDataProvider:
         if action == "downgrade":
             return False
         return is_tradable_rating(row.get("rating"))
+
+    def _row_is_blocked_by_global_recommendation_gate(
+        self, row: dict[str, Any]
+    ) -> bool:
+        """Apply the current snapshot gate to current-day ledger rows only."""
+        signal_date = str(row.get("signal_date") or row.get("trade_date") or "").strip()[:10]
+        if not signal_date:
+            return False
+        try:
+            payload = json.loads(
+                self.recommendation_gate_path.read_text(encoding="utf-8")
+            )
+        except (OSError, json.JSONDecodeError):
+            return False
+        if not isinstance(payload, dict):
+            return False
+        selected_date = str(payload.get("selected_date") or "").strip()[:10]
+        gate = payload.get("recommendation_gate")
+        if not selected_date or selected_date != signal_date or not isinstance(gate, dict):
+            return False
+        return gate.get("recommendation_allowed") is not True
 
     def _is_watch_candidate(self, row: dict[str, Any], task_id: str = "") -> bool:
         if bool(row.get("research_recommendation", False)):

@@ -76,6 +76,9 @@ python3 scripts/headless_dashboard_check.py --url https://lh.ifidy.cn --mode raw
 
 把候选理由、反证、风险、条件、来源和未知项统一到前端与通知；采用后的条件逐项核验，普通刷新不重复提醒，源变化和条件失效可解释。
 
+当前合同：前端从 ledger 生成候选卡片时，必须同时读取当前日 home snapshot 的
+`recommendation_gate`；gate 未通过时，当前日的 `research_recommendation` 只能降级为“观察”，历史日期仍按归档记录展示。
+
 ### S5 发布与自然运行验收
 
 完成本地门禁、CI、immutable release、公网 health/路由/快照检查；随后观察至少一个完整自然运行窗口，分开记录代码、制品、上线、数据新鲜度、真实模型和真实用户持仓验收状态。
