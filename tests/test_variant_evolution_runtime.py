@@ -123,6 +123,28 @@ def test_variant_refresh_does_not_accept_stale_same_day_artifact() -> None:
     assert '"$OUTPUT_PATH" --expected-end "$(date +%F)"' in script
 
 
+def test_variant_refresh_records_failure_status_before_refreshing_snapshot() -> None:
+    """分段失败必须落 `timed_out`/`failed` 状态，且**先写状态再刷快照**。
+
+    否则状态文件一直挂着上一次的 `completed`，展示端拿不到失败信号，页面就替
+    一次失败的刷新背书。2026-11-23 / 11-25 两次 `exit=124` 都是这个下场：
+    产物停在 11-20，状态却写「已通过完整契约校验」。
+    """
+    script = (Path(__file__).parents[1] / "scripts" / "variant_refresh.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'failure_state="timed_out"' in script, "124/137 必须判成超时"
+    assert 'write_status "$failure_state"' in script, "失败分支必须落状态"
+    # 顺序不能反：先刷快照会把旧状态一起写进快照
+    failure_block = script.split("变体分段 ${batch_index} 失败或超时")[1]
+    assert failure_block.index("write_status") < failure_block.index(
+        "refresh_home_snapshot"
+    )
+    # 目标截至日不能漏：前端只有拿到它才把状态认成「当日」而不是「历史记录」
+    assert '"$(date +%F)"' in failure_block.split("refresh_home_snapshot")[0]
+
+
 def test_current_holding_evidence_tolerates_sparse_historical_volume() -> None:
     dates = pd.date_range("2026-06-15", periods=41, freq="B").strftime("%Y-%m-%d")
     frame = pd.DataFrame(

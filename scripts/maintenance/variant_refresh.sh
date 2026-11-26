@@ -49,13 +49,31 @@ CURSOR_PATH="$(resolve_path "${AQSP_VARIANT_CURSOR_PATH:-data/runtime/variant_re
 STATUS_PATH="$(resolve_path "${AQSP_VARIANT_REFRESH_STATUS:-data/runtime/variant_refresh_status.json}")"
 FOCUS_SNAPSHOT="$(resolve_path "${AQSP_HOME_SNAPSHOT_PATH:-data/runtime/home_dashboard_snapshot.json}")"
 
+write_status() {
+    local state="$1" message="$2" reason="${3:-}" end_date="${4:-}"
+    local args=(
+        --market-db "$MARKET_DB"
+        --output "$OUTPUT_PATH"
+        --status-file "$STATUS_PATH"
+        --status-only "$state"
+        --status-message "$message"
+    )
+    if [ -n "$reason" ]; then
+        args+=(--status-reason "$reason")
+    fi
+    # 只有失败态才带目标截至日：展示端要靠它把状态认成「当日」而不是「历史记录」；
+    # waiting 在周末/非交易日没有当日目标，硬塞日期会变成「刷新日期不匹配」。
+    if [ -n "$end_date" ]; then
+        args+=(--end "$end_date")
+    fi
+    if ! "$PYTHON_BIN" "$PROJECT_ROOT/scripts/refresh_variant_results_from_market_db.py" \
+        "${args[@]}" >/dev/null 2>&1; then
+        log "[WARN] 变体状态写入失败(${state})，状态文件可能仍停留在上一次结果"
+    fi
+}
+
 write_waiting_status() {
-    "$PYTHON_BIN" "$PROJECT_ROOT/scripts/refresh_variant_results_from_market_db.py" \
-        --market-db "$MARKET_DB" \
-        --output "$OUTPUT_PATH" \
-        --status-file "$STATUS_PATH" \
-        --status-only waiting \
-        --status-message "$1" >/dev/null 2>&1 || true
+    write_status waiting "$1"
 }
 
 refresh_home_snapshot() {
@@ -183,7 +201,20 @@ for batch_index in $(seq 1 "$MAX_STAGE_BATCHES"); do
         :
     else
         status=$?
+        # 124 = timeout 到期；137 = TERM 被忽略后 KILL。两者都算超时。
+        if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
+            failure_state="timed_out"
+        else
+            failure_state="failed"
+        fi
         log "[ERROR] 变体分段 ${batch_index} 失败或超时，保留产物与 staging，exit=${status}"
+        # 必须落状态：否则状态文件一直挂着上一次的 completed，展示端
+        # （write_home_snapshot._variant_refresh_status_error）拿不到任何失败信号，
+        # 页面就替这次失败背书。先写状态再刷快照，顺序不能反。
+        write_status "$failure_state" \
+            "第 ${batch_index}/${MAX_STAGE_BATCHES} 段退出码 ${status}，产物停留在上一轮，未发布新变体。" \
+            "exit=${status} batch=${batch_index}/${MAX_STAGE_BATCHES} timeout=${MAX_RUNTIME_SECONDS}s" \
+            "$(date +%F)"
         refresh_home_snapshot
         exit "$status"
     fi

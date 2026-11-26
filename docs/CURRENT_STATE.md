@@ -1,6 +1,6 @@
 # AQSP 项目现状（Current State）
 
-> **单一事实来源。** 最后核对：2026-11-26（基线 `origin/main` @ `00ed8b5b` / #690（#675/#677/#685 已上线；#688 脚本已部署、cron 待授权；#691 修桥接读错 data root，待部署）；数据诚实性 #650–#691）。历史核对：2026-11-25（`ac52147c` / #688）、2026-11-24（`d660a31f` / #620）、2026-09-22（`ab6f5fef` / #173）。
+> **单一事实来源。** 最后核对：2026-11-26（基线 `origin/main` @ `edad4624` / #691（#675/#677/#685 已上线；#688 脚本已部署、cron 待授权；#691 修桥接读错 data root，待部署；#692 修变体刷新假成功）；数据诚实性 #650–#692）。历史核对：2026-11-25（`ac52147c` / #688）、2026-11-24（`d660a31f` / #620）、2026-09-22（`ab6f5fef` / #173）。
 > 本项目由**多个 agent 并行开发**，历史上积累了互相矛盾的阶段文档与任务清单。本文用于回答「**现在到底是什么样**」。
 > 维护规则：本文只写「当前是什么」；历史/过程材料一律下沉 `docs/archive/`，不在此堆叠。
 
@@ -465,6 +465,23 @@
   真机 DRY_RUN 读到 `gen=2026-11-25T15:10`、age=18h<36h、exit 0。
   🔴 **脚本已部署到 prod `/opt/aqsp/scripts/`，但 cron 未装**（线上变更须仓主授权）。
   装 cron 后建议每日 15:30（北京时间）跑一次，runner 15:10 结算完成后 Pull。
+- `#692` **变体刷新失败不写状态 ⇒ 状态文件替失败背书**（与 `#684` 同属假成功）。
+  prod 实测：`variant-refresh` 在 11-23、11-25 两次 `exit=124`（分段 1 超时），
+  11-24 连日志都没有；而 `data/runtime/variant_refresh_status.json` 至今写着
+  `status: completed` / `generated_at: 2026-11-20` / 「变体结果已通过完整契约校验」，
+  产物 `variant_results.json` 停在 11-20。根因是写入端与展示端口径不齐：
+  `write_home_snapshot._variant_refresh_status_error()` **已经**能渲染
+  `timed_out/skipped_lock/rejected/failed` 为「变体未发布：…」，但
+  `refresh_variant_results_from_market_db.py --status-only` 的 `choices` 只有
+  `("waiting",)`，且 `variant_refresh.sh` 的分段失败分支只 `log` 不写状态 ⇒
+  失败信号根本没有出口。改法：`--status-only` 取值收敛为模块常量
+  `REFRESH_STATUS_CHOICES`（与展示端 allowed 集合同一套），新增 `--status-reason`；
+  shell 侧加通用 `write_status`，失败分支按退出码落 `timed_out`(124/137) 或
+  `failed`，**先写状态再刷快照**（顺序反了快照会带上旧状态）。
+  测试：1 条源码守卫（锁 124→timed_out 与写状态早于刷快照）+ 1 条往返测试
+  （CLI 写 `timed_out` → 展示端渲染「变体未发布：exit=124…」），反向验证两条均转红。
+  ⚠️ 未改超时预算与变体算法；**超时本身是另一件事**（prod 2C/1.6G 跑 600 只 × 24 变体
+  的容量问题），本次只保证「失败能被看见」。
 - `#691` **`#684` 真正的根因：桥接读错 data root（写读各认一个根）**。
   `daily_pipeline` 的回流写 `$AQSP_RUNTIME_DATA_ROOT/paper_arena.json`（prod =
   `/opt/aqsp/data/`），而 `paper_arena_bridge._path()` 只认 `AQSP_PAPER_ARENA`，

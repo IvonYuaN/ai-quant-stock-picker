@@ -68,6 +68,20 @@ MIN_LATEST_DATE_SYMBOLS = 600
 SQL_CHUNK_SIZE = 80
 REQUIRED_MARKET_TABLES = frozenset({"stocks", "daily_qfq"})
 VARIANT_REFRESH_STATUS_SCHEMA_VERSION = "variant-refresh-status-v1"
+# 与 `scripts/analysis/write_home_snapshot.py::_variant_refresh_status_error` 的
+# allowed 集合保持同一套取值：**写入端能产出的状态，展示端必须都能解释**。
+# 2026-11-26 之前 `--status-only` 只允许 `waiting`，于是分段超时被杀时无处落
+# `timed_out`，状态文件就一直挂着上一次的 `completed` —— 页面替一次失败的刷新
+# 背书（与 #684「写读各认一个根」同属假成功）。
+REFRESH_STATUS_CHOICES = (
+    "waiting",
+    "staged",
+    "completed",
+    "timed_out",
+    "skipped_lock",
+    "rejected",
+    "failed",
+)
 
 
 class VariantRefreshTimeout(TimeoutError):
@@ -799,10 +813,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--status-file", type=Path)
     parser.add_argument(
         "--status-only",
-        choices=("waiting",),
+        choices=REFRESH_STATUS_CHOICES,
         help="只写运行状态，不读取市场数据或执行变体计算。",
     )
     parser.add_argument("--status-message", default="")
+    parser.add_argument("--status-reason", default="")
     parser.add_argument(
         "--profile-batch-size", type=int, default=DEFAULT_PROFILE_BATCH_SIZE
     )
@@ -835,6 +850,13 @@ def main() -> int:
             status=status_only,
             message=str(getattr(args, "status_message", "") or "")
             or "等待下一个错峰运行窗口。",
+            # 展示端优先读 reason（`reason or message`）；空串会被
+            # write_variant_refresh_status 过滤掉，不会污染正常状态。
+            reason=str(getattr(args, "status_reason", "") or ""),
+            # 目标截至日必须带上：`research-validation-context.ts` 只有在
+            # refresh_end_date == selected_date 时才把状态翻成「当日验证本轮超时」，
+            # 缺了它只会退化成「进度待核实」——失败照样被藏起来。
+            end_date=str(getattr(args, "end", "") or ""),
         )
         return 0
     previous = load_qualified_artifact(args.output)
