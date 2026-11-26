@@ -1804,6 +1804,7 @@ def test_run_pipeline_excludes_intraday_sub_strategies(monkeypatch) -> None:
         "预测验证",
         "虚拟盘同步",
         "因子IC回流",
+        "影子账户回流",
         "收盘复盘",
         "自适应学习",
         "策略自进化",
@@ -3491,3 +3492,81 @@ def test_risk_refresh_step_source_error_is_not_a_failure(
     assert details["sources"]["announcements"].startswith("ERROR:")
     assert details["sources"]["holder_count"] == "OK"
 
+
+
+# ---------------------------------------------------------------------------
+# #684：影子账户回流步骤（best-effort，与因子 IC 回流同范式）
+# ---------------------------------------------------------------------------
+
+
+def _write_paper_fetch_script(tmp_path: Path) -> None:
+    (tmp_path / "scripts").mkdir(exist_ok=True)
+    (tmp_path / "scripts" / "fetch_paper_arena.sh").write_text(
+        "#!/usr/bin/env bash\nexit 0\n", encoding="utf-8"
+    )
+
+
+def test_pull_paper_arena_step_success_marks_pulled(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """新产物 ⇒ exit_code=0（步骤成功）+ pulled=True。"""
+    daily_pipeline = _load_daily_pipeline_module()
+    _write_paper_fetch_script(tmp_path)
+    config = _pull_config(tmp_path, daily_pipeline)
+
+    class _FakeProc:
+        returncode = 0
+
+    monkeypatch.setattr("subprocess.run", lambda *a, **k: _FakeProc(), raising=False)
+
+    details = daily_pipeline._step_pull_paper_arena(config, logging.getLogger("t"))
+    assert details["exit_code"] == 0
+    assert details["pulled"] is True
+    assert details["fetch_exit_code"] == 0
+    assert details["reason"] == "PULLED"
+
+
+def test_pull_paper_arena_stale_is_not_a_failure(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """🔴 陈旧（exit 3）⇒ 保留本地旧产物，但步骤绝不判失败、不阻断跑批。"""
+    daily_pipeline = _load_daily_pipeline_module()
+    _write_paper_fetch_script(tmp_path)
+    config = _pull_config(tmp_path, daily_pipeline)
+
+    class _FakeProc:
+        returncode = 3
+
+    monkeypatch.setattr("subprocess.run", lambda *a, **k: _FakeProc(), raising=False)
+
+    details = daily_pipeline._step_pull_paper_arena(config, logging.getLogger("t"))
+    assert details["exit_code"] == 0, "STALE 不得让 pull 步骤失败"
+    assert details["pulled"] is False
+    assert details["fetch_exit_code"] == 3
+    assert details["reason"] == "STALE"
+
+
+def test_pull_paper_arena_script_missing_is_not_a_failure(
+    tmp_path: Path,
+) -> None:
+    """脚本不存在 ⇒ 跳过但仍 success（发版漏带脚本时不能阻断跑批）。"""
+    daily_pipeline = _load_daily_pipeline_module()
+    config = _pull_config(tmp_path, daily_pipeline)
+
+    details = daily_pipeline._step_pull_paper_arena(config, logging.getLogger("t"))
+    assert details["exit_code"] == 0
+    assert details["pulled"] is False
+    assert details["reason"] == "script_missing"
+    assert details["fetch_exit_code"] is None
+
+
+def test_pipeline_includes_paper_arena_pull_before_closing_review() -> None:
+    """回流必须排在收盘复盘之前，且 DEST 与 bridge 读源同源。"""
+    daily_pipeline = _load_daily_pipeline_module()
+    src = Path(daily_pipeline.__file__).read_text(encoding="utf-8")
+    idx_pull = src.find('("影子账户回流"')
+    idx_review = src.find('("收盘复盘"')
+    assert idx_pull > 0, "交易日管线缺少「影子账户回流」步骤"
+    assert idx_review > idx_pull, "回流必须排在收盘复盘之前"
+    assert 'env["DEST"] = str(data_root / "paper_arena.json")' in src, \
+        "DEST 必须与 paper_arena_bridge.DEFAULT_PATH 同源（data/paper_arena.json）"
