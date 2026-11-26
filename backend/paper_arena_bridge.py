@@ -39,7 +39,22 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 def _path() -> Path:
     raw = os.environ.get("AQSP_PAPER_ARENA", "").strip() or DEFAULT_PATH
     path = Path(raw).expanduser()
-    return path if path.is_absolute() else _PROJECT_ROOT / path
+    if path.is_absolute():
+        return path
+    # 相对默认路径必须落到 **cron 实际写入的那个 data root**，否则会出现
+    # 「回流脚本报成功、页面永远停在旧日期」——正是 #684 的翻版：写的一方读的一方
+    # 各认一个根。生产上 `AQSP_RUNTIME_DATA_ROOT=/opt/aqsp/data`（与
+    # `app.py` 读 `pit_cache/filter_verdict.json`、`aqsp_bridge` 读快照同一约定），
+    # 而 release 目录内的 `data/` 只有后端自己写的状态文件，不含管线产物。
+    runtime_data_root = os.environ.get("AQSP_RUNTIME_DATA_ROOT", "").strip()
+    if runtime_data_root:
+        base = Path(runtime_data_root).expanduser()
+        if base.is_absolute():
+            # 与 daily_pipeline._runtime_output_path 同构：`data/` 前缀已经由
+            # base 表达，不能拼成 $ROOT/data/data/paper_arena.json。
+            parts = path.parts[1:] if path.parts and path.parts[0] == "data" else path.parts
+            return base.joinpath(*parts) if parts else base
+    return _PROJECT_ROOT / path
 
 
 def _unavailable(reason: str) -> dict:

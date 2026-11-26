@@ -159,3 +159,45 @@ def test_nav_series_truncated_and_aligned(arena):
     assert len(nav["dates"]) == 120
     assert len(nav["port"]) == 120
     assert len(nav["bench"]) == 120
+
+
+# --- 默认路径必须跟 cron 的 data root 同源（#684 的翻版）--------------------
+# 生产事实（2026-11-26 实测）：`AQSP_RUNTIME_DATA_ROOT=/opt/aqsp/data`，回流脚本
+# 写在那里；而 release 目录内的 `data/` 只有后端自己写的状态文件（notify_state /
+# llm_calls / source_health），**没有管线产物**。如果这里按 `_PROJECT_ROOT` 解析，
+# 就会出现「脚本报成功、页面永远停在旧日期」——写读各认一个根，静默到没人发现。
+
+
+def test_default_path_follows_runtime_data_root(tmp_path, monkeypatch):
+    """不显式给 AQSP_PAPER_ARENA 时，默认路径必须落在 $AQSP_RUNTIME_DATA_ROOT 下。"""
+    monkeypatch.delenv("AQSP_PAPER_ARENA", raising=False)
+    monkeypatch.setenv("AQSP_RUNTIME_DATA_ROOT", str(tmp_path))
+    # 关键：不能拼成 $ROOT/data/data/paper_arena.json
+    assert pb._path() == tmp_path / "paper_arena.json"
+
+    _write(tmp_path / "paper_arena.json", _good())
+    out = pb.payload()
+    assert out["available"] is True, "写读同源：cron 写到哪，这里就要读到哪"
+    assert out["nav"]["port"][-1] == 0.62
+
+
+def test_absolute_override_beats_runtime_data_root(tmp_path, monkeypatch):
+    """AQSP_PAPER_ARENA 是显式指定，优先级高于 data root —— 排障时要能临时指向别处。"""
+    explicit = tmp_path / "elsewhere" / "arena.json"
+    monkeypatch.setenv("AQSP_PAPER_ARENA", str(explicit))
+    monkeypatch.setenv("AQSP_RUNTIME_DATA_ROOT", str(tmp_path / "root"))
+    assert pb._path() == explicit
+
+
+def test_no_runtime_data_root_falls_back_to_project_root(monkeypatch):
+    """未配置 data root（本机/测试环境）时退回项目根，保持原有行为。"""
+    monkeypatch.delenv("AQSP_PAPER_ARENA", raising=False)
+    monkeypatch.delenv("AQSP_RUNTIME_DATA_ROOT", raising=False)
+    assert pb._path() == pb._PROJECT_ROOT / "data" / "paper_arena.json"
+
+
+def test_relative_runtime_data_root_is_ignored(tmp_path, monkeypatch):
+    """相对路径的 data root 不可信（依赖 cwd），必须忽略并退回项目根。"""
+    monkeypatch.delenv("AQSP_PAPER_ARENA", raising=False)
+    monkeypatch.setenv("AQSP_RUNTIME_DATA_ROOT", "data")
+    assert pb._path() == pb._PROJECT_ROOT / "data" / "paper_arena.json"

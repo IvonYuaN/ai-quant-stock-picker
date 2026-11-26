@@ -1,6 +1,6 @@
 # AQSP 项目现状（Current State）
 
-> **单一事实来源。** 最后核对：2026-11-25（基线 `origin/main` @ `ac52147c` / #688（#675/#677/#685 已上线；#688 脚本已部署、cron 待授权）；数据诚实性 #650–#688）。历史核对：2026-11-24（`d660a31f` / #620）、2026-09-22（`ab6f5fef` / #173）。
+> **单一事实来源。** 最后核对：2026-11-26（基线 `origin/main` @ `00ed8b5b` / #690（#675/#677/#685 已上线；#688 脚本已部署、cron 待授权；#691 修桥接读错 data root，待部署）；数据诚实性 #650–#691）。历史核对：2026-11-25（`ac52147c` / #688）、2026-11-24（`d660a31f` / #620）、2026-09-22（`ab6f5fef` / #173）。
 > 本项目由**多个 agent 并行开发**，历史上积累了互相矛盾的阶段文档与任务清单。本文用于回答「**现在到底是什么样**」。
 > 维护规则：本文只写「当前是什么」；历史/过程材料一律下沉 `docs/archive/`，不在此堆叠。
 
@@ -465,6 +465,19 @@
   真机 DRY_RUN 读到 `gen=2026-11-25T15:10`、age=18h<36h、exit 0。
   🔴 **脚本已部署到 prod `/opt/aqsp/scripts/`，但 cron 未装**（线上变更须仓主授权）。
   装 cron 后建议每日 15:30（北京时间）跑一次，runner 15:10 结算完成后 Pull。
+- `#691` **`#684` 真正的根因：桥接读错 data root（写读各认一个根）**。
+  `daily_pipeline` 的回流写 `$AQSP_RUNTIME_DATA_ROOT/paper_arena.json`（prod =
+  `/opt/aqsp/data/`），而 `paper_arena_bridge._path()` 只认 `AQSP_PAPER_ARENA`，
+  否则按 `_PROJECT_ROOT`（= release 根）解析 ⇒ 就算 `#688` 的 cron 装上去，
+  也会「脚本报成功、页面日期不动」。**实测证据（2026-11-26）**：
+  `/opt/aqsp/data/` 里管线产物全部新鲜（`runtime/home_dashboard_snapshot.json`
+  10:13、`gate_notify_state.json` 11-25 18:02、`pit_cache/filter_verdict.json`），
+  release 内 `data/` 只有后端自写的 `notify_state`/`llm_calls`/`source_health`，
+  且 `paper_arena.json` 两份是**不同 inode**（1177943 vs 1854464，非软链非硬链）。
+  改 `_path()` 认 `AQSP_RUNTIME_DATA_ROOT`（仅绝对路径生效，剥离 `data/` 前缀，
+  与 `daily_pipeline._runtime_output_path` 同构），未配置时退回项目根保持原行为。
+  新增 4 条路径契约测试（写读同源 / 显式覆盖优先 / 无 env 回退 / 相对 root 忽略），
+  反向验证撤掉修复即转红。⚠️ 后端改动，**prod 部署需仓主授权**且须避开盘中。
 - `#679` **`#666` 的防复发守卫**：`build_markdown()` / `_row()` 没有闸门且仍是
   手工排查用的活函数（不能删），行为断言只能证明「今天的 main 没接它」，挡不住
   明天有人改回去。改为源码守卫：断言 `main()` 必须走
