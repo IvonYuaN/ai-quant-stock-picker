@@ -671,6 +671,72 @@ def _step_pull_ic_diagnosis(
     return _ok(verdict, rc, rc == 0)
 
 
+def _step_pull_paper_arena(
+    config: PipelineConfig, logger: logging.Logger
+) -> dict[str, Any]:
+    """best-effort：单向 pull runner 的影子账户产物，供 `/api/aqsp/paper-arena` 消费。
+
+    🔴 #684：prod 的 `data/paper_arena.json` 曾是 11-23 发版快照，runner 每天
+    15:10 更新却没有回流通道 ⇒ Web 显示 5 天前的净值且后端误标 stale=false。
+    本步骤补上回流，复用 `fetch_ic_diagnosis.sh` 的 best-effort 范式。
+
+    红线：本步骤绝不阻断跑批。fetch 退出码 0/1/2/3（拉取 / 连不上 / 无新结果 /
+    陈旧）都只记录、不判失败 —— 陈旧或失败时脚本保留本地旧文件，绝不覆盖。
+    """
+    import subprocess
+
+    logger.info("  拉取 runner 影子账户产物（best-effort，不阻断）")
+    script = config.project_root / "scripts" / "fetch_paper_arena.sh"
+    if not script.exists():
+        logger.info("  fetch_paper_arena.sh 不存在（%s），跳过回流", script)
+        return {
+            "exit_code": 0,
+            "pulled": False,
+            "reason": "script_missing",
+            "fetch_exit_code": None,
+        }
+
+    data_root = _runtime_data_root(config.project_root)
+    env = dict(os.environ)
+    # 与 backend/paper_arena_bridge.py 的 DEFAULT_PATH 写读同源
+    env["DEST"] = str(data_root / "paper_arena.json")
+
+    def _ok(reason: str, fetch_rc: int | None, pulled: bool) -> dict[str, Any]:
+        logger.info("  影子账户回流判定 %s（fetch_exit_code=%s），不阻断", reason, fetch_rc)
+        return {
+            "exit_code": 0,
+            "pulled": pulled,
+            "reason": reason,
+            "fetch_exit_code": fetch_rc,
+        }
+
+    try:
+        proc = subprocess.run(
+            ["bash", str(script)],
+            capture_output=True,
+            text=True,
+            errors="replace",
+            env=env,
+            cwd=str(config.project_root),
+            timeout=300,
+        )
+        rc = proc.returncode
+    except subprocess.TimeoutExpired:
+        logger.warning("  影子账户回流超时（>300s），保留本地旧产物，不阻断")
+        return _ok("timeout", None, False)
+    except Exception as exc:
+        logger.warning("  影子账户回流异常：%s（保留本地旧产物，不阻断）", exc)
+        return _ok("exception", None, False)
+
+    verdict = {
+        0: "PULLED",
+        1: "RUNNER_UNREACHABLE",
+        2: "NO_RESULT",
+        3: "STALE",
+    }.get(rc, f"UNKNOWN_{rc}")
+    return _ok(verdict, rc, rc == 0)
+
+
 def _step_refresh_risk_datasources(
     config: PipelineConfig, logger: logging.Logger
 ) -> dict[str, Any]:
@@ -1372,6 +1438,11 @@ def run_pipeline(config: PipelineConfig) -> PipelineResult:
         # 收评日报的「因子 IC 健康」段读 runner 诊断产物 ⇒ 必须放在收盘复盘之前拉取；
         # best-effort：pull 失败/无新结果/陈旧都保留本地旧产物、不阻断（步骤恒 success）。
         ("因子IC回流", lambda: _step_pull_ic_diagnosis(config, logger)),
+        # #684：`/api/aqsp/paper-arena` 读的 data/paper_arena.json 由 runner 每日 15:10
+        # 生成；必须在这里回流，否则 Web 一直显示发版时的旧快照。同 IC 回流，best-effort。
+        ("影子账户回流", lambda: _step_pull_paper_arena(config, logger)),
+        # #684：`/api/aqsp/paper-arena` 读的 data/paper_arena.json 由 runner 每日 15:10
+        # 生成；必须在这里回流，否则 Web 一直显示发版时的旧快照。同 IC 回流，best-effort。
         ("收盘复盘", lambda: _step_closing_review(config, logger)),
         ("自适应学习", lambda: _step_adaptive_learning(config, logger)),
         ("策略自进化", lambda: _step_auto_evolution(config, logger)),
