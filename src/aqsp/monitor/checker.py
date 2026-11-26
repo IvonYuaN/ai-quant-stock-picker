@@ -3,9 +3,10 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Literal
+from zoneinfo import ZoneInfo
 
 import yaml
 
@@ -38,6 +39,21 @@ WALKFORWARD_BLOCKED_STATUSES: frozenset[str] = frozenset(
         "failed",
         "failed_metadata",
     }
+)
+
+VARIANT_REFRESH_STATUSES: frozenset[str] = frozenset(
+    {
+        "waiting",
+        "staged",
+        "completed",
+        "timed_out",
+        "skipped_lock",
+        "rejected",
+        "failed",
+    }
+)
+VARIANT_REFRESH_FAILED_STATUSES: frozenset[str] = frozenset(
+    {"timed_out", "skipped_lock", "rejected", "failed"}
 )
 
 
@@ -138,6 +154,8 @@ class MonitorChecker:
                     result = self._check_source_health(monitor.params)
                 elif monitor.check == "walkforward_runtime":
                     result = self._check_walkforward_runtime(monitor.params)
+                elif monitor.check == "variant_refresh_runtime":
+                    result = self._check_variant_refresh_runtime(monitor.params)
                 elif monitor.check == "screening_liveness":
                     result = self._check_screening_liveness(monitor.params)
                 elif monitor.check == "empty_picks":
@@ -635,6 +653,151 @@ class MonitorChecker:
                 f"{'; '.join(validation.blockers)}"
             ),
             details={**details, "dsr_pbo_blocked": True, "alert_suppressed": False},
+        )
+
+    def _check_variant_refresh_runtime(self, params: dict[str, Any]) -> MonitorResult:
+        """Check that the variant refresh scheduler produced fresh, explicit evidence."""
+        runtime_root = Path(os.environ.get("AQSP_RUNTIME_ROOT", "").strip() or ".")
+        status_path = Path(
+            str(params.get("status_path", "data/runtime/variant_refresh_status.json"))
+        )
+        if not status_path.is_absolute():
+            status_path = runtime_root / status_path
+        required = bool(params.get("required", False))
+        max_staleness = int(params.get("max_staleness_trading_days", 1))
+        if max_staleness < 0:
+            raise ValueError("max_staleness_trading_days must be non-negative")
+
+        if not status_path.exists():
+            if not required:
+                return MonitorResult(
+                    name="variant_refresh_runtime",
+                    triggered=False,
+                    severity="warning",
+                    message="变体刷新状态文件不存在，跳过调度健康检查",
+                    details={"status_path": str(status_path), "required": required},
+                    skipped=True,
+                )
+            return MonitorResult(
+                name="variant_refresh_runtime",
+                triggered=True,
+                severity="critical",
+                message="变体刷新状态文件缺失，无法确认本交易日是否启动",
+                details={"status_path": str(status_path), "required": required},
+            )
+
+        try:
+            payload = json.loads(status_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            return MonitorResult(
+                name="variant_refresh_runtime",
+                triggered=True,
+                severity="critical",
+                message=f"变体刷新状态无法读取: {exc}",
+                details={"status_path": str(status_path)},
+            )
+        if not isinstance(payload, dict):
+            return MonitorResult(
+                name="variant_refresh_runtime",
+                triggered=True,
+                severity="critical",
+                message="变体刷新状态格式无效",
+                details={"status_path": str(status_path)},
+            )
+
+        status = str(payload.get("status") or "unknown").strip().lower()
+        generated_raw = str(payload.get("generated_at") or "").strip()
+        details: dict[str, Any] = {
+            "status_path": str(status_path),
+            "status": status,
+            "generated_at": generated_raw or None,
+            "message": payload.get("message"),
+            "end_date": payload.get("end_date"),
+        }
+        if status not in VARIANT_REFRESH_STATUSES:
+            return MonitorResult(
+                name="variant_refresh_runtime",
+                triggered=True,
+                severity="critical",
+                message=f"变体刷新状态未知: {status}",
+                details=details,
+            )
+        if not generated_raw:
+            return MonitorResult(
+                name="variant_refresh_runtime",
+                triggered=True,
+                severity="critical",
+                message=f"变体刷新 {status} 但缺少启动/更新时间证据",
+                details=details,
+            )
+        try:
+            generated_at = datetime.fromisoformat(generated_raw.replace("Z", "+00:00"))
+        except ValueError:
+            return MonitorResult(
+                name="variant_refresh_runtime",
+                triggered=True,
+                severity="critical",
+                message="变体刷新时间证据不是合法 ISO 8601 时间戳",
+                details=details,
+            )
+        if generated_at.tzinfo is None:
+            return MonitorResult(
+                name="variant_refresh_runtime",
+                triggered=True,
+                severity="critical",
+                message="变体刷新时间证据缺少时区",
+                details=details,
+            )
+
+        today = today_shanghai()
+        # 统一按北京时间判断交易日，避免主机时区或 Z 时间戳把 00:00 附近
+        # 的有效交易日误挪到前一日。
+        generated_day = generated_at.astimezone(ZoneInfo("Asia/Shanghai")).date()
+        if generated_day > today:
+            return MonitorResult(
+                name="variant_refresh_runtime",
+                triggered=True,
+                severity="critical",
+                message="变体刷新时间证据位于未来，拒绝沿用该状态",
+                details={**details, "generated_date": generated_day.isoformat()},
+            )
+        lag = trading_day_lag(generated_day, today)
+        details["generated_date"] = generated_day.isoformat()
+        details["trading_lag_days"] = lag
+        details["max_staleness_trading_days"] = max_staleness
+        if lag > max_staleness:
+            return MonitorResult(
+                name="variant_refresh_runtime",
+                triggered=True,
+                severity="critical",
+                message=(
+                    f"变体刷新状态已过期：最近证据 {generated_day.isoformat()}，"
+                    f"滞后 {lag} 个交易日"
+                ),
+                details=details,
+            )
+        if status in VARIANT_REFRESH_FAILED_STATUSES:
+            return MonitorResult(
+                name="variant_refresh_runtime",
+                triggered=True,
+                severity="critical",
+                message=f"变体刷新未成功完成: {status}",
+                details=details,
+            )
+        if status in {"waiting", "staged"}:
+            return MonitorResult(
+                name="variant_refresh_runtime",
+                triggered=True,
+                severity="critical",
+                message=f"变体刷新仍未完成: {status}",
+                details=details,
+            )
+        return MonitorResult(
+            name="variant_refresh_runtime",
+            triggered=False,
+            severity="critical",
+            message="变体刷新已在交易日窗口内完成",
+            details=details,
         )
 
     def _check_screening_liveness(self, params: dict[str, Any]) -> MonitorResult:

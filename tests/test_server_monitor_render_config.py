@@ -143,7 +143,7 @@ def test_monitors_yaml_uses_runtime_data_root_placeholder() -> None:
 def test_monitors_yaml_version_bumped() -> None:
     """monitors.yaml version 字段必须 bump（AGENTS.md §3.5 阈值约束）。"""
     monitors = (PROJECT_ROOT / "config" / "monitors.yaml").read_text(encoding="utf-8")
-    assert 'version: "1.3.0"' in monitors
+    assert 'version: "1.4.0"' in monitors
 
 
 def test_server_monitor_sources_render_helper() -> None:

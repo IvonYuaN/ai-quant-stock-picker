@@ -384,6 +384,100 @@ class TestMonitorChecker:
         assert result.message == "walk-forward 未完成: blocked_resources"
         assert result.details["production_detail"] == "server memory too low"
 
+    def test_monitor_variant_refresh_runtime_is_healthy_when_completed_in_window(
+        self, sample_config: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        checker = MonitorChecker(config_path=str(sample_config))
+        status_path = tmp_path / "variant_refresh_status.json"
+        status_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "variant-refresh-status-v1",
+                    "generated_at": "2026-07-24T22:00:00+08:00",
+                    "status": "completed",
+                    "message": "ok",
+                }
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(
+            "aqsp.monitor.checker.today_shanghai", lambda: date(2026, 7, 24)
+        )
+
+        result = checker._check_variant_refresh_runtime(
+            {"status_path": str(status_path), "max_staleness_trading_days": 1}
+        )
+
+        assert result.triggered is False
+        assert result.details["status"] == "completed"
+        assert result.details["trading_lag_days"] == 0
+
+    def test_monitor_variant_refresh_runtime_distinguishes_skipped_lock(
+        self, sample_config: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        checker = MonitorChecker(config_path=str(sample_config))
+        status_path = tmp_path / "variant_refresh_status.json"
+        status_path.write_text(
+            json.dumps(
+                {
+                    "generated_at": "2026-07-24T22:00:00+08:00",
+                    "status": "skipped_lock",
+                    "message": "已有任务占锁",
+                }
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(
+            "aqsp.monitor.checker.today_shanghai", lambda: date(2026, 7, 24)
+        )
+
+        result = checker._check_variant_refresh_runtime(
+            {"status_path": str(status_path), "max_staleness_trading_days": 1}
+        )
+
+        assert result.triggered is True
+        assert "skipped_lock" in result.message
+
+    def test_monitor_variant_refresh_runtime_blocks_stale_completed_status(
+        self, sample_config: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        checker = MonitorChecker(config_path=str(sample_config))
+        status_path = tmp_path / "variant_refresh_status.json"
+        status_path.write_text(
+            json.dumps(
+                {
+                    "generated_at": "2026-07-21T22:00:00+08:00",
+                    "status": "completed",
+                }
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(
+            "aqsp.monitor.checker.today_shanghai", lambda: date(2026, 7, 24)
+        )
+
+        result = checker._check_variant_refresh_runtime(
+            {"status_path": str(status_path), "max_staleness_trading_days": 1}
+        )
+
+        assert result.triggered is True
+        assert "过期" in result.message
+        assert result.details["status"] == "completed"
+
+    def test_monitor_variant_refresh_runtime_blocks_missing_timestamp(
+        self, sample_config: Path, tmp_path: Path
+    ) -> None:
+        checker = MonitorChecker(config_path=str(sample_config))
+        status_path = tmp_path / "variant_refresh_status.json"
+        status_path.write_text(json.dumps({"status": "completed"}), encoding="utf-8")
+
+        result = checker._check_variant_refresh_runtime(
+            {"status_path": str(status_path), "required": True}
+        )
+
+        assert result.triggered is True
+        assert "缺少" in result.message
+
     def _write_gate_and_status(
         self, gate_path: Path, status_path: Path, *, gate: dict, status: dict
     ) -> None:

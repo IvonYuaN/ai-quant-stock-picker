@@ -23,7 +23,7 @@
 #   envsubst 渲染到临时副本（自动 trap cleanup）。
 # - CI 直接消费 yaml 时，未声明的 `${AQSP_RUNTIME_DATA_ROOT}` 替换为空，
 #   `cache_path.exists()` 仍走 skipped 分支，行为兼容（PR #77 修复前也是 skipped）。
-version: "1.3.0"
+version: "1.4.0"
 monitors:
   - name: "stale_data"
     description: "数据滞后超过阈值"
@@ -92,6 +92,17 @@ monitors:
       # 状态，双门未过告警每周周期性触发、无新信息量，纯属噪声。待 #199 解决、
       # 策略重新获得上线资格后必须改回 true。
       alert_on_dsr_pbo_blocked: false
+    severity: "critical"
+
+  - name: "variant_refresh_runtime"
+    description: "变体刷新调度是否在交易日窗口内启动并完成"
+    enabled: true
+    check: "variant_refresh_runtime"
+    params:
+      status_path: ${AQSP_RUNTIME_DATA_ROOT}/runtime/variant_refresh_status.json
+      # 生产要求每个交易日都留下新状态；CI 无持久运行目录时跳过。
+      required: false
+      max_staleness_trading_days: 1
     severity: "critical"
 
   - name: "screening_liveness"
