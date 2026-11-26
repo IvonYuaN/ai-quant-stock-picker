@@ -60,10 +60,10 @@ class RecommendationGateResult:
 def evaluate(inputs: RecommendationGateInputs) -> RecommendationGateResult:
     """Evaluate the hard prerequisites for a paper research recommendation.
 
-    Cold-start, paper-tracking, walk-forward, and portfolio-protection state
-    are validation context for this non-trading application. They must not
-    erase live candidates. Freshness remains a hard gate because stale data
-    cannot support a short-term research recommendation.
+    Candidates may remain visible while validation is incomplete, but the
+    formal recommendation flag must fail closed until a passing, recent
+    walk-forward result exists. Otherwise a fresh quote could mask a failed or
+    months-old strategy validation artifact.
     """
     _validate_inputs(inputs)
     reasons: list[str] = []
@@ -71,6 +71,21 @@ def evaluate(inputs: RecommendationGateInputs) -> RecommendationGateResult:
     if not inputs.freshness.ok:
         detail = inputs.freshness.reason or inputs.freshness.status or "unknown"
         reasons.append(f"freshness_not_ready:{detail}")
+
+    if not inputs.walkforward_ok:
+        reasons.append("walkforward_not_ready:validation_failed_or_missing")
+    elif inputs.walkforward_updated_at is None:
+        reasons.append("walkforward_not_ready:missing_updated_at")
+    else:
+        evaluated = inputs.evaluated_at.astimezone(inputs.walkforward_updated_at.tzinfo)
+        age_days = (evaluated.date() - inputs.walkforward_updated_at.date()).days
+        if age_days < 0:
+            reasons.append("walkforward_not_ready:updated_in_future")
+        elif age_days > inputs.walkforward_max_age_days:
+            reasons.append(
+                "walkforward_not_ready:stale_"
+                f"{age_days}d>{inputs.walkforward_max_age_days}d"
+            )
 
     deduped = tuple(dict.fromkeys(reasons))
     return RecommendationGateResult(

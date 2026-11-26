@@ -1143,7 +1143,7 @@ def test_recommendation_gate_blocks_candidates_without_linked_news_evidence() ->
     assert gate.reasons == ("候选缺少可引用消息证据：600010",)
 
 
-def test_recommendation_gate_allows_technical_candidate_without_news_dependency() -> (
+def test_recommendation_gate_blocks_technical_candidate_without_fresh_walkforward() -> (
     None
 ):
     provider = _Provider()
@@ -1169,7 +1169,9 @@ def test_recommendation_gate_allows_technical_candidate_without_news_dependency(
         research_chain=chain,
     )
 
-    assert gate.recommendation_allowed is True
+    assert gate.recommendation_allowed is False
+    assert gate.status == "blocked"
+    assert gate.reasons == ("walkforward_not_ready:validation_failed_or_missing",)
 
 
 @pytest.mark.parametrize('state', ['', 'unknown', '未记录', '完成', 'run_completed', 'partial_failed'])

@@ -51,7 +51,7 @@ def test_recommendation_gate_keeps_candidates_visible_during_validation(
     assert expected_reason not in result.reasons
 
 
-def test_recommendation_gate_does_not_hide_candidates_for_walkforward_status() -> None:
+def test_recommendation_gate_blocks_failed_walkforward_status() -> None:
     result = evaluate(
         _inputs(
             walkforward_ok=False,
@@ -59,8 +59,8 @@ def test_recommendation_gate_does_not_hide_candidates_for_walkforward_status() -
         )
     )
 
-    assert result.recommendation_allowed is True
-    assert result.reasons == ()
+    assert result.recommendation_allowed is False
+    assert result.reasons == ("walkforward_not_ready:validation_failed_or_missing",)
 
 
 def test_recommendation_gate_accepts_walkforward_at_age_boundary() -> None:
@@ -69,6 +69,22 @@ def test_recommendation_gate_accepts_walkforward_at_age_boundary() -> None:
     )
 
     assert result.recommendation_allowed is True
+
+
+def test_recommendation_gate_blocks_missing_walkforward_timestamp() -> None:
+    result = evaluate(_inputs(walkforward_updated_at=None))
+
+    assert result.recommendation_allowed is False
+    assert result.reasons == ("walkforward_not_ready:missing_updated_at",)
+
+
+def test_recommendation_gate_blocks_stale_walkforward_evidence() -> None:
+    result = evaluate(
+        _inputs(walkforward_updated_at=datetime(2026, 5, 1, 12, tzinfo=timezone.utc))
+    )
+
+    assert result.recommendation_allowed is False
+    assert result.reasons == ("walkforward_not_ready:stale_78d>35d",)
 
 
 def test_recommendation_gate_blocks_stale_data_but_not_paper_risk_cooldown() -> None:
