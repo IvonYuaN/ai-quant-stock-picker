@@ -853,6 +853,10 @@ def main() -> int:
             # 展示端优先读 reason（`reason or message`）；空串会被
             # write_variant_refresh_status 过滤掉，不会污染正常状态。
             reason=str(getattr(args, "status_reason", "") or ""),
+            # 目标截至日必须带上：`research-validation-context.ts` 只有在
+            # refresh_end_date == selected_date 时才把状态翻成「当日验证本轮超时」，
+            # 缺了它只会退化成「进度待核实」——失败照样被藏起来。
+            end_date=str(getattr(args, "end", "") or ""),
         )
         return 0
     previous = load_qualified_artifact(args.output)

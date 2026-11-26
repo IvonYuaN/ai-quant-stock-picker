@@ -1455,6 +1455,7 @@ def test_variant_refresh_failure_status_is_written_and_rendered(
             "--status-only", "timed_out",
             "--status-message", "第 1/4 段退出码 124，产物停留在上一轮，未发布新变体。",
             "--status-reason", "exit=124 batch=1/4 timeout=480s",
+            "--end", "2026-11-25",
         ],
         capture_output=True,
         text=True,
@@ -1466,9 +1467,15 @@ def test_variant_refresh_failure_status_is_written_and_rendered(
     payload = json.loads(status_path.read_text(encoding="utf-8"))
     assert payload["status"] == "timed_out"
     assert payload["reason"].startswith("exit=124"), "失败原因要能被页面原样带出"
+    # 目标截至日必须落盘：前端只有拿到它才会把状态认成「当日」而不是「历史记录」
+    assert payload["end_date"] == "2026-11-25"
+
+    monkeypatch.setenv("AQSP_VARIANT_REFRESH_STATUS", str(status_path))
+    facts = write_home_snapshot._variant_refresh_facts()
+    assert facts["refresh_status"] == "timed_out"
+    assert facts["refresh_end_date"] == "2026-11-25"
 
     monkeypatch.setenv("AQSP_VARIANT_RESULTS", str(tmp_path / "missing.json"))
-    monkeypatch.setenv("AQSP_VARIANT_REFRESH_STATUS", str(status_path))
     suite = write_home_snapshot._variant_suite_snapshot()
     assert suite.last_error.startswith("变体未发布：exit=124")
 

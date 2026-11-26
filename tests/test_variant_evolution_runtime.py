@@ -141,6 +141,8 @@ def test_variant_refresh_records_failure_status_before_refreshing_snapshot() -> 
     assert failure_block.index("write_status") < failure_block.index(
         "refresh_home_snapshot"
     )
+    # 目标截至日不能漏：前端只有拿到它才把状态认成「当日」而不是「历史记录」
+    assert '"$(date +%F)"' in failure_block.split("refresh_home_snapshot")[0]
 
 
 def test_current_holding_evidence_tolerates_sparse_historical_volume() -> None:

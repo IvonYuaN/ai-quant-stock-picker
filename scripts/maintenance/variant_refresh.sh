@@ -50,7 +50,7 @@ STATUS_PATH="$(resolve_path "${AQSP_VARIANT_REFRESH_STATUS:-data/runtime/variant
 FOCUS_SNAPSHOT="$(resolve_path "${AQSP_HOME_SNAPSHOT_PATH:-data/runtime/home_dashboard_snapshot.json}")"
 
 write_status() {
-    local state="$1" message="$2" reason="${3:-}"
+    local state="$1" message="$2" reason="${3:-}" end_date="${4:-}"
     local args=(
         --market-db "$MARKET_DB"
         --output "$OUTPUT_PATH"
@@ -60,6 +60,11 @@ write_status() {
     )
     if [ -n "$reason" ]; then
         args+=(--status-reason "$reason")
+    fi
+    # 只有失败态才带目标截至日：展示端要靠它把状态认成「当日」而不是「历史记录」；
+    # waiting 在周末/非交易日没有当日目标，硬塞日期会变成「刷新日期不匹配」。
+    if [ -n "$end_date" ]; then
+        args+=(--end "$end_date")
     fi
     if ! "$PYTHON_BIN" "$PROJECT_ROOT/scripts/refresh_variant_results_from_market_db.py" \
         "${args[@]}" >/dev/null 2>&1; then
@@ -208,7 +213,8 @@ for batch_index in $(seq 1 "$MAX_STAGE_BATCHES"); do
         # 页面就替这次失败背书。先写状态再刷快照，顺序不能反。
         write_status "$failure_state" \
             "第 ${batch_index}/${MAX_STAGE_BATCHES} 段退出码 ${status}，产物停留在上一轮，未发布新变体。" \
-            "exit=${status} batch=${batch_index}/${MAX_STAGE_BATCHES} timeout=${MAX_RUNTIME_SECONDS}s"
+            "exit=${status} batch=${batch_index}/${MAX_STAGE_BATCHES} timeout=${MAX_RUNTIME_SECONDS}s" \
+            "$(date +%F)"
         refresh_home_snapshot
         exit "$status"
     fi
