@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 from dataclasses import replace
 from datetime import date, datetime
 from pathlib import Path
@@ -1428,6 +1431,46 @@ def test_variant_suite_exposes_waiting_refresh_window(
     suite = write_home_snapshot._variant_suite_snapshot()
 
     assert suite.last_error == "变体等待：等待收盘后错峰运行。"
+
+
+def test_variant_refresh_failure_status_is_written_and_rendered(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """分段超时后状态文件必须是 `timed_out`，且展示端能把它翻成人话。
+
+    2026-11-26 之前 `--status-only` 只接受 `waiting`，`variant_refresh.sh` 的失败
+    分支也只写日志 ⇒ 11-23 / 11-25 连续两次 `exit=124` 之后，状态文件仍写着
+    11-20 的 `completed`，页面替一次失败的刷新背书（与 #684 同属假成功）。
+    这条锁住「写入端能产出的状态 ⊆ 展示端能解释的状态」。
+    """
+    root = Path(__file__).parents[1]
+    status_path = tmp_path / "variant_refresh_status.json"
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(root / "scripts" / "analysis" / "refresh_variant_results_from_market_db.py"),
+            "--market-db", str(tmp_path / "unused.db"),
+            "--output", str(tmp_path / "unused.json"),
+            "--status-file", str(status_path),
+            "--status-only", "timed_out",
+            "--status-message", "第 1/4 段退出码 124，产物停留在上一轮，未发布新变体。",
+            "--status-reason", "exit=124 batch=1/4 timeout=480s",
+        ],
+        capture_output=True,
+        text=True,
+        cwd=str(root),
+        env={**os.environ, "PYTHONPATH": f"{root}{os.pathsep}{root / 'src'}"},
+    )
+    assert proc.returncode == 0, proc.stderr
+
+    payload = json.loads(status_path.read_text(encoding="utf-8"))
+    assert payload["status"] == "timed_out"
+    assert payload["reason"].startswith("exit=124"), "失败原因要能被页面原样带出"
+
+    monkeypatch.setenv("AQSP_VARIANT_RESULTS", str(tmp_path / "missing.json"))
+    monkeypatch.setenv("AQSP_VARIANT_REFRESH_STATUS", str(status_path))
+    suite = write_home_snapshot._variant_suite_snapshot()
+    assert suite.last_error.startswith("变体未发布：exit=124")
 
 
 def test_variant_suite_rejects_expired_waiting_status(
