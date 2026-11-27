@@ -26,6 +26,7 @@ def audit_artifact(
     *,
     today: date,
     expected_thresholds_version: str | None = None,
+    expected_cost_mode: str | None = None,
 ) -> dict[str, Any]:
     """读取并审计 sidecar，返回可序列化的结构化证据。"""
     try:
@@ -46,6 +47,11 @@ def audit_artifact(
     )
     coverage = validate_walkforward_market_coverage(payload)
     reasons = [*validation.blockers, *coverage.blockers]
+    cost_mode = payload.get("cost_mode")
+    if expected_cost_mode is not None and cost_mode != expected_cost_mode:
+        reasons.append(
+            f"cost_mode mismatch: {cost_mode!r} != {expected_cost_mode!r}"
+        )
     return {
         "ok": not reasons,
         "status": "pass" if not reasons else "blocked",
@@ -60,6 +66,7 @@ def audit_artifact(
         "pbo": validation.pbo,
         "n_variants": validation.n_variants,
         "thresholds_version": validation.thresholds_version,
+        "cost_mode": cost_mode,
         "effective_symbols": coverage.effective_symbols,
         "coverage_ratio": coverage.coverage_ratio,
         "reasons": reasons,
@@ -71,11 +78,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("path", type=Path)
     parser.add_argument("--today", type=date.fromisoformat)
     parser.add_argument("--expected-thresholds-version")
+    parser.add_argument("--expected-cost-mode", choices=("legacy", "net"))
     args = parser.parse_args(argv)
     result = audit_artifact(
         args.path,
         today=args.today or now_shanghai().date(),
         expected_thresholds_version=args.expected_thresholds_version,
+        expected_cost_mode=args.expected_cost_mode,
     )
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
     return 0 if result["ok"] else 1

@@ -34,8 +34,26 @@ def test_audit_artifact_reports_structured_blockers(tmp_path) -> None:
     assert result["ok"] is False
     assert result["status"] == "blocked"
     assert result["effective_symbols"] == 100
+    assert result["cost_mode"] is None
     assert any("n_variants=4" in reason for reason in result["reasons"])
     assert any("effective_symbols=100" in reason for reason in result["reasons"])
+
+
+def test_audit_artifact_rejects_unexpected_cost_mode(tmp_path) -> None:
+    path = tmp_path / "gate.json"
+    path.write_text(
+        json.dumps({"run_date": "2026-11-20", "cost_mode": "legacy"}),
+        encoding="utf-8",
+    )
+
+    result = audit_artifact(
+        path,
+        today=date(2026, 11, 26),
+        expected_cost_mode="net",
+    )
+
+    assert result["ok"] is False
+    assert any("cost_mode mismatch" in reason for reason in result["reasons"])
 
 
 def test_audit_artifact_handles_unreadable_sidecar(tmp_path) -> None:
