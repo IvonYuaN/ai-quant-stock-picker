@@ -36,7 +36,7 @@ python3 scripts/check_no_secrets.py
 python3 scripts/preflight_upload.py
 
 # 运行前验证
-python3 scripts/check_variant_results.py <path> --min-variants 24 --min-symbols 600
+python3 scripts/monitor/check_variant_results.py <path> --min-variants 24 --min-symbols 600
 python3 scripts/headless_dashboard_check.py --url https://lh.ifidy.cn --mode raw
 ```
 
