@@ -176,6 +176,17 @@ def test_variant_refresh_records_failure_status_before_refreshing_snapshot() -> 
     assert '"$(date +%F)"' in failure_block.split("refresh_home_snapshot")[0]
 
 
+def test_variant_refresh_uses_shorter_profile_batches_within_single_run() -> None:
+    """高负载窗口把 24 个变体拆成 6 段，避免单段超时后整轮失去进度。"""
+    script = (Path(__file__).parents[1] / "scripts" / "variant_refresh.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'PROFILE_BATCH_SIZE="${AQSP_VARIANT_PROFILE_BATCH_SIZE:-4}"' in script
+    assert 'MAX_STAGE_BATCHES="${AQSP_VARIANT_MAX_STAGE_BATCHES:-6}"' in script
+    assert '"$MAX_STAGE_BATCHES" -gt 6' in script
+
+
 def test_current_holding_evidence_tolerates_sparse_historical_volume() -> None:
     dates = pd.date_range("2026-06-15", periods=41, freq="B").strftime("%Y-%m-%d")
     frame = pd.DataFrame(

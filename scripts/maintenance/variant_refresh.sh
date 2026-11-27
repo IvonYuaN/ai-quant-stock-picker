@@ -141,8 +141,8 @@ fi
 MAX_SYMBOLS="${AQSP_VARIANT_MAX_SYMBOLS:-600}"
 MAX_RUNTIME_SECONDS="${AQSP_VARIANT_MAX_RUNTIME_SECONDS:-480}"
 NICE_LEVEL="${AQSP_VARIANT_NICE_LEVEL:-15}"
-PROFILE_BATCH_SIZE="${AQSP_VARIANT_PROFILE_BATCH_SIZE:-6}"
-MAX_STAGE_BATCHES="${AQSP_VARIANT_MAX_STAGE_BATCHES:-4}"
+PROFILE_BATCH_SIZE="${AQSP_VARIANT_PROFILE_BATCH_SIZE:-4}"
+MAX_STAGE_BATCHES="${AQSP_VARIANT_MAX_STAGE_BATCHES:-6}"
 MIN_PUBLISHED_VARIANTS=24
 
 if ! [[ "$MAX_SYMBOLS" =~ ^[0-9]+$ ]] || [ "$MAX_SYMBOLS" -lt 600 ]; then
@@ -166,12 +166,12 @@ if ! [[ "$NICE_LEVEL" =~ ^[0-9]+$ ]] || [ "$NICE_LEVEL" -lt 10 ] || [ "$NICE_LEV
     NICE_LEVEL="15"
 fi
 if ! [[ "$PROFILE_BATCH_SIZE" =~ ^[0-9]+$ ]] || [ "$PROFILE_BATCH_SIZE" -lt 1 ] || [ "$PROFILE_BATCH_SIZE" -gt 12 ]; then
-    log "变体策略批次无效(${PROFILE_BATCH_SIZE})，使用 6"
-    PROFILE_BATCH_SIZE="6"
+    log "变体策略批次无效(${PROFILE_BATCH_SIZE})，使用 4"
+    PROFILE_BATCH_SIZE="4"
 fi
-if ! [[ "$MAX_STAGE_BATCHES" =~ ^[0-9]+$ ]] || [ "$MAX_STAGE_BATCHES" -lt 1 ] || [ "$MAX_STAGE_BATCHES" -gt 4 ]; then
-    log "变体分段次数无效(${MAX_STAGE_BATCHES})，使用 4"
-    MAX_STAGE_BATCHES="4"
+if ! [[ "$MAX_STAGE_BATCHES" =~ ^[0-9]+$ ]] || [ "$MAX_STAGE_BATCHES" -lt 1 ] || [ "$MAX_STAGE_BATCHES" -gt 6 ]; then
+    log "变体分段次数无效(${MAX_STAGE_BATCHES})，使用 6"
+    MAX_STAGE_BATCHES="6"
 fi
 # The runtime artifact validator rejects fewer than 24 diverse variants. Keep a
 # misconfigured small profile batch from silently staging forever across
