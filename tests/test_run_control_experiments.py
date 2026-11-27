@@ -289,6 +289,39 @@ def test_main_execute_requires_gate_script(tmp_path: Path) -> None:
     assert rc == 1
 
 
+def test_validate_compute_node_rejects_production_server() -> None:
+    with pytest.raises(ValueError, match="not a heavy-compute"):
+        rce.validate_compute_node(
+            "aqsp-server",
+            cpu_quota_percent=100,
+            memory_max="1G",
+            tasks_max=10,
+            runtime_max_seconds=60,
+        )
+
+
+def test_validate_compute_node_rejects_unregistered_node() -> None:
+    with pytest.raises(ValueError, match="unregistered"):
+        rce.validate_compute_node(
+            "third-node-not-registered",
+            cpu_quota_percent=100,
+            memory_max="1G",
+            tasks_max=10,
+            runtime_max_seconds=60,
+        )
+
+
+def test_validate_compute_node_rejects_limits_above_registry() -> None:
+    with pytest.raises(ValueError, match="MemoryMax exceeds"):
+        rce.validate_compute_node(
+            "aqsp-runner",
+            cpu_quota_percent=150,
+            memory_max="5G",
+            tasks_max=256,
+            runtime_max_seconds=57600,
+        )
+
+
 # --------------------------------------------------------------------------
 # 旧 release 守卫：OUT 不可覆盖时必须在开跑前拒绝，而不是白跑 11.5h
 # --------------------------------------------------------------------------

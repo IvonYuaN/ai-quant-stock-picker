@@ -34,12 +34,66 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import yaml
+
 DEFAULT_RUNNER_ROOT = Path("/opt/aqsp-runner")
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_NODE_REGISTRY = PROJECT_ROOT / "config" / "compute_nodes.yaml"
 GATE_SCRIPT = "scripts/runner/runner_gate.sh"
 RESULT_NAME = "walkforward_gate.json"
 READY_NAME = "RESULT_READY"
-DEFAULT_HARD_TIMEOUT_SECONDS = 60_000
+DEFAULT_HARD_TIMEOUT_SECONDS = 57_600
 DEFAULT_LOCK_PATH = "/tmp/aqsp-control-experiments.lock"
+
+
+def _memory_gib(value: str) -> float:
+    """Parse a cgroup memory value expressed as GiB, MiB, or bytes."""
+    raw = str(value).strip().upper()
+    units = (
+        ("GIB", 1.0),
+        ("GB", 1.0),
+        ("G", 1.0),
+        ("MIB", 1 / 1024),
+        ("MB", 1 / 1024),
+        ("M", 1 / 1024),
+    )
+    for suffix, factor in units:
+        if raw.endswith(suffix):
+            return float(raw[: -len(suffix)]) * factor
+    return float(raw) / (1024**3)
+
+
+def validate_compute_node(
+    node_id: str,
+    *,
+    registry_path: Path = DEFAULT_NODE_REGISTRY,
+    cpu_quota_percent: int,
+    memory_max: str,
+    tasks_max: int,
+    runtime_max_seconds: int,
+) -> dict[str, object]:
+    """Fail closed unless a registered heavy compute node can host the run."""
+    payload = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
+    nodes = payload.get("nodes", []) if isinstance(payload, dict) else []
+    node = next((item for item in nodes if item.get("id") == node_id), None)
+    if not isinstance(node, dict):
+        raise ValueError(f"unregistered compute node: {node_id}")
+    if node.get("role") not in {"shared_compute", "dedicated_compute"}:
+        raise ValueError(f"node {node_id} is not a heavy-compute node")
+    if node.get("heavy_workloads_allowed") is not True:
+        raise ValueError(f"heavy workloads forbidden on node: {node_id}")
+    limits = node.get("resource_limits")
+    if not isinstance(limits, dict):
+        raise ValueError(f"node {node_id} has no resource limits")
+    if cpu_quota_percent > int(limits["cpu_quota_percent"]):
+        raise ValueError(f"CPUQuota exceeds registered limit for {node_id}")
+    if _memory_gib(memory_max) > float(limits["memory_max_gib"]):
+        raise ValueError(f"MemoryMax exceeds registered limit for {node_id}")
+    if tasks_max > int(limits["tasks_max"]):
+        raise ValueError(f"TasksMax exceeds registered limit for {node_id}")
+    if runtime_max_seconds > int(limits["runtime_max_seconds"]):
+        raise ValueError(f"runtime exceeds registered limit for {node_id}")
+    return node
 
 
 @dataclass(frozen=True)
@@ -298,6 +352,8 @@ def main(argv: list[str] | None = None) -> int:
         help="output root (default: <runner-root>/gate_run/199_control)",
     )
     parser.add_argument("--runner-root", type=Path, default=DEFAULT_RUNNER_ROOT)
+    parser.add_argument("--node-id", default="aqsp-runner")
+    parser.add_argument("--node-registry", type=Path, default=DEFAULT_NODE_REGISTRY)
     parser.add_argument(
         "--hard-timeout-seconds",
         type=int,
@@ -349,6 +405,19 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     if args.cpu_quota_percent <= 0 or args.tasks_max <= 0:
         print("resource limits must be positive", file=sys.stderr)
+        return 2
+
+    try:
+        validate_compute_node(
+            args.node_id,
+            registry_path=args.node_registry,
+            cpu_quota_percent=args.cpu_quota_percent,
+            memory_max=args.memory_max,
+            tasks_max=args.tasks_max,
+            runtime_max_seconds=args.hard_timeout_seconds,
+        )
+    except (OSError, KeyError, TypeError, ValueError) as exc:
+        print(f"compute node refused: {exc}", file=sys.stderr)
         return 2
 
     gate_script = args.runner_root / "aqsp-scheduler-current" / GATE_SCRIPT
