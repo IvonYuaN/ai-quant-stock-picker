@@ -1,0 +1,47 @@
+# 计算节点登记表。这里只登记非敏感的 SSH 别名和职责；密钥、密码和运行时数据不入库。
+# 未登记的点位必须先补齐 registration_required_fields，调度器才允许使用。
+version: 1
+
+policy:
+  unregistered_node_action: refuse
+  production_service_roles:
+    - online_service
+  heavy_workload_roles:
+    - shared_compute
+    - dedicated_compute
+
+nodes:
+  - id: aqsp-server
+    ssh_host: aqsp-server
+    role: online_service
+    capabilities:
+      - api
+      - frontend
+      - intraday
+    heavy_workloads_allowed: false
+
+  - id: aqsp-runner
+    ssh_host: aqsp-runner
+    role: shared_compute
+    capabilities:
+      - offline_gate
+      - walkforward
+      - backfill
+    heavy_workloads_allowed: true
+    resource_limits:
+      cpu_quota_percent: 150
+      memory_max_gib: 4
+      memory_swap_max_gib: 0
+      tasks_max: 256
+      runtime_max_seconds: 57600
+
+# 用户提到的第三个点位尚未登记。不得根据猜测创建 SSH 目标或调度任务。
+pending_registration:
+  required_fields:
+    - id
+    - ssh_host_or_ip
+    - ssh_port
+    - ssh_user
+    - role
+    - capabilities
+    - resource_limits
