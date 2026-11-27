@@ -44,6 +44,9 @@ START_DATE="${START_DATE:-}"
 # 成本口径：0=legacy（生产默认），1=透传 --net-fees（net）。**仅研究对照用**（#199），
 # 生产门禁不要开。走 runner_gate.sh 才能带上共享业务机负载守卫，别绕过它直调父脚本。
 NET_FEES="${NET_FEES:-0}"
+# 覆盖范围：auto_recent_window（默认）或 legacy_full_span。研究对照用，
+# 生产门禁保持默认近窗口口径；通过环境变量隔离到各自 OUT。
+COVERAGE_MODE="${COVERAGE_MODE:-auto_recent_window}"
 
 # 共享业务机守卫。runner 上同时跑着 ifidy/lanshe 三个线上业务（PM2），AQSP 只是租户，
 # 所以 load 高时必须让位。跳过 ≠ 失败，故 exit 0 并把原因写进 skip.log，
@@ -117,12 +120,13 @@ if [[ "$NET_FEES" == "1" ]]; then
   NET_FEES_ARGS=(--net-fees)
   log "成本口径=net（透传 --net-fees）—— 研究对照用途，非生产门禁口径"
 fi
-log "窗口=${WINDOW_ARGS[*]:-自动(lookback=${LOOKBACK_YEARS}y)} profile=$GRID_PROFILE batch=$BATCH_SIZE"
+log "窗口=${WINDOW_ARGS[*]:-自动(lookback=${LOOKBACK_YEARS}y)} coverage=$COVERAGE_MODE profile=$GRID_PROFILE batch=$BATCH_SIZE"
 
 # 3) 跑 gate（前台跑，cron 友好；要离线跑自己套 setsid nohup）
 "$PY" "$RELEASE/scripts/run_production_walkforward_gate.py" \
   --grid-profile "$GRID_PROFILE" \
   --lookback-years "$LOOKBACK_YEARS" \
+  --coverage-mode "$COVERAGE_MODE" \
   --stream-batch-size "$BATCH_SIZE" \
   ${WINDOW_ARGS[@]+"${WINDOW_ARGS[@]}"} \
   ${NET_FEES_ARGS[@]+"${NET_FEES_ARGS[@]}"} \

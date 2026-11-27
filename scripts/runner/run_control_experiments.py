@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Drive the #199 control experiments on the runner, one gate at a time.
 
-Each gate run is ~11.5h (9 serial walk-forwards), so the three control runs of
+Each gate run is ~11.5h (9 serial walk-forwards), so the control runs of
 #199 cannot be started by hand inside one operating window.  This driver makes
 them a single resumable command:
 
@@ -53,7 +53,9 @@ class Spec:
     verdict_meaningful: bool = True
 
 
-# The three control runs of #199.
+# The frozen control runs of #199. ``full_span`` is the second time-window
+# control required by the long-term recommendation spec; it changes coverage
+# mode only and keeps the grid/cost identical to ``baseline``.
 SPECS: tuple[Spec, ...] = (
     Spec(
         name="baseline",
@@ -64,6 +66,16 @@ SPECS: tuple[Spec, ...] = (
         name="net_fees",
         env={"GRID_PROFILE": "stable_plus", "LOOKBACK_YEARS": "3", "NET_FEES": "1"},
         note="成本口径对照：同上但透传 --net-fees",
+    ),
+    Spec(
+        name="full_span",
+        env={
+            "GRID_PROFILE": "stable_plus",
+            "LOOKBACK_YEARS": "3",
+            "NET_FEES": "0",
+            "COVERAGE_MODE": "legacy_full_span",
+        },
+        note="时间窗口对照：同 baseline，但使用 legacy_full_span",
     ),
     Spec(
         name="shrink",

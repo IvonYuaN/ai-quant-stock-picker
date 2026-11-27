@@ -124,6 +124,15 @@ def test_thin_cscv_spec_is_point_estimate_only() -> None:
     assert shrink.env["GRID_PROFILE"] == "stable"  # N=5 < MIN_CSCV_VARIANTS
 
 
+def test_full_span_control_keeps_grid_and_changes_only_coverage_mode() -> None:
+    full_span = next(s for s in rce.SPECS if s.name == "full_span")
+    baseline = next(s for s in rce.SPECS if s.name == "baseline")
+    assert full_span.verdict_meaningful is True
+    assert full_span.env["GRID_PROFILE"] == baseline.env["GRID_PROFILE"]
+    assert full_span.env["NET_FEES"] == baseline.env["NET_FEES"]
+    assert full_span.env["COVERAGE_MODE"] == "legacy_full_span"
+
+
 def test_select_specs_excludes_thin_cscv_by_default() -> None:
     names = [s.name for s in rce.select_specs()]
     assert "shrink" not in names

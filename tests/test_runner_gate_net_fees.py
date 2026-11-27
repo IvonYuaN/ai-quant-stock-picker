@@ -42,3 +42,9 @@ def test_runner_gate_accepts_end_date_without_undefined_start_date() -> None:
     assert 'WINDOW_ARGS+=(--start "$START_DATE")' in script
     assert 'WINDOW_ARGS+=(--end "$END_DATE")' in script
     assert 'WINDOW_ARGS=(--start "$START_DATE" --end "$END_DATE")' not in script
+
+
+def test_runner_gate_forwards_coverage_mode_for_window_control() -> None:
+    script = SCRIPT.read_text(encoding="utf-8")
+    assert 'COVERAGE_MODE="${COVERAGE_MODE:-auto_recent_window}"' in script
+    assert '--coverage-mode "$COVERAGE_MODE"' in script
