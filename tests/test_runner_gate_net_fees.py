@@ -33,3 +33,12 @@ def test_runner_gate_still_keeps_shared_host_load_guard() -> None:
     script = SCRIPT.read_text(encoding="utf-8")
     assert "MAX_LOAD1" in script
     assert "LOAD_GUARD" in script
+
+
+def test_runner_gate_accepts_end_date_without_undefined_start_date() -> None:
+    """只指定结束日时交给父脚本按 lookback 推导起点，不能触发 set -u。"""
+    script = SCRIPT.read_text(encoding="utf-8")
+    assert 'START_DATE="${START_DATE:-}"' in script
+    assert 'WINDOW_ARGS+=(--start "$START_DATE")' in script
+    assert 'WINDOW_ARGS+=(--end "$END_DATE")' in script
+    assert 'WINDOW_ARGS=(--start "$START_DATE" --end "$END_DATE")' not in script

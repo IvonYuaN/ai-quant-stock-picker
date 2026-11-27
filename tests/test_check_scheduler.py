@@ -104,6 +104,19 @@ def test_scheduled_actions_recognizes_direct_entrypoint_schedule() -> None:
     assert actions == {"event-data"}
 
 
+def test_scheduled_actions_recognizes_variant_refresh_entrypoint() -> None:
+    """变体刷新必须进入调度清单，才能发现任务根本未登记。"""
+    crontab = (
+        "0 21 * * 1-5 /bin/bash "
+        "/opt/aqsp-releases/aqsp-scheduler-current/scripts/release_task_entrypoint.sh "
+        "variant-refresh\n"
+    )
+
+    actions = check_scheduler._scheduled_actions(crontab, lambda _path: None)
+
+    assert actions == {"variant-refresh"}
+
+
 def test_scheduled_actions_returns_actions_from_bt_panel_wrappers(tmp_path) -> None:
     daily = tmp_path / "daily"
     daily.write_text(

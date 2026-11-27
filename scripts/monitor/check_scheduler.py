@@ -42,6 +42,9 @@ SCHEDULED_ACTIONS = frozenset(
         "monitor",
         "news",
         "event-data",
+        # 变体刷新是独立的收盘后任务；不纳入调度清单会把「21:00/22:30
+        # 根本没有挂 cron」误报成正常，监控也就无法区分未启动和旧产物。
+        "variant-refresh",
     }
 )
 LEGACY_CRON_TERMS = (

@@ -40,6 +40,7 @@ TIMEOUT_SEC="${TIMEOUT_SEC:-57600}"
 BATCH_SIZE="${BATCH_SIZE:-500}"        # prod 只能 200（内存逼的），runner 8G 可开 500
 MIN_MEMORY_GIB="${MIN_MEMORY_GIB:-4}"  # 预检阈值，runner 8G 无压力；prod 只能 1.5
 END_DATE="${END_DATE:-}"
+START_DATE="${START_DATE:-}"
 # 成本口径：0=legacy（生产默认），1=透传 --net-fees（net）。**仅研究对照用**（#199），
 # 生产门禁不要开。走 runner_gate.sh 才能带上共享业务机负载守卫，别绕过它直调父脚本。
 NET_FEES="${NET_FEES:-0}"
@@ -105,8 +106,11 @@ PY
 # 2) 窗口：默认留空 = 让父脚本按 --lookback-years 自行推导（与 prod 口径逐位一致）。
 #    若要显式指定，END_DATE 必须 ≤ 库内 MAX(trade_date)，否则父脚本 BLOCK。
 WINDOW_ARGS=()
+if [ -n "$START_DATE" ]; then
+  WINDOW_ARGS+=(--start "$START_DATE")
+fi
 if [ -n "$END_DATE" ]; then
-  WINDOW_ARGS=(--start "$START_DATE" --end "$END_DATE")
+  WINDOW_ARGS+=(--end "$END_DATE")
 fi
 NET_FEES_ARGS=()
 if [[ "$NET_FEES" == "1" ]]; then
