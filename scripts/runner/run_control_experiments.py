@@ -26,7 +26,9 @@ Usage (running is opt-in; the bare command only prints the plan):
 from __future__ import annotations
 
 import argparse
+import fcntl
 import os
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -35,6 +37,9 @@ from pathlib import Path
 DEFAULT_RUNNER_ROOT = Path("/opt/aqsp-runner")
 GATE_SCRIPT = "scripts/runner/runner_gate.sh"
 RESULT_NAME = "walkforward_gate.json"
+READY_NAME = "RESULT_READY"
+DEFAULT_HARD_TIMEOUT_SECONDS = 60_000
+DEFAULT_LOCK_PATH = "/tmp/aqsp-control-experiments.lock"
 
 
 @dataclass(frozen=True)
@@ -119,6 +124,47 @@ def result_path(spec: Spec, out_root: Path) -> Path:
     return out_root / f"{spec.name}.gate.json"
 
 
+def clear_ready_marker(out_dir: Path) -> None:
+    """Remove a stale production marker before/after a research run."""
+    marker = out_dir / READY_NAME
+    try:
+        marker.unlink()
+    except FileNotFoundError:
+        pass
+
+
+def build_scoped_command(
+    gate_script: Path,
+    *,
+    use_systemd_scope: bool,
+    cpu_quota_percent: int,
+    memory_max: str,
+    tasks_max: int,
+) -> list[str]:
+    """Build a cgroup-scoped command for a long-running research gate."""
+    base = ["bash", str(gate_script)]
+    if not use_systemd_scope:
+        return base
+    if shutil.which("systemd-run") is None:
+        raise RuntimeError("systemd-run unavailable; refusing unbounded research run")
+    return [
+        "systemd-run",
+        "--quiet",
+        "--wait",
+        "--collect",
+        "--scope",
+        "-p",
+        f"CPUQuota={cpu_quota_percent}%",
+        "-p",
+        f"MemoryMax={memory_max}",
+        "-p",
+        "MemorySwapMax=0",
+        "-p",
+        f"TasksMax={tasks_max}",
+        *base,
+    ]
+
+
 def select_specs(
     specs: tuple[Spec, ...] = SPECS,
     only: str | None = None,
@@ -152,13 +198,51 @@ def render_plan(specs: list[Spec], out_root: Path) -> str:
     return "\n".join(lines)
 
 
-def run_one(spec: Spec, out_root: Path, runner_root: Path, gate_script: Path) -> int:
+def run_one(
+    spec: Spec,
+    out_root: Path,
+    runner_root: Path,
+    gate_script: Path,
+    *,
+    hard_timeout_seconds: int = DEFAULT_HARD_TIMEOUT_SECONDS,
+    use_systemd_scope: bool = False,
+    cpu_quota_percent: int = 150,
+    memory_max: str = "4G",
+    tasks_max: int = 256,
+) -> int:
     """Run one gate.  Returns the subprocess exit code (0 = success)."""
     env = build_env(spec, out_root, runner_root)
-    Path(env["OUT"]).mkdir(parents=True, exist_ok=True)
+    out_dir = Path(env["OUT"])
+    out_dir.mkdir(parents=True, exist_ok=True)
+    clear_ready_marker(out_dir)
     print(f"[ctl] === {spec.name} ===", flush=True)
-    proc = subprocess.run(["bash", str(gate_script)], env=env, check=False)
+    try:
+        command = build_scoped_command(
+            gate_script,
+            use_systemd_scope=use_systemd_scope,
+            cpu_quota_percent=cpu_quota_percent,
+            memory_max=memory_max,
+            tasks_max=tasks_max,
+        )
+        proc = subprocess.run(
+            command,
+            env=env,
+            check=False,
+            timeout=hard_timeout_seconds,
+        )
+    except subprocess.TimeoutExpired:
+        clear_ready_marker(out_dir)
+        print(
+            f"[ctl] {spec.name} HARD TIMEOUT after {hard_timeout_seconds}s",
+            file=sys.stderr,
+        )
+        return 124
+    except RuntimeError as exc:
+        clear_ready_marker(out_dir)
+        print(f"[ctl] {spec.name} REFUSED: {exc}", file=sys.stderr)
+        return 125
     if proc.returncode != 0:
+        clear_ready_marker(out_dir)
         print(f"[ctl] {spec.name} FAILED rc={proc.returncode}", file=sys.stderr)
         return proc.returncode
 
@@ -172,10 +256,12 @@ def run_one(spec: Spec, out_root: Path, runner_root: Path, gate_script: Path) ->
             "(load-guard skip?); leaving it pending",
             file=sys.stderr,
         )
+        clear_ready_marker(out_dir)
         return 1
 
     target = result_path(spec, out_root)
     target.write_bytes(produced.read_bytes())
+    clear_ready_marker(out_dir)
     print(f"[ctl] {spec.name} -> {target}", flush=True)
     return 0
 
@@ -213,6 +299,26 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--runner-root", type=Path, default=DEFAULT_RUNNER_ROOT)
     parser.add_argument(
+        "--hard-timeout-seconds",
+        type=int,
+        default=DEFAULT_HARD_TIMEOUT_SECONDS,
+        help="outer deadline; timeout is fail-closed and clears RESULT_READY",
+    )
+    parser.add_argument(
+        "--lock-path",
+        type=Path,
+        default=Path(DEFAULT_LOCK_PATH),
+        help="single-instance lock for control experiments",
+    )
+    parser.add_argument(
+        "--no-systemd-scope",
+        action="store_true",
+        help="diagnostic only; allow an unscoped run explicitly",
+    )
+    parser.add_argument("--cpu-quota-percent", type=int, default=150)
+    parser.add_argument("--memory-max", default="4G")
+    parser.add_argument("--tasks-max", type=int, default=256)
+    parser.add_argument(
         "--force", action="store_true", help="re-run specs that already have a result"
     )
     parser.add_argument(
@@ -238,6 +344,13 @@ def main(argv: list[str] | None = None) -> int:
     if not todo:
         return 0
 
+    if args.hard_timeout_seconds <= 0:
+        print("--hard-timeout-seconds must be positive", file=sys.stderr)
+        return 2
+    if args.cpu_quota_percent <= 0 or args.tasks_max <= 0:
+        print("resource limits must be positive", file=sys.stderr)
+        return 2
+
     gate_script = args.runner_root / "aqsp-scheduler-current" / GATE_SCRIPT
     if not gate_script.exists():
         print(f"missing gate script: {gate_script}", file=sys.stderr)
@@ -251,12 +364,29 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    for spec in todo:
-        rc = run_one(spec, out_root, args.runner_root, gate_script)
-        if rc != 0:
-            # Stop on first failure: the next gate would just contend for the
-            # same single spare core and produce a second unusable result.
-            return rc
+    args.lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with args.lock_path.open("w") as lock_file:
+        try:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            print(f"control experiment already running: {args.lock_path}", file=sys.stderr)
+            return 3
+        for spec in todo:
+            rc = run_one(
+                spec,
+                out_root,
+                args.runner_root,
+                gate_script,
+                hard_timeout_seconds=args.hard_timeout_seconds,
+                use_systemd_scope=not args.no_systemd_scope,
+                cpu_quota_percent=args.cpu_quota_percent,
+                memory_max=args.memory_max,
+                tasks_max=args.tasks_max,
+            )
+            if rc != 0:
+                # Stop on first failure: the next gate would just contend for the
+                # same single spare core and produce a second unusable result.
+                return rc
     return 0
 
 

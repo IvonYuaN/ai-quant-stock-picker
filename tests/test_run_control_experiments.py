@@ -221,6 +221,52 @@ def test_run_one_propagates_failure_exit_code(tmp_path: Path) -> None:
     assert rc == 7
 
 
+def test_build_scoped_command_contains_cgroup_limits(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(rce.shutil, "which", lambda name: "/usr/bin/systemd-run")
+    command = rce.build_scoped_command(
+        tmp_path / "runner_gate.sh",
+        use_systemd_scope=True,
+        cpu_quota_percent=150,
+        memory_max="4G",
+        tasks_max=256,
+    )
+    assert command[:5] == ["systemd-run", "--quiet", "--wait", "--collect", "--scope"]
+    assert "CPUQuota=150%" in command
+    assert "MemoryMax=4G" in command
+    assert "MemorySwapMax=0" in command
+    assert "TasksMax=256" in command
+
+
+def test_run_one_clears_stale_ready_marker_on_failure(tmp_path: Path) -> None:
+    out_root = tmp_path / "199_control"
+    out_dir = out_root / "baseline"
+    out_dir.mkdir(parents=True)
+    (out_dir / rce.READY_NAME).write_text("stale", encoding="utf-8")
+    _fake_gate(tmp_path, "exit 9\n")
+    rc = rce.run_one(
+        _spec("baseline"),
+        out_root,
+        tmp_path,
+        tmp_path / "aqsp-scheduler-current" / rce.GATE_SCRIPT,
+    )
+    assert rc == 9
+    assert not (out_dir / rce.READY_NAME).exists()
+
+
+def test_run_one_hard_timeout_is_fail_closed(tmp_path: Path) -> None:
+    out_root = tmp_path / "199_control"
+    _fake_gate(tmp_path, "sleep 2\n")
+    rc = rce.run_one(
+        _spec("baseline"),
+        out_root,
+        tmp_path,
+        tmp_path / "aqsp-scheduler-current" / rce.GATE_SCRIPT,
+        hard_timeout_seconds=1,
+    )
+    assert rc == 124
+    assert not (out_root / "baseline" / rce.READY_NAME).exists()
+
+
 def test_main_execute_stops_after_first_failure(tmp_path: Path, monkeypatch) -> None:
     out_root = tmp_path / "199_control"
     _fake_gate(tmp_path, "exit 0\n")
