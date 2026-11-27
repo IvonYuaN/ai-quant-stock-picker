@@ -1242,6 +1242,34 @@ def test_sync_and_recover_walkforward_incident_blocks_when_ssh_unavailable(
     assert "[sync]" not in result.stdout
 
 
+def test_sync_and_recover_walkforward_incident_refuses_unregistered_target(
+    tmp_path: Path,
+) -> None:
+    """Incident repair must never be repurposed as a runner entrypoint."""
+    result_file = tmp_path / "recovery.env"
+    result = subprocess.run(
+        [
+            "bash",
+            str(PROJECT_ROOT / "scripts" / "runner" / "sync_and_recover_walkforward_incident.sh"),
+        ],
+        cwd=str(PROJECT_ROOT),
+        env={
+            **os.environ,
+            "AQSP_PROJECT_ROOT": str(tmp_path),
+            "AQSP_SSH_TARGET": "aqsp-runner",
+            "AQSP_RECOVER_RESULT_FILE": str(result_file),
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert result.returncode == 2
+    assert "[blocked] recovery target must be aqsp-server" in result.stdout
+    assert "status=blocked_target_role" in result_file.read_text(encoding="utf-8")
+
+
 def test_launchd_daily_wrapper_loads_env_before_daily_run() -> None:
     script = (
         PROJECT_ROOT / "scripts" / "launchd" / "aqsp_daily_run_wrapper.sh"

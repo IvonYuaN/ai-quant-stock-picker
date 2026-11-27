@@ -23,6 +23,17 @@ write_result() {
     } >"$RESULT_FILE"
 }
 
+# This helper is a production incident repair path.  It must never become a
+# generic remote runner entrypoint: heavy walk-forward work belongs to the
+# registered compute node and is launched through runner_gate.sh.  Keep the
+# target fail-closed because an accidental RUNNER_HOST/AQSP_SSH_TARGET reuse
+# would otherwise perform a production repair transaction on the wrong host.
+if [ "$SSH_TARGET" != "aqsp-server" ]; then
+    echo "[blocked] recovery target must be aqsp-server (got: ${SSH_TARGET})"
+    write_result "blocked_target_role"
+    exit 2
+fi
+
 FILES=(
     "scripts/run_production_walkforward_gate.py"
     "scripts/recover_walkforward_incident.sh"
